@@ -1,0 +1,15 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "(lldb) debug",
+            "type": "lldb",
+            "request": "launch",
+            "program": "./out", // replace this with your program
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "env": {},
+            // "preLaunchTask": "the task to run before launch"
+        }
+    ]
+}

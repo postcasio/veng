@@ -1,0 +1,6 @@
+out
+*.spv
+*.o
+.DS_Store
+maps/autosave/*
+out.txt

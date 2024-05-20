@@ -1,0 +1,9 @@
+newmtl Ground068_1K-PNG/Ground068_1K-PNG_Color
+map_Kd ../textures/Ground068_1K-PNG/Ground068_1K-PNG_Color.png
+
+newmtl Rock051_1K-PNG/Rock051_1K-PNG_Color
+map_Kd ../textures/Rock051_1K-PNG/Rock051_1K-PNG_Color.png
+
+newmtl Rock053_1K-PNG/Rock053_1K-PNG_Color
+map_Kd ../textures/Rock053_1K-PNG/Rock053_1K-PNG_Color.png
+
