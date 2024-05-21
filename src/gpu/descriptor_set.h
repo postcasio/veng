@@ -11,8 +11,8 @@ public:
     DescriptorSet(DescriptorSetLayout &layout, DescriptorPool &pool);
     ~DescriptorSet();
 
-    DescriptorPool *pool;
-    DescriptorSetLayout *layout;
+    DescriptorPool &pool;
+    DescriptorSetLayout &layout;
     std::vector<VkDescriptorSet> sets;
     VkDescriptorSetAllocateInfo descriptorSetAllocateInfo{};
 };

@@ -1,7 +1,7 @@
 #include "descriptor_pool.h"
 #include "../engine.h"
 
-DescriptorPool::DescriptorPool(uint32_t uniformBufferCount, uint32_t imageSamplerCount, uint32_t descriptorSetCount) : uniformBufferCount(uniformBufferCount), imageSamplerCount(imageSamplerCount), descriptorSetCount(descriptorSetCount)
+DescriptorPool::DescriptorPool(LogicalDevice &device, uint32_t uniformBufferCount, uint32_t imageSamplerCount, uint32_t descriptorSetCount) : device(device), uniformBufferCount(uniformBufferCount), imageSamplerCount(imageSamplerCount), descriptorSetCount(descriptorSetCount)
 {
     std::array<VkDescriptorPoolSize, 2> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -15,30 +15,31 @@ DescriptorPool::DescriptorPool(uint32_t uniformBufferCount, uint32_t imageSample
     descriptorPoolCreateInfo.maxSets = descriptorSetCount;
     descriptorPoolCreateInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
 
-    VK_CHECK_RESULT(vkCreateDescriptorPool(renderer()->device, &descriptorPoolCreateInfo, nullptr, &pool), "failed to create descriptor pool!");
+    VK_CHECK_RESULT(vkCreateDescriptorPool(device.device, &descriptorPoolCreateInfo, nullptr, &pool), "failed to create descriptor pool!");
 }
 
 DescriptorPool::~DescriptorPool()
 {
-    sets.clear();
-
-    vkDestroyDescriptorPool(renderer()->device, pool, nullptr);
+    device.destroyDescriptorPool(pool);
 }
 
-DescriptorSet *DescriptorPool::createDescriptorSet(DescriptorSetLayout &layout)
+std::unique_ptr<DescriptorSet> DescriptorPool::createDescriptorSet(DescriptorSetLayout &layout)
 {
-    sets.push_back(std::make_unique<DescriptorSet>(layout, *this));
-
-    return sets.back().get();
+    return std::make_unique<DescriptorSet>(layout, *this);
 }
 
-void DescriptorPool::freeDescriptorSet(DescriptorSet *set)
+void DescriptorPool::destroyDescriptorSets(std::vector<VkDescriptorSet> sets)
 {
-    auto it = std::find_if(sets.begin(), sets.end(), [set](const std::unique_ptr<DescriptorSet> &s)
-                           { return s.get() == set; });
-
-    if (it != sets.end())
-    {
-        sets.erase(it);
-    }
+    vkFreeDescriptorSets(device.device, pool, static_cast<uint32_t>(sets.size()), sets.data());
 }
+
+// void DescriptorPool::freeDescriptorSet(DescriptorSet *set)
+// {
+//     auto it = std::find_if(sets.begin(), sets.end(), [set](const DescriptorSet *s)
+//                            { return s == set; });
+
+//     if (it != sets.end())
+//     {
+//         sets.erase(it);
+//     }
+// }

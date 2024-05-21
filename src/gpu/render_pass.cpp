@@ -1,7 +1,7 @@
 #include "render_pass.h"
 #include "../engine.h"
 
-RenderPass::RenderPass(std::vector<VkAttachmentDescription> attachments, VkSubpassDescription subpass)
+RenderPass::RenderPass(LogicalDevice &device, std::vector<VkAttachmentDescription> attachments, VkSubpassDescription subpass) : device(device)
 {
     VkSubpassDependency dependency{};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
@@ -19,10 +19,10 @@ RenderPass::RenderPass(std::vector<VkAttachmentDescription> attachments, VkSubpa
     renderPassCreateInfo.dependencyCount = 1;
     renderPassCreateInfo.pDependencies = &dependency;
 
-    VK_CHECK_RESULT(vkCreateRenderPass(renderer()->device, &renderPassCreateInfo, nullptr, &renderPass), "failed to create render pass!");
+    VK_CHECK_RESULT(vkCreateRenderPass(device.device, &renderPassCreateInfo, nullptr, &renderPass), "failed to create render pass!");
 }
 
 RenderPass::~RenderPass()
 {
-    vkDestroyRenderPass(renderer()->device, renderPass, nullptr);
+    device.destroyRenderPass(renderPass);
 }

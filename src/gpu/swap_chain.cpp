@@ -2,12 +2,10 @@
 #include "../gfxcommon.h"
 #include "../engine.h"
 
-SwapChain::SwapChain()
+SwapChain::SwapChain(LogicalDevice &device) : device(device)
 {
-    auto rndr = renderer();
-
     SwapChainSupportDetails swapChainSupport =
-        rndr->querySwapChainSupport(rndr->physicalDevice);
+        device.physicalDevice.querySwapChainSupport();
 
     surfaceFormat =
         renderer()->chooseSwapSurfaceFormat(swapChainSupport.formats);
@@ -33,7 +31,7 @@ SwapChain::SwapChain()
     swapChainCreateInfo.imageArrayLayers = 1;
     swapChainCreateInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
-    QueueFamilyIndices indices = renderer()->findQueueFamilies(renderer()->physicalDevice);
+    QueueFamilyIndices indices = device.physicalDevice.findQueueFamilies();
     uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(),
                                      indices.presentFamily.value()};
 
@@ -59,11 +57,11 @@ SwapChain::SwapChain()
 
     swapChainCreateInfo.oldSwapchain = VK_NULL_HANDLE;
 
-    VK_CHECK_RESULT(vkCreateSwapchainKHR(renderer()->device, &swapChainCreateInfo, nullptr, &chain), "failed to create swap chain!");
+    VK_CHECK_RESULT(vkCreateSwapchainKHR(device.device, &swapChainCreateInfo, nullptr, &chain), "failed to create swap chain!");
 
-    vkGetSwapchainImagesKHR(renderer()->device, chain, &imageCount, nullptr);
+    vkGetSwapchainImagesKHR(device.device, chain, &imageCount, nullptr);
     images.resize(imageCount);
-    vkGetSwapchainImagesKHR(renderer()->device, chain, &imageCount, images.data());
+    vkGetSwapchainImagesKHR(device.device, chain, &imageCount, images.data());
 
     for (auto &image : images)
     {
@@ -80,5 +78,10 @@ SwapChain::~SwapChain()
         imageView.reset();
     }
 
-    vkDestroySwapchainKHR(renderer()->device, chain, nullptr);
+    device.destroySwapChain(chain);
+}
+
+VkResult SwapChain::acquireNextImage(VkSemaphore semaphore, uint32_t *imageIndex)
+{
+    return vkAcquireNextImageKHR(device.device, chain, UINT64_MAX, semaphore, VK_NULL_HANDLE, imageIndex);
 }

@@ -2,7 +2,7 @@
 #include "descriptor_set_layout.h"
 #include "../engine.h"
 
-DescriptorSet::DescriptorSet(DescriptorSetLayout &layout, DescriptorPool &pool) : pool(&pool), layout(&layout)
+DescriptorSet::DescriptorSet(DescriptorSetLayout &layout, DescriptorPool &pool) : pool(pool), layout(layout)
 {
     auto imageCount = MAX_FRAMES_IN_FLIGHT;
 
@@ -15,10 +15,10 @@ DescriptorSet::DescriptorSet(DescriptorSetLayout &layout, DescriptorPool &pool) 
 
     sets.resize(imageCount);
 
-    VK_CHECK_RESULT(vkAllocateDescriptorSets(renderer()->device, &descriptorSetAllocateInfo, sets.data()), "failed to allocate descriptor sets!");
+    VK_CHECK_RESULT(vkAllocateDescriptorSets(pool.device.device, &descriptorSetAllocateInfo, sets.data()), "failed to allocate descriptor sets!");
 }
 
 DescriptorSet::~DescriptorSet()
 {
-    vkFreeDescriptorSets(renderer()->device, pool->pool, static_cast<uint32_t>(sets.size()), sets.data());
+    pool.destroyDescriptorSets(sets);
 }

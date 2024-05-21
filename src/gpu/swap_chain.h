@@ -5,12 +5,14 @@
 #include "../gfxcommon.h"
 #include "image_allocation.h"
 #include "image_view.h"
-
+#include "logical_device.h"
 class SwapChain
 {
 public:
-    SwapChain();
+    SwapChain(LogicalDevice &device);
     ~SwapChain();
+
+    VkResult acquireNextImage(VkSemaphore semaphore, uint32_t *imageIndex);
 
     std::vector<VkImage> images{};
     std::vector<std::unique_ptr<ImageView>> imageViews{};
@@ -25,6 +27,8 @@ public:
     VkFormat format;
 
     uint32_t imageCount;
+
+    LogicalDevice &device;
 };
 
 #endif

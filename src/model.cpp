@@ -20,7 +20,7 @@ Model::Model(std::vector<std::shared_ptr<Mesh>> meshes, std::vector<std::shared_
     this->meshes = meshes;
     this->materials = materials;
 
-    createDescriptorSets();
+    createDescriptorSet();
 }
 
 std::shared_ptr<Model> Model::fromPath(std::filesystem::path const &path)
@@ -237,19 +237,19 @@ void Model::updateDescriptorSets()
         std::array<VkWriteDescriptorSet, 1> descriptorWrites{};
 
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[0].dstSet = descriptorSets->sets[i];
+        descriptorWrites[0].dstSet = descriptorSet->sets[i];
         descriptorWrites[0].dstBinding = 0;
         descriptorWrites[0].dstArrayElement = 0;
         descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         descriptorWrites[0].descriptorCount = 1;
         descriptorWrites[0].pBufferInfo = &bufferInfoTransform;
 
-        vkUpdateDescriptorSets(renderer()->device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+        vkUpdateDescriptorSets(renderer()->device->device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
 }
 
-void Model::createDescriptorSets()
+void Model::createDescriptorSet()
 {
-    descriptorSets = engine()->renderer->descriptorPool->createDescriptorSet(*engine()->renderer->matricesDescriptorSetLayout);
+    descriptorSet = renderer()->descriptorPool->createDescriptorSet(*renderer()->matricesDescriptorSetLayout);
     updateDescriptorSets();
 }

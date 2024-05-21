@@ -36,7 +36,7 @@ Texture::Texture(std::filesystem::path const &path, VkFormat format) : path(path
 
     stbi_image_free(pixels);
 
-    sampler = std::make_unique<Sampler>();
+    sampler = device()->createSampler();
 }
 
 Texture::~Texture()

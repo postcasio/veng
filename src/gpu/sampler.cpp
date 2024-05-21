@@ -1,7 +1,7 @@
 #include "sampler.h"
 #include "../engine.h"
 
-Sampler::Sampler()
+Sampler::Sampler(LogicalDevice &device) : device(device)
 {
     samplerCreateInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     samplerCreateInfo.magFilter = VK_FILTER_LINEAR;
@@ -11,7 +11,7 @@ Sampler::Sampler()
     samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 
     VkPhysicalDeviceProperties properties{};
-    vkGetPhysicalDeviceProperties(renderer()->physicalDevice, &properties);
+    vkGetPhysicalDeviceProperties(renderer()->physicalDevice->device, &properties);
 
     samplerCreateInfo.anisotropyEnable = VK_TRUE;
     samplerCreateInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
@@ -25,12 +25,12 @@ Sampler::Sampler()
     samplerCreateInfo.minLod = 0.0f;
     samplerCreateInfo.maxLod = 0.0f;
 
-    VK_CHECK_RESULT(vkCreateSampler(renderer()->device, &samplerCreateInfo, nullptr,
+    VK_CHECK_RESULT(vkCreateSampler(device.device, &samplerCreateInfo, nullptr,
                                     &sampler),
                     "failed to create texture sampler!");
 }
 
 Sampler::~Sampler()
 {
-    vkDestroySampler(renderer()->device, sampler, nullptr);
+    device.destroySampler(sampler);
 }

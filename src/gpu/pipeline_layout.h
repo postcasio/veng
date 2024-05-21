@@ -4,15 +4,18 @@
 #include "../gfxcommon.h"
 #include "shader.h"
 #include "descriptor_set_layout.h"
+#include "logical_device.h"
 
 class PipelineLayout
 {
 public:
-    PipelineLayout(std::vector<DescriptorSetLayout *> descriptorSetLayouts);
+    PipelineLayout(LogicalDevice &device, std::vector<DescriptorSetLayout *> descriptorSetLayouts);
     ~PipelineLayout();
 
     VkPipelineLayout layout;
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+
+    LogicalDevice &device;
 };
 
 #endif

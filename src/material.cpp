@@ -42,17 +42,14 @@ Material::Material(MaterialDefinition materialDefinition) : materialDefinition(m
     }
 
     // Create descriptor set
-    descriptorSet = engine()->renderer->descriptorPool->createDescriptorSet(*engine()->renderer->materialDescriptorSetLayout);
+    descriptorSet = renderer()->descriptorPool->createDescriptorSet(*renderer()->materialDescriptorSetLayout);
 
     updateDescriptorSet();
 }
 
 Material::~Material()
 {
-    if (descriptorSet != nullptr)
-    {
-        engine()->renderer->descriptorPool->freeDescriptorSet(descriptorSet);
-    }
+    descriptorSet.reset();
 }
 
 bool Material::matchesDefinition(MaterialDefinition materialDefinition)
@@ -125,6 +122,6 @@ void Material::updateDescriptorSet()
         descriptorWrites[3].descriptorCount = 1;
         descriptorWrites[3].pImageInfo = &occlusionImageInfo;
 
-        vkUpdateDescriptorSets(renderer()->device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+        vkUpdateDescriptorSets(renderer()->device->device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
 }

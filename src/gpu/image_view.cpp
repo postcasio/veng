@@ -13,10 +13,10 @@ ImageView::ImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFl
     imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
     imageViewCreateInfo.subresourceRange.layerCount = 1;
 
-    VK_CHECK_RESULT(vkCreateImageView(renderer()->device, &imageViewCreateInfo, nullptr, &view), "failed to create texture image view!");
+    VK_CHECK_RESULT(vkCreateImageView(renderer()->device->device, &imageViewCreateInfo, nullptr, &view), "failed to create texture image view!");
 }
 
 ImageView::~ImageView()
 {
-    vkDestroyImageView(renderer()->device, view, nullptr);
+    vkDestroyImageView(renderer()->device->device, view, nullptr);
 }

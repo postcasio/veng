@@ -91,7 +91,7 @@ void Engine::mainLoop()
         renderer->drawFrame();
     }
 
-    renderer->waitDeviceIdle();
+    renderer->device->waitIdle();
 }
 
 void Engine::dispose()
@@ -111,11 +111,6 @@ void Engine::dispose()
 
 Engine::Engine() : camera(45.0f, 1.0f, 0.1f, 10.0f)
 {
-}
-
-bool QueueFamilyIndices::isComplete()
-{
-    return graphicsFamily.has_value() && presentFamily.has_value();
 }
 
 int Engine::getOutputWidth()

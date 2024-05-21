@@ -2,7 +2,7 @@
 #include "../fs.h"
 #include "../engine.h"
 
-Shader::Shader(std::filesystem::path const &path)
+Shader::Shader(LogicalDevice &device, std::filesystem::path const &path) : device(device)
 {
     auto code = readFile(path);
 
@@ -10,10 +10,10 @@ Shader::Shader(std::filesystem::path const &path)
     shaderModuleCreateInfo.codeSize = code.size();
     shaderModuleCreateInfo.pCode = reinterpret_cast<const uint32_t *>(code.data());
 
-    VK_CHECK_RESULT(vkCreateShaderModule(renderer()->device, &shaderModuleCreateInfo, nullptr, &shaderModule), "failed to create shader module!");
+    VK_CHECK_RESULT(vkCreateShaderModule(device.device, &shaderModuleCreateInfo, nullptr, &shaderModule), "failed to create shader module!");
 }
 
 Shader::~Shader()
 {
-    vkDestroyShaderModule(renderer()->device, shaderModule, nullptr);
+    device.destroyShader(shaderModule);
 }

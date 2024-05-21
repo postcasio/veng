@@ -3,7 +3,7 @@
 #include "../mesh.h"
 #include "../engine.h"
 
-GraphicsPipeline::GraphicsPipeline(PipelineLayout *layout, Shader *vertShader, Shader *fragShader, RenderPass *renderPass)
+GraphicsPipeline::GraphicsPipeline(LogicalDevice &device, PipelineLayout &layout, Shader &vertShader, Shader &fragShader, RenderPass &renderPass) : device(device)
 {
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -75,13 +75,13 @@ GraphicsPipeline::GraphicsPipeline(PipelineLayout *layout, Shader *vertShader, S
     VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
     vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertShaderStageInfo.module = vertShader->shaderModule;
+    vertShaderStageInfo.module = vertShader.shaderModule;
     vertShaderStageInfo.pName = "main";
 
     VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
     fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragShaderStageInfo.module = fragShader->shaderModule;
+    fragShaderStageInfo.module = fragShader.shaderModule;
     fragShaderStageInfo.pName = "main";
 
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
@@ -108,16 +108,16 @@ GraphicsPipeline::GraphicsPipeline(PipelineLayout *layout, Shader *vertShader, S
     graphicsPipelineCreateInfo.pMultisampleState = &multisampling;
     graphicsPipelineCreateInfo.pColorBlendState = &colorBlending;
     graphicsPipelineCreateInfo.pDynamicState = &dynamicState;
-    graphicsPipelineCreateInfo.layout = layout->layout;
-    graphicsPipelineCreateInfo.renderPass = renderPass->renderPass;
+    graphicsPipelineCreateInfo.layout = layout.layout;
+    graphicsPipelineCreateInfo.renderPass = renderPass.renderPass;
     graphicsPipelineCreateInfo.subpass = 0;
     graphicsPipelineCreateInfo.basePipelineHandle = VK_NULL_HANDLE;
     graphicsPipelineCreateInfo.pDepthStencilState = &depthStencil;
 
-    VK_CHECK_RESULT(vkCreateGraphicsPipelines(renderer()->device, VK_NULL_HANDLE, 1, &graphicsPipelineCreateInfo, nullptr, &pipeline), "failed to create graphics pipeline!");
+    VK_CHECK_RESULT(vkCreateGraphicsPipelines(device.device, VK_NULL_HANDLE, 1, &graphicsPipelineCreateInfo, nullptr, &pipeline), "failed to create graphics pipeline!");
 }
 
 GraphicsPipeline::~GraphicsPipeline()
 {
-    vkDestroyPipeline(renderer()->device, pipeline, nullptr);
+    device.destroyGraphicsPipeline(pipeline);
 }

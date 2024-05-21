@@ -26,7 +26,7 @@ public:
 
     void updateDescriptorSets();
 
-    DescriptorSet *descriptorSets;
+    std::unique_ptr<DescriptorSet> descriptorSet;
 
     TransformUniforms uniforms;
 
@@ -39,7 +39,7 @@ public:
 
 private:
     std::vector<std::shared_ptr<Mesh>> meshes;
-    void createDescriptorSets();
+    void createDescriptorSet();
 };
 
 #endif

@@ -28,7 +28,7 @@ public:
     std::shared_ptr<Texture> displacementMap;
     std::shared_ptr<Texture> occlusionMap;
 
-    DescriptorSet *descriptorSet;
+    std::unique_ptr<DescriptorSet> descriptorSet;
 
     MaterialDefinition materialDefinition;
 

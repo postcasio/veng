@@ -29,7 +29,7 @@ Framebuffer::Framebuffer(SwapChain *chain, RenderPass *renderPass, ImageView *de
         framebufferInfo.height = chain->extent.height;
         framebufferInfo.layers = 1;
 
-        VK_CHECK_RESULT(vkCreateFramebuffer(renderer()->device, &framebufferInfo, nullptr, &framebuffers[i]), "failed to create framebuffer!");
+        VK_CHECK_RESULT(vkCreateFramebuffer(renderer()->device->device, &framebufferInfo, nullptr, &framebuffers[i]), "failed to create framebuffer!");
     }
 }
 
@@ -37,6 +37,11 @@ Framebuffer::~Framebuffer()
 {
     for (auto framebuffer : framebuffers)
     {
-        vkDestroyFramebuffer(renderer()->device, framebuffer, nullptr);
+        vkDestroyFramebuffer(device()->device, framebuffer, nullptr);
     }
+}
+
+VkFramebuffer Framebuffer::currentFramebuffer()
+{
+    return framebuffers[currentImage()];
 }

@@ -12,6 +12,8 @@ public:
     Framebuffer(SwapChain *chain, RenderPass *renderPass, ImageView *depthImageView, ImageView *colorImageView);
     ~Framebuffer();
 
+    VkFramebuffer currentFramebuffer();
+
     std::vector<VkFramebuffer> framebuffers;
 };
 

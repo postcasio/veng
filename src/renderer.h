@@ -14,27 +14,16 @@
 #include "gpu/graphics_pipeline.h"
 #include "gpu/render_pass.h"
 #include "gpu/framebuffer.h"
+#include "gpu/command_pool.h"
+#include "gpu/instance.h"
+#include "gpu/physical_device.h"
+#include "gpu/logical_device.h"
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
-struct QueueFamilyIndices
-{
-    std::optional<uint32_t> graphicsFamily;
-    std::optional<uint32_t> presentFamily;
-
-    bool isComplete();
-};
-
-struct SwapChainSupportDetails
-{
-    VkSurfaceCapabilitiesKHR capabilities;
-    std::vector<VkSurfaceFormatKHR> formats;
-    std::vector<VkPresentModeKHR> presentModes;
-};
-
 class Renderer
 {
-    void buildRenderList(Object *object, RenderList &list, Camera *camera);
+    void buildRenderList(Object *object, RenderList &list, Camera &camera);
 
 public:
     Renderer();
@@ -47,6 +36,7 @@ public:
     std::unique_ptr<SwapChain> swapChain;
     std::unique_ptr<PipelineLayout> pipelineLayout;
     std::unique_ptr<GraphicsPipeline> graphicsPipeline;
+    std::unique_ptr<CommandBuffer> commandBuffer;
 
     std::unique_ptr<ImageAllocation> depthImageAllocation;
     std::unique_ptr<ImageView> depthImageView;
@@ -66,12 +56,12 @@ public:
     std::unique_ptr<DescriptorPool> descriptorPool;
 
     bool framebufferResized = false;
-    VkQueue presentQueue;
-    VkQueue graphicsQueue;
+
     uint32_t currentFrame = 0;
-    std::vector<VkCommandBuffer> commandBuffers;
+    uint32_t currentImage = 0;
+
     void drawFrame();
-    void createCommandBuffers();
+    void createCommandBuffer();
     void createSyncObjects();
     void cleanupSwapChain();
     void recreateSwapChain();
@@ -87,46 +77,37 @@ public:
     void createLightingDescriptorSets();
     void updateLightingDescriptorSets();
     std::unique_ptr<DescriptorSetLayout> lightingDescriptorSetLayout;
-    DescriptorSet *lightingDescriptorSet;
+    std::unique_ptr<DescriptorSet> lightingDescriptorSet;
 
     void createRenderPass();
-    void draw(VkCommandBuffer commandBuffer, Scene *scene, Camera *camera, uint32_t imageIndex);
-    void createQueues(uint32_t graphicsFamilyQueueIndex, uint32_t presentFamilyQueueIndex);
+    void draw(Scene &scene, Camera &camera);
+
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
     void createLogicalDevice();
     void createCommandPool();
-    QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
+    void createPhysicalDevice();
     void createInstance();
-    VkCommandPool commandPool;
-    bool checkDeviceExtensionSupport(
-        VkPhysicalDevice device);
+    std::unique_ptr<CommandPool> commandPool;
+
     VkPresentModeKHR chooseSwapPresentMode(
         const std::vector<VkPresentModeKHR> &availablePresentModes);
-    SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
-    void setupDebugMessenger();
-    std::vector<const char *> getRequiredExtensions();
-    bool checkValidationLayerSupport();
-    void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT &createInfo);
-    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+
     void createSurface();
     VkSampleCountFlagBits getMaxUsableSampleCount();
-    void pickPhysicalDevice();
 
-    bool isDeviceSuitable(VkPhysicalDevice device);
     bool hasStencilComponent(VkFormat format);
-    VkFormat findDepthFormat();
-    VkFormat findSupportedFormat(const std::vector<VkFormat> &candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
+
     void createMemoryAllocator();
-    VkInstance instance;
-    VkDebugUtilsMessengerEXT debugMessenger;
-    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+    std::unique_ptr<Instance> instance;
+
+    std::unique_ptr<PhysicalDevice> physicalDevice;
 
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &availableFormats);
     VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities);
 
     VmaAllocator allocator;
-    VkDevice device;
+    std::unique_ptr<LogicalDevice> device;
     VkSurfaceKHR surface;
     void waitDeviceIdle();
 
@@ -136,5 +117,8 @@ public:
 };
 
 Renderer *renderer();
+LogicalDevice *device();
+uint32_t currentFrame();
+uint32_t currentImage();
 
 #endif

@@ -1,7 +1,7 @@
 #include "pipeline_layout.h"
 #include "../engine.h"
 
-PipelineLayout::PipelineLayout(std::vector<DescriptorSetLayout *> descriptorSetLayouts)
+PipelineLayout::PipelineLayout(LogicalDevice &device, std::vector<DescriptorSetLayout *> descriptorSetLayouts) : device(device)
 {
     std::vector<VkDescriptorSetLayout> layouts;
     layouts.resize(descriptorSetLayouts.size());
@@ -14,10 +14,10 @@ PipelineLayout::PipelineLayout(std::vector<DescriptorSetLayout *> descriptorSetL
     pipelineLayoutInfo.setLayoutCount = layouts.size();
     pipelineLayoutInfo.pSetLayouts = layouts.data();
 
-    VK_CHECK_RESULT(vkCreatePipelineLayout(renderer()->device, &pipelineLayoutInfo, nullptr, &layout), "failed to create pipeline layout!");
+    VK_CHECK_RESULT(vkCreatePipelineLayout(device.device, &pipelineLayoutInfo, nullptr, &layout), "failed to create pipeline layout!");
 }
 
 PipelineLayout::~PipelineLayout()
 {
-    vkDestroyPipelineLayout(renderer()->device, layout, nullptr);
+    device.destroyPipelineLayout(layout);
 }
