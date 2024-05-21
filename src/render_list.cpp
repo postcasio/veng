@@ -45,3 +45,43 @@ void RenderList::addMaterial(Material *material)
         materials.push_back(material);
     }
 }
+
+void RenderList::build(Object *object, Camera &camera)
+{
+    if (object->type == ObjectType::Object && object->hasModel() && object->visible)
+    {
+        auto model = object->getModel();
+
+        glm::mat4 normalMatrix = glm::transpose(glm::inverse(camera.inverseWorldMatrix * object->worldMatrix));
+
+        for (auto material : model->materials)
+        {
+            addMaterial(material.get());
+        }
+
+        model->uniforms.ubo.model = object->worldMatrix;
+        model->uniforms.ubo.view = camera.inverseWorldMatrix;
+        model->uniforms.ubo.proj = camera.projectionMatrix;
+        model->uniforms.ubo.normal = normalMatrix;
+        model->uniforms.ubo.cameraPos = camera.position;
+
+        model->uniforms.updateUniformBuffer(currentFrame());
+
+        for (auto mesh : model->getMeshes())
+        {
+            if (model->materials[mesh->materialIndex]->visible)
+            {
+                addOpaque(model.get(), mesh.get(), object, mesh->materialIndex);
+            }
+        }
+    }
+    else if (object->type == ObjectType::PointLight)
+    {
+        addPointLight((PointLight *)object);
+    }
+
+    for (auto child : object->children)
+    {
+        build(child.get(), camera);
+    }
+}

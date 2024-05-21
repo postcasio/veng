@@ -45,38 +45,29 @@ ImageAllocation::~ImageAllocation()
 
 void ImageAllocation::copyBufferToImage(BufferAllocation &buffer, uint32_t width, uint32_t height)
 {
-    VkCommandBuffer commandBuffer = engine()->renderer->beginSingleTimeCommands();
+    auto commandBuffer = engine()->renderer->commandPool->createCommandBuffer();
 
-    VkBufferImageCopy region{};
-    region.bufferOffset = 0;
-    region.bufferRowLength = 0;
-    region.bufferImageHeight = 0;
+    commandBuffer->begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.mipLevel = 0;
-    region.imageSubresource.baseArrayLayer = 0;
-    region.imageSubresource.layerCount = 1;
+    commandBuffer->copyBufferToImage(buffer, *this, width, height);
 
-    region.imageOffset = {0, 0, 0};
-    region.imageExtent = {
-        width,
-        height,
-        1};
+    commandBuffer->end();
 
-    vkCmdCopyBufferToImage(
-        commandBuffer,
-        buffer.buffer,
-        image,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        1,
-        &region);
+    auto underlyingBuffer = commandBuffer->currentBuffer();
 
-    engine()->renderer->endSingleTimeCommands(commandBuffer);
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &underlyingBuffer;
+
+    device()->graphicsQueue->submit(submitInfo);
+    device()->graphicsQueue->waitIdle();
 }
 
 void ImageAllocation::transitionImageLayout(VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout)
 {
-    VkCommandBuffer commandBuffer = engine()->renderer->beginSingleTimeCommands();
+    auto commandBuffer = renderer()->commandPool->createCommandBuffer();
+    commandBuffer->begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
     VkImageMemoryBarrier barrier{};
 
@@ -139,15 +130,14 @@ void ImageAllocation::transitionImageLayout(VkFormat format, VkImageLayout oldLa
         throw std::invalid_argument("unsupported layout transition!");
     }
 
-    vkCmdPipelineBarrier(
-        commandBuffer,
+    commandBuffer->pipelineBarrier(
         sourceStage, destinationStage,
         0,
         0, nullptr,
         0, nullptr,
         1, &barrier);
 
-    engine()->renderer->endSingleTimeCommands(commandBuffer);
+    commandBuffer->end();
 };
 
 void ImageAllocation::uploadTexture(const void *pixels, VkDeviceSize imageSize,

@@ -80,14 +80,14 @@ Mesh::~Mesh()
     vertexBufferAllocation.reset();
 }
 
-void Mesh::draw(VkCommandBuffer commandBuffer)
+void Mesh::draw(CommandBuffer &commandBuffer)
 {
     VkBuffer vertexBuffers[] = {vertexBufferAllocation->buffer};
     VkDeviceSize offsets[] = {0};
 
-    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+    vkCmdBindVertexBuffers(commandBuffer.currentBuffer(), 0, 1, vertexBuffers, offsets);
 
-    vkCmdBindIndexBuffer(commandBuffer, indexBufferAllocation->buffer, 0, VK_INDEX_TYPE_UINT16);
+    vkCmdBindIndexBuffer(commandBuffer.currentBuffer(), indexBufferAllocation->buffer, 0, VK_INDEX_TYPE_UINT16);
 
-    vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+    vkCmdDrawIndexed(commandBuffer.currentBuffer(), static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 }

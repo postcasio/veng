@@ -6,13 +6,14 @@
 #include "image_allocation.h"
 #include "image_view.h"
 #include "logical_device.h"
+#include "semaphore.h"
 class SwapChain
 {
 public:
     SwapChain(LogicalDevice &device);
     ~SwapChain();
 
-    VkResult acquireNextImage(VkSemaphore semaphore, uint32_t *imageIndex);
+    VkResult acquireNextImage(Semaphore &semaphore, uint32_t *imageIndex);
 
     std::vector<VkImage> images{};
     std::vector<std::unique_ptr<ImageView>> imageViews{};

@@ -19,7 +19,7 @@ void Object::setModel(std::shared_ptr<Model> model)
     this->model = model;
 }
 
-void Object::draw(VkCommandBuffer commandBuffer)
+void Object::draw(CommandBuffer &commandBuffer)
 {
     if (model == nullptr)
     {

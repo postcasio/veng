@@ -47,34 +47,18 @@ LogicalDevice::LogicalDevice(PhysicalDevice &physicalDevice) : physicalDevice(ph
         static_cast<uint32_t>(validationLayers->size());
     deviceCreateInfo.ppEnabledLayerNames = validationLayers->data();
 #else
-    createInfo.enabledLayerCount = 0;
+    deviceCreateInfo.enabledLayerCount = 0;
 #endif
 
     VK_CHECK_RESULT(vkCreateDevice(physicalDevice.device, &deviceCreateInfo, nullptr, &device), "failed to create logical device!");
 
-    createQueues(indices.graphicsFamily.value(), indices.presentFamily.value());
-}
-
-void LogicalDevice::createQueues(uint32_t graphicsFamilyQueueIndex, uint32_t presentFamilyQueueIndex)
-{
-
-    vkGetDeviceQueue(device, graphicsFamilyQueueIndex, 0, &graphicsQueue);
-    vkGetDeviceQueue(device, presentFamilyQueueIndex, 0, &presentQueue);
+    graphicsQueue = createQueue(indices.graphicsFamily.value(), 0);
+    presentQueue = createQueue(indices.presentFamily.value(), 0);
 }
 
 void LogicalDevice::waitIdle()
 {
     vkDeviceWaitIdle(device);
-}
-
-void LogicalDevice::waitForFence(const VkFence &fence)
-{
-    vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
-}
-
-void LogicalDevice::resetFence(const VkFence &fence)
-{
-    vkResetFences(device, 1, &fence);
 }
 
 LogicalDevice::~LogicalDevice()
@@ -170,4 +154,29 @@ std::unique_ptr<Shader> LogicalDevice::createShader(std::filesystem::path const 
 void LogicalDevice::destroyShader(VkShaderModule shaderModule)
 {
     vkDestroyShaderModule(device, shaderModule, nullptr);
+}
+
+std::unique_ptr<Semaphore> LogicalDevice::createSemaphore()
+{
+    return std::make_unique<Semaphore>(*this);
+}
+
+void LogicalDevice::destroySemaphore(VkSemaphore semaphore)
+{
+    vkDestroySemaphore(device, semaphore, nullptr);
+}
+
+std::unique_ptr<Fence> LogicalDevice::createFence(VkFenceCreateFlags flags)
+{
+    return std::make_unique<Fence>(*this, flags);
+}
+
+void LogicalDevice::destroyFence(VkFence fence)
+{
+    vkDestroyFence(device, fence, nullptr);
+}
+
+std::unique_ptr<Queue> LogicalDevice::createQueue(uint32_t queueFamilyIndex, uint32_t queueIndex)
+{
+    return std::make_unique<Queue>(*this, queueFamilyIndex, queueIndex);
 }

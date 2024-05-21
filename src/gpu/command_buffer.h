@@ -22,13 +22,15 @@ public:
 
     void reset();
     VkCommandBuffer currentBuffer();
-    void begin();
+    void begin(VkCommandBufferUsageFlags flags = 0);
     void beginRenderPass(RenderPass &renderPass, Framebuffer &framebuffer, SwapChain &swapChain);
     void bindPipeline(GraphicsPipeline &pipeline);
-    void setViewport(const VkViewport *viewport);
-    void setScissor(const VkRect2D *scissor);
+    void setViewport(const VkViewport viewport);
+    void setScissor(const VkRect2D scissor);
     void bindDescriptorSet(PipelineLayout &layout, uint32_t firstSet, DescriptorSet &descriptorSet);
     void endRenderPass();
+    void copyBufferToImage(BufferAllocation &buffer, ImageAllocation &image, uint32_t width, uint32_t height);
+    void pipelineBarrier(VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask, VkDependencyFlags dependencyFlags, uint32_t memoryBarrierCount, const VkMemoryBarrier *pMemoryBarriers, uint32_t bufferMemoryBarrierCount, const VkBufferMemoryBarrier *pBufferMemoryBarriers, uint32_t imageMemoryBarrierCount, const VkImageMemoryBarrier *pImageMemoryBarriers);
     void end();
 
     std::vector<VkCommandBuffer> buffers;

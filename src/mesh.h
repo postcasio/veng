@@ -5,6 +5,7 @@
 
 #include "transform_uniforms.h"
 #include "texture.h"
+#include "gpu/command_buffer.h"
 
 #include <vector>
 
@@ -28,7 +29,7 @@ public:
 
     uint32_t materialIndex;
 
-    void draw(VkCommandBuffer commandBuffer);
+    void draw(CommandBuffer &commandBuffer);
 
     std::vector<Vertex> vertices;
     std::vector<uint16_t> indices;

@@ -81,7 +81,7 @@ SwapChain::~SwapChain()
     device.destroySwapChain(chain);
 }
 
-VkResult SwapChain::acquireNextImage(VkSemaphore semaphore, uint32_t *imageIndex)
+VkResult SwapChain::acquireNextImage(Semaphore &semaphore, uint32_t *imageIndex)
 {
-    return vkAcquireNextImageKHR(device.device, chain, UINT64_MAX, semaphore, VK_NULL_HANDLE, imageIndex);
+    return vkAcquireNextImageKHR(device.device, chain, UINT64_MAX, semaphore.semaphore, VK_NULL_HANDLE, imageIndex);
 }

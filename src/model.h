@@ -34,7 +34,7 @@ public:
 
     static std::shared_ptr<Model> fromPath(std::filesystem::path const &path);
 
-    void draw(VkCommandBuffer commandBuffer);
+    void draw(CommandBuffer &commandBuffer);
     std::vector<std::shared_ptr<Material>> materials;
 
 private:

@@ -11,6 +11,9 @@ class DescriptorSetLayout;
 class GraphicsPipeline;
 class PipelineLayout;
 class Shader;
+class Semaphore;
+class Fence;
+class Queue;
 
 #include <filesystem>
 #include "../gfxcommon.h"
@@ -24,6 +27,9 @@ class Shader;
 #include "graphics_pipeline.h"
 #include "pipeline_layout.h"
 #include "shader.h"
+#include "semaphore.h"
+#include "fence.h"
+#include "queue.h"
 
 class LogicalDevice
 {
@@ -32,8 +38,6 @@ public:
     ~LogicalDevice();
 
     void waitIdle();
-    void waitForFence(const VkFence &fence);
-    void resetFence(const VkFence &fence);
 
     void createQueues(uint32_t graphicsFamilyQueueIndex, uint32_t presentFamilyQueueIndex);
     std::unique_ptr<CommandPool> createCommandPool();
@@ -63,11 +67,19 @@ public:
     std::unique_ptr<Shader> createShader(const std::filesystem::path &path);
     void destroyShader(VkShaderModule shaderModule);
 
+    std::unique_ptr<Semaphore> createSemaphore();
+    void destroySemaphore(VkSemaphore semaphore);
+
+    std::unique_ptr<Fence> createFence(VkFenceCreateFlags flags);
+    void destroyFence(VkFence fence);
+
+    std::unique_ptr<Queue> createQueue(uint32_t familyIndex, uint32_t queueIndex);
+
     VkDevice device;
 
     VkDeviceCreateInfo deviceCreateInfo{};
-    VkQueue presentQueue;
-    VkQueue graphicsQueue;
+    std::unique_ptr<Queue> presentQueue;
+    std::unique_ptr<Queue> graphicsQueue;
 
     PhysicalDevice &physicalDevice;
 };

@@ -7,6 +7,7 @@
 #include "gpu/descriptor_pool.h"
 #include "gpu/instance.h"
 #include "gpu/validation_layers.h"
+#include "gpu/utils.h"
 #include <iostream>
 #include <array>
 #include <algorithm>
@@ -83,12 +84,9 @@ void Renderer::dispose()
 
     renderPass.reset();
 
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        vkDestroySemaphore(device->device, renderFinishedSemaphores[i], nullptr);
-        vkDestroySemaphore(device->device, imageAvailableSemaphores[i], nullptr);
-        vkDestroyFence(device->device, inFlightFences[i], nullptr);
-    }
+    renderFinishedSemaphores.clear();
+    imageAvailableSemaphores.clear();
+    inFlightFences.clear();
 
     commandBuffer.reset();
     commandPool.reset();
@@ -301,8 +299,6 @@ void Renderer::createSwapChain()
 
 void Renderer::draw(Scene &scene, Camera &camera)
 {
-    auto engine = Engine::current();
-
     scene.updateWorldMatrix();
 
     if (camera.parent == nullptr)
@@ -310,32 +306,20 @@ void Renderer::draw(Scene &scene, Camera &camera)
         camera.updateWorldMatrix();
     }
 
-    for (auto object : scene.children)
-    {
-        buildRenderList(object.get(), renderList, camera);
-    }
+    renderList.clear();
+    renderList.build(&scene, camera);
 
     commandBuffer->begin();
-
     commandBuffer->beginRenderPass(*renderPass, *framebuffer, *swapChain);
-
     commandBuffer->bindPipeline(*graphicsPipeline);
 
-    VkViewport viewport{
-        .x = 0.0f,
-        .y = 0.0f,
-        .width = static_cast<float>(swapChain->extent.width),
-        .height = static_cast<float>(swapChain->extent.height),
-        .minDepth = 0.0f,
-        .maxDepth = 1.0f};
+    commandBuffer->setViewport(vkViewport(
+        0.0f, 0.0f,
+        static_cast<float>(swapChain->extent.width),
+        static_cast<float>(swapChain->extent.height),
+        0.0f, 1.0f));
 
-    commandBuffer->setViewport(&viewport);
-
-    VkRect2D scissor{
-        .offset = {0, 0},
-        .extent = swapChain->extent};
-
-    commandBuffer->setScissor(&scissor);
+    commandBuffer->setScissor(vkRect2D(0, 0, swapChain->extent.width, swapChain->extent.height));
 
     updateLightingUniforms();
 
@@ -353,64 +337,20 @@ void Renderer::draw(Scene &scene, Camera &camera)
         if (material.get() != lastMaterial)
         {
             commandBuffer->bindDescriptorSet(*pipelineLayout, 0, *material->descriptorSet);
-
             lastMaterial = material.get();
         }
 
         if (model != lastModel)
         {
             commandBuffer->bindDescriptorSet(*pipelineLayout, 1, *model->descriptorSet);
-
             lastModel = model;
         }
 
-        mesh->draw(commandBuffer->currentBuffer());
+        mesh->draw(*commandBuffer);
     }
 
     commandBuffer->endRenderPass();
     commandBuffer->end();
-
-    renderList.clear();
-}
-
-void Renderer::buildRenderList(Object *object, RenderList &list, Camera &camera)
-{
-    if (object->type == ObjectType::Object && object->hasModel() && object->visible)
-    {
-        auto model = object->getModel();
-
-        glm::mat4 normalMatrix = glm::transpose(glm::inverse(camera.inverseWorldMatrix * object->worldMatrix));
-
-        for (auto material : model->materials)
-        {
-            list.addMaterial(material.get());
-        }
-
-        model->uniforms.ubo.model = object->worldMatrix;
-        model->uniforms.ubo.view = camera.inverseWorldMatrix;
-        model->uniforms.ubo.proj = camera.projectionMatrix;
-        model->uniforms.ubo.normal = normalMatrix;
-        model->uniforms.ubo.cameraPos = camera.position;
-
-        model->uniforms.updateUniformBuffer(currentFrame);
-
-        for (auto mesh : model->getMeshes())
-        {
-            if (model->materials[mesh->materialIndex]->visible)
-            {
-                list.addOpaque(model.get(), mesh.get(), object, mesh->materialIndex);
-            }
-        }
-    }
-    else if (object->type == ObjectType::PointLight)
-    {
-        list.addPointLight((PointLight *)object);
-    }
-
-    for (auto child : object->children)
-    {
-        buildRenderList(child.get(), list, camera);
-    }
 }
 
 void Renderer::createFramebuffers()
@@ -489,27 +429,21 @@ void Renderer::createSyncObjects()
     renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
     inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
 
-    VkSemaphoreCreateInfo semaphoreInfo{};
-    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-    VkFenceCreateInfo fenceInfo{};
-    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
-        VK_CHECK_RESULT(vkCreateSemaphore(device->device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]), "failed to create image available semaphore for a frame!");
-        VK_CHECK_RESULT(vkCreateSemaphore(device->device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]), "failed to create render finished semaphore for a frame!");
-        VK_CHECK_RESULT(vkCreateFence(device->device, &fenceInfo, nullptr, &inFlightFences[i]), "failed to create in flight fence for a frame!");
+        imageAvailableSemaphores[i] = device->createSemaphore();
+        renderFinishedSemaphores[i] = device->createSemaphore();
+        inFlightFences[i] = device->createFence(VK_FENCE_CREATE_SIGNALED_BIT);
     }
 }
 
 void Renderer::drawFrame()
 {
     auto engine = Engine::current();
-    device->waitForFence(inFlightFences[currentFrame]);
 
-    VkResult result = swapChain->acquireNextImage(imageAvailableSemaphores[currentFrame], &currentImage);
+    inFlightFences[currentFrame]->wait();
+
+    VkResult result = swapChain->acquireNextImage(*imageAvailableSemaphores[currentFrame], &currentImage);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR)
     {
@@ -521,13 +455,13 @@ void Renderer::drawFrame()
         throw std::runtime_error("failed to acquire swap chain image!");
     }
 
-    device->resetFence(inFlightFences[currentFrame]);
+    inFlightFences[currentFrame]->reset();
 
     commandBuffer->reset();
 
     draw(engine->scene, engine->camera);
 
-    VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
+    VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]->semaphore};
     VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 
     VkSubmitInfo submitInfo{};
@@ -539,11 +473,11 @@ void Renderer::drawFrame()
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer->buffers[currentFrame];
 
-    VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
+    VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]->semaphore};
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    VK_CHECK_RESULT(vkQueueSubmit(device->graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]), "failed to submit draw command buffer!");
+    device->graphicsQueue->submit(submitInfo, *inFlightFences[currentFrame]);
 
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -558,19 +492,19 @@ void Renderer::drawFrame()
 
     presentInfo.pResults = nullptr; // Optional
 
-    result = vkQueuePresentKHR(device->presentQueue, &presentInfo);
+    result = device->presentQueue->present(presentInfo);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized)
     {
         framebufferResized = false;
         engine->window.spinUntilValidSize();
 
-        vkDeviceWaitIdle(device->device);
+        device->waitIdle();
         recreateSwapChain();
     }
-    else if (result != VK_SUCCESS)
+    else
     {
-        throw std::runtime_error("failed to present swap chain image!");
+        VK_CHECK_RESULT(result, "failed to present swap chain image!");
     }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -579,41 +513,6 @@ void Renderer::drawFrame()
 void Renderer::createCommandBuffer()
 {
     commandBuffer = commandPool->createCommandBuffer();
-}
-
-VkCommandBuffer Renderer::beginSingleTimeCommands()
-{
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandPool = commandPool->pool;
-    allocInfo.commandBufferCount = 1;
-
-    VkCommandBuffer commandBuffer;
-    vkAllocateCommandBuffers(device->device, &allocInfo, &commandBuffer);
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
-
-    return commandBuffer;
-}
-
-void Renderer::endSingleTimeCommands(VkCommandBuffer commandBuffer)
-{
-    vkEndCommandBuffer(commandBuffer);
-
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
-
-    vkQueueSubmit(device->graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(device->graphicsQueue);
-
-    vkFreeCommandBuffers(device->device, commandPool->pool, 1, &commandBuffer);
 }
 
 void Renderer::createLogicalDevice()

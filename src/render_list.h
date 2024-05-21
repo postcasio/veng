@@ -10,6 +10,7 @@
 #include "object.h"
 #include "point_light.h"
 #include "material.h"
+#include "camera.h"
 
 struct RenderItem
 {
@@ -33,6 +34,7 @@ public:
     void addOpaque(Model *model, Mesh *mesh, Object *object, uint32_t materialIndex);
     void addPointLight(PointLight *pointLight);
     void addMaterial(Material *material);
+    void build(Object *object, Camera &camera);
 };
 
 #endif

@@ -1,6 +1,8 @@
 #ifndef _OBJECT_H_
 #define _OBJECT_H_
 
+#include "gpu/command_buffer.h"
+
 enum class ObjectType
 {
     Object,
@@ -28,7 +30,7 @@ public:
     void setModel(std::shared_ptr<Model> model);
     bool hasModel();
 
-    void draw(VkCommandBuffer commandBuffer);
+    void draw(CommandBuffer &commandBuffer);
 
     std::vector<std::shared_ptr<Object>> children;
 

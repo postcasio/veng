@@ -217,7 +217,7 @@ std::filesystem::path loadMaterialTexture(aiMaterial *mat, aiTextureType type, s
     return "";
 }
 
-void Model::draw(VkCommandBuffer commandBuffer)
+void Model::draw(CommandBuffer &commandBuffer)
 {
     for (auto mesh : meshes)
     {

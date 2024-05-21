@@ -17,13 +17,13 @@
 #include "gpu/command_pool.h"
 #include "gpu/instance.h"
 #include "gpu/physical_device.h"
+#include "gpu/semaphore.h"
 #include "gpu/logical_device.h"
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
 class Renderer
 {
-    void buildRenderList(Object *object, RenderList &list, Camera &camera);
 
 public:
     Renderer();
@@ -48,9 +48,9 @@ public:
 
     std::unique_ptr<Framebuffer> framebuffer;
 
-    std::vector<VkSemaphore> imageAvailableSemaphores;
-    std::vector<VkSemaphore> renderFinishedSemaphores;
-    std::vector<VkFence> inFlightFences;
+    std::vector<std::unique_ptr<Semaphore>> imageAvailableSemaphores;
+    std::vector<std::unique_ptr<Semaphore>> renderFinishedSemaphores;
+    std::vector<std::unique_ptr<Fence>> inFlightFences;
 
     void createDescriptorPool();
     std::unique_ptr<DescriptorPool> descriptorPool;
@@ -82,8 +82,6 @@ public:
     void createRenderPass();
     void draw(Scene &scene, Camera &camera);
 
-    VkCommandBuffer beginSingleTimeCommands();
-    void endSingleTimeCommands(VkCommandBuffer commandBuffer);
     void createLogicalDevice();
     void createCommandPool();
     void createPhysicalDevice();
