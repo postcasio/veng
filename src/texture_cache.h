@@ -14,7 +14,7 @@ public:
     TextureCache(size_t maxCacheSize);
     ~TextureCache();
 
-    std::shared_ptr<Texture> getTexture(const std::string &path);
+    std::shared_ptr<Texture> getTexture(const std::string &path, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB);
 
 private:
     struct Entry

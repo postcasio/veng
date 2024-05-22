@@ -27,21 +27,29 @@ Engine *engine()
 void Engine::run(void)
 {
     initialize();
+    stbi_set_flip_vertically_on_load(true);
 
     camera = PerspectiveCamera(45.0f, getOutputWidth() / (float)getOutputHeight(), 0.1f, 4096.0f);
-    camera.position = glm::vec3(-1000.0f, 130.0f, -420.0f);
-    camera.lookAt(glm::vec3(32.0f, 64.0f, 32.0f));
+    camera.position = glm::vec3(0.0f, 32.0f, 0.0f);
+    camera.lookAt(glm::vec3(0.0f, 64.0f, 0.0f));
 
     cameraController = std::make_shared<CameraController>(&camera, &window);
 
-    testObject = std::make_shared<Object>(Model::fromPath("maps/caveentrance.obj"));
+    testObject = std::make_shared<Object>(Model::fromPath("maps/indoortest.obj"));
 
     scene.add(testObject);
 
-    auto light = std::make_shared<PointLight>();
-    light->position = glm::vec3(-1000.0f, 64.0f, -420.0f);
+    light = std::make_shared<PointLight>();
+    light->position = glm::vec3(0.0f, 64.0f, 0.0f);
     light->color = glm::vec3(0.2, 0.6, 0.9);
+
     scene.add(light);
+    light2 = std::make_shared<PointLight>();
+    light2->position = glm::vec3(0.0f, 64.0f, -256.0f);
+    light2->color = glm::vec3(0.9, 0.2, 0.2);
+    light2->linear = 0.0005f;
+    light2->quadratic = 0.00005f;
+    scene.add(light2);
     // auto light2 = std::make_shared<PointLight>();
     // light2->position = glm::vec3(250.0f, 650.0f, 32.0f);
     // light2->color = glm::vec3(1.0f, 0.2f, 0.2f);
@@ -82,11 +90,14 @@ void Engine::mainLoop()
 
         cameraController->updateCamera();
 
+        light->position = camera.position;
+        light2->position.y = 256.0f + 240.0f * sin(currentTime / 2.0);
+
         // scene.children[1]->position.y = 64.0f + 64.0f * sin(currentTime / 4.0);
-        scene.children[1]->position.x = -1000.0f + 1000.0f * cos(currentTime / 4.0);
+        // scene.children[1]->position.x = -1000.0f + 1000.0f * cos(currentTime / 4.0);
         // scene.children[1]->position.z = 8.0f + 64.0f * sin(currentTime / 4.0);
 
-        scene.children[1]->matrixDirty = true;
+        // scene.children[1]->matrixDirty = true;
 
         renderer->drawFrame();
     }

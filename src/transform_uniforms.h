@@ -11,7 +11,7 @@ struct TransformUniformBufferObject
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
     alignas(16) glm::mat4 proj;
-    alignas(16) glm::mat4 normal;
+    alignas(16) glm::mat3 normal;
     alignas(16) glm::vec3 cameraPos;
 };
 

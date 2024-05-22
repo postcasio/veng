@@ -11,6 +11,7 @@ struct MaterialDefinition
     std::string normalMapPath;
     std::string displacementMapPath;
     std::string occlusionMapPath;
+    std::string roughnessMapPath;
 };
 
 class Material
@@ -27,6 +28,7 @@ public:
     std::shared_ptr<Texture> normalMap;
     std::shared_ptr<Texture> displacementMap;
     std::shared_ptr<Texture> occlusionMap;
+    std::shared_ptr<Texture> roughnessMap;
 
     std::unique_ptr<DescriptorSet> descriptorSet;
 

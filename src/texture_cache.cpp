@@ -8,7 +8,7 @@ TextureCache::~TextureCache()
     cacheMap.clear();
 }
 
-std::shared_ptr<Texture> TextureCache::getTexture(const std::string &path)
+std::shared_ptr<Texture> TextureCache::getTexture(const std::string &path, VkFormat format)
 {
     auto mapIt = cacheMap.find(path);
     if (mapIt != cacheMap.end())
@@ -20,7 +20,7 @@ std::shared_ptr<Texture> TextureCache::getTexture(const std::string &path)
     else
     {
         // Load the texture
-        std::shared_ptr<Texture> texture = std::make_shared<Texture>(path);
+        std::shared_ptr<Texture> texture = std::make_shared<Texture>(path, format);
         // Add the texture to the cache
         cacheList.push_front({path, texture});
         cacheMap[path] = cacheList.begin();

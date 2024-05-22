@@ -1,0 +1,9 @@
+newmtl Concrete044B_1K-PNG/Concrete044B_1K-PNG_Color
+map_Kd ../textures/Concrete044B_1K-PNG/Concrete044B_1K-PNG_Color.png
+
+newmtl PavingStones112_1K-PNG/PavingStones112_1K-PNG_Color
+map_Kd ../textures/PavingStones112_1K-PNG/PavingStones112_1K-PNG_Color.png
+
+newmtl __TB_empty
+map_Kd ../../../../../../Applications/TrenchBroom.app/Contents/Resources/defaults/assets/textures/__TB_empty.png
+

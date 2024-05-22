@@ -52,7 +52,7 @@ void RenderList::build(Object *object, Camera &camera)
     {
         auto model = object->getModel();
 
-        glm::mat4 normalMatrix = glm::transpose(glm::inverse(camera.inverseWorldMatrix * object->worldMatrix));
+        glm::mat4 normalMatrix = glm::transpose(glm::inverse(object->worldMatrix));
 
         for (auto material : model->materials)
         {

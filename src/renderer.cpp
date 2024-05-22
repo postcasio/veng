@@ -145,7 +145,14 @@ void Renderer::createMaterialDescriptorSetLayout()
         .pImmutableSamplers = nullptr,
         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT};
 
-    std::vector<VkDescriptorSetLayoutBinding> bindings = {samplerLayoutBinding, normalSamplerLayoutBinding, displacementSamplerLayoutBinding, occlusionSamplerLayoutBinding};
+    VkDescriptorSetLayoutBinding roughnessSamplerLayoutBinding{
+        .binding = 4,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImmutableSamplers = nullptr,
+        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT};
+
+    std::vector<VkDescriptorSetLayoutBinding> bindings = {samplerLayoutBinding, normalSamplerLayoutBinding, displacementSamplerLayoutBinding, occlusionSamplerLayoutBinding, roughnessSamplerLayoutBinding};
 
     materialDescriptorSetLayout = device->createDescriptorSetLayout(bindings);
 }

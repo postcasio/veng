@@ -45,7 +45,7 @@ ImageAllocation::~ImageAllocation()
 
 void ImageAllocation::copyBufferToImage(BufferAllocation &buffer, uint32_t width, uint32_t height)
 {
-    auto commandBuffer = engine()->renderer->commandPool->createCommandBuffer();
+    auto commandBuffer = renderer()->commandPool->createCommandBuffer();
 
     commandBuffer->begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
@@ -138,6 +138,16 @@ void ImageAllocation::transitionImageLayout(VkFormat format, VkImageLayout oldLa
         1, &barrier);
 
     commandBuffer->end();
+
+    auto underlyingBuffer = commandBuffer->currentBuffer();
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &underlyingBuffer;
+
+    device()->graphicsQueue->submit(submitInfo);
+    device()->graphicsQueue->waitIdle();
 };
 
 void ImageAllocation::uploadTexture(const void *pixels, VkDeviceSize imageSize,

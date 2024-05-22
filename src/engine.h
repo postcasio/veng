@@ -49,6 +49,8 @@ public:
     Scene scene;
 
     PerspectiveCamera camera;
+    std::shared_ptr<PointLight> light;
+    std::shared_ptr<PointLight> light2;
 
 private:
     Engine();

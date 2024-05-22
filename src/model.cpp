@@ -27,7 +27,7 @@ std::shared_ptr<Model> Model::fromPath(std::filesystem::path const &path)
 {
     Assimp::Importer importer;
 
-    const aiScene *scene = importer.ReadFile(path.string(), aiProcess_GenNormals | aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace);
+    const aiScene *scene = importer.ReadFile(path.string(), aiProcess_ForceGenNormals | aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace);
 
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
     {
@@ -56,12 +56,13 @@ std::shared_ptr<Model> Model::fromPath(std::filesystem::path const &path)
             definition.displacementMapPath = "textures/null.png";
             definition.normalMapPath = "textures/null.png";
             definition.occlusionMapPath = "textures/null.png";
+            definition.roughnessMapPath = "textures/null.png";
         }
         else
         {
             definition.diffuseMapPath = diffuseMapPath;
 
-            std::filesystem::path normalMapPath(std::regex_replace(diffuseMapPath, std::regex("_Color"), "_NormalGL"));
+            std::filesystem::path normalMapPath(std::regex_replace(diffuseMapPath, std::regex("_Color"), "_NormalDX"));
 
             if (!std::filesystem::exists(normalMapPath))
             {
@@ -92,6 +93,17 @@ std::shared_ptr<Model> Model::fromPath(std::filesystem::path const &path)
             else
             {
                 definition.occlusionMapPath = occlusionMapPath;
+            }
+
+            std::filesystem::path roughnessMapPath(std::regex_replace(diffuseMapPath, std::regex("_Color"), "_Roughness"));
+
+            if (!std::filesystem::exists(roughnessMapPath))
+            {
+                definition.roughnessMapPath = "textures/null.png";
+            }
+            else
+            {
+                definition.roughnessMapPath = roughnessMapPath;
             }
         }
 

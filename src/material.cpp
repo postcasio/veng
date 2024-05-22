@@ -20,7 +20,7 @@ Material::Material(MaterialDefinition materialDefinition) : materialDefinition(m
     }
     else
     {
-        normalMap = engine()->textureCache->getTexture(materialDefinition.normalMapPath);
+        normalMap = engine()->textureCache->getTexture(materialDefinition.normalMapPath, VK_FORMAT_R8G8B8A8_UNORM);
     }
 
     if (materialDefinition.displacementMapPath.empty())
@@ -41,6 +41,15 @@ Material::Material(MaterialDefinition materialDefinition) : materialDefinition(m
         occlusionMap = engine()->textureCache->getTexture(materialDefinition.occlusionMapPath);
     }
 
+    if (materialDefinition.roughnessMapPath.empty())
+    {
+        roughnessMap = engine()->textureCache->getTexture("textures/null.png");
+    }
+    else
+    {
+        roughnessMap = engine()->textureCache->getTexture(materialDefinition.roughnessMapPath);
+    }
+
     // Create descriptor set
     descriptorSet = renderer()->descriptorPool->createDescriptorSet(*renderer()->materialDescriptorSetLayout);
 
@@ -57,7 +66,8 @@ bool Material::matchesDefinition(MaterialDefinition materialDefinition)
     return !this->materialDefinition.diffuseMapPath.compare(materialDefinition.diffuseMapPath) &&
            !this->materialDefinition.normalMapPath.compare(materialDefinition.normalMapPath) &&
            !this->materialDefinition.displacementMapPath.compare(materialDefinition.displacementMapPath) &&
-           !this->materialDefinition.occlusionMapPath.compare(materialDefinition.occlusionMapPath);
+           !this->materialDefinition.occlusionMapPath.compare(materialDefinition.occlusionMapPath) &&
+           !this->materialDefinition.roughnessMapPath.compare(materialDefinition.roughnessMapPath);
 }
 
 void Material::updateDescriptorSet()
@@ -84,7 +94,12 @@ void Material::updateDescriptorSet()
         occlusionImageInfo.imageView = occlusionMap->imageView->view;
         occlusionImageInfo.sampler = occlusionMap->sampler->sampler;
 
-        std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
+        VkDescriptorImageInfo roughnessImageInfo{};
+        roughnessImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        roughnessImageInfo.imageView = roughnessMap->imageView->view;
+        roughnessImageInfo.sampler = roughnessMap->sampler->sampler;
+
+        std::array<VkWriteDescriptorSet, 5> descriptorWrites{};
 
         descriptorWrites[0]
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -121,6 +136,15 @@ void Material::updateDescriptorSet()
         descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         descriptorWrites[3].descriptorCount = 1;
         descriptorWrites[3].pImageInfo = &occlusionImageInfo;
+
+        descriptorWrites[4]
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[4].dstSet = descriptorSet->sets[i];
+        descriptorWrites[4].dstBinding = 4;
+        descriptorWrites[4].dstArrayElement = 0;
+        descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[4].descriptorCount = 1;
+        descriptorWrites[4].pImageInfo = &roughnessImageInfo;
 
         vkUpdateDescriptorSets(renderer()->device->device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }

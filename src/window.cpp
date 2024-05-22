@@ -3,8 +3,8 @@
 
 #include <iostream>
 
-const uint32_t INITIAL_WIDTH = 800;
-const uint32_t INITIAL_HEIGHT = 600;
+const uint32_t INITIAL_WIDTH = 1280;
+const uint32_t INITIAL_HEIGHT = 720;
 
 mouse_state mouseState;
 keyboard_state keyboardState;

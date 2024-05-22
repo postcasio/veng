@@ -42,7 +42,7 @@ void CameraController::updateCamera()
 
     keyboard_state keyboardState = window->getKeyboardState();
 
-    float speed = 2.0f;
+    float speed = 4.0f;
 
     if (keyboardState.keys.w)
     {
