@@ -6,6 +6,7 @@
 
 const std::vector<const char *> *deviceExtensions = new std::vector<const char *>(
     {VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+     "VK_EXT_shader_viewport_index_layer",
      "VK_KHR_portability_subset"});
 
 const std::vector<const char *> *getDeviceExtensions()

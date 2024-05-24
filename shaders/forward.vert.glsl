@@ -22,8 +22,6 @@ layout(location = 2) out vec2 fragTexCoord;
 layout(location = 3) out vec3 fragNormal;
 layout(location = 4) out mat3 fragTBN;
 
-layout(set = 0, binding = 2) uniform sampler2D displacementSampler;
-
 layout(set = 1, binding = 0) uniform TransformUniformBufferObject {
   mat4 model;
   mat4 view;

@@ -12,7 +12,7 @@ LDFLAGS=$(shell pkg-config --libs glfw3) \
 	-rpath /usr/local/lib
 SRC=$(wildcard src/**/*.cpp) $(wildcard src/*.cpp)
 OBJ=$(SRC:.cpp=.o)
-SHADERSRC=$(wildcard shaders/**/*.glsl)
+SHADERSRC=$(wildcard shaders/*.glsl)
 SHADEROBJ=$(SHADERSRC:.glsl=.spv)
 OUT=out
 
@@ -38,6 +38,9 @@ $(OUT): $(OBJ)
 
 %.frag.spv: %.frag.glsl
 	$(GLSLC) $(GLSLFLAGS) -fshader-stage=frag $< -o $@
+
+%.geom.spv: %.geom.glsl
+	$(GLSLC) $(GLSLFLAGS) -fshader-stage=geom $< -o $@
 
 run: all
 	./$(OUT)

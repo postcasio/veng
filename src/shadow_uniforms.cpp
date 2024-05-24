@@ -4,13 +4,13 @@
 #include <iostream>
 
 #include "engine.h"
-#include "lighting_uniforms.h"
+#include "shadow_uniforms.h"
 #include "object.h"
 #include "camera.h"
 
-LightingUniforms::LightingUniforms()
+ShadowUniforms::ShadowUniforms()
 {
-    VkDeviceSize bufferSize = sizeof(LightingUniformBufferObject);
+    VkDeviceSize bufferSize = sizeof(ShadowUniformBufferObject);
 
     uniformBufferAllocations.resize(MAX_FRAMES_IN_FLIGHT);
 
@@ -20,12 +20,12 @@ LightingUniforms::LightingUniforms()
     }
 }
 
-LightingUniforms::~LightingUniforms()
+ShadowUniforms::~ShadowUniforms()
 {
     uniformBufferAllocations.clear();
 }
 
-void LightingUniforms::updateUniformBuffer(uint32_t currentFrame)
+void ShadowUniforms::updateUniformBuffer(uint32_t currentFrame)
 {
     // memcpy(&uniformBuffers[currentImage], &ubo, sizeof(ubo));
     vmaCopyMemoryToAllocation(renderer()->allocator, &ubo, uniformBufferAllocations[currentFrame]->allocation, 0, sizeof(ubo));

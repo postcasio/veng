@@ -84,11 +84,6 @@ void Material::updateDescriptorSet()
         normalImageInfo.imageView = normalMap->imageView->view;
         normalImageInfo.sampler = normalMap->sampler->sampler;
 
-        VkDescriptorImageInfo displacementImageInfo{};
-        displacementImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        displacementImageInfo.imageView = displacementMap->imageView->view;
-        displacementImageInfo.sampler = displacementMap->sampler->sampler;
-
         VkDescriptorImageInfo occlusionImageInfo{};
         occlusionImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         occlusionImageInfo.imageView = occlusionMap->imageView->view;
@@ -99,7 +94,7 @@ void Material::updateDescriptorSet()
         roughnessImageInfo.imageView = roughnessMap->imageView->view;
         roughnessImageInfo.sampler = roughnessMap->sampler->sampler;
 
-        std::array<VkWriteDescriptorSet, 5> descriptorWrites{};
+        std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
 
         descriptorWrites[0]
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -126,7 +121,7 @@ void Material::updateDescriptorSet()
         descriptorWrites[2].dstArrayElement = 0;
         descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         descriptorWrites[2].descriptorCount = 1;
-        descriptorWrites[2].pImageInfo = &displacementImageInfo;
+        descriptorWrites[2].pImageInfo = &occlusionImageInfo;
 
         descriptorWrites[3]
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -135,16 +130,7 @@ void Material::updateDescriptorSet()
         descriptorWrites[3].dstArrayElement = 0;
         descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         descriptorWrites[3].descriptorCount = 1;
-        descriptorWrites[3].pImageInfo = &occlusionImageInfo;
-
-        descriptorWrites[4]
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[4].dstSet = descriptorSet->sets[i];
-        descriptorWrites[4].dstBinding = 4;
-        descriptorWrites[4].dstArrayElement = 0;
-        descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        descriptorWrites[4].descriptorCount = 1;
-        descriptorWrites[4].pImageInfo = &roughnessImageInfo;
+        descriptorWrites[3].pImageInfo = &roughnessImageInfo;
 
         vkUpdateDescriptorSets(renderer()->device->device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }

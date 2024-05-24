@@ -13,6 +13,7 @@ public:
     VkRenderPass renderPass;
     VkRenderPassCreateInfo renderPassCreateInfo{};
 
+    std::vector<VkAttachmentDescription> attachments;
     LogicalDevice &device;
 };
 

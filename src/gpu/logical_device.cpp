@@ -121,14 +121,19 @@ std::unique_ptr<DescriptorSetLayout> LogicalDevice::createDescriptorSetLayout(st
     return std::make_unique<DescriptorSetLayout>(*this, bindings);
 }
 
+std::unique_ptr<DescriptorSetLayout> LogicalDevice::createDescriptorSetLayout(std::vector<VkDescriptorSetLayoutBinding> bindings, VkDescriptorBindingFlags bindingFlags)
+{
+    return std::make_unique<DescriptorSetLayout>(*this, bindings, bindingFlags);
+}
+
 void LogicalDevice::destroyDescriptorSetLayout(VkDescriptorSetLayout layout)
 {
     vkDestroyDescriptorSetLayout(device, layout, nullptr);
 }
 
-std::unique_ptr<GraphicsPipeline> LogicalDevice::createGraphicsPipeline(PipelineLayout &layout, Shader &vertShader, Shader &fragShader, RenderPass &renderPass)
+std::unique_ptr<GraphicsPipeline> LogicalDevice::createGraphicsPipeline(PipelineLayout &layout, Shader &vertShader, Shader &fragShader, RenderPass &renderPass, VkCullModeFlagBits cullMode, bool depthBiasEnable)
 {
-    return std::make_unique<GraphicsPipeline>(*this, layout, vertShader, fragShader, renderPass);
+    return std::make_unique<GraphicsPipeline>(*this, layout, vertShader, fragShader, renderPass, cullMode, depthBiasEnable);
 }
 
 void LogicalDevice::destroyGraphicsPipeline(VkPipeline pipeline)
@@ -139,6 +144,11 @@ void LogicalDevice::destroyGraphicsPipeline(VkPipeline pipeline)
 std::unique_ptr<PipelineLayout> LogicalDevice::createPipelineLayout(std::vector<DescriptorSetLayout *> descriptorSetLayouts)
 {
     return std::make_unique<PipelineLayout>(*this, descriptorSetLayouts);
+}
+
+std::unique_ptr<PipelineLayout> LogicalDevice::createPipelineLayout(std::vector<DescriptorSetLayout *> descriptorSetLayouts, VkPushConstantRange pushConstantRange)
+{
+    return std::make_unique<PipelineLayout>(*this, descriptorSetLayouts, pushConstantRange);
 }
 
 void LogicalDevice::destroyPipelineLayout(VkPipelineLayout layout)

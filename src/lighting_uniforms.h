@@ -29,7 +29,7 @@ public:
     LightingUniforms();
     ~LightingUniforms();
 
-    void updateUniformBuffer(uint32_t currentImage);
+    void updateUniformBuffer(uint32_t currentFrame);
     LightingUniformBufferObject ubo;
     std::vector<std::unique_ptr<BufferAllocation>> uniformBufferAllocations;
 

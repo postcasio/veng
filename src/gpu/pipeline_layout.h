@@ -10,6 +10,7 @@ class PipelineLayout
 {
 public:
     PipelineLayout(LogicalDevice &device, std::vector<DescriptorSetLayout *> descriptorSetLayouts);
+    PipelineLayout(LogicalDevice &device, std::vector<DescriptorSetLayout *> descriptorSetLayouts, VkPushConstantRange pushConstantRange);
     ~PipelineLayout();
 
     VkPipelineLayout layout;

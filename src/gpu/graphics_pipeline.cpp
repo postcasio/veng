@@ -3,7 +3,31 @@
 #include "../mesh.h"
 #include "../engine.h"
 
-GraphicsPipeline::GraphicsPipeline(LogicalDevice &device, PipelineLayout &layout, Shader &vertShader, Shader &fragShader, RenderPass &renderPass) : device(device)
+GraphicsPipeline::GraphicsPipeline(LogicalDevice &device, PipelineLayout &layout, Shader &vertShader, Shader &fragShader, RenderPass &renderPass, VkCullModeFlagBits cullMode, bool depthBiasEnable) : device(device)
+{
+    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertShaderStageInfo.module = vertShader.shaderModule;
+    vertShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+    fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragShaderStageInfo.module = fragShader.shaderModule;
+    fragShaderStageInfo.pName = "main";
+
+    std::vector<VkPipelineShaderStageCreateInfo> shaderStages = {vertShaderStageInfo, fragShaderStageInfo};
+
+    createPipeline(layout, renderPass, shaderStages, cullMode, depthBiasEnable);
+}
+
+GraphicsPipeline::~GraphicsPipeline()
+{
+    device.destroyGraphicsPipeline(pipeline);
+}
+
+void GraphicsPipeline::createPipeline(PipelineLayout &layout, RenderPass &renderPass, std::vector<VkPipelineShaderStageCreateInfo> shaderStages, VkCullModeFlagBits cullMode, bool depthBiasEnable)
 {
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -32,17 +56,26 @@ GraphicsPipeline::GraphicsPipeline(LogicalDevice &device, PipelineLayout &layout
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.cullMode = cullMode;
+    rasterizer.frontFace = cullMode == VK_CULL_MODE_BACK_BIT ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
 
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 
 #ifdef ENABLE_MULTISAMPLING
-    multisampling.sampleShadingEnable = VK_TRUE;
-    multisampling.rasterizationSamples = engine()->msaaSamples;
-    multisampling.minSampleShading = 0.2f;
+    if (renderPass.attachments[0].samples == VK_SAMPLE_COUNT_1_BIT)
+    {
+        std::cout << "MSAA is disabled" << std::endl;
+        multisampling.sampleShadingEnable = VK_FALSE;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    }
+    else
+    {
+        multisampling.sampleShadingEnable = VK_TRUE;
+        multisampling.rasterizationSamples = renderer()->msaaSamples;
+        multisampling.minSampleShading = 0.2f;
+    }
 
 #else
     multisampling.sampleShadingEnable = VK_FALSE;
@@ -66,25 +99,12 @@ GraphicsPipeline::GraphicsPipeline(LogicalDevice &device, PipelineLayout &layout
 
     std::vector<VkDynamicState> dynamicStates = {
         VK_DYNAMIC_STATE_VIEWPORT,
-        VK_DYNAMIC_STATE_SCISSOR};
+        VK_DYNAMIC_STATE_SCISSOR,
+        VK_DYNAMIC_STATE_DEPTH_BIAS};
     VkPipelineDynamicStateCreateInfo dynamicState{};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
     dynamicState.pDynamicStates = dynamicStates.data();
-
-    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
-    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertShaderStageInfo.module = vertShader.shaderModule;
-    vertShaderStageInfo.pName = "main";
-
-    VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
-    fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragShaderStageInfo.module = fragShader.shaderModule;
-    fragShaderStageInfo.pName = "main";
-
-    VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -99,8 +119,8 @@ GraphicsPipeline::GraphicsPipeline(LogicalDevice &device, PipelineLayout &layout
     depthStencil.back = {};  // Optional
 
     graphicsPipelineCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    graphicsPipelineCreateInfo.stageCount = 2;
-    graphicsPipelineCreateInfo.pStages = shaderStages;
+    graphicsPipelineCreateInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
+    graphicsPipelineCreateInfo.pStages = shaderStages.data();
     graphicsPipelineCreateInfo.pVertexInputState = &vertexInputInfo;
     graphicsPipelineCreateInfo.pInputAssemblyState = &inputAssembly;
     graphicsPipelineCreateInfo.pViewportState = &viewportState;
@@ -115,9 +135,4 @@ GraphicsPipeline::GraphicsPipeline(LogicalDevice &device, PipelineLayout &layout
     graphicsPipelineCreateInfo.pDepthStencilState = &depthStencil;
 
     VK_CHECK_RESULT(vkCreateGraphicsPipelines(device.device, VK_NULL_HANDLE, 1, &graphicsPipelineCreateInfo, nullptr, &pipeline), "failed to create graphics pipeline!");
-}
-
-GraphicsPipeline::~GraphicsPipeline()
-{
-    device.destroyGraphicsPipeline(pipeline);
 }

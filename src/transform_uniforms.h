@@ -21,7 +21,7 @@ public:
     TransformUniforms();
     ~TransformUniforms();
 
-    void updateUniformBuffer(uint32_t currentImage);
+    void updateUniformBuffer(uint32_t currentFrame);
     TransformUniformBufferObject ubo;
     std::vector<std::unique_ptr<BufferAllocation>> uniformBufferAllocations;
 

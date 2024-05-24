@@ -41,20 +41,33 @@ void Engine::run(void)
 
     light = std::make_shared<PointLight>();
     light->position = glm::vec3(0.0f, 64.0f, 0.0f);
-    light->color = glm::vec3(0.2, 0.6, 0.9);
-
+    light->color = glm::vec3(0.2, 0.2, 0.2);
+    light->intensity = 0.2f;
+    light->linear = 0.0005f;
+    light->quadratic = 0.00005f;
     scene.add(light);
+
     light2 = std::make_shared<PointLight>();
-    light2->position = glm::vec3(0.0f, 64.0f, -256.0f);
+    light2->position = glm::vec3(0.0f, 64.0f, -1024.0f);
     light2->color = glm::vec3(0.9, 0.2, 0.2);
-    light2->linear = 0.0005f;
-    light2->quadratic = 0.00005f;
+    light2->linear = 0.00005f;
+    light2->quadratic = 0.000005f;
     scene.add(light2);
+
+    auto light3 = std::make_shared<PointLight>();
+    light3->position = glm::vec3(0.0f, 64.0f, 0.0f);
+    light3->color = glm::vec3(0.2, 0.2, 0.2);
+    light3->linear = 0.0005f;
+    light3->intensity = 0.3f;
+    light3->quadratic = 0.00005f;
+    scene.add(light3);
     // auto light2 = std::make_shared<PointLight>();
     // light2->position = glm::vec3(250.0f, 650.0f, 32.0f);
     // light2->color = glm::vec3(1.0f, 0.2f, 0.2f);
     // scene.add(light2);
     mainLoop();
+
+    light3.reset();
     dispose();
 }
 
@@ -91,7 +104,10 @@ void Engine::mainLoop()
         cameraController->updateCamera();
 
         light->position = camera.position;
-        light2->position.y = 256.0f + 240.0f * sin(currentTime / 2.0);
+        light2->position.y = 72.0f + 64.0f * sin(currentTime / 2.0);
+
+        light->matrixDirty = true;
+        light2->matrixDirty = true;
 
         // scene.children[1]->position.y = 64.0f + 64.0f * sin(currentTime / 4.0);
         // scene.children[1]->position.x = -1000.0f + 1000.0f * cos(currentTime / 4.0);
@@ -110,6 +126,8 @@ void Engine::dispose()
     // force all the vertex/index/uniform buffers to be cleaned up
     scene.children.clear();
     testObject.reset();
+    light.reset();
+    light2.reset();
 
     textureCache.reset();
     materialCache.reset();
@@ -118,6 +136,8 @@ void Engine::dispose()
     renderer.reset();
 
     window.destroy();
+
+    std::cout << "shut down complete" << std::endl;
 }
 
 Engine::Engine() : camera(45.0f, 1.0f, 0.1f, 10.0f)

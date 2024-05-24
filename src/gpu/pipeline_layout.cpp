@@ -17,6 +17,24 @@ PipelineLayout::PipelineLayout(LogicalDevice &device, std::vector<DescriptorSetL
     VK_CHECK_RESULT(vkCreatePipelineLayout(device.device, &pipelineLayoutInfo, nullptr, &layout), "failed to create pipeline layout!");
 }
 
+PipelineLayout::PipelineLayout(LogicalDevice &device, std::vector<DescriptorSetLayout *> descriptorSetLayouts, VkPushConstantRange pushConstantRange) : device(device)
+{
+    std::vector<VkDescriptorSetLayout> layouts;
+    layouts.resize(descriptorSetLayouts.size());
+    for (size_t i = 0; i < descriptorSetLayouts.size(); i++)
+    {
+        layouts[i] = descriptorSetLayouts[i]->layout;
+    }
+
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = layouts.size();
+    pipelineLayoutInfo.pSetLayouts = layouts.data();
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+
+    VK_CHECK_RESULT(vkCreatePipelineLayout(device.device, &pipelineLayoutInfo, nullptr, &layout), "failed to create pipeline layout!");
+}
+
 PipelineLayout::~PipelineLayout()
 {
     device.destroyPipelineLayout(layout);

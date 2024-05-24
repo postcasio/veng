@@ -33,6 +33,35 @@ Framebuffer::Framebuffer(SwapChain *chain, RenderPass *renderPass, ImageView *de
     }
 }
 
+Framebuffer::Framebuffer(SwapChain *chain, RenderPass *renderPass, std::vector<std::unique_ptr<ImageView>> &depthImageViews)
+{
+    framebuffers.resize(chain->imageCount);
+
+    for (size_t i = 0; i < chain->imageCount; i++)
+    {
+#ifdef ENABLE_MULTISAMPLING
+        std::vector<VkImageView> attachments = {
+            depthImageViews[i]->view};
+#else
+        std::vector<VkImageView> attachments = {
+            chain->imageViews[i]->view,
+            depthImageView->view};
+#endif
+
+        VkFramebufferCreateInfo framebufferInfo{};
+
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferInfo.renderPass = renderPass->renderPass;
+        framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+        framebufferInfo.pAttachments = attachments.data();
+        framebufferInfo.width = depthImageViews[i]->image.width;
+        framebufferInfo.height = depthImageViews[i]->image.height;
+        framebufferInfo.layers = 6;
+
+        VK_CHECK_RESULT(vkCreateFramebuffer(renderer()->device->device, &framebufferInfo, nullptr, &framebuffers[i]), "failed to create framebuffer!");
+    }
+}
+
 Framebuffer::~Framebuffer()
 {
     for (auto framebuffer : framebuffers)

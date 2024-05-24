@@ -14,8 +14,10 @@ public:
     ~SwapChain();
 
     VkResult acquireNextImage(Semaphore &semaphore, uint32_t *imageIndex);
+    void createImages(VkFormat format, uint32_t requestedImages);
 
     std::vector<VkImage> images{};
+    std::vector<std::unique_ptr<ImageAllocation>> imageAllocations{};
     std::vector<std::unique_ptr<ImageView>> imageViews{};
 
     VkSwapchainKHR chain;

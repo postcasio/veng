@@ -34,6 +34,6 @@
         }                                                                                                                                            \
     }
 
-// #define ENABLE_MULTISAMPLING
+#define ENABLE_MULTISAMPLING
 #define ENABLE_VALIDATION_LAYERS
 #endif

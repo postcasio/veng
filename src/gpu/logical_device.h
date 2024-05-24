@@ -56,12 +56,14 @@ public:
     void destroySampler(VkSampler sampler);
 
     std::unique_ptr<DescriptorSetLayout> createDescriptorSetLayout(std::vector<VkDescriptorSetLayoutBinding> bindings);
+    std::unique_ptr<DescriptorSetLayout> createDescriptorSetLayout(std::vector<VkDescriptorSetLayoutBinding> bindings, VkDescriptorBindingFlags bindingFlags);
     void destroyDescriptorSetLayout(VkDescriptorSetLayout layout);
 
-    std::unique_ptr<GraphicsPipeline> createGraphicsPipeline(PipelineLayout &layout, Shader &vertShader, Shader &fragShader, RenderPass &renderPass);
+    std::unique_ptr<GraphicsPipeline> createGraphicsPipeline(PipelineLayout &layout, Shader &vertShader, Shader &fragShader, RenderPass &renderPass, VkCullModeFlagBits cullMode = VK_CULL_MODE_BACK_BIT, bool depthBiasEnable = false);
     void destroyGraphicsPipeline(VkPipeline pipeline);
 
     std::unique_ptr<PipelineLayout> createPipelineLayout(std::vector<DescriptorSetLayout *> descriptorSetLayouts);
+    std::unique_ptr<PipelineLayout> createPipelineLayout(std::vector<DescriptorSetLayout *> descriptorSetLayouts, VkPushConstantRange pushConstantRange);
     void destroyPipelineLayout(VkPipelineLayout layout);
 
     std::unique_ptr<Shader> createShader(const std::filesystem::path &path);

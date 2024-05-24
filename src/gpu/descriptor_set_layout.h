@@ -8,6 +8,7 @@ class DescriptorSetLayout
 {
 public:
     DescriptorSetLayout(LogicalDevice &device, std::vector<VkDescriptorSetLayoutBinding> bindings);
+    DescriptorSetLayout(LogicalDevice &device, std::vector<VkDescriptorSetLayoutBinding> bindings, VkDescriptorBindingFlags bindingFlags);
     ~DescriptorSetLayout();
 
     VkDescriptorSetLayout layout;

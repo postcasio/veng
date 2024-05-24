@@ -1,7 +1,13 @@
 #include "image_allocation.h"
 #include "../engine.h"
 
-ImageAllocation::ImageAllocation(uint32_t width, uint32_t height, VkSampleCountFlagBits samples, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, const char *name)
+ImageAllocation::ImageAllocation(VkImage image, ImageType type) : image(image), type(type)
+{
+    shouldDestroyImage = false;
+    arrayLayers = 1;
+}
+
+ImageAllocation::ImageAllocation(uint32_t width, uint32_t height, VkSampleCountFlagBits samples, ImageType type, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, const char *name) : type(type), width(width), height(height), format(format)
 {
     std::string fullName = "ImageAllocation";
 
@@ -17,7 +23,6 @@ ImageAllocation::ImageAllocation(uint32_t width, uint32_t height, VkSampleCountF
     imageCreateInfo.extent.height = height;
     imageCreateInfo.extent.depth = 1;
     imageCreateInfo.mipLevels = 1;
-    imageCreateInfo.arrayLayers = 1;
     imageCreateInfo.format = format;
     imageCreateInfo.tiling = tiling;
     imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -35,12 +40,29 @@ ImageAllocation::ImageAllocation(uint32_t width, uint32_t height, VkSampleCountF
     allocationCreateInfo.flags = VMA_ALLOCATION_CREATE_USER_DATA_COPY_STRING_BIT;
     allocationCreateInfo.pUserData = (void *)fullName.c_str();
 
+    switch (type)
+    {
+    case ImageType::Texture2D:
+        imageCreateInfo.arrayLayers = 1;
+        arrayLayers = 1;
+        break;
+    case ImageType::TextureCube:
+        imageCreateInfo.arrayLayers = 6;
+        imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageCreateInfo.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+        arrayLayers = 6;
+        break;
+    }
+
     VK_CHECK_RESULT(vmaCreateImage(renderer()->allocator, &imageCreateInfo, &allocationCreateInfo, &image, &allocation, nullptr), "failed to create image!");
 }
 
 ImageAllocation::~ImageAllocation()
 {
-    vmaDestroyImage(renderer()->allocator, image, allocation);
+    if (shouldDestroyImage)
+    {
+        vmaDestroyImage(renderer()->allocator, image, allocation);
+    }
 }
 
 void ImageAllocation::copyBufferToImage(BufferAllocation &buffer, uint32_t width, uint32_t height)
@@ -166,4 +188,9 @@ void ImageAllocation::uploadTexture(const void *pixels, VkDeviceSize imageSize,
     transitionImageLayout(
         format, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
+std::unique_ptr<ImageView> ImageAllocation::createView(VkFormat format, VkImageAspectFlags aspectFlags)
+{
+    return std::make_unique<ImageView>(*this, format, aspectFlags);
 }

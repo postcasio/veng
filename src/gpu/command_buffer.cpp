@@ -39,7 +39,7 @@ void CommandBuffer::begin(VkCommandBufferUsageFlags flags)
     VK_CHECK_RESULT(vkBeginCommandBuffer(currentBuffer(), &beginInfo), "failed to begin recording command buffer!");
 }
 
-void CommandBuffer::beginRenderPass(RenderPass &renderPass, Framebuffer &framebuffer, SwapChain &swapChain)
+void CommandBuffer::beginRenderPass(RenderPass &renderPass, Framebuffer &framebuffer, VkExtent2D extent, std::vector<VkClearValue> clearValues)
 {
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -47,11 +47,7 @@ void CommandBuffer::beginRenderPass(RenderPass &renderPass, Framebuffer &framebu
     renderPassInfo.framebuffer = framebuffer.currentFramebuffer();
 
     renderPassInfo.renderArea.offset = {0, 0};
-    renderPassInfo.renderArea.extent = swapChain.extent;
-
-    std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-    clearValues[1].depthStencil = {1.0f, 0};
+    renderPassInfo.renderArea.extent = extent;
 
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
     renderPassInfo.pClearValues = clearValues.data();
@@ -129,4 +125,15 @@ void CommandBuffer::pipelineBarrier(VkPipelineStageFlags srcStageMask, VkPipelin
 void CommandBuffer::end()
 {
     VK_CHECK_RESULT(vkEndCommandBuffer(currentBuffer()), "failed to record command buffer!");
+}
+
+void CommandBuffer::pushConstants(PipelineLayout &layout, VkShaderStageFlags stageFlags, uint32_t offset, uint32_t size, const void *pValues)
+{
+    vkCmdPushConstants(currentBuffer(), layout.layout, stageFlags, offset, size, pValues);
+}
+
+void CommandBuffer::setDepthBias(float constantFactor, float clamp, float slopeFactor)
+{
+    std::cout << "Depth bias " << constantFactor << " " << clamp << " " << slopeFactor << std::endl;
+    vkCmdSetDepthBias(currentBuffer(), constantFactor, clamp, slopeFactor);
 }

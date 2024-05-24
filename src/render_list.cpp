@@ -52,20 +52,10 @@ void RenderList::build(Object *object, Camera &camera)
     {
         auto model = object->getModel();
 
-        glm::mat4 normalMatrix = glm::transpose(glm::inverse(object->worldMatrix));
-
         for (auto material : model->materials)
         {
             addMaterial(material.get());
         }
-
-        model->uniforms.ubo.model = object->worldMatrix;
-        model->uniforms.ubo.view = camera.inverseWorldMatrix;
-        model->uniforms.ubo.proj = camera.projectionMatrix;
-        model->uniforms.ubo.normal = normalMatrix;
-        model->uniforms.ubo.cameraPos = camera.position;
-
-        model->uniforms.updateUniformBuffer(currentFrame());
 
         for (auto mesh : model->getMeshes())
         {

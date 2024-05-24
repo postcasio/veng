@@ -9,8 +9,9 @@
 class GraphicsPipeline
 {
 public:
-    GraphicsPipeline(LogicalDevice &device, PipelineLayout &layout, Shader &vertShader, Shader &fragShader, RenderPass &renderPass);
+    GraphicsPipeline(LogicalDevice &device, PipelineLayout &layout, Shader &vertShader, Shader &fragShader, RenderPass &renderPass, VkCullModeFlagBits cullMode = VK_CULL_MODE_BACK_BIT, bool depthBiasEnable = false);
     ~GraphicsPipeline();
+    void createPipeline(PipelineLayout &layout, RenderPass &renderPass, std::vector<VkPipelineShaderStageCreateInfo> shaderStages, VkCullModeFlagBits cullMode = VK_CULL_MODE_BACK_BIT, bool depthBiasEnable = false);
 
     VkGraphicsPipelineCreateInfo graphicsPipelineCreateInfo{};
     VkPipeline pipeline;

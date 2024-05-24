@@ -24,15 +24,14 @@ Texture::Texture(std::filesystem::path const &path, VkFormat format) : path(path
     }
 
     imageAllocation = std::make_unique<ImageAllocation>(
-        texWidth, texHeight, VK_SAMPLE_COUNT_1_BIT, format,
+        texWidth, texHeight, VK_SAMPLE_COUNT_1_BIT, ImageType::Texture2D, format,
         VK_IMAGE_TILING_OPTIMAL,
         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     imageAllocation->uploadTexture(pixels, imageSize, format, texWidth, texHeight);
 
-    imageView = std::make_unique<ImageView>(imageAllocation->image, format,
-                                            VK_IMAGE_ASPECT_COLOR_BIT);
+    imageView = imageAllocation->createView(format, VK_IMAGE_ASPECT_COLOR_BIT);
 
     stbi_image_free(pixels);
 

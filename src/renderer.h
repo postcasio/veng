@@ -6,6 +6,7 @@
 #include "camera.h"
 #include "render_list.h"
 #include "lighting_uniforms.h"
+#include "shadow_uniforms.h"
 #include "gpu/swap_chain.h"
 #include "gpu/descriptor_pool.h"
 #include "gpu/descriptor_set.h"
@@ -31,11 +32,16 @@ public:
 
     RenderList renderList;
     std::unique_ptr<RenderPass> renderPass;
+    std::unique_ptr<RenderPass> shadowRenderPass;
     std::unique_ptr<DescriptorSetLayout> matricesDescriptorSetLayout;
+    std::unique_ptr<DescriptorSetLayout> shadowMatricesDescriptorSetLayout;
     std::unique_ptr<DescriptorSetLayout> materialDescriptorSetLayout;
     std::unique_ptr<SwapChain> swapChain;
     std::unique_ptr<PipelineLayout> pipelineLayout;
     std::unique_ptr<GraphicsPipeline> graphicsPipeline;
+    std::unique_ptr<PipelineLayout> shadowPipelineLayout;
+    std::unique_ptr<GraphicsPipeline> shadowGraphicsPipeline;
+
     std::unique_ptr<CommandBuffer> commandBuffer;
 
     std::unique_ptr<ImageAllocation> depthImageAllocation;
@@ -45,6 +51,7 @@ public:
     std::unique_ptr<ImageView> colorImageView;
 
     std::unique_ptr<LightingUniforms> lightingUniforms;
+    std::unique_ptr<ShadowUniforms> shadowUniforms;
 
     std::unique_ptr<Framebuffer> framebuffer;
 
@@ -61,26 +68,33 @@ public:
     uint32_t currentImage = 0;
 
     void drawFrame();
+    void prepareScene(Scene &scene, Camera &camera);
     void createCommandBuffer();
     void createSyncObjects();
     void cleanupSwapChain();
     void recreateSwapChain();
     void createDepthResources();
     void createGraphicsPipeline();
+    void createShadowGraphicsPipeline();
     void createFramebuffers();
     void createSwapChain();
     void createMatricesDescriptorSetLayout();
     void createMaterialDescriptorSetLayout();
     void createLightingDescriptorSetLayout();
+    void createShadowMatricesDescriptorSetLayout();
     void createColorResources();
     void updateLightingUniforms();
     void createLightingDescriptorSets();
     void updateLightingDescriptorSets();
+    void updateShadowMatricesDescriptorSets();
     std::unique_ptr<DescriptorSetLayout> lightingDescriptorSetLayout;
     std::unique_ptr<DescriptorSet> lightingDescriptorSet;
+    std::unique_ptr<DescriptorSet> shadowMatricesDescriptorSet;
 
     void createRenderPass();
+    void createShadowRenderPass();
     void draw(Scene &scene, Camera &camera);
+    void drawPointLightShadowMap(Scene &scene, PointLight &light);
 
     void createLogicalDevice();
     void createCommandPool();
@@ -109,7 +123,7 @@ public:
     VkSurfaceKHR surface;
     void waitDeviceIdle();
 
-    VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_2_BIT;
     void initialize();
     void dispose();
 };

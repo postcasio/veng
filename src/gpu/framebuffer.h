@@ -10,6 +10,7 @@ class Framebuffer
 {
 public:
     Framebuffer(SwapChain *chain, RenderPass *renderPass, ImageView *depthImageView, ImageView *colorImageView);
+    Framebuffer(SwapChain *chain, RenderPass *renderPass, std::vector<std::unique_ptr<ImageView>> &depthImageViews);
     ~Framebuffer();
 
     VkFramebuffer currentFramebuffer();

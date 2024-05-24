@@ -25,7 +25,7 @@ TransformUniforms::~TransformUniforms()
     uniformBufferAllocations.clear();
 }
 
-void TransformUniforms::updateUniformBuffer(uint32_t currentImage)
+void TransformUniforms::updateUniformBuffer(uint32_t currentFrame)
 {
-    vmaCopyMemoryToAllocation(renderer()->allocator, &ubo, uniformBufferAllocations[currentImage]->allocation, 0, sizeof(ubo));
+    vmaCopyMemoryToAllocation(renderer()->allocator, &ubo, uniformBufferAllocations[currentFrame]->allocation, 0, sizeof(ubo));
 }

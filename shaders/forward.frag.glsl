@@ -29,14 +29,16 @@ transform;
 
 layout(set = 0, binding = 0) uniform sampler2D texSampler;
 layout(set = 0, binding = 1) uniform sampler2D normalSampler;
-layout(set = 0, binding = 3) uniform sampler2D occlusionSampler;
-layout(set = 0, binding = 4) uniform sampler2D roughnessSampler;
+layout(set = 0, binding = 2) uniform sampler2D occlusionSampler;
+layout(set = 0, binding = 3) uniform sampler2D roughnessSampler;
 
 layout(std140, set = 2, binding = 0) uniform PointLightBufferObject {
   PointLight pointLights[4];
   uint pointLightCount;
 }
 lighting;
+
+layout(set = 2, binding = 1) uniform samplerCube shadowMap[4];
 
 mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv) {
   // get edge vectors of the pixel triangle
@@ -59,6 +61,17 @@ vec3 normalLookup() {
   return normalize(fragTBN * (n * 2.0 - 1.0));
 }
 float occlusionLookup() { return texture(occlusionSampler, fragTexCoord).r; }
+
+float ShadowCalculation(int lightIndex, vec3 fragPos) {
+  vec3 fragToLight = (fragPos - lighting.pointLights[lightIndex].position);
+  float closestDepth = texture(shadowMap[lightIndex], fragToLight).r;
+
+  float currentDepth = length(fragToLight) / 2048.0;
+  float bias = 0.1;
+  float shadow = currentDepth > closestDepth ? 1.0 : 0.0;
+
+  return shadow;
+}
 
 vec3 calculatePointLight(int lightIndex, vec3 normal) {
   PointLight light = lighting.pointLights[lightIndex];
@@ -84,7 +97,9 @@ vec3 calculatePointLight(int lightIndex, vec3 normal) {
   float attenuation = 1.0 / (light.constant + light.linear * dist +
                              light.quadratic * (dist * dist));
 
-  vec3 result = (ambient + diffuse + specular) * light.intensity * attenuation;
+  float shadow = ShadowCalculation(lightIndex, fragPos);
+  vec3 result = ((1.0 - shadow) * (ambient + diffuse + specular)) *
+                light.intensity * attenuation;
 
   return result;
 
@@ -107,14 +122,14 @@ void main() {
   }
 
   outColor = vec4(color, 1.0);
-  // outColor = vec4((normal + 1.0) / 2.0, 1.0);
-  // outColor = vec4(vec3(normal), 1.0);
-  // outColor = vec4(viewPosTangentSpace, 1.0);
 
-  // outColor = vec4(texture(normalSampler, fragTexCoord).rgb, 1.0);
+  // vec3 fragToLight = fragPos - transform.cameraPos;
+  // float closestDepth = texture(shadowMap[0], fragToLight).r;
+  // outColor = vec4(vec3(closestDepth), 1.0);
+
+  // float currentDepth = length(fragToLight);
+  // outColor = vec4(vec3(currentDepth / 10000), 1.0);
+
   // outColor =
-  //     vec4(calculatePointLight(0, fragNormal) *
-  //     lightPosTangentSpace[0], 1.0);
-  //   outColor = vec4(vec3(float(lighting.pointLightCount)), 1.0);
-  // outColor = texture(roughnessSampler, fragTexCoord);
+  //     vec4(vec3(ShadowCalculation(0, fragPos - transform.cameraPos)), 1.0);
 }
