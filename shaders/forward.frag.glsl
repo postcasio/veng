@@ -4,6 +4,7 @@ struct PointLight {
   vec3 position;
   vec3 color;
   float intensity;
+  float ambient;
   float constant;
   float linear;
   float quadratic;
@@ -79,7 +80,7 @@ vec3 calculatePointLight(int lightIndex, vec3 normal) {
   vec3 viewDir = normalize(transform.cameraPos - fragPos);
 
   // ambient + diffuse
-  vec3 ambient = light.color * 0.3 * occlusionLookup();
+  vec3 ambient = light.color * light.ambient * occlusionLookup();
 
   vec3 lightDir = normalize(light.position - fragPos);
   float diff = max(dot(normal, lightDir), 0.0);
@@ -97,8 +98,12 @@ vec3 calculatePointLight(int lightIndex, vec3 normal) {
   float attenuation = 1.0 / (light.constant + light.linear * dist +
                              light.quadratic * (dist * dist));
 
+  if (dot(fragNormal, lightDir) < 0.0) {
+    return vec3(0.0);
+  }
+
   float shadow = ShadowCalculation(lightIndex, fragPos);
-  vec3 result = ((1.0 - shadow) * (ambient + diffuse + specular)) *
+  vec3 result = (ambient + (1.0 - shadow) * (diffuse + specular)) *
                 light.intensity * attenuation;
 
   return result;

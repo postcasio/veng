@@ -4,6 +4,13 @@
         "regex": "cpp",
         "ranges": "cpp",
         "array": "cpp",
-        "string": "cpp"
+        "string": "cpp",
+        "istream": "cpp",
+        "locale": "cpp",
+        "tuple": "cpp",
+        "*.ipp": "cpp",
+        "memory": "cpp",
+        "format": "cpp",
+        "functional": "cpp"
     }
 }

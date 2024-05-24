@@ -66,6 +66,8 @@ void Object::updateMatrix()
 
 void Object::updateWorldMatrix()
 {
+    worldMatrixUpdatedThisFrame = false;
+
     if (matrixDirty)
     {
         updateMatrix();
@@ -90,6 +92,7 @@ void Object::updateWorldMatrix()
         }
 
         worldMatrixDirty = false;
+        worldMatrixUpdatedThisFrame = true;
     }
 }
 
@@ -129,6 +132,7 @@ void Object::lookAt(glm::vec3 target)
 void Object::translateOnAxis(glm::vec3 axis, float distance)
 {
     position += this->quaternion * glm::normalize(axis) * distance;
+
     matrixDirty = true;
 }
 void Object::translateX(float distance)
@@ -146,6 +150,7 @@ void Object::translateZ(float distance)
 void Object::rotateOnAxis(glm::vec3 axis, float angle)
 {
     quaternion = glm::angleAxis(angle, glm::normalize(axis)) * quaternion;
+
     matrixDirty = true;
 }
 void Object::rotateX(float angle)

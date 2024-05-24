@@ -1,0 +1,33 @@
+[
+  {
+    "classname": "light_point",
+    "origin": [
+      -7,
+      713,
+      945
+    ],
+    "constant": 1,
+    "intensity": 1,
+    "color": [
+      0.740353,
+      0.249699,
+      0.501213
+    ],
+    "ambient": "",
+    "linear": 0.00006,
+    "quadratic": 9e-8
+  },
+  {
+    "classname": "light_point",
+    "origin": [
+      -15,
+      65,
+      312
+    ],
+    "color": [
+      0.531289,
+      0.962463,
+      0.849836
+    ]
+  }
+]

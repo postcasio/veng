@@ -46,6 +46,8 @@ public:
     glm::quat quaternion = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
     glm::vec3 scale = glm::vec3(1.0f);
 
+    bool worldMatrixUpdatedThisFrame = false;
+
     bool visible = true;
 
     void updateMatrix();

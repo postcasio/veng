@@ -67,7 +67,7 @@ void RenderList::build(Object *object, Camera &camera)
     }
     else if (object->type == ObjectType::PointLight)
     {
-        addPointLight((PointLight *)object);
+        addPointLight(static_cast<PointLight *>(object));
     }
 
     for (auto child : object->children)

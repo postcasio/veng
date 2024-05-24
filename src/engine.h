@@ -25,6 +25,7 @@ public:
     Engine(Engine &&) = delete;
     Engine &operator=(Engine &&) = delete;
     Window window;
+    std::shared_ptr<PointLight> light;
 
     static auto current()
     {
@@ -49,8 +50,6 @@ public:
     Scene scene;
 
     PerspectiveCamera camera;
-    std::shared_ptr<PointLight> light;
-    std::shared_ptr<PointLight> light2;
 
 private:
     Engine();

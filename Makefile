@@ -9,6 +9,7 @@ GLSLFLAGS=
 LDFLAGS=$(shell pkg-config --libs glfw3) \
 	$(shell pkg-config --libs vulkan) \
 	$(shell pkg-config --libs assimp) \
+	-L/opt/homebrew/lib \
 	-rpath /usr/local/lib
 SRC=$(wildcard src/**/*.cpp) $(wildcard src/*.cpp)
 OBJ=$(SRC:.cpp=.o)

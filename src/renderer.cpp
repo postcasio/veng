@@ -369,8 +369,6 @@ void Renderer::draw(Scene &scene, Camera &camera)
     commandBuffer->setScissor(
         vkRect2D(0, 0, swapChain->extent.width, swapChain->extent.height));
 
-    updateLightingUniforms();
-
     commandBuffer->bindDescriptorSet(*pipelineLayout, 2, *lightingDescriptorSet);
 
     Object *lastObject = nullptr;
@@ -412,6 +410,12 @@ void Renderer::draw(Scene &scene, Camera &camera)
 
 void Renderer::drawPointLightShadowMap(Scene &scene, PointLight &light)
 {
+    // if (!light.worldMatrixUpdatedThisFrame)
+    // {
+    //     std::cout << "Skipping light " << light.position.x << ", " << light.position.y << ", " << light.position.z << std::endl;
+    //     return;
+    // }
+
     VkExtent2D extent = {light.shadowMaps[currentImage]->width, light.shadowMaps[currentImage]->height};
 
     std::vector<VkClearValue> clearValues(1);
@@ -421,8 +425,6 @@ void Renderer::drawPointLightShadowMap(Scene &scene, PointLight &light)
         *shadowRenderPass, *light.shadowMapFramebuffer,
         extent, clearValues);
     commandBuffer->bindPipeline(*shadowGraphicsPipeline);
-
-    commandBuffer->setDepthBias(0.1f, 0.0f, 1.75f);
 
     commandBuffer->setViewport(
         vkViewport(0.0f, 0.0f, static_cast<float>(extent.width),
@@ -583,6 +585,8 @@ void Renderer::updateLightingUniforms()
             renderList.pointLights[i]->position;
         lightingUniforms->ubo.pointLights[i].intensity =
             renderList.pointLights[i]->intensity;
+        lightingUniforms->ubo.pointLights[i].ambient =
+            renderList.pointLights[i]->ambient;
         lightingUniforms->ubo.pointLights[i].constant =
             renderList.pointLights[i]->constant;
         lightingUniforms->ubo.pointLights[i].linear =
@@ -688,6 +692,8 @@ void Renderer::drawFrame()
     prepareScene(engine->scene, engine->camera);
 
     updateLightingDescriptorSets();
+
+    updateLightingUniforms();
 
     commandBuffer->begin();
 

@@ -1,0 +1,52 @@
+[
+  {
+    "classname": "light_point",
+    "origin": [
+      7,
+      713,
+      -953
+    ],
+    "constant": 1,
+    "intensity": 1,
+    "color": [
+      0.740353,
+      0.249699,
+      0.501213
+    ],
+    "linear": 0.00006,
+    "quadratic": 9e-8
+  },
+  {
+    "classname": "light_point",
+    "origin": [
+      7,
+      169,
+      -312
+    ],
+    "color": [
+      0.928389,
+      0,
+      0.86714
+    ],
+    "constant": 1,
+    "quadratic": 0.000009,
+    "linear": 0.0006,
+    "intensity": 1,
+    "ambient": "0.01"
+  },
+  {
+    "classname": "light_point",
+    "origin": [
+      8,
+      16,
+      -1416
+    ],
+    "ambient": "0.1",
+    "color": [
+      0.840528,
+      0.859434,
+      0.0973373
+    ],
+    "intensity": 1
+  }
+]

@@ -58,6 +58,7 @@ void GraphicsPipeline::createPipeline(PipelineLayout &layout, RenderPass &render
     rasterizer.lineWidth = 1.0f;
     rasterizer.cullMode = cullMode;
     rasterizer.frontFace = cullMode == VK_CULL_MODE_BACK_BIT ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+    // rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
 
     VkPipelineMultisampleStateCreateInfo multisampling{};

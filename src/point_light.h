@@ -18,6 +18,7 @@ public:
     float linear;
     float quadratic;
     float radius;
+    float ambient;
 
     std::vector<std::unique_ptr<ImageAllocation>> shadowMaps;
     std::vector<std::unique_ptr<ImageView>> shadowMapViews;

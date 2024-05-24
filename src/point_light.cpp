@@ -13,6 +13,7 @@ PointLight::PointLight()
   linear = 0.007f;
   quadratic = 0.0002f;
   radius = 10.0f;
+  ambient = 0.1f;
 
   VkFormat depthFormat = renderer()->physicalDevice->findDepthFormat();
 

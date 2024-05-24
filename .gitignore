@@ -5,3 +5,4 @@ out
 maps/autosave/*
 out.txt
 vendor/VulkanMemoryAllocator
+scripts/node_modules

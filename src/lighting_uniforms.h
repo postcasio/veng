@@ -11,6 +11,7 @@ struct PointLightUniformBufferObject
     alignas(16) glm::vec3 position;
     alignas(16) glm::vec3 color;
     alignas(4) float intensity;
+    alignas(4) float ambient;
     alignas(4) float constant;
     alignas(4) float linear;
     alignas(4) float quadratic;
