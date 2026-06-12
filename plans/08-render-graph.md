@@ -1,6 +1,6 @@
-# 08 — Minimal render graph (automatic barriers)
+# 08 — Render graph (automatic barriers)
 
-**Goal:** a minimal *linear* render graph — declared passes with reads/writes,
+**Goal:** a *linear* render graph — declared passes with reads/writes,
 engine-derived barriers, no reordering — so manual `ImageBarrier`s and
 `vk::ImageLayout` disappear from the public API. This completes insulation
 step 3 (plan 07's acknowledged hole).
@@ -32,13 +32,15 @@ struct PassAttachment { Ref<ImageView> View; LoadOp Load = LoadOp::Clear;
 class RenderGraph {
 public:
     struct PassBuilder {
-        PassBuilder& Color(PassAttachment);      // write as color attachment
-        PassBuilder& Depth(PassAttachment);      // write as depth attachment
-        PassBuilder& Sample(const Ref<Image>&);  // read in fragment/any shader
-        PassBuilder& StorageRead(const Ref<Image>&);   // compute read
-        PassBuilder& StorageWrite(const Ref<Image>&);  // compute write
-        PassBuilder& TransferSrc(const Ref<Image>&);
-        PassBuilder& TransferDst(const Ref<Image>&);
+        PassBuilder& Color(PassAttachment);               // write as color attachment
+        PassBuilder& Depth(PassAttachment);               // write as depth attachment
+        PassBuilder& Sample(const Ref<ImageView>&);       // read in fragment/any shader
+        PassBuilder& StorageRead(const Ref<ImageView>&);  // compute read
+        PassBuilder& StorageWrite(const Ref<ImageView>&); // compute write
+        PassBuilder& TransferSrc(const Ref<ImageView>&);
+        PassBuilder& TransferDst(const Ref<ImageView>&);
+        PassBuilder& LayerCount(u32);   // layers rendered into (default 1)
+        PassBuilder& ViewMask(u32);     // multiview mask (default 0)
         PassBuilder& Execute(function<void(CommandBuffer&)>);
     };
     PassBuilder& AddPass(string_view name);          // graphics (dynamic rendering)
@@ -50,18 +52,42 @@ public:
 
 - **Linear**: passes execute in declaration order. No culling, no reordering,
   no aliasing — those are later upgrades that don't change this API.
+- **All access declarations take `Ref<ImageView>`**, not `Ref<Image>`. The
+  view carries its subresource range (`BaseMipLevel`, `MipLevels`,
+  `BaseArrayLayer`, `ArrayLayers`), which is the unit of barrier precision.
+  The graph resolves `view->GetImage()` for state-map lookup and emits each
+  barrier over exactly the affected subresource range. This is required for
+  effects that operate on specific mip levels or array layers (bloom
+  downsample chain, hierarchical Z, cube shadow maps, screen-space mip reads)
+  — declaring a whole `Image` would force over-broad barriers and prevent
+  correct hazard detection between passes touching different mips of the
+  same image.
 - Each declared use carries `(layout, stage mask, access mask)` internally —
   e.g. `StorageWrite` = `(eGeneral, ComputeShader, ShaderWrite)`. `Execute`
-  walks passes, diffs each image's current tracked state (extend `Image`'s
-  layout tracking with last-stage/last-access) against the declared use, and
-  emits exactly the needed `vkCmdPipelineBarrier` — fixing the "can't know a
+  walks passes, diffs each image's current tracked state **per subresource**
+  (using `Image`'s existing per-layer/per-mip layout array, extended with
+  last-stage/last-access) against the declared view's range, and emits
+  exactly the needed `vkCmdPipelineBarrier` — fixing the "can't know a
   compute write happened" hole in `Utils::GetAccessMask`.
 - Graphics passes get `BeginRendering`/`EndRendering` called for them from
   their `Color`/`Depth` declarations (folding the existing `RenderingInfo`
   path in `CommandBuffer.h:34-44` into the graph); the `Execute` lambda only
-  binds pipelines and draws.
+  binds pipelines and draws. Rendering extent is auto-derived from the first
+  color attachment view's image at the correct mip level:
+  `image_extent >> base_mip_level` — so rendering into mip N produces the
+  right extent without caller involvement. `LayerCount` and `ViewMask` on
+  `PassBuilder` forward into `RenderingInfo` for array-layer and multiview
+  rendering.
 - The graph is rebuilt per frame (cheap: it's a vector of pass structs);
   retained/compiled graphs are a later optimization.
+
+### `ImageView` subresource accessors (prerequisite)
+
+`ImageView` currently discards its subresource range after construction.
+Add `GetBaseMipLevel()`, `GetMipLevels()`, `GetBaseArrayLayer()`,
+`GetArrayLayers()` — store the four values from `ImageViewInfo` on the class.
+The graph reads these when building barriers; callers that create views for
+specific mip levels or cube faces get correct transitions for free.
 
 ### What gets removed/internalized
 
