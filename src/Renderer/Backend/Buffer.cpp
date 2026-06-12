@@ -37,7 +37,7 @@ namespace Veng::Renderer
 
     Buffer::~Buffer()
     {
-        vmaDestroyBuffer(Context::Instance().GetAllocator(), m_VkBuffer, m_VmaAllocation);
+        Context::Instance().Retire(m_VkBuffer, m_VmaAllocation);
     }
 
     void Buffer::Upload(const std::span<const u8> data) const

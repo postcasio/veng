@@ -13,8 +13,6 @@ namespace Veng::Renderer
 
         frame.GetInFlightFence().Reset();
 
-        frame.ResetResources();
-
         auto commandBuffer = frame.GetCommandBuffer();
 
         commandBuffer->Reset();

@@ -43,6 +43,6 @@ namespace Veng::Renderer
 
     Shader::~Shader()
     {
-        Context::Instance().GetVkDevice().destroyShaderModule(m_VkModule);
+        Context::Instance().Retire(m_VkModule);
     }
 }

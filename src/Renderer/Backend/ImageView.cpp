@@ -31,6 +31,18 @@ namespace Veng::Renderer
 
     ImageView::~ImageView()
     {
-        Context::Instance().GetVkDevice().destroyImageView(m_VkImageView);
+        // A view over an unmanaged image is a presentable (swapchain) image
+        // view: it must be destroyed before its swapchain, and the swapchain is
+        // only ever torn down with the GPU idle (resize/teardown WaitIdle
+        // first), so destroy it immediately rather than deferring. Views over
+        // managed images take the normal deferred-destruction path.
+        if (m_Image && !m_Image->IsManaged())
+        {
+            Context::Instance().GetVkDevice().destroyImageView(m_VkImageView);
+        }
+        else
+        {
+            Context::Instance().Retire(m_VkImageView);
+        }
     }
 }

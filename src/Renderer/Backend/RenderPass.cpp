@@ -84,6 +84,6 @@ namespace Veng::Renderer
 
     RenderPass::~RenderPass()
     {
-        Context::Instance().GetVkDevice().destroyRenderPass(m_VkRenderPass);
+        Context::Instance().Retire(m_VkRenderPass);
     }
 }

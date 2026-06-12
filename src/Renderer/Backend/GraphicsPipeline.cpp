@@ -162,6 +162,6 @@ namespace Veng::Renderer
 
     GraphicsPipeline::~GraphicsPipeline()
     {
-        Context::Instance().GetVkDevice().destroyPipeline(m_VkPipeline);
+        Context::Instance().Retire(m_VkPipeline);
     }
 }

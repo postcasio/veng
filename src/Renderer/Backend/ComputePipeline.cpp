@@ -40,7 +40,7 @@ namespace Veng::Renderer
     {
         if (m_VkPipeline)
         {
-            Context::Instance().GetVkDevice().destroyPipeline(m_VkPipeline);
+            Context::Instance().Retire(m_VkPipeline);
             m_VkPipeline = nullptr;
         }
     }

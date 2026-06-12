@@ -178,6 +178,6 @@ namespace Veng::Renderer
 
     DynamicGraphicsPipeline::~DynamicGraphicsPipeline()
     {
-        Context::Instance().GetVkDevice().destroyPipeline(m_VkPipeline);
+        Context::Instance().Retire(m_VkPipeline);
     }
 }

@@ -44,6 +44,6 @@ namespace Veng::Renderer
 
     PipelineLayout::~PipelineLayout()
     {
-        Context::Instance().GetVkDevice().destroyPipelineLayout(m_VkPipelineLayout);
+        Context::Instance().Retire(m_VkPipelineLayout);
     }
 }

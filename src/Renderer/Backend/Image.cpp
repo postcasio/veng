@@ -88,10 +88,7 @@ namespace Veng::Renderer
     {
         if (m_Managed)
         {
-            vmaDestroyImage(
-                Context::Instance().GetAllocator(),
-                m_VkImage,
-                m_VmaAllocation);
+            Context::Instance().Retire(m_VkImage, m_VmaAllocation);
         }
     }
 

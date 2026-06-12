@@ -226,6 +226,7 @@ namespace Veng::Renderer
         });
 
         m_SynchronizationFrames.resize(m_MaxFramesInFlight);
+        m_RetireBins.resize(m_MaxFramesInFlight);
 
 
         m_ImGuiRenderPass = RenderPass::Create({
@@ -394,6 +395,10 @@ namespace Veng::Renderer
 
     void Context::DisposeResources()
     {
+        // Application::Run has already waited the GPU idle. Anything the
+        // consumer released in OnDispose has retired into the bins — drain them
+        // all before the frames (and their command buffers) go away.
+        DrainAllRetireBins();
         m_SynchronizationFrames.clear();
     }
 
@@ -406,6 +411,14 @@ namespace Veng::Renderer
         ImGui::DestroyContext();
         DisposeImGuiResources();
         m_ImGuiRenderPass.reset();
+
+        // The context's own resources (ImGui image/view/framebuffers/render
+        // pass) just retired into the bins. Drain them while the device,
+        // allocator and descriptor pool are still alive, then stop accepting
+        // retirements — anything dropped after this point is a leak/bug.
+        DrainAllRetireBins();
+        m_Disposed = true;
+
         m_ImGuiDescriptorPool.reset();
         m_DescriptorPool.reset();
         m_CommandPool.reset();
@@ -716,7 +729,73 @@ namespace Veng::Renderer
     {
         m_SynchronizationFrames[m_CurrentFrameInFlight].GetInFlightFence().Wait();
 
+        // The fence is now signaled, so the GPU has finished the work that was
+        // recorded the last time this frame index was current — anything
+        // retired then is safe to destroy.
+        DrainRetireBin(m_RetireBins[m_CurrentFrameInFlight]);
+
         return m_SynchronizationFrames[m_CurrentFrameInFlight];
+    }
+
+    Context::RetireBin& Context::CurrentRetireBin()
+    {
+        VE_ASSERT(!m_Disposed,
+                  "Context::Retire after teardown — a resource outlived the rendering context");
+        return m_RetireBins[m_CurrentFrameInFlight];
+    }
+
+    void Context::Retire(vk::Buffer buffer, VmaAllocation allocation)
+    {
+        CurrentRetireBin().Buffers.emplace_back(buffer, allocation);
+    }
+
+    void Context::Retire(vk::Image image, VmaAllocation allocation)
+    {
+        CurrentRetireBin().Images.emplace_back(image, allocation);
+    }
+
+    void Context::Retire(vk::ImageView imageView) { CurrentRetireBin().ImageViews.push_back(imageView); }
+    void Context::Retire(vk::Sampler sampler) { CurrentRetireBin().Samplers.push_back(sampler); }
+    void Context::Retire(vk::ShaderModule shaderModule) { CurrentRetireBin().ShaderModules.push_back(shaderModule); }
+    void Context::Retire(vk::Pipeline pipeline) { CurrentRetireBin().Pipelines.push_back(pipeline); }
+    void Context::Retire(vk::PipelineLayout pipelineLayout) { CurrentRetireBin().PipelineLayouts.push_back(pipelineLayout); }
+    void Context::Retire(vk::RenderPass renderPass) { CurrentRetireBin().RenderPasses.push_back(renderPass); }
+    void Context::Retire(vk::Framebuffer framebuffer) { CurrentRetireBin().Framebuffers.push_back(framebuffer); }
+    void Context::Retire(vk::DescriptorSet descriptorSet) { CurrentRetireBin().DescriptorSets.push_back(descriptorSet); }
+
+    void Context::DrainRetireBin(RetireBin& bin)
+    {
+        // Destroy dependents before the objects they reference: descriptor sets
+        // and framebuffers first, then views, then the images/buffers backing
+        // them. Everything in the bin is already GPU-idle.
+        for (auto descriptorSet : bin.DescriptorSets)
+            m_Device.freeDescriptorSets(m_DescriptorPool->GetVkDescriptorPool(), descriptorSet);
+        for (auto framebuffer : bin.Framebuffers)
+            m_Device.destroyFramebuffer(framebuffer);
+        for (auto imageView : bin.ImageViews)
+            m_Device.destroyImageView(imageView);
+        for (auto& [image, allocation] : bin.Images)
+            vmaDestroyImage(m_Allocator, image, allocation);
+        for (auto& [buffer, allocation] : bin.Buffers)
+            vmaDestroyBuffer(m_Allocator, buffer, allocation);
+        for (auto renderPass : bin.RenderPasses)
+            m_Device.destroyRenderPass(renderPass);
+        for (auto pipeline : bin.Pipelines)
+            m_Device.destroyPipeline(pipeline);
+        for (auto pipelineLayout : bin.PipelineLayouts)
+            m_Device.destroyPipelineLayout(pipelineLayout);
+        for (auto sampler : bin.Samplers)
+            m_Device.destroySampler(sampler);
+        for (auto shaderModule : bin.ShaderModules)
+            m_Device.destroyShaderModule(shaderModule);
+
+        bin = {};
+    }
+
+    void Context::DrainAllRetireBins()
+    {
+        for (auto& bin : m_RetireBins)
+            DrainRetireBin(bin);
     }
 
     void Context::SubmitFrame(const SynchronizationFrame& frame) const

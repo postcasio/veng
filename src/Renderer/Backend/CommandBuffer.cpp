@@ -21,7 +21,6 @@ namespace Veng::Renderer
     void CommandBuffer::Reset()
     {
         m_VkCommandBuffer.reset();
-        m_BoundResources.clear();
     }
 
     void CommandBuffer::Begin(vk::CommandBufferUsageFlags flags) const
@@ -51,8 +50,6 @@ namespace Veng::Renderer
         for (auto attachment : info.ColorAttachments)
         {
             colorAttachments.push_back(BeginRendering_CreateAttachment(attachment));
-
-            m_BoundResources.push_back(attachment.ImageView);
         }
 
         vk::RenderingAttachmentInfo depthAttachment;
@@ -61,8 +58,6 @@ namespace Veng::Renderer
         {
             depthAttachment = BeginRendering_CreateAttachment(info.DepthAttachment.value());
             hasDepthAttachment = true;
-
-            m_BoundResources.push_back(info.DepthAttachment.value().ImageView);
         }
 
         vk::RenderingAttachmentInfo stencilAttachment;
@@ -71,8 +66,6 @@ namespace Veng::Renderer
         {
             stencilAttachment = BeginRendering_CreateAttachment(info.StencilAttachment.value());
             hasStencilAttachment = true;
-
-            m_BoundResources.push_back(info.StencilAttachment.value().ImageView);
         }
 
         const auto renderingInfo = vk::RenderingInfo{
@@ -108,7 +101,6 @@ namespace Veng::Renderer
         for (auto& descriptorSet : info.Sets)
         {
             descriptorSets.push_back(descriptorSet->GetVkDescriptorSet());
-            m_BoundResources.push_back(descriptorSet);
         }
 
         m_VkCommandBuffer.bindDescriptorSets(info.PipelineBindPoint, m_LastBoundPipelineLayout->GetVkPipelineLayout(),
@@ -135,21 +127,18 @@ namespace Veng::Renderer
     void CommandBuffer::BindPipeline(const Ref<DynamicGraphicsPipeline>& pipeline)
     {
         m_VkCommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetVkPipeline());
-        m_BoundResources.push_back(pipeline);
         m_LastBoundPipelineLayout = pipeline->GetPipelineLayout();
     }
 
     void CommandBuffer::BindPipeline(const Ref<GraphicsPipeline>& pipeline)
     {
         m_VkCommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetVkPipeline());
-        m_BoundResources.push_back(pipeline);
         m_LastBoundPipelineLayout = pipeline->GetPipelineLayout();
     }
 
     void CommandBuffer::BindPipeline(const Ref<ComputePipeline>& pipeline)
     {
         m_VkCommandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline->GetVkPipeline());
-        m_BoundResources.push_back(pipeline);
         m_LastBoundPipelineLayout = pipeline->GetPipelineLayout();
     }
 
@@ -225,9 +214,6 @@ namespace Veng::Renderer
 
         m_VkCommandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
 
-        m_BoundResources.push_back(renderPass);
-        m_BoundResources.push_back(framebuffer);
-
         const auto& fbAttachments = framebuffer->GetAttachments();
         const auto& rpAttachments = renderPass->GetAttachments();
 
@@ -256,13 +242,11 @@ namespace Veng::Renderer
     void CommandBuffer::BindVertexBuffer(const Ref<Buffer>& buffer)
     {
         m_VkCommandBuffer.bindVertexBuffers(0, buffer->GetVkBuffer(), {0});
-        m_BoundResources.push_back(buffer);
     }
 
     void CommandBuffer::BindIndexBuffer(const Ref<Buffer>& buffer)
     {
         m_VkCommandBuffer.bindIndexBuffer(buffer->GetVkBuffer(), 0, vk::IndexType::eUint32);
-        m_BoundResources.push_back(buffer);
     }
 
     void CommandBuffer::CopyBufferToImage(const Buffer& buffer, const Image& image) const

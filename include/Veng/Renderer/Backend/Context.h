@@ -94,6 +94,23 @@ namespace Veng::Renderer
         Ref<ImGuiTexture> CreateImGuiTexture(const Sampler& sampler, const ImageView& imageView);
         void DestroyImGuiTexture(const ImGuiTexture& texture);
 
+        // Deferred destruction. Resource destructors hand their Vulkan handles
+        // here instead of destroying them immediately; the handle is retired
+        // into the current frame's bin and only destroyed once that frame's
+        // fence has been waited again (see AcquireNextFrame). This makes
+        // dropping the last Ref/Unique to a resource mid-frame always safe —
+        // in-flight GPU work that still references the handle finishes first.
+        void Retire(vk::Buffer buffer, VmaAllocation allocation);
+        void Retire(vk::Image image, VmaAllocation allocation);
+        void Retire(vk::ImageView imageView);
+        void Retire(vk::Sampler sampler);
+        void Retire(vk::ShaderModule shaderModule);
+        void Retire(vk::Pipeline pipeline);
+        void Retire(vk::PipelineLayout pipelineLayout);
+        void Retire(vk::RenderPass renderPass);
+        void Retire(vk::Framebuffer framebuffer);
+        void Retire(vk::DescriptorSet descriptorSet);
+
     private:
         static inline Context* s_Instance = nullptr;
 
@@ -138,6 +155,32 @@ namespace Veng::Renderer
         u32 m_MaxFramesInFlight = 2;
 
         bool m_RenderExtentChanged = false;
+
+        // One retire bin per in-flight frame. A handle retired while frame i is
+        // recording goes into bin i and is protected by frame i's fence, so it
+        // is destroyed when AcquireNextFrame next waits that fence. MaxFrames
+        // bins suffice: retirements outside a frame (init, post-WaitIdle) are
+        // caught by the shutdown drain-all in DisposeResources/Dispose.
+        struct RetireBin
+        {
+            vector<std::pair<vk::Buffer, VmaAllocation>> Buffers;
+            vector<std::pair<vk::Image, VmaAllocation>> Images;
+            vector<vk::ImageView> ImageViews;
+            vector<vk::Sampler> Samplers;
+            vector<vk::ShaderModule> ShaderModules;
+            vector<vk::Pipeline> Pipelines;
+            vector<vk::PipelineLayout> PipelineLayouts;
+            vector<vk::RenderPass> RenderPasses;
+            vector<vk::Framebuffer> Framebuffers;
+            vector<vk::DescriptorSet> DescriptorSets; // freed back to the descriptor pool
+        };
+
+        vector<RetireBin> m_RetireBins{};
+        bool m_Disposed = false;
+
+        RetireBin& CurrentRetireBin();
+        void DrainRetireBin(RetireBin& bin);
+        void DrainAllRetireBins();
 
         vector<const char*>& GetRequiredExtensions();
         vk::PhysicalDevice GetPhysicalDevice();

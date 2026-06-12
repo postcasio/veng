@@ -34,8 +34,7 @@ namespace Veng::Renderer
 
     DescriptorSet::~DescriptorSet()
     {
-        Context::Instance().GetVkDevice().freeDescriptorSets(
-            Context::Instance().GetDescriptorPool().GetVkDescriptorPool(), m_DescriptorSet);
+        Context::Instance().Retire(m_DescriptorSet);
     }
 
     void DescriptorSet::UpdateDescriptorSet(const DescriptorSetUpdateInfo& info)

@@ -33,6 +33,6 @@ namespace Veng::Renderer
 
     Sampler::~Sampler()
     {
-        Context::Instance().GetVkDevice().destroySampler(m_VkSampler);
+        Context::Instance().Retire(m_VkSampler);
     }
 }

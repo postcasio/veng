@@ -7,7 +7,7 @@ namespace Veng::Renderer
 {
     Framebuffer::~Framebuffer()
     {
-        Context::Instance().GetVkDevice().destroyFramebuffer(m_VkFramebuffer);
+        Context::Instance().Retire(m_VkFramebuffer);
     }
 
     Framebuffer::Framebuffer(const FramebufferInfo& info) : m_Name(info.Name), m_Attachments(info.Attachments),

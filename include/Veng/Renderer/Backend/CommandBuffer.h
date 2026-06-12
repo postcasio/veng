@@ -113,7 +113,6 @@ namespace Veng::Renderer
     private:
         vk::CommandBufferLevel m_Level;
         vk::CommandBuffer m_VkCommandBuffer;
-        vector<Ref<void>> m_BoundResources{};
         Ref<PipelineLayout> m_LastBoundPipelineLayout{};
     };
 }
