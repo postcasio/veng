@@ -5,6 +5,8 @@
 function(add_shaders TARGET_NAME)
     set(SHADER_SOURCE_FILES ${ARGN})
 
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/shaders")
+
     set(SHADER_COMMAND)
     set(SHADER_PRODUCTS)
 

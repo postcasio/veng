@@ -185,6 +185,16 @@ target_link_libraries(veng PUBLIC
 target_link_libraries(veng PRIVATE ZLIB::ZLIB)
 
 # ---------------------------------------------------------------------------
+# Examples
+# ---------------------------------------------------------------------------
+
+option(VENG_BUILD_EXAMPLES "Build the sample applications" ${PROJECT_IS_TOP_LEVEL})
+
+if (VENG_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif ()
+
+# ---------------------------------------------------------------------------
 # Install / export
 # ---------------------------------------------------------------------------
 
