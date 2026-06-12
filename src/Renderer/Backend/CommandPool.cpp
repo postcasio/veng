@@ -6,8 +6,8 @@ namespace Veng::Renderer
     {
         m_VkCommandPool = Context::Instance().GetVkDevice().createCommandPool(
             vk::CommandPoolCreateInfo{
-                .queueFamilyIndex = Context::Instance().GetQueueFamilies().GraphicsFamily.value(),
-                .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer
+                .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+                .queueFamilyIndex = Context::Instance().GetQueueFamilies().GraphicsFamily.value()
             }
         );
     }

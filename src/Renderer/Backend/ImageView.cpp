@@ -10,10 +10,11 @@ namespace Veng::Renderer
                                                       m_Image(info.Image)
     {
         const vk::ImageViewCreateInfo createInfo{
-            .components = info.Components,
-            .format = info.Image->GetFormat(),
+            .flags = info.Flags,
             .image = info.Image->GetVkImage(),
             .viewType = info.ViewType,
+            .format = info.Image->GetFormat(),
+            .components = info.Components,
             .subresourceRange = {
                 .aspectMask = Utils::GetAspectFlags(info.Image->GetFormat()),
                 .baseMipLevel = info.BaseMipLevel,

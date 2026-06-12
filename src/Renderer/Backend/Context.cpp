@@ -17,20 +17,26 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 namespace Veng::Renderer
 {
+#ifdef VE_ENABLE_VALIDATION_LAYERS
     static VKAPI_ATTR VkBool32 VKAPI_CALL
-    debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+    DebugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                   vk::DebugUtilsMessageTypeFlagsEXT messageType,
                   const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
                   void* pUserData)
     {
-        if (messageSeverity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning)
+        // Throwing here would unwind through the Vulkan C ABI, so only log.
+        if (messageSeverity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)
         {
-            Log::Error("Vulkan validation layer error: {}", pCallbackData->pMessage);
-            throw std::runtime_error("Vulkan validation layer error!");
+            Log::Error("Vulkan validation: {}", pCallbackData->pMessage);
+        }
+        else if (messageSeverity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning)
+        {
+            Log::Warn("Vulkan validation: {}", pCallbackData->pMessage);
         }
 
         return VK_FALSE;
     }
+#endif
 
 
     static void GLFWErrorCallback(int err, const char* message)
@@ -76,8 +82,6 @@ namespace Veng::Renderer
     {
         s_Instance = this;
 
-        auto applicationName = info.ApplicationName;
-
         Log::Info("Initializing Vulkan context");
 
         VULKAN_HPP_DEFAULT_DISPATCHER.init();
@@ -104,7 +108,7 @@ namespace Veng::Renderer
         auto extensions = GetRequiredExtensions();
 
         const vk::ApplicationInfo appInfo{
-            .pApplicationName = applicationName.c_str(),
+            .pApplicationName = info.ApplicationName.c_str(),
             .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
             .pEngineName = info.EngineName.c_str(),
             .engineVersion = VK_MAKE_VERSION(1, 0, 0),
@@ -126,7 +130,7 @@ namespace Veng::Renderer
             .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
             vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
             vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
-            .pfnUserCallback = debugCallback
+            .pfnUserCallback = DebugCallback
         };
 
         instanceCreateInfo.pNext = &debugCreateInfo;
@@ -144,6 +148,10 @@ namespace Veng::Renderer
         m_Instance = createInstance(instanceCreateInfo);
 
         VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Instance);
+
+#ifdef VE_ENABLE_VALIDATION_LAYERS
+        m_DebugMessenger = m_Instance.createDebugUtilsMessengerEXT(debugCreateInfo);
+#endif
 
         DebugMarkers::Initialize();
 
@@ -172,10 +180,10 @@ namespace Veng::Renderer
         m_PresentQueue = m_Device.getQueue(m_QueueFamilies.PresentFamily.value(), 0);
 
         m_SwapChain = SwapChain::Create({
-            .Format = vk::Format::eR16G16B16A16Sfloat,
             .MaxImageCount = 2,
             .Width = window->GetWidth(),
             .Height = window->GetHeight(),
+            .Format = vk::Format::eR16G16B16A16Sfloat,
         });
 
         Log::Info("Created {0} swap chain images ({1}x{2})", m_SwapChain->GetImageCount(),
@@ -274,7 +282,6 @@ namespace Veng::Renderer
             .DescriptorPool = m_DescriptorPool->GetVkDescriptorPool(),
             .MinImageCount = m_SwapChain->GetImageCount(),
             .ImageCount = m_SwapChain->GetImageCount(),
-            // .UseDynamicRendering = true,
             .PipelineInfoMain = {
                 .RenderPass = m_ImGuiRenderPass->GetVkRenderPass(),
                 .MSAASamples = VK_SAMPLE_COUNT_1_BIT,
@@ -423,6 +430,11 @@ namespace Veng::Renderer
         m_Device.destroy();
         m_Instance.destroySurfaceKHR(m_Surface);
         m_PhysicalDevice = nullptr;
+        if (m_DebugMessenger)
+        {
+            m_Instance.destroyDebugUtilsMessengerEXT(m_DebugMessenger);
+            m_DebugMessenger = nullptr;
+        }
         m_Instance.destroy();
         m_Window = nullptr;
         s_Instance = nullptr;
@@ -503,15 +515,12 @@ namespace Veng::Renderer
         {
             ImGui::EndFrame();
             ImGui::UpdatePlatformWindows();
-            // ImGui::RenderPlatformWindowsDefault();
         }
 
         m_ImGuiRenderedThisFrame = false;
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
-        // ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {10, 10});
         ImGui::NewFrame();
-        // ImGui::PopStyleVar();
     }
 
     Ref<ImGUITexture> Context::CreateImGUITexture(const Sampler& sampler, const ImageView& imageView)
@@ -540,10 +549,6 @@ namespace Veng::Renderer
             m_RequiredExtensions = vector<const char*>(glfwExtensions,
                                                        glfwExtensions + glfwExtensionCount);
 
-#ifdef VE_ENABLE_VALIDATION_LAYERS
-            m_RequiredExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-#endif
-
             m_RequiredExtensions.emplace_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
             m_RequiredExtensions.emplace_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
             m_RequiredExtensions.emplace_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
@@ -555,6 +560,8 @@ namespace Veng::Renderer
 
     QueueFamilyIndices& Context::FindQueueFamilies(vk::PhysicalDevice device)
     {
+        m_QueueFamilies = {};
+
         u32 queueFamilyCount = 0;
         device.getQueueFamilyProperties(&queueFamilyCount, nullptr);
 
@@ -645,13 +652,6 @@ namespace Veng::Renderer
             .dynamicRendering = vk::True
         };
 
-        // Bindless
-
-        vk::PhysicalDeviceDescriptorIndexingFeatures indexingFeatures{
-            vk::StructureType::ePhysicalDeviceDescriptorIndexingFeaturesEXT,
-            &dynamicRenderingFeatures,
-        };
-
         vk::PhysicalDeviceFeatures2 features2{
             .pNext = &dynamicRenderingFeatures,
             .features = deviceFeatures
@@ -675,35 +675,13 @@ namespace Veng::Renderer
             .shaderOutputLayer = vk::True,
         };
 
-        // bool bindlessSupported = indexingFeatures.descriptorBindingPartiallyBound &&
-        //     indexingFeatures.runtimeDescriptorArray;
-        //
-        // Log::Info("Bindless supported: {0}", bindlessSupported);
-        //
-        // if (!bindlessSupported)
-        // {
-        //     throw std::runtime_error("Bindless is not supported on this device!");
-        // }
-
         vk::DeviceCreateInfo deviceCreateInfo{
             .pNext = &vulkan12Features,
-            .queueCreateInfoCount =
-            static_cast<u32>(queueCreateInfos.size()),
+            .queueCreateInfoCount = static_cast<u32>(queueCreateInfos.size()),
             .pQueueCreateInfos = queueCreateInfos.data(),
-            // .enabledLayerCount = 0,
-            .enabledExtensionCount =
-            static_cast<u32>(deviceExtensions.size()),
+            .enabledExtensionCount = static_cast<u32>(deviceExtensions.size()),
             .ppEnabledExtensionNames = deviceExtensions.data()
         };
-        //
-        // #ifdef VE_ENABLE_VALIDATION_LAYERS
-        //         auto validationLayers = m_ValidationLayers;
-        //         deviceCreateInfo.enabledLayerCount =
-        //             static_cast<u32>(validationLayers.size());
-        //         deviceCreateInfo.ppEnabledLayerNames = validationLayers.data();
-        // #else
-        //         deviceCreateInfo.enabledLayerCount = 0;
-        // #endif
 
         return m_PhysicalDevice.createDevice(deviceCreateInfo, nullptr);
     }
@@ -764,13 +742,13 @@ namespace Veng::Renderer
         const vk::PipelineStageFlags mask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
 
         const vk::SubmitInfo submitInfo{
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &imageAvailableSemaphore,
+            .pWaitDstStageMask = &mask,
             .commandBufferCount = 1,
             .pCommandBuffers = &commandBuffer,
             .signalSemaphoreCount = 1,
             .pSignalSemaphores = &renderFinishedSemaphore,
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &imageAvailableSemaphore,
-            .pWaitDstStageMask = &mask,
         };
 
         VK_ASSERT(m_GraphicsQueue.submit(1, &submitInfo, frame.GetInFlightFence().GetVkFence()),
@@ -850,8 +828,6 @@ namespace Veng::Renderer
 
         DisposeImGuiResources();
         CreateImGuiResources();
-
-        // m_FinalCompositorPass->RenderExtentChanged();
 
         m_SwapChain->Invalidated();
 

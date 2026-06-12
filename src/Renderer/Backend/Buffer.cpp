@@ -3,7 +3,6 @@
 #include <Veng/Renderer/Backend/Context.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
 
-
 namespace Veng::Renderer
 {
     Buffer::Buffer(const BufferInfo& info) : m_Name(info.Name), m_Size(info.Size)
@@ -18,11 +17,11 @@ namespace Veng::Renderer
         VkBuffer buffer;
 
         const VmaAllocationCreateInfo allocationCreateInfo = {
+            .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT,
             .usage = VMA_MEMORY_USAGE_AUTO,
             .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            .pool = VK_NULL_HANDLE,
-            .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT
+            .pool = VK_NULL_HANDLE
         };
 
         VK_RAW_ASSERT(
@@ -48,13 +47,14 @@ namespace Veng::Renderer
             "failed to upload buffer data!");
     }
 
-    std::span<u8> Buffer::Download() const
+    vector<u8> Buffer::Download() const
     {
-        void* data = calloc(m_Size, sizeof(u8));
+        vector<u8> data(m_Size);
 
-        VK_RAW_ASSERT(vmaCopyAllocationToMemory(Context::Instance().GetAllocator(), m_VmaAllocation, 0, data, m_Size),
-                      "failed to download buffer data!");
+        VK_RAW_ASSERT(
+            vmaCopyAllocationToMemory(Context::Instance().GetAllocator(), m_VmaAllocation, 0, data.data(), m_Size),
+            "failed to download buffer data!");
 
-        return {static_cast<u8*>(data), m_Size};
+        return data;
     }
 }

@@ -8,10 +8,10 @@ namespace Veng::Renderer
     DescriptorPool::DescriptorPool(const DescriptorPoolInfo& info)
     {
         const vk::DescriptorPoolCreateInfo descriptorPoolCreateInfo{
+            .flags = info.Flags,
             .maxSets = info.MaxSets,
             .poolSizeCount = static_cast<u32>(info.PoolSizes.size()),
-            .pPoolSizes = info.PoolSizes.data(),
-            .flags = info.Flags
+            .pPoolSizes = info.PoolSizes.data()
         };
 
         m_VkDescriptorPool = Context::Instance().GetVkDevice().createDescriptorPool(descriptorPoolCreateInfo);

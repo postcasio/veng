@@ -26,7 +26,7 @@ namespace Veng::Renderer
         ~Buffer();
 
         void Upload(std::span<u8> data) const;
-        [[nodiscard]] std::span<u8> Download() const;
+        [[nodiscard]] vector<u8> Download() const;
 
         [[nodiscard]] vk::Buffer GetVkBuffer() const { return m_VkBuffer; }
         [[nodiscard]] VmaAllocation GetVmaAllocation() const { return m_VmaAllocation; }

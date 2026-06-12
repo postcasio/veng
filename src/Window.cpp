@@ -2,7 +2,6 @@
 #include <Veng/WindowEvents.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Backend/Context.h>
-#include <nfd.h>
 
 namespace Veng
 {
@@ -10,7 +9,6 @@ namespace Veng
     {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_BOOL(m_Resizable));
-        // glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
 
         Log::Info("Creating window: {0} ({1}x{2})", m_Title, m_Extent.x, m_Extent.y);
 
@@ -49,8 +47,6 @@ namespace Veng
         {
             CaptureMouse();
         }
-
-        // glfwSetCursorPosCallback(m_Window, setCursorPosCallback);
     }
 
     void Window::CreateSurface(const Renderer::Context& context)
@@ -124,9 +120,8 @@ namespace Veng
 
     bool Window::IsMinimized() const
     {
-        return m_Minimized;
+        return glfwGetWindowAttrib(m_Handle, GLFW_ICONIFIED) == GLFW_TRUE;
     }
-
 
     bool Window::ShouldClose() const
     {
@@ -199,44 +194,15 @@ namespace Veng
         return CreateUnique<Window>(info);
     }
 
-    bool Window::OpenFileDialog(string* outSelectedPath, const string& defaultPath,
+    bool Window::OpenFileDialog(string& outSelectedPath, const string& defaultPath,
                                 const vector<nfdu8filteritem_t>& extensions)
     {
-        nfdu8char_t* outPath;
-        nfdopendialogu8args_t args;
-        args.filterCount = static_cast<uint32_t>(extensions.size());
+        nfdu8char_t* outPath = nullptr;
+        nfdopendialogu8args_t args = {};
+        args.filterCount = static_cast<nfdfiltersize_t>(extensions.size());
         args.filterList = extensions.data();
         args.defaultPath = defaultPath.c_str();
-        nfdresult_t result = NFD_OpenDialogU8_With(&outPath, &args);
-
-        if (result == NFD_OKAY)
-        {
-            *outSelectedPath = outPath;
-            NFD_FreePathU8(outPath);
-
-            return true;
-        }
-        else if (result == NFD_CANCEL)
-        {
-            return false;
-        }
-        else
-        {
-            Log::Error("Error: {0}", NFD_GetError());
-            return false;
-        }
-    }
-
-    bool Window::SaveFileDialog(string& outSelectedPath, const string& defaultPath,
-                                const vector<nfdu8filteritem_t>& extensions)
-    {
-        nfdu8char_t* outPath;
-        nfdsavedialogu8args_t args;
-        args.filterCount = static_cast<uint32_t>(extensions.size());
-        args.filterList = extensions.data();
-        args.defaultPath = defaultPath.c_str();
-        args.defaultName = "Untitled";
-        nfdresult_t result = NFD_SaveDialogU8_With(&outPath, &args);
+        const nfdresult_t result = NFD_OpenDialogU8_With(&outPath, &args);
 
         if (result == NFD_OKAY)
         {
@@ -245,14 +211,39 @@ namespace Veng
 
             return true;
         }
-        else if (result == NFD_CANCEL)
-        {
-            return false;
-        }
-        else
+
+        if (result != NFD_CANCEL)
         {
             Log::Error("Error: {0}", NFD_GetError());
-            return false;
         }
+
+        return false;
+    }
+
+    bool Window::SaveFileDialog(string& outSelectedPath, const string& defaultPath,
+                                const vector<nfdu8filteritem_t>& extensions)
+    {
+        nfdu8char_t* outPath = nullptr;
+        nfdsavedialogu8args_t args = {};
+        args.filterCount = static_cast<nfdfiltersize_t>(extensions.size());
+        args.filterList = extensions.data();
+        args.defaultPath = defaultPath.c_str();
+        args.defaultName = "Untitled";
+        const nfdresult_t result = NFD_SaveDialogU8_With(&outPath, &args);
+
+        if (result == NFD_OKAY)
+        {
+            outSelectedPath = outPath;
+            NFD_FreePathU8(outPath);
+
+            return true;
+        }
+
+        if (result != NFD_CANCEL)
+        {
+            Log::Error("Error: {0}", NFD_GetError());
+        }
+
+        return false;
     }
 }

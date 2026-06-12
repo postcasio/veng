@@ -27,17 +27,6 @@
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtx/euler_angles.hpp>
 
-#define STR_HELPER(x) #x
-#define STR(x) STR_HELPER(x) // expands VALUE first, then stringizes
-
-#define VE_CONCAT_IMPL(a, b) a##b
-#define VE_CONCAT(a, b) VE_CONCAT_IMPL(a, b)
-
-#define VE_CONCAT3_IMPL(a, b, c) a##b##c
-#define VE_CONCAT3(a, b, c) VE_CONCAT3_IMPL(a, b, c)
-
-#define EXPAND(x) x
-
 // Shared-library export annotation. On macOS/Linux veng is built with default
 // symbol visibility, so this is only meaningful for a future Windows port.
 #if defined(_WIN32)

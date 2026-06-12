@@ -31,15 +31,15 @@ namespace Veng::Renderer
         });
     }
 
-    vk::RenderingAttachmentInfo BeginRendering_CreateAttachment(const RenderingAttachmentInfo& info)
+    static vk::RenderingAttachmentInfo BeginRendering_CreateAttachment(const RenderingAttachmentInfo& info)
     {
         return {
             .imageView = info.ImageView->GetVkImageView(),
             .imageLayout = Utils::GetFormatAttachmentImageLayout(info.ImageView->GetFormat()),
-            .clearValue = info.ClearValue,
+            .resolveMode = vk::ResolveModeFlagBits::eNone,
             .loadOp = info.LoadOp,
             .storeOp = info.StoreOp,
-            .resolveMode = vk::ResolveModeFlagBits::eNone
+            .clearValue = info.ClearValue
         };
     }
 
@@ -75,11 +75,10 @@ namespace Veng::Renderer
             m_BoundResources.push_back(info.StencilAttachment.value().ImageView);
         }
 
-        // const auto renderingInfo = static_cast<VkRenderingInfo>(vk::RenderingInfo {
         const auto renderingInfo = vk::RenderingInfo{
             .flags = info.Flags,
-            .layerCount = info.LayerCount,
             .renderArea = {info.Offset.x, info.Offset.y, info.Extent.x, info.Extent.y},
+            .layerCount = info.LayerCount,
             .viewMask = info.ViewMask,
             .colorAttachmentCount = static_cast<u32>(colorAttachments.size()),
             .pColorAttachments = colorAttachments.data(),
@@ -175,9 +174,11 @@ namespace Veng::Renderer
         const auto newLayout = barrier.NewLayout;
 
         const vk::ImageMemoryBarrier imageMemoryBarrier{
-            .image = barrier.Image.GetVkImage(),
+            .srcAccessMask = Utils::GetAccessMask(oldLayout),
+            .dstAccessMask = Utils::GetAccessMask(newLayout),
             .oldLayout = oldLayout,
             .newLayout = newLayout,
+            .image = barrier.Image.GetVkImage(),
             .subresourceRange = {
                 Utils::GetAspectFlags(barrier.Image.GetFormat()),
                 barrier.BaseMipLevel,
@@ -185,8 +186,6 @@ namespace Veng::Renderer
                 barrier.BaseLayer,
                 barrier.LayerCount
             },
-            .srcAccessMask = Utils::GetAccessMask(oldLayout),
-            .dstAccessMask = Utils::GetAccessMask(newLayout),
         };
 
         m_VkCommandBuffer.pipelineBarrier(
@@ -274,10 +273,12 @@ namespace Veng::Renderer
             .bufferOffset = 0,
             .bufferRowLength = 0,
             .bufferImageHeight = 0,
-            .imageSubresource.aspectMask = Utils::GetAspectFlags(image.GetFormat()),
-            .imageSubresource.mipLevel = 0,
-            .imageSubresource.baseArrayLayer = 0,
-            .imageSubresource.layerCount = image.GetLayers(),
+            .imageSubresource = {
+                .aspectMask = Utils::GetAspectFlags(image.GetFormat()),
+                .mipLevel = 0,
+                .baseArrayLayer = 0,
+                .layerCount = image.GetLayers()
+            },
             .imageOffset = {0, 0, 0},
             .imageExtent = {extent.x, extent.y, extent.z}
         };
@@ -298,10 +299,12 @@ namespace Veng::Renderer
             .bufferOffset = 0,
             .bufferRowLength = 0,
             .bufferImageHeight = 0,
-            .imageSubresource.aspectMask = Utils::GetAspectFlags(image.GetFormat()),
-            .imageSubresource.mipLevel = 0,
-            .imageSubresource.baseArrayLayer = 0,
-            .imageSubresource.layerCount = 1,
+            .imageSubresource = {
+                .aspectMask = Utils::GetAspectFlags(image.GetFormat()),
+                .mipLevel = 0,
+                .baseArrayLayer = 0,
+                .layerCount = 1
+            },
             .imageOffset = {0, 0, 0},
             .imageExtent = {extent.x, extent.y, extent.z}
         };
@@ -319,20 +322,20 @@ namespace Veng::Renderer
         vk::Offset3D destinationExtent = {info.DestinationExtent.x, info.DestinationExtent.y, info.DestinationExtent.z};
 
         vk::ImageBlit blitInfo{
-            .srcOffsets = {{sourceOffset, sourceExtent}},
-            .dstOffsets = {{destinationOffset, destinationExtent}},
             .srcSubresource = {
                 .aspectMask = Utils::GetAspectFlags(info.SourceImage.GetFormat()),
                 .mipLevel = info.SourceMipLevel,
                 .baseArrayLayer = 0,
                 .layerCount = 1
             },
+            .srcOffsets = {{sourceOffset, sourceExtent}},
             .dstSubresource = {
                 .aspectMask = Utils::GetAspectFlags(info.DestinationImage.GetFormat()),
                 .mipLevel = info.DestinationMipLevel,
                 .baseArrayLayer = 0,
                 .layerCount = 1
-            }
+            },
+            .dstOffsets = {{destinationOffset, destinationExtent}}
         };
 
         m_VkCommandBuffer.blitImage(

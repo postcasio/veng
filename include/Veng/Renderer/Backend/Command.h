@@ -8,10 +8,7 @@ namespace Veng::Renderer
     class Command
     {
     public:
-        static void Initialize();
-        static void Dispose();
         static CommandBuffer& BeginFrame();
-        static void CompositeFrame(bool enableFinalRender, bool enableUi);
         static void EndFrame();
 
         template <typename T>
@@ -32,7 +29,5 @@ namespace Veng::Renderer
                 frame.SubmitResource(resource);
             }
         }
-
-    private:
     };
 }

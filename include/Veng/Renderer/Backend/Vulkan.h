@@ -14,24 +14,25 @@
 
 #include <Veng/Assert.h>
 
-#define VK_RAW_ASSERT(f, msg)                                                 \
-    {                                                                        \
-        auto res = (f);                                                  \
-        if (res != VK_SUCCESS)                                               \
-        {                                                                    \
-            Veng::Log::Error("Vulkan call failed with {}: {}", string_VkResult(res), msg); \
-            throw std::runtime_error(msg);                                     \
-        }                                                                    \
-    }
+#define VK_RAW_ASSERT(f, msg)                                                                      \
+    do {                                                                                           \
+        VkResult res = (f);                                                                        \
+        if (res != VK_SUCCESS)                                                                     \
+        {                                                                                          \
+            Veng::Log::Error("Vulkan call failed with {}: {}", string_VkResult(res), msg);         \
+            throw std::runtime_error(msg);                                                         \
+        }                                                                                          \
+    } while (false)
 
-#define VK_ASSERT(f, msg)                                                 \
-    {                                                                        \
-        vk::Result res = (f);                                                  \
-        if (res != vk::Result::eSuccess)                                               \
-        {                                                                    \
-            Veng::Log::Error("Vulkan call failed with {}: {}", string_VkResult(static_cast<VkResult>(res)), msg); \
-            throw std::runtime_error(msg);                                               \
-        }                                                                    \
-    }
+#define VK_ASSERT(f, msg)                                                                          \
+    do {                                                                                           \
+        vk::Result res = (f);                                                                      \
+        if (res != vk::Result::eSuccess)                                                           \
+        {                                                                                          \
+            Veng::Log::Error("Vulkan call failed with {}: {}",                                     \
+                             string_VkResult(static_cast<VkResult>(res)), msg);                    \
+            throw std::runtime_error(msg);                                                         \
+        }                                                                                          \
+    } while (false)
 
 #define VK_BOOL(b) ((b) ? vk::True : vk::False)

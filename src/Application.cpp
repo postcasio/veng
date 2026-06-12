@@ -27,7 +27,7 @@ namespace Veng
 
     void Application::Run(vector<string> arguments)
     {
-        // switch current dir to arguments[1]
+        // If a directory is passed as the first argument, use it as the working directory.
         if (arguments.size() > 1)
         {
             if (std::filesystem::exists(arguments[1]) && std::filesystem::is_directory(arguments[1]))
@@ -40,7 +40,9 @@ namespace Veng
             }
         }
 
-        Log::Info("Current Directory: {}", std::filesystem::current_path().c_str());
+        Time::Initialize();
+
+        Log::Info("Current Directory: {}", std::filesystem::current_path().string());
 
         Initialize();
 

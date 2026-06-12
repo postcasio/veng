@@ -18,9 +18,6 @@ namespace Veng::Renderer
         CommandPool();
         ~CommandPool();
 
-    protected:
-
-
     private:
         vk::CommandPool m_VkCommandPool;
     };

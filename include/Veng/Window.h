@@ -6,7 +6,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Event.h>
-#include "nfd.h"
+#include <nfd.h>
 
 #define GLFW_BOOL(x) ((x) ? GLFW_TRUE : GLFW_FALSE)
 
@@ -32,10 +32,10 @@ namespace Veng
         explicit Window(const WindowInfo& info);
 
         static Unique<Window> Create(const WindowInfo& info);
-        static bool OpenFileDialog(string* outSelectedPath, const string& defaultPath,
+        static bool OpenFileDialog(string& outSelectedPath, const string& defaultPath,
                                    const vector<nfdu8filteritem_t>& extensions);
         static bool SaveFileDialog(string& outSelectedPath, const string& defaultPath,
-                            const vector<nfdu8filteritem_t>& extensions);
+                                   const vector<nfdu8filteritem_t>& extensions);
 
         ~Window() { Close(); }
 
@@ -71,10 +71,8 @@ namespace Veng
         void SetTitle(const string& title);
         [[nodiscard]] string GetTitle() const;
 
-    protected:
     private:
         bool m_Open = true;
-        bool m_Minimized = false;
         ivec2 m_Extent{};
         bool m_Resizable;
         std::function<void(Event&)> m_EventCallback;

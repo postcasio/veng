@@ -1,8 +1,5 @@
 #include <Veng/Log.h>
 
-
-#include <fmt/chrono.h>
-
 #include <Veng/Time.h>
 
 namespace Veng::Log

@@ -23,7 +23,7 @@ namespace Veng::Renderer
     {
         auto swapChainSupport = Context::Instance().QuerySwapChainSupport(Context::Instance().GetVkPhysicalDevice());
 
-        u32 imageCount = 2;
+        u32 imageCount = std::max(m_MaxImageCount, swapChainSupport.Capabilities.minImageCount);
 
         if (swapChainSupport.Capabilities.maxImageCount > 0 &&
             imageCount > swapChainSupport.Capabilities.maxImageCount)
@@ -85,17 +85,16 @@ namespace Veng::Renderer
         for (auto image : images)
         {
             m_Images.emplace_back(Image::Create(image, ImageInfo{
-                                                    .Name = string("SwapChain Image [") + std::to_string(
-                                                        m_Images.size()) + "]",
+                                                    .Name = fmt::format("SwapChain Image [{}]", m_Images.size()),
                                                     .Extent = uvec3{m_Width, m_Height, 1u},
-                                                    .Format = m_Format,
                                                     .MipLevels = 1,
+                                                    .Format = m_Format,
                                                     .Type = vk::ImageType::e2D,
                                                     .Usage = vk::ImageUsageFlagBits::eColorAttachment
                                                 }));
 
             m_ImageViews.emplace_back(ImageView::Create(ImageViewInfo{
-                .Name = string("SwapChain ImageView [") + std::to_string(m_ImageViews.size()) + "]",
+                .Name = fmt::format("SwapChain ImageView [{}]", m_ImageViews.size()),
                 .Image = m_Images.back(),
             }));
         }

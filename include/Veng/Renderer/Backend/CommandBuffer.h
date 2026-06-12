@@ -110,9 +110,6 @@ namespace Veng::Renderer
         void CopyImageToBuffer(const Image& image, const Buffer& buffer) const;
         void BlitImage(const BlitImageInfo& info) const;
 
-    protected:
-
-
     private:
         vk::CommandBufferLevel m_Level;
         vk::CommandBuffer m_VkCommandBuffer;

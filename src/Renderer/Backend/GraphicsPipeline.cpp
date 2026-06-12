@@ -31,9 +31,9 @@ namespace Veng::Renderer
             auto& vertexBufferLayout = info.VertexBufferLayout.value();
 
             bindingDescription = {
-                bindingDescription.binding = 0,
-                bindingDescription.stride = vertexBufferLayout.GetStride(),
-                bindingDescription.inputRate = vk::VertexInputRate::eVertex,
+                .binding = 0,
+                .stride = vertexBufferLayout.GetStride(),
+                .inputRate = vk::VertexInputRate::eVertex,
             };
 
             auto& elements = vertexBufferLayout.GetElements();
@@ -43,8 +43,8 @@ namespace Veng::Renderer
                 auto& element = elements[i];
 
                 vk::VertexInputAttributeDescription attributeDescription = {
-                    .binding = 0,
                     .location = i,
+                    .binding = 0,
                     .format = VertexElementDataTypeToVulkanFormat(element.Type),
                     .offset = element.Offset,
                 };
@@ -54,18 +54,18 @@ namespace Veng::Renderer
 
             vertexInputInfo = {
                 .vertexBindingDescriptionCount = 1,
-                .vertexAttributeDescriptionCount = static_cast<u32>(attributeDescriptions.size()),
                 .pVertexBindingDescriptions = &bindingDescription,
+                .vertexAttributeDescriptionCount = static_cast<u32>(attributeDescriptions.size()),
                 .pVertexAttributeDescriptions = attributeDescriptions.data(),
             };
         }
         else
         {
             vertexInputInfo = {
-                .vertexAttributeDescriptionCount = 0,
-                .pVertexAttributeDescriptions = nullptr,
                 .vertexBindingDescriptionCount = 0,
-                .pVertexBindingDescriptions = nullptr
+                .pVertexBindingDescriptions = nullptr,
+                .vertexAttributeDescriptionCount = 0,
+                .pVertexAttributeDescriptions = nullptr
             };
         }
 
@@ -87,15 +87,15 @@ namespace Veng::Renderer
             .depthClampEnable = vk::False,
             .rasterizerDiscardEnable = vk::False,
             .polygonMode = info.PolygonMode,
-            .lineWidth = 1.0f,
             .cullMode = info.CullMode,
             .frontFace = vk::FrontFace::eCounterClockwise,
             .depthBiasEnable = vk::False,
+            .lineWidth = 1.0f,
         };
 
         vk::PipelineMultisampleStateCreateInfo multisampleState = {
-            .sampleShadingEnable = vk::False,
-            .rasterizationSamples = vk::SampleCountFlagBits::e1
+            .rasterizationSamples = vk::SampleCountFlagBits::e1,
+            .sampleShadingEnable = vk::False
         };
 
         vk::PipelineDepthStencilStateCreateInfo depthStencilState = {
@@ -103,11 +103,11 @@ namespace Veng::Renderer
             .depthWriteEnable = VK_BOOL(info.DepthWriteEnable),
             .depthCompareOp = info.DepthCompareOp,
             .depthBoundsTestEnable = vk::False,
-            .minDepthBounds = 0.0f,
-            .maxDepthBounds = 1.0f,
             .stencilTestEnable = vk::False,
             .front = {},
-            .back = {}
+            .back = {},
+            .minDepthBounds = 0.0f,
+            .maxDepthBounds = 1.0f
         };
 
         std::vector<vk::PipelineColorBlendAttachmentState> blendAttachments;

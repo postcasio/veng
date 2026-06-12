@@ -5,14 +5,6 @@
 
 namespace Veng::Renderer
 {
-    void Command::Initialize()
-    {
-    }
-
-    void Command::Dispose()
-    {
-    }
-
     CommandBuffer& Command::BeginFrame()
     {
         auto& frame = Context::Instance().AcquireNextFrame();
@@ -30,19 +22,6 @@ namespace Veng::Renderer
         commandBuffer->Begin();
 
         return *commandBuffer;
-    }
-
-    void Command::CompositeFrame(const bool enableFinalRender, const bool enableUi)
-    {
-        auto& frame = Context::Instance().GetCurrentFrame();
-
-        auto commandBuffer = frame.GetCommandBuffer();
-
-        // Context::Instance().GetFinalCompositorPass().Run({
-        //     .CommandBuffer = commandBuffer,
-        //     .EnableFinalRender = enableFinalRender,
-        //     .EnableUi = enableUi,
-        // });
     }
 
     void Command::EndFrame()

@@ -43,6 +43,7 @@ namespace Veng::Renderer
 
         VkImageCreateInfo imageCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .flags = static_cast<VkImageCreateFlags>(flags),
             .imageType = static_cast<VkImageType>(m_Type),
             .format = static_cast<VkFormat>(m_Format),
             .extent = {m_Extent.x, m_Extent.y, m_Extent.z},
@@ -52,8 +53,7 @@ namespace Veng::Renderer
             .tiling = static_cast<VkImageTiling>(vk::ImageTiling::eOptimal),
             .usage = static_cast<VkImageUsageFlags>(m_Usage),
             .sharingMode = static_cast<VkSharingMode>(vk::SharingMode::eExclusive),
-            .initialLayout = static_cast<VkImageLayout>(vk::ImageLayout::eUndefined),
-            .flags = static_cast<VkImageCreateFlags>(flags)
+            .initialLayout = static_cast<VkImageLayout>(vk::ImageLayout::eUndefined)
         };
 
         VmaAllocationCreateInfo allocationCreateInfo{
@@ -178,7 +178,7 @@ namespace Veng::Renderer
         Context::Instance().SubmitImmediateCommands(*commandBuffer);
     }
 
-    std::span<u8> Image::Download()
+    vector<u8> Image::Download()
     {
         auto buffer = Buffer::Create({
             .Name = m_Name + " (Download)",

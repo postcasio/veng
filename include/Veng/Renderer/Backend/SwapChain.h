@@ -50,11 +50,11 @@ namespace Veng::Renderer
         [[nodiscard]] Ref<ImageView> GetImageView(const u32 index) const { return m_ImageViews[index]; }
         [[nodiscard]] Ref<ImageView> GetCurrentImageView() const { return m_ImageViews[m_CurrentImageIndex]; }
 
-        // Allow clients (including JS) to register for swapchain invalidation (recreation)
+        // Register a callback fired after the swapchain has been recreated
         void OnInvalidated(std::function<void()> func) { m_OnInvalidated = std::move(func); }
 
         void Invalidated();
-    protected:
+
     private:
         u32 m_Width;
         u32 m_Height;

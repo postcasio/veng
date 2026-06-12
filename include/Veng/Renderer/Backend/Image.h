@@ -73,7 +73,7 @@ namespace Veng::Renderer
 
         void GenerateMipmaps(CommandBuffer& commandBuffer);
         void Upload(std::span<u8> span);
-        std::span<u8> Download();
+        [[nodiscard]] vector<u8> Download();
 
     private:
         [[nodiscard]] u32 GetLayoutIndex(const u32 layer, const u32 mip) const

@@ -114,7 +114,6 @@ FetchContent_MakeAvailable(imnodes)
 
 add_library(veng SHARED
         src/Application.cpp
-        src/Event.cpp
         src/Log.cpp
         src/Time.cpp
         src/Window.cpp

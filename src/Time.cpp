@@ -1,11 +1,12 @@
 #include <Veng/Time.h>
 
-
 namespace Veng
 {
     void Time::Initialize()
     {
         s_StartTime = std::chrono::high_resolution_clock::now();
+        s_FrameTime = s_StartTime;
+        s_DeltaTime = 0.0f;
     }
 
     f32 Time::Update()

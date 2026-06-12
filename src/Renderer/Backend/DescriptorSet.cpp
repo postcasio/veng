@@ -31,32 +31,30 @@ namespace Veng::Renderer
     void DescriptorSet::UpdateDescriptorSet(const DescriptorSetUpdateInfo& info)
     {
         vector<vk::WriteDescriptorSet> writes;
-        vector<vector<vk::DescriptorImageInfo>*> imageInfos;
-        vector<vector<vk::DescriptorBufferInfo>*> bufferInfos;
 
+        // Reserved up front so the pointers stored in `writes` stay valid.
+        vector<vector<vk::DescriptorImageInfo>> imageInfos;
+        vector<vector<vk::DescriptorBufferInfo>> bufferInfos;
         imageInfos.reserve(info.Writes.size());
         bufferInfos.reserve(info.Writes.size());
 
         for (const auto& write : info.Writes)
         {
-            auto writeImageInfos = new vector<vk::DescriptorImageInfo>();
-            imageInfos.push_back(writeImageInfos);
-            auto writeBufferInfos = new vector<vk::DescriptorBufferInfo>();
-            bufferInfos.push_back(writeBufferInfos);
-
             switch (write.Type)
             {
             case vk::DescriptorType::eCombinedImageSampler:
                 {
                     const auto& data = std::get<vector<DescriptorImageInfo>>(write.Data);
-                    writeImageInfos->reserve(data.size());
+
+                    auto& writeImageInfos = imageInfos.emplace_back();
+                    writeImageInfos.reserve(data.size());
 
                     auto binding = write.Binding;
                     for (const auto& image : data)
                     {
-                        writeImageInfos->push_back({
-                            .imageView = image.ImageView->GetVkImageView(),
+                        writeImageInfos.push_back({
                             .sampler = image.Sampler->GetVkSampler(),
+                            .imageView = image.ImageView->GetVkImageView(),
                             .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
                         });
 
@@ -68,22 +66,24 @@ namespace Veng::Renderer
                         .dstSet = m_DescriptorSet,
                         .dstBinding = write.Binding,
                         .dstArrayElement = write.ArrayElement,
+                        .descriptorCount = static_cast<u32>(writeImageInfos.size()),
                         .descriptorType = write.Type,
-                        .descriptorCount = static_cast<u32>(writeImageInfos->size()),
-                        .pImageInfo = writeImageInfos->data()
+                        .pImageInfo = writeImageInfos.data()
                     });
-
 
                     break;
                 }
             case vk::DescriptorType::eUniformBuffer:
                 {
                     const auto& data = std::get<vector<DescriptorBufferInfo>>(write.Data);
-                    writeBufferInfos->reserve(data.size());
+
+                    auto& writeBufferInfos = bufferInfos.emplace_back();
+                    writeBufferInfos.reserve(data.size());
+
                     auto binding = write.Binding;
                     for (const auto& buffer : data)
                     {
-                        writeBufferInfos->push_back({
+                        writeBufferInfos.push_back({
                             .buffer = buffer.Buffer->GetVkBuffer(),
                             .offset = buffer.Offset,
                             .range = buffer.Range
@@ -94,10 +94,10 @@ namespace Veng::Renderer
                     writes.push_back({
                         .dstSet = m_DescriptorSet,
                         .dstBinding = write.Binding,
-                        .dstArrayElement = static_cast<u32>(write.ArrayElement),
+                        .dstArrayElement = write.ArrayElement,
+                        .descriptorCount = static_cast<u32>(writeBufferInfos.size()),
                         .descriptorType = write.Type,
-                        .descriptorCount = static_cast<u32>(writeBufferInfos->size()),
-                        .pBufferInfo = writeBufferInfos->data()
+                        .pBufferInfo = writeBufferInfos.data()
                     });
                     break;
                 }
@@ -106,15 +106,5 @@ namespace Veng::Renderer
         }
 
         Context::Instance().GetVkDevice().updateDescriptorSets(writes, {});
-
-        for (auto imageInfo : imageInfos)
-        {
-            delete imageInfo;
-        }
-
-        for (auto bufferInfo : bufferInfos)
-        {
-            delete bufferInfo;
-        }
     }
 }

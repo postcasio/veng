@@ -80,11 +80,6 @@ namespace Veng::Renderer
         [[nodiscard]] u32 GetMaxFramesInFlight() const { return m_MaxFramesInFlight; }
         [[nodiscard]] u32 GetCurrentFrameInFlight() const { return m_CurrentFrameInFlight; }
 
-        [[nodiscard]] SynchronizationFrame& GetCurrentSynchronizationFrame()
-        {
-            return m_SynchronizationFrames[m_CurrentFrameInFlight];
-        }
-
         [[nodiscard]] Ref<Image> GetImGuiImage() const { return m_ImGuiImage; }
 
         void ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const;
@@ -120,7 +115,7 @@ namespace Veng::Renderer
             VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME
         });
         vector<const char*> m_RequiredExtensions;
-        VkDebugUtilsMessengerEXT m_DebugMessenger = nullptr;
+        vk::DebugUtilsMessengerEXT m_DebugMessenger;
         QueueFamilyIndices m_QueueFamilies{};
         VmaAllocator m_Allocator = nullptr;
         Unique<SwapChain> m_SwapChain;
