@@ -17,7 +17,7 @@ namespace Veng::Renderer
             .pSetLayouts = layouts.data()
         };
 
-        m_DescriptorSet = Context::Instance().GetVkDevice().allocateDescriptorSets(allocateInfo)[0];
+        m_DescriptorSet = Context::Instance().GetVkDevice().allocateDescriptorSets(allocateInfo).value[0];
 
         const auto& bindings = m_Layout->GetBindings();
         for (u32 i = 0; i < bindings.size(); i++)

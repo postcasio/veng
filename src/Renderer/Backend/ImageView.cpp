@@ -24,7 +24,7 @@ namespace Veng::Renderer
             }
         };
 
-        m_VkImageView = Context::Instance().GetVkDevice().createImageView(createInfo);
+        m_VkImageView = Context::Instance().GetVkDevice().createImageView(createInfo).value;
 
         DebugMarkers::MarkImageView(m_VkImageView, info.Name);
     }

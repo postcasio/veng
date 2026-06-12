@@ -37,7 +37,7 @@ namespace Veng
             }
             else
             {
-                throw std::runtime_error(fmt::format("Invalid directory: {}", arguments[1]));
+                VE_ASSERT(false, "Invalid directory: {}", arguments[1]);
             }
         }
 

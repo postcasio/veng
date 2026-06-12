@@ -15,7 +15,7 @@ namespace Veng::Renderer
             return vk::ColorSpaceKHR::eSrgbNonlinear;
 
         default:
-            throw std::runtime_error("Unsupported format!");
+            VE_ASSERT(false, "Unsupported format!");
         }
     }
 
@@ -75,8 +75,8 @@ namespace Veng::Renderer
 
         swapChainCreateInfo.oldSwapchain = VK_NULL_HANDLE;
 
-        m_VkSwapChain = Context::Instance().GetVkDevice().createSwapchainKHR(swapChainCreateInfo);
-        auto images = Context::Instance().GetVkDevice().getSwapchainImagesKHR(m_VkSwapChain);
+        m_VkSwapChain = Context::Instance().GetVkDevice().createSwapchainKHR(swapChainCreateInfo).value;
+        auto images = Context::Instance().GetVkDevice().getSwapchainImagesKHR(m_VkSwapChain).value;
 
         m_ImageCount = images.size();
         m_ImageViews.reserve(m_ImageCount);

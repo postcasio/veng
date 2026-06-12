@@ -12,7 +12,7 @@ namespace Veng::Renderer
             .flags = flags
         };
 
-        m_VkSemaphore = Context::Instance().GetVkDevice().createSemaphore(semaphoreCreateInfo);
+        m_VkSemaphore = Context::Instance().GetVkDevice().createSemaphore(semaphoreCreateInfo).value;
 
         DebugMarkers::MarkSemaphore(m_VkSemaphore, m_Name);
     }

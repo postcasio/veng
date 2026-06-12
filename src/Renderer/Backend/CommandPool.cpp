@@ -9,7 +9,7 @@ namespace Veng::Renderer
                 .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
                 .queueFamilyIndex = Context::Instance().GetQueueFamilies().GraphicsFamily.value()
             }
-        );
+        ).value;
     }
 
     CommandPool::~CommandPool()

@@ -77,7 +77,7 @@ namespace Veng::Renderer
             .pDependencies = nullptr
         };
 
-        m_VkRenderPass = Context::Instance().GetVkDevice().createRenderPass(renderPassInfo);
+        m_VkRenderPass = Context::Instance().GetVkDevice().createRenderPass(renderPassInfo).value;
 
         DebugMarkers::MarkRenderPass(m_VkRenderPass, m_Name);
     }

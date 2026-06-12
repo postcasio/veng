@@ -94,7 +94,7 @@ namespace Veng::Renderer
         case vk::ImageLayout::ePresentSrcKHR:
             return vk::AccessFlagBits::eMemoryRead;
         default:
-            throw std::runtime_error("Unsupported image layout");
+            VE_ASSERT(false, "Unsupported image layout");
         }
     }
 
@@ -117,7 +117,7 @@ namespace Veng::Renderer
             // Present isn't a pipeline stage; use AllCommands as a conservative barrier endpoint.
             return vk::PipelineStageFlagBits::eAllCommands;
         default:
-            throw std::runtime_error("Unsupported image layout");
+            VE_ASSERT(false, "Unsupported image layout");
         }
     }
 
@@ -140,7 +140,7 @@ namespace Veng::Renderer
             // When transitioning from present, be conservative so we properly wait for external reads.
             return vk::PipelineStageFlagBits::eAllCommands;
         default:
-            throw std::runtime_error("Unsupported image layout");
+            VE_ASSERT(false, "Unsupported image layout");
         }
     }
 }

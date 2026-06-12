@@ -37,7 +37,7 @@ namespace Veng::Renderer
             .pPushConstantRanges = pushConstantRanges.data(),
         };
 
-        m_VkPipelineLayout = Context::Instance().GetVkDevice().createPipelineLayout(pipelineLayoutCreateInfo);
+        m_VkPipelineLayout = Context::Instance().GetVkDevice().createPipelineLayout(pipelineLayoutCreateInfo).value;
 
         DebugMarkers::MarkPipelineLayout(m_VkPipelineLayout, m_Name);
     }

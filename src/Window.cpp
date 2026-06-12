@@ -11,7 +11,7 @@ namespace Veng
 
         void GLFWErrorCallback(int err, const char* message)
         {
-            throw std::runtime_error(fmt::format("GLFW error ({0}): {1}", err, message));
+            VE_ASSERT(false, "GLFW error ({0}): {1}", err, message);
         }
     }
 
@@ -30,7 +30,7 @@ namespace Veng
 
             if (glfwInit() != GLFW_TRUE)
             {
-                throw std::runtime_error("Failed to initialize GLFW!");
+                VE_ASSERT(false, "Failed to initialize GLFW!");
             }
 
             s_GlfwInitialized = true;
@@ -45,7 +45,7 @@ namespace Veng
 
         if (!m_Handle)
         {
-            throw std::runtime_error("Failed to create window!");
+            VE_ASSERT(false, "Failed to create window!");
         }
 
         glfwSetWindowUserPointer(m_Handle, this);

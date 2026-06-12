@@ -3,13 +3,25 @@
 #include <string_view>
 #include <string>
 #include <utility>
+#include <functional>
 #include <fmt/format.h>
 
 namespace Veng::Log
 {
     enum class Level { Info, Warn, Error };
 
-    // Core sink that emits a fully formatted message
+    // A sink receives the level and the message body (no timestamp/level prefix
+    // — the sink decides how to present it). Called on whatever thread logs;
+    // veng is single-threaded for now, so no synchronization is provided.
+    using Sink = std::function<void(Level, std::string_view)>;
+
+    // Replace the log sink. Passing nullptr restores the default stdout sink.
+    void SetSink(Sink sink);
+
+    // Messages below this level are dropped. Defaults to Level::Info.
+    void SetMinimumLevel(Level level);
+
+    // Core entry point: filters by minimum level, then forwards to the sink.
     void LogMessage(Level level, std::string_view message);
 
     // Convenience helpers with fmt-style formatting

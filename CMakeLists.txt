@@ -114,6 +114,7 @@ FetchContent_MakeAvailable(imnodes)
 
 add_library(veng SHARED
         src/Application.cpp
+        src/Assert.cpp
         src/Log.cpp
         src/Time.cpp
         src/Window.cpp
@@ -168,6 +169,14 @@ target_include_directories(veng PRIVATE
 )
 
 target_compile_definitions(veng PRIVATE VE_BUILD_SHARED)
+
+# veng raises no exceptions (see Veng/Assert.h): asserts are fatal, recoverable
+# operations return Veng::Result<T>. Building -fno-exceptions is the enforcement
+# mechanism — any stray `throw` becomes a compile error. tinyexr is the one
+# vendor TU that uses exceptions by default, so disable them for it too.
+target_compile_options(veng PRIVATE -fno-exceptions)
+set_source_files_properties(src/Vendor/TinyExr.cpp PROPERTIES
+        COMPILE_DEFINITIONS TINYEXR_USE_EXCEPTIONS=0)
 
 if (VE_DEBUG)
     target_compile_definitions(veng PUBLIC VE_ENABLE_VALIDATION_LAYERS=1 VE_DEBUG=1)

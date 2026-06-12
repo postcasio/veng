@@ -42,7 +42,7 @@ namespace Veng::Renderer
 
     vk::PhysicalDevice Context::GetPhysicalDevice()
     {
-        auto physicalDevices = m_Instance.enumeratePhysicalDevices();
+        auto physicalDevices = m_Instance.enumeratePhysicalDevices().value;
 
         for (auto& device : physicalDevices)
         {
@@ -52,7 +52,7 @@ namespace Veng::Renderer
             }
         }
 
-        throw std::runtime_error("Failed to find a suitable GPU!");
+        VE_ASSERT(false, "Failed to find a suitable GPU!");
     }
 
     bool Context::IsDeviceSuitable(vk::PhysicalDevice device)
@@ -88,7 +88,7 @@ namespace Veng::Renderer
 
         if (glfwVulkanSupported() != GLFW_TRUE)
         {
-            throw std::runtime_error("Vulkan is not supported on this system!");
+            VE_ASSERT(false, "Vulkan is not supported on this system!");
         }
 
         auto extensions = GetRequiredExtensions();
@@ -131,7 +131,7 @@ namespace Veng::Renderer
 
         instanceCreateInfo.flags = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
 
-        m_Instance = createInstance(instanceCreateInfo);
+        m_Instance = createInstance(instanceCreateInfo).value;
 
         VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Instance);
 
@@ -454,7 +454,7 @@ namespace Veng::Renderer
         }
         else if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
         {
-            throw std::runtime_error("failed to acquire swap chain image!");
+            VE_ASSERT(false, "failed to acquire swap chain image!");
         }
     }
 
@@ -562,7 +562,7 @@ namespace Veng::Renderer
                 m_QueueFamilies.GraphicsFamily = i;
             }
 
-            if (vk::Bool32 presentSupport = device.getSurfaceSupportKHR(i, m_Surface))
+            if (vk::Bool32 presentSupport = device.getSurfaceSupportKHR(i, m_Surface).value)
             {
                 m_QueueFamilies.PresentFamily = i;
             }
@@ -581,15 +581,15 @@ namespace Veng::Renderer
     SwapChainSupportDetails Context::QuerySwapChainSupport(vk::PhysicalDevice device) const
     {
         return SwapChainSupportDetails{
-            .Capabilities = device.getSurfaceCapabilitiesKHR(m_Surface),
-            .Formats = device.getSurfaceFormatsKHR(m_Surface),
-            .PresentModes = device.getSurfacePresentModesKHR(m_Surface)
+            .Capabilities = device.getSurfaceCapabilitiesKHR(m_Surface).value,
+            .Formats = device.getSurfaceFormatsKHR(m_Surface).value,
+            .PresentModes = device.getSurfacePresentModesKHR(m_Surface).value
         };
     }
 
     bool Context::CheckDeviceExtensionSupport(vk::PhysicalDevice device) const
     {
-        auto availableExtensions = device.enumerateDeviceExtensionProperties(nullptr);
+        auto availableExtensions = device.enumerateDeviceExtensionProperties(nullptr).value;
 
         auto& deviceExtensions = m_DeviceExtensions;
 
@@ -669,7 +669,7 @@ namespace Veng::Renderer
             .ppEnabledExtensionNames = deviceExtensions.data()
         };
 
-        return m_PhysicalDevice.createDevice(deviceCreateInfo, nullptr);
+        return m_PhysicalDevice.createDevice(deviceCreateInfo, nullptr).value;
     }
 
     void Context::CreateImGuiResources()
@@ -770,7 +770,7 @@ namespace Veng::Renderer
         }
         else if (result != vk::Result::eSuccess)
         {
-            throw std::runtime_error("failed to present swap chain image!");
+            VE_ASSERT(false, "failed to present swap chain image!");
         }
 
         m_CurrentFrameInFlight = (m_CurrentFrameInFlight + 1) % m_MaxFramesInFlight;

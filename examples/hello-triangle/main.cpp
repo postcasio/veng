@@ -1,4 +1,5 @@
 #include <Veng/Application.h>
+#include <Veng/Assert.h>
 #include <Veng/Log.h>
 #include <Veng/Vendor/ImGui.h>
 
@@ -134,10 +135,13 @@ private:
             .Name = "triangle.vert",
             .Path = path(HT_SHADER_DIR) / "triangle.vert.spv",
         });
+        VE_ASSERT(vertexShader, "{}", vertexShader.error());
+
         const auto fragmentShader = Renderer::Shader::Create({
             .Name = "triangle.frag",
             .Path = path(HT_SHADER_DIR) / "triangle.frag.spv",
         });
+        VE_ASSERT(fragmentShader, "{}", fragmentShader.error());
 
         m_TriangleLayout = Renderer::PipelineLayout::Create({
             .Name = "Triangle Layout",
@@ -155,8 +159,8 @@ private:
             }),
             .PipelineLayout = m_TriangleLayout,
             .ShaderStages = {
-                {.Stage = vk::ShaderStageFlagBits::eVertex, .Module = *vertexShader},
-                {.Stage = vk::ShaderStageFlagBits::eFragment, .Module = *fragmentShader},
+                {.Stage = vk::ShaderStageFlagBits::eVertex, .Module = *vertexShader.value()},
+                {.Stage = vk::ShaderStageFlagBits::eFragment, .Module = *fragmentShader.value()},
             },
         });
     }
@@ -167,10 +171,13 @@ private:
             .Name = "composite.vert",
             .Path = path(HT_SHADER_DIR) / "composite.vert.spv",
         });
+        VE_ASSERT(vertexShader, "{}", vertexShader.error());
+
         const auto fragmentShader = Renderer::Shader::Create({
             .Name = "composite.frag",
             .Path = path(HT_SHADER_DIR) / "composite.frag.spv",
         });
+        VE_ASSERT(fragmentShader, "{}", fragmentShader.error());
 
         m_CompositeSetLayout = Renderer::DescriptorSetLayout::Create({
             .Name = "Composite Set Layout",
@@ -200,8 +207,8 @@ private:
             .ColorAttachments = {{.Format = GetRenderContext().GetSwapChain().GetFormat()}},
             .PipelineLayout = m_CompositeLayout,
             .ShaderStages = {
-                {.Stage = vk::ShaderStageFlagBits::eVertex, .Module = *vertexShader},
-                {.Stage = vk::ShaderStageFlagBits::eFragment, .Module = *fragmentShader},
+                {.Stage = vk::ShaderStageFlagBits::eVertex, .Module = *vertexShader.value()},
+                {.Stage = vk::ShaderStageFlagBits::eFragment, .Module = *fragmentShader.value()},
             },
         });
 

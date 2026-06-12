@@ -14,7 +14,7 @@ namespace Veng::Renderer
             .pPoolSizes = info.PoolSizes.data()
         };
 
-        m_VkDescriptorPool = Context::Instance().GetVkDevice().createDescriptorPool(descriptorPoolCreateInfo);
+        m_VkDescriptorPool = Context::Instance().GetVkDevice().createDescriptorPool(descriptorPoolCreateInfo).value;
 
         DebugMarkers::MarkDescriptorPool(m_VkDescriptorPool, info.Name);
     }

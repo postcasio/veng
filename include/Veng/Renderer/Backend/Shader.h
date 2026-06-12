@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Result.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 
 namespace Veng::Renderer
@@ -22,17 +23,17 @@ namespace Veng::Renderer
     class Shader
     {
     public:
-        static Unique<Shader> Create(const ShaderInfo& info)
-        {
-            return CreateUnique<Shader>(info);
-        }
+        // Loads SPIR-V from disk. Returns an error Result when the file cannot
+        // be opened, so callers can recover (report and continue, retry on
+        // hot-reload) instead of terminating. Invalid SPIR-V past that point is
+        // fatal via the Vulkan call.
+        static Result<Unique<Shader>> Create(const ShaderInfo& info);
 
         static Unique<Shader> Create(const ShaderBinaryInfo& info)
         {
             return CreateUnique<Shader>(info);
         }
 
-        explicit Shader(const ShaderInfo& info);
         explicit Shader(const ShaderBinaryInfo& info);
         ~Shader();
 

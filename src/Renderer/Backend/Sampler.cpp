@@ -26,7 +26,7 @@ namespace Veng::Renderer
             .unnormalizedCoordinates = info.UnnormalizedCoordinates,
         };
 
-        m_VkSampler = Context::Instance().GetVkDevice().createSampler(samplerCreateInfo);
+        m_VkSampler = Context::Instance().GetVkDevice().createSampler(samplerCreateInfo).value;
 
         DebugMarkers::MarkSampler(m_VkSampler, m_Name);
     }

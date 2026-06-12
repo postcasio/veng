@@ -33,7 +33,7 @@ namespace Veng::Renderer
             .layers = info.Layers
         };
 
-        m_VkFramebuffer = Context::Instance().GetVkDevice().createFramebuffer(framebufferCreateInfo);
+        m_VkFramebuffer = Context::Instance().GetVkDevice().createFramebuffer(framebufferCreateInfo).value;
 
         DebugMarkers::MarkFramebuffer(m_VkFramebuffer, m_Name);
     }

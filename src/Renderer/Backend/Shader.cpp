@@ -6,14 +6,14 @@
 
 namespace Veng::Renderer
 {
-    Shader::Shader(const ShaderInfo& info) : m_Name(info.Name), m_EntryPoint(info.EntryPoint)
+    Result<Unique<Shader>> Shader::Create(const ShaderInfo& info)
     {
         path filePath = std::filesystem::absolute(info.Path);
         std::ifstream file(filePath, std::ios::ate | std::ios::binary);
 
         if (!file.is_open())
         {
-            throw std::runtime_error(fmt::format("Can't open file: {}", filePath.string()));
+            return std::unexpected(fmt::format("Can't open shader file: {}", filePath.string()));
         }
 
         const u32 fileSize = (u32)file.tellg();
@@ -24,12 +24,11 @@ namespace Veng::Renderer
 
         file.close();
 
-        vk::ShaderModuleCreateInfo createInfo{
-            .codeSize = buffer.size(),
-            .pCode = reinterpret_cast<const u32*>(buffer.data()),
-        };
-
-        m_VkModule = Context::Instance().GetVkDevice().createShaderModule(createInfo);
+        return CreateUnique<Shader>(ShaderBinaryInfo{
+            .Name = info.Name,
+            .Binary = buffer,
+            .EntryPoint = info.EntryPoint,
+        });
     }
 
     Shader::Shader(const ShaderBinaryInfo& info) : m_Name(info.Name), m_EntryPoint(info.EntryPoint)
@@ -39,7 +38,7 @@ namespace Veng::Renderer
             .pCode = reinterpret_cast<const u32*>(info.Binary.data()),
         };
 
-        m_VkModule = Context::Instance().GetVkDevice().createShaderModule(createInfo);
+        m_VkModule = Context::Instance().GetVkDevice().createShaderModule(createInfo).value;
     }
 
     Shader::~Shader()

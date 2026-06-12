@@ -15,7 +15,7 @@ namespace Veng::Renderer
         case VertexElementDataType::Float3:
             return vk::Format::eR32G32B32Sfloat;
         default:
-            throw std::runtime_error("Unknown vertex element data type");
+            VE_ASSERT(false, "Unknown vertex element data type");
         }
     }
 
@@ -30,7 +30,7 @@ namespace Veng::Renderer
         case VertexElementDataType::Float3:
             return 4 * 3;
         default:
-            throw std::runtime_error("Unknown VertexElementDataType");
+            VE_ASSERT(false, "Unknown VertexElementDataType");
         }
     }
 
@@ -41,7 +41,7 @@ namespace Veng::Renderer
         case VertexElementDataType::Float: return 1;
         case VertexElementDataType::Float2: return 2;
         case VertexElementDataType::Float3: return 3;
-        default: throw std::runtime_error("Unknown VertexElementDataType");
+        default: VE_ASSERT(false, "Unknown VertexElementDataType");
         }
     }
 

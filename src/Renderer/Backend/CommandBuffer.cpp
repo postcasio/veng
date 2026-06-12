@@ -15,7 +15,7 @@ namespace Veng::Renderer
             .commandBufferCount = 1,
         };
 
-        m_VkCommandBuffer = Context::Instance().GetVkDevice().allocateCommandBuffers(allocInfo)[0];
+        m_VkCommandBuffer = Context::Instance().GetVkDevice().allocateCommandBuffers(allocInfo).value[0];
     }
 
     void CommandBuffer::Reset()

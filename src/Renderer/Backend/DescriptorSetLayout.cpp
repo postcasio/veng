@@ -30,7 +30,7 @@ namespace Veng::Renderer
         };
 
         m_VkDescriptorSetLayout = Context::Instance().GetVkDevice().createDescriptorSetLayout(
-            descriptorSetLayoutCreateInfo);
+            descriptorSetLayoutCreateInfo).value;
 
         DebugMarkers::MarkDescriptorSetLayout(m_VkDescriptorSetLayout, m_Name);
     }

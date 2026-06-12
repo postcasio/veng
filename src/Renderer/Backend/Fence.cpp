@@ -11,7 +11,7 @@ namespace Veng::Renderer
             .flags = flags
         };
 
-        m_VkFence = Context::Instance().GetVkDevice().createFence(fenceCreateInfo);
+        m_VkFence = Context::Instance().GetVkDevice().createFence(fenceCreateInfo).value;
 
         DebugMarkers::MarkFence(m_VkFence, m_Name);
     }
