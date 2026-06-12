@@ -39,10 +39,6 @@ namespace Veng::Renderer
 #endif
 
 
-    static void GLFWErrorCallback(int err, const char* message)
-    {
-        throw std::runtime_error(fmt::format("GLFW error ({0}): {1}", err, message));
-    }
 
     vk::PhysicalDevice Context::GetPhysicalDevice()
     {
@@ -78,7 +74,7 @@ namespace Veng::Renderer
         return indices.IsComplete() && extensionsSupported && swapChainAdequate && supportedFeatures.samplerAnisotropy;
     }
 
-    Unique<Window> Context::Initialize(const ContextInfo& info)
+    void Context::Initialize(const ContextInfo& info, Window* window)
     {
         s_Instance = this;
 
@@ -86,24 +82,14 @@ namespace Veng::Renderer
 
         VULKAN_HPP_DEFAULT_DISPATCHER.init();
 
-        Log::Info("Initializing GLFW");
+        VE_ASSERT(window != nullptr, "Context::Initialize requires a window (headless mode is not supported yet)");
 
-        glfwSetErrorCallback(GLFWErrorCallback);
-
-        if (glfwInit() != GLFW_TRUE)
-        {
-            throw std::runtime_error("Failed to initialize GLFW!");
-        }
+        m_Window = window;
 
         if (glfwVulkanSupported() != GLFW_TRUE)
         {
             throw std::runtime_error("Vulkan is not supported on this system!");
         }
-
-        auto window = CreateUnique<Window>(info.WindowInfo);
-        m_Window = window.get();
-
-        window->Initialize(*this);
 
         auto extensions = GetRequiredExtensions();
 
@@ -404,8 +390,6 @@ namespace Veng::Renderer
             static constexpr ImWchar icon_ranges[] = {ICON_MIN_MD, ICON_MAX_16_MD, 0};
             io.Fonts->AddFontFromFileTTF(info.IconFontPath->string().c_str(), 20.0f, &config, icon_ranges);
         }
-
-        return window;
     }
 
     void Context::DisposeResources()

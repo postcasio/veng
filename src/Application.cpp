@@ -13,14 +13,15 @@ namespace Veng
 
     void Application::Initialize()
     {
-        m_Window = m_RenderContext.Initialize({
+        m_Window = Window::Create(m_Info.WindowInfo);
+
+        m_RenderContext.Initialize({
             .ApplicationName = m_Info.Name,
             .EngineName = m_Info.EngineName,
             .InternalRenderExtent = m_Info.InternalRenderExtent,
-            .WindowInfo = m_Info.WindowInfo,
             .DefaultFontPath = m_Info.DefaultFontPath,
             .IconFontPath = m_Info.IconFontPath
-        });
+        }, m_Window.get());
 
         OnInitialize();
     }
@@ -53,7 +54,13 @@ namespace Veng
 
         m_RenderContext.WaitIdle();
 
+        // Consumers must release their engine resources here — the context is
+        // torn down right after, and resources outliving it are an error.
         OnDispose();
+
+        m_RenderContext.DisposeResources();
+        m_RenderContext.Dispose();
+        m_Window.reset();
     }
 
     void Application::Frame()

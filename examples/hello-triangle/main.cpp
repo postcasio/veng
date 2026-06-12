@@ -113,7 +113,18 @@ protected:
 
     void OnDispose() override
     {
-        GetRenderContext().DestroyImGuiTexture(*m_SceneTexture);
+        m_SceneTexture.reset();
+        m_CompositeSet.reset();
+        m_CompositePipeline.reset();
+        m_CompositeLayout.reset();
+        m_CompositeSetLayout.reset();
+        m_TrianglePipeline.reset();
+        m_TriangleLayout.reset();
+        m_VertexBuffer.reset();
+        m_Sampler.reset();
+        m_ImGuiImageView.reset();
+        m_SceneImageView.reset();
+        m_SceneImage.reset();
     }
 
 private:

@@ -47,6 +47,10 @@ namespace Veng
         {
         }
 
+        // Called after the main loop exits and the GPU is idle, immediately
+        // before the rendering context is torn down. Release every engine
+        // resource held by the application here (reset Refs/Uniques) —
+        // resources that outlive the context fail on destruction.
         virtual void OnDispose()
         {
         }

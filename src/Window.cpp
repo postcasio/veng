@@ -5,8 +5,37 @@
 
 namespace Veng
 {
-    void Window::Initialize(const Renderer::Context& context)
+    namespace
     {
+        bool s_GlfwInitialized = false;
+
+        void GLFWErrorCallback(int err, const char* message)
+        {
+            throw std::runtime_error(fmt::format("GLFW error ({0}): {1}", err, message));
+        }
+    }
+
+    Window::Window(const WindowInfo& info):
+        m_Extent(info.Extent),
+        m_Resizable(info.Resizable),
+        m_EventCallback(info.EventCallback),
+        m_Title(info.Title),
+        m_MouseCaptured(info.CaptureMouse)
+    {
+        if (!s_GlfwInitialized)
+        {
+            Log::Info("Initializing GLFW");
+
+            glfwSetErrorCallback(GLFWErrorCallback);
+
+            if (glfwInit() != GLFW_TRUE)
+            {
+                throw std::runtime_error("Failed to initialize GLFW!");
+            }
+
+            s_GlfwInitialized = true;
+        }
+
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_BOOL(m_Resizable));
 
@@ -103,10 +132,17 @@ namespace Veng
         m_Open = false;
     }
 
-    void Window::Dispose() const
+    // veng is single-window for now, so window destruction terminates GLFW.
+    Window::~Window()
     {
-        glfwDestroyWindow(m_Handle);
+        if (m_Handle)
+        {
+            glfwDestroyWindow(m_Handle);
+            m_Handle = nullptr;
+        }
+
         glfwTerminate();
+        s_GlfwInitialized = false;
     }
 
     void Window::SpinUntilValidSize()
@@ -178,15 +214,6 @@ namespace Veng
     string Window::GetTitle() const
     {
         return m_Title;
-    }
-
-    Window::Window(const WindowInfo& info):
-        m_Extent(info.Extent),
-        m_Resizable(info.Resizable),
-        m_EventCallback(info.EventCallback),
-        m_Title(info.Title),
-        m_MouseCaptured(info.CaptureMouse)
-    {
     }
 
     Unique<Window> Window::Create(const WindowInfo& info)

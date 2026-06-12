@@ -30,7 +30,7 @@ namespace Veng::Renderer
         string ApplicationName;
         string EngineName = "Veng";
         uvec2 InternalRenderExtent;
-        WindowInfo WindowInfo;
+        // Fonts live here until ImGui is extracted into its own module.
         optional<path> DefaultFontPath;
         optional<path> IconFontPath;
         vk::Format OutputFormat = vk::Format::eR16G16B16A16Sfloat;
@@ -40,7 +40,9 @@ namespace Veng::Renderer
     class Context
     {
     public:
-        Unique<Window> Initialize(const ContextInfo& info);
+        // The window is borrowed, not owned; it must outlive the context and is
+        // created by the application before the context initializes.
+        void Initialize(const ContextInfo& info, Window* window);
         void DisposeResources();
         void Dispose();
 
@@ -95,7 +97,7 @@ namespace Veng::Renderer
     private:
         static inline Context* s_Instance = nullptr;
 
-        // Non-owning; the Window created in Initialize() is owned by the caller
+        // Borrowed from the application in Initialize(); never owned.
         Window* m_Window = nullptr;
 
         uvec2 m_InternalRenderExtent;

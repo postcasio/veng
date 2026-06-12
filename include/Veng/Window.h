@@ -29,6 +29,9 @@ namespace Veng
     class Window
     {
     public:
+        // Initializes GLFW (first window only) and creates the native window.
+        // The window exists independently of any rendering context; the context
+        // borrows it and calls CreateSurface during its own initialization.
         explicit Window(const WindowInfo& info);
 
         static Unique<Window> Create(const WindowInfo& info);
@@ -37,9 +40,14 @@ namespace Veng
         static bool SaveFileDialog(string& outSelectedPath, const string& defaultPath,
                                    const vector<nfdu8filteritem_t>& extensions);
 
-        ~Window() { Close(); }
+        // Destroys the native window and terminates GLFW. The surface created
+        // by CreateSurface is owned and destroyed by the context, so the
+        // context must be disposed before the window is destroyed.
+        ~Window();
 
-        void Initialize(const Renderer::Context& context);
+        Window(const Window&) = delete;
+        Window& operator=(const Window&) = delete;
+
         void CreateSurface(const Renderer::Context& context);
         void SpinUntilValidSize();
 
@@ -49,8 +57,8 @@ namespace Veng
         void ReleaseMouse();
         [[nodiscard]] bool IsMouseCaptured() const;
         void Update();
+        // Requests main-loop exit (IsOpen() becomes false); does not destroy anything.
         void Close();
-        void Dispose() const;
         [[nodiscard]] bool ShouldClose() const;
         [[nodiscard]] bool KeyPressed(i32 key) const;
 
