@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Renderer/Backend/Context.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
 
 namespace Veng::Renderer
 {
@@ -10,11 +11,11 @@ namespace Veng::Renderer
         : m_Name(info.Name), m_PipelineLayout(info.PipelineLayout)
     {
         VE_ASSERT(m_PipelineLayout != nullptr, "ComputePipeline '{}' requires a PipelineLayout", m_Name);
-        VE_ASSERT(info.ShaderStage.Stage == vk::ShaderStageFlagBits::eCompute,
+        VE_ASSERT(info.ShaderStage.Stage == ShaderStage::Compute,
                   "ComputePipeline '{}' requires a compute shader stage", m_Name);
 
         const vk::PipelineShaderStageCreateInfo shaderStageInfo{
-            .stage = info.ShaderStage.Stage,
+            .stage = ToVkBit(info.ShaderStage.Stage),
             .module = info.ShaderStage.Module.GetVkModule(),
             // Shader stores/owns this string; it must live through pipeline creation.
             .pName = info.ShaderStage.Module.GetEntryPoint().c_str(),

@@ -2,6 +2,9 @@
 #include <Veng/WindowEvents.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Backend/Context.h>
+#include <nfd.h>
+
+#define GLFW_BOOL(x) ((x) ? GLFW_TRUE : GLFW_FALSE)
 
 namespace Veng
 {
@@ -164,9 +167,9 @@ namespace Veng
         return glfwWindowShouldClose(m_Handle);
     }
 
-    bool Window::KeyPressed(const i32 key) const
+    bool Window::KeyPressed(const Key key) const
     {
-        return glfwGetKey(m_Handle, key) == GLFW_PRESS;
+        return glfwGetKey(m_Handle, static_cast<i32>(key)) == GLFW_PRESS;
     }
 
     VkSurfaceKHR Window::GetSurface() const
@@ -221,13 +224,30 @@ namespace Veng
         return CreateUnique<Window>(info);
     }
 
-    bool Window::OpenFileDialog(string& outSelectedPath, const string& defaultPath,
-                                const vector<nfdu8filteritem_t>& extensions)
+    namespace
     {
+        // Build the nfd filter array, borrowing the FileDialogFilter strings
+        // (which outlive the dialog call).
+        vector<nfdu8filteritem_t> ToNfdFilters(const vector<FileDialogFilter>& filters)
+        {
+            vector<nfdu8filteritem_t> items;
+            items.reserve(filters.size());
+            for (const auto& filter : filters)
+            {
+                items.push_back({filter.Name.c_str(), filter.Extensions.c_str()});
+            }
+            return items;
+        }
+    }
+
+    bool Window::OpenFileDialog(string& outSelectedPath, const string& defaultPath,
+                                const vector<FileDialogFilter>& filters)
+    {
+        const auto items = ToNfdFilters(filters);
         nfdu8char_t* outPath = nullptr;
         nfdopendialogu8args_t args = {};
-        args.filterCount = static_cast<nfdfiltersize_t>(extensions.size());
-        args.filterList = extensions.data();
+        args.filterCount = static_cast<nfdfiltersize_t>(items.size());
+        args.filterList = items.data();
         args.defaultPath = defaultPath.c_str();
         const nfdresult_t result = NFD_OpenDialogU8_With(&outPath, &args);
 
@@ -248,12 +268,13 @@ namespace Veng
     }
 
     bool Window::SaveFileDialog(string& outSelectedPath, const string& defaultPath,
-                                const vector<nfdu8filteritem_t>& extensions)
+                                const vector<FileDialogFilter>& filters)
     {
+        const auto items = ToNfdFilters(filters);
         nfdu8char_t* outPath = nullptr;
         nfdsavedialogu8args_t args = {};
-        args.filterCount = static_cast<nfdfiltersize_t>(extensions.size());
-        args.filterList = extensions.data();
+        args.filterCount = static_cast<nfdfiltersize_t>(items.size());
+        args.filterList = items.data();
         args.defaultPath = defaultPath.c_str();
         args.defaultName = "Untitled";
         const nfdresult_t result = NFD_SaveDialogU8_With(&outPath, &args);

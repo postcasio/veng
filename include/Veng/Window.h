@@ -6,9 +6,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Event.h>
-#include <nfd.h>
-
-#define GLFW_BOOL(x) ((x) ? GLFW_TRUE : GLFW_FALSE)
+#include <Veng/Input.h>
 
 namespace Veng
 {
@@ -26,6 +24,14 @@ namespace Veng
         bool CaptureMouse;
     };
 
+    // A file-dialog filter, e.g. {"Images", "png,jpg"}. Replaces the nfd type in
+    // the public signature; the nfd mapping lives in Window.cpp.
+    struct FileDialogFilter
+    {
+        string Name;
+        string Extensions;
+    };
+
     class Window
     {
     public:
@@ -36,9 +42,9 @@ namespace Veng
 
         static Unique<Window> Create(const WindowInfo& info);
         static bool OpenFileDialog(string& outSelectedPath, const string& defaultPath,
-                                   const vector<nfdu8filteritem_t>& extensions);
+                                   const vector<FileDialogFilter>& filters);
         static bool SaveFileDialog(string& outSelectedPath, const string& defaultPath,
-                                   const vector<nfdu8filteritem_t>& extensions);
+                                   const vector<FileDialogFilter>& filters);
 
         // Destroys the native window and terminates GLFW. The surface created
         // by CreateSurface is owned and destroyed by the context, so the
@@ -60,7 +66,7 @@ namespace Veng
         // Requests main-loop exit (IsOpen() becomes false); does not destroy anything.
         void Close();
         [[nodiscard]] bool ShouldClose() const;
-        [[nodiscard]] bool KeyPressed(i32 key) const;
+        [[nodiscard]] bool KeyPressed(Key key) const;
 
         [[nodiscard]] VkSurfaceKHR GetSurface() const;
 

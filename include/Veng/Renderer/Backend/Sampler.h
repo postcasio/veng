@@ -2,27 +2,27 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
+#include <Veng/Renderer/Types.h>
 
 namespace Veng::Renderer
 {
     struct SamplerInfo
     {
         string Name;
-        vk::SamplerCreateFlags Flags{};
-        vk::Filter MagFilter = vk::Filter::eLinear;
-        vk::Filter MinFilter = vk::Filter::eLinear;
-        vk::SamplerMipmapMode MipmapMode = vk::SamplerMipmapMode::eLinear;
-        vk::SamplerAddressMode AddressModeU = vk::SamplerAddressMode::eRepeat;
-        vk::SamplerAddressMode AddressModeV = vk::SamplerAddressMode::eRepeat;
-        vk::SamplerAddressMode AddressModeW = vk::SamplerAddressMode::eRepeat;
+        Filter MagFilter = Filter::Linear;
+        Filter MinFilter = Filter::Linear;
+        MipmapMode MipmapMode = MipmapMode::Linear;
+        AddressMode AddressModeU = AddressMode::Repeat;
+        AddressMode AddressModeV = AddressMode::Repeat;
+        AddressMode AddressModeW = AddressMode::Repeat;
         f32 MipLodBias = 0;
         bool AnisotropyEnabled = true;
         f32 MaxAnisotropy = 8;
         bool CompareEnable = false;
-        vk::CompareOp CompareOp = vk::CompareOp::eAlways;
+        CompareOp CompareOp = CompareOp::Always;
         f32 MinLod = 0;
         f32 MaxLod = 1;
-        vk::BorderColor BorderColor = vk::BorderColor::eIntOpaqueBlack;
+        BorderColor BorderColor = BorderColor::OpaqueBlack;
         bool UnnormalizedCoordinates = false;
     };
 

@@ -53,8 +53,8 @@ protected:
             .Name = "Scene Image",
             .Extent = {sceneExtent.x, sceneExtent.y, 1},
             .Format = context.GetOutputFormat(),
-            .Usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled |
-            vk::ImageUsageFlagBits::eTransferSrc,
+            .Usage = Renderer::ImageUsage::ColorAttachment | Renderer::ImageUsage::Sampled |
+            Renderer::ImageUsage::TransferSrc,
         });
 
         m_SceneImageView = Renderer::ImageView::Create({
@@ -69,15 +69,15 @@ protected:
 
         m_Sampler = Renderer::Sampler::Create({
             .Name = "Sample Sampler",
-            .AddressModeU = vk::SamplerAddressMode::eClampToEdge,
-            .AddressModeV = vk::SamplerAddressMode::eClampToEdge,
-            .AddressModeW = vk::SamplerAddressMode::eClampToEdge,
+            .AddressModeU = Renderer::AddressMode::ClampToEdge,
+            .AddressModeV = Renderer::AddressMode::ClampToEdge,
+            .AddressModeW = Renderer::AddressMode::ClampToEdge,
         });
 
         m_VertexBuffer = Renderer::Buffer::Create({
             .Name = "Triangle Vertices",
             .Size = sizeof(k_Vertices),
-            .Usage = vk::BufferUsageFlagBits::eVertexBuffer,
+            .Usage = Renderer::BufferUsage::Vertex,
         });
         m_VertexBuffer->Upload({reinterpret_cast<const u8*>(k_Vertices), sizeof(k_Vertices)});
 
@@ -146,7 +146,7 @@ private:
         m_TriangleLayout = Renderer::PipelineLayout::Create({
             .Name = "Triangle Layout",
             .PushConstantRanges = {
-                {.Stages = vk::ShaderStageFlagBits::eVertex, .Offset = 0, .Size = sizeof(mat4)},
+                {.Stages = Renderer::ShaderStage::Vertex, .Offset = 0, .Size = sizeof(mat4)},
             },
         });
 
@@ -159,8 +159,8 @@ private:
             }),
             .PipelineLayout = m_TriangleLayout,
             .ShaderStages = {
-                {.Stage = vk::ShaderStageFlagBits::eVertex, .Module = *vertexShader.value()},
-                {.Stage = vk::ShaderStageFlagBits::eFragment, .Module = *fragmentShader.value()},
+                {.Stage = Renderer::ShaderStage::Vertex, .Module = *vertexShader.value()},
+                {.Stage = Renderer::ShaderStage::Fragment, .Module = *fragmentShader.value()},
             },
         });
     }
@@ -183,16 +183,16 @@ private:
             .Name = "Composite Set Layout",
             .Bindings = {
                 {
-                    .binding = 0,
-                    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                    .descriptorCount = 1,
-                    .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                    .Binding = 0,
+                    .Type = Renderer::DescriptorType::CombinedImageSampler,
+                    .Count = 1,
+                    .Stages = Renderer::ShaderStage::Fragment,
                 },
                 {
-                    .binding = 1,
-                    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                    .descriptorCount = 1,
-                    .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                    .Binding = 1,
+                    .Type = Renderer::DescriptorType::CombinedImageSampler,
+                    .Count = 1,
+                    .Stages = Renderer::ShaderStage::Fragment,
                 },
             },
         });
@@ -207,8 +207,8 @@ private:
             .ColorAttachments = {{.Format = GetRenderContext().GetSwapChain().GetFormat()}},
             .PipelineLayout = m_CompositeLayout,
             .ShaderStages = {
-                {.Stage = vk::ShaderStageFlagBits::eVertex, .Module = *vertexShader.value()},
-                {.Stage = vk::ShaderStageFlagBits::eFragment, .Module = *fragmentShader.value()},
+                {.Stage = Renderer::ShaderStage::Vertex, .Module = *vertexShader.value()},
+                {.Stage = Renderer::ShaderStage::Fragment, .Module = *fragmentShader.value()},
             },
         });
 
@@ -235,9 +235,9 @@ private:
             .ColorAttachments = {
                 {
                     .ImageView = m_SceneImageView,
-                    .LoadOp = vk::AttachmentLoadOp::eClear,
-                    .StoreOp = vk::AttachmentStoreOp::eStore,
-                    .ClearValue = {.color = vk::ClearColorValue{std::array{0.05f, 0.05f, 0.08f, 1.0f}}},
+                    .LoadOp = Renderer::LoadOp::Clear,
+                    .StoreOp = Renderer::StoreOp::Store,
+                    .ClearValue = Renderer::ClearColor{0.05f, 0.05f, 0.08f, 1.0f},
                 },
             },
         });
@@ -253,7 +253,7 @@ private:
 
         cmd.PushConstants({
             .PipelineLayout = *m_TriangleLayout,
-            .StageFlags = vk::ShaderStageFlagBits::eVertex,
+            .StageFlags = Renderer::ShaderStage::Vertex,
             .Offset = 0,
             .Size = sizeof(mat4),
             .Data = &transform,
@@ -322,9 +322,9 @@ private:
             .ColorAttachments = {
                 {
                     .ImageView = swapChain.GetCurrentImageView(),
-                    .LoadOp = vk::AttachmentLoadOp::eClear,
-                    .StoreOp = vk::AttachmentStoreOp::eStore,
-                    .ClearValue = {.color = vk::ClearColorValue{std::array{0.0f, 0.0f, 0.0f, 1.0f}}},
+                    .LoadOp = Renderer::LoadOp::Clear,
+                    .StoreOp = Renderer::StoreOp::Store,
+                    .ClearValue = Renderer::ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
                 },
             },
         });

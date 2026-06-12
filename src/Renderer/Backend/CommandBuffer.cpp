@@ -1,6 +1,7 @@
 #include <Veng/Renderer/Backend/CommandBuffer.h>
 
 #include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
 #include <Veng/Renderer/Backend/Utils.h>
 
 
@@ -36,9 +37,9 @@ namespace Veng::Renderer
             .imageView = info.ImageView->GetVkImageView(),
             .imageLayout = Utils::GetFormatAttachmentImageLayout(info.ImageView->GetFormat()),
             .resolveMode = vk::ResolveModeFlagBits::eNone,
-            .loadOp = info.LoadOp,
-            .storeOp = info.StoreOp,
-            .clearValue = info.ClearValue
+            .loadOp = ToVk(info.LoadOp),
+            .storeOp = ToVk(info.StoreOp),
+            .clearValue = ToVk(info.ClearValue)
         };
     }
 
@@ -69,7 +70,6 @@ namespace Veng::Renderer
         }
 
         const auto renderingInfo = vk::RenderingInfo{
-            .flags = info.Flags,
             .renderArea = {info.Offset.x, info.Offset.y, info.Extent.x, info.Extent.y},
             .layerCount = info.LayerCount,
             .viewMask = info.ViewMask,
@@ -89,7 +89,7 @@ namespace Veng::Renderer
 
     void CommandBuffer::PushConstants(const PushConstantsInfo& info) const
     {
-        m_VkCommandBuffer.pushConstants(info.PipelineLayout.GetVkPipelineLayout(), info.StageFlags, info.Offset,
+        m_VkCommandBuffer.pushConstants(info.PipelineLayout.GetVkPipelineLayout(), ToVk(info.StageFlags), info.Offset,
                                         info.Size, info.Data);
     }
 
@@ -103,7 +103,7 @@ namespace Veng::Renderer
             descriptorSets.push_back(descriptorSet->GetVkDescriptorSet());
         }
 
-        m_VkCommandBuffer.bindDescriptorSets(info.PipelineBindPoint, m_LastBoundPipelineLayout->GetVkPipelineLayout(),
+        m_VkCommandBuffer.bindDescriptorSets(ToVk(info.PipelineBindPoint), m_LastBoundPipelineLayout->GetVkPipelineLayout(),
                                              info.FirstSet, descriptorSets, nullptr);
     }
 
@@ -169,7 +169,7 @@ namespace Veng::Renderer
             .newLayout = newLayout,
             .image = barrier.Image.GetVkImage(),
             .subresourceRange = {
-                Utils::GetAspectFlags(barrier.Image.GetFormat()),
+                Utils::GetAspectFlags(ToVk(barrier.Image.GetFormat())),
                 barrier.BaseMipLevel,
                 barrier.MipLevelCount,
                 barrier.BaseLayer,
@@ -258,7 +258,7 @@ namespace Veng::Renderer
             .bufferRowLength = 0,
             .bufferImageHeight = 0,
             .imageSubresource = {
-                .aspectMask = Utils::GetAspectFlags(image.GetFormat()),
+                .aspectMask = Utils::GetAspectFlags(ToVk(image.GetFormat())),
                 .mipLevel = 0,
                 .baseArrayLayer = 0,
                 .layerCount = image.GetLayers()
@@ -284,7 +284,7 @@ namespace Veng::Renderer
             .bufferRowLength = 0,
             .bufferImageHeight = 0,
             .imageSubresource = {
-                .aspectMask = Utils::GetAspectFlags(image.GetFormat()),
+                .aspectMask = Utils::GetAspectFlags(ToVk(image.GetFormat())),
                 .mipLevel = 0,
                 .baseArrayLayer = 0,
                 .layerCount = 1
@@ -307,14 +307,14 @@ namespace Veng::Renderer
 
         vk::ImageBlit blitInfo{
             .srcSubresource = {
-                .aspectMask = Utils::GetAspectFlags(info.SourceImage.GetFormat()),
+                .aspectMask = Utils::GetAspectFlags(ToVk(info.SourceImage.GetFormat())),
                 .mipLevel = info.SourceMipLevel,
                 .baseArrayLayer = 0,
                 .layerCount = 1
             },
             .srcOffsets = {{sourceOffset, sourceExtent}},
             .dstSubresource = {
-                .aspectMask = Utils::GetAspectFlags(info.DestinationImage.GetFormat()),
+                .aspectMask = Utils::GetAspectFlags(ToVk(info.DestinationImage.GetFormat())),
                 .mipLevel = info.DestinationMipLevel,
                 .baseArrayLayer = 0,
                 .layerCount = 1

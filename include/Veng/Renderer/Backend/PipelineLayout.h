@@ -2,28 +2,25 @@
 
 #include <Veng/Renderer/Backend/DescriptorSetLayout.h>
 #include <Veng/Renderer/Backend/Shader.h>
+#include <Veng/Renderer/Types.h>
 
 namespace Veng::Renderer
 {
     struct PipelineShaderStageInfo
     {
-        vk::ShaderStageFlagBits Stage;
+        ShaderStage Stage;
         const Shader& Module;
     };
 
     struct PipelineAttachmentInfo
     {
-        vk::Format Format = vk::Format::eUndefined;
-        vk::PipelineColorBlendAttachmentState BlendMode = {
-            .blendEnable = VK_FALSE,
-            .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-            vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
-        };
+        Format Format = Format::Undefined;
+        BlendState Blend = BlendState::Opaque();
     };
 
     struct PipelineLayoutPushConstantRangeInfo
     {
-        vk::ShaderStageFlags Stages{};
+        ShaderStage Stages{};
         u32 Offset = 0;
         u32 Size;
     };
@@ -31,7 +28,6 @@ namespace Veng::Renderer
     struct PipelineLayoutInfo
     {
         string Name;
-        vk::PipelineLayoutCreateFlags Flags{};
         vector<Ref<DescriptorSetLayout>> DescriptorSetLayouts{};
         vector<PipelineLayoutPushConstantRangeInfo> PushConstantRanges{};
     };

@@ -1,5 +1,6 @@
 #include <Veng/Renderer/Backend/SwapChain.h>
 #include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
 
 namespace Veng::Renderer
 {
@@ -88,9 +89,9 @@ namespace Veng::Renderer
                                                     .Name = fmt::format("SwapChain Image [{}]", m_Images.size()),
                                                     .Extent = uvec3{m_Width, m_Height, 1u},
                                                     .MipLevels = 1,
-                                                    .Format = m_Format,
-                                                    .Type = vk::ImageType::e2D,
-                                                    .Usage = vk::ImageUsageFlagBits::eColorAttachment
+                                                    .Format = FromVk(m_Format),
+                                                    .Type = ImageType::Type2D,
+                                                    .Usage = ImageUsage::ColorAttachment
                                                 }));
 
             m_ImageViews.emplace_back(ImageView::Create(ImageViewInfo{
@@ -160,6 +161,11 @@ namespace Veng::Renderer
 
             return actualExtent;
         }
+    }
+
+    Format SwapChain::GetFormat() const
+    {
+        return FromVk(m_Format);
     }
 
     vk::Result SwapChain::AcquireNextImage(Semaphore& semaphore)

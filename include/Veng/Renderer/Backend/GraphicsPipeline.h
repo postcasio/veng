@@ -5,6 +5,7 @@
 #include <Veng/Renderer/Backend/Shader.h>
 #include <Veng/Renderer/Backend/VertexBufferLayout.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
+#include <Veng/Renderer/Types.h>
 
 namespace Veng::Renderer
 {
@@ -16,12 +17,12 @@ namespace Veng::Renderer
         Ref<PipelineLayout> PipelineLayout;
 
         vector<PipelineShaderStageInfo> ShaderStages = {};
-        vk::PolygonMode PolygonMode = vk::PolygonMode::eFill;
-        vk::CullModeFlags CullMode = vk::CullModeFlagBits::eBack;
+        PolygonMode PolygonMode = PolygonMode::Fill;
+        CullMode CullMode = CullMode::Back;
         bool DepthTestEnable = true;
         bool DepthWriteEnable = true;
-        vk::CompareOp DepthCompareOp = vk::CompareOp::eLessOrEqual;
-        vector<vk::PipelineColorBlendAttachmentState> ColorBlendAttachments = {};
+        CompareOp DepthCompareOp = CompareOp::LessOrEqual;
+        vector<BlendState> ColorBlendAttachments = {};
 
         Ref<RenderPass> RenderPass;
     };

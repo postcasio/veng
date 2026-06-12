@@ -4,6 +4,7 @@
 #include <Veng/Renderer/Backend/Shader.h>
 #include <Veng/Renderer/Backend/VertexBufferLayout.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
+#include <Veng/Renderer/Types.h>
 
 namespace Veng::Renderer
 {
@@ -12,18 +13,18 @@ namespace Veng::Renderer
         string Name;
 
         vector<PipelineAttachmentInfo> ColorAttachments = {};
-        vk::Format DepthAttachmentFormat = vk::Format::eUndefined;
-        vk::Format StencilAttachmentFormat = vk::Format::eUndefined;
+        Format DepthAttachmentFormat = Format::Undefined;
+        Format StencilAttachmentFormat = Format::Undefined;
 
         optional<VertexBufferLayout> VertexBufferLayout;
         Ref<PipelineLayout> PipelineLayout;
 
         vector<PipelineShaderStageInfo> ShaderStages = {};
-        vk::PolygonMode PolygonMode = vk::PolygonMode::eFill;
-        vk::CullModeFlags CullMode = vk::CullModeFlagBits::eNone;
+        PolygonMode PolygonMode = PolygonMode::Fill;
+        CullMode CullMode = CullMode::None;
         bool DepthTestEnable = false;
         bool DepthWriteEnable = false;
-        vk::CompareOp DepthCompareOp = vk::CompareOp::eLessOrEqual;
+        CompareOp DepthCompareOp = CompareOp::LessOrEqual;
     };
 
     class DynamicGraphicsPipeline

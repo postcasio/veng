@@ -2,6 +2,7 @@
 
 #include <Veng/Renderer/Backend/Context.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
 
 namespace Veng::Renderer
 {
@@ -23,14 +24,13 @@ namespace Veng::Renderer
         for (const auto& pushConstantRangeInfo : info.PushConstantRanges)
         {
             pushConstantRanges.push_back({
-                .stageFlags = pushConstantRangeInfo.Stages,
+                .stageFlags = ToVk(pushConstantRangeInfo.Stages),
                 .offset = pushConstantRangeInfo.Offset,
                 .size = pushConstantRangeInfo.Size
             });
         }
 
         const vk::PipelineLayoutCreateInfo pipelineLayoutCreateInfo{
-            .flags = info.Flags,
             .setLayoutCount = static_cast<u32>(descriptorSetLayouts.size()),
             .pSetLayouts = descriptorSetLayouts.data(),
             .pushConstantRangeCount = static_cast<u32>(pushConstantRanges.size()),

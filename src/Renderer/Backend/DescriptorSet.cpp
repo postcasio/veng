@@ -3,15 +3,16 @@
 #include <Veng/Assert.h>
 #include <Veng/Renderer/Backend/Context.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
 
 
 namespace Veng::Renderer
 {
     namespace
     {
-        const char* TypeName(vk::DescriptorType type)
+        const char* TypeName(DescriptorType type)
         {
-            return string_VkDescriptorType(static_cast<VkDescriptorType>(type));
+            return string_VkDescriptorType(static_cast<VkDescriptorType>(ToVk(type)));
         }
     }
 
@@ -37,8 +38,8 @@ namespace Veng::Renderer
 
     void DescriptorSet::Write(u32 binding, const Ref<ImageView>& view, const Ref<Sampler>& sampler)
     {
-        const vk::DescriptorType type = m_Layout->GetBindingType(binding);
-        VE_ASSERT(type == vk::DescriptorType::eCombinedImageSampler,
+        const DescriptorType type = m_Layout->GetBindingType(binding);
+        VE_ASSERT(type == DescriptorType::CombinedImageSampler,
                   "DescriptorSet '{}': binding {} is {}, not a combined image sampler",
                   m_Name, binding, TypeName(type));
 
@@ -53,7 +54,7 @@ namespace Veng::Renderer
             .dstBinding = binding,
             .dstArrayElement = 0,
             .descriptorCount = 1,
-            .descriptorType = type,
+            .descriptorType = ToVk(type),
             .pImageInfo = &imageInfo,
         };
 
@@ -67,12 +68,12 @@ namespace Veng::Renderer
 
     void DescriptorSet::Write(u32 binding, const Ref<ImageView>& view)
     {
-        const vk::DescriptorType type = m_Layout->GetBindingType(binding);
-        VE_ASSERT(type == vk::DescriptorType::eSampledImage || type == vk::DescriptorType::eStorageImage,
+        const DescriptorType type = m_Layout->GetBindingType(binding);
+        VE_ASSERT(type == DescriptorType::SampledImage || type == DescriptorType::StorageImage,
                   "DescriptorSet '{}': binding {} is {}, not a sampled or storage image",
                   m_Name, binding, TypeName(type));
 
-        const vk::ImageLayout imageLayout = type == vk::DescriptorType::eStorageImage
+        const vk::ImageLayout imageLayout = type == DescriptorType::StorageImage
                                                 ? vk::ImageLayout::eGeneral
                                                 : vk::ImageLayout::eShaderReadOnlyOptimal;
 
@@ -86,7 +87,7 @@ namespace Veng::Renderer
             .dstBinding = binding,
             .dstArrayElement = 0,
             .descriptorCount = 1,
-            .descriptorType = type,
+            .descriptorType = ToVk(type),
             .pImageInfo = &imageInfo,
         };
 
@@ -102,8 +103,8 @@ namespace Veng::Renderer
 
     void DescriptorSet::Write(u32 binding, const Ref<Buffer>& buffer, u64 offset, u64 range)
     {
-        const vk::DescriptorType type = m_Layout->GetBindingType(binding);
-        VE_ASSERT(type == vk::DescriptorType::eUniformBuffer || type == vk::DescriptorType::eStorageBuffer,
+        const DescriptorType type = m_Layout->GetBindingType(binding);
+        VE_ASSERT(type == DescriptorType::UniformBuffer || type == DescriptorType::StorageBuffer,
                   "DescriptorSet '{}': binding {} is {}, not a uniform or storage buffer",
                   m_Name, binding, TypeName(type));
 
@@ -118,7 +119,7 @@ namespace Veng::Renderer
             .dstBinding = binding,
             .dstArrayElement = 0,
             .descriptorCount = 1,
-            .descriptorType = type,
+            .descriptorType = ToVk(type),
             .pBufferInfo = &bufferInfo,
         };
 
@@ -130,8 +131,8 @@ namespace Veng::Renderer
     void DescriptorSet::WriteArray(u32 binding, std::span<const Ref<ImageView>> views,
                                    const Ref<Sampler>& sampler, u32 firstElement)
     {
-        const vk::DescriptorType type = m_Layout->GetBindingType(binding);
-        VE_ASSERT(type == vk::DescriptorType::eCombinedImageSampler,
+        const DescriptorType type = m_Layout->GetBindingType(binding);
+        VE_ASSERT(type == DescriptorType::CombinedImageSampler,
                   "DescriptorSet '{}': binding {} is {}, not a combined image sampler",
                   m_Name, binding, TypeName(type));
 
@@ -157,7 +158,7 @@ namespace Veng::Renderer
             .dstBinding = binding,
             .dstArrayElement = firstElement,
             .descriptorCount = static_cast<u32>(imageInfos.size()),
-            .descriptorType = type,
+            .descriptorType = ToVk(type),
             .pImageInfo = imageInfos.data(),
         };
 

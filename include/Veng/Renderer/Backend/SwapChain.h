@@ -39,7 +39,10 @@ namespace Veng::Renderer
         [[nodiscard]] u32 GetMaxImageCount() const { return m_MaxImageCount; }
         [[nodiscard]] u32 GetImageCount() const { return m_ImageCount; }
         [[nodiscard]] u32 GetCurrentImageIndex() const { return m_CurrentImageIndex; }
-        [[nodiscard]] vk::Format GetFormat() const { return m_Format; }
+        // Engine format of the presentable images. (The vk::Format is internal;
+        // GetVkFormat exposes it for backend code.)
+        [[nodiscard]] Format GetFormat() const;
+        [[nodiscard]] vk::Format GetVkFormat() const { return m_Format; }
 
         [[nodiscard]] vk::Result AcquireNextImage(Semaphore& semaphore);
 

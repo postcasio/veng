@@ -10,6 +10,7 @@
 
 #include <Veng/Renderer/Backend/SwapChain.h>
 #include <Veng/Renderer/Backend/SwapChainSupport.h>
+#include <Veng/Renderer/Types.h>
 #include <Veng/Window.h>
 
 namespace Veng::Renderer
@@ -33,8 +34,8 @@ namespace Veng::Renderer
         // Fonts live here until ImGui is extracted into its own module.
         optional<path> DefaultFontPath;
         optional<path> IconFontPath;
-        vk::Format OutputFormat = vk::Format::eR16G16B16A16Sfloat;
-        vk::Format DepthFormat = vk::Format::eD32Sfloat;
+        Format OutputFormat = Format::RGBA16Sfloat;
+        Format DepthFormat = Format::D32Sfloat;
     };
 
     class Context
@@ -69,8 +70,8 @@ namespace Veng::Renderer
         void SubmitFrame(const SynchronizationFrame& frame) const;
         void PresentFrame(const SynchronizationFrame& frame);
         void SubmitImmediateCommands(CommandBuffer& commandBuffer) const;
-        [[nodiscard]] vk::Format GetOutputFormat() const { return m_OutputFormat; }
-        [[nodiscard]] vk::Format GetDepthFormat() const { return m_DepthFormat; }
+        [[nodiscard]] Format GetOutputFormat() const { return m_OutputFormat; }
+        [[nodiscard]] Format GetDepthFormat() const { return m_DepthFormat; }
 
         static vk::PresentModeKHR GetPresentMode(
             const vector<vk::PresentModeKHR>& availablePresentModes);
@@ -119,8 +120,8 @@ namespace Veng::Renderer
 
         uvec2 m_InternalRenderExtent;
         uvec2 m_RenderExtent;
-        vk::Format m_OutputFormat = vk::Format::eR16G16B16A16Sfloat;
-        vk::Format m_DepthFormat = vk::Format::eD32Sfloat;
+        Format m_OutputFormat = Format::RGBA16Sfloat;
+        Format m_DepthFormat = Format::D32Sfloat;
         bool m_ImGuiRenderedThisFrame = true;
 
         vk::Instance m_Instance;

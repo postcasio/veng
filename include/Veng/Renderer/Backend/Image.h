@@ -4,6 +4,7 @@
 #include <Veng/Renderer/Backend/DescriptorSet.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Backend/Sampler.h>
+#include <Veng/Renderer/Types.h>
 
 namespace Veng::Renderer
 {
@@ -15,9 +16,9 @@ namespace Veng::Renderer
         uvec3 Extent = {1, 1, 1};
         u32 MipLevels = 1;
         u32 Layers = 1;
-        vk::Format Format;
-        vk::ImageType Type = vk::ImageType::e2D;
-        vk::ImageUsageFlags Usage;
+        Format Format;
+        ImageType Type = ImageType::Type2D;
+        ImageUsage Usage;
     };
 
     class Image
@@ -40,8 +41,8 @@ namespace Veng::Renderer
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] vk::Image GetVkImage() const { return m_VkImage; }
-        [[nodiscard]] vk::Format GetFormat() const { return m_Format; }
-        [[nodiscard]] vk::ImageUsageFlags GetUsage() const { return m_Usage; }
+        [[nodiscard]] Format GetFormat() const { return m_Format; }
+        [[nodiscard]] ImageUsage GetUsage() const { return m_Usage; }
         [[nodiscard]] uvec3 GetExtent() const { return m_Extent; }
         [[nodiscard]] u32 GetWidth() const { return m_Extent.x; }
         [[nodiscard]] u32 GetHeight() const { return m_Extent.y; }
@@ -49,7 +50,7 @@ namespace Veng::Renderer
         [[nodiscard]] u32 GetMipLevels() const { return m_MipLevels; }
         [[nodiscard]] u32 GetLayers() const { return m_Layers; }
         [[nodiscard]] bool IsManaged() const { return m_Managed; }
-        [[nodiscard]] vk::ImageType GetType() const { return m_Type; }
+        [[nodiscard]] ImageType GetType() const { return m_Type; }
 
         // Layout tracking is per layer * per mip.
         void SetLayout(const vk::ImageLayout layout) { for (auto& l : m_Layouts) l = layout; }
@@ -86,9 +87,9 @@ namespace Veng::Renderer
         u32 m_MipLevels;
         u32 m_Layers;
         vector<vk::ImageLayout> m_Layouts{};
-        vk::Format m_Format;
-        vk::ImageType m_Type;
-        vk::ImageUsageFlags m_Usage;
+        Format m_Format;
+        ImageType m_Type;
+        ImageUsage m_Usage;
         bool m_Managed;
 
         vk::Image m_VkImage;

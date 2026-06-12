@@ -2,10 +2,14 @@
 
 #include <Veng/Renderer/Backend/Context.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
 #include <Veng/Renderer/Backend/Utils.h>
 
 namespace Veng::Renderer
 {
+    // Defined in VertexBufferLayout.cpp; not part of the public header.
+    vk::Format VertexElementDataTypeToVulkanFormat(VertexElementDataType type);
+
     DynamicGraphicsPipeline::DynamicGraphicsPipeline(const DynamicPipelineInfo& info) : m_Name(info.Name),
         m_PipelineLayout(info.PipelineLayout)
     {
@@ -14,15 +18,15 @@ namespace Veng::Renderer
 
         for (auto& attachment : info.ColorAttachments)
         {
-            colorAttachmentFormats.push_back(attachment.Format);
+            colorAttachmentFormats.push_back(ToVk(attachment.Format));
         }
 
         const vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo = {
             .viewMask = 0,
             .colorAttachmentCount = static_cast<u32>(colorAttachmentFormats.size()),
             .pColorAttachmentFormats = colorAttachmentFormats.data(),
-            .depthAttachmentFormat = info.DepthAttachmentFormat,
-            .stencilAttachmentFormat = info.StencilAttachmentFormat,
+            .depthAttachmentFormat = ToVk(info.DepthAttachmentFormat),
+            .stencilAttachmentFormat = ToVk(info.StencilAttachmentFormat),
         };
 
         vector<vk::PipelineShaderStageCreateInfo> shaderStages;
@@ -31,7 +35,7 @@ namespace Veng::Renderer
         for (const auto& shaderStage : info.ShaderStages)
         {
             shaderStages.push_back({
-                .stage = shaderStage.Stage,
+                .stage = ToVkBit(shaderStage.Stage),
                 .module = shaderStage.Module.GetVkModule(),
                 .pName = shaderStage.Module.GetEntryPoint().c_str()
             });
@@ -101,8 +105,8 @@ namespace Veng::Renderer
         vk::PipelineRasterizationStateCreateInfo rasterizerState = {
             .depthClampEnable = vk::False,
             .rasterizerDiscardEnable = vk::False,
-            .polygonMode = info.PolygonMode,
-            .cullMode = info.CullMode,
+            .polygonMode = ToVk(info.PolygonMode),
+            .cullMode = ToVk(info.CullMode),
             .frontFace = vk::FrontFace::eCounterClockwise,
             .depthBiasEnable = vk::False,
             .lineWidth = 1.0f,
@@ -116,7 +120,7 @@ namespace Veng::Renderer
         vk::PipelineDepthStencilStateCreateInfo depthStencilState = {
             .depthTestEnable = VK_BOOL(info.DepthTestEnable),
             .depthWriteEnable = VK_BOOL(info.DepthWriteEnable),
-            .depthCompareOp = info.DepthCompareOp,
+            .depthCompareOp = ToVk(info.DepthCompareOp),
             .depthBoundsTestEnable = vk::False,
             .stencilTestEnable = vk::False,
             .front = {},
@@ -130,7 +134,7 @@ namespace Veng::Renderer
 
         for (auto& attachment : info.ColorAttachments)
         {
-            blendAttachments.push_back(attachment.BlendMode);
+            blendAttachments.push_back(ToVk(attachment.Blend));
         }
 
         vk::PipelineColorBlendStateCreateInfo colorBlendState = {

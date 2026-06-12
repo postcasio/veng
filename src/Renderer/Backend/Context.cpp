@@ -4,6 +4,7 @@
 #include <set>
 
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
 
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
@@ -694,10 +695,9 @@ namespace Veng::Renderer
             .Extent = {m_RenderExtent.x, m_RenderExtent.y, 1},
             .MipLevels = 1,
             .Layers = 1,
-            .Format = vk::Format::eR16G16B16A16Sfloat,
-            .Type = vk::ImageType::e2D,
-            .Usage = vk::ImageUsageFlagBits::eColorAttachment |
-            vk::ImageUsageFlagBits::eSampled
+            .Format = Format::RGBA16Sfloat,
+            .Type = ImageType::Type2D,
+            .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled
         });
 
         m_ImGuiImageView = ImageView::Create({

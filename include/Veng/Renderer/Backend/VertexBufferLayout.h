@@ -1,7 +1,6 @@
 #pragma once
 
 #include <Veng/Veng.h>
-#include <Veng/Renderer/Backend/Vulkan.h>
 
 namespace Veng::Renderer
 {
@@ -28,8 +27,6 @@ namespace Veng::Renderer
 
         VertexBufferElement(VertexElementDataType type, const std::string& name);
     };
-
-    vk::Format VertexElementDataTypeToVulkanFormat(VertexElementDataType type);
 
     class VertexBufferLayout
     {

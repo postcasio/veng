@@ -25,7 +25,7 @@ Decisions baked into these plans:
 | 03 | [Error handling & logging](03-error-handling-logging.md) | done (2026-06-12) |
 | 04 | [Deferred destruction queue](04-deferred-destruction.md) | done (2026-06-12) |
 | 05 | [Descriptor set typed writers](05-descriptor-typed-writers.md) | done (2026-06-12) |
-| 06 | [Vocabulary enums (Vulkan + GLFW + nfd)](06-vocabulary-enums.md) | not started |
+| 06 | [Vocabulary enums (Vulkan + GLFW + nfd)](06-vocabulary-enums.md) | done (2026-06-12) |
 | 07 | [Public/backend header split](07-public-backend-header-split.md) | not started |
 | 08 | [Render graph (automatic barriers)](08-render-graph.md) | not started |
 | 09 | [ImGui as an optional module](09-imgui-module.md) | not started |

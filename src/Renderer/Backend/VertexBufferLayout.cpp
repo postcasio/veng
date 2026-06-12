@@ -1,9 +1,14 @@
 #include <Veng/Renderer/Backend/VertexBufferLayout.h>
 
+#include <Veng/Assert.h>
+#include <Veng/Renderer/Backend/Vulkan.h>
+
 #include <utility>
 
 namespace Veng::Renderer
 {
+    // Declared here (not in the public header) — only used internally by the
+    // pipeline .cpp files via the forward declaration below.
     vk::Format VertexElementDataTypeToVulkanFormat(const VertexElementDataType type)
     {
         switch (type)

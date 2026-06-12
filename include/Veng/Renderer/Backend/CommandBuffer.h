@@ -10,6 +10,7 @@
 #include <Veng/Renderer/Backend/RenderPass.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Backend/ImageView.h>
+#include <Veng/Renderer/Types.h>
 
 
 namespace Veng::Renderer
@@ -17,7 +18,7 @@ namespace Veng::Renderer
     struct PushConstantsInfo
     {
         PipelineLayout& PipelineLayout;
-        vk::ShaderStageFlags StageFlags;
+        ShaderStage StageFlags;
         u32 Offset;
         u32 Size;
         const void* Data;
@@ -26,14 +27,13 @@ namespace Veng::Renderer
     struct RenderingAttachmentInfo
     {
         Ref<ImageView> ImageView;
-        vk::AttachmentLoadOp LoadOp;
-        vk::AttachmentStoreOp StoreOp;
-        vk::ClearValue ClearValue;
+        LoadOp LoadOp;
+        StoreOp StoreOp;
+        ClearValue ClearValue;
     };
 
     struct RenderingInfo
     {
-        vk::RenderingFlags Flags{};
         ivec2 Offset = {0, 0};
         uvec2 Extent;
         u32 LayerCount = 1;
@@ -47,7 +47,7 @@ namespace Veng::Renderer
     {
         vector<Ref<DescriptorSet>> Sets;
         u32 FirstSet = 0;
-        vk::PipelineBindPoint PipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+        PipelineBindPoint PipelineBindPoint = PipelineBindPoint::Graphics;
     };
 
     struct BlitImageInfo

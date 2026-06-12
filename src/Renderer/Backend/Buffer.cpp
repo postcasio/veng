@@ -2,6 +2,7 @@
 
 #include <Veng/Renderer/Backend/Context.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
 
 namespace Veng::Renderer
 {
@@ -10,7 +11,7 @@ namespace Veng::Renderer
         const VkBufferCreateInfo bufferCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .size = m_Size,
-            .usage = static_cast<VkBufferUsageFlags>(info.Usage),
+            .usage = static_cast<VkBufferUsageFlags>(ToVk(info.Usage)),
             .sharingMode = VK_SHARING_MODE_EXCLUSIVE
         };
 

@@ -3,6 +3,7 @@
 #include <Veng/Renderer/Backend/Buffer.h>
 #include <Veng/Renderer/Backend/Context.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
 
 #include <vulkan/vulkan_format_traits.hpp>
 
@@ -46,14 +47,14 @@ namespace Veng::Renderer
         VkImageCreateInfo imageCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
             .flags = static_cast<VkImageCreateFlags>(flags),
-            .imageType = static_cast<VkImageType>(m_Type),
-            .format = static_cast<VkFormat>(m_Format),
+            .imageType = static_cast<VkImageType>(ToVk(m_Type)),
+            .format = static_cast<VkFormat>(ToVk(m_Format)),
             .extent = {m_Extent.x, m_Extent.y, m_Extent.z},
             .mipLevels = m_MipLevels,
             .arrayLayers = m_Layers,
             .samples = static_cast<VkSampleCountFlagBits>(vk::SampleCountFlagBits::e1),
             .tiling = static_cast<VkImageTiling>(vk::ImageTiling::eOptimal),
-            .usage = static_cast<VkImageUsageFlags>(m_Usage),
+            .usage = static_cast<VkImageUsageFlags>(ToVk(m_Usage)),
             .sharingMode = static_cast<VkSharingMode>(vk::SharingMode::eExclusive),
             .initialLayout = static_cast<VkImageLayout>(vk::ImageLayout::eUndefined)
         };
@@ -141,7 +142,7 @@ namespace Veng::Renderer
         auto stagingBuffer = Buffer::Create({
             .Name = m_Name + " (Upload)",
             .Size = span.size(),
-            .Usage = vk::BufferUsageFlagBits::eTransferSrc,
+            .Usage = BufferUsage::TransferSrc,
         });
 
         stagingBuffer->Upload(span);
@@ -181,8 +182,8 @@ namespace Veng::Renderer
     {
         auto buffer = Buffer::Create({
             .Name = m_Name + " (Download)",
-            .Size = m_Extent.x * m_Extent.y * vk::blockSize(m_Format),
-            .Usage = vk::BufferUsageFlagBits::eTransferDst,
+            .Size = m_Extent.x * m_Extent.y * vk::blockSize(ToVk(m_Format)),
+            .Usage = BufferUsage::TransferDst,
         });
 
         auto layout = GetLayout(0, 0);

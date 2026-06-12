@@ -2,13 +2,22 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
+#include <Veng/Renderer/Types.h>
 
 namespace Veng::Renderer
 {
+    struct DescriptorBinding
+    {
+        u32 Binding = 0;
+        DescriptorType Type{};
+        u32 Count = 1;
+        ShaderStage Stages{};
+    };
+
     struct DescriptorSetLayoutInfo
     {
         string Name;
-        vector<vk::DescriptorSetLayoutBinding> Bindings;
+        vector<DescriptorBinding> Bindings;
     };
 
     class DescriptorSetLayout
@@ -28,17 +37,17 @@ namespace Veng::Renderer
         }
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
-        [[nodiscard]] const vector<vk::DescriptorSetLayoutBinding>& GetBindings() const { return m_Bindings; }
+        [[nodiscard]] const vector<DescriptorBinding>& GetBindings() const { return m_Bindings; }
 
         // Look up a binding by its binding *number* (sparse-safe — works for
         // layouts like 0, 2, 5). Both are fatal if the binding does not exist.
-        [[nodiscard]] vk::DescriptorType GetBindingType(u32 binding) const;
+        [[nodiscard]] DescriptorType GetBindingType(u32 binding) const;
         [[nodiscard]] u32 GetBindingCount(u32 binding) const; // descriptor count (array size)
 
     private:
         string m_Name;
-        vector<vk::DescriptorSetLayoutBinding> m_Bindings;
-        map<u32, vk::DescriptorSetLayoutBinding> m_BindingsByNumber;
+        vector<DescriptorBinding> m_Bindings;
+        map<u32, DescriptorBinding> m_BindingsByNumber;
         vk::DescriptorSetLayout m_VkDescriptorSetLayout;
     };
 }

@@ -2,21 +2,22 @@
 
 #include <Veng/Renderer/Backend/Context.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
 #include <Veng/Renderer/Backend/Utils.h>
 
 namespace Veng::Renderer
 {
-    ImageView::ImageView(const ImageViewInfo& info) : m_Name(info.Name), m_Format(info.Image->GetFormat()),
+    ImageView::ImageView(const ImageViewInfo& info) : m_Name(info.Name), m_Format(ToVk(info.Image->GetFormat())),
                                                       m_Image(info.Image)
     {
         const vk::ImageViewCreateInfo createInfo{
             .flags = info.Flags,
             .image = info.Image->GetVkImage(),
             .viewType = info.ViewType,
-            .format = info.Image->GetFormat(),
+            .format = ToVk(info.Image->GetFormat()),
             .components = info.Components,
             .subresourceRange = {
-                .aspectMask = Utils::GetAspectFlags(info.Image->GetFormat()),
+                .aspectMask = Utils::GetAspectFlags(ToVk(info.Image->GetFormat())),
                 .baseMipLevel = info.BaseMipLevel,
                 .levelCount = info.MipLevels,
                 .baseArrayLayer = info.BaseArrayLayer,

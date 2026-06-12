@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 
 namespace Veng::Renderer
@@ -11,7 +12,7 @@ namespace Veng::Renderer
     {
         string Name;
         u64 Size;
-        vk::BufferUsageFlags Usage;
+        BufferUsage Usage;
     };
 
     class Buffer
