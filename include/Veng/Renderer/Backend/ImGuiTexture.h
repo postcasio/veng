@@ -4,15 +4,15 @@
 
 namespace Veng::Renderer
 {
-    class ImGUITexture
+    class ImGuiTexture
     {
     public:
-        ImGUITexture(VkDescriptorSet descriptorSet);
-        ~ImGUITexture();
+        ImGuiTexture(VkDescriptorSet descriptorSet);
+        ~ImGuiTexture();
 
-        static Ref<ImGUITexture> Create(VkDescriptorSet descriptorSet)
+        static Ref<ImGuiTexture> Create(VkDescriptorSet descriptorSet)
         {
-            return CreateRef<ImGUITexture>(descriptorSet);
+            return CreateRef<ImGuiTexture>(descriptorSet);
         }
 
         [[nodiscard]] VkDescriptorSet GetDescriptorSet() const { return m_DescriptorSet; }

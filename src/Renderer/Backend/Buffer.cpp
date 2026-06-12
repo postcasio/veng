@@ -40,7 +40,7 @@ namespace Veng::Renderer
         vmaDestroyBuffer(Context::Instance().GetAllocator(), m_VkBuffer, m_VmaAllocation);
     }
 
-    void Buffer::Upload(const std::span<u8> data) const
+    void Buffer::Upload(const std::span<const u8> data) const
     {
         VK_RAW_ASSERT(
             vmaCopyMemoryToAllocation(Context::Instance().GetAllocator(), data.data(), m_VmaAllocation, 0, data.size()),

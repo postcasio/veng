@@ -35,7 +35,7 @@ namespace Veng::Renderer
         ~ImageView();
         explicit ImageView(const ImageViewInfo& info);
 
-        [[nodiscard]] string GetName() const { return m_Name; }
+        [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] vk::ImageView GetVkImageView() const { return m_VkImageView; }
         [[nodiscard]] vk::Format GetFormat() const { return m_Format; }
         [[nodiscard]] Ref<Image> GetImage() const { return m_Image; }

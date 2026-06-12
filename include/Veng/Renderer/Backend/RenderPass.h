@@ -22,7 +22,7 @@ namespace Veng::Renderer
         explicit RenderPass(const RenderPassInfo& info);
         ~RenderPass();
 
-        [[nodiscard]] string GetName() const { return m_Name; }
+        [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] vk::RenderPass GetVkRenderPass() const { return m_VkRenderPass; }
         [[nodiscard]] const vector<vk::AttachmentDescription>& GetAttachments() const { return m_Attachments; }
 

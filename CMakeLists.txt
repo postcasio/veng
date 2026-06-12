@@ -2,8 +2,7 @@ cmake_minimum_required(VERSION 4.1)
 project(veng VERSION 0.1.0 LANGUAGES CXX)
 
 # Note: not REQUIRED — AppleClang doesn't advertise the C++26 dialect flag,
-# so the standard decays to the newest the compiler supports (matches the
-# behavior ApolloSim was built with).
+# so the standard decays to the newest the compiler supports.
 set(CMAKE_CXX_STANDARD 26)
 
 # ImGui (and the rest of the public API) is exported from the shared library;
@@ -50,7 +49,8 @@ set(VMA_ENABLE_INSTALL ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
         VulkanMemoryAllocator
         GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
-        GIT_TAG master
+        GIT_TAG v3.4.0
+        GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(VulkanMemoryAllocator)
 
@@ -59,7 +59,7 @@ set(NFD_INSTALL ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
         nativefiledialog_extended
         GIT_REPOSITORY https://github.com/btzy/nativefiledialog-extended.git
-        GIT_TAG master
+        GIT_TAG v1.3.0
         GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(nativefiledialog_extended)
@@ -74,12 +74,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tinyexr)
 
-# stb (header-only)
+# stb (header-only); no release tags, pinned to a specific commit
 FetchContent_Declare(
         stb
         GIT_REPOSITORY https://github.com/nothings/stb.git
-        GIT_TAG master
-        GIT_SHALLOW TRUE
+        GIT_TAG 31c1ad37456438565541f4919958214b6e762fb4
 )
 FetchContent_MakeAvailable(stb)
 
@@ -99,11 +98,12 @@ add_library(imgui_headers INTERFACE)
 target_include_directories(imgui_headers INTERFACE ${imgui_SOURCE_DIR})
 set(IMNODES_IMGUI_TARGET_NAME imgui_headers)
 
+# Latest tag (v0.5, 2022) is far behind master (38 commits, as of 2026-06);
+# pinned to a master commit instead.
 FetchContent_Declare(
         imnodes
         GIT_REPOSITORY https://github.com/Nelarius/imnodes.git
-        GIT_TAG master
-        GIT_SHALLOW TRUE
+        GIT_TAG eb36902c892548ef94f88f51ad7e7c9c7058a71c
         EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(imnodes)
@@ -133,7 +133,7 @@ add_library(veng SHARED
         src/Renderer/Backend/GraphicsPipeline.cpp
         src/Renderer/Backend/Image.cpp
         src/Renderer/Backend/ImageView.cpp
-        src/Renderer/Backend/ImGUITexture.cpp
+        src/Renderer/Backend/ImGuiTexture.cpp
         src/Renderer/Backend/PipelineLayout.cpp
         src/Renderer/Backend/RenderPass.cpp
         src/Renderer/Backend/Sampler.cpp
@@ -183,11 +183,6 @@ target_link_libraries(veng PUBLIC
 )
 
 target_link_libraries(veng PRIVATE ZLIB::ZLIB)
-
-# macOS: ensure Homebrew lib dir is on the search path
-if (APPLE)
-    target_link_directories(veng PUBLIC /opt/homebrew/lib)
-endif ()
 
 # ---------------------------------------------------------------------------
 # Install / export

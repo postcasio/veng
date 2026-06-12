@@ -5,7 +5,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Renderer/Backend/CommandPool.h>
 #include <Veng/Renderer/Backend/DescriptorPool.h>
-#include <Veng/Renderer/Backend/ImGUITexture.h>
+#include <Veng/Renderer/Backend/ImGuiTexture.h>
 #include <Veng/Renderer/Backend/SynchronizationFrame.h>
 
 #include <Veng/Renderer/Backend/SwapChain.h>
@@ -33,6 +33,8 @@ namespace Veng::Renderer
         WindowInfo WindowInfo;
         optional<path> DefaultFontPath;
         optional<path> IconFontPath;
+        vk::Format OutputFormat = vk::Format::eR16G16B16A16Sfloat;
+        vk::Format DepthFormat = vk::Format::eD32Sfloat;
     };
 
     class Context
@@ -65,8 +67,8 @@ namespace Veng::Renderer
         void SubmitFrame(const SynchronizationFrame& frame) const;
         void PresentFrame(const SynchronizationFrame& frame);
         void SubmitImmediateCommands(CommandBuffer& commandBuffer) const;
-        vk::Format GetOutputFormat() { return vk::Format::eR16G16B16A16Sfloat; }
-        vk::Format GetDepthFormat() { return vk::Format::eD32Sfloat; }
+        [[nodiscard]] vk::Format GetOutputFormat() const { return m_OutputFormat; }
+        [[nodiscard]] vk::Format GetDepthFormat() const { return m_DepthFormat; }
 
         static vk::PresentModeKHR GetPresentMode(
             const vector<vk::PresentModeKHR>& availablePresentModes);
@@ -87,8 +89,8 @@ namespace Veng::Renderer
         void WaitIdle() const;
         void RenderImGui(CommandBuffer& commandBuffer);
         void BeginFrame();
-        Ref<ImGUITexture> CreateImGUITexture(const Sampler& sampler, const ImageView& imageView);
-        void DestroyImGUITexture(const ImGUITexture& texture);
+        Ref<ImGuiTexture> CreateImGuiTexture(const Sampler& sampler, const ImageView& imageView);
+        void DestroyImGuiTexture(const ImGuiTexture& texture);
 
     private:
         static inline Context* s_Instance = nullptr;
@@ -98,6 +100,8 @@ namespace Veng::Renderer
 
         uvec2 m_InternalRenderExtent;
         uvec2 m_RenderExtent;
+        vk::Format m_OutputFormat = vk::Format::eR16G16B16A16Sfloat;
+        vk::Format m_DepthFormat = vk::Format::eD32Sfloat;
         bool m_ImGuiRenderedThisFrame = true;
 
         vk::Instance m_Instance;

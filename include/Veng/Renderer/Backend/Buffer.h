@@ -25,12 +25,12 @@ namespace Veng::Renderer
         explicit Buffer(const BufferInfo& info);
         ~Buffer();
 
-        void Upload(std::span<u8> data) const;
+        void Upload(std::span<const u8> data) const;
         [[nodiscard]] vector<u8> Download() const;
 
         [[nodiscard]] vk::Buffer GetVkBuffer() const { return m_VkBuffer; }
         [[nodiscard]] VmaAllocation GetVmaAllocation() const { return m_VmaAllocation; }
-        [[nodiscard]] string GetName() const { return m_Name; }
+        [[nodiscard]] const string& GetName() const { return m_Name; }
 
     private:
         string m_Name;

@@ -65,7 +65,7 @@ namespace Veng::Renderer
     class CommandBuffer
     {
     public:
-        static Ref<CommandBuffer> Create(vk::CommandBufferLevel level = {})
+        static Ref<CommandBuffer> Create(vk::CommandBufferLevel level = vk::CommandBufferLevel::ePrimary)
         {
             return CreateRef<CommandBuffer>(level);
         }

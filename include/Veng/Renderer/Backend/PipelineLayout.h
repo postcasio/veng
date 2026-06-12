@@ -8,7 +8,7 @@ namespace Veng::Renderer
     struct PipelineShaderStageInfo
     {
         vk::ShaderStageFlagBits Stage;
-        Shader* Module;
+        const Shader& Module;
     };
 
     struct PipelineAttachmentInfo
@@ -48,7 +48,7 @@ namespace Veng::Renderer
         ~PipelineLayout();
 
         [[nodiscard]] vk::PipelineLayout GetVkPipelineLayout() const { return m_VkPipelineLayout; }
-        [[nodiscard]] string GetName() const { return m_Name; }
+        [[nodiscard]] const string& GetName() const { return m_Name; }
 
         [[nodiscard]] const vector<PipelineLayoutPushConstantRangeInfo>& GetPushConstantRanges() const
         {

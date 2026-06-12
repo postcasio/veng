@@ -32,8 +32,8 @@ namespace Veng::Renderer
         {
             shaderStages.push_back({
                 .stage = shaderStage.Stage,
-                .module = shaderStage.Module->GetVkModule(),
-                .pName = shaderStage.Module->GetEntryPoint().c_str()
+                .module = shaderStage.Module.GetVkModule(),
+                .pName = shaderStage.Module.GetEntryPoint().c_str()
             });
         }
 

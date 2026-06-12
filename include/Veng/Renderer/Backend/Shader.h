@@ -15,7 +15,7 @@ namespace Veng::Renderer
     struct ShaderBinaryInfo
     {
         string Name;
-        std::span<u8> Binary;
+        std::span<const u8> Binary;
         string EntryPoint = "main";
     };
 

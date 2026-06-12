@@ -37,7 +37,7 @@ namespace Veng::Renderer
         explicit Sampler(const SamplerInfo& info);
         ~Sampler();
 
-        [[nodiscard]] string GetName() const { return m_Name; }
+        [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] vk::Sampler GetVkSampler() const { return m_VkSampler; }
 
     private:

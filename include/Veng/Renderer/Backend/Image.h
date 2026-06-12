@@ -38,7 +38,7 @@ namespace Veng::Renderer
 
         ~Image();
 
-        [[nodiscard]] string GetName() const { return m_Name; }
+        [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] vk::Image GetVkImage() const { return m_VkImage; }
         [[nodiscard]] vk::Format GetFormat() const { return m_Format; }
         [[nodiscard]] vk::ImageUsageFlags GetUsage() const { return m_Usage; }
@@ -72,7 +72,7 @@ namespace Veng::Renderer
         }
 
         void GenerateMipmaps(CommandBuffer& commandBuffer);
-        void Upload(std::span<u8> span);
+        void Upload(std::span<const u8> span);
         [[nodiscard]] vector<u8> Download();
 
     private:

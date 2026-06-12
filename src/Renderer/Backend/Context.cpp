@@ -8,7 +8,7 @@
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
 
-#include <Veng/Renderer/Backend/ImGUITexture.h>
+#include <Veng/Renderer/Backend/ImGuiTexture.h>
 #include <Veng/Vendor/IconsMaterialDesign.h>
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
@@ -192,6 +192,8 @@ namespace Veng::Renderer
         Log::Info("Setting initial render extents:");
         m_RenderExtent = m_SwapChain->GetExtent();
         m_InternalRenderExtent = info.InternalRenderExtent;
+        m_OutputFormat = info.OutputFormat;
+        m_DepthFormat = info.DepthFormat;
         Log::Info("  Internal: {0}x{1}", m_InternalRenderExtent.x, m_InternalRenderExtent.y);
         Log::Info("  Output: {0}x{1}", m_RenderExtent.x, m_RenderExtent.y);
 
@@ -221,7 +223,7 @@ namespace Veng::Renderer
         });
 
         m_ImGuiDescriptorPool = DescriptorPool::Create({
-            .Name = "ImGUI Descriptor Pool",
+            .Name = "ImGui Descriptor Pool",
             .MaxSets = 100000,
             .PoolSizes = {
                 {
@@ -241,7 +243,7 @@ namespace Veng::Renderer
 
 
         m_ImGuiRenderPass = RenderPass::Create({
-            .Name = "ImGUI RenderPass",
+            .Name = "ImGui RenderPass",
             .Attachments = {
                 {
                     .format = vk::Format::eR16G16B16A16Sfloat,
@@ -523,9 +525,9 @@ namespace Veng::Renderer
         ImGui::NewFrame();
     }
 
-    Ref<ImGUITexture> Context::CreateImGUITexture(const Sampler& sampler, const ImageView& imageView)
+    Ref<ImGuiTexture> Context::CreateImGuiTexture(const Sampler& sampler, const ImageView& imageView)
     {
-        return ImGUITexture::Create(
+        return ImGuiTexture::Create(
             ImGui_ImplVulkan_AddTexture(
                 sampler.GetVkSampler(),
                 imageView.GetVkImageView(),
@@ -534,7 +536,7 @@ namespace Veng::Renderer
         );
     }
 
-    void Context::DestroyImGUITexture(const ImGUITexture& texture)
+    void Context::DestroyImGuiTexture(const ImGuiTexture& texture)
     {
         ImGui_ImplVulkan_RemoveTexture(texture.GetDescriptorSet());
     }
@@ -691,7 +693,7 @@ namespace Veng::Renderer
         m_ImGuiFramebuffers.resize(m_SwapChain->GetImageCount());
 
         m_ImGuiImage = Image::Create({
-            .Name = "ImGUI Image",
+            .Name = "ImGui Image",
             .Extent = {m_RenderExtent.x, m_RenderExtent.y, 1},
             .MipLevels = 1,
             .Layers = 1,
@@ -702,14 +704,14 @@ namespace Veng::Renderer
         });
 
         m_ImGuiImageView = ImageView::Create({
-            .Name = "ImGUI Image View",
+            .Name = "ImGui Image View",
             .Image = m_ImGuiImage,
         });
 
         for (size_t i = 0; i < m_SwapChain->GetImageCount(); i++)
         {
             m_ImGuiFramebuffers[i] = Framebuffer::Create({
-                .Name = fmt::format("ImGUI Framebuffer {}", i),
+                .Name = fmt::format("ImGui Framebuffer {}", i),
                 .RenderPass = m_ImGuiRenderPass,
                 .Attachments = {m_ImGuiImageView},
                 .Width = m_RenderExtent.x,

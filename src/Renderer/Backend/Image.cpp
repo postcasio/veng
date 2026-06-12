@@ -4,6 +4,8 @@
 #include <Veng/Renderer/Backend/Context.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
 
+#include <vulkan/vulkan_format_traits.hpp>
+
 namespace Veng::Renderer
 {
     Image::Image(const vk::Image vkImage, const ImageInfo& info) :
@@ -137,7 +139,7 @@ namespace Veng::Renderer
         commandBuffer.PipelineBarrier(barrier);
     }
 
-    void Image::Upload(std::span<u8> span)
+    void Image::Upload(std::span<const u8> span)
     {
         auto stagingBuffer = Buffer::Create({
             .Name = m_Name + " (Upload)",
@@ -182,7 +184,7 @@ namespace Veng::Renderer
     {
         auto buffer = Buffer::Create({
             .Name = m_Name + " (Download)",
-            .Size = m_Extent.x * m_Extent.y * 4,
+            .Size = m_Extent.x * m_Extent.y * vk::blockSize(m_Format),
             .Usage = vk::BufferUsageFlagBits::eTransferDst,
         });
 

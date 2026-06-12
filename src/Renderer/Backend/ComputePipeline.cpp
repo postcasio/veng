@@ -15,9 +15,9 @@ namespace Veng::Renderer
 
         const vk::PipelineShaderStageCreateInfo shaderStageInfo{
             .stage = info.ShaderStage.Stage,
-            .module = info.ShaderStage.Module->GetVkModule(),
+            .module = info.ShaderStage.Module.GetVkModule(),
             // Shader stores/owns this string; it must live through pipeline creation.
-            .pName = info.ShaderStage.Module->GetEntryPoint().c_str(),
+            .pName = info.ShaderStage.Module.GetEntryPoint().c_str(),
             .pSpecializationInfo = info.SpecializationInfo,
         };
 

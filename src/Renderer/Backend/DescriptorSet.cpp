@@ -1,5 +1,6 @@
 #include <Veng/Renderer/Backend/DescriptorSet.h>
 
+#include <Veng/Assert.h>
 #include <Veng/Renderer/Backend/Context.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
 
@@ -17,6 +18,15 @@ namespace Veng::Renderer
         };
 
         m_DescriptorSet = Context::Instance().GetVkDevice().allocateDescriptorSets(allocateInfo)[0];
+
+        const auto& bindings = m_Layout->GetBindings();
+        for (u32 i = 0; i < bindings.size(); i++)
+        {
+            VE_ASSERT(bindings[i].binding == i,
+                      "DescriptorSetLayout '{}' has non-dense binding numbers; binding {} is at index {}",
+                      m_Layout->GetName(), bindings[i].binding, i);
+        }
+
         m_BoundResources.resize(m_Layout->GetBindingCount(), nullptr);
 
         DebugMarkers::MarkDescriptorSet(m_DescriptorSet, m_Name);
@@ -101,7 +111,10 @@ namespace Veng::Renderer
                     });
                     break;
                 }
-            default: break;
+            default:
+                VE_ASSERT(false, "DescriptorSet '{}': unsupported descriptor type {}", m_Name,
+                          string_VkDescriptorType(static_cast<VkDescriptorType>(write.Type)));
+                break;
             }
         }
 

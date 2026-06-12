@@ -125,10 +125,10 @@ namespace Veng::Renderer
 
     void SwapChain::Invalidated()
     {
-        // Fire invalidation callback after the swapchain has been recreated
-        if (m_OnInvalidated)
+        // Fire invalidation callbacks after the swapchain has been recreated
+        for (const auto& callback : m_OnInvalidated)
         {
-            m_OnInvalidated();
+            callback();
         }
     }
 

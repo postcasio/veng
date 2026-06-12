@@ -67,7 +67,7 @@ namespace Veng::Renderer
 
         void UpdateDescriptorSet(const DescriptorSetUpdateInfo& info);
 
-        [[nodiscard]] string GetName() const { return m_Name; }
+        [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] vk::DescriptorSet GetVkDescriptorSet() const { return m_DescriptorSet; }
 
     private:

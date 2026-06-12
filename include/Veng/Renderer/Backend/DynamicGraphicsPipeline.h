@@ -37,7 +37,7 @@ namespace Veng::Renderer
         explicit DynamicGraphicsPipeline(const DynamicPipelineInfo& info);
         ~DynamicGraphicsPipeline();
 
-        [[nodiscard]] string GetName() const { return m_Name; }
+        [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] vk::Pipeline GetVkPipeline() const { return m_VkPipeline; }
         [[nodiscard]] Ref<PipelineLayout> GetPipelineLayout() const { return m_PipelineLayout; }
 

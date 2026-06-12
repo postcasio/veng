@@ -19,7 +19,7 @@ namespace Veng
 
     struct WindowInfo
     {
-        vec2 Extent;
+        uvec2 Extent;
         bool Resizable;
         EventCallback EventCallback;
         string Title;

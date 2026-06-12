@@ -51,7 +51,7 @@ namespace Veng::Renderer
         [[nodiscard]] Ref<ImageView> GetCurrentImageView() const { return m_ImageViews[m_CurrentImageIndex]; }
 
         // Register a callback fired after the swapchain has been recreated
-        void OnInvalidated(std::function<void()> func) { m_OnInvalidated = std::move(func); }
+        void AddInvalidationCallback(std::function<void()> func) { m_OnInvalidated.push_back(std::move(func)); }
 
         void Invalidated();
 
@@ -66,7 +66,7 @@ namespace Veng::Renderer
         vk::SwapchainKHR m_VkSwapChain;
         vector<Ref<Image>> m_Images{};
         vector<Ref<ImageView>> m_ImageViews{};
-        std::function<void()> m_OnInvalidated{};
+        vector<std::function<void()>> m_OnInvalidated{};
 
         void Dispose();
     };

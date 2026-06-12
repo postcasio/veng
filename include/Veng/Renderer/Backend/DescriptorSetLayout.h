@@ -27,7 +27,7 @@ namespace Veng::Renderer
             return m_VkDescriptorSetLayout;
         }
 
-        [[nodiscard]] string GetName() const { return m_Name; }
+        [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] const vector<vk::DescriptorSetLayoutBinding>& GetBindings() const { return m_Bindings; }
         [[nodiscard]] u32 GetBindingCount() const { return static_cast<u32>(m_Bindings.size()); }
 
