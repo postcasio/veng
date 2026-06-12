@@ -217,24 +217,8 @@ private:
             .Layout = m_CompositeSetLayout,
         });
 
-        m_CompositeSet->UpdateDescriptorSet({
-            .Writes = {
-                {
-                    .Type = vk::DescriptorType::eCombinedImageSampler,
-                    .Binding = 0,
-                    .Data = vector<Renderer::DescriptorImageInfo>{
-                        {.ImageView = m_SceneImageView, .Sampler = m_Sampler},
-                    },
-                },
-                {
-                    .Type = vk::DescriptorType::eCombinedImageSampler,
-                    .Binding = 1,
-                    .Data = vector<Renderer::DescriptorImageInfo>{
-                        {.ImageView = m_ImGuiImageView, .Sampler = m_Sampler},
-                    },
-                },
-            },
-        });
+        m_CompositeSet->Write(0, m_SceneImageView, m_Sampler);
+        m_CompositeSet->Write(1, m_ImGuiImageView, m_Sampler);
     }
 
     void RenderScene(Renderer::CommandBuffer& cmd)

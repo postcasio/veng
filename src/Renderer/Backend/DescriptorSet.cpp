@@ -7,6 +7,14 @@
 
 namespace Veng::Renderer
 {
+    namespace
+    {
+        const char* TypeName(vk::DescriptorType type)
+        {
+            return string_VkDescriptorType(static_cast<VkDescriptorType>(type));
+        }
+    }
+
     DescriptorSet::DescriptorSet(const DescriptorSetInfo& info) : m_Name(info.Name), m_Layout(info.Layout)
     {
         vector<vk::DescriptorSetLayout> layouts = {info.Layout->GetVkDescriptorSetLayout()};
@@ -19,16 +27,6 @@ namespace Veng::Renderer
 
         m_DescriptorSet = Context::Instance().GetVkDevice().allocateDescriptorSets(allocateInfo).value[0];
 
-        const auto& bindings = m_Layout->GetBindings();
-        for (u32 i = 0; i < bindings.size(); i++)
-        {
-            VE_ASSERT(bindings[i].binding == i,
-                      "DescriptorSetLayout '{}' has non-dense binding numbers; binding {} is at index {}",
-                      m_Layout->GetName(), bindings[i].binding, i);
-        }
-
-        m_BoundResources.resize(m_Layout->GetBindingCount(), nullptr);
-
         DebugMarkers::MarkDescriptorSet(m_DescriptorSet, m_Name);
     }
 
@@ -37,86 +35,134 @@ namespace Veng::Renderer
         Context::Instance().Retire(m_DescriptorSet);
     }
 
-    void DescriptorSet::UpdateDescriptorSet(const DescriptorSetUpdateInfo& info)
+    void DescriptorSet::Write(u32 binding, const Ref<ImageView>& view, const Ref<Sampler>& sampler)
     {
-        vector<vk::WriteDescriptorSet> writes;
+        const vk::DescriptorType type = m_Layout->GetBindingType(binding);
+        VE_ASSERT(type == vk::DescriptorType::eCombinedImageSampler,
+                  "DescriptorSet '{}': binding {} is {}, not a combined image sampler",
+                  m_Name, binding, TypeName(type));
 
-        // Reserved up front so the pointers stored in `writes` stay valid.
-        vector<vector<vk::DescriptorImageInfo>> imageInfos;
-        vector<vector<vk::DescriptorBufferInfo>> bufferInfos;
-        imageInfos.reserve(info.Writes.size());
-        bufferInfos.reserve(info.Writes.size());
+        const vk::DescriptorImageInfo imageInfo{
+            .sampler = sampler->GetVkSampler(),
+            .imageView = view->GetVkImageView(),
+            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        };
 
-        for (const auto& write : info.Writes)
+        const vk::WriteDescriptorSet write{
+            .dstSet = m_DescriptorSet,
+            .dstBinding = binding,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = type,
+            .pImageInfo = &imageInfo,
+        };
+
+        Context::Instance().GetVkDevice().updateDescriptorSets(write, {});
+
+        m_BoundPerBinding[binding] = {
+            std::static_pointer_cast<void>(view),
+            std::static_pointer_cast<void>(sampler),
+        };
+    }
+
+    void DescriptorSet::Write(u32 binding, const Ref<ImageView>& view)
+    {
+        const vk::DescriptorType type = m_Layout->GetBindingType(binding);
+        VE_ASSERT(type == vk::DescriptorType::eSampledImage || type == vk::DescriptorType::eStorageImage,
+                  "DescriptorSet '{}': binding {} is {}, not a sampled or storage image",
+                  m_Name, binding, TypeName(type));
+
+        const vk::ImageLayout imageLayout = type == vk::DescriptorType::eStorageImage
+                                                ? vk::ImageLayout::eGeneral
+                                                : vk::ImageLayout::eShaderReadOnlyOptimal;
+
+        const vk::DescriptorImageInfo imageInfo{
+            .imageView = view->GetVkImageView(),
+            .imageLayout = imageLayout,
+        };
+
+        const vk::WriteDescriptorSet write{
+            .dstSet = m_DescriptorSet,
+            .dstBinding = binding,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = type,
+            .pImageInfo = &imageInfo,
+        };
+
+        Context::Instance().GetVkDevice().updateDescriptorSets(write, {});
+
+        m_BoundPerBinding[binding] = {std::static_pointer_cast<void>(view)};
+    }
+
+    void DescriptorSet::Write(u32 binding, const Ref<Buffer>& buffer)
+    {
+        Write(binding, buffer, 0, VK_WHOLE_SIZE);
+    }
+
+    void DescriptorSet::Write(u32 binding, const Ref<Buffer>& buffer, u64 offset, u64 range)
+    {
+        const vk::DescriptorType type = m_Layout->GetBindingType(binding);
+        VE_ASSERT(type == vk::DescriptorType::eUniformBuffer || type == vk::DescriptorType::eStorageBuffer,
+                  "DescriptorSet '{}': binding {} is {}, not a uniform or storage buffer",
+                  m_Name, binding, TypeName(type));
+
+        const vk::DescriptorBufferInfo bufferInfo{
+            .buffer = buffer->GetVkBuffer(),
+            .offset = offset,
+            .range = range,
+        };
+
+        const vk::WriteDescriptorSet write{
+            .dstSet = m_DescriptorSet,
+            .dstBinding = binding,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = type,
+            .pBufferInfo = &bufferInfo,
+        };
+
+        Context::Instance().GetVkDevice().updateDescriptorSets(write, {});
+
+        m_BoundPerBinding[binding] = {std::static_pointer_cast<void>(buffer)};
+    }
+
+    void DescriptorSet::WriteArray(u32 binding, std::span<const Ref<ImageView>> views,
+                                   const Ref<Sampler>& sampler, u32 firstElement)
+    {
+        const vk::DescriptorType type = m_Layout->GetBindingType(binding);
+        VE_ASSERT(type == vk::DescriptorType::eCombinedImageSampler,
+                  "DescriptorSet '{}': binding {} is {}, not a combined image sampler",
+                  m_Name, binding, TypeName(type));
+
+        vector<vk::DescriptorImageInfo> imageInfos;
+        imageInfos.reserve(views.size());
+
+        vector<Ref<void>> owned;
+        owned.reserve(views.size() + 1);
+        owned.push_back(std::static_pointer_cast<void>(sampler));
+
+        for (const auto& view : views)
         {
-            switch (write.Type)
-            {
-            case vk::DescriptorType::eCombinedImageSampler:
-                {
-                    const auto& data = std::get<vector<DescriptorImageInfo>>(write.Data);
-
-                    auto& writeImageInfos = imageInfos.emplace_back();
-                    writeImageInfos.reserve(data.size());
-
-                    auto binding = write.Binding;
-                    for (const auto& image : data)
-                    {
-                        writeImageInfos.push_back({
-                            .sampler = image.Sampler->GetVkSampler(),
-                            .imageView = image.ImageView->GetVkImageView(),
-                            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-                        });
-
-                        m_BoundResources[binding++] = CreateRef<DescriptorSetImageBinding>(
-                            image.ImageView, image.Sampler);
-                    }
-
-                    writes.push_back({
-                        .dstSet = m_DescriptorSet,
-                        .dstBinding = write.Binding,
-                        .dstArrayElement = write.ArrayElement,
-                        .descriptorCount = static_cast<u32>(writeImageInfos.size()),
-                        .descriptorType = write.Type,
-                        .pImageInfo = writeImageInfos.data()
-                    });
-
-                    break;
-                }
-            case vk::DescriptorType::eUniformBuffer:
-                {
-                    const auto& data = std::get<vector<DescriptorBufferInfo>>(write.Data);
-
-                    auto& writeBufferInfos = bufferInfos.emplace_back();
-                    writeBufferInfos.reserve(data.size());
-
-                    auto binding = write.Binding;
-                    for (const auto& buffer : data)
-                    {
-                        writeBufferInfos.push_back({
-                            .buffer = buffer.Buffer->GetVkBuffer(),
-                            .offset = buffer.Offset,
-                            .range = buffer.Range
-                        });
-                        m_BoundResources[binding++] = buffer.Buffer;
-                    }
-
-                    writes.push_back({
-                        .dstSet = m_DescriptorSet,
-                        .dstBinding = write.Binding,
-                        .dstArrayElement = write.ArrayElement,
-                        .descriptorCount = static_cast<u32>(writeBufferInfos.size()),
-                        .descriptorType = write.Type,
-                        .pBufferInfo = writeBufferInfos.data()
-                    });
-                    break;
-                }
-            default:
-                VE_ASSERT(false, "DescriptorSet '{}': unsupported descriptor type {}", m_Name,
-                          string_VkDescriptorType(static_cast<VkDescriptorType>(write.Type)));
-                break;
-            }
+            imageInfos.push_back({
+                .sampler = sampler->GetVkSampler(),
+                .imageView = view->GetVkImageView(),
+                .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+            });
+            owned.push_back(std::static_pointer_cast<void>(view));
         }
 
-        Context::Instance().GetVkDevice().updateDescriptorSets(writes, {});
+        const vk::WriteDescriptorSet write{
+            .dstSet = m_DescriptorSet,
+            .dstBinding = binding,
+            .dstArrayElement = firstElement,
+            .descriptorCount = static_cast<u32>(imageInfos.size()),
+            .descriptorType = type,
+            .pImageInfo = imageInfos.data(),
+        };
+
+        Context::Instance().GetVkDevice().updateDescriptorSets(write, {});
+
+        m_BoundPerBinding[binding] = std::move(owned);
     }
 }
