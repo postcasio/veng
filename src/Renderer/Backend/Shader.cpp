@@ -28,11 +28,11 @@ namespace Veng::Renderer
 
         file.close();
 
-        return CreateRef<Shader>(ShaderBinaryInfo{
+        return Ref<Shader>(new Shader(ShaderBinaryInfo{
             .Name = info.Name,
             .Binary = buffer,
             .EntryPoint = info.EntryPoint,
-        });
+        }));
     }
 
     Shader::Shader(const ShaderBinaryInfo& info) : m_Name(info.Name), m_EntryPoint(info.EntryPoint),

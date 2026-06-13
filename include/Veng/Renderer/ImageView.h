@@ -24,11 +24,13 @@ namespace Veng::Renderer
     public:
         static Ref<ImageView> Create(const ImageViewInfo& info)
         {
-            return CreateRef<ImageView>(info);
+            return Ref<ImageView>(new ImageView(info));
         }
 
         ~ImageView();
-        explicit ImageView(const ImageViewInfo& info);
+
+        ImageView(const ImageView&) = delete;
+        ImageView& operator=(const ImageView&) = delete;
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] Format GetFormat() const { return m_Format; }
@@ -45,6 +47,8 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
+        explicit ImageView(const ImageViewInfo& info);
+
         string m_Name;
         Format m_Format;
         u32 m_BaseMipLevel;

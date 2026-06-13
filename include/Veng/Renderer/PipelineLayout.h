@@ -48,11 +48,13 @@ namespace Veng::Renderer
     public:
         static Ref<PipelineLayout> Create(const PipelineLayoutInfo& info)
         {
-            return CreateRef<PipelineLayout>(info);
+            return Ref<PipelineLayout>(new PipelineLayout(info));
         }
 
-        explicit PipelineLayout(const PipelineLayoutInfo& info);
         ~PipelineLayout();
+
+        PipelineLayout(const PipelineLayout&) = delete;
+        PipelineLayout& operator=(const PipelineLayout&) = delete;
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
 
@@ -65,6 +67,8 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
+        explicit PipelineLayout(const PipelineLayoutInfo& info);
+
         string m_Name;
         Unique<Native> m_Native;
         vector<Ref<DescriptorSetLayout>> m_DescriptorSetLayouts;

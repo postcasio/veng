@@ -18,11 +18,13 @@ namespace Veng::Renderer
     public:
         static Ref<ComputePipeline> Create(const ComputePipelineInfo& info)
         {
-            return CreateRef<ComputePipeline>(info);
+            return Ref<ComputePipeline>(new ComputePipeline(info));
         }
 
-        explicit ComputePipeline(const ComputePipelineInfo& info);
         ~ComputePipeline();
+
+        ComputePipeline(const ComputePipeline&) = delete;
+        ComputePipeline& operator=(const ComputePipeline&) = delete;
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] Ref<PipelineLayout> GetPipelineLayout() const { return m_PipelineLayout; }
@@ -31,6 +33,8 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
+        explicit ComputePipeline(const ComputePipelineInfo& info);
+
         string m_Name;
         Unique<Native> m_Native;
         Ref<PipelineLayout> m_PipelineLayout;

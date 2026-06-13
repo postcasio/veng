@@ -35,11 +35,13 @@ namespace Veng::Renderer
 
         static Ref<Shader> Create(const ShaderBinaryInfo& info)
         {
-            return CreateRef<Shader>(info);
+            return Ref<Shader>(new Shader(info));
         }
 
-        explicit Shader(const ShaderBinaryInfo& info);
         ~Shader();
+
+        Shader(const Shader&) = delete;
+        Shader& operator=(const Shader&) = delete;
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] const string& GetEntryPoint() const { return m_EntryPoint; }
@@ -48,6 +50,8 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
+        explicit Shader(const ShaderBinaryInfo& info);
+
         string m_Name;
         string m_EntryPoint;
         Unique<Native> m_Native;

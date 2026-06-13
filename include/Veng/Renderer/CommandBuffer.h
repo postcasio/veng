@@ -70,10 +70,14 @@ namespace Veng::Renderer
     public:
         static Ref<CommandBuffer> Create(CommandBufferLevel level = CommandBufferLevel::Primary)
         {
-            return CreateRef<CommandBuffer>(level);
+            return Ref<CommandBuffer>(new CommandBuffer(level));
         }
 
         ~CommandBuffer();
+
+        CommandBuffer(const CommandBuffer&) = delete;
+        CommandBuffer& operator=(const CommandBuffer&) = delete;
+
         void BindVertexBuffer(const Ref<Buffer>& buffer);
         void BindIndexBuffer(const Ref<Buffer>& buffer, IndexType type = IndexType::U32);
 
@@ -82,8 +86,6 @@ namespace Veng::Renderer
         template <typename V>
         void BindVertexBuffer(const VertexBuffer<V>& buffer);
         void BindIndexBuffer(const IndexBuffer& buffer);
-
-        explicit CommandBuffer(CommandBufferLevel level);
 
         struct Native;
         [[nodiscard]] Native& GetNative() const;
@@ -124,6 +126,8 @@ namespace Veng::Renderer
         void BlitImage(const BlitImageInfo& info);
 
     private:
+        explicit CommandBuffer(CommandBufferLevel level);
+
         CommandBufferLevel m_Level;
         Unique<Native> m_Native;
         Ref<PipelineLayout> m_LastBoundPipelineLayout{};

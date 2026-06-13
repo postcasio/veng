@@ -22,11 +22,13 @@ namespace Veng::Renderer
     public:
         static Ref<DescriptorSet> Create(const DescriptorSetInfo& info)
         {
-            return CreateRef<DescriptorSet>(info);
+            return Ref<DescriptorSet>(new DescriptorSet(info));
         }
 
-        explicit DescriptorSet(const DescriptorSetInfo& info);
         ~DescriptorSet();
+
+        DescriptorSet(const DescriptorSet&) = delete;
+        DescriptorSet& operator=(const DescriptorSet&) = delete;
 
         // Typed writes. The descriptor type is inferred from the layout's
         // binding — the caller never restates it. A payload kind that doesn't
@@ -60,6 +62,8 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
+        explicit DescriptorSet(const DescriptorSetInfo& info);
+
         string m_Name;
         Unique<Native> m_Native;
         // Ownership of the resources currently written into each binding, keyed

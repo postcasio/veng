@@ -11,11 +11,13 @@ namespace Veng::Renderer
         // Create return-type rule in Veng.h) — nothing else holds a reference.
         static Unique<Fence> Create(const string& name, bool signaled = false)
         {
-            return CreateUnique<Fence>(name, signaled);
+            return Unique<Fence>(new Fence(name, signaled));
         }
 
-        explicit Fence(const string& name, bool signaled);
         ~Fence();
+
+        Fence(const Fence&) = delete;
+        Fence& operator=(const Fence&) = delete;
 
         void Wait() const;
         void Reset() const;
@@ -24,6 +26,8 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
+        explicit Fence(const string& name, bool signaled);
+
         string m_Name;
         Unique<Native> m_Native;
     };

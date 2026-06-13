@@ -21,11 +21,13 @@ namespace Veng::Renderer
     public:
         static Ref<Buffer> Create(const BufferInfo& info)
         {
-            return CreateRef<Buffer>(info);
+            return Ref<Buffer>(new Buffer(info));
         }
 
-        explicit Buffer(const BufferInfo& info);
         ~Buffer();
+
+        Buffer(const Buffer&) = delete;
+        Buffer& operator=(const Buffer&) = delete;
 
         // Copy data into the buffer at byte offset (default 0). offset + size
         // must fit within the buffer.
@@ -39,6 +41,8 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
+        explicit Buffer(const BufferInfo& info);
+
         string m_Name;
 
         Unique<Native> m_Native;

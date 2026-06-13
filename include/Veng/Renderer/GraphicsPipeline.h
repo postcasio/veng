@@ -31,11 +31,13 @@ namespace Veng::Renderer
     public:
         static Ref<GraphicsPipeline> Create(const GraphicsPipelineInfo& info)
         {
-            return CreateRef<GraphicsPipeline>(info);
+            return Ref<GraphicsPipeline>(new GraphicsPipeline(info));
         }
 
-        explicit GraphicsPipeline(const GraphicsPipelineInfo& info);
         ~GraphicsPipeline();
+
+        GraphicsPipeline(const GraphicsPipeline&) = delete;
+        GraphicsPipeline& operator=(const GraphicsPipeline&) = delete;
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] Ref<PipelineLayout> GetPipelineLayout() const { return m_PipelineLayout; }
@@ -51,6 +53,8 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
+        explicit GraphicsPipeline(const GraphicsPipelineInfo& info);
+
         string m_Name;
         Unique<Native> m_Native;
         Ref<PipelineLayout> m_PipelineLayout;

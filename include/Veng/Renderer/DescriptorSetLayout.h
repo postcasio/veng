@@ -24,11 +24,13 @@ namespace Veng::Renderer
     public:
         static Ref<DescriptorSetLayout> Create(const DescriptorSetLayoutInfo& info)
         {
-            return CreateRef<DescriptorSetLayout>(info);
+            return Ref<DescriptorSetLayout>(new DescriptorSetLayout(info));
         }
 
-        explicit DescriptorSetLayout(const DescriptorSetLayoutInfo& info);
         ~DescriptorSetLayout();
+
+        DescriptorSetLayout(const DescriptorSetLayout&) = delete;
+        DescriptorSetLayout& operator=(const DescriptorSetLayout&) = delete;
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] const vector<DescriptorBinding>& GetBindings() const { return m_Bindings; }
@@ -42,6 +44,8 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
+        explicit DescriptorSetLayout(const DescriptorSetLayoutInfo& info);
+
         string m_Name;
         vector<DescriptorBinding> m_Bindings;
         map<u32, DescriptorBinding> m_BindingsByNumber;

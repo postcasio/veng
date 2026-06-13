@@ -11,16 +11,20 @@ namespace Veng::Renderer
         // Create return-type rule in Veng.h) — nothing else holds a reference.
         static Unique<Semaphore> Create(const string& name)
         {
-            return CreateUnique<Semaphore>(name);
+            return Unique<Semaphore>(new Semaphore(name));
         }
 
-        explicit Semaphore(const string& name);
         ~Semaphore();
+
+        Semaphore(const Semaphore&) = delete;
+        Semaphore& operator=(const Semaphore&) = delete;
 
         struct Native;
         [[nodiscard]] Native& GetNative() const;
 
     private:
+        explicit Semaphore(const string& name);
+
         string m_Name;
         Unique<Native> m_Native;
     };

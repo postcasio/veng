@@ -30,11 +30,13 @@ namespace Veng::Renderer
     public:
         static Ref<Sampler> Create(const SamplerInfo& info)
         {
-            return CreateRef<Sampler>(info);
+            return Ref<Sampler>(new Sampler(info));
         }
 
-        explicit Sampler(const SamplerInfo& info);
         ~Sampler();
+
+        Sampler(const Sampler&) = delete;
+        Sampler& operator=(const Sampler&) = delete;
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
 
@@ -42,6 +44,8 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
+        explicit Sampler(const SamplerInfo& info);
+
         string m_Name;
         Unique<Native> m_Native;
     };

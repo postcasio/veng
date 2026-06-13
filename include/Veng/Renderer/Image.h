@@ -26,12 +26,13 @@ namespace Veng::Renderer
     public:
         static Ref<Image> Create(const ImageInfo& info)
         {
-            return CreateRef<Image>(info);
+            return Ref<Image>(new Image(info));
         }
 
-        explicit Image(const ImageInfo& info);
-
         ~Image();
+
+        Image(const Image&) = delete;
+        Image& operator=(const Image&) = delete;
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] Format GetFormat() const { return m_Format; }
@@ -57,6 +58,8 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
+        explicit Image(const ImageInfo& info);
+
         // Presentable (swapchain) images: the Native already wraps an
         // externally-owned vk::Image, so this constructor only sets up the
         // engine-side bookkeeping.
