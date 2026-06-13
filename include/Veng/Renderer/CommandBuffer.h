@@ -127,6 +127,20 @@ namespace Veng::Renderer
         CommandBufferLevel m_Level;
         Unique<Native> m_Native;
         Ref<PipelineLayout> m_LastBoundPipelineLayout{};
+
+        // Attachment-format validation (see Draw/DrawIndexed/DrawFullscreenTriangle):
+        // captured from the active RenderingInfo in BeginRendering and from the
+        // bound pipeline in BindPipeline(DynamicGraphicsPipeline). Compared at
+        // draw time to turn a silent dynamic-rendering validation error into a
+        // named VE_ASSERT. Cleared in EndRendering (const) / on compute pipeline
+        // bind, hence mutable.
+        mutable vector<Format> m_ActiveColorAttachmentFormats{};
+        mutable Format m_ActiveDepthAttachmentFormat = Format::Undefined;
+        mutable bool m_HasActiveRenderingInfo = false;
+
+        vector<Format> m_BoundPipelineColorAttachmentFormats{};
+        Format m_BoundPipelineDepthAttachmentFormat = Format::Undefined;
+        bool m_HasBoundGraphicsPipelineFormats = false;
     };
 
     template <typename T>

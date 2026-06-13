@@ -1,5 +1,6 @@
 #include <Veng/Renderer/CommandBuffer.h>
 
+#include <Veng/Assert.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
@@ -47,8 +48,52 @@ namespace Veng::Renderer
         };
     }
 
+    // Draw-time pipeline/attachment format validation: a dynamic-rendering
+    // pipeline declares its attachment formats at creation, and they must match
+    // the formats of the views the render graph is currently rendering into —
+    // otherwise Vulkan validation raises a silent (easy to miss) error. Checked
+    // only when both the active rendering attachments and a bound graphics
+    // pipeline's formats are known, so manual/non-graph draws without this info
+    // never false-trip.
+    static void ValidateBoundPipelineAttachmentFormats(
+        const vector<Format>& activeColorFormats, const Format activeDepthFormat,
+        const vector<Format>& pipelineColorFormats, const Format pipelineDepthFormat)
+    {
+        VE_ASSERT(pipelineColorFormats.size() == activeColorFormats.size(),
+                  "CommandBuffer::Draw: bound pipeline declares {} color attachment(s) but {} are active",
+                  pipelineColorFormats.size(), activeColorFormats.size());
+
+        for (usize i = 0; i < pipelineColorFormats.size(); i++)
+        {
+            VE_ASSERT(pipelineColorFormats[i] == activeColorFormats[i],
+                      "CommandBuffer::Draw: color attachment {} format mismatch — pipeline declares {}, "
+                      "render target is {}",
+                      i, static_cast<u32>(pipelineColorFormats[i]), static_cast<u32>(activeColorFormats[i]));
+        }
+
+        VE_ASSERT(pipelineDepthFormat == activeDepthFormat,
+                  "CommandBuffer::Draw: depth attachment format mismatch — pipeline declares {}, render target is {}",
+                  static_cast<u32>(pipelineDepthFormat), static_cast<u32>(activeDepthFormat));
+    }
+
     void CommandBuffer::BeginRendering(const RenderingInfo& info)
     {
+        // Capture the active attachment formats for draw-time pipeline validation
+        // (see Draw/DrawIndexed/DrawFullscreenTriangle).
+        m_ActiveColorAttachmentFormats.clear();
+        m_ActiveColorAttachmentFormats.reserve(info.ColorAttachments.size());
+
+        for (const auto& attachment : info.ColorAttachments)
+        {
+            m_ActiveColorAttachmentFormats.push_back(attachment.ImageView->GetFormat());
+        }
+
+        m_ActiveDepthAttachmentFormat = info.DepthAttachment.has_value()
+            ? info.DepthAttachment->ImageView->GetFormat()
+            : Format::Undefined;
+
+        m_HasActiveRenderingInfo = true;
+
         vector<vk::RenderingAttachmentInfo> colorAttachments;
         colorAttachments.reserve(info.ColorAttachments.size());
 
@@ -89,6 +134,10 @@ namespace Veng::Renderer
     void CommandBuffer::EndRendering() const
     {
         m_Native->CommandBuffer.endRendering();
+
+        m_ActiveColorAttachmentFormats.clear();
+        m_ActiveDepthAttachmentFormat = Format::Undefined;
+        m_HasActiveRenderingInfo = false;
     }
 
     void CommandBuffer::PushConstants(const PushConstantsInfo& info) const
@@ -113,18 +162,39 @@ namespace Veng::Renderer
 
     void CommandBuffer::DrawFullscreenTriangle() const
     {
+        if (m_HasActiveRenderingInfo && m_HasBoundGraphicsPipelineFormats)
+        {
+            ValidateBoundPipelineAttachmentFormats(m_ActiveColorAttachmentFormats, m_ActiveDepthAttachmentFormat,
+                                                    m_BoundPipelineColorAttachmentFormats,
+                                                    m_BoundPipelineDepthAttachmentFormat);
+        }
+
         m_Native->CommandBuffer.draw(3, 1, 0, 0);
     }
 
     void CommandBuffer::Draw(const u32 vertexCount, const u32 instanceCount, const u32 firstVertex,
                              const u32 firstInstance) const
     {
+        if (m_HasActiveRenderingInfo && m_HasBoundGraphicsPipelineFormats)
+        {
+            ValidateBoundPipelineAttachmentFormats(m_ActiveColorAttachmentFormats, m_ActiveDepthAttachmentFormat,
+                                                    m_BoundPipelineColorAttachmentFormats,
+                                                    m_BoundPipelineDepthAttachmentFormat);
+        }
+
         m_Native->CommandBuffer.draw(vertexCount, instanceCount, firstVertex, firstInstance);
     }
 
     void CommandBuffer::DrawIndexed(const u32 indexCount, const u32 instanceCount, const u32 firstIndex,
                                     const i32 vertexOffset, const u32 firstInstance) const
     {
+        if (m_HasActiveRenderingInfo && m_HasBoundGraphicsPipelineFormats)
+        {
+            ValidateBoundPipelineAttachmentFormats(m_ActiveColorAttachmentFormats, m_ActiveDepthAttachmentFormat,
+                                                    m_BoundPipelineColorAttachmentFormats,
+                                                    m_BoundPipelineDepthAttachmentFormat);
+        }
+
         m_Native->CommandBuffer.drawIndexed(indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
     }
 
@@ -137,12 +207,26 @@ namespace Veng::Renderer
     {
         m_Native->CommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetNative().Pipeline);
         m_LastBoundPipelineLayout = pipeline->GetPipelineLayout();
+
+        // Capture the declared attachment formats for draw-time validation
+        // against the active rendering attachments (see Draw/DrawIndexed/
+        // DrawFullscreenTriangle).
+        m_BoundPipelineColorAttachmentFormats = pipeline->GetColorAttachmentFormats();
+        m_BoundPipelineDepthAttachmentFormat = pipeline->GetDepthAttachmentFormat();
+        m_HasBoundGraphicsPipelineFormats = true;
     }
 
     void CommandBuffer::BindPipeline(const Ref<ComputePipeline>& pipeline)
     {
         m_Native->CommandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline->GetNative().Pipeline);
         m_LastBoundPipelineLayout = pipeline->GetPipelineLayout();
+
+        // A compute pipeline has no rendering attachments; clear any previously
+        // bound graphics pipeline's formats so draw-time validation does not
+        // compare against a stale graphics pipeline.
+        m_BoundPipelineColorAttachmentFormats.clear();
+        m_BoundPipelineDepthAttachmentFormat = Format::Undefined;
+        m_HasBoundGraphicsPipelineFormats = false;
     }
 
     void CommandBuffer::SetScissor(const ivec2 offset, const uvec2 extent) const

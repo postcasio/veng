@@ -15,14 +15,18 @@ namespace Veng::Renderer
     DynamicGraphicsPipeline::Native& DynamicGraphicsPipeline::GetNative() const { return *m_Native; }
 
     DynamicGraphicsPipeline::DynamicGraphicsPipeline(const DynamicPipelineInfo& info) : m_Name(info.Name),
-        m_Native(CreateUnique<Native>()), m_PipelineLayout(info.PipelineLayout)
+        m_Native(CreateUnique<Native>()), m_PipelineLayout(info.PipelineLayout),
+        m_DepthAttachmentFormat(info.DepthAttachmentFormat)
     {
         vector<vk::Format> colorAttachmentFormats;
         colorAttachmentFormats.reserve(info.ColorAttachments.size());
 
+        m_ColorAttachmentFormats.reserve(info.ColorAttachments.size());
+
         for (auto& attachment : info.ColorAttachments)
         {
             colorAttachmentFormats.push_back(ToVk(attachment.Format));
+            m_ColorAttachmentFormats.push_back(attachment.Format);
         }
 
         const vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo = {

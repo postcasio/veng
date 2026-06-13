@@ -40,6 +40,13 @@ namespace Veng::Renderer
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] Ref<PipelineLayout> GetPipelineLayout() const { return m_PipelineLayout; }
 
+        // Declared attachment formats (from DynamicPipelineInfo at creation).
+        // CommandBuffer compares these against the active rendering attachments'
+        // formats at draw time (see CommandBuffer::Draw/DrawIndexed) to turn a
+        // silent dynamic-rendering validation error into a named engine assert.
+        [[nodiscard]] const vector<Format>& GetColorAttachmentFormats() const { return m_ColorAttachmentFormats; }
+        [[nodiscard]] Format GetDepthAttachmentFormat() const { return m_DepthAttachmentFormat; }
+
         struct Native;
         [[nodiscard]] Native& GetNative() const;
 
@@ -47,5 +54,7 @@ namespace Veng::Renderer
         string m_Name;
         Unique<Native> m_Native;
         Ref<PipelineLayout> m_PipelineLayout;
+        vector<Format> m_ColorAttachmentFormats;
+        Format m_DepthAttachmentFormat = Format::Undefined;
     };
 }

@@ -53,10 +53,15 @@ protected:
 
         m_SmokeOutput = std::getenv("HT_SMOKE");
 
+        // Defined once here and referenced by both the scene image and the
+        // triangle pipeline's color attachment (see CreateTrianglePipeline), so
+        // they can't drift apart.
+        m_SceneFormat = context.GetOutputFormat();
+
         m_SceneImage = Renderer::Image::Create({
             .Name = "Scene Image",
             .Extent = {sceneExtent.x, sceneExtent.y, 1},
-            .Format = context.GetOutputFormat(),
+            .Format = m_SceneFormat,
             .Usage = Renderer::ImageUsage::ColorAttachment | Renderer::ImageUsage::Sampled |
             Renderer::ImageUsage::TransferSrc,
         });
@@ -170,7 +175,7 @@ private:
 
         m_TrianglePipeline = Renderer::DynamicGraphicsPipeline::Create({
             .Name = "Triangle Pipeline",
-            .ColorAttachments = {{.Format = GetRenderContext().GetOutputFormat()}},
+            .ColorAttachments = {{.Format = m_SceneFormat}},
             .VertexBufferLayout = Renderer::VertexBufferLayout({
                 {Renderer::VertexElementDataType::Float2, "a_Position"},
                 {Renderer::VertexElementDataType::Float3, "a_Color"},
@@ -222,6 +227,9 @@ private:
 
         m_CompositePipeline = Renderer::DynamicGraphicsPipeline::Create({
             .Name = "Composite Pipeline",
+            // The composite pass renders into the swapchain image, which the
+            // context owns and already exposes a single format accessor — no
+            // separate Image::Create to keep in sync with here.
             .ColorAttachments = {{.Format = GetRenderContext().GetSwapChainFormat()}},
             .PipelineLayout = m_CompositeLayout,
             .ShaderStages = {
@@ -343,6 +351,7 @@ private:
         graph.Execute(cmd);
     }
 
+    Renderer::Format m_SceneFormat = Renderer::Format::Undefined;
     Ref<Renderer::Image> m_SceneImage;
     Ref<Renderer::ImageView> m_SceneImageView;
     Ref<Renderer::ImageView> m_ImGuiImageView;
