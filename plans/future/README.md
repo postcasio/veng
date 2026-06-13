@@ -95,25 +95,38 @@ real setup:
 A first cut at sequencing — the order to *take the areas up* (each becomes its own
 planset), not a schedule. Refine when each is detailed.
 
+Note that *testing* (area 5) isn't one block — its two halves sit at different
+points, around the de-global change:
+
 ```
-5 testing ──► 3 de-globalize ──► 2 threading ──► 1 asset system
+5a test harness + pure-logic tests ──► 3 de-globalize ──► 5b GPU/integration tests
+                                                  └─► 2 threading ──► 1 asset system
 4 events/input — independent, gameplay-driven (any time)
 ```
 
-1. **Testing (area 5) — first.** No dependencies, and it's the safety net for what
-   follows: de-global and threading are wide, regression-prone changes. Dom wants
-   it firmed up soon anyway, so it leads.
-2. **De-globalize the context (area 3).** Do it on the current single-threaded
-   base with tests in place — a mechanical sweep across every `Create` call site
-   is far safer before threads exist than after. Threading on top of a global
-   mutable singleton invites races, so this should precede it.
-3. **Threading / task system (area 2).** Design against the explicit-device API
-   from step 2; this is where the single-threaded v1 contract is deliberately
-   lifted, and Vulkan-queue correctness is the hard part.
-4. **Asset system (area 1) — headline, end of the chain.** The general asset API
+1. **Test harness + pure-logic tests (area 5, first half).** Framework + CTest
+   wiring + the no-GPU unit tests (Result paths, typed-buffer/stride math,
+   `ToVk`/`FromVk` round-trips, render-graph barrier-diff rule). These don't touch
+   `Context::Instance()`, so de-globalizing does nothing for them — no reason to
+   delay them, and they're the safety net for the sweep that follows. Satisfies
+   "firm up testing soon".
+2. **De-globalize the context (area 3).** Mechanical sweep across every `Create`
+   call site — safest on the current single-threaded base with step 1 (plus the
+   existing smoke tests/sample) as a net. Must precede threading: threads on top
+   of a global mutable singleton invite races.
+3. **GPU / integration tests (area 5, second half).** Written *after* de-global so
+   they target the explicit-device API once (not rewritten when the singleton
+   goes) and get real per-test isolation — stand up/tear down a context per case
+   instead of sharing global state. (Isolation matters most for a unit framework
+   running many cases in one process; a one-exe-per-test like `headless_smoke`
+   already gets a fresh singleton per process.)
+4. **Threading / task system (area 2).** Design against the explicit-device API;
+   this is where the single-threaded v1 contract is deliberately lifted, and
+   Vulkan-queue correctness is the hard part.
+5. **Asset system (area 1) — headline, end of the chain.** The general asset API
    (types, handles, import/cook, *synchronous* load) is largely independent and
    could be scoped/started earlier, but the headline payoff — loading without
-   stalling the frame — needs threading (step 3). Land the API early if
+   stalling the frame — needs threading (step 4). Land the API early if
    convenient; async loading after threading.
 
 **Event & input (area 4)** is off the critical path — independent of the
