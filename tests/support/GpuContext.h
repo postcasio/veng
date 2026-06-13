@@ -8,10 +8,11 @@
 // vk:: / VMA / GLFW types — so it stays clear of the public/backend split the
 // include_hygiene test guards.
 //
-// Each GPU test still owns its own process (and so its own Context singleton);
-// this just removes the copy-pasted Initialize/.../Dispose dance and the
-// per-pixel comparison loop that both headless_smoke and compute_dispatch
-// duplicated.
+// Each one-exe GPU test owns its own process and its own Context; the
+// in-process veng_gpu suite (planset-4, plan 05) instead constructs one of
+// these per TEST_CASE_FIXTURE for per-case isolation. Either way, this just
+// removes the copy-pasted Initialize/.../Dispose dance and the per-pixel
+// comparison loop that both headless_smoke and compute_dispatch duplicated.
 
 #include <array>
 #include <span>
@@ -26,8 +27,8 @@ namespace Veng::Test
     // in the destructor. Construct this *after* checking HasVulkanDriver() —
     // it has no skip path of its own.
     //
-    // Context is non-movable (it's the engine singleton), so this wrapper holds
-    // it by value and is itself non-movable/non-copyable.
+    // Context can't be copied or moved (it owns a Unique<Native>), so this
+    // wrapper holds it by value and is itself non-movable/non-copyable.
     class GpuContext
     {
     public:

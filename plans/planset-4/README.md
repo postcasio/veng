@@ -97,7 +97,7 @@ exactly one (`Renderer::Context m_RenderContext`) and v1 stays single-context. T
 | 02 | [Explicit context in `Create` — buffers & images](02-explicit-create-buffers-images.md) | done | 01 |
 | 03 | [Explicit context in `Create` — shaders, pipelines, descriptors](03-explicit-create-shaders-pipelines.md) | done | 01 |
 | 04 | [De-globalize context internals & delete the singleton](04-deglobalize-internals.md) | done | 02, 03 |
-| 05 | [In-process multi-case GPU integration suite (5b)](05-gpu-integration-suite.md) | proposed | 04 |
+| 05 | [In-process multi-case GPU integration suite (5b)](05-gpu-integration-suite.md) | done | 04 |
 | 06 | [Local validation-error gate](06-validation-gate.md) | proposed | 05 |
 
 ## Dependency graph (for delegation)

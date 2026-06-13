@@ -353,43 +353,27 @@ if (VENG_BUILD_TESTS)
     add_test(NAME compute_dispatch COMMAND veng_compute_dispatch)
     set_tests_properties(compute_dispatch PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
 
-    # ---- New focused GPU exercises (plan 06) --------------------------------
-    # Each is its own one-exe test: skip (SKIP_RETURN_CODE 77) with no Vulkan
-    # ICD via Test::HasVulkanDriver(), label `gpu`.
+    # ---- In-process multi-case GPU integration suite (plan 05, area 5b) ----
+    # A single doctest-based executable running many GPU cases, each standing
+    # up and tearing down its own Context (GpuFixture, tests/gpu/fixture.h) for
+    # real per-case isolation — something the old Context singleton made
+    # impossible. Ports the focused GPU exercises from planset-3 plan 06
+    # (buffer/typed-buffer roundtrip, image clear+format, descriptor write
+    # paths) plus a new per-case isolation proof. Custom main (tests/gpu/main.cpp)
+    # checks Test::HasVulkanDriver() first and returns 77 with no ICD; one ctest
+    # entry, labelled `gpu`, same skip contract as the rest of the band.
+    add_executable(veng_gpu
+            tests/gpu/main.cpp
+            tests/gpu/buffer_roundtrip.cpp
+            tests/gpu/typed_buffer_roundtrip.cpp
+            tests/gpu/image_clear_format.cpp
+            tests/gpu/descriptor_write_paths.cpp
+            tests/gpu/isolation.cpp
+    )
+    target_link_libraries(veng_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
 
-    # Buffer round-trip: Upload/Download identity, including an offset upload.
-    add_executable(veng_buffer_roundtrip tests/buffer_roundtrip.cpp)
-    target_link_libraries(veng_buffer_roundtrip PRIVATE veng::veng veng_test_support)
-
-    add_test(NAME buffer_roundtrip COMMAND veng_buffer_roundtrip)
-    set_tests_properties(buffer_roundtrip PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
-
-    # Typed-buffer round-trip: VertexBuffer<V>/StorageBuffer<T> upload/download,
-    # the primary device-side coverage of the count*sizeof(T) size arithmetic
-    # (plan 02 deliberately left this untested device-free).
-    add_executable(veng_typed_buffer_roundtrip tests/typed_buffer_roundtrip.cpp)
-    target_link_libraries(veng_typed_buffer_roundtrip PRIVATE veng::veng veng_test_support)
-
-    add_test(NAME typed_buffer_roundtrip COMMAND veng_typed_buffer_roundtrip)
-    set_tests_properties(typed_buffer_roundtrip PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
-
-    # Image clear + download at a non-trivial extent and a second format,
-    # broadening headless_smoke's single 4x4 RGBA8Unorm case.
-    add_executable(veng_image_clear_format tests/image_clear_format.cpp)
-    target_link_libraries(veng_image_clear_format PRIVATE veng::veng veng_test_support)
-
-    add_test(NAME image_clear_format COMMAND veng_image_clear_format)
-    set_tests_properties(image_clear_format PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
-
-    # Descriptor write paths: exercises DescriptorSet::Write for combined-image-
-    # sampler, storage image, uniform buffer and storage buffer bindings without
-    # a full render. The storage-image path hits the known UPDATE_AFTER_BIND /
-    # pool-size validation gap (CLAUDE.md) — recorded, not fixed, here.
-    add_executable(veng_descriptor_write_paths tests/descriptor_write_paths.cpp)
-    target_link_libraries(veng_descriptor_write_paths PRIVATE veng::veng veng_test_support)
-
-    add_test(NAME descriptor_write_paths COMMAND veng_descriptor_write_paths)
-    set_tests_properties(descriptor_write_paths PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+    add_test(NAME veng_gpu COMMAND veng_gpu)
+    set_tests_properties(veng_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
 endif ()
 
 # ---------------------------------------------------------------------------
