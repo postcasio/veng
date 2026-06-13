@@ -13,6 +13,7 @@ namespace Veng::Renderer
 {
     template <typename V> class VertexBuffer;
     class IndexBuffer;
+    class Context;
 
     // Raw, untyped push for exotic/dynamic use (e.g. a single push spanning
     // ranges with different stages). The layout comes from the command
@@ -68,9 +69,9 @@ namespace Veng::Renderer
     class CommandBuffer
     {
     public:
-        static Ref<CommandBuffer> Create(CommandBufferLevel level = CommandBufferLevel::Primary)
+        static Ref<CommandBuffer> Create(Context& context, CommandBufferLevel level = CommandBufferLevel::Primary)
         {
-            return Ref<CommandBuffer>(new CommandBuffer(level));
+            return Ref<CommandBuffer>(new CommandBuffer(context, level));
         }
 
         ~CommandBuffer();
@@ -126,8 +127,9 @@ namespace Veng::Renderer
         void BlitImage(const BlitImageInfo& info);
 
     private:
-        explicit CommandBuffer(CommandBufferLevel level);
+        CommandBuffer(Context& context, CommandBufferLevel level);
 
+        Context& m_Context;
         CommandBufferLevel m_Level;
         Unique<Native> m_Native;
         Ref<PipelineLayout> m_LastBoundPipelineLayout{};

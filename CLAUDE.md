@@ -6,9 +6,10 @@ dev platform is macOS via MoltenVK; the code is written to be portable (a Window
 port is anticipated, hence `VE_API`).
 
 **veng v1 is single-threaded by design, not by accident.** The render `Context`
-is a singleton (`Context::Instance()`); `Time`, input, and the ImGui integration
-all assume one driving thread. Do not call veng APIs concurrently. (De-globalizing
-the context and a task system are future work — see `plans/future/`.)
+is constructed explicitly by `Application` and threaded into every resource;
+`Time`, input, and the ImGui integration all assume one driving thread. Do not
+call veng APIs concurrently. (De-globalizing the context is done — see
+`plans/planset-4/`; a task system remains future work — see `plans/future/`.)
 
 ## Layout
 
@@ -128,12 +129,13 @@ The pointer type follows one rule (full version in `docs/ownership.md`):
   `Unique`.**
 
 **Dropping a resource mid-frame is safe.** Destructors do not call `vkDestroy*`;
-they *retire* the handle into the current frame's bin on `Context`
-(`Context::Instance().GetNative().Retire(...)`). The handle is destroyed only
-after that frame's fence is waited again (`Context::AcquireNextFrame`), i.e. once
-the GPU is done with it. No manual keep-alive lists. The one deliberate exception:
-`DescriptorSet` holds `Ref`s to the resources it was written with
-(`m_BoundResources`) — that's ownership, not frame-tracking.
+they *retire* the handle into the current frame's bin on `Context` via the
+resource's stored back-reference (`m_Context.GetNative().Retire(...)`). The
+handle is destroyed only after that frame's fence is waited again
+(`Context::AcquireNextFrame`), i.e. once the GPU is done with it. No manual
+keep-alive lists. The one deliberate exception: `DescriptorSet` holds `Ref`s to
+the resources it was written with (`m_BoundResources`) — that's ownership, not
+frame-tracking.
 
 Apps must release every engine resource in `Application::OnDispose()` (reset all
 Refs/Uniques) — resources outliving the context fail on destruction.

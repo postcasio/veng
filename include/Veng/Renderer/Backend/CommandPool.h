@@ -5,20 +5,23 @@
 
 namespace Veng::Renderer
 {
+    class Context;
+
     class CommandPool
     {
     public:
-        static Unique<CommandPool> Create()
+        static Unique<CommandPool> Create(Context& context)
         {
-            return CreateUnique<CommandPool>();
+            return CreateUnique<CommandPool>(context);
         }
 
         [[nodiscard]] vk::CommandPool GetVkCommandPool() const { return m_VkCommandPool; }
 
-        CommandPool();
+        explicit CommandPool(Context& context);
         ~CommandPool();
 
     private:
+        Context& m_Context;
         vk::CommandPool m_VkCommandPool;
     };
 }

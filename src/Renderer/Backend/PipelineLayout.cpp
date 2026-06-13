@@ -44,7 +44,7 @@ namespace Veng::Renderer
 
         m_Native->Layout = GetVkDevice(m_Context).createPipelineLayout(pipelineLayoutCreateInfo).value;
 
-        DebugMarkers::MarkPipelineLayout(m_Native->Layout, m_Name);
+        DebugMarkers::MarkPipelineLayout(GetVkDevice(m_Context), m_Native->Layout, m_Name);
     }
 
     PipelineLayout::~PipelineLayout()

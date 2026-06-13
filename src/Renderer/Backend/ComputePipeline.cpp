@@ -37,7 +37,7 @@ namespace Veng::Renderer
                            .createComputePipeline(nullptr, pipelineCreateInfo)
                            .value;
 
-        DebugMarkers::MarkPipeline(m_Native->Pipeline, m_Name);
+        DebugMarkers::MarkPipeline(GetVkDevice(m_Context), m_Native->Pipeline, m_Name);
     }
 
     ComputePipeline::~ComputePipeline()

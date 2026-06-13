@@ -33,7 +33,7 @@ namespace Veng::Renderer
 
         m_Native->Set = GetVkDevice(m_Context).allocateDescriptorSets(allocateInfo).value[0];
 
-        DebugMarkers::MarkDescriptorSet(m_Native->Set, m_Name);
+        DebugMarkers::MarkDescriptorSet(GetVkDevice(m_Context), m_Native->Set, m_Name);
     }
 
     DescriptorSet::~DescriptorSet()

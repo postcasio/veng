@@ -91,8 +91,6 @@ namespace Veng::Renderer
 
         void UpdateRenderExtent();
 
-        static Context& Instance();
-
         [[nodiscard]] uvec2 GetInternalRenderExtent() const { return m_InternalRenderExtent; }
         [[nodiscard]] uvec2 GetRenderExtent() const { return m_RenderExtent; }
 
@@ -119,8 +117,6 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        static inline Context* s_Instance = nullptr;
-
         // Borrowed from the application in Initialize(); never owned.
         Window* m_Window = nullptr;
 

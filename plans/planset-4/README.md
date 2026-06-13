@@ -3,13 +3,14 @@
 **Phase goal:** remove the `Context::Instance()` singleton — thread an explicit
 device/context into every resource — and *then*, on top of the explicit-device
 API, deliver the testing work that was deliberately held until de-global landed:
-the in-process multi-case GPU integration suite (area 5b) and a CI pipeline with a
-software Vulkan ICD.
+the in-process multi-case GPU integration suite (area 5b) and a local
+validation-error gate.
 
 This is **future area 3 (de-globalize the rendering context)** followed by the
-**remainder of area 5 (5b + CI)**, in the order the future roadmap fixes:
-`5a → 3 → 5b`. planset-3 delivered 5a (the harness + pure-logic/round-trip/
-death/one-exe-GPU bands). The de-global change must come before 5b so the GPU
+**remainder of area 5 (5b + the validation gate)**, in the order the future
+roadmap fixes: `5a → 3 → 5b`. planset-3 delivered 5a (the harness + pure-logic/
+round-trip/death/one-exe-GPU bands). The de-global change must come before 5b so
+the GPU
 integration suite is written **once** against the explicit-device API and can get
 real per-case isolation (stand a `Context` up/down per test) — impossible while
 `Context::Instance()` is a process-global singleton.
@@ -18,8 +19,9 @@ real per-case isolation (stand a `Context` up/down per test) — impossible whil
 
 They are a single arc: de-global is the prerequisite, and 5b is the first real
 consumer that *needs* it (per-case device lifecycle). Landing them together means
-5b is designed against the final API the moment that API exists, and CI lands with
-a suite worth running. The de-global plans (01–04) come first and stand on their
+5b is designed against the final API the moment that API exists, and the
+validation gate lands with a suite worth gating. The de-global plans (01–04) come
+first and stand on their
 own; the testing plans (05–06) build directly on plan 04's explicit-device API.
 
 ## Scope decision
@@ -30,8 +32,11 @@ own; the testing plans (05–06) build directly on plan 04's explicit-device API
   primitives off the global; delete `s_Instance` / `Instance()`; update the
   `Veng.h` threading note and the ownership/CLAUDE docs.
 - **In (testing):** the in-process multi-case GPU integration suite (5b) with
-  per-case `Context` fixtures, and a CI job running `ctest` against a software ICD
-  with a validation-error gate.
+  per-case `Context` fixtures, and a local validation-error gate that promotes
+  Vulkan validation ERRORs to test failures under `ctest`.
+- **Out of scope — CI.** veng has no hosted pipeline and none is planned. The
+  software-ICD / GitHub Actions / badge work is dropped; the testing work runs
+  locally on the dev box.
 - **Out of scope — the threading/task system (area 2).** De-global is the
   *prerequisite* for threading, not threading itself. **veng stays single-threaded
   and single-context through all of planset-4.** No concurrency, no second device,
@@ -40,7 +45,8 @@ own; the testing plans (05–06) build directly on plan 04's explicit-device API
 - **Out of scope — the descriptor/bindless rework.** The known descriptor-pool /
   `UPDATE_AFTER_BIND` validation gap (CLAUDE.md) is pinned by planset-3's tests and
   belongs to [bindless-descriptors](../future/bindless-descriptors.md), not here.
-  5b and CI must not *widen* it; they may continue to note/xfail it.
+  5b and the validation gate must not *widen* it; they may continue to
+  note/xfail it (it is the gate's one allowlisted gap).
 
 ## Design decisions
 
@@ -90,9 +96,9 @@ exactly one (`Renderer::Context m_RenderContext`) and v1 stays single-context. T
 | 01 | [Context back-reference (mechanism + internal de-global)](01-context-backreference.md) | proposed | — |
 | 02 | [Explicit context in `Create` — buffers & images](02-explicit-create-buffers-images.md) | done | 01 |
 | 03 | [Explicit context in `Create` — shaders, pipelines, descriptors](03-explicit-create-shaders-pipelines.md) | done | 01 |
-| 04 | [De-globalize context internals & delete the singleton](04-deglobalize-internals.md) | proposed | 02, 03 |
+| 04 | [De-globalize context internals & delete the singleton](04-deglobalize-internals.md) | done | 02, 03 |
 | 05 | [In-process multi-case GPU integration suite (5b)](05-gpu-integration-suite.md) | proposed | 04 |
-| 06 | [CI with a software Vulkan ICD + validation gate](06-ci-software-icd.md) | proposed | 05 |
+| 06 | [Local validation-error gate](06-validation-gate.md) | proposed | 05 |
 
 ## Dependency graph (for delegation)
 
@@ -105,7 +111,7 @@ exactly one (`Renderer::Context m_RenderContext`) and v1 stays single-context. T
    │                                          │   sequence the merges)
    └──────────────► 04 internals + delete singleton  (capstone of de-global)
                           │
-                          └─► 05 GPU integration suite (5b) ─► 06 CI + ICD
+                          └─► 05 GPU integration suite (5b) ─► 06 validation gate
 ```
 
 **Delegation guidance.** Plan **01 carries the design** (back-ref type, destructor
@@ -116,9 +122,9 @@ mechanical signature-and-call-site plumbing — delegatable to `model: sonnet`
 subagents, but they both edit the hello-triangle `main.cpp`, so land them in
 sequence, not concurrently, to avoid a migration collision. Plan **04** removes the
 singleton and touches engine + docs — main thread. Plans **05 / 06** are the
-testing half: 05 designs the per-case fixture (main thread); 06 is CI plumbing
-(YAML + ICD provisioning), well-scoped for a subagent with review on the main
-thread.
+testing half: 05 designs the per-case fixture (main thread); 06 is the local
+validation gate (a CTest fixture grepping captured stderr), well-scoped for a
+subagent with review on the main thread.
 
 ## Process discipline (from the future note)
 
@@ -135,7 +141,7 @@ update this table → one commit per plan.
 
 This planset closes **future areas 3 and 5** in full. Update
 [future/README.md](../future/README.md): strike area 3, mark area 5 done (5a =
-planset-3, 5b + CI = planset-4), and re-cut the ordering diagram so the remaining
+planset-3, 5b + validation gate = planset-4), and re-cut the ordering diagram so the remaining
 chain is `2 threading → 1 asset system` (plus independent area 4). Update the top
 [plans/README.md](../README.md) index with the planset-4 entry.
 
@@ -147,7 +153,7 @@ chain is `2 threading → 1 asset system` (plus independent area 4). Update the 
   Vulkan calls, only the path to the device changes. Any latent bug spotted while
   sweeping is noted separately, not fixed under a de-global plan.
 - Test additions live under `tests/` (5b extends `tests/support/` from planset-3
-  plan 06); CI config lives at the repo root / `.github/`.
+  plan 06); the validation gate registers as a CTest fixture, no repo-root config.
 
 > Status legend: `proposed` = drafted, awaiting review; `ready` = reviewed and
 > approved; `done` = landed and verified. Fleshed out and ordered before

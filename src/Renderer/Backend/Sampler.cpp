@@ -32,7 +32,7 @@ namespace Veng::Renderer
 
         m_Native->Sampler = GetVkDevice(m_Context).createSampler(samplerCreateInfo).value;
 
-        DebugMarkers::MarkSampler(m_Native->Sampler, m_Name);
+        DebugMarkers::MarkSampler(GetVkDevice(m_Context), m_Native->Sampler, m_Name);
     }
 
     Sampler::~Sampler()

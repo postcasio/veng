@@ -55,7 +55,7 @@ namespace Veng::Renderer
         m_Native->Layout = GetVkDevice(m_Context).createDescriptorSetLayout(
             descriptorSetLayoutCreateInfo).value;
 
-        DebugMarkers::MarkDescriptorSetLayout(m_Native->Layout, m_Name);
+        DebugMarkers::MarkDescriptorSetLayout(GetVkDevice(m_Context), m_Native->Layout, m_Name);
     }
 
     DescriptorSetLayout::~DescriptorSetLayout()

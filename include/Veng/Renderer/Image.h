@@ -64,7 +64,7 @@ namespace Veng::Renderer
         // Presentable (swapchain) images: the Native already wraps an
         // externally-owned vk::Image, so this constructor only sets up the
         // engine-side bookkeeping.
-        Image(const ImageInfo& info, Unique<Native> native);
+        Image(Context& context, const ImageInfo& info, Unique<Native> native);
 
         // The context this resource was created with (deferred-destruction
         // back-ref; a resource must not outlive its context).

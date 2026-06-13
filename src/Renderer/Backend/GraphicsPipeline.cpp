@@ -182,7 +182,7 @@ namespace Veng::Renderer
 
         m_Native->Pipeline = GetVkDevice(m_Context).createGraphicsPipeline(nullptr, pipelineInfo).value;
 
-        DebugMarkers::MarkPipeline(m_Native->Pipeline, m_Name);
+        DebugMarkers::MarkPipeline(GetVkDevice(m_Context), m_Native->Pipeline, m_Name);
     }
 
     GraphicsPipeline::~GraphicsPipeline()

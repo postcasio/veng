@@ -3,18 +3,18 @@
 
 namespace Veng::Renderer
 {
-    CommandPool::CommandPool()
+    CommandPool::CommandPool(Context& context) : m_Context(context)
     {
-        m_VkCommandPool = GetVkDevice(Context::Instance()).createCommandPool(
+        m_VkCommandPool = GetVkDevice(m_Context).createCommandPool(
             vk::CommandPoolCreateInfo{
                 .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-                .queueFamilyIndex = Context::Instance().GetQueueFamilies().GraphicsFamily.value()
+                .queueFamilyIndex = m_Context.GetQueueFamilies().GraphicsFamily.value()
             }
         ).value;
     }
 
     CommandPool::~CommandPool()
     {
-        GetVkDevice(Context::Instance()).destroyCommandPool(m_VkCommandPool);
+        GetVkDevice(m_Context).destroyCommandPool(m_VkCommandPool);
     }
 }

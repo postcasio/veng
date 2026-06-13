@@ -6,7 +6,7 @@
 
 namespace Veng::Renderer
 {
-    DescriptorPool::DescriptorPool(const DescriptorPoolInfo& info)
+    DescriptorPool::DescriptorPool(Context& context, const DescriptorPoolInfo& info) : m_Context(context)
     {
         const vk::DescriptorPoolCreateInfo descriptorPoolCreateInfo{
             .flags = info.Flags,
@@ -15,13 +15,13 @@ namespace Veng::Renderer
             .pPoolSizes = info.PoolSizes.data()
         };
 
-        m_VkDescriptorPool = GetVkDevice(Context::Instance()).createDescriptorPool(descriptorPoolCreateInfo).value;
+        m_VkDescriptorPool = GetVkDevice(m_Context).createDescriptorPool(descriptorPoolCreateInfo).value;
 
-        DebugMarkers::MarkDescriptorPool(m_VkDescriptorPool, info.Name);
+        DebugMarkers::MarkDescriptorPool(GetVkDevice(m_Context), m_VkDescriptorPool, info.Name);
     }
 
     DescriptorPool::~DescriptorPool()
     {
-        GetVkDevice(Context::Instance()).destroyDescriptorPool(m_VkDescriptorPool);
+        GetVkDevice(m_Context).destroyDescriptorPool(m_VkDescriptorPool);
     }
 }

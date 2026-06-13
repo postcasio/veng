@@ -9,6 +9,8 @@
 
 namespace Veng::Renderer
 {
+    class Context;
+
     struct SwapChainInfo
     {
         u32 MaxImageCount;
@@ -20,13 +22,13 @@ namespace Veng::Renderer
     class SwapChain
     {
     public:
-        static Unique<SwapChain> Create(const SwapChainInfo& info)
+        static Unique<SwapChain> Create(Context& context, const SwapChainInfo& info)
         {
-            return CreateUnique<SwapChain>(info);
+            return CreateUnique<SwapChain>(context, info);
         }
 
         void Initialize();
-        explicit SwapChain(const SwapChainInfo& info);
+        SwapChain(Context& context, const SwapChainInfo& info);
         ~SwapChain();
 
         void RenderExtentChanged();
@@ -58,6 +60,7 @@ namespace Veng::Renderer
         void Invalidated();
 
     private:
+        Context& m_Context;
         u32 m_Width;
         u32 m_Height;
         u32 m_MaxImageCount;

@@ -9,25 +9,25 @@ namespace Veng::Renderer
 {
     Fence::Native& Fence::GetNative() const { return *m_Native; }
 
-    Fence::Fence(const string& name, const bool signaled) : m_Name(name), m_Native(CreateUnique<Native>())
+    Fence::Fence(Context& context, const string& name, const bool signaled) : m_Context(context), m_Name(name), m_Native(CreateUnique<Native>())
     {
         const vk::FenceCreateInfo fenceCreateInfo{
             .flags = signaled ? vk::FenceCreateFlagBits::eSignaled : vk::FenceCreateFlags{}
         };
 
-        m_Native->Fence = GetVkDevice(Context::Instance()).createFence(fenceCreateInfo).value;
+        m_Native->Fence = GetVkDevice(m_Context).createFence(fenceCreateInfo).value;
 
-        DebugMarkers::MarkFence(m_Native->Fence, m_Name);
+        DebugMarkers::MarkFence(GetVkDevice(m_Context), m_Native->Fence, m_Name);
     }
 
     Fence::~Fence()
     {
-        GetVkDevice(Context::Instance()).destroyFence(m_Native->Fence);
+        GetVkDevice(m_Context).destroyFence(m_Native->Fence);
     }
 
     void Fence::Wait() const
     {
-        auto result = GetVkDevice(Context::Instance()).waitForFences(m_Native->Fence, VK_TRUE,
+        auto result = GetVkDevice(m_Context).waitForFences(m_Native->Fence, VK_TRUE,
                                                                       std::numeric_limits<u64>::max());
 
         VK_ASSERT(result, "Failed to wait for fence!");
@@ -35,6 +35,6 @@ namespace Veng::Renderer
 
     void Fence::Reset() const
     {
-        VK_ASSERT(GetVkDevice(Context::Instance()).resetFences(m_Native->Fence), "failed to reset fence!");
+        VK_ASSERT(GetVkDevice(m_Context).resetFences(m_Native->Fence), "failed to reset fence!");
     }
 }

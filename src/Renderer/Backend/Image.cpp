@@ -14,8 +14,8 @@ namespace Veng::Renderer
 {
     Image::Native& Image::GetNative() const { return *m_Native; }
 
-    Image::Image(const ImageInfo& info, Unique<Native> native) :
-        m_Context(Context::Instance()),
+    Image::Image(Context& context, const ImageInfo& info, Unique<Native> native) :
+        m_Context(context),
         m_Name(info.Name),
         m_Extent(info.Extent),
         m_MipLevels(info.MipLevels),
@@ -28,7 +28,7 @@ namespace Veng::Renderer
     {
         m_Native->InitStates(m_Layers, m_MipLevels);
 
-        DebugMarkers::MarkImage(m_Native->Image, m_Name);
+        DebugMarkers::MarkImage(GetVkDevice(m_Context), m_Native->Image, m_Name);
     }
 
     Image::Image(Context& context, const ImageInfo& info) :
@@ -90,7 +90,7 @@ namespace Veng::Renderer
             m_Native->Allocation,
             m_Name.c_str());
 
-        DebugMarkers::MarkImage(m_Native->Image, m_Name);
+        DebugMarkers::MarkImage(GetVkDevice(m_Context), m_Native->Image, m_Name);
     }
 
     Image::~Image()
@@ -141,7 +141,7 @@ namespace Veng::Renderer
 
         stagingBuffer->Upload(span);
 
-        auto commandBuffer = CommandBuffer::Create();
+        auto commandBuffer = CommandBuffer::Create(m_Context);
 
         commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
         Backend::TransitionImage(*commandBuffer, *this, ImageLayout::TransferDst, 0, m_Layers, 0, m_MipLevels);
@@ -171,7 +171,7 @@ namespace Veng::Renderer
 
         const ImageLayout originalLayout = FromVk(m_Native->At(0, 0).Layout);
 
-        auto commandBuffer = CommandBuffer::Create();
+        auto commandBuffer = CommandBuffer::Create(m_Context);
 
         commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
 

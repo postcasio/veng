@@ -33,7 +33,7 @@ namespace Veng
     {
         using namespace Renderer;
 
-        m_DescriptorPool = DescriptorPool::Create({
+        m_DescriptorPool = DescriptorPool::Create(m_Context, {
             .Name = "ImGui Descriptor Pool",
             .MaxSets = 100000,
             .PoolSizes = {

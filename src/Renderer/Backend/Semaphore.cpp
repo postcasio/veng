@@ -10,17 +10,17 @@ namespace Veng::Renderer
 {
     Semaphore::Native& Semaphore::GetNative() const { return *m_Native; }
 
-    Semaphore::Semaphore(const string& name) : m_Name(name), m_Native(CreateUnique<Native>())
+    Semaphore::Semaphore(Context& context, const string& name) : m_Context(context), m_Name(name), m_Native(CreateUnique<Native>())
     {
         constexpr vk::SemaphoreCreateInfo semaphoreCreateInfo{};
 
-        m_Native->Semaphore = GetVkDevice(Context::Instance()).createSemaphore(semaphoreCreateInfo).value;
+        m_Native->Semaphore = GetVkDevice(m_Context).createSemaphore(semaphoreCreateInfo).value;
 
-        DebugMarkers::MarkSemaphore(m_Native->Semaphore, m_Name);
+        DebugMarkers::MarkSemaphore(GetVkDevice(m_Context), m_Native->Semaphore, m_Name);
     }
 
     Semaphore::~Semaphore()
     {
-        GetVkDevice(Context::Instance()).destroySemaphore(m_Native->Semaphore);
+        GetVkDevice(m_Context).destroySemaphore(m_Native->Semaphore);
     }
 }

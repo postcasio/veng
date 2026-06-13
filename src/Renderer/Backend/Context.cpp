@@ -90,8 +90,6 @@ namespace Veng::Renderer
 
     void Context::Initialize(const ContextInfo& info, Window* window)
     {
-        s_Instance = this;
-
         const bool headless = (window == nullptr);
         m_Native->Headless = headless;
 
@@ -174,7 +172,7 @@ namespace Veng::Renderer
         m_Native->DebugMessenger = m_Native->Instance.createDebugUtilsMessengerEXT(debugCreateInfo).value;
 #endif
 
-        DebugMarkers::Initialize();
+        DebugMarkers::Initialize(m_Native->Instance);
 
         if (!headless)
         {
@@ -204,7 +202,7 @@ namespace Veng::Renderer
         {
             m_Native->PresentQueue = m_Native->Device.getQueue(m_Native->QueueFamilies.PresentFamily.value(), 0);
 
-            m_Native->SwapChain = SwapChain::Create({
+            m_Native->SwapChain = SwapChain::Create(*this, {
                 .MaxImageCount = 2,
                 .Width = window->GetWidth(),
                 .Height = window->GetHeight(),
@@ -232,9 +230,9 @@ namespace Veng::Renderer
 
         Log::Info("Creating command pool");
 
-        m_Native->CommandPool = CommandPool::Create();
+        m_Native->CommandPool = CommandPool::Create(*this);
 
-        m_Native->DescriptorPool = DescriptorPool::Create({
+        m_Native->DescriptorPool = DescriptorPool::Create(*this, {
             .Name = "Primary Pool",
             .MaxSets = 100000,
             .PoolSizes{
@@ -255,7 +253,12 @@ namespace Veng::Renderer
             vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind
         });
 
-        m_Native->SynchronizationFrames.resize(m_Native->MaxFramesInFlight);
+        m_Native->SynchronizationFrames.reserve(m_Native->MaxFramesInFlight);
+        for (u32 i = 0; i < m_Native->MaxFramesInFlight; ++i)
+        {
+            m_Native->SynchronizationFrames.emplace_back(*this);
+        }
+
         m_Native->RetireBins.resize(m_Native->MaxFramesInFlight);
 
     }
@@ -298,12 +301,6 @@ namespace Veng::Renderer
         }
         m_Native->Instance.destroy();
         m_Window = nullptr;
-        s_Instance = nullptr;
-    }
-
-    Context& Context::Instance()
-    {
-        return *s_Instance;
     }
 
     bool Context::IsHeadless() const { return m_Native->Headless; }
@@ -380,7 +377,7 @@ namespace Veng::Renderer
 
     void Context::ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const
     {
-        auto commandBuffer = CommandBuffer::Create();
+        auto commandBuffer = CommandBuffer::Create(const_cast<Context&>(*this));
         commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
 
         function(*commandBuffer);

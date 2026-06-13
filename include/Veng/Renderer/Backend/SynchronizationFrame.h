@@ -7,10 +7,12 @@
 
 namespace Veng::Renderer
 {
+    class Context;
+
     class SynchronizationFrame
     {
     public:
-        SynchronizationFrame();
+        explicit SynchronizationFrame(Context& context);
 
         [[nodiscard]] Semaphore& GetImageAvailableSemaphore() const { return *m_ImageAvailableSemaphore; }
         [[nodiscard]] Semaphore& GetRenderFinishedSemaphore() const { return *m_RenderFinishedSemaphore; }

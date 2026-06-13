@@ -37,7 +37,7 @@ namespace Veng::Renderer
 
     void SwapChain::Initialize()
     {
-        auto& contextNative = Context::Instance().GetNative();
+        auto& contextNative = m_Context.GetNative();
         auto swapChainSupport = contextNative.QuerySwapChainSupport(contextNative.PhysicalDevice);
 
         u32 imageCount = std::max(m_MaxImageCount, swapChainSupport.Capabilities.minImageCount);
@@ -48,7 +48,7 @@ namespace Veng::Renderer
             imageCount = swapChainSupport.Capabilities.maxImageCount;
         }
 
-        const auto extent = GetSurfaceExtent(Context::Instance().GetWindow(), swapChainSupport);
+        const auto extent = GetSurfaceExtent(m_Context.GetWindow(), swapChainSupport);
 
         m_Width = extent.width;
         m_Height = extent.height;
@@ -104,7 +104,7 @@ namespace Veng::Renderer
             auto native = CreateUnique<Image::Native>();
             native->Image = image;
 
-            m_Images.emplace_back(Ref<Image>(new Image(ImageInfo{
+            m_Images.emplace_back(Ref<Image>(new Image(m_Context, ImageInfo{
                                                     .Name = fmt::format("SwapChain Image [{}]", m_Images.size()),
                                                     .Extent = uvec3{m_Width, m_Height, 1u},
                                                     .MipLevels = 1,
@@ -113,14 +113,15 @@ namespace Veng::Renderer
                                                     .Usage = ImageUsage::ColorAttachment
                                                 }, std::move(native))));
 
-            m_ImageViews.emplace_back(ImageView::Create(Context::Instance(), ImageViewInfo{
+            m_ImageViews.emplace_back(ImageView::Create(m_Context, ImageViewInfo{
                 .Name = fmt::format("SwapChain ImageView [{}]", m_ImageViews.size()),
                 .Image = m_Images.back(),
             }));
         }
     }
 
-    SwapChain::SwapChain(const SwapChainInfo& info) :
+    SwapChain::SwapChain(Context& context, const SwapChainInfo& info) :
+        m_Context(context),
         m_Width(info.Width),
         m_Height(info.Height),
         m_MaxImageCount(info.MaxImageCount),
@@ -140,7 +141,7 @@ namespace Veng::Renderer
         m_Images.clear();
         m_ImageViews.clear();
 
-        GetVkDevice(Context::Instance()).destroySwapchainKHR(m_VkSwapChain);
+        GetVkDevice(m_Context).destroySwapchainKHR(m_VkSwapChain);
     }
 
     void SwapChain::Invalidated()
@@ -189,7 +190,7 @@ namespace Veng::Renderer
 
     vk::Result SwapChain::AcquireNextImage(Semaphore& semaphore)
     {
-        return GetVkDevice(Context::Instance()).acquireNextImageKHR(m_VkSwapChain, UINT64_MAX,
+        return GetVkDevice(m_Context).acquireNextImageKHR(m_VkSwapChain, UINT64_MAX,
                                                                      semaphore.GetNative().Semaphore, VK_NULL_HANDLE,
                                                                      &m_CurrentImageIndex);
     }

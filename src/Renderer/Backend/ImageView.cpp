@@ -35,7 +35,7 @@ namespace Veng::Renderer
 
         m_Native->ImageView = GetVkDevice(m_Context).createImageView(createInfo).value;
 
-        DebugMarkers::MarkImageView(m_Native->ImageView, info.Name);
+        DebugMarkers::MarkImageView(GetVkDevice(m_Context), m_Native->ImageView, info.Name);
     }
 
     ImageView::~ImageView()

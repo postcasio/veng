@@ -13,16 +13,16 @@ namespace Veng::Renderer
 {
     CommandBuffer::Native& CommandBuffer::GetNative() const { return *m_Native; }
 
-    CommandBuffer::CommandBuffer(const CommandBufferLevel level) :
-        m_Level(level), m_Native(CreateUnique<Native>())
+    CommandBuffer::CommandBuffer(Context& context, const CommandBufferLevel level) :
+        m_Context(context), m_Level(level), m_Native(CreateUnique<Native>())
     {
         const vk::CommandBufferAllocateInfo allocInfo{
-            .commandPool = Context::Instance().GetNative().CommandPool->GetVkCommandPool(),
+            .commandPool = m_Context.GetNative().CommandPool->GetVkCommandPool(),
             .level = ToVk(m_Level),
             .commandBufferCount = 1,
         };
 
-        m_Native->CommandBuffer = GetVkDevice(Context::Instance()).allocateCommandBuffers(allocInfo).value[0];
+        m_Native->CommandBuffer = GetVkDevice(m_Context).allocateCommandBuffers(allocInfo).value[0];
     }
 
     void CommandBuffer::Reset()
@@ -253,8 +253,8 @@ namespace Veng::Renderer
 
     CommandBuffer::~CommandBuffer()
     {
-        GetVkDevice(Context::Instance()).freeCommandBuffers(
-            Context::Instance().GetNative().CommandPool->GetVkCommandPool(),
+        GetVkDevice(m_Context).freeCommandBuffers(
+            m_Context.GetNative().CommandPool->GetVkCommandPool(),
             1, &m_Native->CommandBuffer
         );
     }

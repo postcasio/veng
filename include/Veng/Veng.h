@@ -11,10 +11,10 @@
 // is a mechanical sweep — but that is not the current direction.
 //
 // Threading contract: veng v1 is single-threaded by design, not by accident.
-// The render Context is a singleton (Context::Instance()), and Time, input and
-// the ImGui integration all assume they are driven from one thread. Do not call
-// veng APIs concurrently from multiple threads; drive the engine from the
-// thread that created the Context.
+// The render Context is constructed explicitly and threaded into every
+// resource; Time, input and the ImGui integration all assume they are driven
+// from the same thread that owns it. Do not call veng APIs concurrently from
+// multiple threads; drive the engine from the thread that created the Context.
 
 #include <filesystem>
 #include <map>

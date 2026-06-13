@@ -4,14 +4,16 @@
 
 namespace Veng::Renderer
 {
+    class Context;
+
     class Fence
     {
     public:
         // Unique, not Ref: a single-owner synchronization primitive (see the
         // Create return-type rule in Veng.h) — nothing else holds a reference.
-        static Unique<Fence> Create(const string& name, bool signaled = false)
+        static Unique<Fence> Create(Context& context, const string& name, bool signaled = false)
         {
-            return Unique<Fence>(new Fence(name, signaled));
+            return Unique<Fence>(new Fence(context, name, signaled));
         }
 
         ~Fence();
@@ -26,8 +28,9 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        explicit Fence(const string& name, bool signaled);
+        Fence(Context& context, const string& name, bool signaled);
 
+        Context& m_Context;
         string m_Name;
         Unique<Native> m_Native;
     };

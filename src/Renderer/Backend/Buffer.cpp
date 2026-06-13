@@ -37,7 +37,7 @@ namespace Veng::Renderer
 
         vmaSetAllocationName(GetVmaAllocator(m_Context), m_Native->Allocation, info.Name.c_str());
 
-        DebugMarkers::MarkBuffer(m_Native->Buffer, m_Name);
+        DebugMarkers::MarkBuffer(GetVkDevice(m_Context), m_Native->Buffer, m_Name);
     }
 
     Buffer::~Buffer()
