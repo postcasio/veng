@@ -146,9 +146,9 @@ namespace
 
     void RunBufferUploadOverrun()
     {
-        InGpuContext([](Context&)
+        InGpuContext([](Context& context)
         {
-            const auto buffer = Buffer::Create({
+            const auto buffer = Buffer::Create(context, {
                 .Name = "overrun",
                 .Size = 16,
                 .Usage = BufferUsage::TransferDst,
@@ -160,9 +160,9 @@ namespace
 
     void RunIndexU16IntoU32()
     {
-        InGpuContext([](Context&)
+        InGpuContext([](Context& context)
         {
-            const auto index = IndexBuffer::Create("indices", 4, IndexType::U32);
+            const auto index = IndexBuffer::Create(context, "indices", 4, IndexType::U32);
             const u16 values[4] = {};
             index.Upload(std::span<const u16>(values)); // buffer is U32
         });
@@ -170,9 +170,9 @@ namespace
 
     void RunIndexU32IntoU16()
     {
-        InGpuContext([](Context&)
+        InGpuContext([](Context& context)
         {
-            const auto index = IndexBuffer::Create("indices", 4, IndexType::U16);
+            const auto index = IndexBuffer::Create(context, "indices", 4, IndexType::U16);
             const u32 values[4] = {};
             index.Upload(std::span<const u32>(values)); // buffer is U16
         });
@@ -180,7 +180,7 @@ namespace
 
     void RunDescriptorTypeMismatch()
     {
-        InGpuContext([](Context&)
+        InGpuContext([](Context& context)
         {
             const auto layout = DescriptorSetLayout::Create({
                 .Name = "mismatch-layout",
@@ -193,13 +193,13 @@ namespace
             });
             const auto set = DescriptorSet::Create({.Name = "mismatch-set", .Layout = layout});
 
-            const auto image = Image::Create({
+            const auto image = Image::Create(context, {
                 .Name = "img",
                 .Extent = {4, 4, 1},
                 .Format = Format::RGBA8Unorm,
                 .Usage = ImageUsage::Sampled,
             });
-            const auto view = ImageView::Create({.Name = "iv", .Image = image});
+            const auto view = ImageView::Create(context, {.Name = "iv", .Image = image});
 
             // Binding 0 is a UniformBuffer; the image Write asserts the type.
             set->Write(0, view);

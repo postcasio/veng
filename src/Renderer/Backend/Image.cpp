@@ -31,8 +31,8 @@ namespace Veng::Renderer
         DebugMarkers::MarkImage(m_Native->Image, m_Name);
     }
 
-    Image::Image(const ImageInfo& info) :
-        m_Context(Context::Instance()),
+    Image::Image(Context& context, const ImageInfo& info) :
+        m_Context(context),
         m_Name(info.Name),
         m_Extent(info.Extent),
         m_MipLevels(info.MipLevels),
@@ -133,7 +133,7 @@ namespace Veng::Renderer
 
     void Image::Upload(std::span<const u8> span)
     {
-        auto stagingBuffer = Buffer::Create({
+        auto stagingBuffer = Buffer::Create(m_Context, {
             .Name = m_Name + " (Upload)",
             .Size = span.size(),
             .Usage = BufferUsage::TransferSrc,
@@ -163,7 +163,7 @@ namespace Veng::Renderer
 
     vector<u8> Image::Download()
     {
-        auto buffer = Buffer::Create({
+        auto buffer = Buffer::Create(m_Context, {
             .Name = m_Name + " (Download)",
             .Size = m_Extent.x * m_Extent.y * vk::blockSize(ToVk(m_Format)),
             .Usage = BufferUsage::TransferDst,

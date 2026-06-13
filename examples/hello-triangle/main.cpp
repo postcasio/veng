@@ -57,7 +57,7 @@ protected:
         // they can't drift apart.
         m_SceneFormat = context.GetOutputFormat();
 
-        m_SceneImage = Renderer::Image::Create({
+        m_SceneImage = Renderer::Image::Create(context, {
             .Name = "Scene Image",
             .Extent = {sceneExtent.x, sceneExtent.y, 1},
             .Format = m_SceneFormat,
@@ -65,22 +65,22 @@ protected:
             Renderer::ImageUsage::TransferSrc,
         });
 
-        m_SceneImageView = Renderer::ImageView::Create({
+        m_SceneImageView = Renderer::ImageView::Create(context, {
             .Name = "Scene Image View",
             .Image = m_SceneImage,
         });
 
-        m_Sampler = Renderer::Sampler::Create({
+        m_Sampler = Renderer::Sampler::Create(context, {
             .Name = "Sample Sampler",
             .AddressModeU = Renderer::AddressMode::ClampToEdge,
             .AddressModeV = Renderer::AddressMode::ClampToEdge,
             .AddressModeW = Renderer::AddressMode::ClampToEdge,
         });
 
-        m_VertexBuffer = Renderer::VertexBuffer<Vertex>::Create("Triangle Vertices", std::size(k_Vertices));
+        m_VertexBuffer = Renderer::VertexBuffer<Vertex>::Create(context, "Triangle Vertices", std::size(k_Vertices));
         m_VertexBuffer.Upload(k_Vertices);
 
-        m_IndexBuffer = Renderer::IndexBuffer::Create("Triangle Indices", std::size(k_Indices),
+        m_IndexBuffer = Renderer::IndexBuffer::Create(context, "Triangle Indices", std::size(k_Indices),
                                                       Renderer::IndexType::U16);
         m_IndexBuffer.Upload(k_Indices);
 
@@ -91,7 +91,7 @@ protected:
         // downloads it — no ImGui layer, no swapchain.
         if (GetImGuiLayer())
         {
-            m_ImGuiImageView = Renderer::ImageView::Create({
+            m_ImGuiImageView = Renderer::ImageView::Create(context, {
                 .Name = "Sample ImGui Image View",
                 .Image = GetImGuiLayer()->GetOutputImage(),
             });

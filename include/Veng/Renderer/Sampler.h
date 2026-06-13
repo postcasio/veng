@@ -30,9 +30,9 @@ namespace Veng::Renderer
     class Sampler
     {
     public:
-        static Ref<Sampler> Create(const SamplerInfo& info)
+        static Ref<Sampler> Create(Context& context, const SamplerInfo& info)
         {
-            return Ref<Sampler>(new Sampler(info));
+            return Ref<Sampler>(new Sampler(context, info));
         }
 
         ~Sampler();
@@ -46,7 +46,7 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        explicit Sampler(const SamplerInfo& info);
+        Sampler(Context& context, const SamplerInfo& info);
 
         // The context this resource was created with (deferred-destruction
         // back-ref; a resource must not outlive its context).

@@ -113,7 +113,7 @@ namespace Veng::Renderer
                                                     .Usage = ImageUsage::ColorAttachment
                                                 }, std::move(native))));
 
-            m_ImageViews.emplace_back(ImageView::Create(ImageViewInfo{
+            m_ImageViews.emplace_back(ImageView::Create(Context::Instance(), ImageViewInfo{
                 .Name = fmt::format("SwapChain ImageView [{}]", m_ImageViews.size()),
                 .Image = m_Images.back(),
             }));

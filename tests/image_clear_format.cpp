@@ -64,14 +64,14 @@ int main()
         // Exactly representable in RGBA8Unorm: green, fully opaque.
         constexpr std::array<u8, 4> expected = {0, 255, 0, 255};
 
-        auto image = Image::Create({
+        auto image = Image::Create(context, {
             .Name = "Clear Target RGBA8",
             .Extent = {width, height, 1},
             .Format = Format::RGBA8Unorm,
             .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
         });
 
-        auto view = ImageView::Create({.Name = "Clear Target RGBA8 View", .Image = image});
+        auto view = ImageView::Create(context, {.Name = "Clear Target RGBA8 View", .Image = image});
 
         ClearImage(context, view, ClearColor{0.0f, 1.0f, 0.0f, 1.0f});
 
@@ -94,14 +94,14 @@ int main()
     {
         constexpr u8 expected = 255;
 
-        auto image = Image::Create({
+        auto image = Image::Create(context, {
             .Name = "Clear Target R8",
             .Extent = {width, height, 1},
             .Format = Format::R8Unorm,
             .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
         });
 
-        auto view = ImageView::Create({.Name = "Clear Target R8 View", .Image = image});
+        auto view = ImageView::Create(context, {.Name = "Clear Target R8 View", .Image = image});
 
         // Only the red channel is meaningful for a single-channel format; the
         // other channels of ClearColor are ignored by the backend.

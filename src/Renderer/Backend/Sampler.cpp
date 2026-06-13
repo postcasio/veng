@@ -10,7 +10,7 @@ namespace Veng::Renderer
 {
     Sampler::Native& Sampler::GetNative() const { return *m_Native; }
 
-    Sampler::Sampler(const SamplerInfo& info) : m_Context(Context::Instance()), m_Name(info.Name), m_Native(CreateUnique<Native>())
+    Sampler::Sampler(Context& context, const SamplerInfo& info) : m_Context(context), m_Name(info.Name), m_Native(CreateUnique<Native>())
     {
         const vk::SamplerCreateInfo samplerCreateInfo{
             .magFilter = ToVk(info.MagFilter),

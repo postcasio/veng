@@ -75,39 +75,40 @@ int main()
     constexpr u32 size = 4;
 
     Test::GpuContext gpu("Descriptor Write Paths Test", {size, size});
+    Context& context = gpu.Get();
 
     int status = 0;
     {
-        auto sampledImage = Image::Create({
+        auto sampledImage = Image::Create(context, {
             .Name = "Sampled Image",
             .Extent = {size, size, 1},
             .Format = Format::RGBA8Unorm,
             .Usage = ImageUsage::Sampled,
         });
-        auto sampledView = ImageView::Create({.Name = "Sampled Image View", .Image = sampledImage});
+        auto sampledView = ImageView::Create(context, {.Name = "Sampled Image View", .Image = sampledImage});
 
-        auto storageImage = Image::Create({
+        auto storageImage = Image::Create(context, {
             .Name = "Storage Image",
             .Extent = {size, size, 1},
             .Format = Format::RGBA8Unorm,
             .Usage = ImageUsage::Storage,
         });
-        auto storageView = ImageView::Create({.Name = "Storage Image View", .Image = storageImage});
+        auto storageView = ImageView::Create(context, {.Name = "Storage Image View", .Image = storageImage});
 
-        auto sampler = Sampler::Create({
+        auto sampler = Sampler::Create(context, {
             .Name = "Descriptor Test Sampler",
             .AddressModeU = AddressMode::ClampToEdge,
             .AddressModeV = AddressMode::ClampToEdge,
             .AddressModeW = AddressMode::ClampToEdge,
         });
 
-        auto uniformBuffer = Buffer::Create({
+        auto uniformBuffer = Buffer::Create(context, {
             .Name = "Uniform Buffer",
             .Size = 64,
             .Usage = BufferUsage::Uniform | BufferUsage::TransferDst,
         });
 
-        auto storageBuffer = Buffer::Create({
+        auto storageBuffer = Buffer::Create(context, {
             .Name = "Storage Buffer",
             .Size = 256,
             .Usage = BufferUsage::Storage | BufferUsage::TransferDst,

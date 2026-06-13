@@ -53,7 +53,6 @@ int main()
 
     Test::GpuContext gpu("Typed Buffer Roundtrip Test");
     Context& context = gpu.Get();
-    (void)context;
 
     int status = 0;
 
@@ -67,7 +66,7 @@ int main()
             {.Position = {0.5f, -0.5f, 0.0f}, .Color = {0.0f, 0.0f, 1.0f, 1.0f}},
         };
 
-        auto vertexBuffer = VertexBuffer<Vertex>::Create("Vertices", count);
+        auto vertexBuffer = VertexBuffer<Vertex>::Create(context, "Vertices", count);
         vertexBuffer.Upload(source);
 
         const vector<u8> downloaded = vertexBuffer.GetBuffer()->Download();
@@ -101,7 +100,7 @@ int main()
             };
         }
 
-        auto storageBuffer = StorageBuffer<Particle>::Create("Particles", count);
+        auto storageBuffer = StorageBuffer<Particle>::Create(context, "Particles", count);
 
         // Upload the first two elements, then the last two at firstElement=2 —
         // exercises the firstElement * sizeof(T) offset arithmetic.

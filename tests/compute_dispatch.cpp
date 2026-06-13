@@ -65,38 +65,38 @@ int main()
 
     int status = 0;
     {
-        auto sourceImage = Image::Create({
+        auto sourceImage = Image::Create(context, {
             .Name = "Compute Source",
             .Extent = {size, size, 1},
             .Format = Format::RGBA8Unorm,
             .Usage = ImageUsage::ColorAttachment | ImageUsage::Storage,
         });
 
-        auto sourceView = ImageView::Create({
+        auto sourceView = ImageView::Create(context, {
             .Name = "Compute Source View",
             .Image = sourceImage,
         });
 
-        auto derivedImage = Image::Create({
+        auto derivedImage = Image::Create(context, {
             .Name = "Compute Derived",
             .Extent = {size, size, 1},
             .Format = Format::RGBA8Unorm,
             .Usage = ImageUsage::Storage | ImageUsage::Sampled,
         });
 
-        auto derivedView = ImageView::Create({
+        auto derivedView = ImageView::Create(context, {
             .Name = "Compute Derived View",
             .Image = derivedImage,
         });
 
-        auto outputImage = Image::Create({
+        auto outputImage = Image::Create(context, {
             .Name = "Compute Output",
             .Extent = {size, size, 1},
             .Format = Format::RGBA8Unorm,
             .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
         });
 
-        auto outputView = ImageView::Create({
+        auto outputView = ImageView::Create(context, {
             .Name = "Compute Output View",
             .Image = outputImage,
         });
@@ -172,7 +172,7 @@ int main()
             },
         });
 
-        auto sampler = Sampler::Create({
+        auto sampler = Sampler::Create(context, {
             .Name = "Compute Test Sampler",
             .AddressModeU = AddressMode::ClampToEdge,
             .AddressModeV = AddressMode::ClampToEdge,

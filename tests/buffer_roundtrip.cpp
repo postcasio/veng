@@ -31,13 +31,12 @@ int main()
 
     Test::GpuContext gpu("Buffer Roundtrip Test");
     Context& context = gpu.Get();
-    (void)context;
 
     int status = 0;
     {
         constexpr u64 size = 64;
 
-        auto buffer = Buffer::Create({
+        auto buffer = Buffer::Create(context, {
             .Name = "Roundtrip Buffer",
             .Size = size,
             .Usage = BufferUsage::TransferSrc | BufferUsage::TransferDst,

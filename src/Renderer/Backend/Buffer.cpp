@@ -10,7 +10,7 @@ namespace Veng::Renderer
 {
     Buffer::Native& Buffer::GetNative() const { return *m_Native; }
 
-    Buffer::Buffer(const BufferInfo& info) : m_Context(Context::Instance()), m_Name(info.Name), m_Native(CreateUnique<Native>()), m_Size(info.Size)
+    Buffer::Buffer(Context& context, const BufferInfo& info) : m_Context(context), m_Name(info.Name), m_Native(CreateUnique<Native>()), m_Size(info.Size)
     {
         const VkBufferCreateInfo bufferCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,

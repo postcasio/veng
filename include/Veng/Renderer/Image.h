@@ -25,9 +25,9 @@ namespace Veng::Renderer
     class Image : public std::enable_shared_from_this<Image>
     {
     public:
-        static Ref<Image> Create(const ImageInfo& info)
+        static Ref<Image> Create(Context& context, const ImageInfo& info)
         {
-            return Ref<Image>(new Image(info));
+            return Ref<Image>(new Image(context, info));
         }
 
         ~Image();
@@ -59,7 +59,7 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        explicit Image(const ImageInfo& info);
+        Image(Context& context, const ImageInfo& info);
 
         // Presentable (swapchain) images: the Native already wraps an
         // externally-owned vk::Image, so this constructor only sets up the

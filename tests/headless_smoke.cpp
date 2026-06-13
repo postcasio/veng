@@ -43,14 +43,14 @@ int main()
 
     int status = 0;
     {
-        auto image = Image::Create({
+        auto image = Image::Create(context, {
             .Name = "Headless Target",
             .Extent = {size, size, 1},
             .Format = Format::RGBA8Unorm,
             .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
         });
 
-        auto view = ImageView::Create({
+        auto view = ImageView::Create(context, {
             .Name = "Headless Target View",
             .Image = image,
         });

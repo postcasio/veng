@@ -238,7 +238,7 @@ namespace Veng
 
         const uvec2 extent = m_Context.GetRenderExtent();
 
-        m_Image = Image::Create({
+        m_Image = Image::Create(m_Context, {
             .Name = "ImGui Image",
             .Extent = {extent.x, extent.y, 1},
             .MipLevels = 1,
@@ -248,7 +248,7 @@ namespace Veng
             .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled
         });
 
-        m_ImageView = ImageView::Create({
+        m_ImageView = ImageView::Create(m_Context, {
             .Name = "ImGui Image View",
             .Image = m_Image,
         });

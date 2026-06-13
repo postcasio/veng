@@ -20,9 +20,9 @@ namespace Veng::Renderer
     class Buffer
     {
     public:
-        static Ref<Buffer> Create(const BufferInfo& info)
+        static Ref<Buffer> Create(Context& context, const BufferInfo& info)
         {
-            return Ref<Buffer>(new Buffer(info));
+            return Ref<Buffer>(new Buffer(context, info));
         }
 
         ~Buffer();
@@ -42,7 +42,7 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        explicit Buffer(const BufferInfo& info);
+        Buffer(Context& context, const BufferInfo& info);
 
         // The context this resource was created with — used for deferred
         // destruction (Retire) and host transfers. A resource must not outlive

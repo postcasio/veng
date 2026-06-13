@@ -29,9 +29,9 @@ namespace Veng::Renderer
     public:
         VertexBuffer() = default;
 
-        static VertexBuffer Create(string_view name, usize vertexCount)
+        static VertexBuffer Create(Context& context, string_view name, usize vertexCount)
         {
-            return VertexBuffer(Buffer::Create({
+            return VertexBuffer(Buffer::Create(context, {
                 .Name = string(name),
                 .Size = vertexCount * sizeof(V),
                 .Usage = BufferUsage::Vertex | BufferUsage::TransferDst,
@@ -61,10 +61,10 @@ namespace Veng::Renderer
     public:
         IndexBuffer() = default;
 
-        static IndexBuffer Create(string_view name, usize indexCount, IndexType type = IndexType::U32)
+        static IndexBuffer Create(Context& context, string_view name, usize indexCount, IndexType type = IndexType::U32)
         {
             const u64 stride = type == IndexType::U16 ? sizeof(u16) : sizeof(u32);
-            return IndexBuffer(Buffer::Create({
+            return IndexBuffer(Buffer::Create(context, {
                 .Name = string(name),
                 .Size = indexCount * stride,
                 .Usage = BufferUsage::Index | BufferUsage::TransferDst,
@@ -108,9 +108,9 @@ namespace Veng::Renderer
     public:
         UniformBuffer() = default;
 
-        static UniformBuffer Create(string_view name)
+        static UniformBuffer Create(Context& context, string_view name)
         {
-            return UniformBuffer(Buffer::Create({
+            return UniformBuffer(Buffer::Create(context, {
                 .Name = string(name),
                 .Size = sizeof(T),
                 .Usage = BufferUsage::Uniform | BufferUsage::TransferDst,
@@ -138,9 +138,9 @@ namespace Veng::Renderer
     public:
         StorageBuffer() = default;
 
-        static StorageBuffer Create(string_view name, usize elementCount)
+        static StorageBuffer Create(Context& context, string_view name, usize elementCount)
         {
-            return StorageBuffer(Buffer::Create({
+            return StorageBuffer(Buffer::Create(context, {
                 .Name = string(name),
                 .Size = elementCount * sizeof(T),
                 .Usage = BufferUsage::Storage | BufferUsage::TransferDst,

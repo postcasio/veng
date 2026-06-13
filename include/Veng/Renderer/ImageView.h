@@ -23,9 +23,9 @@ namespace Veng::Renderer
     class ImageView
     {
     public:
-        static Ref<ImageView> Create(const ImageViewInfo& info)
+        static Ref<ImageView> Create(Context& context, const ImageViewInfo& info)
         {
-            return Ref<ImageView>(new ImageView(info));
+            return Ref<ImageView>(new ImageView(context, info));
         }
 
         ~ImageView();
@@ -48,7 +48,7 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        explicit ImageView(const ImageViewInfo& info);
+        ImageView(Context& context, const ImageViewInfo& info);
 
         // The context this resource was created with (deferred-destruction
         // back-ref; a resource must not outlive its context).
