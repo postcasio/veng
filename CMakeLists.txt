@@ -231,6 +231,7 @@ if (VENG_BUILD_TESTS)
     add_executable(veng_unit
             tests/unit/main.cpp
             tests/unit/sanity.cpp
+            tests/unit/pure_logic.cpp
     )
     target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
 

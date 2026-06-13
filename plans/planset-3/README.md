@@ -45,7 +45,7 @@ suite's assertions are written in plain enough macros to port if needed.
 | # | Plan | Status | Depends on |
 |---|------|--------|-----------|
 | 01 | [Framework + harness + CTest wiring](01-test-framework-harness.md) | done | — |
-| 02 | [Pure-logic suite (no GPU)](02-pure-logic-suite.md) | proposed | 01 |
+| 02 | [Pure-logic suite (no GPU)](02-pure-logic-suite.md) | done | 01 |
 | 03 | [Type-mapping round-trips](03-type-mapping-roundtrips.md) | proposed | 01 |
 | 04 | [Extract & test the barrier-decision rule](04-barrier-decision-extraction.md) | proposed | 01 |
 | 05 | [Death tests (VE_ASSERT)](05-death-tests.md) | proposed | 01 |
