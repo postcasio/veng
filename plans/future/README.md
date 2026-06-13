@@ -57,18 +57,20 @@ contract** (documented in `Veng.h`); this phase revisits it.
 - Touches the `Context` (queues, pools) and the resource upload paths
   (`Buffer`/`Image::Upload`). Interacts with de-globalizing the context (area 3).
 
-### 3. De-globalize the rendering context
+### 3. De-globalize the rendering context — DONE (planset-4)
 
-> **Taken up by [planset-4](../planset-4/README.md)** (proposed) — plans 01–04.
-> Strike this area when planset-4 lands.
+> ~~Taken up by [planset-4](../planset-4/README.md)~~ — **done**. Plans 01–04
+> threaded an explicit `Context&` into every resource `Create`, converted the
+> context-internal primitives off the global, and deleted `Context::Instance()` /
+> `s_Instance` entirely. veng remains single-threaded/single-context (the freedom
+> this buys is not yet used — see area 2).
 
-`Context::Instance()` is a global singleton reached by every resource constructor
-(`Buffer::Create` etc. secretly grab it). Biggest "not-modern" smell: blocks more
-than one device, hides the dependency, couples tests to global state, and fights
-multi-threaded creation. planset-1 kept it deliberately; this phase removes it
-(thread an explicit device/context into creation, or a scoped "current device").
-Pervasive, mechanical change — best done with/before the asset + threading work,
-which want device-explicit, device-free-editor code paths anyway.
+`Context::Instance()` was a global singleton reached by every resource constructor
+(`Buffer::Create` etc. secretly grabbed it) — the biggest "not-modern" smell:
+blocked more than one device, hid the dependency, coupled tests to global state,
+and fought multi-threaded creation. planset-1 kept it deliberately; planset-4
+removed it via explicit threading (`X::Create(Context&, const XInfo&)`, each
+resource holding a `Context&` back-reference for deferred-destruction `Retire`).
 
 ### 4. Event & input systems
 
@@ -76,7 +78,7 @@ Thin and partially stubbed: `EventType` declares focus/move events with no
 classes; input lives ad-hoc on `Window` (`MouseButton` unused; no actions/
 bindings/devices). Revisit when gameplay drives the requirements.
 
-### 5. Unit testing / test infrastructure (firm up soon)
+### 5. Unit testing / test infrastructure — DONE (5a: planset-3, 5b + validation gate: planset-4)
 
 > **Area 5a is DONE — delivered by [planset-3](../planset-3/README.md)**: doctest
 > framework + CTest wiring, a death harness (separate-process; traps
@@ -87,66 +89,62 @@ bindings/devices). Revisit when gameplay drives the requirements.
 > `DecideBarrier`/`ScopeFor` rule + tests, death tests, and a consolidated one-exe
 > GPU band that skips (not fails) with no ICD. Typed-buffer size math is covered
 > end-to-end on the GPU, not extracted.
+>
+> **Area 5b + the validation gate are DONE — delivered by
+> [planset-4](../planset-4/README.md)** (plans 05–06), written *after* its
+> de-global change (plans 01–04), per the `5a → 3 → 5b` ordering below:
+>
+> - **5b — in-process multi-case GPU integration suite** (`veng_gpu`, plan 05):
+>   a doctest-based executable with per-case `Context` fixtures
+>   (`tests/gpu/fixture.h`), giving real per-case isolation now that
+>   `Context::Instance()` is gone. Ports the focused GPU exercises from
+>   planset-3 plan 06 (buffer/typed-buffer roundtrip, image clear+format,
+>   descriptor write paths) plus a new per-case isolation proof. Same
+>   skip-with-no-ICD contract as the rest of the `gpu`-labelled band.
+> - **Local validation-error gate** (plan 06): `ctest -L validation` runs the
+>   `gpu`-labelled binaries under `build-debug/` (`VE_DEBUG=ON`) and fails if a
+>   new `[ERROR] Vulkan validation` line appears, via an allowlist
+>   (`cmake/ValidationGate.cmake`) of the one documented, pinned gap below. CI
+>   with a hosted software-ICD pipeline was explicitly descoped — veng has no
+>   hosted pipeline and none is planned; this gate is local-only, dependency-free
+>   (`cmake -P`), and runs as part of `ctest`.
 
-What remains in area 5 after planset-3 — **taken up by
-[planset-4](../planset-4/README.md)** (proposed, plans 05–06), written *after* its
-de-global change (plans 01–04):
-
-- **5b — in-process multi-case GPU integration suite**, deferred until after the
-  de-globalize change (area 3) so it targets the explicit-device API and gets real
-  per-test isolation (stand a `Context` up/down per case). It can't get that
-  isolation while `Context::Instance()` is a singleton, and writing it against the
-  singleton now would mean rewriting it post-de-global — hence the `5a → 3 → 5b`
-  ordering. Its exact shape (fixtures, per-case device lifecycle) is fixed by where
-  de-global lands, so it's specified then, not now. The existing one-exe-per-test
-  GPU band (each its own process → its own singleton) is the stopgap until then.
-- **CI with a software Vulkan ICD** (lavapipe / SwiftShader). planset-3 was
-  deliberately local-dev-only: the GPU band skips where no driver is present, but
-  there is no hosted pipeline and no automated validation gate. Validation errors
-  still don't fail tests (the debug messenger only logs) — a CI gate would need to
-  grep stderr for validation ERRORs, or promote them to failures behind a flag.
 - **Known descriptor-pool / `UPDATE_AFTER_BIND` validation gap** (storage-image,
   and — surfaced by planset-3's `descriptor_write_paths` — sampled-image pool
-  sizes): not a testing task but a real engine gap the tests now pin. It belongs to
-  the [bindless/descriptor rework](bindless-descriptors.md), not area 5.
+  sizes): not a testing task but a real engine gap the tests now pin, and the
+  validation gate's one allowlist entry. It belongs to the
+  [bindless/descriptor rework](bindless-descriptors.md), not area 5 — when that
+  rework closes the gap, remove the allowlist entry so the gate tightens
+  automatically.
 
 ## Ordering & dependencies
 
 A first cut at sequencing — the order to *take the areas up* (each becomes its own
 planset), not a schedule. Refine when each is detailed.
 
-Note that *testing* (area 5) isn't one block — its two halves sit at different
-points, around the de-global change:
+Areas 5a, 3, and 5b (+ the validation gate) are **done** (planset-3, planset-4).
+The remaining chain is:
 
 ```
-5a test harness + pure-logic tests ──► 3 de-globalize ──► 5b GPU/integration tests
-                                                  └─► 2 threading ──► 1 asset system
+2 threading ──► 1 asset system
 4 events/input — independent, gameplay-driven (any time)
 ```
 
-1. **Test harness + pure-logic tests (area 5, first half).** Framework + CTest
-   wiring + the no-GPU unit tests (Result paths, typed-buffer/stride math,
-   `ToVk`/`FromVk` round-trips, render-graph barrier-diff rule). These don't touch
-   `Context::Instance()`, so de-globalizing does nothing for them — no reason to
-   delay them, and they're the safety net for the sweep that follows. Satisfies
-   "firm up testing soon".
-2. **De-globalize the context (area 3).** Mechanical sweep across every `Create`
-   call site — safest on the current single-threaded base with step 1 (plus the
-   existing smoke tests/sample) as a net. Must precede threading: threads on top
-   of a global mutable singleton invite races.
-3. **GPU / integration tests (area 5, second half).** Written *after* de-global so
-   they target the explicit-device API once (not rewritten when the singleton
-   goes) and get real per-test isolation — stand up/tear down a context per case
-   instead of sharing global state. (Isolation matters most for a unit framework
-   running many cases in one process; a one-exe-per-test like `headless_smoke`
-   already gets a fresh singleton per process.)
-4. **Threading / task system (area 2).** Design against the explicit-device API;
-   this is where the single-threaded v1 contract is deliberately lifted, and
-   Vulkan-queue correctness is the hard part.
-5. **Asset system (area 1) — headline, end of the chain.** The general asset API
+~~1. Test harness + pure-logic tests (area 5, first half).~~ Done — planset-3.
+
+~~2. De-globalize the context (area 3).~~ Done — planset-4 (plans 01–04).
+
+~~3. GPU / integration tests (area 5, second half) + validation gate.~~ Done —
+planset-4 (plans 05–06).
+
+1. **Threading / task system (area 2).** Design against the explicit-device API
+   (now available — `Context::Instance()` is gone); this is where the
+   single-threaded v1 contract is deliberately lifted, and Vulkan-queue
+   correctness is the hard part.
+2. **Asset system (area 1) — headline, end of the chain.** The general asset API
    (types, handles, import/cook, *synchronous* load) is largely independent and
    could be scoped/started earlier, but the headline payoff — loading without
-   stalling the frame — needs threading (step 4). Land the API early if
+   stalling the frame — needs threading (step 1 above). Land the API early if
    convenient; async loading after threading.
 
 **Event & input (area 4)** is off the critical path — independent of the
@@ -154,20 +152,19 @@ rendering/asset/threading work and driven by gameplay needs, so slot it in
 whenever it's wanted.
 
 Open question: how much of the asset API (definition + sync loading) to pull
-forward in parallel with de-global/threading, vs. keeping the whole asset phase
-last.
+forward in parallel with threading, vs. keeping the whole asset phase last.
 
 ## Cross-cutting concerns (weigh when opening each phase)
 
 Not areas of their own — considerations that span the work above and are cheaper
 to decide early than to retrofit.
 
-- **Design infrastructure against a real client.** De-global (3) and threading
-  (2) risk being designed speculatively. Consider pulling a deliberately thin,
-  *synchronous* asset-loading slice (1) forward — just enough to be a real
-  consumer — so it surfaces the requirements that shape the context/threading
-  APIs, rather than reworking them after the fact. Infrastructure built against an
-  actual caller tends to be right. *(affects ordering of 1 / 2 / 3.)*
+- **Design infrastructure against a real client.** Threading (2) risks being
+  designed speculatively. Consider pulling a deliberately thin, *synchronous*
+  asset-loading slice (1) forward — just enough to be a real consumer — so it
+  surfaces the requirements that shape the threading API, rather than reworking
+  it after the fact. Infrastructure built against an actual caller tends to be
+  right. *(affects ordering of 1 / 2; de-global (3) is done — planset-4.)*
 - **Higher-level descriptor management + a bindless system** in the asset/material
   phase — not an open question but a requirement. Materials (many textures/
   parameters, per-material sets multiplying across a scene) need descriptor
@@ -186,9 +183,11 @@ to decide early than to retrofit.
   `std::string` today; asset loading is where callers will want to branch on error
   *kind* (not-found / corrupt / version-mismatch / missing-dependency). Expect to
   promote the error to a structured type — `Result.h` already flags this. *(area 1.)*
-- **CI with a software Vulkan ICD** (lavapipe / SwiftShader) as part of the
-  testing work, not after — otherwise the GPU/headless suite only ever runs
-  locally. *(area 5.)*
+- ~~**CI with a software Vulkan ICD** (lavapipe / SwiftShader) as part of the
+  testing work, not after.~~ Explicitly descoped by planset-4 (plan 06): veng has
+  no hosted pipeline and none is planned. The GPU/headless suite stays
+  local-dev-only (skips with no ICD); the validation gate is local too.
+  *(area 5, resolved.)*
 - **The editor is the demanding second consumer.** hello-triangle (one pipeline,
   one push constant) won't surface multi-material/mesh/scene friction; the
   node-based editor will. Develop the editor and the engine API together so it
@@ -196,11 +195,13 @@ to decide early than to retrofit.
   sample. *(area 1.)*
 - **Pipeline caching.** Persist `VkPipelineCache` to disk once materials multiply
   — load-time win, naturally part of the asset/material phase. *(area 1.)*
-- **Process discipline.** Keep planset-1's cadence — small, sample-verified, per-
-  plan increments — especially for de-global (3), where a big-bang sweep is most
-  tempting and most dangerous.
+- **Process discipline.** Keep planset-1's cadence — small, sample-verified,
+  per-plan increments. planset-4 followed this for de-global (3), which is now
+  done; the same discipline applies to threading (2), where a big-bang sweep
+  would be just as tempting and dangerous.
 
 ## Status
 
-Vision only. Nothing detailed or scheduled. Each area becomes its own planset
-when taken up. Revisit after planset-2.
+Vision only beyond what's noted done above. Areas 3 and 5 are complete
+(planset-3, planset-4); areas 1, 2, and 4 remain undetailed/unscheduled. Each
+becomes its own planset when taken up.

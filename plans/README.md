@@ -22,17 +22,19 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   `future/`, deferred until after the de-globalize change.
 
 - **[planset-4](planset-4/README.md)** — de-globalize the context, then finish
-  testing (📝 proposed). Removes the `Context::Instance()` singleton (future area
-  3) by threading an explicit `Context&` into every resource `Create`, then — on
-  the explicit-device API — delivers the deferred testing work: the in-process
-  multi-case GPU integration suite (area 5b) and CI with a software Vulkan ICD +
-  validation gate. Order is `5a → 3 → 5b`, as the future roadmap fixes. Stays
+  testing (✅ done, 6 plans). Removed the `Context::Instance()` singleton (future
+  area 3) by threading an explicit `Context&` into every resource `Create`, then —
+  on the explicit-device API — delivered the deferred testing work: the in-process
+  multi-case GPU integration suite (area 5b, `veng_gpu`) and a local
+  `ctest -L validation` gate over the documented validation-error allowlist
+  (CI with a hosted software-ICD pipeline was explicitly descoped — local only).
+  Order was `5a → 3 → 5b`, as the future roadmap fixed. Stays
   single-threaded/single-context; threading (area 2) is a later planset.
 
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
-  holding area; not a planset). The asset system (asset API first, then
-  materials/textures/meshes; absorbs offline shader reflection + shader-derived
-  layouts), a threading/task system (Vulkan-queue-correct async asset loading),
-  de-globalizing the context singleton, the event/input systems, and the
-  post-de-globalize GPU integration tests (area 5b). Each becomes its own planset
-  when taken up. (Testing area 5a is now planset-3.)
+  holding area; not a planset). Remaining areas: the asset system (asset API
+  first, then materials/textures/meshes; absorbs offline shader reflection +
+  shader-derived layouts), a threading/task system (Vulkan-queue-correct async
+  asset loading), and the event/input systems. Each becomes its own planset when
+  taken up. (Testing areas 5a/5b and de-globalizing the context (area 3) are done
+  — planset-3 and planset-4 respectively.)

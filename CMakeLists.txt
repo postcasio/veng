@@ -374,6 +374,21 @@ if (VENG_BUILD_TESTS)
 
     add_test(NAME veng_gpu COMMAND veng_gpu)
     set_tests_properties(veng_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+
+    # ---- Local validation-error gate (plan 06) ------------------------------
+    # ctest -L validation: runs the gpu-labelled binaries that emit Vulkan
+    # validation messages under VE_DEBUG and fails if a new [ERROR] Vulkan
+    # validation line appears (see cmake/ValidationGate.cmake for the allowlist
+    # of documented gaps). Under the default (non-VE_DEBUG) build no validation
+    # layers are enabled, so this is trivially green.
+    add_test(NAME validation_gate
+        COMMAND ${CMAKE_COMMAND}
+            -D VENG_GATE_BIN_HEADLESS_SMOKE=$<TARGET_FILE:veng_headless_smoke>
+            -D VENG_GATE_BIN_COMPUTE_DISPATCH=$<TARGET_FILE:veng_compute_dispatch>
+            -D VENG_GATE_BIN_GPU=$<TARGET_FILE:veng_gpu>
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidationGate.cmake
+    )
+    set_tests_properties(validation_gate PROPERTIES LABELS validation)
 endif ()
 
 # ---------------------------------------------------------------------------
