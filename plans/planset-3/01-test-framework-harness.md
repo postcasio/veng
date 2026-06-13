@@ -29,18 +29,26 @@ helper), so it lands first and on the main thread; the rest fan out from it.
    trap in-process, so death cases run as **separate processes**:
    - One small executable `tests/death/death_main.cpp` that switches on `argv[1]`
      (the case name), runs exactly that offending operation, and is *expected to
-     abort*. Unknown/no case name → clean exit (so a misregistered case fails
-     loudly rather than passing).
-   - Each death case is an `add_test(NAME death.<case> COMMAND veng_death <case>)`
-     with `set_tests_properties(... PROPERTIES WILL_FAIL TRUE)` — SIGABRT is a
-     non-zero exit, which `WILL_FAIL` inverts to a pass. Use one explicit
-     `add_test` per case (not auto-discovery) — death cases are few and reading
-     them one per line is clearer.
-   - **Decision:** also pin the assert message with `PASS_REGULAR_EXPRESSION`
-     against the `FatalAssert` log line on stderr, so a case that aborts for the
-     *wrong* reason still fails. (The framework-driven unit cases in `veng_unit`,
-     by contrast, use doctest's `doctest_discover_tests` so each shows
-     individually in `ctest`.)
+     abort*. Unknown/no case name → exit non-zero with no assert message (so a
+     misregistered case fails loudly rather than passing).
+   - **Mechanism (corrected during implementation):** the original plan assumed
+     `WILL_FAIL TRUE` would invert the SIGABRT into a pass. It does **not** —
+     CTest reports a signal death as "Subprocess aborted", which neither
+     `WILL_FAIL` nor `PASS_REGULAR_EXPRESSION` overrides (verified against this
+     CMake). So the harness installs a `SIGABRT` handler that, *after*
+     `FatalAssert` has already logged + flushed its message to stderr, converts
+     the abort into a clean exit via `std::_Exit`. Each death case is then an
+     `add_test(NAME death.<case> COMMAND veng_death <case>)` registered with
+     **only** `PASS_REGULAR_EXPRESSION` pinned to that case's assert message —
+     the message match is what decides pass/fail. Use one explicit `add_test`
+     per case (not auto-discovery) — death cases are few and reading them one per
+     line is clearer.
+   - This pins the assert message against the `FatalAssert` log line (routed to
+     unbuffered stderr by the harness so it survives `abort()`), so a case that
+     aborts for the *wrong* reason — or fails to abort at all (clean exit, or an
+     unknown/missing case name) — never matches and fails. (The framework-driven
+     unit cases in `veng_unit`, by contrast, use doctest's
+     `doctest_discover_tests` so each shows individually in `ctest`.)
    - The harness here is just the dispatch + registration *mechanism*; the actual
      cases are plan 05. Land this plan with one trivial sentinel death case (e.g.
      `VE_ASSERT(false, ...)` under name `sentinel`) to prove the wiring.

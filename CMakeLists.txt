@@ -207,6 +207,60 @@ option(VENG_BUILD_TESTS "Build the test suite" ${PROJECT_IS_TOP_LEVEL})
 if (VENG_BUILD_TESTS)
     enable_testing()
 
+    # doctest: single-header unit framework, test-only. Header-only INTERFACE
+    # target doctest::doctest; its own tests/install are off (we only consume
+    # the header + the CTest discovery script). Kept out of veng's exported
+    # surface — never a dependency of the library itself.
+    set(DOCTEST_WITH_TESTS OFF CACHE BOOL "" FORCE)
+    set(DOCTEST_NO_INSTALL ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+            doctest
+            GIT_REPOSITORY https://github.com/doctest/doctest.git
+            GIT_TAG v2.4.12
+            GIT_SHALLOW TRUE
+            EXCLUDE_FROM_ALL
+    )
+    FetchContent_MakeAvailable(doctest)
+    include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
+
+    # ---- Unit band (pure-logic, type-mapping, barrier — plans 02–04) --------
+    # Single executable hosting the framework-driven cases. main.cpp provides
+    # DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN; each band adds its own *.cpp. Links
+    # veng::veng + doctest only. NOTE: -fno-exceptions is PRIVATE to veng, so
+    # this target compiles with exceptions enabled (doctest needs them).
+    add_executable(veng_unit
+            tests/unit/main.cpp
+            tests/unit/sanity.cpp
+    )
+    target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
+
+    # Discover each TEST_CASE as its own ctest entry, labelled `unit` so
+    # `ctest -L unit` is the fast, driver-free feedback loop.
+    doctest_discover_tests(veng_unit PROPERTIES LABELS unit)
+
+    # ---- Death band (VE_ASSERT — wiring here, cases in plan 05) -------------
+    # VE_ASSERT aborts, which doctest can't trap in-process, so death cases run
+    # as separate processes. The harness traps SIGABRT and converts the abort
+    # into a clean exit once the assert message is on stderr; each case is a
+    # separate add_test pinned to that message via PASS_REGULAR_EXPRESSION (see
+    # death_main.cpp for why this, and not WILL_FAIL).
+    add_executable(veng_death tests/death/death_main.cpp)
+    target_link_libraries(veng_death PRIVATE veng::veng)
+
+    add_test(NAME death.sentinel COMMAND veng_death sentinel)
+    set_tests_properties(death.sentinel PROPERTIES
+            LABELS death
+            PASS_REGULAR_EXPRESSION "sentinel death case"
+    )
+
+    # ---- Shared GPU-band support (consumed by plan 06) ----------------------
+    # Vulkan-driver probe so a GPU test can skip (not fail) where no ICD exists.
+    # Links Vulkan PRIVATE; its public header pulls in no Vulkan headers, so
+    # consumers include <support/GpuProbe.h> without the backend include graph.
+    add_library(veng_test_support STATIC tests/support/GpuProbe.cpp)
+    target_include_directories(veng_test_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(veng_test_support PRIVATE Vulkan::Vulkan)
+
     # Include-hygiene guard: compiles every public header while linking only the
     # PUBLIC deps of veng (glm, fmt, ImGui). Because Vulkan/GLFW/VMA/nfd link
     # PRIVATE, this fails to build if a public header leaks a backend header.

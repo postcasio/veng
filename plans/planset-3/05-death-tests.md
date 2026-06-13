@@ -6,7 +6,9 @@ as its own process via the death harness from plan 01.
 
 ## Dependencies
 
-Needs plan 01 (the `veng_death` harness + `WILL_FAIL` registration). Independent
+Needs plan 01 (the `veng_death` harness + its `PASS_REGULAR_EXPRESSION`
+registration; the SIGABRT-trap-to-clean-exit mechanism, not `WILL_FAIL` — see
+plan 01). Independent
 of the other leaves. Cases split by whether they need a GPU:
 - **Pure-logic death cases** — no `Context`; run with no ICD.
 - **GPU-coupled death cases** — need a headless `Context` (already available via
@@ -16,9 +18,9 @@ of the other leaves. Cases split by whether they need a GPU:
 
 ## Cases
 
-Add each as a named branch in `tests/death/death_main.cpp` and register with
-`WILL_FAIL TRUE`, plus a `PASS_REGULAR_EXPRESSION` on the assert message where it
-pins the right failure.
+Add each as a named branch in `tests/death/death_main.cpp` and register with a
+`PASS_REGULAR_EXPRESSION` on the assert message that pins the right failure (no
+`WILL_FAIL` — see plan 01's mechanism note).
 
 **Pure-logic (no device):**
 1. `vertex_format_unknown` — build a `VertexBufferLayout` with a `Format` outside
@@ -47,8 +49,8 @@ pins the right failure.
 
 ## Acceptance
 
-- `ctest -R '^death\.'` passes (each death case "fails" by aborting, inverted by
-  `WILL_FAIL`).
+- `ctest -R '^death\.'` passes (each death case aborts, the harness converts the
+  SIGABRT to a clean exit, and the pinned message matches).
 - Pure-logic death cases pass with **no ICD**; GPU-coupled ones skip cleanly with
   no ICD and pass with one.
 - Each registered message regex actually matches the emitted `FatalAssert` line
@@ -56,8 +58,9 @@ pins the right failure.
 
 ## Notes
 
-- The harness must **exit cleanly** for an unknown case name so a typo in
-  registration surfaces as an unexpected pass-that-should-fail, not a silent skip.
+- For an unknown case name the harness exits non-zero *without* emitting any
+  assert message, so a typo in registration fails the test (the
+  `PASS_REGULAR_EXPRESSION` never matches) rather than passing silently.
 - Every case above asserts in code that already exists — this plan adds no engine
   asserts. If a future death case needs a new assert, that's an API-contract change
   to raise separately, not slip in here.
