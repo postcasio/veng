@@ -21,6 +21,14 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   ICD. The in-process multi-case GPU integration suite (5b) and CI stay in
   `future/`, deferred until after the de-globalize change.
 
+- **[planset-4](planset-4/README.md)** — de-globalize the context, then finish
+  testing (📝 proposed). Removes the `Context::Instance()` singleton (future area
+  3) by threading an explicit `Context&` into every resource `Create`, then — on
+  the explicit-device API — delivers the deferred testing work: the in-process
+  multi-case GPU integration suite (area 5b) and CI with a software Vulkan ICD +
+  validation gate. Order is `5a → 3 → 5b`, as the future roadmap fixes. Stays
+  single-threaded/single-context; threading (area 2) is a later planset.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). The asset system (asset API first, then
   materials/textures/meshes; absorbs offline shader reflection + shader-derived

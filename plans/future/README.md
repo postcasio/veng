@@ -59,6 +59,9 @@ contract** (documented in `Veng.h`); this phase revisits it.
 
 ### 3. De-globalize the rendering context
 
+> **Taken up by [planset-4](../planset-4/README.md)** (proposed) — plans 01–04.
+> Strike this area when planset-4 lands.
+
 `Context::Instance()` is a global singleton reached by every resource constructor
 (`Buffer::Create` etc. secretly grab it). Biggest "not-modern" smell: blocks more
 than one device, hides the dependency, couples tests to global state, and fights
@@ -85,7 +88,9 @@ bindings/devices). Revisit when gameplay drives the requirements.
 > GPU band that skips (not fails) with no ICD. Typed-buffer size math is covered
 > end-to-end on the GPU, not extracted.
 
-What remains in area 5 after planset-3:
+What remains in area 5 after planset-3 — **taken up by
+[planset-4](../planset-4/README.md)** (proposed, plans 05–06), written *after* its
+de-global change (plans 01–04):
 
 - **5b — in-process multi-case GPU integration suite**, deferred until after the
   de-globalize change (area 3) so it targets the explicit-device API and gets real
