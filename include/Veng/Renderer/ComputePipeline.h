@@ -18,9 +18,9 @@ namespace Veng::Renderer
     class ComputePipeline
     {
     public:
-        static Ref<ComputePipeline> Create(const ComputePipelineInfo& info)
+        static Ref<ComputePipeline> Create(Context& context, const ComputePipelineInfo& info)
         {
-            return Ref<ComputePipeline>(new ComputePipeline(info));
+            return Ref<ComputePipeline>(new ComputePipeline(context, info));
         }
 
         ~ComputePipeline();
@@ -35,7 +35,7 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        explicit ComputePipeline(const ComputePipelineInfo& info);
+        ComputePipeline(Context& context, const ComputePipelineInfo& info);
 
         // The context this resource was created with (deferred-destruction
         // back-ref; a resource must not outlive its context).

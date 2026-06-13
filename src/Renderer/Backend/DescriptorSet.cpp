@@ -20,13 +20,13 @@ namespace Veng::Renderer
 
     DescriptorSet::Native& DescriptorSet::GetNative() const { return *m_Native; }
 
-    DescriptorSet::DescriptorSet(const DescriptorSetInfo& info) : m_Context(Context::Instance()), m_Name(info.Name), m_Native(CreateUnique<Native>()),
+    DescriptorSet::DescriptorSet(Context& context, const DescriptorSetInfo& info) : m_Context(context), m_Name(info.Name), m_Native(CreateUnique<Native>()),
                                                                    m_Layout(info.Layout)
     {
         vector<vk::DescriptorSetLayout> layouts = {info.Layout->GetNative().Layout};
 
         const vk::DescriptorSetAllocateInfo allocateInfo = {
-            .descriptorPool = m_Context.GetNative().DescriptorPool->GetVkDescriptorPool(),
+            .descriptorPool = context.GetNative().DescriptorPool->GetVkDescriptorPool(),
             .descriptorSetCount = static_cast<u32>(layouts.size()),
             .pSetLayouts = layouts.data()
         };

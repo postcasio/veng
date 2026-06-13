@@ -11,8 +11,8 @@ namespace Veng::Renderer
 {
     ComputePipeline::Native& ComputePipeline::GetNative() const { return *m_Native; }
 
-    ComputePipeline::ComputePipeline(const ComputePipelineInfo& info)
-        : m_Context(Context::Instance()), m_Name(info.Name), m_Native(CreateUnique<Native>()), m_PipelineLayout(info.PipelineLayout)
+    ComputePipeline::ComputePipeline(Context& context, const ComputePipelineInfo& info)
+        : m_Context(context), m_Name(info.Name), m_Native(CreateUnique<Native>()), m_PipelineLayout(info.PipelineLayout)
     {
         VE_ASSERT(m_PipelineLayout != nullptr, "ComputePipeline '{}' requires a PipelineLayout", m_Name);
         VE_ASSERT(info.ShaderStage.Stage == ShaderStage::Compute,

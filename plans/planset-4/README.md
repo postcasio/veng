@@ -89,7 +89,7 @@ exactly one (`Renderer::Context m_RenderContext`) and v1 stays single-context. T
 |---|------|--------|-----------|
 | 01 | [Context back-reference (mechanism + internal de-global)](01-context-backreference.md) | proposed | — |
 | 02 | [Explicit context in `Create` — buffers & images](02-explicit-create-buffers-images.md) | done | 01 |
-| 03 | [Explicit context in `Create` — shaders, pipelines, descriptors](03-explicit-create-shaders-pipelines.md) | proposed | 01 |
+| 03 | [Explicit context in `Create` — shaders, pipelines, descriptors](03-explicit-create-shaders-pipelines.md) | done | 01 |
 | 04 | [De-globalize context internals & delete the singleton](04-deglobalize-internals.md) | proposed | 02, 03 |
 | 05 | [In-process multi-case GPU integration suite (5b)](05-gpu-integration-suite.md) | proposed | 04 |
 | 06 | [CI with a software Vulkan ICD + validation gate](06-ci-software-icd.md) | proposed | 05 |

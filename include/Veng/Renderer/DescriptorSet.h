@@ -21,9 +21,9 @@ namespace Veng::Renderer
     class DescriptorSet
     {
     public:
-        static Ref<DescriptorSet> Create(const DescriptorSetInfo& info)
+        static Ref<DescriptorSet> Create(Context& context, const DescriptorSetInfo& info)
         {
-            return Ref<DescriptorSet>(new DescriptorSet(info));
+            return Ref<DescriptorSet>(new DescriptorSet(context, info));
         }
 
         ~DescriptorSet();
@@ -63,7 +63,7 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        explicit DescriptorSet(const DescriptorSetInfo& info);
+        DescriptorSet(Context& context, const DescriptorSetInfo& info);
 
         // The context this resource was created with (deferred-destruction
         // back-ref; a resource must not outlive its context).

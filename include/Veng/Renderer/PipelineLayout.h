@@ -48,9 +48,9 @@ namespace Veng::Renderer
     class PipelineLayout
     {
     public:
-        static Ref<PipelineLayout> Create(const PipelineLayoutInfo& info)
+        static Ref<PipelineLayout> Create(Context& context, const PipelineLayoutInfo& info)
         {
-            return Ref<PipelineLayout>(new PipelineLayout(info));
+            return Ref<PipelineLayout>(new PipelineLayout(context, info));
         }
 
         ~PipelineLayout();
@@ -69,7 +69,7 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        explicit PipelineLayout(const PipelineLayoutInfo& info);
+        PipelineLayout(Context& context, const PipelineLayoutInfo& info);
 
         // The context this resource was created with (deferred-destruction
         // back-ref; a resource must not outlive its context).

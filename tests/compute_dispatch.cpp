@@ -103,13 +103,13 @@ int main()
 
         // --- Compute pipeline: reads `source`, writes `derived`. ---
 
-        const auto computeShader = Shader::Create({
+        const auto computeShader = Shader::Create(context, {
             .Name = "invert.comp",
             .Path = path(CD_SHADER_DIR) / "invert.comp.spv",
         });
         VE_ASSERT(computeShader, "{}", computeShader.error());
 
-        auto computeSetLayout = DescriptorSetLayout::Create({
+        auto computeSetLayout = DescriptorSetLayout::Create(context, {
             .Name = "Compute Set Layout",
             .Bindings = {
                 {.Binding = 0, .Type = DescriptorType::StorageImage, .Count = 1, .Stages = ShaderStage::Compute},
@@ -117,18 +117,18 @@ int main()
             },
         });
 
-        auto computeLayout = PipelineLayout::Create({
+        auto computeLayout = PipelineLayout::Create(context, {
             .Name = "Compute Layout",
             .DescriptorSetLayouts = {computeSetLayout},
         });
 
-        auto computePipeline = ComputePipeline::Create({
+        auto computePipeline = ComputePipeline::Create(context, {
             .Name = "Invert Pipeline",
             .PipelineLayout = computeLayout,
             .ShaderStage = {.Stage = ShaderStage::Compute, .Module = computeShader.value()},
         });
 
-        auto computeSet = DescriptorSet::Create({
+        auto computeSet = DescriptorSet::Create(context, {
             .Name = "Compute Set",
             .Layout = computeSetLayout,
         });
@@ -138,31 +138,31 @@ int main()
 
         // --- Graphics pipeline: samples `derived`, writes to `output`. ---
 
-        const auto vertexShader = Shader::Create({
+        const auto vertexShader = Shader::Create(context, {
             .Name = "fullscreen.vert",
             .Path = path(CD_SHADER_DIR) / "fullscreen.vert.spv",
         });
         VE_ASSERT(vertexShader, "{}", vertexShader.error());
 
-        const auto fragmentShader = Shader::Create({
+        const auto fragmentShader = Shader::Create(context, {
             .Name = "sample.frag",
             .Path = path(CD_SHADER_DIR) / "sample.frag.spv",
         });
         VE_ASSERT(fragmentShader, "{}", fragmentShader.error());
 
-        auto sampleSetLayout = DescriptorSetLayout::Create({
+        auto sampleSetLayout = DescriptorSetLayout::Create(context, {
             .Name = "Sample Set Layout",
             .Bindings = {
                 {.Binding = 0, .Type = DescriptorType::CombinedImageSampler, .Count = 1, .Stages = ShaderStage::Fragment},
             },
         });
 
-        auto sampleLayout = PipelineLayout::Create({
+        auto sampleLayout = PipelineLayout::Create(context, {
             .Name = "Sample Layout",
             .DescriptorSetLayouts = {sampleSetLayout},
         });
 
-        auto samplePipeline = GraphicsPipeline::Create({
+        auto samplePipeline = GraphicsPipeline::Create(context, {
             .Name = "Sample Pipeline",
             .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
             .PipelineLayout = sampleLayout,
@@ -179,7 +179,7 @@ int main()
             .AddressModeW = AddressMode::ClampToEdge,
         });
 
-        auto sampleSet = DescriptorSet::Create({
+        auto sampleSet = DescriptorSet::Create(context, {
             .Name = "Sample Set",
             .Layout = sampleSetLayout,
         });

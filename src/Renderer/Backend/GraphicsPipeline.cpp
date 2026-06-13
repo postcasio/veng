@@ -11,7 +11,7 @@ namespace Veng::Renderer
 {
     GraphicsPipeline::Native& GraphicsPipeline::GetNative() const { return *m_Native; }
 
-    GraphicsPipeline::GraphicsPipeline(const GraphicsPipelineInfo& info) : m_Context(Context::Instance()), m_Name(info.Name),
+    GraphicsPipeline::GraphicsPipeline(Context& context, const GraphicsPipelineInfo& info) : m_Context(context), m_Name(info.Name),
         m_Native(CreateUnique<Native>()), m_PipelineLayout(info.PipelineLayout),
         m_DepthAttachmentFormat(info.DepthAttachmentFormat)
     {

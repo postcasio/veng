@@ -24,9 +24,9 @@ namespace Veng::Renderer
     class DescriptorSetLayout
     {
     public:
-        static Ref<DescriptorSetLayout> Create(const DescriptorSetLayoutInfo& info)
+        static Ref<DescriptorSetLayout> Create(Context& context, const DescriptorSetLayoutInfo& info)
         {
-            return Ref<DescriptorSetLayout>(new DescriptorSetLayout(info));
+            return Ref<DescriptorSetLayout>(new DescriptorSetLayout(context, info));
         }
 
         ~DescriptorSetLayout();
@@ -46,7 +46,7 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        explicit DescriptorSetLayout(const DescriptorSetLayoutInfo& info);
+        DescriptorSetLayout(Context& context, const DescriptorSetLayoutInfo& info);
 
         // The context this resource was created with (deferred-destruction
         // back-ref; a resource must not outlive its context).

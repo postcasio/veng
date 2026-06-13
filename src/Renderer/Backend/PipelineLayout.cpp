@@ -10,7 +10,7 @@ namespace Veng::Renderer
 {
     PipelineLayout::Native& PipelineLayout::GetNative() const { return *m_Native; }
 
-    PipelineLayout::PipelineLayout(const PipelineLayoutInfo& info) : m_Context(Context::Instance()), m_Name(info.Name),
+    PipelineLayout::PipelineLayout(Context& context, const PipelineLayoutInfo& info) : m_Context(context), m_Name(info.Name),
                                                                      m_Native(CreateUnique<Native>()),
                                                                      m_DescriptorSetLayouts(info.DescriptorSetLayouts),
                                                                      m_PushConstantRanges(info.PushConstantRanges)

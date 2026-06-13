@@ -49,14 +49,14 @@ namespace
     // Allocates a single-binding layout + set of `type` and writes `write` into
     // binding 0. Returns the set so it stays alive for the caller's scope.
     template <typename Write>
-    Ref<DescriptorSet> WriteSingleBinding(string_view name, DescriptorType type, ShaderStage stages, Write&& write)
+    Ref<DescriptorSet> WriteSingleBinding(Context& context, string_view name, DescriptorType type, ShaderStage stages, Write&& write)
     {
-        auto layout = DescriptorSetLayout::Create({
+        auto layout = DescriptorSetLayout::Create(context, {
             .Name = string(name) + " Layout",
             .Bindings = {{.Binding = 0, .Type = type, .Count = 1, .Stages = stages}},
         });
 
-        auto set = DescriptorSet::Create({
+        auto set = DescriptorSet::Create(context, {
             .Name = string(name) + " Set",
             .Layout = layout,
         });
@@ -115,14 +115,14 @@ int main()
         });
 
         // CombinedImageSampler
-        auto combinedSet = WriteSingleBinding("Combined Image Sampler", DescriptorType::CombinedImageSampler,
+        auto combinedSet = WriteSingleBinding(context, "Combined Image Sampler", DescriptorType::CombinedImageSampler,
             ShaderStage::Fragment, [&](const Ref<DescriptorSet>& set)
             {
                 set->Write(0, sampledView, sampler);
             });
 
         // SampledImage
-        auto sampledSet = WriteSingleBinding("Sampled Image", DescriptorType::SampledImage,
+        auto sampledSet = WriteSingleBinding(context, "Sampled Image", DescriptorType::SampledImage,
             ShaderStage::Fragment, [&](const Ref<DescriptorSet>& set)
             {
                 set->Write(0, sampledView);
@@ -134,21 +134,21 @@ int main()
         // allocate/write may emit Vulkan validation messages under VE_DEBUG.
         // Validation errors don't abort (CLAUDE.md), so the call still
         // completes and this test still passes.
-        auto storageImageSet = WriteSingleBinding("Storage Image", DescriptorType::StorageImage,
+        auto storageImageSet = WriteSingleBinding(context, "Storage Image", DescriptorType::StorageImage,
             ShaderStage::Compute, [&](const Ref<DescriptorSet>& set)
             {
                 set->Write(0, storageView);
             });
 
         // UniformBuffer
-        auto uniformSet = WriteSingleBinding("Uniform Buffer", DescriptorType::UniformBuffer,
+        auto uniformSet = WriteSingleBinding(context, "Uniform Buffer", DescriptorType::UniformBuffer,
             ShaderStage::Vertex | ShaderStage::Fragment, [&](const Ref<DescriptorSet>& set)
             {
                 set->Write(0, uniformBuffer);
             });
 
         // StorageBuffer
-        auto storageBufferSet = WriteSingleBinding("Storage Buffer", DescriptorType::StorageBuffer,
+        auto storageBufferSet = WriteSingleBinding(context, "Storage Buffer", DescriptorType::StorageBuffer,
             ShaderStage::Compute, [&](const Ref<DescriptorSet>& set)
             {
                 set->Write(0, storageBuffer);

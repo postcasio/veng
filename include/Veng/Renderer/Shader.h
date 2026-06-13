@@ -33,11 +33,11 @@ namespace Veng::Renderer
         //
         // Ref, not Unique: shaders are a shared GPU resource (the same module is
         // referenced by PipelineShaderStageInfo on every pipeline that uses it).
-        static Result<Ref<Shader>> Create(const ShaderInfo& info);
+        static Result<Ref<Shader>> Create(Context& context, const ShaderInfo& info);
 
-        static Ref<Shader> Create(const ShaderBinaryInfo& info)
+        static Ref<Shader> Create(Context& context, const ShaderBinaryInfo& info)
         {
-            return Ref<Shader>(new Shader(info));
+            return Ref<Shader>(new Shader(context, info));
         }
 
         ~Shader();
@@ -52,7 +52,7 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        explicit Shader(const ShaderBinaryInfo& info);
+        Shader(Context& context, const ShaderBinaryInfo& info);
 
         // The context this resource was created with (deferred-destruction
         // back-ref; a resource must not outlive its context).

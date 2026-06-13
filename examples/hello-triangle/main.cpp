@@ -153,26 +153,28 @@ protected:
 private:
     void CreateTrianglePipeline()
     {
-        const auto vertexShader = Renderer::Shader::Create({
+        auto& context = GetRenderContext();
+
+        const auto vertexShader = Renderer::Shader::Create(context, {
             .Name = "triangle.vert",
             .Path = path(HT_SHADER_DIR) / "triangle.vert.spv",
         });
         VE_ASSERT(vertexShader, "{}", vertexShader.error());
 
-        const auto fragmentShader = Renderer::Shader::Create({
+        const auto fragmentShader = Renderer::Shader::Create(context, {
             .Name = "triangle.frag",
             .Path = path(HT_SHADER_DIR) / "triangle.frag.spv",
         });
         VE_ASSERT(fragmentShader, "{}", fragmentShader.error());
 
-        m_TriangleLayout = Renderer::PipelineLayout::Create({
+        m_TriangleLayout = Renderer::PipelineLayout::Create(context, {
             .Name = "Triangle Layout",
             .PushConstantRanges = {
                 Renderer::PushConstantRange::Of<mat4>(Renderer::ShaderStage::Vertex),
             },
         });
 
-        m_TrianglePipeline = Renderer::GraphicsPipeline::Create({
+        m_TrianglePipeline = Renderer::GraphicsPipeline::Create(context, {
             .Name = "Triangle Pipeline",
             .ColorAttachments = {{.Format = m_SceneFormat}},
             .VertexBufferLayout = Renderer::VertexBufferLayout({
@@ -189,19 +191,21 @@ private:
 
     void CreateCompositePipeline()
     {
-        const auto vertexShader = Renderer::Shader::Create({
+        auto& context = GetRenderContext();
+
+        const auto vertexShader = Renderer::Shader::Create(context, {
             .Name = "composite.vert",
             .Path = path(HT_SHADER_DIR) / "composite.vert.spv",
         });
         VE_ASSERT(vertexShader, "{}", vertexShader.error());
 
-        const auto fragmentShader = Renderer::Shader::Create({
+        const auto fragmentShader = Renderer::Shader::Create(context, {
             .Name = "composite.frag",
             .Path = path(HT_SHADER_DIR) / "composite.frag.spv",
         });
         VE_ASSERT(fragmentShader, "{}", fragmentShader.error());
 
-        m_CompositeSetLayout = Renderer::DescriptorSetLayout::Create({
+        m_CompositeSetLayout = Renderer::DescriptorSetLayout::Create(context, {
             .Name = "Composite Set Layout",
             .Bindings = {
                 {
@@ -219,17 +223,17 @@ private:
             },
         });
 
-        m_CompositeLayout = Renderer::PipelineLayout::Create({
+        m_CompositeLayout = Renderer::PipelineLayout::Create(context, {
             .Name = "Composite Layout",
             .DescriptorSetLayouts = {m_CompositeSetLayout},
         });
 
-        m_CompositePipeline = Renderer::GraphicsPipeline::Create({
+        m_CompositePipeline = Renderer::GraphicsPipeline::Create(context, {
             .Name = "Composite Pipeline",
             // The composite pass renders into the swapchain image, which the
             // context owns and already exposes a single format accessor — no
             // separate Image::Create to keep in sync with here.
-            .ColorAttachments = {{.Format = GetRenderContext().GetSwapChainFormat()}},
+            .ColorAttachments = {{.Format = context.GetSwapChainFormat()}},
             .PipelineLayout = m_CompositeLayout,
             .ShaderStages = {
                 {.Stage = Renderer::ShaderStage::Vertex, .Module = vertexShader.value()},
@@ -237,7 +241,7 @@ private:
             },
         });
 
-        m_CompositeSet = Renderer::DescriptorSet::Create({
+        m_CompositeSet = Renderer::DescriptorSet::Create(context, {
             .Name = "Composite Set",
             .Layout = m_CompositeSetLayout,
         });

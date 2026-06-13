@@ -11,7 +11,7 @@ namespace Veng::Renderer
 {
     DescriptorSetLayout::Native& DescriptorSetLayout::GetNative() const { return *m_Native; }
 
-    DescriptorSetLayout::DescriptorSetLayout(const DescriptorSetLayoutInfo& info) : m_Context(Context::Instance()), m_Name(info.Name),
+    DescriptorSetLayout::DescriptorSetLayout(Context& context, const DescriptorSetLayoutInfo& info) : m_Context(context), m_Name(info.Name),
         m_Bindings(info.Bindings), m_Native(CreateUnique<Native>())
     {
         for (const auto& binding : m_Bindings)
