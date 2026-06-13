@@ -35,6 +35,6 @@ namespace Veng::Renderer
 
     void Fence::Reset() const
     {
-        GetVkDevice(Context::Instance()).resetFences(m_Native->Fence);
+        VK_ASSERT(GetVkDevice(Context::Instance()).resetFences(m_Native->Fence), "failed to reset fence!");
     }
 }

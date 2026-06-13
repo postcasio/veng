@@ -171,7 +171,7 @@ namespace Veng::Renderer
         VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Native->Instance);
 
 #ifdef VE_ENABLE_VALIDATION_LAYERS
-        m_Native->DebugMessenger = m_Native->Instance.createDebugUtilsMessengerEXT(debugCreateInfo);
+        m_Native->DebugMessenger = m_Native->Instance.createDebugUtilsMessengerEXT(debugCreateInfo).value;
 #endif
 
         DebugMarkers::Initialize();
@@ -407,7 +407,7 @@ namespace Veng::Renderer
 
     void Context::WaitIdle() const
     {
-        m_Native->Device.waitIdle();
+        VK_ASSERT(m_Native->Device.waitIdle(), "failed to wait for device idle!");
     }
 
     vector<const char*>& Context::Native::GetRequiredExtensions()
@@ -605,7 +605,8 @@ namespace Veng::Renderer
         // first, then views, then the images/buffers backing them. Everything in
         // the bin is already GPU-idle.
         for (auto descriptorSet : bin.DescriptorSets)
-            Device.freeDescriptorSets(DescriptorPool->GetVkDescriptorPool(), descriptorSet);
+            VK_ASSERT(Device.freeDescriptorSets(DescriptorPool->GetVkDescriptorPool(), descriptorSet),
+                      "failed to free descriptor set!");
         for (auto imageView : bin.ImageViews)
             Device.destroyImageView(imageView);
         for (auto& [image, allocation] : bin.Images)

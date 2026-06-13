@@ -5,6 +5,7 @@
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 #include <Veng/Renderer/Backend/Utils.h>
+#include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Native.h>
 
 
@@ -26,14 +27,14 @@ namespace Veng::Renderer
 
     void CommandBuffer::Reset()
     {
-        m_Native->CommandBuffer.reset();
+        VK_ASSERT(m_Native->CommandBuffer.reset(), "failed to reset command buffer!");
     }
 
     void CommandBuffer::Begin(CommandBufferUsage flags)
     {
-        m_Native->CommandBuffer.begin({
+        VK_ASSERT(m_Native->CommandBuffer.begin({
             .flags = ToVk(flags)
-        });
+        }), "failed to begin command buffer!");
     }
 
     static vk::RenderingAttachmentInfo BeginRendering_CreateAttachment(const RenderingAttachmentInfo& info)
@@ -247,7 +248,7 @@ namespace Veng::Renderer
 
     void CommandBuffer::End()
     {
-        m_Native->CommandBuffer.end();
+        VK_ASSERT(m_Native->CommandBuffer.end(), "failed to end command buffer!");
     }
 
     CommandBuffer::~CommandBuffer()
