@@ -1,4 +1,4 @@
-// Death-test harness (planset-3, plan 01).
+// Death-test harness (planset-3, plans 01 + 05).
 //
 // VE_ASSERT calls std::abort(), which doctest cannot trap in-process, so death
 // cases run as separate processes: ctest invokes this binary with a case name
@@ -20,22 +20,46 @@
 // fail. (This contradicts plan 01's assumption that WILL_FAIL inverts a SIGABRT
 // — noted there.)
 //
-// The actual death cases beyond `sentinel` are plan 05; this file owns only the
-// dispatch + the one sentinel case that proves the wiring.
+// Cases come in two bands:
+//   - Pure-logic: no Context, run with no ICD (registered `death`).
+//   - GPU-coupled: need a headless Context; registered `gpu;death` with
+//     SKIP_RETURN_CODE so they report *skipped* (not failed) on a machine with
+//     no Vulkan driver, via the plan-01 HasVulkanDriver() probe.
 
 #include <csignal>
 #include <cstdlib>
+#include <span>
 #include <string_view>
 
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
 
+#include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/DescriptorSetLayout.h>
+#include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/TypedBuffers.h>
+#include <Veng/Renderer/Types.h>
+#include <Veng/Renderer/VertexBufferLayout.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
+
+#include <support/GpuProbe.h>
+
 #include <fmt/format.h>
 
 using namespace Veng;
+using namespace Veng::Renderer;
 
 namespace
 {
+    // Exit code that marks a GPU-coupled case as skipped (no Vulkan driver). Must
+    // match SKIP_RETURN_CODE in CMakeLists.txt. CTest's skip detection takes
+    // precedence over PASS_REGULAR_EXPRESSION, so a driverless run reports
+    // *skipped* rather than failing on a missed message.
+    constexpr int SkipExitCode = 77;
+
     // SIGABRT lands here once VE_ASSERT has already logged + flushed its message
     // to stderr. Convert the abort into a clean exit so CTest judges the run by
     // PASS_REGULAR_EXPRESSION (the assert message) rather than reporting an
@@ -57,9 +81,119 @@ namespace
         });
     }
 
+    // -- Pure-logic death cases (no device) ----------------------------------
+
     void RunSentinel()
     {
         VE_ASSERT(false, "sentinel death case");
+    }
+
+    void RunVertexFormatUnknown()
+    {
+        // RGBA8Unorm is not a vertex element format; GetFormatSize aborts while
+        // the layout's element is constructed.
+        const VertexBufferLayout layout = {{Format::RGBA8Unorm, "bad"}};
+        (void)layout.GetStride();
+    }
+
+    void RunToVkUnmapped()
+    {
+        // A Format value outside the mapped range hits ToVk's "unmapped" assert.
+        volatile auto bad = static_cast<Format>(200);
+        const vk::Format mapped = ToVk(static_cast<Format>(bad));
+        (void)mapped;
+    }
+
+    void RunAssertMessage()
+    {
+        // Proves FatalAssert routes the formatted message to the log sink before
+        // aborting.
+        VE_ASSERT(false, "assert_message case fired");
+    }
+
+    // -- GPU-coupled death cases (need a headless Context) -------------------
+
+    // Bring up a headless Context, run `body` (which is expected to abort), and
+    // never return: skip if no driver, fail loudly if `body` somehow returns.
+    template <typename Body>
+    [[noreturn]] void InGpuContext(Body&& body)
+    {
+        if (!Test::HasVulkanDriver())
+            std::_Exit(SkipExitCode);
+
+        Context context;
+        context.Initialize({
+            .ApplicationName = "Death Test",
+            .InternalRenderExtent = {4, 4},
+        }, nullptr);
+
+        body(context);
+
+        // body was supposed to abort; reaching here means it did not.
+        fmt::print(stderr, "death harness: GPU case did not abort\n");
+        std::_Exit(1);
+    }
+
+    void RunBufferUploadOverrun()
+    {
+        InGpuContext([](Context&)
+        {
+            const auto buffer = Buffer::Create({
+                .Name = "overrun",
+                .Size = 16,
+                .Usage = BufferUsage::TransferDst,
+            });
+            const u8 data[32] = {};
+            buffer->Upload({data, sizeof(data)}); // offset 0 + 32 > 16
+        });
+    }
+
+    void RunIndexU16IntoU32()
+    {
+        InGpuContext([](Context&)
+        {
+            const auto index = IndexBuffer::Create("indices", 4, IndexType::U32);
+            const u16 values[4] = {};
+            index.Upload(std::span<const u16>(values)); // buffer is U32
+        });
+    }
+
+    void RunIndexU32IntoU16()
+    {
+        InGpuContext([](Context&)
+        {
+            const auto index = IndexBuffer::Create("indices", 4, IndexType::U16);
+            const u32 values[4] = {};
+            index.Upload(std::span<const u32>(values)); // buffer is U16
+        });
+    }
+
+    void RunDescriptorTypeMismatch()
+    {
+        InGpuContext([](Context&)
+        {
+            const auto layout = DescriptorSetLayout::Create({
+                .Name = "mismatch-layout",
+                .Bindings = {{
+                    .Binding = 0,
+                    .Type = DescriptorType::UniformBuffer,
+                    .Count = 1,
+                    .Stages = ShaderStage::Fragment,
+                }},
+            });
+            const auto set = DescriptorSet::Create({.Name = "mismatch-set", .Layout = layout});
+
+            const auto image = Image::Create({
+                .Name = "img",
+                .Extent = {4, 4, 1},
+                .Format = Format::RGBA8Unorm,
+                .Usage = ImageUsage::Sampled,
+            });
+            const auto view = ImageView::Create({.Name = "iv", .Image = image});
+
+            // Binding 0 is a UniformBuffer; the image Write asserts the type.
+            set->Write(0, view);
+        });
     }
 }
 
@@ -76,8 +210,16 @@ int main(int argc, char** argv)
 
     const std::string_view name = argv[1];
 
-    if (name == "sentinel")
-        RunSentinel();
+    // Pure-logic
+    if (name == "sentinel") RunSentinel();
+    else if (name == "vertex_format_unknown") RunVertexFormatUnknown();
+    else if (name == "tovk_unmapped") RunToVkUnmapped();
+    else if (name == "assert_message") RunAssertMessage();
+    // GPU-coupled
+    else if (name == "buffer_upload_overrun") RunBufferUploadOverrun();
+    else if (name == "index_u16_into_u32") RunIndexU16IntoU32();
+    else if (name == "index_u32_into_u16") RunIndexU32IntoU16();
+    else if (name == "descriptor_type_mismatch") RunDescriptorTypeMismatch();
     else
         fmt::print(stderr, "death harness: unknown case '{}'\n", name);
 

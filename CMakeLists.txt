@@ -254,28 +254,64 @@ if (VENG_BUILD_TESTS)
     # `ctest -L unit` is the fast, driver-free feedback loop.
     doctest_discover_tests(veng_unit PROPERTIES LABELS unit)
 
-    # ---- Death band (VE_ASSERT — wiring here, cases in plan 05) -------------
-    # VE_ASSERT aborts, which doctest can't trap in-process, so death cases run
-    # as separate processes. The harness traps SIGABRT and converts the abort
-    # into a clean exit once the assert message is on stderr; each case is a
-    # separate add_test pinned to that message via PASS_REGULAR_EXPRESSION (see
-    # death_main.cpp for why this, and not WILL_FAIL).
-    add_executable(veng_death tests/death/death_main.cpp)
-    target_link_libraries(veng_death PRIVATE veng::veng)
-
-    add_test(NAME death.sentinel COMMAND veng_death sentinel)
-    set_tests_properties(death.sentinel PROPERTIES
-            LABELS death
-            PASS_REGULAR_EXPRESSION "sentinel death case"
-    )
-
-    # ---- Shared GPU-band support (consumed by plan 06) ----------------------
+    # ---- Shared GPU-band support (consumed by the death + GPU bands) --------
     # Vulkan-driver probe so a GPU test can skip (not fail) where no ICD exists.
     # Links Vulkan PRIVATE; its public header pulls in no Vulkan headers, so
     # consumers include <support/GpuProbe.h> without the backend include graph.
     add_library(veng_test_support STATIC tests/support/GpuProbe.cpp)
     target_include_directories(veng_test_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(veng_test_support PRIVATE Vulkan::Vulkan)
+
+    # ---- Death band (VE_ASSERT contract — plans 01 + 05) -------------------
+    # VE_ASSERT aborts, which doctest can't trap in-process, so death cases run
+    # as separate processes. The harness traps SIGABRT and converts the abort
+    # into a clean exit once the assert message is on stderr; each case is a
+    # separate add_test pinned to that message via PASS_REGULAR_EXPRESSION (see
+    # death_main.cpp for why this, and not WILL_FAIL). GPU-coupled cases link the
+    # driver probe and use SKIP_RETURN_CODE so they skip (not fail) with no ICD.
+    add_executable(veng_death tests/death/death_main.cpp)
+    target_link_libraries(veng_death PRIVATE veng::veng veng_test_support)
+    # tovk_unmapped includes TypeMapping.h (→ Backend/Vulkan.h → GLFW + VMA);
+    # headers only, like veng_unit.
+    target_link_libraries(veng_death PRIVATE
+            Vulkan::Vulkan
+            glfw
+            GPUOpen::VulkanMemoryAllocator
+    )
+
+    # Pure-logic death cases (no device; run with no ICD).
+    add_test(NAME death.sentinel COMMAND veng_death sentinel)
+    set_tests_properties(death.sentinel PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "sentinel death case")
+
+    add_test(NAME death.vertex_format_unknown COMMAND veng_death vertex_format_unknown)
+    set_tests_properties(death.vertex_format_unknown PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "Unknown vertex element Format")
+
+    add_test(NAME death.tovk_unmapped COMMAND veng_death tovk_unmapped)
+    set_tests_properties(death.tovk_unmapped PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "ToVk\\(Format\\): unmapped format")
+
+    add_test(NAME death.assert_message COMMAND veng_death assert_message)
+    set_tests_properties(death.assert_message PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "assert_message case fired")
+
+    # GPU-coupled death cases (need a headless Context; skip with no driver).
+    add_test(NAME death.buffer_upload_overrun COMMAND veng_death buffer_upload_overrun)
+    set_tests_properties(death.buffer_upload_overrun PROPERTIES LABELS "gpu;death"
+            SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "upload out of range")
+
+    add_test(NAME death.index_u16_into_u32 COMMAND veng_death index_u16_into_u32)
+    set_tests_properties(death.index_u16_into_u32 PROPERTIES LABELS "gpu;death"
+            SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "cannot upload u16 indices")
+
+    add_test(NAME death.index_u32_into_u16 COMMAND veng_death index_u32_into_u16)
+    set_tests_properties(death.index_u32_into_u16 PROPERTIES LABELS "gpu;death"
+            SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "cannot upload u32 indices")
+
+    add_test(NAME death.descriptor_type_mismatch COMMAND veng_death descriptor_type_mismatch)
+    set_tests_properties(death.descriptor_type_mismatch PROPERTIES LABELS "gpu;death"
+            SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "not a sampled or storage image")
 
     # Include-hygiene guard: compiles every public header while linking only the
     # PUBLIC deps of veng (glm, fmt, ImGui). Because Vulkan/GLFW/VMA/nfd link

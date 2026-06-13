@@ -48,7 +48,7 @@ suite's assertions are written in plain enough macros to port if needed.
 | 02 | [Pure-logic suite (no GPU)](02-pure-logic-suite.md) | done | 01 |
 | 03 | [Type-mapping round-trips](03-type-mapping-roundtrips.md) | done | 01 |
 | 04 | [Extract & test the barrier-decision rule](04-barrier-decision-extraction.md) | done | 01 |
-| 05 | [Death tests (VE_ASSERT)](05-death-tests.md) | proposed | 01 |
+| 05 | [Death tests (VE_ASSERT)](05-death-tests.md) | done | 01 |
 | 06 | [Consolidate & extend GPU tests](06-gpu-test-consolidation.md) | proposed | 01 |
 
 ## Dependency graph (for delegation)
