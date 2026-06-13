@@ -75,6 +75,12 @@ bindings/devices). Revisit when gameplay drives the requirements.
 
 ### 5. Unit testing / test infrastructure (firm up soon)
 
+> **Area 5a (harness + pure-logic + one-exe GPU tests) is now
+> [planset-3](../planset-3/README.md)** (in progress). What remains here is **5b**:
+> the in-process multi-case GPU integration suite, deferred until after the
+> de-globalize change (area 3) so it targets the explicit-device API and gets real
+> per-test isolation. The notes below are retained as the area's full vision.
+
 Today's `tests/` are two CTest smoke/compile guards (`include_hygiene`,
 `headless_smoke`) — no unit-test framework, no pure-logic coverage. Stand up a
 real setup:

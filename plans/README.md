@@ -13,10 +13,17 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   retiring the legacy render-pass path, and minor ergonomics. Shader-facing work
   is deferred to the future-work areas below.
 
-- **[future](future/README.md)** — work beyond planset-2 (📝 draft/vision,
+- **[planset-3](planset-3/README.md)** — unit testing & test infrastructure
+  (🚧 in progress). Promotes the first half of the future "testing" area (area 5a):
+  a header-only framework (doctest), CTest wiring, a death-test harness, and a base
+  suite — pure-logic, type-mapping round-trips, GPU one-exe exercises. The
+  in-process multi-case GPU integration suite (5b) stays in `future/`, deferred
+  until after the de-globalize change.
+
+- **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). The asset system (asset API first, then
   materials/textures/meshes; absorbs offline shader reflection + shader-derived
   layouts), a threading/task system (Vulkan-queue-correct async asset loading),
-  de-globalizing the context singleton, the event/input systems, and unit-test
-  infrastructure. Each becomes its own planset when taken up. Not scheduled —
-  planset-2 first.
+  de-globalizing the context singleton, the event/input systems, and the
+  post-de-globalize GPU integration tests (area 5b). Each becomes its own planset
+  when taken up. (Testing area 5a is now planset-3.)
