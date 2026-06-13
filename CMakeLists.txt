@@ -258,8 +258,13 @@ if (VENG_BUILD_TESTS)
     # Vulkan-driver probe so a GPU test can skip (not fail) where no ICD exists.
     # Links Vulkan PRIVATE; its public header pulls in no Vulkan headers, so
     # consumers include <support/GpuProbe.h> without the backend include graph.
-    add_library(veng_test_support STATIC tests/support/GpuProbe.cpp)
+    #
+    # GpuContext.cpp (plan 06) adds the shared headless-Context RAII wrapper and
+    # pixel-compare helper used by the one-exe GPU tests; it's written against
+    # public veng APIs only, so this target now also links veng::veng.
+    add_library(veng_test_support STATIC tests/support/GpuProbe.cpp tests/support/GpuContext.cpp)
     target_include_directories(veng_test_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(veng_test_support PUBLIC veng::veng)
     target_link_libraries(veng_test_support PRIVATE Vulkan::Vulkan)
 
     # ---- Death band (VE_ASSERT contract — plans 01 + 05) -------------------
@@ -322,17 +327,18 @@ if (VENG_BUILD_TESTS)
     add_test(NAME include_hygiene COMMAND veng_include_hygiene)
 
     # Headless smoke test: brings up a windowless context, renders off-screen and
-    # verifies downloaded pixels. Requires a Vulkan ICD at run time.
+    # verifies downloaded pixels. Skips (SKIP_RETURN_CODE 77) with no Vulkan ICD.
     add_executable(veng_headless_smoke tests/headless_smoke.cpp)
-    target_link_libraries(veng_headless_smoke PRIVATE veng::veng)
+    target_link_libraries(veng_headless_smoke PRIVATE veng::veng veng_test_support)
 
     add_test(NAME headless_smoke COMMAND veng_headless_smoke)
+    set_tests_properties(headless_smoke PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
 
     # Compute dispatch test (plan 05): headless graphics -> compute -> graphics
     # render graph proving cmd.Dispatch and the storage-image barrier chain.
-    # Requires a Vulkan ICD at run time.
+    # Skips (SKIP_RETURN_CODE 77) with no Vulkan ICD.
     add_executable(veng_compute_dispatch tests/compute_dispatch.cpp)
-    target_link_libraries(veng_compute_dispatch PRIVATE veng::veng)
+    target_link_libraries(veng_compute_dispatch PRIVATE veng::veng veng_test_support)
     target_compile_definitions(veng_compute_dispatch PRIVATE
             CD_SHADER_DIR="${CMAKE_CURRENT_BINARY_DIR}/shaders"
     )
@@ -345,6 +351,45 @@ if (VENG_BUILD_TESTS)
     add_dependencies(veng_compute_dispatch veng_compute_dispatch_shaders)
 
     add_test(NAME compute_dispatch COMMAND veng_compute_dispatch)
+    set_tests_properties(compute_dispatch PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+
+    # ---- New focused GPU exercises (plan 06) --------------------------------
+    # Each is its own one-exe test: skip (SKIP_RETURN_CODE 77) with no Vulkan
+    # ICD via Test::HasVulkanDriver(), label `gpu`.
+
+    # Buffer round-trip: Upload/Download identity, including an offset upload.
+    add_executable(veng_buffer_roundtrip tests/buffer_roundtrip.cpp)
+    target_link_libraries(veng_buffer_roundtrip PRIVATE veng::veng veng_test_support)
+
+    add_test(NAME buffer_roundtrip COMMAND veng_buffer_roundtrip)
+    set_tests_properties(buffer_roundtrip PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+
+    # Typed-buffer round-trip: VertexBuffer<V>/StorageBuffer<T> upload/download,
+    # the primary device-side coverage of the count*sizeof(T) size arithmetic
+    # (plan 02 deliberately left this untested device-free).
+    add_executable(veng_typed_buffer_roundtrip tests/typed_buffer_roundtrip.cpp)
+    target_link_libraries(veng_typed_buffer_roundtrip PRIVATE veng::veng veng_test_support)
+
+    add_test(NAME typed_buffer_roundtrip COMMAND veng_typed_buffer_roundtrip)
+    set_tests_properties(typed_buffer_roundtrip PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+
+    # Image clear + download at a non-trivial extent and a second format,
+    # broadening headless_smoke's single 4x4 RGBA8Unorm case.
+    add_executable(veng_image_clear_format tests/image_clear_format.cpp)
+    target_link_libraries(veng_image_clear_format PRIVATE veng::veng veng_test_support)
+
+    add_test(NAME image_clear_format COMMAND veng_image_clear_format)
+    set_tests_properties(image_clear_format PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+
+    # Descriptor write paths: exercises DescriptorSet::Write for combined-image-
+    # sampler, storage image, uniform buffer and storage buffer bindings without
+    # a full render. The storage-image path hits the known UPDATE_AFTER_BIND /
+    # pool-size validation gap (CLAUDE.md) — recorded, not fixed, here.
+    add_executable(veng_descriptor_write_paths tests/descriptor_write_paths.cpp)
+    target_link_libraries(veng_descriptor_write_paths PRIVATE veng::veng veng_test_support)
+
+    add_test(NAME descriptor_write_paths COMMAND veng_descriptor_write_paths)
+    set_tests_properties(descriptor_write_paths PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
 endif ()
 
 # ---------------------------------------------------------------------------

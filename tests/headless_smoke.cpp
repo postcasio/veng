@@ -4,34 +4,36 @@
 // Drives Context directly — no Window, no Application, no swapchain. This is the
 // CI-facing proof that renderer code runs without a display.
 //
-// Note: a Vulkan ICD must be present (MoltenVK on macOS dev machines; lavapipe/
-// SwiftShader on Linux CI). With the engine's fatal-assert model there is no
-// graceful "no ICD" skip yet — run this only where a Vulkan implementation
-// exists.
+// Skips cleanly (exit 77, ctest reports it as skipped — see CMakeLists.txt's
+// SKIP_RETURN_CODE) on a machine with no usable Vulkan ICD, via
+// Test::HasVulkanDriver() (planset-3, plan 01/06).
 
+#include <array>
 #include <cstdio>
 
-#include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Types.h>
 
+#include <support/GpuContext.h>
+#include <support/GpuProbe.h>
+
 using namespace Veng;
 using namespace Veng::Renderer;
 
 int main()
 {
+    if (!Test::HasVulkanDriver())
+        return 77;
+
     constexpr u32 size = 4;
     // Exactly representable in RGBA8Unorm: red, fully opaque.
-    constexpr u8 expected[4] = {255, 0, 0, 255};
+    constexpr std::array<u8, 4> expected = {255, 0, 0, 255};
 
-    Context context;
-    context.Initialize({
-        .ApplicationName = "Headless Smoke",
-        .InternalRenderExtent = {size, size},
-    }, nullptr);
+    Test::GpuContext gpu("Headless Smoke", {size, size});
+    Context& context = gpu.Get();
 
     if (!context.IsHeadless())
     {
@@ -75,28 +77,11 @@ int main()
             std::fprintf(stderr, "FAIL: unexpected download size %zu\n", pixels.size());
             status = 1;
         }
-        else
+        else if (!Test::PixelsMatch(pixels, expected))
         {
-            for (size_t p = 0; p < pixels.size() && status == 0; p += 4)
-            {
-                for (u32 c = 0; c < 4; c++)
-                {
-                    if (pixels[p + c] != expected[c])
-                    {
-                        std::fprintf(stderr,
-                                     "FAIL: pixel %zu channel %u = %u, expected %u\n",
-                                     p / 4, c, pixels[p + c], expected[c]);
-                        status = 1;
-                        break;
-                    }
-                }
-            }
+            status = 1;
         }
     }
-
-    context.WaitIdle();
-    context.DisposeResources();
-    context.Dispose();
 
     if (status == 0)
     {

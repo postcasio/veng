@@ -14,7 +14,12 @@
 // without cmd.Dispatch. With validation layers enabled (VE_ENABLE_VALIDATION_LAYERS)
 // this also proves the render graph's derived barriers are sync-validation
 // clean across a compute pass.
+//
+// Skips cleanly (exit 77, ctest reports it as skipped — see CMakeLists.txt's
+// SKIP_RETURN_CODE) on a machine with no usable Vulkan ICD, via
+// Test::HasVulkanDriver() (planset-3, plan 01/06).
 
+#include <array>
 #include <cstdio>
 
 #include <Veng/Assert.h>
@@ -32,22 +37,25 @@
 #include <Veng/Renderer/Shader.h>
 #include <Veng/Renderer/Types.h>
 
+#include <support/GpuContext.h>
+#include <support/GpuProbe.h>
+
 using namespace Veng;
 using namespace Veng::Renderer;
 
 int main()
 {
+    if (!Test::HasVulkanDriver())
+        return 77;
+
     constexpr u32 size = 4;
 
     // Source image is cleared to (0.2, 0.4, 0.6, 1.0); the compute pass writes
     // 1 - rgb (alpha unchanged), so the output image must match `expected`.
-    constexpr u8 expected[4] = {204, 153, 102, 255}; // ~ (0.8, 0.6, 0.4, 1.0)
+    constexpr std::array<u8, 4> expected = {204, 153, 102, 255}; // ~ (0.8, 0.6, 0.4, 1.0)
 
-    Context context;
-    context.Initialize({
-        .ApplicationName = "Compute Dispatch Test",
-        .InternalRenderExtent = {size, size},
-    }, nullptr);
+    Test::GpuContext gpu("Compute Dispatch Test", {size, size});
+    Context& context = gpu.Get();
 
     if (!context.IsHeadless())
     {
@@ -233,28 +241,11 @@ int main()
             std::fprintf(stderr, "FAIL: unexpected download size %zu\n", pixels.size());
             status = 1;
         }
-        else
+        else if (!Test::PixelsMatch(pixels, expected))
         {
-            for (size_t p = 0; p < pixels.size() && status == 0; p += 4)
-            {
-                for (u32 c = 0; c < 4; c++)
-                {
-                    if (pixels[p + c] != expected[c])
-                    {
-                        std::fprintf(stderr,
-                                     "FAIL: pixel %zu channel %u = %u, expected %u\n",
-                                     p / 4, c, pixels[p + c], expected[c]);
-                        status = 1;
-                        break;
-                    }
-                }
-            }
+            status = 1;
         }
     }
-
-    context.WaitIdle();
-    context.DisposeResources();
-    context.Dispose();
 
     if (status == 0)
     {
