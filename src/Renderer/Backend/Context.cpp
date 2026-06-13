@@ -4,6 +4,7 @@
 #include <cstring>
 #include <set>
 
+#include <Veng/Renderer/Backend/Barrier.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
@@ -320,6 +321,46 @@ namespace Veng::Renderer
     CommandBuffer& Context::GetCurrentCommandBuffer()
     {
         return *GetCurrentFrame().GetCommandBuffer();
+    }
+
+    CommandBuffer& Context::BeginFrame()
+    {
+        auto& frame = AcquireNextFrame();
+
+        // Headless has no swapchain image to acquire.
+        if (!IsHeadless())
+        {
+            AcquireNextImage(frame.GetImageAvailableSemaphore());
+        }
+
+        frame.GetInFlightFence().Reset();
+
+        auto commandBuffer = frame.GetCommandBuffer();
+
+        commandBuffer->Reset();
+
+        commandBuffer->Begin();
+
+        return *commandBuffer;
+    }
+
+    void Context::EndFrame()
+    {
+        auto& frame = GetCurrentFrame();
+
+        auto commandBuffer = frame.GetCommandBuffer();
+
+        // Headless has no swapchain image to transition for presentation.
+        if (!IsHeadless())
+        {
+            Backend::TransitionImage(*commandBuffer, *GetCurrentSwapChainImage(), ImageLayout::PresentSrc);
+        }
+
+        commandBuffer->End();
+
+        SubmitFrame(frame);
+
+        PresentFrame(frame);
     }
 
     u32 Context::GetMaxFramesInFlight() const { return m_Native->MaxFramesInFlight; }

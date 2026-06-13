@@ -4,9 +4,8 @@
 #include <Veng/Vendor/ImGui.h>
 
 #include <Veng/Renderer/Buffer.h>
-#include <Veng/Renderer/Command.h>
 #include <Veng/Renderer/DescriptorSet.h>
-#include <Veng/Renderer/DynamicGraphicsPipeline.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
@@ -173,17 +172,17 @@ private:
             },
         });
 
-        m_TrianglePipeline = Renderer::DynamicGraphicsPipeline::Create({
+        m_TrianglePipeline = Renderer::GraphicsPipeline::Create({
             .Name = "Triangle Pipeline",
             .ColorAttachments = {{.Format = m_SceneFormat}},
             .VertexBufferLayout = Renderer::VertexBufferLayout({
-                {Renderer::VertexElementDataType::Float2, "a_Position"},
-                {Renderer::VertexElementDataType::Float3, "a_Color"},
+                {Renderer::Format::RG32Sfloat, "a_Position"},
+                {Renderer::Format::RGB32Sfloat, "a_Color"},
             }),
             .PipelineLayout = m_TriangleLayout,
             .ShaderStages = {
-                {.Stage = Renderer::ShaderStage::Vertex, .Module = *vertexShader.value()},
-                {.Stage = Renderer::ShaderStage::Fragment, .Module = *fragmentShader.value()},
+                {.Stage = Renderer::ShaderStage::Vertex, .Module = vertexShader.value()},
+                {.Stage = Renderer::ShaderStage::Fragment, .Module = fragmentShader.value()},
             },
         });
     }
@@ -225,7 +224,7 @@ private:
             .DescriptorSetLayouts = {m_CompositeSetLayout},
         });
 
-        m_CompositePipeline = Renderer::DynamicGraphicsPipeline::Create({
+        m_CompositePipeline = Renderer::GraphicsPipeline::Create({
             .Name = "Composite Pipeline",
             // The composite pass renders into the swapchain image, which the
             // context owns and already exposes a single format accessor — no
@@ -233,8 +232,8 @@ private:
             .ColorAttachments = {{.Format = GetRenderContext().GetSwapChainFormat()}},
             .PipelineLayout = m_CompositeLayout,
             .ShaderStages = {
-                {.Stage = Renderer::ShaderStage::Vertex, .Module = *vertexShader.value()},
-                {.Stage = Renderer::ShaderStage::Fragment, .Module = *fragmentShader.value()},
+                {.Stage = Renderer::ShaderStage::Vertex, .Module = vertexShader.value()},
+                {.Stage = Renderer::ShaderStage::Fragment, .Module = fragmentShader.value()},
             },
         });
 
@@ -360,11 +359,11 @@ private:
     Renderer::IndexBuffer m_IndexBuffer;
 
     Ref<Renderer::PipelineLayout> m_TriangleLayout;
-    Ref<Renderer::DynamicGraphicsPipeline> m_TrianglePipeline;
+    Ref<Renderer::GraphicsPipeline> m_TrianglePipeline;
 
     Ref<Renderer::DescriptorSetLayout> m_CompositeSetLayout;
     Ref<Renderer::PipelineLayout> m_CompositeLayout;
-    Ref<Renderer::DynamicGraphicsPipeline> m_CompositePipeline;
+    Ref<Renderer::GraphicsPipeline> m_CompositePipeline;
     Ref<Renderer::DescriptorSet> m_CompositeSet;
 
     Ref<ImGuiTexture> m_SceneTexture;

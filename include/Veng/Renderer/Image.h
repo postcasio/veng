@@ -21,7 +21,7 @@ namespace Veng::Renderer
         ImageUsage Usage;
     };
 
-    class Image
+    class Image : public std::enable_shared_from_this<Image>
     {
     public:
         static Ref<Image> Create(const ImageInfo& info)

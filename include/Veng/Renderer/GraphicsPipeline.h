@@ -7,7 +7,7 @@
 
 namespace Veng::Renderer
 {
-    struct DynamicPipelineInfo
+    struct GraphicsPipelineInfo
     {
         string Name;
 
@@ -26,21 +26,21 @@ namespace Veng::Renderer
         CompareOp DepthCompareOp = CompareOp::LessOrEqual;
     };
 
-    class DynamicGraphicsPipeline
+    class GraphicsPipeline
     {
     public:
-        static Ref<DynamicGraphicsPipeline> Create(const DynamicPipelineInfo& info)
+        static Ref<GraphicsPipeline> Create(const GraphicsPipelineInfo& info)
         {
-            return CreateRef<DynamicGraphicsPipeline>(info);
+            return CreateRef<GraphicsPipeline>(info);
         }
 
-        explicit DynamicGraphicsPipeline(const DynamicPipelineInfo& info);
-        ~DynamicGraphicsPipeline();
+        explicit GraphicsPipeline(const GraphicsPipelineInfo& info);
+        ~GraphicsPipeline();
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] Ref<PipelineLayout> GetPipelineLayout() const { return m_PipelineLayout; }
 
-        // Declared attachment formats (from DynamicPipelineInfo at creation).
+        // Declared attachment formats (from GraphicsPipelineInfo at creation).
         // CommandBuffer compares these against the active rendering attachments'
         // formats at draw time (see CommandBuffer::Draw/DrawIndexed) to turn a
         // silent dynamic-rendering validation error into a named engine assert.

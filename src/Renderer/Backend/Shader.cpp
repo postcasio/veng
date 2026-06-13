@@ -10,7 +10,7 @@ namespace Veng::Renderer
 {
     Shader::Native& Shader::GetNative() const { return *m_Native; }
 
-    Result<Unique<Shader>> Shader::Create(const ShaderInfo& info)
+    Result<Ref<Shader>> Shader::Create(const ShaderInfo& info)
     {
         path filePath = std::filesystem::absolute(info.Path);
         std::ifstream file(filePath, std::ios::ate | std::ios::binary);
@@ -28,7 +28,7 @@ namespace Veng::Renderer
 
         file.close();
 
-        return CreateUnique<Shader>(ShaderBinaryInfo{
+        return CreateRef<Shader>(ShaderBinaryInfo{
             .Name = info.Name,
             .Binary = buffer,
             .EntryPoint = info.EntryPoint,

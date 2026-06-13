@@ -29,7 +29,7 @@ namespace Veng::Renderer
         m_Native->CommandBuffer.reset();
     }
 
-    void CommandBuffer::Begin(CommandBufferUsage flags) const
+    void CommandBuffer::Begin(CommandBufferUsage flags)
     {
         m_Native->CommandBuffer.begin({
             .flags = ToVk(flags)
@@ -131,7 +131,7 @@ namespace Veng::Renderer
         m_Native->CommandBuffer.beginRendering(renderingInfo);
     }
 
-    void CommandBuffer::EndRendering() const
+    void CommandBuffer::EndRendering()
     {
         m_Native->CommandBuffer.endRendering();
 
@@ -140,7 +140,7 @@ namespace Veng::Renderer
         m_HasActiveRenderingInfo = false;
     }
 
-    void CommandBuffer::PushConstants(const PushConstantsInfo& info) const
+    void CommandBuffer::PushConstants(const PushConstantsInfo& info)
     {
         m_Native->CommandBuffer.pushConstants(m_LastBoundPipelineLayout->GetNative().Layout, ToVk(info.StageFlags), info.Offset,
                                         info.Size, info.Data);
@@ -160,7 +160,7 @@ namespace Veng::Renderer
                                              info.FirstSet, descriptorSets, nullptr);
     }
 
-    void CommandBuffer::DrawFullscreenTriangle() const
+    void CommandBuffer::DrawFullscreenTriangle()
     {
         if (m_HasActiveRenderingInfo && m_HasBoundGraphicsPipelineFormats)
         {
@@ -173,7 +173,7 @@ namespace Veng::Renderer
     }
 
     void CommandBuffer::Draw(const u32 vertexCount, const u32 instanceCount, const u32 firstVertex,
-                             const u32 firstInstance) const
+                             const u32 firstInstance)
     {
         if (m_HasActiveRenderingInfo && m_HasBoundGraphicsPipelineFormats)
         {
@@ -186,7 +186,7 @@ namespace Veng::Renderer
     }
 
     void CommandBuffer::DrawIndexed(const u32 indexCount, const u32 instanceCount, const u32 firstIndex,
-                                    const i32 vertexOffset, const u32 firstInstance) const
+                                    const i32 vertexOffset, const u32 firstInstance)
     {
         if (m_HasActiveRenderingInfo && m_HasBoundGraphicsPipelineFormats)
         {
@@ -198,12 +198,12 @@ namespace Veng::Renderer
         m_Native->CommandBuffer.drawIndexed(indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
     }
 
-    void CommandBuffer::Dispatch(const u32 groupsX, const u32 groupsY, const u32 groupsZ) const
+    void CommandBuffer::Dispatch(const u32 groupsX, const u32 groupsY, const u32 groupsZ)
     {
         m_Native->CommandBuffer.dispatch(groupsX, groupsY, groupsZ);
     }
 
-    void CommandBuffer::BindPipeline(const Ref<DynamicGraphicsPipeline>& pipeline)
+    void CommandBuffer::BindPipeline(const Ref<GraphicsPipeline>& pipeline)
     {
         m_Native->CommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetNative().Pipeline);
         m_LastBoundPipelineLayout = pipeline->GetPipelineLayout();
@@ -229,12 +229,12 @@ namespace Veng::Renderer
         m_HasBoundGraphicsPipelineFormats = false;
     }
 
-    void CommandBuffer::SetScissor(const ivec2 offset, const uvec2 extent) const
+    void CommandBuffer::SetScissor(const ivec2 offset, const uvec2 extent)
     {
         m_Native->CommandBuffer.setScissor(0, {vk::Rect2D{{offset.x, offset.y}, {extent.x, extent.y}}});
     }
 
-    void CommandBuffer::SetViewport(const ivec2 offset, const uvec2 extent) const
+    void CommandBuffer::SetViewport(const ivec2 offset, const uvec2 extent)
     {
         m_Native->CommandBuffer.setViewport(0, {
                                           vk::Viewport{
@@ -245,7 +245,7 @@ namespace Veng::Renderer
     }
 
 
-    void CommandBuffer::End() const
+    void CommandBuffer::End()
     {
         m_Native->CommandBuffer.end();
     }
@@ -268,42 +268,42 @@ namespace Veng::Renderer
         m_Native->CommandBuffer.bindIndexBuffer(buffer->GetNative().Buffer, 0, ToVk(type));
     }
 
-    void CommandBuffer::CopyBufferToImage(const Buffer& buffer, const Image& image) const
+    void CommandBuffer::CopyBufferToImage(const Ref<Buffer>& buffer, const Ref<Image>& image)
     {
-        const auto extent = image.GetExtent();
+        const auto extent = image->GetExtent();
 
         const vk::BufferImageCopy region = {
             .bufferOffset = 0,
             .bufferRowLength = 0,
             .bufferImageHeight = 0,
             .imageSubresource = {
-                .aspectMask = Utils::GetAspectFlags(ToVk(image.GetFormat())),
+                .aspectMask = Utils::GetAspectFlags(ToVk(image->GetFormat())),
                 .mipLevel = 0,
                 .baseArrayLayer = 0,
-                .layerCount = image.GetLayers()
+                .layerCount = image->GetLayers()
             },
             .imageOffset = {0, 0, 0},
             .imageExtent = {extent.x, extent.y, extent.z}
         };
 
         m_Native->CommandBuffer.copyBufferToImage(
-            buffer.GetNative().Buffer,
-            image.GetNative().Image,
+            buffer->GetNative().Buffer,
+            image->GetNative().Image,
             vk::ImageLayout::eTransferDstOptimal,
             1,
             &region);
     }
 
-    void CommandBuffer::CopyImageToBuffer(const Image& image, const Buffer& buffer) const
+    void CommandBuffer::CopyImageToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer)
     {
-        const auto extent = image.GetExtent();
+        const auto extent = image->GetExtent();
 
         const vk::BufferImageCopy region = {
             .bufferOffset = 0,
             .bufferRowLength = 0,
             .bufferImageHeight = 0,
             .imageSubresource = {
-                .aspectMask = Utils::GetAspectFlags(ToVk(image.GetFormat())),
+                .aspectMask = Utils::GetAspectFlags(ToVk(image->GetFormat())),
                 .mipLevel = 0,
                 .baseArrayLayer = 0,
                 .layerCount = 1
@@ -312,11 +312,11 @@ namespace Veng::Renderer
             .imageExtent = {extent.x, extent.y, extent.z}
         };
 
-        m_Native->CommandBuffer.copyImageToBuffer(image.GetNative().Image, vk::ImageLayout::eTransferSrcOptimal,
-                                            buffer.GetNative().Buffer, 1, &region);
+        m_Native->CommandBuffer.copyImageToBuffer(image->GetNative().Image, vk::ImageLayout::eTransferSrcOptimal,
+                                            buffer->GetNative().Buffer, 1, &region);
     }
 
-    void CommandBuffer::BlitImage(const BlitImageInfo& info) const
+    void CommandBuffer::BlitImage(const BlitImageInfo& info)
     {
         vk::Offset3D sourceOffset = {info.SourceOffset.x, info.SourceOffset.y, info.SourceOffset.z};
         vk::Offset3D sourceExtent = {info.SourceExtent.x, info.SourceExtent.y, info.SourceExtent.z};
@@ -326,14 +326,14 @@ namespace Veng::Renderer
 
         vk::ImageBlit blitInfo{
             .srcSubresource = {
-                .aspectMask = Utils::GetAspectFlags(ToVk(info.SourceImage.GetFormat())),
+                .aspectMask = Utils::GetAspectFlags(ToVk(info.SourceImage->GetFormat())),
                 .mipLevel = info.SourceMipLevel,
                 .baseArrayLayer = 0,
                 .layerCount = 1
             },
             .srcOffsets = {{sourceOffset, sourceExtent}},
             .dstSubresource = {
-                .aspectMask = Utils::GetAspectFlags(ToVk(info.DestinationImage.GetFormat())),
+                .aspectMask = Utils::GetAspectFlags(ToVk(info.DestinationImage->GetFormat())),
                 .mipLevel = info.DestinationMipLevel,
                 .baseArrayLayer = 0,
                 .layerCount = 1
@@ -342,9 +342,9 @@ namespace Veng::Renderer
         };
 
         m_Native->CommandBuffer.blitImage(
-            info.SourceImage.GetNative().Image,
+            info.SourceImage->GetNative().Image,
             vk::ImageLayout::eTransferSrcOptimal,
-            info.DestinationImage.GetNative().Image,
+            info.DestinationImage->GetNative().Image,
             vk::ImageLayout::eTransferDstOptimal,
             1,
             &blitInfo,

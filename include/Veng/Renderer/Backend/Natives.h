@@ -11,8 +11,8 @@
 #include <Veng/Renderer/ComputePipeline.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
-#include <Veng/Renderer/DynamicGraphicsPipeline.h>
 #include <Veng/Renderer/Fence.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/ImGui/ImGuiTexture.h>
@@ -107,7 +107,7 @@ namespace Veng::Renderer
         vk::PipelineLayout Layout;
     };
 
-    struct DynamicGraphicsPipeline::Native
+    struct GraphicsPipeline::Native
     {
         vk::Pipeline Pipeline;
     };

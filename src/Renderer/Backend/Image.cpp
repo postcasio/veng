@@ -110,8 +110,8 @@ namespace Veng::Renderer
             Backend::TransitionImage(commandBuffer, *this, ImageLayout::TransferSrc, 0, 1, i - 1, 1);
 
             commandBuffer.BlitImage({
-                .SourceImage = *this,
-                .DestinationImage = *this,
+                .SourceImage = shared_from_this(),
+                .DestinationImage = shared_from_this(),
                 .SourceMipLevel = i - 1,
                 .DestinationMipLevel = i,
                 .SourceOffset = {0, 0, 0},
@@ -143,7 +143,7 @@ namespace Veng::Renderer
 
         commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
         Backend::TransitionImage(*commandBuffer, *this, ImageLayout::TransferDst, 0, m_Layers, 0, m_MipLevels);
-        commandBuffer->CopyBufferToImage(*stagingBuffer, *this);
+        commandBuffer->CopyBufferToImage(stagingBuffer, shared_from_this());
 
         if (m_MipLevels > 1)
         {
@@ -175,7 +175,7 @@ namespace Veng::Renderer
 
         Backend::TransitionImage(*commandBuffer, *this, ImageLayout::TransferSrc);
 
-        commandBuffer->CopyImageToBuffer(*this, *buffer);
+        commandBuffer->CopyImageToBuffer(shared_from_this(), buffer);
 
         // Restore the image to the layout it had on entry so callers see no
         // change; skip if it was never transitioned (can't transition to

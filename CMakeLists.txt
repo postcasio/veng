@@ -123,7 +123,6 @@ add_library(veng SHARED
         src/Renderer/RenderGraph.cpp
         src/Renderer/Backend/Barrier.cpp
         src/Renderer/Backend/Buffer.cpp
-        src/Renderer/Backend/Command.cpp
         src/Renderer/Backend/CommandBuffer.cpp
         src/Renderer/Backend/CommandPool.cpp
         src/Renderer/Backend/ComputePipeline.cpp
@@ -132,8 +131,8 @@ add_library(veng SHARED
         src/Renderer/Backend/DescriptorPool.cpp
         src/Renderer/Backend/DescriptorSet.cpp
         src/Renderer/Backend/DescriptorSetLayout.cpp
-        src/Renderer/Backend/DynamicGraphicsPipeline.cpp
         src/Renderer/Backend/Fence.cpp
+        src/Renderer/Backend/GraphicsPipeline.cpp
         src/Renderer/Backend/Image.cpp
         src/Renderer/Backend/ImageView.cpp
         src/Renderer/Backend/PipelineLayout.cpp

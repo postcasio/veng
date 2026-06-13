@@ -4,6 +4,18 @@
 // in include/Veng/Renderer hides vk:: and Vma* types behind the Native idiom;
 // reach for this header only when interop with Vulkan or a third-party
 // library (e.g. ImGui backends) requires the underlying handle directly.
+//
+// GetNative() const doctrine: every resource declares
+// `[[nodiscard]] Native& GetNative() const;` — a const method returning a
+// mutable reference. This is a deliberate, narrow escape hatch, not an
+// oversight: GetNative() hands out the raw backend handle(s) (vk::Buffer,
+// vk::Image, ...) so the backend and Vulkan interop helpers below can issue
+// commands and bind resources. The wrapper object's logical constness
+// describes *this engine object's identity* (its name, format, extent, ...)
+// — it says nothing about the constness of the GPU state the handle refers
+// to, which is mutated by recording commands regardless of how the wrapper
+// was reached. Treat `const Resource&` as "this wrapper's identity won't
+// change", not as "the GPU resource behind it is read-only".
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Backend/Natives.h>
 
@@ -42,7 +54,7 @@ namespace Veng::Renderer
 
     [[nodiscard]] inline vk::PipelineLayout GetVkPipelineLayout(const PipelineLayout& layout) { return layout.GetNative().Layout; }
 
-    [[nodiscard]] inline vk::Pipeline GetVkPipeline(const DynamicGraphicsPipeline& pipeline) { return pipeline.GetNative().Pipeline; }
+    [[nodiscard]] inline vk::Pipeline GetVkPipeline(const GraphicsPipeline& pipeline) { return pipeline.GetNative().Pipeline; }
     [[nodiscard]] inline vk::Pipeline GetVkPipeline(const ComputePipeline& pipeline) { return pipeline.GetNative().Pipeline; }
 
     [[nodiscard]] inline vk::CommandBuffer GetVkCommandBuffer(const CommandBuffer& commandBuffer) { return commandBuffer.GetNative().CommandBuffer; }

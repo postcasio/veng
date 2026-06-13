@@ -72,6 +72,17 @@ namespace Veng::Renderer
         // Current frame's command buffer — the common case for recording.
         [[nodiscard]] CommandBuffer& GetCurrentCommandBuffer();
 
+        // Acquires the next frame (and swapchain image, if not headless),
+        // resets its fence, and begins recording its command buffer. The
+        // returned reference is the same buffer GetCurrentCommandBuffer()
+        // returns for the rest of the frame — callers don't need to hold onto
+        // it.
+        CommandBuffer& BeginFrame();
+
+        // Transitions the swapchain image to present (if not headless), ends
+        // recording, submits, and presents the current frame.
+        void EndFrame();
+
         void SubmitFrame(const SynchronizationFrame& frame) const;
         void PresentFrame(const SynchronizationFrame& frame);
         void SubmitImmediateCommands(CommandBuffer& commandBuffer) const;

@@ -3,7 +3,6 @@
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
 #include <Veng/Time.h>
-#include <Veng/Renderer/Command.h>
 
 namespace Veng
 {
@@ -93,10 +92,10 @@ namespace Veng
 
         OnUpdate(delta);
 
-        Renderer::Command::BeginFrame();
+        m_RenderContext.BeginFrame();
 
         OnRender();
 
-        Renderer::Command::EndFrame();
+        m_RenderContext.EndFrame();
     }
 }

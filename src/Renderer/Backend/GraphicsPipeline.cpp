@@ -1,4 +1,4 @@
-#include <Veng/Renderer/DynamicGraphicsPipeline.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
 
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Native.h>
@@ -9,12 +9,9 @@
 
 namespace Veng::Renderer
 {
-    // Defined in VertexBufferLayout.cpp; not part of the public header.
-    vk::Format VertexElementDataTypeToVulkanFormat(VertexElementDataType type);
+    GraphicsPipeline::Native& GraphicsPipeline::GetNative() const { return *m_Native; }
 
-    DynamicGraphicsPipeline::Native& DynamicGraphicsPipeline::GetNative() const { return *m_Native; }
-
-    DynamicGraphicsPipeline::DynamicGraphicsPipeline(const DynamicPipelineInfo& info) : m_Name(info.Name),
+    GraphicsPipeline::GraphicsPipeline(const GraphicsPipelineInfo& info) : m_Name(info.Name),
         m_Native(CreateUnique<Native>()), m_PipelineLayout(info.PipelineLayout),
         m_DepthAttachmentFormat(info.DepthAttachmentFormat)
     {
@@ -44,8 +41,8 @@ namespace Veng::Renderer
         {
             shaderStages.push_back({
                 .stage = ToVkBit(shaderStage.Stage),
-                .module = shaderStage.Module.GetNative().Module,
-                .pName = shaderStage.Module.GetEntryPoint().c_str()
+                .module = shaderStage.Module->GetNative().Module,
+                .pName = shaderStage.Module->GetEntryPoint().c_str()
             });
         }
 
@@ -72,7 +69,7 @@ namespace Veng::Renderer
                 vk::VertexInputAttributeDescription attributeDescription = {
                     .location = i,
                     .binding = 0,
-                    .format = VertexElementDataTypeToVulkanFormat(element.Type),
+                    .format = ToVk(element.Type),
                     .offset = element.Offset,
                 };
 
@@ -188,7 +185,7 @@ namespace Veng::Renderer
         DebugMarkers::MarkPipeline(m_Native->Pipeline, m_Name);
     }
 
-    DynamicGraphicsPipeline::~DynamicGraphicsPipeline()
+    GraphicsPipeline::~GraphicsPipeline()
     {
         Context::Instance().GetNative().Retire(m_Native->Pipeline);
     }

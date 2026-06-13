@@ -7,6 +7,8 @@ namespace Veng::Renderer
     class Semaphore
     {
     public:
+        // Unique, not Ref: a single-owner synchronization primitive (see the
+        // Create return-type rule in Veng.h) — nothing else holds a reference.
         static Unique<Semaphore> Create(const string& name)
         {
             return CreateUnique<Semaphore>(name);

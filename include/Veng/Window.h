@@ -92,7 +92,7 @@ namespace Veng
 
     private:
         bool m_Open = true;
-        ivec2 m_Extent{};
+        uvec2 m_Extent{};
         bool m_Resizable;
         std::function<void(Event&)> m_EventCallback;
         string m_Title;

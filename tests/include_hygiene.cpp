@@ -24,14 +24,13 @@
 #include <Veng/ImGui/ImGuiTexture.h>
 
 #include <Veng/Renderer/Buffer.h>
-#include <Veng/Renderer/Command.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/ComputePipeline.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
-#include <Veng/Renderer/DynamicGraphicsPipeline.h>
 #include <Veng/Renderer/Fence.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/PipelineLayout.h>

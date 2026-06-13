@@ -7,6 +7,8 @@ namespace Veng::Renderer
     class Fence
     {
     public:
+        // Unique, not Ref: a single-owner synchronization primitive (see the
+        // Create return-type rule in Veng.h) — nothing else holds a reference.
         static Unique<Fence> Create(const string& name, bool signaled = false)
         {
             return CreateUnique<Fence>(name, signaled);

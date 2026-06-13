@@ -47,7 +47,8 @@ namespace Veng
 
         Log::Info("Creating window: {0} ({1}x{2})", m_Title, m_Extent.x, m_Extent.y);
 
-        m_Handle = glfwCreateWindow(m_Extent.x, m_Extent.y, m_Title.c_str(), nullptr, nullptr);
+        m_Handle = glfwCreateWindow(static_cast<int>(m_Extent.x), static_cast<int>(m_Extent.y), m_Title.c_str(),
+                                     nullptr, nullptr);
 
         if (!m_Handle)
         {
@@ -76,7 +77,11 @@ namespace Veng
             window->m_MousePosition = {xpos, ypos};
         });
 
-        glfwGetFramebufferSize(m_Handle, &m_Extent.x, &m_Extent.y);
+        {
+            int width, height;
+            glfwGetFramebufferSize(m_Handle, &width, &height);
+            m_Extent = {static_cast<u32>(width), static_cast<u32>(height)};
+        }
 
         if (m_MouseCaptured)
         {
@@ -159,7 +164,9 @@ namespace Veng
     {
         while (m_Extent.x == 0 || m_Extent.y == 0)
         {
-            glfwGetFramebufferSize(m_Handle, &m_Extent.x, &m_Extent.y);
+            int width, height;
+            glfwGetFramebufferSize(m_Handle, &width, &height);
+            m_Extent = {static_cast<u32>(width), static_cast<u32>(height)};
             glfwWaitEvents();
         }
     }

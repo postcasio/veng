@@ -9,7 +9,7 @@ namespace Veng::Renderer
     struct PipelineShaderStageInfo
     {
         ShaderStage Stage;
-        const Shader& Module;
+        Ref<Shader> Module;
     };
 
     struct PipelineAttachmentInfo

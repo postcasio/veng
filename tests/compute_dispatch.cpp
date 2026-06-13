@@ -23,7 +23,7 @@
 #include <Veng/Renderer/ComputePipeline.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
-#include <Veng/Renderer/DynamicGraphicsPipeline.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/PipelineLayout.h>
@@ -117,7 +117,7 @@ int main()
         auto computePipeline = ComputePipeline::Create({
             .Name = "Invert Pipeline",
             .PipelineLayout = computeLayout,
-            .ShaderStage = {.Stage = ShaderStage::Compute, .Module = *computeShader.value()},
+            .ShaderStage = {.Stage = ShaderStage::Compute, .Module = computeShader.value()},
         });
 
         auto computeSet = DescriptorSet::Create({
@@ -154,13 +154,13 @@ int main()
             .DescriptorSetLayouts = {sampleSetLayout},
         });
 
-        auto samplePipeline = DynamicGraphicsPipeline::Create({
+        auto samplePipeline = GraphicsPipeline::Create({
             .Name = "Sample Pipeline",
             .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
             .PipelineLayout = sampleLayout,
             .ShaderStages = {
-                {.Stage = ShaderStage::Vertex, .Module = *vertexShader.value()},
-                {.Stage = ShaderStage::Fragment, .Module = *fragmentShader.value()},
+                {.Stage = ShaderStage::Vertex, .Module = vertexShader.value()},
+                {.Stage = ShaderStage::Fragment, .Module = fragmentShader.value()},
             },
         });
 

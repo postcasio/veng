@@ -88,6 +88,13 @@ namespace Veng
         return std::make_unique<T>(std::forward<Args>(args)...);
     }
 
+    // Renderer::X::Create() return-type rule: a shared GPU resource that other
+    // objects hold references to (buffers, images, views, samplers, shaders,
+    // pipelines, descriptor sets/layouts, pipeline layouts, command buffers)
+    // returns Ref<X> — multiple owners are normal (e.g. a pipeline holds
+    // Ref<Shader>, a descriptor set holds Ref<ImageView>). A single-owner
+    // synchronization primitive (Fence, Semaphore) returns Unique<X> — nothing
+    // else ever holds a reference to one.
     template <typename T>
     using Ref = std::shared_ptr<T>;
 

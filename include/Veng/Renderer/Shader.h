@@ -28,11 +28,14 @@ namespace Veng::Renderer
         // be opened, so callers can recover (report and continue, retry on
         // hot-reload) instead of terminating. Invalid SPIR-V past that point is
         // fatal via the Vulkan call.
-        static Result<Unique<Shader>> Create(const ShaderInfo& info);
+        //
+        // Ref, not Unique: shaders are a shared GPU resource (the same module is
+        // referenced by PipelineShaderStageInfo on every pipeline that uses it).
+        static Result<Ref<Shader>> Create(const ShaderInfo& info);
 
-        static Unique<Shader> Create(const ShaderBinaryInfo& info)
+        static Ref<Shader> Create(const ShaderBinaryInfo& info)
         {
-            return CreateUnique<Shader>(info);
+            return CreateRef<Shader>(info);
         }
 
         explicit Shader(const ShaderBinaryInfo& info);

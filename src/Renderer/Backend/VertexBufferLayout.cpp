@@ -1,57 +1,49 @@
 #include <Veng/Renderer/VertexBufferLayout.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 
 #include <utility>
 
 namespace Veng::Renderer
 {
-    // Declared here (not in the public header) — only used internally by the
-    // pipeline .cpp files via the forward declaration below.
-    vk::Format VertexElementDataTypeToVulkanFormat(const VertexElementDataType type)
+    // Vertex element formats are a small subset of Format — the plain
+    // float/vecN attributes a vertex shader input can be. Vulkan format
+    // mapping comes from the engine-wide ToVk(Format) in TypeMapping.h; only
+    // size/component-count (needed to lay out the buffer) are local to vertex
+    // elements.
+    static u32 GetFormatSize(const Format format)
     {
-        switch (type)
+        switch (format)
         {
-        case VertexElementDataType::Float:
-            return vk::Format::eR32Sfloat;
-        case VertexElementDataType::Float2:
-            return vk::Format::eR32G32Sfloat;
-        case VertexElementDataType::Float3:
-            return vk::Format::eR32G32B32Sfloat;
-        default:
-            VE_ASSERT(false, "Unknown vertex element data type");
-        }
-    }
-
-    static u32 GetVertexElementDataTypeSize(const VertexElementDataType type)
-    {
-        switch (type)
-        {
-        case VertexElementDataType::Float:
+        case Format::R32Sfloat:
             return 4;
-        case VertexElementDataType::Float2:
+        case Format::RG32Sfloat:
             return 4 * 2;
-        case VertexElementDataType::Float3:
+        case Format::RGB32Sfloat:
             return 4 * 3;
+        case Format::RGBA32Sfloat:
+            return 4 * 4;
         default:
-            VE_ASSERT(false, "Unknown VertexElementDataType");
+            VE_ASSERT(false, "Unknown vertex element Format");
         }
     }
 
-    static u32 GetVertexElementDataTypeComponentCount(const VertexElementDataType type)
+    static u32 GetFormatComponentCount(const Format format)
     {
-        switch (type)
+        switch (format)
         {
-        case VertexElementDataType::Float: return 1;
-        case VertexElementDataType::Float2: return 2;
-        case VertexElementDataType::Float3: return 3;
-        default: VE_ASSERT(false, "Unknown VertexElementDataType");
+        case Format::R32Sfloat: return 1;
+        case Format::RG32Sfloat: return 2;
+        case Format::RGB32Sfloat: return 3;
+        case Format::RGBA32Sfloat: return 4;
+        default: VE_ASSERT(false, "Unknown vertex element Format");
         }
     }
 
-    VertexBufferElement::VertexBufferElement(const VertexElementDataType type, const std::string& name)
-        : Type(type), Name(name), Size(GetVertexElementDataTypeSize(type)), Offset(0)
+    VertexBufferElement::VertexBufferElement(const Format type, const string& name)
+        : Type(type), Name(name), Size(GetFormatSize(type)), Offset(0)
     {
     }
 
@@ -64,14 +56,14 @@ namespace Veng::Renderer
         {
             element.Offset = offset;
             offset += element.Size;
-            floatCount += GetVertexElementDataTypeComponentCount(element.Type);
+            floatCount += GetFormatComponentCount(element.Type);
         }
 
         m_Stride = offset;
         m_FloatCount = floatCount;
     }
 
-    VertexBufferLayout::VertexBufferLayout(const std::vector<VertexBufferElement>& elements) : m_Elements(elements)
+    VertexBufferLayout::VertexBufferLayout(const vector<VertexBufferElement>& elements) : m_Elements(elements)
     {
         u32 offset = 0;
         u32 floatCount = 0;
@@ -79,7 +71,7 @@ namespace Veng::Renderer
         {
             element.Offset = offset;
             offset += element.Size;
-            floatCount += GetVertexElementDataTypeComponentCount(element.Type);
+            floatCount += GetFormatComponentCount(element.Type);
         }
         m_Stride = offset;
         m_FloatCount = floatCount;

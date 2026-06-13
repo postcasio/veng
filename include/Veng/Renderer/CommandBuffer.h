@@ -2,9 +2,9 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Renderer/Buffer.h>
-#include <Veng/Renderer/DescriptorSet.h>
-#include <Veng/Renderer/DynamicGraphicsPipeline.h>
 #include <Veng/Renderer/ComputePipeline.h>
+#include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Types.h>
 
@@ -55,8 +55,8 @@ namespace Veng::Renderer
 
     struct BlitImageInfo
     {
-        Image& SourceImage;
-        Image& DestinationImage;
+        Ref<Image> SourceImage;
+        Ref<Image> DestinationImage;
         u32 SourceMipLevel;
         u32 DestinationMipLevel;
         ivec3 SourceOffset;
@@ -90,38 +90,38 @@ namespace Veng::Renderer
 
         void Reset();
 
-        void Begin(CommandBufferUsage flags = CommandBufferUsage::None) const;
-        void End() const;
+        void Begin(CommandBufferUsage flags = CommandBufferUsage::None);
+        void End();
 
         void BeginRendering(const RenderingInfo& info);
-        void EndRendering() const;
+        void EndRendering();
 
-        void PushConstants(const PushConstantsInfo& info) const;
+        void PushConstants(const PushConstantsInfo& info);
 
         // Typed push. Stages and size come from the PushConstantRange declared
         // on the bound pipeline layout that contains [offset, offset +
         // sizeof(T)); only the value (and an optional offset for partial or
         // multi-range pushes) come from the call site.
         template <typename T>
-        void PushConstants(const T& value, u32 offset = 0) const;
+        void PushConstants(const T& value, u32 offset = 0);
 
-        void Draw(u32 vertexCount, u32 instanceCount, u32 firstVertex, u32 firstInstance) const;
-        void DrawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset, u32 firstInstance) const;
+        void Draw(u32 vertexCount, u32 instanceCount, u32 firstVertex, u32 firstInstance);
+        void DrawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset, u32 firstInstance);
 
-        void Dispatch(u32 groupsX, u32 groupsY, u32 groupsZ) const;
+        void Dispatch(u32 groupsX, u32 groupsY, u32 groupsZ);
 
-        void BindPipeline(const Ref<DynamicGraphicsPipeline>& pipeline);
+        void BindPipeline(const Ref<GraphicsPipeline>& pipeline);
         void BindPipeline(const Ref<ComputePipeline>& pipeline);
 
-        void SetScissor(ivec2 offset, uvec2 extent) const;
-        void SetViewport(ivec2 offset, uvec2 extent) const;
+        void SetScissor(ivec2 offset, uvec2 extent);
+        void SetViewport(ivec2 offset, uvec2 extent);
 
         void BindDescriptorSets(const DescriptorSetBindInfo& info);
-        void DrawFullscreenTriangle() const;
+        void DrawFullscreenTriangle();
 
-        void CopyBufferToImage(const Buffer& buffer, const Image& image) const;
-        void CopyImageToBuffer(const Image& image, const Buffer& buffer) const;
-        void BlitImage(const BlitImageInfo& info) const;
+        void CopyBufferToImage(const Ref<Buffer>& buffer, const Ref<Image>& image);
+        void CopyImageToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer);
+        void BlitImage(const BlitImageInfo& info);
 
     private:
         CommandBufferLevel m_Level;
@@ -130,13 +130,12 @@ namespace Veng::Renderer
 
         // Attachment-format validation (see Draw/DrawIndexed/DrawFullscreenTriangle):
         // captured from the active RenderingInfo in BeginRendering and from the
-        // bound pipeline in BindPipeline(DynamicGraphicsPipeline). Compared at
+        // bound pipeline in BindPipeline(GraphicsPipeline). Compared at
         // draw time to turn a silent dynamic-rendering validation error into a
-        // named VE_ASSERT. Cleared in EndRendering (const) / on compute pipeline
-        // bind, hence mutable.
-        mutable vector<Format> m_ActiveColorAttachmentFormats{};
-        mutable Format m_ActiveDepthAttachmentFormat = Format::Undefined;
-        mutable bool m_HasActiveRenderingInfo = false;
+        // named VE_ASSERT. Cleared in EndRendering.
+        vector<Format> m_ActiveColorAttachmentFormats{};
+        Format m_ActiveDepthAttachmentFormat = Format::Undefined;
+        bool m_HasActiveRenderingInfo = false;
 
         vector<Format> m_BoundPipelineColorAttachmentFormats{};
         Format m_BoundPipelineDepthAttachmentFormat = Format::Undefined;
@@ -144,7 +143,7 @@ namespace Veng::Renderer
     };
 
     template <typename T>
-    void CommandBuffer::PushConstants(const T& value, const u32 offset) const
+    void CommandBuffer::PushConstants(const T& value, const u32 offset)
     {
         static_assert(sizeof(T) <= 128, "Push constant value exceeds the guaranteed minimum block size (128 bytes)");
 
