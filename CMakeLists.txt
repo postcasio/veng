@@ -232,8 +232,21 @@ if (VENG_BUILD_TESTS)
             tests/unit/main.cpp
             tests/unit/sanity.cpp
             tests/unit/pure_logic.cpp
+            tests/unit/type_mapping.cpp
     )
     target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
+
+    # The type-mapping (and barrier-decision, plan 04) cases include backend
+    # headers (TypeMapping.h → Backend/Vulkan.h, which also pulls in GLFW + VMA),
+    # so this target needs those *include dirs* — headers only, no run-time
+    # driver dependency, so the pure-logic cases still run with no ICD. This is
+    # allowed: include-hygiene guards *public* headers, not test use of backend
+    # headers.
+    target_link_libraries(veng_unit PRIVATE
+            Vulkan::Vulkan
+            glfw
+            GPUOpen::VulkanMemoryAllocator
+    )
 
     # Discover each TEST_CASE as its own ctest entry, labelled `unit` so
     # `ctest -L unit` is the fast, driver-free feedback loop.
