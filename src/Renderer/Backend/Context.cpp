@@ -556,27 +556,21 @@ namespace Veng::Renderer
     void Context::Native::Retire(vk::ShaderModule shaderModule) { CurrentRetireBin().ShaderModules.push_back(shaderModule); }
     void Context::Native::Retire(vk::Pipeline pipeline) { CurrentRetireBin().Pipelines.push_back(pipeline); }
     void Context::Native::Retire(vk::PipelineLayout pipelineLayout) { CurrentRetireBin().PipelineLayouts.push_back(pipelineLayout); }
-    void Context::Native::Retire(vk::RenderPass renderPass) { CurrentRetireBin().RenderPasses.push_back(renderPass); }
-    void Context::Native::Retire(vk::Framebuffer framebuffer) { CurrentRetireBin().Framebuffers.push_back(framebuffer); }
     void Context::Native::Retire(vk::DescriptorSet descriptorSet) { CurrentRetireBin().DescriptorSets.push_back(descriptorSet); }
 
     void Context::Native::DrainRetireBin(RetireBin& bin)
     {
         // Destroy dependents before the objects they reference: descriptor sets
-        // and framebuffers first, then views, then the images/buffers backing
-        // them. Everything in the bin is already GPU-idle.
+        // first, then views, then the images/buffers backing them. Everything in
+        // the bin is already GPU-idle.
         for (auto descriptorSet : bin.DescriptorSets)
             Device.freeDescriptorSets(DescriptorPool->GetVkDescriptorPool(), descriptorSet);
-        for (auto framebuffer : bin.Framebuffers)
-            Device.destroyFramebuffer(framebuffer);
         for (auto imageView : bin.ImageViews)
             Device.destroyImageView(imageView);
         for (auto& [image, allocation] : bin.Images)
             vmaDestroyImage(Allocator, image, allocation);
         for (auto& [buffer, allocation] : bin.Buffers)
             vmaDestroyBuffer(Allocator, buffer, allocation);
-        for (auto renderPass : bin.RenderPasses)
-            Device.destroyRenderPass(renderPass);
         for (auto pipeline : bin.Pipelines)
             Device.destroyPipeline(pipeline);
         for (auto pipelineLayout : bin.PipelineLayouts)

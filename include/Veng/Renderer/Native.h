@@ -42,15 +42,10 @@ namespace Veng::Renderer
 
     [[nodiscard]] inline vk::PipelineLayout GetVkPipelineLayout(const PipelineLayout& layout) { return layout.GetNative().Layout; }
 
-    [[nodiscard]] inline vk::Pipeline GetVkPipeline(const GraphicsPipeline& pipeline) { return pipeline.GetNative().Pipeline; }
     [[nodiscard]] inline vk::Pipeline GetVkPipeline(const DynamicGraphicsPipeline& pipeline) { return pipeline.GetNative().Pipeline; }
     [[nodiscard]] inline vk::Pipeline GetVkPipeline(const ComputePipeline& pipeline) { return pipeline.GetNative().Pipeline; }
 
     [[nodiscard]] inline vk::CommandBuffer GetVkCommandBuffer(const CommandBuffer& commandBuffer) { return commandBuffer.GetNative().CommandBuffer; }
-
-    [[nodiscard]] inline vk::RenderPass GetVkRenderPass(const RenderPass& renderPass) { return renderPass.GetNative().RenderPass; }
-
-    [[nodiscard]] inline vk::Framebuffer GetVkFramebuffer(const Framebuffer& framebuffer) { return framebuffer.GetNative().Framebuffer; }
 
     [[nodiscard]] inline vk::Fence GetVkFence(const Fence& fence) { return fence.GetNative().Fence; }
 

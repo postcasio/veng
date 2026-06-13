@@ -134,12 +134,6 @@ namespace Veng::Renderer
         m_LastBoundPipelineLayout = pipeline->GetPipelineLayout();
     }
 
-    void CommandBuffer::BindPipeline(const Ref<GraphicsPipeline>& pipeline)
-    {
-        m_Native->CommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetNative().Pipeline);
-        m_LastBoundPipelineLayout = pipeline->GetPipelineLayout();
-    }
-
     void CommandBuffer::BindPipeline(const Ref<ComputePipeline>& pipeline)
     {
         m_Native->CommandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline->GetNative().Pipeline);
@@ -165,59 +159,6 @@ namespace Veng::Renderer
     void CommandBuffer::End() const
     {
         m_Native->CommandBuffer.end();
-    }
-
-    void CommandBuffer::BeginRenderPass(const Ref<RenderPass>& renderPass, const Ref<Framebuffer>& framebuffer, const vector<ClearValue>& clearValues)
-    {
-        auto renderExtent = framebuffer->GetExtent();
-
-        vector<vk::ClearValue> vkClearValues;
-        vkClearValues.reserve(clearValues.size());
-        for (const auto& clearValue : clearValues)
-        {
-            vkClearValues.push_back(ToVk(clearValue));
-        }
-
-        const vk::RenderPassBeginInfo renderPassInfo{
-            .renderPass = renderPass->GetNative().RenderPass,
-            .framebuffer = framebuffer->GetNative().Framebuffer,
-            .renderArea = {
-                .offset = {0, 0},
-                .extent = {renderExtent.x, renderExtent.y}
-            },
-            .clearValueCount = static_cast<u32>(vkClearValues.size()),
-            .pClearValues = vkClearValues.empty() ? nullptr : vkClearValues.data(),
-        };
-
-        m_Native->CommandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
-
-        const auto& fbAttachments = framebuffer->GetAttachments();
-        const auto& rpAttachments = renderPass->GetAttachments();
-
-        // A render pass performs its own layout transitions to each attachment's
-        // FinalLayout; mirror that into the tracked per-subresource state so the
-        // render graph and transfer paths see the image's true post-pass state.
-        for (auto i = 0; i < fbAttachments.size(); i++)
-        {
-            const auto& view = fbAttachments[i];
-            auto image = view->GetImage();
-            auto& native = image->GetNative();
-
-            const auto vkLayout = ToVk(rpAttachments[i].FinalLayout);
-            for (u32 layer = 0; layer < image->GetLayers(); layer++)
-                for (u32 mip = 0; mip < image->GetMipLevels(); mip++)
-                {
-                    auto& state = native.At(layer, mip);
-                    state.Layout = vkLayout;
-                    state.Stage = Utils::GetDestinationStageMask(vkLayout);
-                    state.Access = Utils::GetAccessMask(vkLayout);
-                }
-        }
-    }
-
-    void CommandBuffer::EndRenderPass() const
-    {
-        m_Native->CommandBuffer.endRenderPass();
     }
 
     CommandBuffer::~CommandBuffer()

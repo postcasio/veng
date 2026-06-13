@@ -82,16 +82,6 @@ namespace Veng::Renderer
         MarkObject(VK_OBJECT_TO_U64(VkDescriptorSet, descriptorSet), VK_OBJECT_TYPE_DESCRIPTOR_SET, name);
     }
 
-    void DebugMarkers::MarkRenderPass(const vk::RenderPass renderPass, const string& name)
-    {
-        MarkObject(VK_OBJECT_TO_U64(VkRenderPass, renderPass), VK_OBJECT_TYPE_RENDER_PASS, name);
-    }
-
-    void DebugMarkers::MarkFramebuffer(const vk::Framebuffer framebuffer, const string& name)
-    {
-        MarkObject(VK_OBJECT_TO_U64(VkFramebuffer, framebuffer), VK_OBJECT_TYPE_FRAMEBUFFER, name);
-    }
-
     void DebugMarkers::MarkPipelineLayout(const vk::PipelineLayout pipelineLayout, const string& name)
     {
         MarkObject(VK_OBJECT_TO_U64(VkPipelineLayout, pipelineLayout), VK_OBJECT_TYPE_PIPELINE_LAYOUT, name);

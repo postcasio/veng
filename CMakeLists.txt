@@ -134,12 +134,9 @@ add_library(veng SHARED
         src/Renderer/Backend/DescriptorSetLayout.cpp
         src/Renderer/Backend/DynamicGraphicsPipeline.cpp
         src/Renderer/Backend/Fence.cpp
-        src/Renderer/Backend/Framebuffer.cpp
-        src/Renderer/Backend/GraphicsPipeline.cpp
         src/Renderer/Backend/Image.cpp
         src/Renderer/Backend/ImageView.cpp
         src/Renderer/Backend/PipelineLayout.cpp
-        src/Renderer/Backend/RenderPass.cpp
         src/Renderer/Backend/Sampler.cpp
         src/Renderer/Backend/Semaphore.cpp
         src/Renderer/Backend/Shader.cpp

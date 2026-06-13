@@ -1,6 +1,5 @@
 #pragma once
 
-#include <Veng/Renderer/Framebuffer.h>
 #include <Veng/Veng.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Image.h>

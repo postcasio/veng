@@ -13,13 +13,10 @@
 #include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/DynamicGraphicsPipeline.h>
 #include <Veng/Renderer/Fence.h>
-#include <Veng/Renderer/Framebuffer.h>
-#include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/ImGui/ImGuiTexture.h>
 #include <Veng/Renderer/PipelineLayout.h>
-#include <Veng/Renderer/RenderPass.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Semaphore.h>
 #include <Veng/Renderer/Shader.h>
@@ -110,11 +107,6 @@ namespace Veng::Renderer
         vk::PipelineLayout Layout;
     };
 
-    struct GraphicsPipeline::Native
-    {
-        vk::Pipeline Pipeline;
-    };
-
     struct DynamicGraphicsPipeline::Native
     {
         vk::Pipeline Pipeline;
@@ -128,16 +120,6 @@ namespace Veng::Renderer
     struct CommandBuffer::Native
     {
         vk::CommandBuffer CommandBuffer;
-    };
-
-    struct RenderPass::Native
-    {
-        vk::RenderPass RenderPass;
-    };
-
-    struct Framebuffer::Native
-    {
-        vk::Framebuffer Framebuffer;
     };
 
     struct Fence::Native

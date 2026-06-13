@@ -64,8 +64,6 @@ namespace Veng::Renderer
             vector<vk::ShaderModule> ShaderModules;
             vector<vk::Pipeline> Pipelines;
             vector<vk::PipelineLayout> PipelineLayouts;
-            vector<vk::RenderPass> RenderPasses;
-            vector<vk::Framebuffer> Framebuffers;
             vector<vk::DescriptorSet> DescriptorSets; // freed back to the descriptor pool
         };
 
@@ -89,8 +87,6 @@ namespace Veng::Renderer
         void Retire(vk::ShaderModule shaderModule);
         void Retire(vk::Pipeline pipeline);
         void Retire(vk::PipelineLayout pipelineLayout);
-        void Retire(vk::RenderPass renderPass);
-        void Retire(vk::Framebuffer framebuffer);
         void Retire(vk::DescriptorSet descriptorSet);
 
         vector<const char*>& GetRequiredExtensions();

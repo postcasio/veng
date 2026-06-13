@@ -7,13 +7,12 @@
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Framebuffer.h>
-#include <Veng/Renderer/RenderPass.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Backend/Barrier.h>
 #include <Veng/Renderer/Backend/DescriptorPool.h>
 #include <Veng/Renderer/Backend/Natives.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
 
 #include <Veng/Vendor/ImGui.h>
 #include <Veng/Vendor/IconsMaterialDesign.h>
@@ -51,19 +50,6 @@ namespace Veng
             vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind
         });
 
-        m_RenderPass = RenderPass::Create({
-            .Name = "ImGui RenderPass",
-            .Attachments = {
-                {
-                    .Format = Format::RGBA16Sfloat,
-                    .LoadOp = LoadOp::Clear,
-                    .StoreOp = StoreOp::Store,
-                    .InitialLayout = ImageLayout::Undefined,
-                    .FinalLayout = ImageLayout::ColorAttachment
-                }
-            }
-        });
-
         CreateResources();
 
         ImGui::CreateContext();
@@ -82,6 +68,16 @@ namespace Veng
 
         ImGui_ImplGlfw_InitForVulkan(handle, true);
 
+        // ImGui draws into the offscreen image via dynamic rendering rather than
+        // a dedicated render pass/framebuffer (plan 03): the only attachment is
+        // the RGBA16Sfloat color attachment that backs m_Image.
+        const vk::Format colorAttachmentFormat = ToVk(Format::RGBA16Sfloat);
+
+        const vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo = {
+            .colorAttachmentCount = 1,
+            .pColorAttachmentFormats = &colorAttachmentFormat,
+        };
+
         ImGui_ImplVulkan_InitInfo initInfo = {
             .Instance = GetVkInstance(context),
             .PhysicalDevice = GetVkPhysicalDevice(context),
@@ -91,9 +87,10 @@ namespace Veng
             .MinImageCount = context.GetSwapChainImageCount(),
             .ImageCount = context.GetSwapChainImageCount(),
             .PipelineInfoMain = {
-                .RenderPass = m_RenderPass->GetNative().RenderPass,
                 .MSAASamples = VK_SAMPLE_COUNT_1_BIT,
-            }
+                .PipelineRenderingCreateInfo = pipelineRenderingCreateInfo,
+            },
+            .UseDynamicRendering = true,
         };
 
         ImGui_ImplVulkan_Init(&initInfo);
@@ -211,8 +208,8 @@ namespace Veng
             io.Fonts->AddFontFromFileTTF(info.IconFontPath->string().c_str(), 20.0f, &config, icon_ranges);
         }
 
-        // Recreate the offscreen image/view/framebuffers whenever the swap chain
-        // is recreated (resize). This used to be special-cased inside Context.
+        // Recreate the offscreen image/view whenever the swap chain is recreated
+        // (resize). This used to be special-cased inside Context.
         m_Context.AddSwapChainInvalidationCallback([this]
         {
             DisposeResources();
@@ -232,7 +229,6 @@ namespace Veng
         ImGui::DestroyContext();
 
         DisposeResources();
-        m_RenderPass.reset();
         m_DescriptorPool.reset();
     }
 
@@ -256,27 +252,12 @@ namespace Veng
             .Name = "ImGui Image View",
             .Image = m_Image,
         });
-
-        const u32 imageCount = m_Context.GetSwapChainImageCount();
-        m_Framebuffers.resize(imageCount);
-        for (u32 i = 0; i < imageCount; i++)
-        {
-            m_Framebuffers[i] = Framebuffer::Create({
-                .Name = fmt::format("ImGui Framebuffer {}", i),
-                .RenderPass = m_RenderPass,
-                .Attachments = {m_ImageView},
-                .Width = extent.x,
-                .Height = extent.y,
-                .Layers = 1,
-            });
-        }
     }
 
     void ImGuiLayer::DisposeResources()
     {
         m_ImageView.reset();
         m_Image.reset();
-        m_Framebuffers.clear();
     }
 
     void ImGuiLayer::BeginFrame()
@@ -301,11 +282,17 @@ namespace Veng
 
         Backend::TransitionImage(commandBuffer, *m_Image, ImageLayout::ColorAttachment);
 
-        vector<ClearValue> clear = {
-            ClearColor{1.0f, 0.0f, 0.0f, 0.0f}
-        };
-
-        commandBuffer.BeginRenderPass(m_RenderPass, m_Framebuffers[m_Context.GetCurrentSwapChainImageIndex()], clear);
+        commandBuffer.BeginRendering({
+            .Extent = m_Context.GetRenderExtent(),
+            .ColorAttachments = {
+                {
+                    .ImageView = m_ImageView,
+                    .LoadOp = LoadOp::Clear,
+                    .StoreOp = StoreOp::Store,
+                    .ClearValue = ClearColor{1.0f, 0.0f, 0.0f, 0.0f},
+                }
+            },
+        });
 
         ImGui::Render();
 
@@ -315,7 +302,7 @@ namespace Veng
         ImDrawData* drawData = ImGui::GetDrawData();
         ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer.GetNative().CommandBuffer);
 
-        commandBuffer.EndRenderPass();
+        commandBuffer.EndRendering();
 
         Backend::TransitionImage(commandBuffer, *m_Image, ImageLayout::ShaderReadOnly);
     }

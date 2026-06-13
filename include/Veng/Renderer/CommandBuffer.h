@@ -3,10 +3,7 @@
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DynamicGraphicsPipeline.h>
-#include <Veng/Renderer/Framebuffer.h>
-#include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/ComputePipeline.h>
-#include <Veng/Renderer/RenderPass.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Types.h>
 
@@ -91,9 +88,6 @@ namespace Veng::Renderer
         void Begin(CommandBufferUsage flags = CommandBufferUsage::None) const;
         void End() const;
 
-        void BeginRenderPass(const Ref<RenderPass>& renderPass, const Ref<Framebuffer>& framebuffer, const vector<ClearValue>& clearValues = {});
-        void EndRenderPass() const;
-
         void BeginRendering(const RenderingInfo& info);
         void EndRendering() const;
 
@@ -103,7 +97,6 @@ namespace Veng::Renderer
         void DrawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset, u32 firstInstance) const;
 
         void BindPipeline(const Ref<DynamicGraphicsPipeline>& pipeline);
-        void BindPipeline(const Ref<GraphicsPipeline>& pipeline);
         void BindPipeline(const Ref<ComputePipeline>& pipeline);
 
         void SetScissor(ivec2 offset, uvec2 extent) const;

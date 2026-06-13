@@ -15,8 +15,6 @@ namespace Veng::Renderer
     class Image;
     class ImageView;
     class Sampler;
-    class RenderPass;
-    class Framebuffer;
     class DescriptorPool;
 }
 
@@ -70,8 +68,6 @@ namespace Veng
         // backend shuts down.
         Unique<Renderer::DescriptorPool> m_DescriptorPool;
 
-        Ref<Renderer::RenderPass> m_RenderPass;
-        vector<Ref<Renderer::Framebuffer>> m_Framebuffers;
         Ref<Renderer::Image> m_Image;
         Ref<Renderer::ImageView> m_ImageView;
 

@@ -21,8 +21,6 @@ namespace Veng::Renderer
         static void MarkDescriptorPool(vk::DescriptorPool descriptorPool, const string& name);
         static void MarkDescriptorSetLayout(vk::DescriptorSetLayout descriptorSetLayout, const string& name);
         static void MarkDescriptorSet(vk::DescriptorSet descriptorSet, const string& name);
-        static void MarkRenderPass(vk::RenderPass renderPass, const string& name);
-        static void MarkFramebuffer(vk::Framebuffer framebuffer, const string& string);
         static void MarkPipelineLayout(vk::PipelineLayout pipelineLayout, const string& string);
         static void MarkPipeline(vk::Pipeline pipeline, const string& name);
         static void MarkSampler(vk::Sampler sampler, const string& name);
