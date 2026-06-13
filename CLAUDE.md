@@ -200,5 +200,3 @@ and per-plan status column. As of 2026-06: **planset-1** done (12 plans),
 mechanical multi-file edits, focused sub-task implementation). Keep orchestration,
 design decisions, verification, and commits on the main thread. Don't spawn for
 trivial single-file edits that are faster inline.
-</content>
-</invoke>
