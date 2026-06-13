@@ -63,11 +63,6 @@ protected:
             .Image = m_SceneImage,
         });
 
-        m_ImGuiImageView = Renderer::ImageView::Create({
-            .Name = "Sample ImGui Image View",
-            .Image = GetImGuiLayer()->GetOutputImage(),
-        });
-
         m_Sampler = Renderer::Sampler::Create({
             .Name = "Sample Sampler",
             .AddressModeU = Renderer::AddressMode::ClampToEdge,
@@ -83,9 +78,21 @@ protected:
         m_VertexBuffer->Upload({reinterpret_cast<const u8*>(k_Vertices), sizeof(k_Vertices)});
 
         CreateTrianglePipeline();
-        CreateCompositePipeline();
 
-        m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_Sampler, *m_SceneImageView);
+        // The compositing path (ImGui overlay + swapchain present) only exists in
+        // windowed mode. The headless smoke run renders just the scene and
+        // downloads it — no ImGui layer, no swapchain.
+        if (GetImGuiLayer())
+        {
+            m_ImGuiImageView = Renderer::ImageView::Create({
+                .Name = "Sample ImGui Image View",
+                .Image = GetImGuiLayer()->GetOutputImage(),
+            });
+
+            CreateCompositePipeline();
+
+            m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_Sampler, *m_SceneImageView);
+        }
     }
 
     void OnUpdate(const f32 delta) override
@@ -98,7 +105,7 @@ protected:
         if (m_SmokeOutput && ++m_FrameCount == 20)
         {
             WriteSceneCapture(m_SmokeOutput);
-            GetWindow().Close();
+            RequestExit();
         }
     }
 
@@ -108,9 +115,15 @@ protected:
         auto& cmd = context.GetCurrentCommandBuffer();
 
         RenderScene(cmd);
-        RenderUserInterface();
-        GetImGuiLayer()->Render(cmd);
-        CompositeToSwapChain(cmd);
+
+        // Headless (smoke) renders only the scene; the ImGui overlay and the
+        // composite-to-swapchain pass are windowed-only.
+        if (GetImGuiLayer())
+        {
+            RenderUserInterface();
+            GetImGuiLayer()->Render(cmd);
+            CompositeToSwapChain(cmd);
+        }
     }
 
     void OnDispose() override
@@ -354,6 +367,11 @@ private:
 
 int main(const int argc, char** argv)
 {
+    // Smoke mode runs headless: no window or swapchain, render the scene
+    // off-screen and dump it. This is the display-free CI path enabled by the
+    // headless context (plan 10).
+    const bool smoke = std::getenv("HT_SMOKE") != nullptr;
+
     HelloTriangleApp app({
         .Name = "Hello Triangle",
         .InternalRenderExtent = {1280, 720},
@@ -364,6 +382,7 @@ int main(const int argc, char** argv)
             .Title = "veng — Hello Triangle",
             .CaptureMouse = false,
         },
+        .Headless = smoke,
     });
 
     app.Run(vector<string>(argv, argv + argc));
