@@ -31,7 +31,13 @@ Decisions baked into these plans:
 | 09 | [ImGui as an optional module](09-imgui-module.md) | done (2026-06-12) |
 | 10 | [Headless context](10-headless-context.md) | done (2026-06-12) |
 | 11 | [Typed buffers](11-typed-buffers.md) | done (2026-06-12) |
-| 12 | [Shader reflection](12-shader-reflection.md) | not started |
+| 12 | [Shader reflection](12-shader-reflection.md) | **superseded — will not implement** |
+
+> Plan 12 (runtime shader reflection) is intentionally not implemented. Shader
+> reflection moves *offline* and becomes part of the material-system phase
+> (planset-3) rather than a runtime load-time step — see
+> [../planset-3/README.md](../planset-3/README.md). This file is kept for the
+> design record only.
 
 Dependency sketch:
 

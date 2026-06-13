@@ -1,4 +1,4 @@
-# 05 — Pipeline attachment formats from render targets
+# 02 — Pipeline attachment formats from render targets
 
 **Goal:** stop restating color/depth attachment formats at pipeline creation to
 match the images the render graph binds. Derive (or validate) them from the

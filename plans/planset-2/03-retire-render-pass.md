@@ -1,4 +1,4 @@
-# 06 — Retire the legacy render-pass pipeline surface
+# 03 — Retire the legacy render-pass pipeline surface
 
 **Goal:** remove `GraphicsPipeline`, `RenderPass` and `Framebuffer` from the
 public API. After planset-1/08 the render graph is dynamic-rendering only, and
@@ -30,8 +30,6 @@ layer. They're public dead weight.
   dynamic rendering in our version (it does via `UseDynamicRendering`), which
   lets us delete `RenderPass`/`Framebuffer` outright and removes the last public
   `ImageLayout` use — finishing plan 08's acceptance to the letter.
-- `PipelineShaderStageInfo::Stage` becomes redundant once stage comes from the
-  shader interface (plan 01); drop it here or in 02.
 
 ## Acceptance
 
