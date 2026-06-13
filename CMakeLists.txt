@@ -218,6 +218,13 @@ if (VENG_BUILD_TESTS)
     target_link_libraries(veng_include_hygiene PRIVATE veng::veng)
 
     add_test(NAME include_hygiene COMMAND veng_include_hygiene)
+
+    # Headless smoke test: brings up a windowless context, renders off-screen and
+    # verifies downloaded pixels. Requires a Vulkan ICD at run time.
+    add_executable(veng_headless_smoke tests/headless_smoke.cpp)
+    target_link_libraries(veng_headless_smoke PRIVATE veng::veng)
+
+    add_test(NAME headless_smoke COMMAND veng_headless_smoke)
 endif ()
 
 # ---------------------------------------------------------------------------

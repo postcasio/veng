@@ -14,7 +14,10 @@ namespace Veng
 
     void Application::Initialize()
     {
-        m_Window = Window::Create(m_Info.WindowInfo);
+        if (!m_Info.Headless)
+        {
+            m_Window = Window::Create(m_Info.WindowInfo);
+        }
 
         m_RenderContext.Initialize({
             .ApplicationName = m_Info.Name,
@@ -22,7 +25,8 @@ namespace Veng
             .InternalRenderExtent = m_Info.InternalRenderExtent,
         }, m_Window.get());
 
-        if (m_Info.ImGui)
+        // ImGui needs a window (GLFW backend), so it's only available windowed.
+        if (!m_Info.Headless && m_Info.ImGui)
         {
             m_ImGuiLayer = ImGuiLayer::Create(*m_Info.ImGui, m_RenderContext, *m_Window);
         }
@@ -51,7 +55,9 @@ namespace Veng
 
         Initialize();
 
-        while (m_Window->IsOpen())
+        // Windowed: run until the window closes (or RequestExit). Headless: run
+        // until the consumer calls RequestExit().
+        while (!m_ShouldExit && (m_Info.Headless || m_Window->IsOpen()))
         {
             Frame();
         }
@@ -80,7 +86,11 @@ namespace Veng
             m_ImGuiLayer->BeginFrame();
         }
 
-        m_Window->Update();
+        if (m_Window)
+        {
+            m_Window->Update();
+        }
+
         OnUpdate(delta);
 
         Renderer::Command::BeginFrame();

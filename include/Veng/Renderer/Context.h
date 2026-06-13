@@ -23,9 +23,16 @@ namespace Veng::Renderer
         optional<u32> GraphicsFamily;
         optional<u32> PresentFamily;
 
+        // Graphics is all a headless context needs; presentation is only
+        // required when there's a surface (see CanPresent).
         [[nodiscard]] bool IsComplete() const
         {
-            return GraphicsFamily.has_value() && PresentFamily.has_value();
+            return GraphicsFamily.has_value();
+        }
+
+        [[nodiscard]] bool CanPresent() const
+        {
+            return PresentFamily.has_value();
         }
     };
 
@@ -45,10 +52,16 @@ namespace Veng::Renderer
         ~Context();
 
         // The window is borrowed, not owned; it must outlive the context and is
-        // created by the application before the context initializes.
+        // created by the application before the context initializes. Pass
+        // window == nullptr for a headless context (no surface or swapchain,
+        // off-screen rendering only).
         void Initialize(const ContextInfo& info, Window* window);
         void DisposeResources();
         void Dispose();
+
+        // True when initialized without a window (no surface/swapchain): the
+        // swapchain accessors and present path are unavailable.
+        [[nodiscard]] bool IsHeadless() const;
 
         [[nodiscard]] const QueueFamilyIndices& GetQueueFamilies() const;
         [[nodiscard]] Window& GetWindow() const { return *m_Window; }

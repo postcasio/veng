@@ -15,7 +15,11 @@ namespace Veng
         WindowInfo WindowInfo;
         // ImGui is opt-in: engaged (the default) creates an ImGuiLayer; set to
         // nullopt for a UI-free app that pays nothing for ImGui at runtime.
+        // (ImGui needs a window, so it is force-disabled when Headless.)
         optional<ImGuiLayerInfo> ImGui = ImGuiLayerInfo{};
+        // Headless: create no window and a windowless (off-screen) context. The
+        // run loop then runs until RequestExit() rather than the window closing.
+        bool Headless = false;
     };
 
     class Application
@@ -64,6 +68,11 @@ namespace Veng
         {
         }
 
+        // Ask the run loop to exit after the current frame. This is the only way
+        // to stop a headless app (which has no window to close), and also works
+        // for windowed apps.
+        void RequestExit() { m_ShouldExit = true; }
+
     private:
         void Initialize();
         void Frame();
@@ -75,5 +84,7 @@ namespace Veng
         Renderer::Context m_RenderContext;
 
         Unique<ImGuiLayer> m_ImGuiLayer;
+
+        bool m_ShouldExit = false;
     };
 }

@@ -10,7 +10,11 @@ namespace Veng::Renderer
     {
         auto& frame = Context::Instance().AcquireNextFrame();
 
-        Context::Instance().AcquireNextImage(frame.GetImageAvailableSemaphore());
+        // Headless has no swapchain image to acquire.
+        if (!Context::Instance().IsHeadless())
+        {
+            Context::Instance().AcquireNextImage(frame.GetImageAvailableSemaphore());
+        }
 
         frame.GetInFlightFence().Reset();
 
@@ -29,8 +33,12 @@ namespace Veng::Renderer
 
         auto commandBuffer = frame.GetCommandBuffer();
 
-        Backend::TransitionImage(*commandBuffer, *Context::Instance().GetCurrentSwapChainImage(),
-                                 ImageLayout::PresentSrc);
+        // Headless has no swapchain image to transition for presentation.
+        if (!Context::Instance().IsHeadless())
+        {
+            Backend::TransitionImage(*commandBuffer, *Context::Instance().GetCurrentSwapChainImage(),
+                                     ImageLayout::PresentSrc);
+        }
 
         commandBuffer->End();
 

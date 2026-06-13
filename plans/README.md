@@ -29,7 +29,7 @@ Decisions baked into these plans:
 | 07 | [Public/backend header split](07-public-backend-header-split.md) | done (2026-06-12) |
 | 08 | [Render graph (automatic barriers)](08-render-graph.md) | done (2026-06-12) |
 | 09 | [ImGui as an optional module](09-imgui-module.md) | done (2026-06-12) |
-| 10 | [Headless context](10-headless-context.md) | not started |
+| 10 | [Headless context](10-headless-context.md) | done (2026-06-12) |
 | 11 | [Typed buffers](11-typed-buffers.md) | not started |
 | 12 | [Shader reflection](12-shader-reflection.md) | not started |
 
