@@ -90,6 +90,40 @@ real setup:
 - **CI:** GPU tests need a Vulkan ICD (MoltenVK / lavapipe / SwiftShader) — gate
   or skip gracefully where absent.
 
+## Ordering & dependencies
+
+A first cut at sequencing — the order to *take the areas up* (each becomes its own
+planset), not a schedule. Refine when each is detailed.
+
+```
+5 testing ──► 3 de-globalize ──► 2 threading ──► 1 asset system
+4 events/input — independent, gameplay-driven (any time)
+```
+
+1. **Testing (area 5) — first.** No dependencies, and it's the safety net for what
+   follows: de-global and threading are wide, regression-prone changes. Dom wants
+   it firmed up soon anyway, so it leads.
+2. **De-globalize the context (area 3).** Do it on the current single-threaded
+   base with tests in place — a mechanical sweep across every `Create` call site
+   is far safer before threads exist than after. Threading on top of a global
+   mutable singleton invites races, so this should precede it.
+3. **Threading / task system (area 2).** Design against the explicit-device API
+   from step 2; this is where the single-threaded v1 contract is deliberately
+   lifted, and Vulkan-queue correctness is the hard part.
+4. **Asset system (area 1) — headline, end of the chain.** The general asset API
+   (types, handles, import/cook, *synchronous* load) is largely independent and
+   could be scoped/started earlier, but the headline payoff — loading without
+   stalling the frame — needs threading (step 3). Land the API early if
+   convenient; async loading after threading.
+
+**Event & input (area 4)** is off the critical path — independent of the
+rendering/asset/threading work and driven by gameplay needs, so slot it in
+whenever it's wanted.
+
+Open question: how much of the asset API (definition + sync loading) to pull
+forward in parallel with de-global/threading, vs. keeping the whole asset phase
+last.
+
 ## Status
 
 Vision only. Nothing detailed or scheduled. Each area becomes its own planset
