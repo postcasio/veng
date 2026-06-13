@@ -93,7 +93,7 @@ namespace Veng::Renderer
 
     void CommandBuffer::PushConstants(const PushConstantsInfo& info) const
     {
-        m_Native->CommandBuffer.pushConstants(info.PipelineLayout.GetNative().Layout, ToVk(info.StageFlags), info.Offset,
+        m_Native->CommandBuffer.pushConstants(m_LastBoundPipelineLayout->GetNative().Layout, ToVk(info.StageFlags), info.Offset,
                                         info.Size, info.Data);
     }
 

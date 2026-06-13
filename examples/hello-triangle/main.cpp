@@ -164,7 +164,7 @@ private:
         m_TriangleLayout = Renderer::PipelineLayout::Create({
             .Name = "Triangle Layout",
             .PushConstantRanges = {
-                {.Stages = Renderer::ShaderStage::Vertex, .Offset = 0, .Size = sizeof(mat4)},
+                Renderer::PushConstantRange::Of<mat4>(Renderer::ShaderStage::Vertex),
             },
         });
 
@@ -267,13 +267,7 @@ private:
                 const mat4 transform = glm::scale(mat4(1.0f), vec3(1.0f / aspect, 1.0f, 1.0f)) *
                     glm::rotate(mat4(1.0f), m_Angle, vec3(0.0f, 0.0f, 1.0f));
 
-                cmd.PushConstants({
-                    .PipelineLayout = *m_TriangleLayout,
-                    .StageFlags = Renderer::ShaderStage::Vertex,
-                    .Offset = 0,
-                    .Size = sizeof(mat4),
-                    .Data = &transform,
-                });
+                cmd.PushConstants(transform);
 
                 cmd.DrawIndexed(static_cast<u32>(m_IndexBuffer.GetIndexCount()), 1, 0, 0, 0);
             });

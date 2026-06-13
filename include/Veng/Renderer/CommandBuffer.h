@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Assert.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DynamicGraphicsPipeline.h>
@@ -13,9 +14,13 @@ namespace Veng::Renderer
     template <typename V> class VertexBuffer;
     class IndexBuffer;
 
+    // Raw, untyped push for exotic/dynamic use (e.g. a single push spanning
+    // ranges with different stages). The layout comes from the command
+    // buffer's last-bound pipeline layout, same as descriptor set binds.
+    // Prefer the typed CommandBuffer::PushConstants<T>, which also derives
+    // StageFlags and Size from the declared PushConstantRange.
     struct PushConstantsInfo
     {
-        PipelineLayout& PipelineLayout;
         ShaderStage StageFlags;
         u32 Offset;
         u32 Size;
@@ -93,6 +98,13 @@ namespace Veng::Renderer
 
         void PushConstants(const PushConstantsInfo& info) const;
 
+        // Typed push. Stages and size come from the PushConstantRange declared
+        // on the bound pipeline layout that contains [offset, offset +
+        // sizeof(T)); only the value (and an optional offset for partial or
+        // multi-range pushes) come from the call site.
+        template <typename T>
+        void PushConstants(const T& value, u32 offset = 0) const;
+
         void Draw(u32 vertexCount, u32 instanceCount, u32 firstVertex, u32 firstInstance) const;
         void DrawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset, u32 firstInstance) const;
 
@@ -116,4 +128,38 @@ namespace Veng::Renderer
         Unique<Native> m_Native;
         Ref<PipelineLayout> m_LastBoundPipelineLayout{};
     };
+
+    template <typename T>
+    void CommandBuffer::PushConstants(const T& value, const u32 offset) const
+    {
+        static_assert(sizeof(T) <= 128, "Push constant value exceeds the guaranteed minimum block size (128 bytes)");
+
+        VE_ASSERT(m_LastBoundPipelineLayout, "PushConstants<T>: no pipeline layout is bound");
+
+        const auto& ranges = m_LastBoundPipelineLayout->GetPushConstantRanges();
+
+        const PushConstantRange* matchingRange = nullptr;
+        for (const auto& range : ranges)
+        {
+            if (offset >= range.Offset && offset + sizeof(T) <= range.Offset + range.Size)
+            {
+                VE_ASSERT(matchingRange == nullptr,
+                          "PushConstants<T>: [{}, {}) is contained by more than one declared PushConstantRange on '{}'",
+                          offset, offset + sizeof(T), m_LastBoundPipelineLayout->GetName());
+
+                matchingRange = &range;
+            }
+        }
+
+        VE_ASSERT(matchingRange != nullptr,
+                  "PushConstants<T>: no declared PushConstantRange on '{}' contains [{}, {})",
+                  m_LastBoundPipelineLayout->GetName(), offset, offset + sizeof(T));
+
+        PushConstants(PushConstantsInfo{
+            .StageFlags = matchingRange->Stages,
+            .Offset = offset,
+            .Size = sizeof(T),
+            .Data = &value,
+        });
+    }
 }

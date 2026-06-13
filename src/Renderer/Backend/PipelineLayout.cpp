@@ -26,12 +26,12 @@ namespace Veng::Renderer
         vector<vk::PushConstantRange> pushConstantRanges;
         pushConstantRanges.reserve(info.PushConstantRanges.size());
 
-        for (const auto& pushConstantRangeInfo : info.PushConstantRanges)
+        for (const auto& pushConstantRange : info.PushConstantRanges)
         {
             pushConstantRanges.push_back({
-                .stageFlags = ToVk(pushConstantRangeInfo.Stages),
-                .offset = pushConstantRangeInfo.Offset,
-                .size = pushConstantRangeInfo.Size
+                .stageFlags = ToVk(pushConstantRange.Stages),
+                .offset = pushConstantRange.Offset,
+                .size = pushConstantRange.Size
             });
         }
 
