@@ -128,6 +128,11 @@ namespace Veng::Renderer
         m_Native->CommandBuffer.drawIndexed(indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
     }
 
+    void CommandBuffer::Dispatch(const u32 groupsX, const u32 groupsY, const u32 groupsZ) const
+    {
+        m_Native->CommandBuffer.dispatch(groupsX, groupsY, groupsZ);
+    }
+
     void CommandBuffer::BindPipeline(const Ref<DynamicGraphicsPipeline>& pipeline)
     {
         m_Native->CommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetNative().Pipeline);

@@ -1,0 +1,265 @@
+// Compute dispatch test (plan 05): brings up a windowless context and runs a
+// three-pass render graph that exercises the full
+// graphics-write -> compute-read/write -> graphics-read chain:
+//
+//   1. A graphics pass clears a "source" image to a known colour.
+//   2. A compute pass (cmd.Dispatch) reads the source image as a storage
+//      image and writes the colour-inverted result to a "derived" storage
+//      image.
+//   3. A graphics pass samples the derived image and writes it to an output
+//      image, which is downloaded and checked against the expected inverted
+//      colour.
+//
+// This is the acceptance chain from planset-1/08 that could not be exercised
+// without cmd.Dispatch. With validation layers enabled (VE_ENABLE_VALIDATION_LAYERS)
+// this also proves the render graph's derived barriers are sync-validation
+// clean across a compute pass.
+
+#include <cstdio>
+
+#include <Veng/Assert.h>
+#include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/ComputePipeline.h>
+#include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/DescriptorSetLayout.h>
+#include <Veng/Renderer/DynamicGraphicsPipeline.h>
+#include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/PipelineLayout.h>
+#include <Veng/Renderer/RenderGraph.h>
+#include <Veng/Renderer/Sampler.h>
+#include <Veng/Renderer/Shader.h>
+#include <Veng/Renderer/Types.h>
+
+using namespace Veng;
+using namespace Veng::Renderer;
+
+int main()
+{
+    constexpr u32 size = 4;
+
+    // Source image is cleared to (0.2, 0.4, 0.6, 1.0); the compute pass writes
+    // 1 - rgb (alpha unchanged), so the output image must match `expected`.
+    constexpr u8 expected[4] = {204, 153, 102, 255}; // ~ (0.8, 0.6, 0.4, 1.0)
+
+    Context context;
+    context.Initialize({
+        .ApplicationName = "Compute Dispatch Test",
+        .InternalRenderExtent = {size, size},
+    }, nullptr);
+
+    if (!context.IsHeadless())
+    {
+        std::fprintf(stderr, "FAIL: context did not initialize headless\n");
+        return 1;
+    }
+
+    int status = 0;
+    {
+        auto sourceImage = Image::Create({
+            .Name = "Compute Source",
+            .Extent = {size, size, 1},
+            .Format = Format::RGBA8Unorm,
+            .Usage = ImageUsage::ColorAttachment | ImageUsage::Storage,
+        });
+
+        auto sourceView = ImageView::Create({
+            .Name = "Compute Source View",
+            .Image = sourceImage,
+        });
+
+        auto derivedImage = Image::Create({
+            .Name = "Compute Derived",
+            .Extent = {size, size, 1},
+            .Format = Format::RGBA8Unorm,
+            .Usage = ImageUsage::Storage | ImageUsage::Sampled,
+        });
+
+        auto derivedView = ImageView::Create({
+            .Name = "Compute Derived View",
+            .Image = derivedImage,
+        });
+
+        auto outputImage = Image::Create({
+            .Name = "Compute Output",
+            .Extent = {size, size, 1},
+            .Format = Format::RGBA8Unorm,
+            .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+        });
+
+        auto outputView = ImageView::Create({
+            .Name = "Compute Output View",
+            .Image = outputImage,
+        });
+
+        // --- Compute pipeline: reads `source`, writes `derived`. ---
+
+        const auto computeShader = Shader::Create({
+            .Name = "invert.comp",
+            .Path = path(CD_SHADER_DIR) / "invert.comp.spv",
+        });
+        VE_ASSERT(computeShader, "{}", computeShader.error());
+
+        auto computeSetLayout = DescriptorSetLayout::Create({
+            .Name = "Compute Set Layout",
+            .Bindings = {
+                {.Binding = 0, .Type = DescriptorType::StorageImage, .Count = 1, .Stages = ShaderStage::Compute},
+                {.Binding = 1, .Type = DescriptorType::StorageImage, .Count = 1, .Stages = ShaderStage::Compute},
+            },
+        });
+
+        auto computeLayout = PipelineLayout::Create({
+            .Name = "Compute Layout",
+            .DescriptorSetLayouts = {computeSetLayout},
+        });
+
+        auto computePipeline = ComputePipeline::Create({
+            .Name = "Invert Pipeline",
+            .PipelineLayout = computeLayout,
+            .ShaderStage = {.Stage = ShaderStage::Compute, .Module = *computeShader.value()},
+        });
+
+        auto computeSet = DescriptorSet::Create({
+            .Name = "Compute Set",
+            .Layout = computeSetLayout,
+        });
+
+        computeSet->Write(0, sourceView);
+        computeSet->Write(1, derivedView);
+
+        // --- Graphics pipeline: samples `derived`, writes to `output`. ---
+
+        const auto vertexShader = Shader::Create({
+            .Name = "fullscreen.vert",
+            .Path = path(CD_SHADER_DIR) / "fullscreen.vert.spv",
+        });
+        VE_ASSERT(vertexShader, "{}", vertexShader.error());
+
+        const auto fragmentShader = Shader::Create({
+            .Name = "sample.frag",
+            .Path = path(CD_SHADER_DIR) / "sample.frag.spv",
+        });
+        VE_ASSERT(fragmentShader, "{}", fragmentShader.error());
+
+        auto sampleSetLayout = DescriptorSetLayout::Create({
+            .Name = "Sample Set Layout",
+            .Bindings = {
+                {.Binding = 0, .Type = DescriptorType::CombinedImageSampler, .Count = 1, .Stages = ShaderStage::Fragment},
+            },
+        });
+
+        auto sampleLayout = PipelineLayout::Create({
+            .Name = "Sample Layout",
+            .DescriptorSetLayouts = {sampleSetLayout},
+        });
+
+        auto samplePipeline = DynamicGraphicsPipeline::Create({
+            .Name = "Sample Pipeline",
+            .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
+            .PipelineLayout = sampleLayout,
+            .ShaderStages = {
+                {.Stage = ShaderStage::Vertex, .Module = *vertexShader.value()},
+                {.Stage = ShaderStage::Fragment, .Module = *fragmentShader.value()},
+            },
+        });
+
+        auto sampler = Sampler::Create({
+            .Name = "Compute Test Sampler",
+            .AddressModeU = AddressMode::ClampToEdge,
+            .AddressModeV = AddressMode::ClampToEdge,
+            .AddressModeW = AddressMode::ClampToEdge,
+        });
+
+        auto sampleSet = DescriptorSet::Create({
+            .Name = "Sample Set",
+            .Layout = sampleSetLayout,
+        });
+
+        sampleSet->Write(0, derivedView, sampler);
+
+        // --- The three-pass graph. ---
+
+        context.ImmediateCommands([&](CommandBuffer& cmd)
+        {
+            RenderGraph graph;
+
+            graph.AddPass("Clear Source")
+                .Color({
+                    .View = sourceView,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = ClearColor{0.2f, 0.4f, 0.6f, 1.0f},
+                })
+                .Execute([](CommandBuffer&) {});
+
+            graph.AddComputePass("Invert")
+                .StorageRead(sourceView)
+                .StorageWrite(derivedView)
+                .Execute([&](CommandBuffer& cmd)
+                {
+                    cmd.BindPipeline(computePipeline);
+                    cmd.BindDescriptorSets({
+                        .Sets = {computeSet},
+                        .PipelineBindPoint = PipelineBindPoint::Compute,
+                    });
+                    cmd.Dispatch(size, size, 1);
+                });
+
+            graph.AddPass("Sample Derived")
+                .Color({
+                    .View = outputView,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                })
+                .Sample(derivedView)
+                .Execute([&](CommandBuffer& cmd)
+                {
+                    cmd.BindPipeline(samplePipeline);
+                    cmd.SetViewport({0, 0}, {size, size});
+                    cmd.SetScissor({0, 0}, {size, size});
+                    cmd.BindDescriptorSets({.Sets = {sampleSet}});
+                    cmd.DrawFullscreenTriangle();
+                });
+
+            graph.Execute(cmd);
+        });
+
+        const vector<u8> pixels = outputImage->Download();
+
+        if (pixels.size() != static_cast<size_t>(size) * size * 4)
+        {
+            std::fprintf(stderr, "FAIL: unexpected download size %zu\n", pixels.size());
+            status = 1;
+        }
+        else
+        {
+            for (size_t p = 0; p < pixels.size() && status == 0; p += 4)
+            {
+                for (u32 c = 0; c < 4; c++)
+                {
+                    if (pixels[p + c] != expected[c])
+                    {
+                        std::fprintf(stderr,
+                                     "FAIL: pixel %zu channel %u = %u, expected %u\n",
+                                     p / 4, c, pixels[p + c], expected[c]);
+                        status = 1;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    context.WaitIdle();
+    context.DisposeResources();
+    context.Dispose();
+
+    if (status == 0)
+    {
+        std::printf("OK: compute dispatch verified (%ux%u)\n", size, size);
+    }
+
+    return status;
+}

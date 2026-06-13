@@ -96,6 +96,8 @@ namespace Veng::Renderer
         void Draw(u32 vertexCount, u32 instanceCount, u32 firstVertex, u32 firstInstance) const;
         void DrawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset, u32 firstInstance) const;
 
+        void Dispatch(u32 groupsX, u32 groupsY, u32 groupsZ) const;
+
         void BindPipeline(const Ref<DynamicGraphicsPipeline>& pipeline);
         void BindPipeline(const Ref<ComputePipeline>& pipeline);
 

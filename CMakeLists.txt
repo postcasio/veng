@@ -222,6 +222,24 @@ if (VENG_BUILD_TESTS)
     target_link_libraries(veng_headless_smoke PRIVATE veng::veng)
 
     add_test(NAME headless_smoke COMMAND veng_headless_smoke)
+
+    # Compute dispatch test (plan 05): headless graphics -> compute -> graphics
+    # render graph proving cmd.Dispatch and the storage-image barrier chain.
+    # Requires a Vulkan ICD at run time.
+    add_executable(veng_compute_dispatch tests/compute_dispatch.cpp)
+    target_link_libraries(veng_compute_dispatch PRIVATE veng::veng)
+    target_compile_definitions(veng_compute_dispatch PRIVATE
+            CD_SHADER_DIR="${CMAKE_CURRENT_BINARY_DIR}/shaders"
+    )
+
+    add_shaders(veng_compute_dispatch_shaders
+            tests/shaders/invert.comp
+            tests/shaders/fullscreen.vert
+            tests/shaders/sample.frag
+    )
+    add_dependencies(veng_compute_dispatch veng_compute_dispatch_shaders)
+
+    add_test(NAME compute_dispatch COMMAND veng_compute_dispatch)
 endif ()
 
 # ---------------------------------------------------------------------------
