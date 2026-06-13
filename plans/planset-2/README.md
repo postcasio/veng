@@ -19,11 +19,11 @@ their own.
 
 | # | Plan | Status |
 |---|------|--------|
-| 01 | [Push-constant layout & buffer](01-push-constants.md) | ready |
-| 02 | [Pipeline attachment formats from render targets](02-attachment-formats.md) | ready |
-| 03 | [Retire the legacy render-pass pipeline surface](03-retire-render-pass.md) | ready |
-| 04 | [Minor API cleanups & consistency](04-minor-cleanups.md) | ready |
-| 05 | [Compute dispatch](05-compute-dispatch.md) | ready |
+| 01 | [Push-constant layout & buffer](01-push-constants.md) | done |
+| 02 | [Pipeline attachment formats from render targets](02-attachment-formats.md) | done |
+| 03 | [Retire the legacy render-pass pipeline surface](03-retire-render-pass.md) | done |
+| 04 | [Minor API cleanups & consistency](04-minor-cleanups.md) | done |
+| 05 | [Compute dispatch](05-compute-dispatch.md) | done |
 
 All independent — they can land in any order (04's pipeline rename is sequenced
 after 03).
