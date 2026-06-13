@@ -19,11 +19,11 @@ their own.
 
 | # | Plan | Status |
 |---|------|--------|
-| 01 | [Push-constant layout & buffer](01-push-constants.md) | draft |
-| 02 | [Pipeline attachment formats from render targets](02-attachment-formats.md) | draft |
-| 03 | [Retire the legacy render-pass pipeline surface](03-retire-render-pass.md) | draft |
-| 04 | [Minor API cleanups & consistency](04-minor-cleanups.md) | draft |
-| 05 | [Compute dispatch](05-compute-dispatch.md) | draft |
+| 01 | [Push-constant layout & buffer](01-push-constants.md) | ready |
+| 02 | [Pipeline attachment formats from render targets](02-attachment-formats.md) | ready |
+| 03 | [Retire the legacy render-pass pipeline surface](03-retire-render-pass.md) | ready |
+| 04 | [Minor API cleanups & consistency](04-minor-cleanups.md) | ready |
+| 05 | [Compute dispatch](05-compute-dispatch.md) | ready |
 
 All independent — they can land in any order (04's pipeline rename is sequenced
 after 03).
@@ -31,8 +31,10 @@ after 03).
 ## Duplication / surface this phase removes
 
 1. Push-constant range declared at pipeline-layout creation *and* restated in
-   every `cmd.PushConstants(...)` → one `PushConstantLayout`, a
-   `PushConstantBuffer` for the data, `cmd.PushConstants(buffer)`.
+   every `cmd.PushConstants(...)` → declare the range once on the pipeline layout
+   and push typed data with `cmd.PushConstants(value)`, which recovers
+   layout/stage/size from the bound pipeline. No buffer/layout wrapper types;
+   push constants are an engine-fixed channel, so no reflection.
 2. Pipeline `ColorAttachments` formats restated to match the render target →
    derive/validate against the render-graph pass.
 3. `GraphicsPipeline`/`RenderPass`/`Framebuffer` public but used only by the
@@ -52,5 +54,6 @@ after 03).
 - Vertex layout derived from / validated against the shader.
 - `PipelineShaderStageInfo::Stage` (stage comes from the shader interface).
 
-> Status legend: `draft` = proposed, not yet detailed/approved. Plans get fleshed
-> out and ordered firmly before implementation, planset-1 style.
+> Status legend: `ready` = reviewed and approved for implementation; `done` =
+> landed and verified. Plans were fleshed out and ordered firmly before
+> implementation, planset-1 style.
