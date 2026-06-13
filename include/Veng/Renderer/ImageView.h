@@ -6,6 +6,7 @@
 namespace Veng::Renderer
 {
     class Image;
+    class Context;
 
     struct ImageViewInfo
     {
@@ -49,6 +50,9 @@ namespace Veng::Renderer
     private:
         explicit ImageView(const ImageViewInfo& info);
 
+        // The context this resource was created with (deferred-destruction
+        // back-ref; a resource must not outlive its context).
+        Context& m_Context;
         string m_Name;
         Format m_Format;
         u32 m_BaseMipLevel;

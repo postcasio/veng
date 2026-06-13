@@ -12,7 +12,7 @@ namespace Veng::Renderer
     ComputePipeline::Native& ComputePipeline::GetNative() const { return *m_Native; }
 
     ComputePipeline::ComputePipeline(const ComputePipelineInfo& info)
-        : m_Name(info.Name), m_Native(CreateUnique<Native>()), m_PipelineLayout(info.PipelineLayout)
+        : m_Context(Context::Instance()), m_Name(info.Name), m_Native(CreateUnique<Native>()), m_PipelineLayout(info.PipelineLayout)
     {
         VE_ASSERT(m_PipelineLayout != nullptr, "ComputePipeline '{}' requires a PipelineLayout", m_Name);
         VE_ASSERT(info.ShaderStage.Stage == ShaderStage::Compute,
@@ -33,7 +33,7 @@ namespace Veng::Renderer
             .basePipelineIndex = 0,
         };
 
-        m_Native->Pipeline = GetVkDevice(Context::Instance())
+        m_Native->Pipeline = GetVkDevice(m_Context)
                            .createComputePipeline(nullptr, pipelineCreateInfo)
                            .value;
 
@@ -44,7 +44,7 @@ namespace Veng::Renderer
     {
         if (m_Native->Pipeline)
         {
-            Context::Instance().GetNative().Retire(m_Native->Pipeline);
+            m_Context.GetNative().Retire(m_Native->Pipeline);
             m_Native->Pipeline = nullptr;
         }
     }

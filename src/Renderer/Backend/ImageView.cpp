@@ -11,7 +11,7 @@ namespace Veng::Renderer
 {
     ImageView::Native& ImageView::GetNative() const { return *m_Native; }
 
-    ImageView::ImageView(const ImageViewInfo& info) : m_Name(info.Name), m_Format(info.Image->GetFormat()),
+    ImageView::ImageView(const ImageViewInfo& info) : m_Context(Context::Instance()), m_Name(info.Name), m_Format(info.Image->GetFormat()),
                                                       m_BaseMipLevel(info.BaseMipLevel), m_MipLevels(info.MipLevels),
                                                       m_BaseArrayLayer(info.BaseArrayLayer), m_ArrayLayers(info.ArrayLayers),
                                                       m_Native(CreateUnique<Native>()), m_Image(info.Image)
@@ -33,7 +33,7 @@ namespace Veng::Renderer
             }
         };
 
-        m_Native->ImageView = GetVkDevice(Context::Instance()).createImageView(createInfo).value;
+        m_Native->ImageView = GetVkDevice(m_Context).createImageView(createInfo).value;
 
         DebugMarkers::MarkImageView(m_Native->ImageView, info.Name);
     }
@@ -47,11 +47,11 @@ namespace Veng::Renderer
         // managed images take the normal deferred-destruction path.
         if (m_Image && !m_Image->IsManaged())
         {
-            GetVkDevice(Context::Instance()).destroyImageView(m_Native->ImageView);
+            GetVkDevice(m_Context).destroyImageView(m_Native->ImageView);
         }
         else
         {
-            Context::Instance().GetNative().Retire(m_Native->ImageView);
+            m_Context.GetNative().Retire(m_Native->ImageView);
         }
     }
 }

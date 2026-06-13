@@ -20,25 +20,25 @@ namespace Veng::Renderer
 
     DescriptorSet::Native& DescriptorSet::GetNative() const { return *m_Native; }
 
-    DescriptorSet::DescriptorSet(const DescriptorSetInfo& info) : m_Name(info.Name), m_Native(CreateUnique<Native>()),
+    DescriptorSet::DescriptorSet(const DescriptorSetInfo& info) : m_Context(Context::Instance()), m_Name(info.Name), m_Native(CreateUnique<Native>()),
                                                                    m_Layout(info.Layout)
     {
         vector<vk::DescriptorSetLayout> layouts = {info.Layout->GetNative().Layout};
 
         const vk::DescriptorSetAllocateInfo allocateInfo = {
-            .descriptorPool = Context::Instance().GetNative().DescriptorPool->GetVkDescriptorPool(),
+            .descriptorPool = m_Context.GetNative().DescriptorPool->GetVkDescriptorPool(),
             .descriptorSetCount = static_cast<u32>(layouts.size()),
             .pSetLayouts = layouts.data()
         };
 
-        m_Native->Set = GetVkDevice(Context::Instance()).allocateDescriptorSets(allocateInfo).value[0];
+        m_Native->Set = GetVkDevice(m_Context).allocateDescriptorSets(allocateInfo).value[0];
 
         DebugMarkers::MarkDescriptorSet(m_Native->Set, m_Name);
     }
 
     DescriptorSet::~DescriptorSet()
     {
-        Context::Instance().GetNative().Retire(m_Native->Set);
+        m_Context.GetNative().Retire(m_Native->Set);
     }
 
     void DescriptorSet::Write(u32 binding, const Ref<ImageView>& view, const Ref<Sampler>& sampler)
@@ -63,7 +63,7 @@ namespace Veng::Renderer
             .pImageInfo = &imageInfo,
         };
 
-        GetVkDevice(Context::Instance()).updateDescriptorSets(write, {});
+        GetVkDevice(m_Context).updateDescriptorSets(write, {});
 
         m_BoundPerBinding[binding] = {
             std::static_pointer_cast<void>(view),
@@ -96,7 +96,7 @@ namespace Veng::Renderer
             .pImageInfo = &imageInfo,
         };
 
-        GetVkDevice(Context::Instance()).updateDescriptorSets(write, {});
+        GetVkDevice(m_Context).updateDescriptorSets(write, {});
 
         m_BoundPerBinding[binding] = {std::static_pointer_cast<void>(view)};
     }
@@ -128,7 +128,7 @@ namespace Veng::Renderer
             .pBufferInfo = &bufferInfo,
         };
 
-        GetVkDevice(Context::Instance()).updateDescriptorSets(write, {});
+        GetVkDevice(m_Context).updateDescriptorSets(write, {});
 
         m_BoundPerBinding[binding] = {std::static_pointer_cast<void>(buffer)};
     }
@@ -167,7 +167,7 @@ namespace Veng::Renderer
             .pImageInfo = imageInfos.data(),
         };
 
-        GetVkDevice(Context::Instance()).updateDescriptorSets(write, {});
+        GetVkDevice(m_Context).updateDescriptorSets(write, {});
 
         m_BoundPerBinding[binding] = std::move(owned);
     }

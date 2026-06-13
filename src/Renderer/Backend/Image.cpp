@@ -15,6 +15,7 @@ namespace Veng::Renderer
     Image::Native& Image::GetNative() const { return *m_Native; }
 
     Image::Image(const ImageInfo& info, Unique<Native> native) :
+        m_Context(Context::Instance()),
         m_Name(info.Name),
         m_Extent(info.Extent),
         m_MipLevels(info.MipLevels),
@@ -31,6 +32,7 @@ namespace Veng::Renderer
     }
 
     Image::Image(const ImageInfo& info) :
+        m_Context(Context::Instance()),
         m_Name(info.Name),
         m_Extent(info.Extent),
         m_MipLevels(info.MipLevels),
@@ -74,7 +76,7 @@ namespace Veng::Renderer
         VkImage image;
 
         VK_RAW_ASSERT(vmaCreateImage(
-                          GetVmaAllocator(Context::Instance()),
+                          GetVmaAllocator(m_Context),
                           &imageCreateInfo,
                           &allocationCreateInfo,
                           &image,
@@ -84,7 +86,7 @@ namespace Veng::Renderer
         m_Native->Image = image;
 
         vmaSetAllocationName(
-            GetVmaAllocator(Context::Instance()),
+            GetVmaAllocator(m_Context),
             m_Native->Allocation,
             m_Name.c_str());
 
@@ -95,7 +97,7 @@ namespace Veng::Renderer
     {
         if (m_Managed)
         {
-            Context::Instance().GetNative().Retire(m_Native->Image, m_Native->Allocation);
+            m_Context.GetNative().Retire(m_Native->Image, m_Native->Allocation);
         }
     }
 
@@ -156,7 +158,7 @@ namespace Veng::Renderer
 
         commandBuffer->End();
 
-        Context::Instance().SubmitImmediateCommands(*commandBuffer);
+        m_Context.SubmitImmediateCommands(*commandBuffer);
     }
 
     vector<u8> Image::Download()
@@ -187,7 +189,7 @@ namespace Veng::Renderer
 
         commandBuffer->End();
 
-        Context::Instance().SubmitImmediateCommands(*commandBuffer);
+        m_Context.SubmitImmediateCommands(*commandBuffer);
 
         return buffer->Download();
     }

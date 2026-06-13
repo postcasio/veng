@@ -10,7 +10,7 @@ namespace Veng::Renderer
 {
     Buffer::Native& Buffer::GetNative() const { return *m_Native; }
 
-    Buffer::Buffer(const BufferInfo& info) : m_Name(info.Name), m_Native(CreateUnique<Native>()), m_Size(info.Size)
+    Buffer::Buffer(const BufferInfo& info) : m_Context(Context::Instance()), m_Name(info.Name), m_Native(CreateUnique<Native>()), m_Size(info.Size)
     {
         const VkBufferCreateInfo bufferCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -30,19 +30,19 @@ namespace Veng::Renderer
         };
 
         VK_RAW_ASSERT(
-            vmaCreateBuffer(GetVmaAllocator(Context::Instance()), &bufferCreateInfo, &allocationCreateInfo, &buffer, &
+            vmaCreateBuffer(GetVmaAllocator(m_Context), &bufferCreateInfo, &allocationCreateInfo, &buffer, &
                 m_Native->Allocation, nullptr), "failed to create buffer!");
 
         m_Native->Buffer = buffer;
 
-        vmaSetAllocationName(GetVmaAllocator(Context::Instance()), m_Native->Allocation, info.Name.c_str());
+        vmaSetAllocationName(GetVmaAllocator(m_Context), m_Native->Allocation, info.Name.c_str());
 
         DebugMarkers::MarkBuffer(m_Native->Buffer, m_Name);
     }
 
     Buffer::~Buffer()
     {
-        Context::Instance().GetNative().Retire(m_Native->Buffer, m_Native->Allocation);
+        m_Context.GetNative().Retire(m_Native->Buffer, m_Native->Allocation);
     }
 
     void Buffer::Upload(const std::span<const u8> data, const u64 offset) const
@@ -52,7 +52,7 @@ namespace Veng::Renderer
                   m_Name, offset, data.size(), m_Size);
 
         VK_RAW_ASSERT(
-            vmaCopyMemoryToAllocation(GetVmaAllocator(Context::Instance()), data.data(), m_Native->Allocation, offset, data.size()),
+            vmaCopyMemoryToAllocation(GetVmaAllocator(m_Context), data.data(), m_Native->Allocation, offset, data.size()),
             "failed to upload buffer data!");
     }
 
@@ -61,7 +61,7 @@ namespace Veng::Renderer
         vector<u8> data(m_Size);
 
         VK_RAW_ASSERT(
-            vmaCopyAllocationToMemory(GetVmaAllocator(Context::Instance()), m_Native->Allocation, 0, data.data(), m_Size),
+            vmaCopyAllocationToMemory(GetVmaAllocator(m_Context), m_Native->Allocation, 0, data.data(), m_Size),
             "failed to download buffer data!");
 
         return data;

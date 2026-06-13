@@ -6,6 +6,8 @@
 
 namespace Veng::Renderer
 {
+    class Context;
+
     struct PipelineShaderStageInfo
     {
         ShaderStage Stage;
@@ -69,6 +71,9 @@ namespace Veng::Renderer
     private:
         explicit PipelineLayout(const PipelineLayoutInfo& info);
 
+        // The context this resource was created with (deferred-destruction
+        // back-ref; a resource must not outlive its context).
+        Context& m_Context;
         string m_Name;
         Unique<Native> m_Native;
         vector<Ref<DescriptorSetLayout>> m_DescriptorSetLayouts;

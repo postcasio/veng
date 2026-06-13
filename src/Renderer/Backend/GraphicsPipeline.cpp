@@ -11,7 +11,7 @@ namespace Veng::Renderer
 {
     GraphicsPipeline::Native& GraphicsPipeline::GetNative() const { return *m_Native; }
 
-    GraphicsPipeline::GraphicsPipeline(const GraphicsPipelineInfo& info) : m_Name(info.Name),
+    GraphicsPipeline::GraphicsPipeline(const GraphicsPipelineInfo& info) : m_Context(Context::Instance()), m_Name(info.Name),
         m_Native(CreateUnique<Native>()), m_PipelineLayout(info.PipelineLayout),
         m_DepthAttachmentFormat(info.DepthAttachmentFormat)
     {
@@ -180,13 +180,13 @@ namespace Veng::Renderer
             .basePipelineIndex = 0,
         };
 
-        m_Native->Pipeline = GetVkDevice(Context::Instance()).createGraphicsPipeline(nullptr, pipelineInfo).value;
+        m_Native->Pipeline = GetVkDevice(m_Context).createGraphicsPipeline(nullptr, pipelineInfo).value;
 
         DebugMarkers::MarkPipeline(m_Native->Pipeline, m_Name);
     }
 
     GraphicsPipeline::~GraphicsPipeline()
     {
-        Context::Instance().GetNative().Retire(m_Native->Pipeline);
+        m_Context.GetNative().Retire(m_Native->Pipeline);
     }
 }

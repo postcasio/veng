@@ -8,6 +8,7 @@
 
 namespace Veng::Renderer
 {
+    class Context;
     template <typename T> class UniformBuffer;
     template <typename T> class StorageBuffer;
 
@@ -64,6 +65,9 @@ namespace Veng::Renderer
     private:
         explicit DescriptorSet(const DescriptorSetInfo& info);
 
+        // The context this resource was created with (deferred-destruction
+        // back-ref; a resource must not outlive its context).
+        Context& m_Context;
         string m_Name;
         Unique<Native> m_Native;
         // Ownership of the resources currently written into each binding, keyed

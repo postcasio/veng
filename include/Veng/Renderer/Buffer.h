@@ -8,6 +8,7 @@
 namespace Veng::Renderer
 {
     class CommandBuffer;
+    class Context;
 
     struct BufferInfo
     {
@@ -43,6 +44,10 @@ namespace Veng::Renderer
     private:
         explicit Buffer(const BufferInfo& info);
 
+        // The context this resource was created with — used for deferred
+        // destruction (Retire) and host transfers. A resource must not outlive
+        // its context (see docs/ownership.md).
+        Context& m_Context;
         string m_Name;
 
         Unique<Native> m_Native;

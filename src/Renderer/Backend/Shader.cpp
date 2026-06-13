@@ -35,7 +35,7 @@ namespace Veng::Renderer
         }));
     }
 
-    Shader::Shader(const ShaderBinaryInfo& info) : m_Name(info.Name), m_EntryPoint(info.EntryPoint),
+    Shader::Shader(const ShaderBinaryInfo& info) : m_Context(Context::Instance()), m_Name(info.Name), m_EntryPoint(info.EntryPoint),
                                                     m_Native(CreateUnique<Native>())
     {
         vk::ShaderModuleCreateInfo createInfo{
@@ -43,11 +43,11 @@ namespace Veng::Renderer
             .pCode = reinterpret_cast<const u32*>(info.Binary.data()),
         };
 
-        m_Native->Module = GetVkDevice(Context::Instance()).createShaderModule(createInfo).value;
+        m_Native->Module = GetVkDevice(m_Context).createShaderModule(createInfo).value;
     }
 
     Shader::~Shader()
     {
-        Context::Instance().GetNative().Retire(m_Native->Module);
+        m_Context.GetNative().Retire(m_Native->Module);
     }
 }

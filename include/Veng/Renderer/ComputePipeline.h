@@ -5,6 +5,8 @@
 
 namespace Veng::Renderer
 {
+    class Context;
+
     struct ComputePipelineInfo
     {
         string Name;
@@ -35,6 +37,9 @@ namespace Veng::Renderer
     private:
         explicit ComputePipeline(const ComputePipelineInfo& info);
 
+        // The context this resource was created with (deferred-destruction
+        // back-ref; a resource must not outlive its context).
+        Context& m_Context;
         string m_Name;
         Unique<Native> m_Native;
         Ref<PipelineLayout> m_PipelineLayout;

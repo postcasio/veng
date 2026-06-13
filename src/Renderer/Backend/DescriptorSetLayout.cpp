@@ -11,7 +11,7 @@ namespace Veng::Renderer
 {
     DescriptorSetLayout::Native& DescriptorSetLayout::GetNative() const { return *m_Native; }
 
-    DescriptorSetLayout::DescriptorSetLayout(const DescriptorSetLayoutInfo& info) : m_Name(info.Name),
+    DescriptorSetLayout::DescriptorSetLayout(const DescriptorSetLayoutInfo& info) : m_Context(Context::Instance()), m_Name(info.Name),
         m_Bindings(info.Bindings), m_Native(CreateUnique<Native>())
     {
         for (const auto& binding : m_Bindings)
@@ -52,7 +52,7 @@ namespace Veng::Renderer
             .pBindings = vkBindings.data(),
         };
 
-        m_Native->Layout = GetVkDevice(Context::Instance()).createDescriptorSetLayout(
+        m_Native->Layout = GetVkDevice(m_Context).createDescriptorSetLayout(
             descriptorSetLayoutCreateInfo).value;
 
         DebugMarkers::MarkDescriptorSetLayout(m_Native->Layout, m_Name);
@@ -60,7 +60,7 @@ namespace Veng::Renderer
 
     DescriptorSetLayout::~DescriptorSetLayout()
     {
-        GetVkDevice(Context::Instance()).destroyDescriptorSetLayout(m_Native->Layout);
+        GetVkDevice(m_Context).destroyDescriptorSetLayout(m_Native->Layout);
     }
 
     DescriptorType DescriptorSetLayout::GetBindingType(u32 binding) const

@@ -5,6 +5,8 @@
 
 namespace Veng::Renderer
 {
+    class Context;
+
     struct DescriptorBinding
     {
         u32 Binding = 0;
@@ -46,6 +48,9 @@ namespace Veng::Renderer
     private:
         explicit DescriptorSetLayout(const DescriptorSetLayoutInfo& info);
 
+        // The context this resource was created with (deferred-destruction
+        // back-ref; a resource must not outlive its context).
+        Context& m_Context;
         string m_Name;
         vector<DescriptorBinding> m_Bindings;
         map<u32, DescriptorBinding> m_BindingsByNumber;

@@ -10,7 +10,7 @@ namespace Veng::Renderer
 {
     Sampler::Native& Sampler::GetNative() const { return *m_Native; }
 
-    Sampler::Sampler(const SamplerInfo& info) : m_Name(info.Name), m_Native(CreateUnique<Native>())
+    Sampler::Sampler(const SamplerInfo& info) : m_Context(Context::Instance()), m_Name(info.Name), m_Native(CreateUnique<Native>())
     {
         const vk::SamplerCreateInfo samplerCreateInfo{
             .magFilter = ToVk(info.MagFilter),
@@ -30,13 +30,13 @@ namespace Veng::Renderer
             .unnormalizedCoordinates = info.UnnormalizedCoordinates,
         };
 
-        m_Native->Sampler = GetVkDevice(Context::Instance()).createSampler(samplerCreateInfo).value;
+        m_Native->Sampler = GetVkDevice(m_Context).createSampler(samplerCreateInfo).value;
 
         DebugMarkers::MarkSampler(m_Native->Sampler, m_Name);
     }
 
     Sampler::~Sampler()
     {
-        Context::Instance().GetNative().Retire(m_Native->Sampler);
+        m_Context.GetNative().Retire(m_Native->Sampler);
     }
 }

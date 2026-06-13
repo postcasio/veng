@@ -9,6 +9,7 @@ namespace Veng::Renderer
 {
     class CommandBuffer;
     class SwapChain;
+    class Context;
 
     struct ImageInfo
     {
@@ -65,6 +66,9 @@ namespace Veng::Renderer
         // engine-side bookkeeping.
         Image(const ImageInfo& info, Unique<Native> native);
 
+        // The context this resource was created with (deferred-destruction
+        // back-ref; a resource must not outlive its context).
+        Context& m_Context;
         string m_Name;
         uvec3 m_Extent;
         u32 m_MipLevels;

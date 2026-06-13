@@ -10,7 +10,7 @@ namespace Veng::Renderer
 {
     PipelineLayout::Native& PipelineLayout::GetNative() const { return *m_Native; }
 
-    PipelineLayout::PipelineLayout(const PipelineLayoutInfo& info) : m_Name(info.Name),
+    PipelineLayout::PipelineLayout(const PipelineLayoutInfo& info) : m_Context(Context::Instance()), m_Name(info.Name),
                                                                      m_Native(CreateUnique<Native>()),
                                                                      m_DescriptorSetLayouts(info.DescriptorSetLayouts),
                                                                      m_PushConstantRanges(info.PushConstantRanges)
@@ -42,13 +42,13 @@ namespace Veng::Renderer
             .pPushConstantRanges = pushConstantRanges.data(),
         };
 
-        m_Native->Layout = GetVkDevice(Context::Instance()).createPipelineLayout(pipelineLayoutCreateInfo).value;
+        m_Native->Layout = GetVkDevice(m_Context).createPipelineLayout(pipelineLayoutCreateInfo).value;
 
         DebugMarkers::MarkPipelineLayout(m_Native->Layout, m_Name);
     }
 
     PipelineLayout::~PipelineLayout()
     {
-        Context::Instance().GetNative().Retire(m_Native->Layout);
+        m_Context.GetNative().Retire(m_Native->Layout);
     }
 }

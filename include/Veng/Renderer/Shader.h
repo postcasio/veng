@@ -7,6 +7,8 @@
 
 namespace Veng::Renderer
 {
+    class Context;
+
     struct ShaderInfo
     {
         string Name;
@@ -52,6 +54,9 @@ namespace Veng::Renderer
     private:
         explicit Shader(const ShaderBinaryInfo& info);
 
+        // The context this resource was created with (deferred-destruction
+        // back-ref; a resource must not outlive its context).
+        Context& m_Context;
         string m_Name;
         string m_EntryPoint;
         Unique<Native> m_Native;
