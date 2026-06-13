@@ -25,7 +25,9 @@ after.
   push constants and layouts by hand. Two paths: **loaded** (a node-based
   material editor produces an asset carrying shader binary + parameter data) and
   **constructed** (reference a shader + explicitly supplied uniform/texture info,
-  validated against what the shader needs).
+  validated against what the shader needs). This **requires higher-level
+  descriptor management and a bindless system** — see the descriptor-strategy
+  cross-cutting concern below.
 - This phase **absorbs all deferred shader work** (why planset-1/12 and the
   shader parts of planset-2 were dropped): **offline shader reflection →
   serializable `ShaderInterface`** (descriptor bindings, push-constant blocks,
@@ -148,11 +150,20 @@ to decide early than to retrofit.
   consumer — so it surfaces the requirements that shape the context/threading
   APIs, rather than reworking them after the fact. Infrastructure built against an
   actual caller tends to be right. *(affects ordering of 1 / 2 / 3.)*
-- **Decide the descriptor strategy up front** in the asset/material phase:
-  bindless / descriptor-indexing vs. per-resource sets. It's the modern default,
-  it deeply shapes the descriptor/layout/material-binding APIs, and it's painful
-  to retrofit. planset-2 explicitly deferred bindless — this is where it's chosen.
-  *(area 1.)*
+- **Higher-level descriptor management + a bindless system** in the asset/material
+  phase — not an open question but a requirement. Materials (many textures/
+  parameters, per-material sets multiplying across a scene) need descriptor
+  management above today's per-set `DescriptorSet`/`DescriptorSetLayout` layer:
+  name-based binding driven by shader reflection, and bindless / descriptor-
+  indexing (the modern default) for texture tables and per-draw resource access.
+  It deeply shapes the descriptor/layout/material-binding APIs and is painful to
+  retrofit, so design it here. planset-2 explicitly deferred bindless, and the
+  [planset-2/06 addendum](../planset-2/06-descriptor-update-policy.md) found the
+  current descriptor layer already strains a single basic use case — it hard-codes
+  `UPDATE_AFTER_BIND` on every binding with hand-maintained, drift-prone feature/
+  pool prerequisites. That addendum only corrects the *flag-policy altitude* for
+  the existing layer; the real bindless subsystem (large arrays, per-frame
+  streaming, possibly descriptor buffers) is this phase's job. *(area 1.)*
 - **Structured error type for the asset/import pipeline.** `Result<T>` carries a
   `std::string` today; asset loading is where callers will want to branch on error
   *kind* (not-found / corrupt / version-mismatch / missing-dependency). Expect to
