@@ -7,7 +7,7 @@
 // DecideBarrier, emits a barrier iff NeedsBarrier, and records NewState.
 
 #include <Veng/Renderer/Backend/Vulkan.h>
-#include <Veng/Renderer/RenderGraph.h> // RenderGraph::AccessKind (for ScopeFor)
+#include <Veng/Renderer/Types.h> // AccessKind (for ScopeFor)
 
 namespace Veng::Renderer::Backend
 {
@@ -45,8 +45,8 @@ namespace Veng::Renderer::Backend
                                                 vk::PipelineStageFlags dstStage,
                                                 vk::AccessFlags dstAccess);
 
-    // The declared-use table: each RenderGraph access kind resolves to the layout
-    // the image must be in plus the stage/access scope that uses it. Pure; lives
-    // here so it is testable alongside DecideBarrier.
-    [[nodiscard]] SubresourceState ScopeFor(RenderGraph::AccessKind kind);
+    // The declared-use table: each access kind resolves to the layout the image
+    // must be in plus the stage/access scope that uses it. Pure; lives here so it
+    // is testable alongside DecideBarrier.
+    [[nodiscard]] SubresourceState ScopeFor(AccessKind kind);
 }

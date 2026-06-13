@@ -43,9 +43,9 @@ namespace Veng::Renderer::Backend
         };
     }
 
-    SubresourceState ScopeFor(const RenderGraph::AccessKind kind)
+    SubresourceState ScopeFor(const AccessKind kind)
     {
-        using Kind = RenderGraph::AccessKind;
+        using Kind = AccessKind;
         switch (kind)
         {
         case Kind::ColorAttachment:
@@ -91,6 +91,6 @@ namespace Veng::Renderer::Backend
                 vk::AccessFlagBits::eTransferWrite,
             };
         }
-        VE_ASSERT(false, "RenderGraph: unhandled AccessKind {}", static_cast<u32>(kind));
+        VE_ASSERT(false, "unhandled AccessKind {}", static_cast<u32>(kind));
     }
 }

@@ -2,6 +2,8 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Backend/Barrier.h>
+#include <Veng/Renderer/Backend/BarrierDecision.h>
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 #include <Veng/Renderer/Backend/Utils.h>
@@ -351,5 +353,20 @@ namespace Veng::Renderer
             &blitInfo,
             vk::Filter::eLinear
         );
+    }
+
+    void CommandBuffer::PrepareForAccess(const Ref<ImageView>& view, const AccessKind kind)
+    {
+        // Same path the RenderGraph uses for a declared access (ScopeFor +
+        // TransitionImage), so an out-of-graph use leaves the image's tracked
+        // state exactly as a graph pass would — a later graph pass declaring the
+        // same use then correctly sees no hazard.
+        const auto scope = Backend::ScopeFor(kind);
+
+        Backend::TransitionImage(
+            *this, *view->GetImage(),
+            scope.Layout, scope.Stage, scope.Access,
+            view->GetBaseArrayLayer(), view->GetArrayLayers(),
+            view->GetBaseMipLevel(), view->GetMipLevels());
     }
 }

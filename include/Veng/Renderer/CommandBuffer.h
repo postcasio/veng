@@ -126,6 +126,16 @@ namespace Veng::Renderer
         void CopyImageToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer);
         void BlitImage(const BlitImageInfo& info);
 
+        // Transition a view's image so an out-of-graph consumer can use it as
+        // `kind` (e.g. AccessKind::Sample before ImGui samples a scene texture
+        // via ImGui::Image). Within a RenderGraph, barriers fall out of declared
+        // use and you never call this; this is the deliberate, named escape hatch
+        // for reads/writes the graph cannot see. It funnels into the same
+        // barrier path as the graph (ScopeFor + DecideBarrier) and updates the
+        // image's tracked state, so a later graph pass declaring the same use
+        // correctly sees no hazard.
+        void PrepareForAccess(const Ref<ImageView>& view, AccessKind kind);
+
     private:
         CommandBuffer(Context& context, CommandBufferLevel level);
 

@@ -113,6 +113,15 @@ namespace Veng::Renderer
                                                     .Usage = ImageUsage::ColorAttachment
                                                 }, std::move(native))));
 
+            // Swapchain images come from vkAcquireNextImageKHR, whose
+            // image-available semaphore is waited at AcquireWaitStage on submit.
+            // Seed the tracked state's stage to match: the first transition's
+            // srcStageMask then covers that stage, forming the execution
+            // dependency validation requires against the acquire (otherwise the
+            // default TopOfPipe srcStage lets the transition race ahead of the
+            // semaphore wait — a WRITE_AFTER_READ hazard on first use).
+            m_Images.back()->GetNative().At(0, 0).Stage = AcquireWaitStage;
+
             m_ImageViews.emplace_back(ImageView::Create(m_Context, ImageViewInfo{
                 .Name = fmt::format("SwapChain ImageView [{}]", m_ImageViews.size()),
                 .Image = m_Images.back(),

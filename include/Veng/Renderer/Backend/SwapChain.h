@@ -22,6 +22,17 @@ namespace Veng::Renderer
     class SwapChain
     {
     public:
+        // Pipeline stage at which the image-available semaphore (signalled by
+        // vkAcquireNextImageKHR) is waited on submit. Two sites must agree on
+        // this and are coupled through this single constant:
+        //   - Context::SubmitFrame's pWaitDstStageMask for that semaphore, and
+        //   - the srcStage each swapchain image's tracked state is seeded with,
+        //     so its first layout transition forms an execution dependency
+        //     against the acquire instead of racing ahead of the wait (a
+        //     WRITE_AFTER_READ hazard on first use).
+        static constexpr vk::PipelineStageFlags AcquireWaitStage =
+            vk::PipelineStageFlagBits::eColorAttachmentOutput;
+
         static Unique<SwapChain> Create(Context& context, const SwapChainInfo& info)
         {
             return CreateUnique<SwapChain>(context, info);

@@ -109,7 +109,7 @@ TEST_CASE("IsWriteAccess classifies write bits and reads")
 
 TEST_CASE("ScopeFor maps each AccessKind to its documented scope")
 {
-    using Kind = RenderGraph::AccessKind;
+    using Kind = AccessKind;
 
     const auto color = ScopeFor(Kind::ColorAttachment);
     CHECK(color.Layout == vk::ImageLayout::eColorAttachmentOptimal);

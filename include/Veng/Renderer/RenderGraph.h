@@ -36,19 +36,9 @@ namespace Veng::Renderer
     public:
         enum class PassType : u8 { Graphics, Compute, Transfer };
 
-        // How a pass uses a view. Each maps internally to a (layout, stage,
-        // access) triple that drives barrier derivation.
-        enum class AccessKind : u8
-        {
-            ColorAttachment,
-            DepthAttachment,
-            Sample,
-            StorageRead,
-            StorageWrite,
-            TransferSrc,
-            TransferDst,
-        };
-
+        // How a pass uses a view drives barrier derivation; the AccessKind
+        // vocabulary enum lives in Types.h (it is also used by
+        // CommandBuffer::PrepareForAccess for out-of-graph consumers).
         struct Access
         {
             Ref<ImageView> View;

@@ -648,7 +648,9 @@ namespace Veng::Renderer
         const auto renderFinishedSemaphore = frame.GetRenderFinishedSemaphore().GetNative().Semaphore;
         const auto imageAvailableSemaphore = frame.GetImageAvailableSemaphore().GetNative().Semaphore;
 
-        const vk::PipelineStageFlags mask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+        // Must match the srcStage each swapchain image's first transition is
+        // seeded with — see SwapChain::AcquireWaitStage.
+        const vk::PipelineStageFlags mask = SwapChain::AcquireWaitStage;
 
         const vk::SubmitInfo submitInfo{
             .waitSemaphoreCount = 1,

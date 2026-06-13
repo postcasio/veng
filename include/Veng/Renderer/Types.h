@@ -81,6 +81,22 @@ namespace Veng::Renderer
     enum class LoadOp : u8 { Load, Clear, DontCare };
     enum class StoreOp : u8 { Store, DontCare };
 
+    // How a resource is used by a pass or operation. Each kind resolves to a
+    // (layout, stage, access) scope (Backend::ScopeFor) that drives barrier
+    // derivation. Declared on RenderGraph passes, and passed to
+    // CommandBuffer::PrepareForAccess for out-of-graph consumers (e.g. ImGui)
+    // the graph cannot see.
+    enum class AccessKind : u8
+    {
+        ColorAttachment,
+        DepthAttachment,
+        Sample,
+        StorageRead,
+        StorageWrite,
+        TransferSrc,
+        TransferDst,
+    };
+
     enum class IndexType : u8 { U16, U32 };
 
     enum class CompareOp : u8

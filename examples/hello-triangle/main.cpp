@@ -127,6 +127,13 @@ protected:
         // composite-to-swapchain pass are windowed-only.
         if (GetImGuiLayer())
         {
+            // RenderUserInterface() draws m_SceneTexture via ImGui::Image(), and
+            // GetImGuiLayer()->Render(cmd) is what actually records that sampled
+            // read — before CompositeToSwapChain's own .Sample() declaration runs.
+            // ImGui samples outside the graph, so declare the read explicitly:
+            // transition the scene image to a sampleable layout before that pass.
+            cmd.PrepareForAccess(m_SceneImageView, Renderer::AccessKind::Sample);
+
             RenderUserInterface();
             GetImGuiLayer()->Render(cmd);
             CompositeToSwapChain(cmd);
@@ -256,8 +263,9 @@ private:
 
         // Declare the pass; the graph derives the layout transition and drives
         // BeginRendering/EndRendering from the color attachment. The transition
-        // back to a sampleable layout is derived by the composite pass that reads
-        // the scene image — barriers fall out of declared use, not manual calls.
+        // back to a sampleable layout happens at the next declared read — the
+        // out-of-graph ImGui sample (see OnRender's cmd.PrepareForAccess) or, in
+        // headless, the composite pass — barriers fall out of declared use.
         Renderer::RenderGraph graph;
         graph.AddPass("Scene")
             .Color({
