@@ -2,24 +2,13 @@
 
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/Backend/BarrierDecision.h>
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 #include <Veng/Renderer/Backend/Utils.h>
 
 namespace Veng::Renderer::Backend
 {
-    static bool IsWriteAccess(const vk::AccessFlags access)
-    {
-        constexpr auto writes =
-            vk::AccessFlagBits::eColorAttachmentWrite |
-            vk::AccessFlagBits::eDepthStencilAttachmentWrite |
-            vk::AccessFlagBits::eShaderWrite |
-            vk::AccessFlagBits::eTransferWrite |
-            vk::AccessFlagBits::eHostWrite |
-            vk::AccessFlagBits::eMemoryWrite;
-        return static_cast<bool>(access & writes);
-    }
-
     void TransitionImage(CommandBuffer& cmd, Image& image,
                          const vk::ImageLayout newLayout,
                          const vk::PipelineStageFlags dstStage, const vk::AccessFlags dstAccess,
@@ -28,50 +17,44 @@ namespace Veng::Renderer::Backend
         auto& native = image.GetNative();
 
         // The base subresource stands in for the whole declared range; views the
-        // graph declares cover a range that is uniform in tracked state.
-        const auto& src = native.At(baseLayer, baseMip);
+        // graph declares cover a range that is uniform in tracked state. The pure
+        // hazard rule lives in DecideBarrier (Backend/BarrierDecision.h); here we
+        // only read/write the device-bound tracked state and emit the barrier.
+        const auto& tracked = native.At(baseLayer, baseMip);
+        const SubresourceState current{tracked.Layout, tracked.Stage, tracked.Access};
 
-        const bool layoutChange = src.Layout != newLayout;
-        const bool hazard = layoutChange || IsWriteAccess(src.Access) || IsWriteAccess(dstAccess);
+        const BarrierDecision decision = DecideBarrier(current, newLayout, dstStage, dstAccess);
 
-        if (!hazard)
+        if (decision.NeedsBarrier)
         {
-            // Read-after-read, same layout: no barrier needed. Widen the tracked
-            // read scope so a later write waits on every prior read.
-            for (u32 layer = baseLayer; layer < baseLayer + layerCount; layer++)
-                for (u32 mip = baseMip; mip < baseMip + mipCount; mip++)
-                {
-                    auto& s = native.At(layer, mip);
-                    s.Stage |= dstStage;
-                    s.Access |= dstAccess;
-                }
-            return;
+            const vk::ImageMemoryBarrier barrier{
+                .srcAccessMask = decision.Src.Access,
+                .dstAccessMask = decision.Dst.Access,
+                .oldLayout = decision.Src.Layout,
+                .newLayout = decision.Dst.Layout,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = native.Image,
+                .subresourceRange = {
+                    Utils::GetAspectFlags(ToVk(image.GetFormat())),
+                    baseMip, mipCount, baseLayer, layerCount,
+                },
+            };
+
+            cmd.GetNative().CommandBuffer.pipelineBarrier(
+                decision.Src.Stage, decision.Dst.Stage,
+                vk::DependencyFlags{}, 0, nullptr, 0, nullptr, 1, &barrier);
         }
 
-        const vk::ImageMemoryBarrier barrier{
-            .srcAccessMask = src.Access,
-            .dstAccessMask = dstAccess,
-            .oldLayout = src.Layout,
-            .newLayout = newLayout,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = native.Image,
-            .subresourceRange = {
-                Utils::GetAspectFlags(ToVk(image.GetFormat())),
-                baseMip, mipCount, baseLayer, layerCount,
-            },
-        };
-
-        cmd.GetNative().CommandBuffer.pipelineBarrier(
-            src.Stage, dstStage, vk::DependencyFlags{}, 0, nullptr, 0, nullptr, 1, &barrier);
-
+        // Record the resulting state across the subresource range: a barrier resets
+        // it to the desired state; a no-hazard use carries the widened read scope.
         for (u32 layer = baseLayer; layer < baseLayer + layerCount; layer++)
             for (u32 mip = baseMip; mip < baseMip + mipCount; mip++)
             {
                 auto& s = native.At(layer, mip);
-                s.Layout = newLayout;
-                s.Stage = dstStage;
-                s.Access = dstAccess;
+                s.Layout = decision.NewState.Layout;
+                s.Stage = decision.NewState.Stage;
+                s.Access = decision.NewState.Access;
             }
     }
 

@@ -122,6 +122,7 @@ add_library(veng SHARED
         src/ImGui/ImGuiTexture.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/Backend/Barrier.cpp
+        src/Renderer/Backend/BarrierDecision.cpp
         src/Renderer/Backend/Buffer.cpp
         src/Renderer/Backend/CommandBuffer.cpp
         src/Renderer/Backend/CommandPool.cpp
@@ -233,6 +234,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/sanity.cpp
             tests/unit/pure_logic.cpp
             tests/unit/type_mapping.cpp
+            tests/unit/barrier_decision.cpp
     )
     target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
 

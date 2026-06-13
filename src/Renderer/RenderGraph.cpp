@@ -3,74 +3,15 @@
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/Backend/Barrier.h>
+#include <Veng/Renderer/Backend/BarrierDecision.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 
 namespace Veng::Renderer
 {
-    namespace
-    {
-        // The declared-use table: each AccessKind resolves to the layout the
-        // image must be in plus the pipeline stage/access scope that uses it.
-        // This is what fixes the "layout alone can't tell a compute write from a
-        // read" hole — the scope is declared, not guessed from the layout.
-        struct AccessScope
-        {
-            vk::ImageLayout Layout;
-            vk::PipelineStageFlags Stage;
-            vk::AccessFlags Access;
-        };
-
-        AccessScope ScopeFor(const RenderGraph::AccessKind kind)
-        {
-            using Kind = RenderGraph::AccessKind;
-            switch (kind)
-            {
-            case Kind::ColorAttachment:
-                return {
-                    vk::ImageLayout::eColorAttachmentOptimal,
-                    vk::PipelineStageFlagBits::eColorAttachmentOutput,
-                    vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eColorAttachmentRead,
-                };
-            case Kind::DepthAttachment:
-                return {
-                    vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                    vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eLateFragmentTests,
-                    vk::AccessFlagBits::eDepthStencilAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentRead,
-                };
-            case Kind::Sample:
-                return {
-                    vk::ImageLayout::eShaderReadOnlyOptimal,
-                    vk::PipelineStageFlagBits::eFragmentShader,
-                    vk::AccessFlagBits::eShaderRead,
-                };
-            case Kind::StorageRead:
-                return {
-                    vk::ImageLayout::eGeneral,
-                    vk::PipelineStageFlagBits::eComputeShader,
-                    vk::AccessFlagBits::eShaderRead,
-                };
-            case Kind::StorageWrite:
-                return {
-                    vk::ImageLayout::eGeneral,
-                    vk::PipelineStageFlagBits::eComputeShader,
-                    vk::AccessFlagBits::eShaderWrite,
-                };
-            case Kind::TransferSrc:
-                return {
-                    vk::ImageLayout::eTransferSrcOptimal,
-                    vk::PipelineStageFlagBits::eTransfer,
-                    vk::AccessFlagBits::eTransferRead,
-                };
-            case Kind::TransferDst:
-                return {
-                    vk::ImageLayout::eTransferDstOptimal,
-                    vk::PipelineStageFlagBits::eTransfer,
-                    vk::AccessFlagBits::eTransferWrite,
-                };
-            }
-            VE_ASSERT(false, "RenderGraph: unhandled AccessKind {}", static_cast<u32>(kind));
-        }
-    }
+    // The declared-use table (Backend::ScopeFor) and the hazard rule it feeds
+    // (Backend::DecideBarrier) now live in Backend/BarrierDecision.h so they are
+    // unit-testable without a device (planset-3, plan 04).
+    using Backend::ScopeFor;
 
     RenderGraph::PassBuilder& RenderGraph::PassBuilder::Color(const PassAttachment& attachment)
     {
