@@ -233,9 +233,9 @@ namespace Veng::Renderer
         m_Native->CommandBuffer.bindVertexBuffers(0, buffer->GetNative().Buffer, {0});
     }
 
-    void CommandBuffer::BindIndexBuffer(const Ref<Buffer>& buffer)
+    void CommandBuffer::BindIndexBuffer(const Ref<Buffer>& buffer, const IndexType type)
     {
-        m_Native->CommandBuffer.bindIndexBuffer(buffer->GetNative().Buffer, 0, vk::IndexType::eUint32);
+        m_Native->CommandBuffer.bindIndexBuffer(buffer->GetNative().Buffer, 0, ToVk(type));
     }
 
     void CommandBuffer::CopyBufferToImage(const Buffer& buffer, const Image& image) const

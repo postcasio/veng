@@ -81,6 +81,8 @@ namespace Veng::Renderer
     enum class LoadOp : u8 { Load, Clear, DontCare };
     enum class StoreOp : u8 { Store, DontCare };
 
+    enum class IndexType : u8 { U16, U32 };
+
     enum class CompareOp : u8
     {
         Never, Less, Equal, LessOrEqual, Greater, NotEqual, GreaterOrEqual, Always,

@@ -92,6 +92,16 @@ namespace Veng::Renderer
         VE_ASSERT(false, "ToVk(ImageLayout): unmapped value {}", static_cast<u32>(layout));
     }
 
+    inline vk::IndexType ToVk(IndexType type)
+    {
+        switch (type)
+        {
+        case IndexType::U16: return vk::IndexType::eUint16;
+        case IndexType::U32: return vk::IndexType::eUint32;
+        }
+        VE_ASSERT(false, "ToVk(IndexType): unmapped value {}", static_cast<u32>(type));
+    }
+
     inline ImageLayout FromVk(vk::ImageLayout layout)
     {
         switch (layout)

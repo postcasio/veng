@@ -11,6 +11,7 @@
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Shader.h>
+#include <Veng/Renderer/TypedBuffers.h>
 
 #include <glm/gtc/packing.hpp>
 
@@ -32,6 +33,8 @@ namespace
         {{0.6f, 0.6f}, {0.2f, 1.0f, 0.2f}},
         {{-0.6f, 0.6f}, {0.2f, 0.2f, 1.0f}},
     };
+
+    const u16 k_Indices[] = {0, 1, 2};
 }
 
 class HelloTriangleApp final : public Application
@@ -70,12 +73,12 @@ protected:
             .AddressModeW = Renderer::AddressMode::ClampToEdge,
         });
 
-        m_VertexBuffer = Renderer::Buffer::Create({
-            .Name = "Triangle Vertices",
-            .Size = sizeof(k_Vertices),
-            .Usage = Renderer::BufferUsage::Vertex,
-        });
-        m_VertexBuffer->Upload({reinterpret_cast<const u8*>(k_Vertices), sizeof(k_Vertices)});
+        m_VertexBuffer = Renderer::VertexBuffer<Vertex>::Create("Triangle Vertices", std::size(k_Vertices));
+        m_VertexBuffer.Upload(k_Vertices);
+
+        m_IndexBuffer = Renderer::IndexBuffer::Create("Triangle Indices", std::size(k_Indices),
+                                                      Renderer::IndexType::U16);
+        m_IndexBuffer.Upload(k_Indices);
 
         CreateTrianglePipeline();
 
@@ -135,7 +138,8 @@ protected:
         m_CompositeSetLayout.reset();
         m_TrianglePipeline.reset();
         m_TriangleLayout.reset();
-        m_VertexBuffer.reset();
+        m_VertexBuffer = {};
+        m_IndexBuffer = {};
         m_Sampler.reset();
         m_ImGuiImageView.reset();
         m_SceneImageView.reset();
@@ -257,6 +261,7 @@ private:
                 cmd.SetViewport({0, 0}, extent);
                 cmd.SetScissor({0, 0}, extent);
                 cmd.BindVertexBuffer(m_VertexBuffer);
+                cmd.BindIndexBuffer(m_IndexBuffer);
 
                 const f32 aspect = static_cast<f32>(extent.x) / static_cast<f32>(extent.y);
                 const mat4 transform = glm::scale(mat4(1.0f), vec3(1.0f / aspect, 1.0f, 1.0f)) *
@@ -270,7 +275,7 @@ private:
                     .Data = &transform,
                 });
 
-                cmd.Draw(3, 1, 0, 0);
+                cmd.DrawIndexed(static_cast<u32>(m_IndexBuffer.GetIndexCount()), 1, 0, 0, 0);
             });
 
         graph.Execute(cmd);
@@ -348,7 +353,8 @@ private:
     Ref<Renderer::ImageView> m_SceneImageView;
     Ref<Renderer::ImageView> m_ImGuiImageView;
     Ref<Renderer::Sampler> m_Sampler;
-    Ref<Renderer::Buffer> m_VertexBuffer;
+    Renderer::VertexBuffer<Vertex> m_VertexBuffer;
+    Renderer::IndexBuffer m_IndexBuffer;
 
     Ref<Renderer::PipelineLayout> m_TriangleLayout;
     Ref<Renderer::DynamicGraphicsPipeline> m_TrianglePipeline;

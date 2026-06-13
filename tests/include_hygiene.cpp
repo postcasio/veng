@@ -42,6 +42,7 @@
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Semaphore.h>
 #include <Veng/Renderer/Shader.h>
+#include <Veng/Renderer/TypedBuffers.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>
 

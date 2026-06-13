@@ -27,10 +27,13 @@ namespace Veng::Renderer
         explicit Buffer(const BufferInfo& info);
         ~Buffer();
 
-        void Upload(std::span<const u8> data) const;
+        // Copy data into the buffer at byte offset (default 0). offset + size
+        // must fit within the buffer.
+        void Upload(std::span<const u8> data, u64 offset = 0) const;
         [[nodiscard]] vector<u8> Download() const;
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
+        [[nodiscard]] u64 GetSize() const { return m_Size; }
 
         struct Native;
         [[nodiscard]] Native& GetNative() const;

@@ -8,6 +8,9 @@
 
 namespace Veng::Renderer
 {
+    template <typename T> class UniformBuffer;
+    template <typename T> class StorageBuffer;
+
     struct DescriptorSetInfo
     {
         string Name;
@@ -41,6 +44,12 @@ namespace Veng::Renderer
         void Write(u32 binding, const Ref<Buffer>& buffer);
         // Uniform or storage buffer, explicit range.
         void Write(u32 binding, const Ref<Buffer>& buffer, u64 offset, u64 range);
+        // Typed-buffer convenience (definitions in TypedBuffers.h): forward to
+        // the Ref<Buffer> writer, which asserts the binding's type.
+        template <typename T>
+        void Write(u32 binding, const UniformBuffer<T>& buffer);
+        template <typename T>
+        void Write(u32 binding, const StorageBuffer<T>& buffer);
         // Array of combined image samplers (bindless-style).
         void WriteArray(u32 binding, std::span<const Ref<ImageView>> views,
                         const Ref<Sampler>& sampler, u32 firstElement = 0);

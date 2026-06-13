@@ -13,6 +13,9 @@
 
 namespace Veng::Renderer
 {
+    template <typename V> class VertexBuffer;
+    class IndexBuffer;
+
     struct PushConstantsInfo
     {
         PipelineLayout& PipelineLayout;
@@ -70,7 +73,13 @@ namespace Veng::Renderer
 
         ~CommandBuffer();
         void BindVertexBuffer(const Ref<Buffer>& buffer);
-        void BindIndexBuffer(const Ref<Buffer>& buffer);
+        void BindIndexBuffer(const Ref<Buffer>& buffer, IndexType type = IndexType::U32);
+
+        // Typed binds (definitions in TypedBuffers.h): no usage flags or index
+        // width restated at the call site.
+        template <typename V>
+        void BindVertexBuffer(const VertexBuffer<V>& buffer);
+        void BindIndexBuffer(const IndexBuffer& buffer);
 
         explicit CommandBuffer(CommandBufferLevel level);
 
