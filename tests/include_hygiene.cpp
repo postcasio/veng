@@ -33,9 +33,9 @@
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/ImGuiTexture.h>
 #include <Veng/Renderer/Image.h>
-#include <Veng/Renderer/ImageBarrier.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/PipelineLayout.h>
+#include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/RenderPass.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Semaphore.h>

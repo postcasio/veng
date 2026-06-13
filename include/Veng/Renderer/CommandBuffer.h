@@ -6,7 +6,6 @@
 #include <Veng/Renderer/Framebuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/ComputePipeline.h>
-#include <Veng/Renderer/ImageBarrier.h>
 #include <Veng/Renderer/RenderPass.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Types.h>
@@ -103,8 +102,6 @@ namespace Veng::Renderer
 
         void BindDescriptorSets(const DescriptorSetBindInfo& info);
         void DrawFullscreenTriangle() const;
-
-        void PipelineBarrier(const ImageBarrier& barrier) const;
 
         void CopyBufferToImage(const Buffer& buffer, const Image& image) const;
         void CopyImageToBuffer(const Image& image, const Buffer& buffer) const;

@@ -120,27 +120,4 @@ namespace Veng::Renderer
             VE_ASSERT(false, "Unsupported image layout");
         }
     }
-
-    vk::PipelineStageFlags Utils::GetSourceStageMask(const vk::ImageLayout imageLayout)
-    {
-        switch (imageLayout)
-        {
-        case vk::ImageLayout::eUndefined: return vk::PipelineStageFlagBits::eTopOfPipe;
-        case vk::ImageLayout::eDepthReadOnlyOptimal: return vk::PipelineStageFlagBits::eEarlyFragmentTests;
-        case vk::ImageLayout::eDepthStencilReadOnlyOptimal: return vk::PipelineStageFlagBits::eEarlyFragmentTests;
-        case vk::ImageLayout::eStencilReadOnlyOptimal: return vk::PipelineStageFlagBits::eLateFragmentTests;
-        case vk::ImageLayout::eShaderReadOnlyOptimal: return vk::PipelineStageFlagBits::eFragmentShader;
-        case vk::ImageLayout::eTransferSrcOptimal: return vk::PipelineStageFlagBits::eTransfer;
-        case vk::ImageLayout::eTransferDstOptimal: return vk::PipelineStageFlagBits::eTransfer;
-        case vk::ImageLayout::eColorAttachmentOptimal: return vk::PipelineStageFlagBits::eColorAttachmentOutput;
-        case vk::ImageLayout::eDepthAttachmentOptimal: return vk::PipelineStageFlagBits::eEarlyFragmentTests;
-        case vk::ImageLayout::eDepthStencilAttachmentOptimal: return vk::PipelineStageFlagBits::eEarlyFragmentTests;
-        case vk::ImageLayout::eStencilAttachmentOptimal: return vk::PipelineStageFlagBits::eLateFragmentTests;
-        case vk::ImageLayout::ePresentSrcKHR:
-            // When transitioning from present, be conservative so we properly wait for external reads.
-            return vk::PipelineStageFlagBits::eAllCommands;
-        default:
-            VE_ASSERT(false, "Unsupported image layout");
-        }
-    }
 }

@@ -34,12 +34,23 @@ namespace Veng::Renderer
         [[nodiscard]] Format GetFormat() const { return m_Format; }
         [[nodiscard]] Ref<Image> GetImage() const { return m_Image; }
 
+        // Subresource range this view covers. The render graph reads these to emit
+        // barriers over exactly the affected mips/layers (see RenderGraph).
+        [[nodiscard]] u32 GetBaseMipLevel() const { return m_BaseMipLevel; }
+        [[nodiscard]] u32 GetMipLevels() const { return m_MipLevels; }
+        [[nodiscard]] u32 GetBaseArrayLayer() const { return m_BaseArrayLayer; }
+        [[nodiscard]] u32 GetArrayLayers() const { return m_ArrayLayers; }
+
         struct Native;
         [[nodiscard]] Native& GetNative() const;
 
     private:
         string m_Name;
         Format m_Format;
+        u32 m_BaseMipLevel;
+        u32 m_MipLevels;
+        u32 m_BaseArrayLayer;
+        u32 m_ArrayLayers;
         Unique<Native> m_Native;
         Ref<Image> m_Image;
     };

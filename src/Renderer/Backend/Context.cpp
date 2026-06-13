@@ -3,6 +3,7 @@
 
 #include <set>
 
+#include <Veng/Renderer/Backend/Barrier.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
@@ -131,7 +132,18 @@ namespace Veng::Renderer
             .pfnUserCallback = DebugCallback
         };
 
-        instanceCreateInfo.pNext = &debugCreateInfo;
+        // Turn on synchronization validation so missing/incorrect barriers from
+        // the render graph are caught at runtime (plan 08 acceptance).
+        constexpr vk::ValidationFeatureEnableEXT enabledValidationFeatures[] = {
+            vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
+        };
+        const vk::ValidationFeaturesEXT validationFeatures{
+            .pNext = &debugCreateInfo,
+            .enabledValidationFeatureCount = static_cast<u32>(std::size(enabledValidationFeatures)),
+            .pEnabledValidationFeatures = enabledValidationFeatures,
+        };
+
+        instanceCreateInfo.pNext = &validationFeatures;
         instanceCreateInfo.enabledLayerCount =
             static_cast<u32>(m_Native->ValidationLayers.size());
         instanceCreateInfo.ppEnabledLayerNames = m_Native->ValidationLayers.data();
@@ -512,10 +524,7 @@ namespace Veng::Renderer
     {
         m_ImGuiRenderedThisFrame = true;
 
-        commandBuffer.PipelineBarrier({
-            .Image = *m_ImGuiImage,
-            .NewLayout = ImageLayout::ColorAttachment,
-        });
+        Backend::TransitionImage(commandBuffer, *m_ImGuiImage, ImageLayout::ColorAttachment);
 
         vector<ClearValue> clear = {
             ClearColor{1.0f, 0.0f, 0.0f, 0.0f}
@@ -534,10 +543,7 @@ namespace Veng::Renderer
 
         commandBuffer.EndRenderPass();
 
-        commandBuffer.PipelineBarrier({
-            .Image = *m_ImGuiImage,
-            .NewLayout = ImageLayout::ShaderReadOnly,
-        });
+        Backend::TransitionImage(commandBuffer, *m_ImGuiImage, ImageLayout::ShaderReadOnly);
     }
 
     void Context::BeginFrame()

@@ -118,6 +118,8 @@ add_library(veng SHARED
         src/Log.cpp
         src/Time.cpp
         src/Window.cpp
+        src/Renderer/RenderGraph.cpp
+        src/Renderer/Backend/Barrier.cpp
         src/Renderer/Backend/Buffer.cpp
         src/Renderer/Backend/Command.cpp
         src/Renderer/Backend/CommandBuffer.cpp

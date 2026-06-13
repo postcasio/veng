@@ -161,40 +161,6 @@ namespace Veng::Renderer
                                       });
     }
 
-    void CommandBuffer::PipelineBarrier(const ImageBarrier& barrier) const
-    {
-        const auto oldLayout = ToVk(barrier.Image.GetLayout(barrier.BaseLayer, barrier.BaseMipLevel));
-        const auto newLayout = ToVk(barrier.NewLayout);
-
-        const vk::ImageMemoryBarrier imageMemoryBarrier{
-            .srcAccessMask = Utils::GetAccessMask(oldLayout),
-            .dstAccessMask = Utils::GetAccessMask(newLayout),
-            .oldLayout = oldLayout,
-            .newLayout = newLayout,
-            .image = barrier.Image.GetNative().Image,
-            .subresourceRange = {
-                Utils::GetAspectFlags(ToVk(barrier.Image.GetFormat())),
-                barrier.BaseMipLevel,
-                barrier.MipLevelCount,
-                barrier.BaseLayer,
-                barrier.LayerCount
-            },
-        };
-
-        m_Native->CommandBuffer.pipelineBarrier(
-            Utils::GetSourceStageMask(oldLayout),
-            Utils::GetDestinationStageMask(newLayout),
-            vk::DependencyFlags{},
-            0,
-            nullptr,
-            0,
-            nullptr,
-            1,
-            &imageMemoryBarrier
-        );
-
-        barrier.Image.SetLayout(barrier.BaseLayer, barrier.LayerCount, barrier.BaseMipLevel, barrier.MipLevelCount, barrier.NewLayout);
-    }
 
     void CommandBuffer::End() const
     {
@@ -228,12 +194,24 @@ namespace Veng::Renderer
         const auto& fbAttachments = framebuffer->GetAttachments();
         const auto& rpAttachments = renderPass->GetAttachments();
 
+        // A render pass performs its own layout transitions to each attachment's
+        // FinalLayout; mirror that into the tracked per-subresource state so the
+        // render graph and transfer paths see the image's true post-pass state.
         for (auto i = 0; i < fbAttachments.size(); i++)
         {
             const auto& view = fbAttachments[i];
             auto image = view->GetImage();
+            auto& native = image->GetNative();
 
-            image->SetLayout(0, image->GetLayers(), 0, image->GetMipLevels(), rpAttachments[i].FinalLayout);
+            const auto vkLayout = ToVk(rpAttachments[i].FinalLayout);
+            for (u32 layer = 0; layer < image->GetLayers(); layer++)
+                for (u32 mip = 0; mip < image->GetMipLevels(); mip++)
+                {
+                    auto& state = native.At(layer, mip);
+                    state.Layout = vkLayout;
+                    state.Stage = Utils::GetDestinationStageMask(vkLayout);
+                    state.Access = Utils::GetAccessMask(vkLayout);
+                }
         }
     }
 

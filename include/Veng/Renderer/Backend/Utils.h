@@ -13,6 +13,5 @@ namespace Veng::Renderer
         static vk::ImageAspectFlags GetAspectFlags(vk::Format format);
         static vk::AccessFlags GetAccessMask(vk::ImageLayout imageLayout);
         static vk::PipelineStageFlags GetDestinationStageMask(vk::ImageLayout imageLayout);
-        static vk::PipelineStageFlags GetSourceStageMask(vk::ImageLayout imageLayout);
     };
 }

@@ -46,6 +46,33 @@ namespace Veng::Renderer
         vk::Image Image;
         VmaAllocationInfo AllocationInfo{};
         VmaAllocation Allocation = nullptr;
+
+        // Per-subresource (layer * mip) layout/stage/access tracking — the state
+        // the render graph diffs against to derive barriers. Seeded to Undefined
+        // / TopOfPipe so the first use of any subresource emits a correct
+        // undefined-source transition.
+        struct SubresourceState
+        {
+            vk::ImageLayout Layout = vk::ImageLayout::eUndefined;
+            vk::PipelineStageFlags Stage = vk::PipelineStageFlagBits::eTopOfPipe;
+            vk::AccessFlags Access{};
+        };
+
+        u32 Layers = 1;
+        u32 MipLevels = 1;
+        vector<SubresourceState> States;
+
+        void InitStates(const u32 layers, const u32 mipLevels)
+        {
+            Layers = layers;
+            MipLevels = mipLevels;
+            States.assign(static_cast<usize>(layers) * mipLevels, {});
+        }
+
+        [[nodiscard]] SubresourceState& At(const u32 layer, const u32 mip)
+        {
+            return States[layer * MipLevels + mip];
+        }
     };
 
     struct ImageView::Native

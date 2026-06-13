@@ -45,25 +45,9 @@ namespace Veng::Renderer
         [[nodiscard]] bool IsManaged() const { return m_Managed; }
         [[nodiscard]] ImageType GetType() const { return m_Type; }
 
-        // Layout tracking is per layer * per mip.
-        void SetLayout(const ImageLayout layout) { for (auto& l : m_Layouts) l = layout; }
-
-        void SetLayout(const u32 layer, const u32 mip, const ImageLayout layout)
-        {
-            m_Layouts[GetLayoutIndex(layer, mip)] = layout;
-        }
-
-        void SetLayout(const u32 baseLayer, const u32 layerCount, const u32 baseMip, const u32 mipCount, const ImageLayout layout)
-        {
-            for (u32 layer = baseLayer; layer < baseLayer + layerCount; layer++)
-                for (u32 mip = baseMip; mip < baseMip + mipCount; mip++)
-                    m_Layouts[GetLayoutIndex(layer, mip)] = layout;
-        }
-
-        [[nodiscard]] ImageLayout GetLayout(const u32 layer, const u32 mip) const
-        {
-            return m_Layouts[GetLayoutIndex(layer, mip)];
-        }
+        // Per-subresource layout/stage/access tracking lives in Native (it holds
+        // vk:: types). The render graph and the engine's transfer paths read and
+        // update it through the backend; consumers no longer reason about layout.
 
         void GenerateMipmaps(CommandBuffer& commandBuffer);
         void Upload(std::span<const u8> span);
@@ -73,11 +57,6 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        [[nodiscard]] u32 GetLayoutIndex(const u32 layer, const u32 mip) const
-        {
-            return layer * m_MipLevels + mip;
-        }
-
         // Presentable (swapchain) images: the Native already wraps an
         // externally-owned vk::Image, so this constructor only sets up the
         // engine-side bookkeeping.
@@ -87,7 +66,6 @@ namespace Veng::Renderer
         uvec3 m_Extent;
         u32 m_MipLevels;
         u32 m_Layers;
-        vector<ImageLayout> m_Layouts{};
         Format m_Format;
         ImageType m_Type;
         ImageUsage m_Usage;

@@ -3,6 +3,7 @@
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Native.h>
+#include <Veng/Renderer/Backend/Barrier.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
@@ -24,7 +25,7 @@ namespace Veng::Renderer
         m_Managed(false),
         m_Native(std::move(native))
     {
-        m_Layouts.resize(m_Layers * m_MipLevels, ImageLayout::Undefined);
+        m_Native->InitStates(m_Layers, m_MipLevels);
 
         DebugMarkers::MarkImage(m_Native->Image, m_Name);
     }
@@ -40,7 +41,7 @@ namespace Veng::Renderer
         m_Managed(true),
         m_Native(CreateUnique<Native>())
     {
-        m_Layouts.resize(m_Layers * m_MipLevels, ImageLayout::Undefined);
+        m_Native->InitStates(m_Layers, m_MipLevels);
 
         vk::ImageCreateFlags flags;
 
@@ -101,21 +102,12 @@ namespace Veng::Renderer
 
     void Image::GenerateMipmaps(CommandBuffer& commandBuffer)
     {
-        ImageBarrier barrier{
-            .Image = *this,
-            .NewLayout = ImageLayout::TransferSrc,
-            .BaseMipLevel = 0,
-        };
-
         u32 mipWidth = m_Extent.x;
         u32 mipHeight = m_Extent.y;
 
         for (u32 i = 1; i < m_MipLevels; i++)
         {
-            barrier.NewLayout = ImageLayout::TransferSrc;
-            barrier.BaseMipLevel = i - 1;
-
-            commandBuffer.PipelineBarrier(barrier);
+            Backend::TransitionImage(commandBuffer, *this, ImageLayout::TransferSrc, 0, 1, i - 1, 1);
 
             commandBuffer.BlitImage({
                 .SourceImage = *this,
@@ -128,18 +120,13 @@ namespace Veng::Renderer
                 .DestinationExtent = {mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1}
             });
 
-            barrier.NewLayout = ImageLayout::ShaderReadOnly;
-
-            commandBuffer.PipelineBarrier(barrier);
+            Backend::TransitionImage(commandBuffer, *this, ImageLayout::ShaderReadOnly, 0, 1, i - 1, 1);
 
             if (mipWidth > 1) mipWidth /= 2;
             if (mipHeight > 1) mipHeight /= 2;
         }
 
-        barrier.BaseMipLevel = m_MipLevels - 1;
-        barrier.NewLayout = ImageLayout::ShaderReadOnly;
-
-        commandBuffer.PipelineBarrier(barrier);
+        Backend::TransitionImage(commandBuffer, *this, ImageLayout::ShaderReadOnly, 0, 1, m_MipLevels - 1, 1);
     }
 
     void Image::Upload(std::span<const u8> span)
@@ -155,13 +142,7 @@ namespace Veng::Renderer
         auto commandBuffer = CommandBuffer::Create();
 
         commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
-        commandBuffer->PipelineBarrier(ImageBarrier{
-            .Image = *this,
-            .NewLayout = ImageLayout::TransferDst,
-            .LayerCount = m_Layers,
-            .BaseMipLevel = 0,
-            .MipLevelCount = m_MipLevels
-        });
+        Backend::TransitionImage(*commandBuffer, *this, ImageLayout::TransferDst, 0, m_Layers, 0, m_MipLevels);
         commandBuffer->CopyBufferToImage(*stagingBuffer, *this);
 
         if (m_MipLevels > 1)
@@ -170,12 +151,7 @@ namespace Veng::Renderer
         }
         else
         {
-            commandBuffer->PipelineBarrier(ImageBarrier{
-                .Image = *this,
-                .NewLayout = ImageLayout::ShaderReadOnly,
-                .LayerCount = m_Layers,
-                .MipLevelCount = 1
-            });
+            Backend::TransitionImage(*commandBuffer, *this, ImageLayout::ShaderReadOnly, 0, m_Layers, 0, 1);
         }
 
         commandBuffer->End();
@@ -191,23 +167,23 @@ namespace Veng::Renderer
             .Usage = BufferUsage::TransferDst,
         });
 
-        auto layout = GetLayout(0, 0);
+        const ImageLayout originalLayout = FromVk(m_Native->At(0, 0).Layout);
 
         auto commandBuffer = CommandBuffer::Create();
 
         commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
 
-        commandBuffer->PipelineBarrier(ImageBarrier{
-            .Image = *this,
-            .NewLayout = ImageLayout::TransferSrc
-        });
+        Backend::TransitionImage(*commandBuffer, *this, ImageLayout::TransferSrc);
 
         commandBuffer->CopyImageToBuffer(*this, *buffer);
 
-        commandBuffer->PipelineBarrier(ImageBarrier{
-            .Image = *this,
-            .NewLayout = layout
-        });
+        // Restore the image to the layout it had on entry so callers see no
+        // change; skip if it was never transitioned (can't transition to
+        // Undefined).
+        if (originalLayout != ImageLayout::Undefined)
+        {
+            Backend::TransitionImage(*commandBuffer, *this, originalLayout);
+        }
 
         commandBuffer->End();
 

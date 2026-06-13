@@ -1,6 +1,7 @@
 #include <Veng/Renderer/Command.h>
 
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Backend/Barrier.h>
 #include <Veng/Renderer/Backend/SynchronizationFrame.h>
 
 namespace Veng::Renderer
@@ -28,10 +29,8 @@ namespace Veng::Renderer
 
         auto commandBuffer = frame.GetCommandBuffer();
 
-        commandBuffer->PipelineBarrier({
-            .Image = *Context::Instance().GetCurrentSwapChainImage(),
-            .NewLayout = ImageLayout::PresentSrc
-        });
+        Backend::TransitionImage(*commandBuffer, *Context::Instance().GetCurrentSwapChainImage(),
+                                 ImageLayout::PresentSrc);
 
         commandBuffer->End();
 

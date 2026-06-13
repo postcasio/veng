@@ -8,6 +8,7 @@
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DynamicGraphicsPipeline.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Shader.h>
 
@@ -225,48 +226,41 @@ private:
     {
         const uvec2 extent = {m_SceneImage->GetWidth(), m_SceneImage->GetHeight()};
 
-        cmd.PipelineBarrier({
-            .Image = *m_SceneImage,
-            .NewLayout = Renderer::ImageLayout::ColorAttachment,
-        });
+        // Declare the pass; the graph derives the layout transition and drives
+        // BeginRendering/EndRendering from the color attachment. The transition
+        // back to a sampleable layout is derived by the composite pass that reads
+        // the scene image — barriers fall out of declared use, not manual calls.
+        Renderer::RenderGraph graph;
+        graph.AddPass("Scene")
+            .Color({
+                .View = m_SceneImageView,
+                .Load = Renderer::LoadOp::Clear,
+                .Store = Renderer::StoreOp::Store,
+                .Clear = Renderer::ClearColor{0.05f, 0.05f, 0.08f, 1.0f},
+            })
+            .Execute([this, extent](Renderer::CommandBuffer& cmd)
+            {
+                cmd.BindPipeline(m_TrianglePipeline);
+                cmd.SetViewport({0, 0}, extent);
+                cmd.SetScissor({0, 0}, extent);
+                cmd.BindVertexBuffer(m_VertexBuffer);
 
-        cmd.BeginRendering({
-            .Extent = extent,
-            .ColorAttachments = {
-                {
-                    .ImageView = m_SceneImageView,
-                    .LoadOp = Renderer::LoadOp::Clear,
-                    .StoreOp = Renderer::StoreOp::Store,
-                    .ClearValue = Renderer::ClearColor{0.05f, 0.05f, 0.08f, 1.0f},
-                },
-            },
-        });
+                const f32 aspect = static_cast<f32>(extent.x) / static_cast<f32>(extent.y);
+                const mat4 transform = glm::scale(mat4(1.0f), vec3(1.0f / aspect, 1.0f, 1.0f)) *
+                    glm::rotate(mat4(1.0f), m_Angle, vec3(0.0f, 0.0f, 1.0f));
 
-        cmd.BindPipeline(m_TrianglePipeline);
-        cmd.SetViewport({0, 0}, extent);
-        cmd.SetScissor({0, 0}, extent);
-        cmd.BindVertexBuffer(m_VertexBuffer);
+                cmd.PushConstants({
+                    .PipelineLayout = *m_TriangleLayout,
+                    .StageFlags = Renderer::ShaderStage::Vertex,
+                    .Offset = 0,
+                    .Size = sizeof(mat4),
+                    .Data = &transform,
+                });
 
-        const f32 aspect = static_cast<f32>(extent.x) / static_cast<f32>(extent.y);
-        const mat4 transform = glm::scale(mat4(1.0f), vec3(1.0f / aspect, 1.0f, 1.0f)) *
-            glm::rotate(mat4(1.0f), m_Angle, vec3(0.0f, 0.0f, 1.0f));
+                cmd.Draw(3, 1, 0, 0);
+            });
 
-        cmd.PushConstants({
-            .PipelineLayout = *m_TriangleLayout,
-            .StageFlags = Renderer::ShaderStage::Vertex,
-            .Offset = 0,
-            .Size = sizeof(mat4),
-            .Data = &transform,
-        });
-
-        cmd.Draw(3, 1, 0, 0);
-
-        cmd.EndRendering();
-
-        cmd.PipelineBarrier({
-            .Image = *m_SceneImage,
-            .NewLayout = Renderer::ImageLayout::ShaderReadOnly,
-        });
+        graph.Execute(cmd);
     }
 
     void RenderUserInterface() const
@@ -312,30 +306,29 @@ private:
         auto& context = GetRenderContext();
         const uvec2 extent = context.GetSwapChainExtent();
 
-        cmd.PipelineBarrier({
-            .Image = *context.GetCurrentSwapChainImage(),
-            .NewLayout = Renderer::ImageLayout::ColorAttachment,
-        });
+        // Sampling the scene and ImGui views declares the reads that drive their
+        // transitions to ShaderReadOnly; rendering the swapchain view declares
+        // the write that drives its transition to ColorAttachment.
+        Renderer::RenderGraph graph;
+        graph.AddPass("Composite")
+            .Color({
+                .View = context.GetCurrentSwapChainImageView(),
+                .Load = Renderer::LoadOp::Clear,
+                .Store = Renderer::StoreOp::Store,
+                .Clear = Renderer::ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+            })
+            .Sample(m_SceneImageView)
+            .Sample(m_ImGuiImageView)
+            .Execute([this, extent](Renderer::CommandBuffer& cmd)
+            {
+                cmd.BindPipeline(m_CompositePipeline);
+                cmd.SetViewport({0, 0}, extent);
+                cmd.SetScissor({0, 0}, extent);
+                cmd.BindDescriptorSets({.Sets = {m_CompositeSet}});
+                cmd.DrawFullscreenTriangle();
+            });
 
-        cmd.BeginRendering({
-            .Extent = extent,
-            .ColorAttachments = {
-                {
-                    .ImageView = context.GetCurrentSwapChainImageView(),
-                    .LoadOp = Renderer::LoadOp::Clear,
-                    .StoreOp = Renderer::StoreOp::Store,
-                    .ClearValue = Renderer::ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
-                },
-            },
-        });
-
-        cmd.BindPipeline(m_CompositePipeline);
-        cmd.SetViewport({0, 0}, extent);
-        cmd.SetScissor({0, 0}, extent);
-        cmd.BindDescriptorSets({.Sets = {m_CompositeSet}});
-        cmd.DrawFullscreenTriangle();
-
-        cmd.EndRendering();
+        graph.Execute(cmd);
     }
 
     Ref<Renderer::Image> m_SceneImage;

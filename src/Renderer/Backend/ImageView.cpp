@@ -12,6 +12,8 @@ namespace Veng::Renderer
     ImageView::Native& ImageView::GetNative() const { return *m_Native; }
 
     ImageView::ImageView(const ImageViewInfo& info) : m_Name(info.Name), m_Format(info.Image->GetFormat()),
+                                                      m_BaseMipLevel(info.BaseMipLevel), m_MipLevels(info.MipLevels),
+                                                      m_BaseArrayLayer(info.BaseArrayLayer), m_ArrayLayers(info.ArrayLayers),
                                                       m_Native(CreateUnique<Native>()), m_Image(info.Image)
     {
         const vk::ImageViewCreateInfo createInfo{
