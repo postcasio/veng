@@ -24,9 +24,13 @@ their own.
 | 03 | [Retire the legacy render-pass pipeline surface](03-retire-render-pass.md) | done |
 | 04 | [Minor API cleanups & consistency](04-minor-cleanups.md) | done |
 | 05 | [Compute dispatch](05-compute-dispatch.md) | done |
+| 06 | [Descriptor binding flags & update policy (addendum)](06-descriptor-update-policy.md) | proposed |
 
-All independent — they can land in any order (04's pipeline rename is sequenced
-after 03).
+Plans 01–05 are independent and landed in dependency order (04's pipeline rename
+after 03). Plan 06 is a post-hoc **addendum**: a design finding surfaced once the
+`VE_DEBUG` validation build was repaired — the descriptor-set abstraction
+hard-codes Vulkan binding flags on every binding and the prerequisites have
+drifted. It awaits review.
 
 ## Duplication / surface this phase removes
 
@@ -54,6 +58,6 @@ after 03).
 - Vertex layout derived from / validated against the shader.
 - `PipelineShaderStageInfo::Stage` (stage comes from the shader interface).
 
-> Status legend: `ready` = reviewed and approved for implementation; `done` =
-> landed and verified. Plans were fleshed out and ordered firmly before
-> implementation, planset-1 style.
+> Status legend: `proposed` = drafted, awaiting review; `ready` = reviewed and
+> approved for implementation; `done` = landed and verified. Plans were fleshed
+> out and ordered firmly before implementation, planset-1 style.
