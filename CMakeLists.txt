@@ -118,6 +118,8 @@ add_library(veng SHARED
         src/Log.cpp
         src/Time.cpp
         src/Window.cpp
+        src/ImGui/ImGuiLayer.cpp
+        src/ImGui/ImGuiTexture.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/Backend/Barrier.cpp
         src/Renderer/Backend/Buffer.cpp
@@ -136,7 +138,6 @@ add_library(veng SHARED
         src/Renderer/Backend/GraphicsPipeline.cpp
         src/Renderer/Backend/Image.cpp
         src/Renderer/Backend/ImageView.cpp
-        src/Renderer/Backend/ImGuiTexture.cpp
         src/Renderer/Backend/PipelineLayout.cpp
         src/Renderer/Backend/RenderPass.cpp
         src/Renderer/Backend/Sampler.cpp

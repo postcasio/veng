@@ -20,9 +20,12 @@ namespace Veng
             .ApplicationName = m_Info.Name,
             .EngineName = m_Info.EngineName,
             .InternalRenderExtent = m_Info.InternalRenderExtent,
-            .DefaultFontPath = m_Info.DefaultFontPath,
-            .IconFontPath = m_Info.IconFontPath
         }, m_Window.get());
+
+        if (m_Info.ImGui)
+        {
+            m_ImGuiLayer = ImGuiLayer::Create(*m_Info.ImGui, m_RenderContext, *m_Window);
+        }
 
         OnInitialize();
     }
@@ -59,6 +62,10 @@ namespace Veng
         // torn down right after, and resources outliving it are an error.
         OnDispose();
 
+        // Shut ImGui down before the context: its backend, descriptor pool and
+        // offscreen target must be released while the device is still alive.
+        m_ImGuiLayer.reset();
+
         m_RenderContext.DisposeResources();
         m_RenderContext.Dispose();
         m_Window.reset();
@@ -68,7 +75,10 @@ namespace Veng
     {
         const f32 delta = Time::Update();
 
-        m_RenderContext.BeginFrame();
+        if (m_ImGuiLayer)
+        {
+            m_ImGuiLayer->BeginFrame();
+        }
 
         m_Window->Update();
         OnUpdate(delta);

@@ -65,7 +65,7 @@ protected:
 
         m_ImGuiImageView = Renderer::ImageView::Create({
             .Name = "Sample ImGui Image View",
-            .Image = context.GetImGuiImage(),
+            .Image = GetImGuiLayer()->GetOutputImage(),
         });
 
         m_Sampler = Renderer::Sampler::Create({
@@ -85,7 +85,7 @@ protected:
         CreateTrianglePipeline();
         CreateCompositePipeline();
 
-        m_SceneTexture = context.CreateImGuiTexture(*m_Sampler, *m_SceneImageView);
+        m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_Sampler, *m_SceneImageView);
     }
 
     void OnUpdate(const f32 delta) override
@@ -109,7 +109,7 @@ protected:
 
         RenderScene(cmd);
         RenderUserInterface();
-        context.RenderImGui(cmd);
+        GetImGuiLayer()->Render(cmd);
         CompositeToSwapChain(cmd);
     }
 
@@ -345,7 +345,7 @@ private:
     Ref<Renderer::DynamicGraphicsPipeline> m_CompositePipeline;
     Ref<Renderer::DescriptorSet> m_CompositeSet;
 
-    Ref<Renderer::ImGuiTexture> m_SceneTexture;
+    Ref<ImGuiTexture> m_SceneTexture;
 
     f32 m_Angle = 0.0f;
     u32 m_FrameCount = 0;

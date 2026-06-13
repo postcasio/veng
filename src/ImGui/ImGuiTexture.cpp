@@ -1,20 +1,20 @@
-#include <Veng/Renderer/ImGuiTexture.h>
+#include <Veng/ImGui/ImGuiTexture.h>
 
-#include <Veng/Renderer/Context.h>
+#include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Renderer/Backend/Natives.h>
 
-namespace Veng::Renderer
+namespace Veng
 {
     ImGuiTexture::Native& ImGuiTexture::GetNative() const { return *m_Native; }
 
-    ImGuiTexture::ImGuiTexture(Unique<Native> native) : m_Native(std::move(native))
+    ImGuiTexture::ImGuiTexture(Unique<Native> native, ImGuiLayer& layer) :
+        m_Native(std::move(native)), m_Layer(layer)
     {
-
     }
 
     ImGuiTexture::~ImGuiTexture()
     {
-        Context::Instance().DestroyImGuiTexture(*this);
+        m_Layer.DestroyTexture(*this);
     }
 
     u64 ImGuiTexture::GetTextureId() const

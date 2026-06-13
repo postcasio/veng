@@ -6,9 +6,6 @@
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Framebuffer.h>
-#include <Veng/Renderer/RenderPass.h>
-#include <Veng/Renderer/ImGuiTexture.h>
 
 namespace Veng
 {
@@ -19,7 +16,6 @@ namespace Veng::Renderer
 {
     class CommandBuffer;
     class Semaphore;
-    class Sampler;
     class SynchronizationFrame;
 
     struct QueueFamilyIndices
@@ -38,9 +34,6 @@ namespace Veng::Renderer
         string ApplicationName;
         string EngineName = "Veng";
         uvec2 InternalRenderExtent;
-        // Fonts live here until ImGui is extracted into its own module.
-        optional<path> DefaultFontPath;
-        optional<path> IconFontPath;
         Format OutputFormat = Format::RGBA16Sfloat;
         Format DepthFormat = Format::D32Sfloat;
     };
@@ -82,21 +75,21 @@ namespace Veng::Renderer
         [[nodiscard]] u32 GetMaxFramesInFlight() const;
         [[nodiscard]] u32 GetCurrentFrameInFlight() const;
 
-        [[nodiscard]] Ref<Image> GetImGuiImage() const { return m_ImGuiImage; }
-
         // Current swap chain image/view and extent/format, for compositing.
         [[nodiscard]] uvec2 GetSwapChainExtent() const;
         [[nodiscard]] Format GetSwapChainFormat() const;
         [[nodiscard]] Ref<Image> GetCurrentSwapChainImage() const;
         [[nodiscard]] Ref<ImageView> GetCurrentSwapChainImageView() const;
+        [[nodiscard]] u32 GetSwapChainImageCount() const;
+        [[nodiscard]] u32 GetCurrentSwapChainImageIndex() const;
+
+        // Register a callback fired after the swap chain is recreated (resize).
+        // The ImGui layer uses this to recreate its offscreen target.
+        void AddSwapChainInvalidationCallback(std::function<void()> callback);
 
         void ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const;
         void AcquireNextImage(Semaphore& semaphore);
         void WaitIdle() const;
-        void RenderImGui(CommandBuffer& commandBuffer);
-        void BeginFrame();
-        Ref<ImGuiTexture> CreateImGuiTexture(const Sampler& sampler, const ImageView& imageView);
-        void DestroyImGuiTexture(const ImGuiTexture& texture);
 
         struct Native;
         [[nodiscard]] Native& GetNative() const;
@@ -111,18 +104,9 @@ namespace Veng::Renderer
         uvec2 m_RenderExtent;
         Format m_OutputFormat = Format::RGBA16Sfloat;
         Format m_DepthFormat = Format::D32Sfloat;
-        bool m_ImGuiRenderedThisFrame = true;
-
-        Ref<RenderPass> m_ImGuiRenderPass;
-        vector<Ref<Framebuffer>> m_ImGuiFramebuffers;
-        Ref<Image> m_ImGuiImage;
-        Ref<ImageView> m_ImGuiImageView;
 
         bool m_RenderExtentChanged = false;
 
         Unique<Native> m_Native;
-
-        void CreateImGuiResources();
-        void DisposeImGuiResources();
     };
 }

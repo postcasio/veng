@@ -55,6 +55,4 @@ namespace Veng::Renderer
     [[nodiscard]] inline vk::Fence GetVkFence(const Fence& fence) { return fence.GetNative().Fence; }
 
     [[nodiscard]] inline vk::Semaphore GetVkSemaphore(const Semaphore& semaphore) { return semaphore.GetNative().Semaphore; }
-
-    [[nodiscard]] inline vk::DescriptorSet GetVkDescriptorSet(const ImGuiTexture& texture) { return texture.GetNative().Set; }
 }

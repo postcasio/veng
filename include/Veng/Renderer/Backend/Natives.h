@@ -17,7 +17,7 @@
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/ImGuiTexture.h>
+#include <Veng/ImGui/ImGuiTexture.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderPass.h>
 #include <Veng/Renderer/Sampler.h>
@@ -30,6 +30,11 @@ namespace Veng
     struct Window::Native
     {
         vk::SurfaceKHR Surface;
+    };
+
+    struct ImGuiTexture::Native
+    {
+        vk::DescriptorSet Set;
     };
 }
 
@@ -143,10 +148,5 @@ namespace Veng::Renderer
     struct Semaphore::Native
     {
         vk::Semaphore Semaphore;
-    };
-
-    struct ImGuiTexture::Native
-    {
-        vk::DescriptorSet Set;
     };
 }

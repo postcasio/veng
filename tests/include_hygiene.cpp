@@ -20,6 +20,9 @@
 #include <Veng/Window.h>
 #include <Veng/WindowEvents.h>
 
+#include <Veng/ImGui/ImGuiLayer.h>
+#include <Veng/ImGui/ImGuiTexture.h>
+
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/Command.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -31,7 +34,6 @@
 #include <Veng/Renderer/Fence.h>
 #include <Veng/Renderer/Framebuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
-#include <Veng/Renderer/ImGuiTexture.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/PipelineLayout.h>

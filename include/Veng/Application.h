@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Window.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/ImGui/ImGuiLayer.h>
 
 namespace Veng
 {
@@ -12,8 +13,9 @@ namespace Veng
         string EngineName = "Veng";
         uvec2 InternalRenderExtent{1280, 720};
         WindowInfo WindowInfo;
-        optional<path> DefaultFontPath;
-        optional<path> IconFontPath;
+        // ImGui is opt-in: engaged (the default) creates an ImGuiLayer; set to
+        // nullopt for a UI-free app that pays nothing for ImGui at runtime.
+        optional<ImGuiLayerInfo> ImGui = ImGuiLayerInfo{};
     };
 
     class Application
@@ -32,6 +34,13 @@ namespace Veng
         [[nodiscard]] Renderer::Context& GetRenderContext()
         {
             return m_RenderContext;
+        }
+
+        // The ImGui layer, or nullptr if the app opted out (ApplicationInfo::ImGui
+        // == nullopt).
+        [[nodiscard]] ImGuiLayer* GetImGuiLayer() const
+        {
+            return m_ImGuiLayer.get();
         }
 
     protected:
@@ -64,5 +73,7 @@ namespace Veng
         Unique<Window> m_Window;
 
         Renderer::Context m_RenderContext;
+
+        Unique<ImGuiLayer> m_ImGuiLayer;
     };
 }

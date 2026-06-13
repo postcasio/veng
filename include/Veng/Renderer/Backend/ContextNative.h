@@ -40,7 +40,6 @@ namespace Veng::Renderer
         Unique<SwapChain> SwapChain;
         Unique<CommandPool> CommandPool;
         Unique<DescriptorPool> DescriptorPool;
-        Unique<Veng::Renderer::DescriptorPool> ImGuiDescriptorPool;
 
         vector<SynchronizationFrame> SynchronizationFrames{};
         u32 CurrentFrameInFlight = 0;
