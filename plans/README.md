@@ -11,10 +11,12 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
 - **[planset-2](planset-2/README.md)** — rendering API surface cleanup (🚧 in
   progress). Push-constant layout/buffer, attachment formats from render targets,
   retiring the legacy render-pass path, and minor ergonomics. Shader-facing work
-  is deferred to planset-3.
+  is deferred to the future-work areas below.
 
-- **[planset-3](planset-3/README.md)** — future work (📝 draft/vision, holding
-  area). The material system (primary rendering interface; absorbs offline shader
-  reflection + shader-derived layouts), de-globalizing the context singleton, the
-  event/input systems, and unit-test infrastructure. Will be split into several
-  dedicated plansets as each is taken up. Not scheduled — planset-2 first.
+- **[future](future/README.md)** — work beyond planset-2 (📝 draft/vision,
+  holding area; not a planset). The asset system (asset API first, then
+  materials/textures/meshes; absorbs offline shader reflection + shader-derived
+  layouts), a threading/task system (Vulkan-queue-correct async asset loading),
+  de-globalizing the context singleton, the event/input systems, and unit-test
+  infrastructure. Each becomes its own planset when taken up. Not scheduled —
+  planset-2 first.

@@ -81,9 +81,8 @@ both. Pick a convention for extents (`uvec2`) and offsets (`ivec2`) and apply.
 - Each landed cleanup keeps the sample compiling and the headless smoke output
   unchanged — surface/ergonomics only, no behavioural change.
 
-## Out of scope (deferred to planset-3 future-work draft)
+## Out of scope (deferred to the future-work draft)
 
-The audit's bigger items are captured in
-[../planset-3/README.md](../planset-3/README.md), not here: de-globalizing the
-`Context::Instance()` singleton, and the thin/partially-stubbed event & input
-systems. Both are their own future plansets.
+The audit's bigger items are captured in [../future/README.md](../future/README.md),
+not here: de-globalizing the `Context::Instance()` singleton, and the
+thin/partially-stubbed event & input systems. Both are their own future plansets.

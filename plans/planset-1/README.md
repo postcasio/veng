@@ -34,10 +34,9 @@ Decisions baked into these plans:
 | 12 | [Shader reflection](12-shader-reflection.md) | **superseded — will not implement** |
 
 > Plan 12 (runtime shader reflection) is intentionally not implemented. Shader
-> reflection moves *offline* and becomes part of the material-system phase
-> (planset-3) rather than a runtime load-time step — see
-> [../planset-3/README.md](../planset-3/README.md). This file is kept for the
-> design record only.
+> reflection moves *offline* and becomes part of the asset/material phase rather
+> than a runtime load-time step — see [../future/README.md](../future/README.md).
+> This file is kept for the design record only.
 
 Dependency sketch:
 

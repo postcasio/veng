@@ -4,15 +4,16 @@
 remove "say it twice" duplication at call sites and retire vestigial public
 types — *without* touching shaders. Shader-facing work (reflection, derived
 descriptor layouts, name-based writes, vertex layout from the shader) is
-deliberately deferred: it belongs to the material system, drafted in
-[planset-3](../planset-3/README.md).
+deliberately deferred: it belongs to the asset/material phase, drafted in
+[future/](../future/README.md).
 
 ## Scope decision (2026-06-12)
 
-Shader changes are pushed to a later phase again. The material system — not the
-shader — becomes the primary authoring interface (see planset-3), so the
-shader-interface/reflection work is designed there rather than here. planset-2 is
-limited to cleanups that stand on their own.
+Shader changes are pushed to a later phase again. The material (part of a broader
+asset system) — not the shader — becomes the primary authoring interface (see
+[future/](../future/README.md)), so the shader-interface/reflection work is
+designed there rather than here. planset-2 is limited to cleanups that stand on
+their own.
 
 ## Plans
 
