@@ -137,6 +137,40 @@ Open question: how much of the asset API (definition + sync loading) to pull
 forward in parallel with de-global/threading, vs. keeping the whole asset phase
 last.
 
+## Cross-cutting concerns (weigh when opening each phase)
+
+Not areas of their own — considerations that span the work above and are cheaper
+to decide early than to retrofit.
+
+- **Design infrastructure against a real client.** De-global (3) and threading
+  (2) risk being designed speculatively. Consider pulling a deliberately thin,
+  *synchronous* asset-loading slice (1) forward — just enough to be a real
+  consumer — so it surfaces the requirements that shape the context/threading
+  APIs, rather than reworking them after the fact. Infrastructure built against an
+  actual caller tends to be right. *(affects ordering of 1 / 2 / 3.)*
+- **Decide the descriptor strategy up front** in the asset/material phase:
+  bindless / descriptor-indexing vs. per-resource sets. It's the modern default,
+  it deeply shapes the descriptor/layout/material-binding APIs, and it's painful
+  to retrofit. planset-2 explicitly deferred bindless — this is where it's chosen.
+  *(area 1.)*
+- **Structured error type for the asset/import pipeline.** `Result<T>` carries a
+  `std::string` today; asset loading is where callers will want to branch on error
+  *kind* (not-found / corrupt / version-mismatch / missing-dependency). Expect to
+  promote the error to a structured type — `Result.h` already flags this. *(area 1.)*
+- **CI with a software Vulkan ICD** (lavapipe / SwiftShader) as part of the
+  testing work, not after — otherwise the GPU/headless suite only ever runs
+  locally. *(area 5.)*
+- **The editor is the demanding second consumer.** hello-triangle (one pipeline,
+  one push constant) won't surface multi-material/mesh/scene friction; the
+  node-based editor will. Develop the editor and the engine API together so it
+  exercises the asset/material surface as it's built — it doubles as the richer
+  sample. *(area 1.)*
+- **Pipeline caching.** Persist `VkPipelineCache` to disk once materials multiply
+  — load-time win, naturally part of the asset/material phase. *(area 1.)*
+- **Process discipline.** Keep planset-1's cadence — small, sample-verified, per-
+  plan increments — especially for de-global (3), where a big-bang sweep is most
+  tempting and most dangerous.
+
 ## Status
 
 Vision only. Nothing detailed or scheduled. Each area becomes its own planset
