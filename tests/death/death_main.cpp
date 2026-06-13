@@ -60,12 +60,22 @@ namespace
     // *skipped* rather than failing on a missed message.
     constexpr int SkipExitCode = 77;
 
-    // SIGABRT lands here once VE_ASSERT has already logged + flushed its message
-    // to stderr. Convert the abort into a clean exit so CTest judges the run by
-    // PASS_REGULAR_EXPRESSION (the assert message) rather than reporting an
-    // un-overridable "Subprocess aborted". std::_Exit is async-signal-safe and
-    // skips atexit/global-dtor teardown, which is what we want after an abort.
-    [[noreturn]] void OnAbort(int)
+    // Lands here once VE_ASSERT has already logged + flushed its message to
+    // stderr, on whichever signal the fatal path raised. Convert it into a clean
+    // exit so CTest judges the run by PASS_REGULAR_EXPRESSION (the assert message)
+    // rather than reporting an un-overridable "Subprocess aborted"/signal death.
+    // std::_Exit is async-signal-safe and skips atexit/global-dtor teardown,
+    // which is what we want after a fatal assert.
+    //
+    // Three signals, because FatalAssert's path differs by build:
+    //  - default build: std::abort() -> SIGABRT.
+    //  - VE_DEBUG build: VE_DEBUG_BREAK() fires *before* abort — __builtin_debugtrap
+    //    (clang) raises SIGTRAP, __builtin_trap (gcc) raises SIGILL — so with no
+    //    debugger attached the process would die there first. Trapping these lets
+    //    the death band stay green under the validation build too.
+    // Only the fatal-assert path produces these here; a real crash (SIGSEGV) is
+    // left to fail, and the message match still gates a pass either way.
+    [[noreturn]] void OnFatalSignal(int)
     {
         std::_Exit(0);
     }
@@ -200,7 +210,9 @@ namespace
 int main(int argc, char** argv)
 {
     InstallStderrSink();
-    std::signal(SIGABRT, OnAbort);
+    std::signal(SIGABRT, OnFatalSignal); // std::abort (default build)
+    std::signal(SIGTRAP, OnFatalSignal); // __builtin_debugtrap (clang, VE_DEBUG)
+    std::signal(SIGILL, OnFatalSignal);  // __builtin_trap (gcc, VE_DEBUG)
 
     if (argc < 2)
     {
