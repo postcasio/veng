@@ -21,9 +21,11 @@ limited to cleanups that stand on their own.
 | 01 | [Push-constant layout & buffer](01-push-constants.md) | draft |
 | 02 | [Pipeline attachment formats from render targets](02-attachment-formats.md) | draft |
 | 03 | [Retire the legacy render-pass pipeline surface](03-retire-render-pass.md) | draft |
-| 04 | [Minor API cleanups](04-minor-cleanups.md) | draft |
+| 04 | [Minor API cleanups & consistency](04-minor-cleanups.md) | draft |
+| 05 | [Compute dispatch](05-compute-dispatch.md) | draft |
 
-All independent — they can land in any order.
+All independent — they can land in any order (04's pipeline rename is sequenced
+after 03).
 
 ## Duplication / surface this phase removes
 
@@ -35,7 +37,11 @@ All independent — they can land in any order.
 3. `GraphicsPipeline`/`RenderPass`/`Framebuffer` public but used only by the
    internal ImGui path → port ImGui to dynamic rendering and delete them (also
    removes the last public `ImageLayout`).
-4. Assorted small ergonomics (frame API, `VertexBufferLayout` vocabulary).
+4. Assorted small ergonomics & consistency (frame API, `VertexBufferLayout`
+   vocabulary, CommandBuffer const-correctness, `Ref<>` vs raw-ref params,
+   `Create` return-type rule, dead code) — from the 2026-06-12 surface audit.
+5. Compute is bindable but **not dispatchable** (`cmd.Dispatch` is missing) —
+   close that gap so `RenderGraph::AddComputePass` actually does something.
 
 ## Explicitly deferred to a later (shader/material) phase
 
