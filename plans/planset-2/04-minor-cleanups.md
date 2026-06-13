@@ -81,10 +81,9 @@ both. Pick a convention for extents (`uvec2`) and offsets (`ivec2`) and apply.
 - Each landed cleanup keeps the sample compiling and the headless smoke output
   unchanged — surface/ergonomics only, no behavioural change.
 
-## Out of scope (noted, not here)
+## Out of scope (deferred to planset-3 future-work draft)
 
-- **Context singleton** (`Context::Instance()` reached by every resource ctor) —
-  the biggest "not modern" smell; its own architectural phase, not a minor
-  cleanup.
-- **Event/Input systems** are thin/partially stubbed (`EventType` values with no
-  classes; `MouseButton` unused) — revisit when gameplay needs them.
+The audit's bigger items are captured in
+[../planset-3/README.md](../planset-3/README.md), not here: de-globalizing the
+`Context::Instance()` singleton, and the thin/partially-stubbed event & input
+systems. Both are their own future plansets.

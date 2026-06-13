@@ -1,60 +1,94 @@
-# planset-3 — material system (DRAFT / vision)
+# planset-3 — future work (DRAFT / vision)
 
-> Draft vision doc. Not scheduled — planset-2 comes first. Captured now so the
-> earlier phases stay coherent with where the rendering API is going.
+> Draft vision doc, not scheduled — planset-2 comes first. This is a **holding
+> area** for the larger phases beyond the surface cleanup. It will be **split
+> into several dedicated plansets** (3, 4, …) as each area is taken up and
+> detailed planset-1 style; the sections below are direction, not plans.
 
-**Phase goal:** make the **material** the primary rendering interface, not the
-shader. A material bundles a shader (binary) with the uniform/texture data it
-needs; you bind and draw a material rather than juggling pipelines, descriptor
-sets, push constants and shader layouts by hand. This is where the deferred
-shader-facing work (reflection, derived layouts, name-based binding) finally
-lands — in service of materials.
+Captured now so the earlier phases stay coherent with where veng is going.
 
-## The two ways to get a material
+## Areas
+
+### 1. Material system (the headline next phase)
+
+Make the **material** the primary rendering interface, not the shader. A material
+bundles a shader (binary) with the uniform/texture data it needs; you bind and
+draw a material rather than juggling pipelines, descriptor sets, push constants
+and shader layouts by hand.
+
+Two ways to get one:
 
 1. **Loaded (editor-authored).** A node-based material editor produces a material
-   asset containing the shader binary plus the required uniform values and
-   texture references. The runtime loads it and it's ready to bind — no manual
-   layout/descriptor wiring.
+   asset carrying the shader binary plus required uniform values and texture
+   references. The runtime loads it ready to bind — no manual layout wiring.
 2. **Constructed (programmatic).** Reference a shader and explicitly supply the
-   uniform/texture info. The engine validates the supplied data against what the
-   shader actually needs and builds the descriptor sets / push-constant data for
-   you.
+   uniform/texture info; the engine validates it against what the shader needs
+   and builds the descriptor sets / push-constant data.
 
-Both paths converge on the same runtime `Material` and the same descriptor /
-push-constant machinery; only the source of the parameter data differs.
-
-## What this phase absorbs (deferred from planset-1/2)
+This phase **absorbs all the deferred shader work** (the reason planset-1/12 and
+the shader parts of planset-2 were dropped):
 
 - **Offline shader reflection → serializable `ShaderInterface`** (descriptor
-  bindings, push-constant blocks, vertex inputs). Produced by the material/asset
-  importer at cook time, *not* at runtime; the editor and the runtime both read
-  it. This is the old planset-1 plan 12, reframed as material-system groundwork.
-- **Derived descriptor & pipeline layouts** from the shader interface; a
-  material's parameters bind by **name**.
-- **Vertex layout** derived from / validated against the shader's vertex inputs.
-- `PipelineShaderStageInfo::Stage` etc. — stage and layout come from the
-  interface, not restated.
+  bindings, push-constant blocks, vertex inputs), produced by the importer at
+  cook time — not at runtime; editor and runtime both read it.
+- Descriptor/pipeline layouts derived from the interface; name-based binding.
+- Vertex layout derived from / validated against the shader's vertex inputs.
 
-## Likely sub-areas (to become real plans later)
+Likely sub-plans: shader-interface + reflection step; `Material`/`MaterialInstance`
+runtime + pipeline caching; material asset format + serialization; the node-based
+editor (its own tooling area); hot-reload and shader variants.
 
-- Shader interface description + offline reflection tool / importer step.
-- `Material` / `MaterialInstance` runtime types (shared shader+pipeline, per-
-  instance parameter data); pipeline caching/identity.
-- Material asset format (shader ref + named uniform values + texture/sampler refs
-  + render state: blend/cull/depth) and its on-disk serialization.
-- Node-based material editor (tooling; almost certainly its own phase/repo area).
-- Hot-reload and shader variant/permutation handling.
+### 2. De-globalize the rendering context
 
-## Open questions
+`Context::Instance()` is a global singleton reached by every resource
+constructor (`Buffer::Create` etc. secretly grab it). It's the biggest
+"not-modern" smell: it blocks more than one device, hides the dependency, and
+couples tests to global state. planset-1 kept it deliberately; this phase removes
+it.
 
-- Division between veng-core material runtime and editor-only authoring types.
-- How render state (blend/cull/depth, attachment formats) is authored: in the
-  material vs. by the render graph pass that draws it.
-- Pipeline permutations (defines/specialization constants) and their caching.
-- Relationship to the asset system generally (this phase may be folded into a
-  broader asset-pipeline phase).
+Direction: thread an explicit device/context into resource creation
+(`device.CreateBuffer(info)` or `Buffer::Create(context, info)`), or a scoped
+"current device" for ergonomics. Large, mechanical-but-pervasive change touching
+every `Create` call site — its own planset. Best done before/with the asset
+system, which will want device-free editor code paths anyway.
+
+### 3. Event & input systems
+
+Both are thin and partially stubbed today:
+
+- **Events:** `EventType` declares `WindowFocus/LostFocus/Moved` with no event
+  classes; only resize/close exist. The `EVENT` macro + virtual dispatch is heavy
+  for two events.
+- **Input:** lives ad-hoc on `Window` (`KeyPressed`, `GetMousePosition`);
+  `MouseButton` is defined but unused; no actions/bindings/devices abstraction.
+
+Revisit when gameplay drives the requirements — design a real input abstraction
+(polling + actions, multiple devices) and decide whether the event system grows
+or is replaced. Its own planset.
+
+### 4. Unit testing / test infrastructure (firm up soon)
+
+Today's `tests/` are two CTest smoke/compile guards (`include_hygiene`,
+`headless_smoke`) — there's no unit-test framework and no coverage of pure logic.
+Stand up a real test setup:
+
+- **Framework:** a lightweight header-only one (doctest or Catch2). Note the
+  constraint: `veng` builds `-fno-exceptions` (PRIVATE), but test executables are
+  separate targets that link `veng::veng` and *don't* inherit that flag, so a
+  throwing framework is fine in test TUs.
+- **Pure-logic coverage** (no GPU): `Result`/error paths, typed-buffer size math
+  and `VertexBufferLayout` stride, `ToVk`/`FromVk` vocabulary round-trips, render
+  graph barrier-decision logic (extract the diff rule so it's testable without a
+  device).
+- **Fatal-assert (death) tests:** `VE_ASSERT` aborts, so test these as separate
+  processes via exit code (CTest `WILL_FAIL` / a small fork harness) — e.g.
+  uploading u16 indices into a U32 `IndexBuffer`, descriptor type mismatch.
+- **GPU-backed tests** via the headless context (extend the `headless_smoke`
+  pattern): render-graph correctness, upload/download round-trips.
+- **CI:** run the suite; the headless/GPU tests need a Vulkan ICD
+  (MoltenVK / lavapipe / SwiftShader) — gate or skip gracefully where absent.
 
 ## Status
 
-Vision only. No plans detailed, nothing scheduled. Revisit after planset-2.
+Vision only. No plans detailed, nothing scheduled. Each area above becomes its
+own planset when taken up. Revisit after planset-2.

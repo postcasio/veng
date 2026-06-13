@@ -13,7 +13,8 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   retiring the legacy render-pass path, and minor ergonomics. Shader-facing work
   is deferred to planset-3.
 
-- **[planset-3](planset-3/README.md)** — material system (📝 draft/vision). The
-  material becomes the primary rendering interface (editor-authored or
-  programmatic); this is where offline shader reflection and shader-derived
-  layouts land. Not scheduled — planset-2 first.
+- **[planset-3](planset-3/README.md)** — future work (📝 draft/vision, holding
+  area). The material system (primary rendering interface; absorbs offline shader
+  reflection + shader-derived layouts), de-globalizing the context singleton, the
+  event/input systems, and unit-test infrastructure. Will be split into several
+  dedicated plansets as each is taken up. Not scheduled — planset-2 first.
