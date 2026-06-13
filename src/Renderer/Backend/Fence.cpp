@@ -1,29 +1,33 @@
-#include <Veng/Renderer/Backend/Fence.h>
+#include <Veng/Renderer/Fence.h>
 
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/Natives.h>
 
 namespace Veng::Renderer
 {
-    Fence::Fence(const string& name, const vk::FenceCreateFlags flags) : m_Name(name)
+    Fence::Native& Fence::GetNative() const { return *m_Native; }
+
+    Fence::Fence(const string& name, const bool signaled) : m_Name(name), m_Native(CreateUnique<Native>())
     {
-        vk::FenceCreateInfo fenceCreateInfo{
-            .flags = flags
+        const vk::FenceCreateInfo fenceCreateInfo{
+            .flags = signaled ? vk::FenceCreateFlagBits::eSignaled : vk::FenceCreateFlags{}
         };
 
-        m_VkFence = Context::Instance().GetVkDevice().createFence(fenceCreateInfo).value;
+        m_Native->Fence = GetVkDevice(Context::Instance()).createFence(fenceCreateInfo).value;
 
-        DebugMarkers::MarkFence(m_VkFence, m_Name);
+        DebugMarkers::MarkFence(m_Native->Fence, m_Name);
     }
 
     Fence::~Fence()
     {
-        Context::Instance().GetVkDevice().destroyFence(m_VkFence);
+        GetVkDevice(Context::Instance()).destroyFence(m_Native->Fence);
     }
 
     void Fence::Wait() const
     {
-        auto result = Context::Instance().GetVkDevice().waitForFences(m_VkFence, VK_TRUE,
+        auto result = GetVkDevice(Context::Instance()).waitForFences(m_Native->Fence, VK_TRUE,
                                                                       std::numeric_limits<u64>::max());
 
         VK_ASSERT(result, "Failed to wait for fence!");
@@ -31,6 +35,6 @@ namespace Veng::Renderer
 
     void Fence::Reset() const
     {
-        Context::Instance().GetVkDevice().resetFences(m_VkFence);
+        GetVkDevice(Context::Instance()).resetFences(m_Native->Fence);
     }
 }

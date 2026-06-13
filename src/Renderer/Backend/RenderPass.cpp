@@ -1,20 +1,43 @@
-#include <Veng/Renderer/Backend/RenderPass.h>
+#include <Veng/Renderer/RenderPass.h>
 
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/Natives.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
 #include <Veng/Renderer/Backend/Utils.h>
 
 namespace Veng::Renderer
 {
-    RenderPass::RenderPass(const RenderPassInfo& info) : m_Name(info.Name), m_Attachments(info.Attachments)
+    RenderPass::Native& RenderPass::GetNative() const { return *m_Native; }
+
+    RenderPass::RenderPass(const RenderPassInfo& info) : m_Name(info.Name), m_Native(CreateUnique<Native>()),
+                                                          m_Attachments(info.Attachments)
     {
+        vector<vk::AttachmentDescription> vkAttachments;
+        vkAttachments.reserve(m_Attachments.size());
+
+        for (const auto& attachment : m_Attachments)
+        {
+            vkAttachments.push_back({
+                .format = ToVk(attachment.Format),
+                .samples = vk::SampleCountFlagBits::e1,
+                .loadOp = ToVk(attachment.LoadOp),
+                .storeOp = ToVk(attachment.StoreOp),
+                .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
+                .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
+                .initialLayout = ToVk(attachment.InitialLayout),
+                .finalLayout = ToVk(attachment.FinalLayout),
+            });
+        }
+
         vector<vk::AttachmentReference> colorAttachmentRefs;
         vk::AttachmentReference depthAttachmentRef;
         bool hasDepth = false;
 
-        for (u32 i = 0; i < m_Attachments.size(); i++)
+        for (u32 i = 0; i < vkAttachments.size(); i++)
         {
-            auto& attachment = m_Attachments[i];
+            const auto& attachment = vkAttachments[i];
 
             if (Utils::IsDepthFormat(attachment.format))
             {
@@ -69,21 +92,21 @@ namespace Veng::Renderer
         dependencies[1].dependencyFlags = {};
 
         const vk::RenderPassCreateInfo renderPassInfo = {
-            .attachmentCount = static_cast<u32>(m_Attachments.size()),
-            .pAttachments = m_Attachments.data(),
+            .attachmentCount = static_cast<u32>(vkAttachments.size()),
+            .pAttachments = vkAttachments.data(),
             .subpassCount = 1,
             .pSubpasses = &subpass,
             .dependencyCount = 0,
             .pDependencies = nullptr
         };
 
-        m_VkRenderPass = Context::Instance().GetVkDevice().createRenderPass(renderPassInfo).value;
+        m_Native->RenderPass = GetVkDevice(Context::Instance()).createRenderPass(renderPassInfo).value;
 
-        DebugMarkers::MarkRenderPass(m_VkRenderPass, m_Name);
+        DebugMarkers::MarkRenderPass(m_Native->RenderPass, m_Name);
     }
 
     RenderPass::~RenderPass()
     {
-        Context::Instance().Retire(m_VkRenderPass);
+        Context::Instance().GetNative().Retire(m_Native->RenderPass);
     }
 }

@@ -1,8 +1,9 @@
 #pragma once
 
+#include <span>
+
 #include <Veng/Veng.h>
 #include <Veng/Result.h>
-#include <Veng/Renderer/Backend/Vulkan.h>
 
 namespace Veng::Renderer
 {
@@ -37,13 +38,15 @@ namespace Veng::Renderer
         explicit Shader(const ShaderBinaryInfo& info);
         ~Shader();
 
-        [[nodiscard]] vk::ShaderModule GetVkModule() const { return m_VkModule; }
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] const string& GetEntryPoint() const { return m_EntryPoint; }
+
+        struct Native;
+        [[nodiscard]] Native& GetNative() const;
 
     private:
         string m_Name;
         string m_EntryPoint;
-        vk::ShaderModule m_VkModule;
+        Unique<Native> m_Native;
     };
 }

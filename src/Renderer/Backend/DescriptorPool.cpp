@@ -1,6 +1,7 @@
 #include <Veng/Renderer/Backend/DescriptorPool.h>
 
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
 
 namespace Veng::Renderer
@@ -14,13 +15,13 @@ namespace Veng::Renderer
             .pPoolSizes = info.PoolSizes.data()
         };
 
-        m_VkDescriptorPool = Context::Instance().GetVkDevice().createDescriptorPool(descriptorPoolCreateInfo).value;
+        m_VkDescriptorPool = GetVkDevice(Context::Instance()).createDescriptorPool(descriptorPoolCreateInfo).value;
 
         DebugMarkers::MarkDescriptorPool(m_VkDescriptorPool, info.Name);
     }
 
     DescriptorPool::~DescriptorPool()
     {
-        Context::Instance().GetVkDevice().destroyDescriptorPool(m_VkDescriptorPool);
+        GetVkDevice(Context::Instance()).destroyDescriptorPool(m_VkDescriptorPool);
     }
 }

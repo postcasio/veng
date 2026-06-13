@@ -1,7 +1,9 @@
 #include <Veng/Window.h>
 #include <Veng/WindowEvents.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Backend/Natives.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Native.h>
 #include <nfd.h>
 
 #define GLFW_BOOL(x) ((x) ? GLFW_TRUE : GLFW_FALSE)
@@ -23,7 +25,8 @@ namespace Veng
         m_Resizable(info.Resizable),
         m_EventCallback(info.EventCallback),
         m_Title(info.Title),
-        m_MouseCaptured(info.CaptureMouse)
+        m_MouseCaptured(info.CaptureMouse),
+        m_Native(CreateUnique<Native>())
     {
         if (!s_GlfwInitialized)
         {
@@ -81,10 +84,14 @@ namespace Veng
         }
     }
 
+    Window::Native& Window::GetNative() const { return *m_Native; }
+
     void Window::CreateSurface(const Renderer::Context& context)
     {
-        VK_RAW_ASSERT(glfwCreateWindowSurface(context.GetVkInstance(), m_Handle, nullptr, &m_Surface),
+        VkSurfaceKHR surface;
+        VK_RAW_ASSERT(glfwCreateWindowSurface(GetVkInstance(context), m_Handle, nullptr, &surface),
                       "Failed to create window surface!");
+        m_Native->Surface = surface;
     }
 
     void Window::CaptureMouse()
@@ -172,11 +179,6 @@ namespace Veng
         return glfwGetKey(m_Handle, static_cast<i32>(key)) == GLFW_PRESS;
     }
 
-    VkSurfaceKHR Window::GetSurface() const
-    {
-        return m_Surface;
-    }
-
     uvec2 Window::GetExtent() const
     {
         return m_Extent;
@@ -190,11 +192,6 @@ namespace Veng
     u32 Window::GetHeight() const
     {
         return m_Extent.y;
-    }
-
-    GLFWwindow* Window::GetHandle() const
-    {
-        return m_Handle;
     }
 
     bool Window::IsOpen() const

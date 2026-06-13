@@ -1,6 +1,6 @@
-#include <Veng/Renderer/Backend/Command.h>
+#include <Veng/Renderer/Command.h>
 
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Backend/SynchronizationFrame.h>
 
 namespace Veng::Renderer
@@ -29,8 +29,8 @@ namespace Veng::Renderer
         auto commandBuffer = frame.GetCommandBuffer();
 
         commandBuffer->PipelineBarrier({
-            .Image = *Context::Instance().GetSwapChain().GetCurrentImage(),
-            .NewLayout = vk::ImageLayout::ePresentSrcKHR
+            .Image = *Context::Instance().GetCurrentSwapChainImage(),
+            .NewLayout = ImageLayout::PresentSrc
         });
 
         commandBuffer->End();

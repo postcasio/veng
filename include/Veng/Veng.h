@@ -1,4 +1,21 @@
 #pragma once
+
+// Veng.h — the foundational header every other veng header builds on. It pulls
+// in the standard-library and glm pieces the engine leans on and defines the
+// house-style aliases (Veng::string, vector<T>, Ref<T>, u32, vec3, ...).
+//
+// House-style aliases (decided in the API rework, plan 07): the aliases stay.
+// They are part of veng's identity and the public API and sample app are
+// written in them. They live here, in one self-contained header, so the
+// vocabulary is defined in exactly one place. If the project ever drops them it
+// is a mechanical sweep — but that is not the current direction.
+//
+// Threading contract: veng v1 is single-threaded by design, not by accident.
+// The render Context is a singleton (Context::Instance()), and Time, input and
+// the ImGui integration all assume they are driven from one thread. Do not call
+// veng APIs concurrently from multiple threads; drive the engine from the
+// thread that created the Context.
+
 #include <filesystem>
 #include <map>
 #include <unordered_map>

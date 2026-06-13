@@ -1,8 +1,7 @@
 #pragma once
 
-#include <Veng/Renderer/Backend/PipelineLayout.h>
-#include <Veng/Renderer/Backend/Shader.h>
-#include <Veng/Renderer/Backend/Vulkan.h>
+#include <Veng/Renderer/PipelineLayout.h>
+#include <Veng/Renderer/Shader.h>
 
 namespace Veng::Renderer
 {
@@ -12,9 +11,6 @@ namespace Veng::Renderer
 
         Ref<PipelineLayout> PipelineLayout;
         PipelineShaderStageInfo ShaderStage;
-
-        // Optional specialization constants for the compute shader.
-        vk::SpecializationInfo* SpecializationInfo = nullptr;
     };
 
     class ComputePipeline
@@ -29,12 +25,14 @@ namespace Veng::Renderer
         ~ComputePipeline();
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
-        [[nodiscard]] vk::Pipeline GetVkPipeline() const { return m_VkPipeline; }
         [[nodiscard]] Ref<PipelineLayout> GetPipelineLayout() const { return m_PipelineLayout; }
+
+        struct Native;
+        [[nodiscard]] Native& GetNative() const;
 
     private:
         string m_Name;
-        vk::Pipeline m_VkPipeline{};
+        Unique<Native> m_Native;
         Ref<PipelineLayout> m_PipelineLayout;
     };
 }

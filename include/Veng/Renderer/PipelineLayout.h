@@ -1,7 +1,7 @@
 #pragma once
 
-#include <Veng/Renderer/Backend/DescriptorSetLayout.h>
-#include <Veng/Renderer/Backend/Shader.h>
+#include <Veng/Renderer/DescriptorSetLayout.h>
+#include <Veng/Renderer/Shader.h>
 #include <Veng/Renderer/Types.h>
 
 namespace Veng::Renderer
@@ -43,7 +43,6 @@ namespace Veng::Renderer
         explicit PipelineLayout(const PipelineLayoutInfo& info);
         ~PipelineLayout();
 
-        [[nodiscard]] vk::PipelineLayout GetVkPipelineLayout() const { return m_VkPipelineLayout; }
         [[nodiscard]] const string& GetName() const { return m_Name; }
 
         [[nodiscard]] const vector<PipelineLayoutPushConstantRangeInfo>& GetPushConstantRanges() const
@@ -51,9 +50,12 @@ namespace Veng::Renderer
             return m_PushConstantRanges;
         }
 
+        struct Native;
+        [[nodiscard]] Native& GetNative() const;
+
     private:
         string m_Name;
-        vk::PipelineLayout m_VkPipelineLayout = nullptr;
+        Unique<Native> m_Native;
         vector<Ref<DescriptorSetLayout>> m_DescriptorSetLayouts;
         vector<PipelineLayoutPushConstantRangeInfo> m_PushConstantRanges;
     };

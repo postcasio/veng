@@ -4,9 +4,10 @@
 #include <vector>
 
 #include <Veng/Veng.h>
-#include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Event.h>
 #include <Veng/Input.h>
+
+struct GLFWwindow;
 
 namespace Veng
 {
@@ -68,15 +69,11 @@ namespace Veng
         [[nodiscard]] bool ShouldClose() const;
         [[nodiscard]] bool KeyPressed(Key key) const;
 
-        [[nodiscard]] VkSurfaceKHR GetSurface() const;
-
         [[nodiscard]] uvec2 GetExtent() const;
 
         [[nodiscard]] u32 GetWidth() const;
 
         [[nodiscard]] u32 GetHeight() const;
-
-        [[nodiscard]] GLFWwindow* GetHandle() const;
 
         [[nodiscard]] bool IsOpen() const;
 
@@ -84,6 +81,14 @@ namespace Veng
 
         void SetTitle(const string& title);
         [[nodiscard]] string GetTitle() const;
+
+        struct Native;
+        [[nodiscard]] Native& GetNative() const;
+
+        // GLFWwindow* is kept as an incomplete-type pointer member rather than
+        // moved into Native, since GLFW is a free function API that doesn't
+        // need a Vulkan-style handle wrapper. Exposed via the escape hatch.
+        friend GLFWwindow* GetGlfwWindow(const Window& window);
 
     private:
         bool m_Open = true;
@@ -93,7 +98,8 @@ namespace Veng
         string m_Title;
         bool m_MouseCaptured;
         GLFWwindow* m_Handle = nullptr;
-        VkSurfaceKHR m_Surface = nullptr;
         vec2 m_MousePosition = {0, 0};
+
+        Unique<Native> m_Native;
     };
 }

@@ -1,10 +1,11 @@
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Native.h>
 
 namespace Veng::Renderer
 {
     CommandPool::CommandPool()
     {
-        m_VkCommandPool = Context::Instance().GetVkDevice().createCommandPool(
+        m_VkCommandPool = GetVkDevice(Context::Instance()).createCommandPool(
             vk::CommandPoolCreateInfo{
                 .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
                 .queueFamilyIndex = Context::Instance().GetQueueFamilies().GraphicsFamily.value()
@@ -14,6 +15,6 @@ namespace Veng::Renderer
 
     CommandPool::~CommandPool()
     {
-        Context::Instance().GetVkDevice().destroyCommandPool(m_VkCommandPool);
+        GetVkDevice(Context::Instance()).destroyCommandPool(m_VkCommandPool);
     }
 }

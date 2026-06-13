@@ -1,21 +1,27 @@
-#include <Veng/Renderer/Backend/ImageView.h>
+#include <Veng/Renderer/ImageView.h>
 
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 #include <Veng/Renderer/Backend/Utils.h>
 
 namespace Veng::Renderer
 {
-    ImageView::ImageView(const ImageViewInfo& info) : m_Name(info.Name), m_Format(ToVk(info.Image->GetFormat())),
-                                                      m_Image(info.Image)
+    ImageView::Native& ImageView::GetNative() const { return *m_Native; }
+
+    ImageView::ImageView(const ImageViewInfo& info) : m_Name(info.Name), m_Format(info.Image->GetFormat()),
+                                                      m_Native(CreateUnique<Native>()), m_Image(info.Image)
     {
         const vk::ImageViewCreateInfo createInfo{
-            .flags = info.Flags,
-            .image = info.Image->GetVkImage(),
-            .viewType = info.ViewType,
+            .image = info.Image->GetNative().Image,
+            .viewType = ToVk(info.ViewType),
             .format = ToVk(info.Image->GetFormat()),
-            .components = info.Components,
+            .components = {
+                vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity,
+                vk::ComponentSwizzle::eIdentity
+            },
             .subresourceRange = {
                 .aspectMask = Utils::GetAspectFlags(ToVk(info.Image->GetFormat())),
                 .baseMipLevel = info.BaseMipLevel,
@@ -25,9 +31,9 @@ namespace Veng::Renderer
             }
         };
 
-        m_VkImageView = Context::Instance().GetVkDevice().createImageView(createInfo).value;
+        m_Native->ImageView = GetVkDevice(Context::Instance()).createImageView(createInfo).value;
 
-        DebugMarkers::MarkImageView(m_VkImageView, info.Name);
+        DebugMarkers::MarkImageView(m_Native->ImageView, info.Name);
     }
 
     ImageView::~ImageView()
@@ -39,11 +45,11 @@ namespace Veng::Renderer
         // managed images take the normal deferred-destruction path.
         if (m_Image && !m_Image->IsManaged())
         {
-            Context::Instance().GetVkDevice().destroyImageView(m_VkImageView);
+            GetVkDevice(Context::Instance()).destroyImageView(m_Native->ImageView);
         }
         else
         {
-            Context::Instance().Retire(m_VkImageView);
+            Context::Instance().GetNative().Retire(m_Native->ImageView);
         }
     }
 }

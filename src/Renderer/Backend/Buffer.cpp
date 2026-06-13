@@ -1,12 +1,16 @@
-#include <Veng/Renderer/Backend/Buffer.h>
+#include <Veng/Renderer/Buffer.h>
 
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
 namespace Veng::Renderer
 {
-    Buffer::Buffer(const BufferInfo& info) : m_Name(info.Name), m_Size(info.Size)
+    Buffer::Native& Buffer::GetNative() const { return *m_Native; }
+
+    Buffer::Buffer(const BufferInfo& info) : m_Name(info.Name), m_Native(CreateUnique<Native>()), m_Size(info.Size)
     {
         const VkBufferCreateInfo bufferCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -26,25 +30,25 @@ namespace Veng::Renderer
         };
 
         VK_RAW_ASSERT(
-            vmaCreateBuffer(Context::Instance().GetAllocator(), &bufferCreateInfo, &allocationCreateInfo, &buffer, &
-                m_VmaAllocation, nullptr), "failed to create buffer!");
+            vmaCreateBuffer(GetVmaAllocator(Context::Instance()), &bufferCreateInfo, &allocationCreateInfo, &buffer, &
+                m_Native->Allocation, nullptr), "failed to create buffer!");
 
-        m_VkBuffer = buffer;
+        m_Native->Buffer = buffer;
 
-        vmaSetAllocationName(Context::Instance().GetAllocator(), m_VmaAllocation, info.Name.c_str());
+        vmaSetAllocationName(GetVmaAllocator(Context::Instance()), m_Native->Allocation, info.Name.c_str());
 
-        DebugMarkers::MarkBuffer(m_VkBuffer, m_Name);
+        DebugMarkers::MarkBuffer(m_Native->Buffer, m_Name);
     }
 
     Buffer::~Buffer()
     {
-        Context::Instance().Retire(m_VkBuffer, m_VmaAllocation);
+        Context::Instance().GetNative().Retire(m_Native->Buffer, m_Native->Allocation);
     }
 
     void Buffer::Upload(const std::span<const u8> data) const
     {
         VK_RAW_ASSERT(
-            vmaCopyMemoryToAllocation(Context::Instance().GetAllocator(), data.data(), m_VmaAllocation, 0, data.size()),
+            vmaCopyMemoryToAllocation(GetVmaAllocator(Context::Instance()), data.data(), m_Native->Allocation, 0, data.size()),
             "failed to upload buffer data!");
     }
 
@@ -53,7 +57,7 @@ namespace Veng::Renderer
         vector<u8> data(m_Size);
 
         VK_RAW_ASSERT(
-            vmaCopyAllocationToMemory(Context::Instance().GetAllocator(), m_VmaAllocation, 0, data.data(), m_Size),
+            vmaCopyAllocationToMemory(GetVmaAllocator(Context::Instance()), m_Native->Allocation, 0, data.data(), m_Size),
             "failed to download buffer data!");
 
         return data;

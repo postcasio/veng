@@ -1,15 +1,19 @@
-#include <Veng/Renderer/Backend/Image.h>
+#include <Veng/Renderer/Image.h>
 
-#include <Veng/Renderer/Backend/Buffer.h>
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
 #include <vulkan/vulkan_format_traits.hpp>
 
 namespace Veng::Renderer
 {
-    Image::Image(const vk::Image vkImage, const ImageInfo& info) :
+    Image::Native& Image::GetNative() const { return *m_Native; }
+
+    Image::Image(const ImageInfo& info, Unique<Native> native) :
         m_Name(info.Name),
         m_Extent(info.Extent),
         m_MipLevels(info.MipLevels),
@@ -18,11 +22,11 @@ namespace Veng::Renderer
         m_Type(info.Type),
         m_Usage(info.Usage),
         m_Managed(false),
-        m_VkImage(vkImage)
+        m_Native(std::move(native))
     {
-        m_Layouts.resize(m_Layers * m_MipLevels, vk::ImageLayout::eUndefined);
+        m_Layouts.resize(m_Layers * m_MipLevels, ImageLayout::Undefined);
 
-        DebugMarkers::MarkImage(m_VkImage, m_Name);
+        DebugMarkers::MarkImage(m_Native->Image, m_Name);
     }
 
     Image::Image(const ImageInfo& info) :
@@ -33,9 +37,10 @@ namespace Veng::Renderer
         m_Format(info.Format),
         m_Type(info.Type),
         m_Usage(info.Usage),
-        m_Managed(true)
+        m_Managed(true),
+        m_Native(CreateUnique<Native>())
     {
-        m_Layouts.resize(m_Layers * m_MipLevels, vk::ImageLayout::eUndefined);
+        m_Layouts.resize(m_Layers * m_MipLevels, ImageLayout::Undefined);
 
         vk::ImageCreateFlags flags;
 
@@ -68,28 +73,28 @@ namespace Veng::Renderer
         VkImage image;
 
         VK_RAW_ASSERT(vmaCreateImage(
-                          Context::Instance().GetAllocator(),
+                          GetVmaAllocator(Context::Instance()),
                           &imageCreateInfo,
                           &allocationCreateInfo,
                           &image,
-                          &m_VmaAllocation,
-                          &m_VmaAllocationInfo), fmt::format("Failed to create image {}", m_Name));
+                          &m_Native->Allocation,
+                          &m_Native->AllocationInfo), fmt::format("Failed to create image {}", m_Name));
 
-        m_VkImage = image;
+        m_Native->Image = image;
 
         vmaSetAllocationName(
-            Context::Instance().GetAllocator(),
-            m_VmaAllocation,
+            GetVmaAllocator(Context::Instance()),
+            m_Native->Allocation,
             m_Name.c_str());
 
-        DebugMarkers::MarkImage(m_VkImage, m_Name);
+        DebugMarkers::MarkImage(m_Native->Image, m_Name);
     }
 
     Image::~Image()
     {
         if (m_Managed)
         {
-            Context::Instance().Retire(m_VkImage, m_VmaAllocation);
+            Context::Instance().GetNative().Retire(m_Native->Image, m_Native->Allocation);
         }
     }
 
@@ -98,7 +103,7 @@ namespace Veng::Renderer
     {
         ImageBarrier barrier{
             .Image = *this,
-            .NewLayout = vk::ImageLayout::eTransferSrcOptimal,
+            .NewLayout = ImageLayout::TransferSrc,
             .BaseMipLevel = 0,
         };
 
@@ -107,7 +112,7 @@ namespace Veng::Renderer
 
         for (u32 i = 1; i < m_MipLevels; i++)
         {
-            barrier.NewLayout = vk::ImageLayout::eTransferSrcOptimal;
+            barrier.NewLayout = ImageLayout::TransferSrc;
             barrier.BaseMipLevel = i - 1;
 
             commandBuffer.PipelineBarrier(barrier);
@@ -123,7 +128,7 @@ namespace Veng::Renderer
                 .DestinationExtent = {mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1}
             });
 
-            barrier.NewLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            barrier.NewLayout = ImageLayout::ShaderReadOnly;
 
             commandBuffer.PipelineBarrier(barrier);
 
@@ -132,7 +137,7 @@ namespace Veng::Renderer
         }
 
         barrier.BaseMipLevel = m_MipLevels - 1;
-        barrier.NewLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        barrier.NewLayout = ImageLayout::ShaderReadOnly;
 
         commandBuffer.PipelineBarrier(barrier);
     }
@@ -149,10 +154,10 @@ namespace Veng::Renderer
 
         auto commandBuffer = CommandBuffer::Create();
 
-        commandBuffer->Begin(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+        commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
         commandBuffer->PipelineBarrier(ImageBarrier{
             .Image = *this,
-            .NewLayout = vk::ImageLayout::eTransferDstOptimal,
+            .NewLayout = ImageLayout::TransferDst,
             .LayerCount = m_Layers,
             .BaseMipLevel = 0,
             .MipLevelCount = m_MipLevels
@@ -167,7 +172,7 @@ namespace Veng::Renderer
         {
             commandBuffer->PipelineBarrier(ImageBarrier{
                 .Image = *this,
-                .NewLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                .NewLayout = ImageLayout::ShaderReadOnly,
                 .LayerCount = m_Layers,
                 .MipLevelCount = 1
             });
@@ -190,11 +195,11 @@ namespace Veng::Renderer
 
         auto commandBuffer = CommandBuffer::Create();
 
-        commandBuffer->Begin(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+        commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
 
         commandBuffer->PipelineBarrier(ImageBarrier{
             .Image = *this,
-            .NewLayout = vk::ImageLayout::eTransferSrcOptimal
+            .NewLayout = ImageLayout::TransferSrc
         });
 
         commandBuffer->CopyImageToBuffer(*this, *buffer);

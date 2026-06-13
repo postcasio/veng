@@ -1,7 +1,9 @@
-#include <Veng/Renderer/Backend/GraphicsPipeline.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
 
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 #include <Veng/Renderer/Backend/Utils.h>
 
@@ -10,7 +12,10 @@ namespace Veng::Renderer
     // Defined in VertexBufferLayout.cpp; not part of the public header.
     vk::Format VertexElementDataTypeToVulkanFormat(VertexElementDataType type);
 
+    GraphicsPipeline::Native& GraphicsPipeline::GetNative() const { return *m_Native; }
+
     GraphicsPipeline::GraphicsPipeline(const GraphicsPipelineInfo& info) : m_Name(info.Name),
+                                                                           m_Native(CreateUnique<Native>()),
                                                                            m_PipelineLayout(info.PipelineLayout),
                                                                            m_RenderPass(info.RenderPass)
     {
@@ -21,7 +26,7 @@ namespace Veng::Renderer
         {
             shaderStages.push_back({
                 .stage = ToVkBit(shaderStage.Stage),
-                .module = shaderStage.Module.GetVkModule(),
+                .module = shaderStage.Module.GetNative().Module,
                 .pName = shaderStage.Module.GetEntryPoint().c_str()
             });
         }
@@ -152,20 +157,20 @@ namespace Veng::Renderer
             .pDepthStencilState = &depthStencilState,
             .pColorBlendState = &colorBlendState,
             .pDynamicState = &dynamicState,
-            .layout = m_PipelineLayout->GetVkPipelineLayout(),
-            .renderPass = info.RenderPass->GetVkRenderPass(),
+            .layout = m_PipelineLayout->GetNative().Layout,
+            .renderPass = info.RenderPass->GetNative().RenderPass,
             .subpass = 0,
             .basePipelineHandle = nullptr,
             .basePipelineIndex = 0,
         };
 
-        m_VkPipeline = Context::Instance().GetVkDevice().createGraphicsPipeline(nullptr, pipelineInfo).value;
+        m_Native->Pipeline = GetVkDevice(Context::Instance()).createGraphicsPipeline(nullptr, pipelineInfo).value;
 
-        DebugMarkers::MarkPipeline(m_VkPipeline, m_Name);
+        DebugMarkers::MarkPipeline(m_Native->Pipeline, m_Name);
     }
 
     GraphicsPipeline::~GraphicsPipeline()
     {
-        Context::Instance().Retire(m_VkPipeline);
+        Context::Instance().GetNative().Retire(m_Native->Pipeline);
     }
 }

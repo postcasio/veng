@@ -1,8 +1,8 @@
 #pragma once
 
-#include <Veng/Renderer/Backend/CommandBuffer.h>
-#include <Veng/Renderer/Backend/Fence.h>
-#include <Veng/Renderer/Backend/Semaphore.h>
+#include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/Fence.h>
+#include <Veng/Renderer/Semaphore.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 
 namespace Veng::Renderer

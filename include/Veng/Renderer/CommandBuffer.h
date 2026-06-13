@@ -1,15 +1,14 @@
 #pragma once
 
-#include <Veng/Renderer/Backend/Buffer.h>
-#include <Veng/Renderer/Backend/DescriptorSet.h>
-#include <Veng/Renderer/Backend/DynamicGraphicsPipeline.h>
-#include <Veng/Renderer/Backend/Framebuffer.h>
-#include <Veng/Renderer/Backend/GraphicsPipeline.h>
-#include <Veng/Renderer/Backend/ComputePipeline.h>
-#include <Veng/Renderer/Backend/ImageBarrier.h>
-#include <Veng/Renderer/Backend/RenderPass.h>
-#include <Veng/Renderer/Backend/Vulkan.h>
-#include <Veng/Renderer/Backend/ImageView.h>
+#include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/DynamicGraphicsPipeline.h>
+#include <Veng/Renderer/Framebuffer.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
+#include <Veng/Renderer/ComputePipeline.h>
+#include <Veng/Renderer/ImageBarrier.h>
+#include <Veng/Renderer/RenderPass.h>
+#include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Types.h>
 
 
@@ -65,7 +64,7 @@ namespace Veng::Renderer
     class CommandBuffer
     {
     public:
-        static Ref<CommandBuffer> Create(vk::CommandBufferLevel level = vk::CommandBufferLevel::ePrimary)
+        static Ref<CommandBuffer> Create(CommandBufferLevel level = CommandBufferLevel::Primary)
         {
             return CreateRef<CommandBuffer>(level);
         }
@@ -74,16 +73,17 @@ namespace Veng::Renderer
         void BindVertexBuffer(const Ref<Buffer>& buffer);
         void BindIndexBuffer(const Ref<Buffer>& buffer);
 
-        explicit CommandBuffer(vk::CommandBufferLevel level);
+        explicit CommandBuffer(CommandBufferLevel level);
 
-        [[nodiscard]] vk::CommandBuffer GetVkCommandBuffer() const { return m_VkCommandBuffer; }
+        struct Native;
+        [[nodiscard]] Native& GetNative() const;
 
         void Reset();
 
-        void Begin(vk::CommandBufferUsageFlags flags = {}) const;
+        void Begin(CommandBufferUsage flags = CommandBufferUsage::None) const;
         void End() const;
 
-        void BeginRenderPass(const Ref<RenderPass>& renderPass, const Ref<Framebuffer>& framebuffer, const vector<vk::ClearValue>& clearValues = {});
+        void BeginRenderPass(const Ref<RenderPass>& renderPass, const Ref<Framebuffer>& framebuffer, const vector<ClearValue>& clearValues = {});
         void EndRenderPass() const;
 
         void BeginRendering(const RenderingInfo& info);
@@ -111,8 +111,8 @@ namespace Veng::Renderer
         void BlitImage(const BlitImageInfo& info) const;
 
     private:
-        vk::CommandBufferLevel m_Level;
-        vk::CommandBuffer m_VkCommandBuffer;
+        CommandBufferLevel m_Level;
+        Unique<Native> m_Native;
         Ref<PipelineLayout> m_LastBoundPipelineLayout{};
     };
 }

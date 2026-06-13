@@ -1,9 +1,8 @@
 #pragma once
 
-#include <Veng/Renderer/Backend/PipelineLayout.h>
-#include <Veng/Renderer/Backend/Shader.h>
-#include <Veng/Renderer/Backend/VertexBufferLayout.h>
-#include <Veng/Renderer/Backend/Vulkan.h>
+#include <Veng/Renderer/PipelineLayout.h>
+#include <Veng/Renderer/Shader.h>
+#include <Veng/Renderer/VertexBufferLayout.h>
 #include <Veng/Renderer/Types.h>
 
 namespace Veng::Renderer
@@ -39,12 +38,14 @@ namespace Veng::Renderer
         ~DynamicGraphicsPipeline();
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
-        [[nodiscard]] vk::Pipeline GetVkPipeline() const { return m_VkPipeline; }
         [[nodiscard]] Ref<PipelineLayout> GetPipelineLayout() const { return m_PipelineLayout; }
+
+        struct Native;
+        [[nodiscard]] Native& GetNative() const;
 
     private:
         string m_Name;
-        vk::Pipeline m_VkPipeline;
+        Unique<Native> m_Native;
         Ref<PipelineLayout> m_PipelineLayout;
     };
 }

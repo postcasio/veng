@@ -1,7 +1,7 @@
 #pragma once
 
-#include <Veng/Renderer/Backend/CommandBuffer.h>
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/Context.h>
 
 namespace Veng::Renderer
 {

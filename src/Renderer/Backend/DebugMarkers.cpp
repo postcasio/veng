@@ -1,12 +1,13 @@
 #include <Veng/Renderer/Backend/DebugMarkers.h>
 
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Native.h>
 
 namespace Veng::Renderer
 {
     void DebugMarkers::Initialize()
     {
-        auto& instance = Context::Instance().GetVkInstance();
+        auto instance = GetVkInstance(Context::Instance());
 
         s_PfnSetDebugUtilsObjectTag = reinterpret_cast<PFN_vkSetDebugUtilsObjectTagEXT>(instance.getProcAddr(
             "vkSetDebugUtilsObjectTagEXT"));
@@ -30,7 +31,7 @@ namespace Veng::Renderer
             .pObjectName = name.c_str(),
         };
 
-        const auto& device = Context::Instance().GetVkDevice();
+        const auto& device = GetVkDevice(Context::Instance());
 
         s_PfnSetDebugUtilsObjectName(device, &nameInfo);
     }

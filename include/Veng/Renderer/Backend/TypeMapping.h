@@ -76,6 +76,72 @@ namespace Veng::Renderer
         VE_ASSERT(false, "ToVk(ImageType): unmapped value {}", static_cast<u32>(type));
     }
 
+    inline vk::ImageLayout ToVk(ImageLayout layout)
+    {
+        switch (layout)
+        {
+        case ImageLayout::Undefined: return vk::ImageLayout::eUndefined;
+        case ImageLayout::General: return vk::ImageLayout::eGeneral;
+        case ImageLayout::ColorAttachment: return vk::ImageLayout::eColorAttachmentOptimal;
+        case ImageLayout::DepthAttachment: return vk::ImageLayout::eDepthStencilAttachmentOptimal;
+        case ImageLayout::ShaderReadOnly: return vk::ImageLayout::eShaderReadOnlyOptimal;
+        case ImageLayout::TransferSrc: return vk::ImageLayout::eTransferSrcOptimal;
+        case ImageLayout::TransferDst: return vk::ImageLayout::eTransferDstOptimal;
+        case ImageLayout::PresentSrc: return vk::ImageLayout::ePresentSrcKHR;
+        }
+        VE_ASSERT(false, "ToVk(ImageLayout): unmapped value {}", static_cast<u32>(layout));
+    }
+
+    inline ImageLayout FromVk(vk::ImageLayout layout)
+    {
+        switch (layout)
+        {
+        case vk::ImageLayout::eUndefined: return ImageLayout::Undefined;
+        case vk::ImageLayout::eGeneral: return ImageLayout::General;
+        case vk::ImageLayout::eColorAttachmentOptimal: return ImageLayout::ColorAttachment;
+        case vk::ImageLayout::eDepthStencilAttachmentOptimal: return ImageLayout::DepthAttachment;
+        case vk::ImageLayout::eShaderReadOnlyOptimal: return ImageLayout::ShaderReadOnly;
+        case vk::ImageLayout::eTransferSrcOptimal: return ImageLayout::TransferSrc;
+        case vk::ImageLayout::eTransferDstOptimal: return ImageLayout::TransferDst;
+        case vk::ImageLayout::ePresentSrcKHR: return ImageLayout::PresentSrc;
+        default:
+            VE_ASSERT(false, "FromVk(vk::ImageLayout): unmapped value {}",
+                      string_VkImageLayout(static_cast<VkImageLayout>(layout)));
+        }
+    }
+
+    inline vk::ImageViewType ToVk(ImageViewType type)
+    {
+        switch (type)
+        {
+        case ImageViewType::Type1D: return vk::ImageViewType::e1D;
+        case ImageViewType::Type2D: return vk::ImageViewType::e2D;
+        case ImageViewType::Type3D: return vk::ImageViewType::e3D;
+        case ImageViewType::Cube: return vk::ImageViewType::eCube;
+        case ImageViewType::Array1D: return vk::ImageViewType::e1DArray;
+        case ImageViewType::Array2D: return vk::ImageViewType::e2DArray;
+        case ImageViewType::CubeArray: return vk::ImageViewType::eCubeArray;
+        }
+        VE_ASSERT(false, "ToVk(ImageViewType): unmapped value {}", static_cast<u32>(type));
+    }
+
+    inline vk::CommandBufferLevel ToVk(CommandBufferLevel level)
+    {
+        switch (level)
+        {
+        case CommandBufferLevel::Primary: return vk::CommandBufferLevel::ePrimary;
+        case CommandBufferLevel::Secondary: return vk::CommandBufferLevel::eSecondary;
+        }
+        VE_ASSERT(false, "ToVk(CommandBufferLevel): unmapped value {}", static_cast<u32>(level));
+    }
+
+    inline vk::CommandBufferUsageFlags ToVk(CommandBufferUsage usage)
+    {
+        vk::CommandBufferUsageFlags flags{};
+        if (HasFlag(usage, CommandBufferUsage::OneTimeSubmit)) flags |= vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+        return flags;
+    }
+
     inline vk::ImageUsageFlags ToVk(ImageUsage usage)
     {
         vk::ImageUsageFlags flags{};

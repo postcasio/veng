@@ -1,24 +1,26 @@
-#include <Veng/Renderer/Backend/Semaphore.h>
+#include <Veng/Renderer/Semaphore.h>
 
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/Natives.h>
 
 
 namespace Veng::Renderer
 {
-    Semaphore::Semaphore(const string& name, const vk::SemaphoreCreateFlags flags) : m_Name(name)
+    Semaphore::Native& Semaphore::GetNative() const { return *m_Native; }
+
+    Semaphore::Semaphore(const string& name) : m_Name(name), m_Native(CreateUnique<Native>())
     {
-        vk::SemaphoreCreateInfo semaphoreCreateInfo{
-            .flags = flags
-        };
+        constexpr vk::SemaphoreCreateInfo semaphoreCreateInfo{};
 
-        m_VkSemaphore = Context::Instance().GetVkDevice().createSemaphore(semaphoreCreateInfo).value;
+        m_Native->Semaphore = GetVkDevice(Context::Instance()).createSemaphore(semaphoreCreateInfo).value;
 
-        DebugMarkers::MarkSemaphore(m_VkSemaphore, m_Name);
+        DebugMarkers::MarkSemaphore(m_Native->Semaphore, m_Name);
     }
 
     Semaphore::~Semaphore()
     {
-        Context::Instance().GetVkDevice().destroySemaphore(m_VkSemaphore);
+        GetVkDevice(Context::Instance()).destroySemaphore(m_Native->Semaphore);
     }
 }

@@ -3,13 +3,13 @@
 #include <Veng/Log.h>
 #include <Veng/Vendor/ImGui.h>
 
-#include <Veng/Renderer/Backend/Buffer.h>
-#include <Veng/Renderer/Backend/Command.h>
-#include <Veng/Renderer/Backend/DescriptorSet.h>
-#include <Veng/Renderer/Backend/DynamicGraphicsPipeline.h>
-#include <Veng/Renderer/Backend/ImageView.h>
-#include <Veng/Renderer/Backend/Sampler.h>
-#include <Veng/Renderer/Backend/Shader.h>
+#include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/Command.h>
+#include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/DynamicGraphicsPipeline.h>
+#include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/Sampler.h>
+#include <Veng/Renderer/Shader.h>
 
 #include <glm/gtc/packing.hpp>
 
@@ -104,7 +104,7 @@ protected:
     void OnRender() override
     {
         auto& context = GetRenderContext();
-        auto& cmd = *context.GetCurrentFrame().GetCommandBuffer();
+        auto& cmd = context.GetCurrentCommandBuffer();
 
         RenderScene(cmd);
         RenderUserInterface();
@@ -204,7 +204,7 @@ private:
 
         m_CompositePipeline = Renderer::DynamicGraphicsPipeline::Create({
             .Name = "Composite Pipeline",
-            .ColorAttachments = {{.Format = GetRenderContext().GetSwapChain().GetFormat()}},
+            .ColorAttachments = {{.Format = GetRenderContext().GetSwapChainFormat()}},
             .PipelineLayout = m_CompositeLayout,
             .ShaderStages = {
                 {.Stage = Renderer::ShaderStage::Vertex, .Module = *vertexShader.value()},
@@ -227,7 +227,7 @@ private:
 
         cmd.PipelineBarrier({
             .Image = *m_SceneImage,
-            .NewLayout = vk::ImageLayout::eColorAttachmentOptimal,
+            .NewLayout = Renderer::ImageLayout::ColorAttachment,
         });
 
         cmd.BeginRendering({
@@ -265,7 +265,7 @@ private:
 
         cmd.PipelineBarrier({
             .Image = *m_SceneImage,
-            .NewLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+            .NewLayout = Renderer::ImageLayout::ShaderReadOnly,
         });
     }
 
@@ -274,7 +274,7 @@ private:
         ImGui::Begin("Scene");
         const ImVec2 available = ImGui::GetContentRegionAvail();
         const f32 aspect = static_cast<f32>(m_SceneImage->GetHeight()) / static_cast<f32>(m_SceneImage->GetWidth());
-        ImGui::Image(reinterpret_cast<ImTextureID>(m_SceneTexture->GetDescriptorSet()),
+        ImGui::Image(static_cast<ImTextureID>(m_SceneTexture->GetTextureId()),
                      {available.x, available.x * aspect});
         ImGui::End();
 
@@ -310,18 +310,18 @@ private:
     void CompositeToSwapChain(Renderer::CommandBuffer& cmd)
     {
         auto& context = GetRenderContext();
-        const auto& swapChain = context.GetSwapChain();
+        const uvec2 extent = context.GetSwapChainExtent();
 
         cmd.PipelineBarrier({
-            .Image = *swapChain.GetCurrentImage(),
-            .NewLayout = vk::ImageLayout::eColorAttachmentOptimal,
+            .Image = *context.GetCurrentSwapChainImage(),
+            .NewLayout = Renderer::ImageLayout::ColorAttachment,
         });
 
         cmd.BeginRendering({
-            .Extent = swapChain.GetExtent(),
+            .Extent = extent,
             .ColorAttachments = {
                 {
-                    .ImageView = swapChain.GetCurrentImageView(),
+                    .ImageView = context.GetCurrentSwapChainImageView(),
                     .LoadOp = Renderer::LoadOp::Clear,
                     .StoreOp = Renderer::StoreOp::Store,
                     .ClearValue = Renderer::ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
@@ -330,8 +330,8 @@ private:
         });
 
         cmd.BindPipeline(m_CompositePipeline);
-        cmd.SetViewport({0, 0}, swapChain.GetExtent());
-        cmd.SetScissor({0, 0}, swapChain.GetExtent());
+        cmd.SetViewport({0, 0}, extent);
+        cmd.SetScissor({0, 0}, extent);
         cmd.BindDescriptorSets({.Sets = {m_CompositeSet}});
         cmd.DrawFullscreenTriangle();
 

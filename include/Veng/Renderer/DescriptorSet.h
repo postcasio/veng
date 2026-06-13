@@ -1,10 +1,10 @@
 #pragma once
 #include <span>
 
-#include <Veng/Renderer/Backend/Buffer.h>
-#include <Veng/Renderer/Backend/DescriptorSetLayout.h>
-#include <Veng/Renderer/Backend/ImageView.h>
-#include <Veng/Renderer/Backend/Sampler.h>
+#include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/DescriptorSetLayout.h>
+#include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/Sampler.h>
 
 namespace Veng::Renderer
 {
@@ -46,11 +46,13 @@ namespace Veng::Renderer
                         const Ref<Sampler>& sampler, u32 firstElement = 0);
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
-        [[nodiscard]] vk::DescriptorSet GetVkDescriptorSet() const { return m_DescriptorSet; }
+
+        struct Native;
+        [[nodiscard]] Native& GetNative() const;
 
     private:
         string m_Name;
-        vk::DescriptorSet m_DescriptorSet;
+        Unique<Native> m_Native;
         // Ownership of the resources currently written into each binding, keyed
         // by binding number. Re-writing a binding releases exactly what it
         // replaced. This is the ownership list (dangling-descriptor

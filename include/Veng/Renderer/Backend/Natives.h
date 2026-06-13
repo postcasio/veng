@@ -1,0 +1,125 @@
+#pragma once
+
+// Out-of-line definitions of the Native structs declared (but not defined) by
+// the public Renderer headers. Internal-only: backend .cpp files include this
+// to reach the raw vk::/Vma handles behind Resource::GetNative().
+#include <Veng/Renderer/Backend/Vulkan.h>
+#include <Veng/Renderer/Backend/ContextNative.h>
+
+#include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/ComputePipeline.h>
+#include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/DescriptorSetLayout.h>
+#include <Veng/Renderer/DynamicGraphicsPipeline.h>
+#include <Veng/Renderer/Fence.h>
+#include <Veng/Renderer/Framebuffer.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
+#include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/ImGuiTexture.h>
+#include <Veng/Renderer/PipelineLayout.h>
+#include <Veng/Renderer/RenderPass.h>
+#include <Veng/Renderer/Sampler.h>
+#include <Veng/Renderer/Semaphore.h>
+#include <Veng/Renderer/Shader.h>
+#include <Veng/Window.h>
+
+namespace Veng
+{
+    struct Window::Native
+    {
+        vk::SurfaceKHR Surface;
+    };
+}
+
+namespace Veng::Renderer
+{
+    struct Buffer::Native
+    {
+        vk::Buffer Buffer;
+        VmaAllocation Allocation{};
+    };
+
+    struct Image::Native
+    {
+        vk::Image Image;
+        VmaAllocationInfo AllocationInfo{};
+        VmaAllocation Allocation = nullptr;
+    };
+
+    struct ImageView::Native
+    {
+        vk::ImageView ImageView;
+    };
+
+    struct Sampler::Native
+    {
+        vk::Sampler Sampler;
+    };
+
+    struct Shader::Native
+    {
+        vk::ShaderModule Module;
+    };
+
+    struct DescriptorSet::Native
+    {
+        vk::DescriptorSet Set;
+    };
+
+    struct DescriptorSetLayout::Native
+    {
+        vk::DescriptorSetLayout Layout;
+    };
+
+    struct PipelineLayout::Native
+    {
+        vk::PipelineLayout Layout;
+    };
+
+    struct GraphicsPipeline::Native
+    {
+        vk::Pipeline Pipeline;
+    };
+
+    struct DynamicGraphicsPipeline::Native
+    {
+        vk::Pipeline Pipeline;
+    };
+
+    struct ComputePipeline::Native
+    {
+        vk::Pipeline Pipeline;
+    };
+
+    struct CommandBuffer::Native
+    {
+        vk::CommandBuffer CommandBuffer;
+    };
+
+    struct RenderPass::Native
+    {
+        vk::RenderPass RenderPass;
+    };
+
+    struct Framebuffer::Native
+    {
+        vk::Framebuffer Framebuffer;
+    };
+
+    struct Fence::Native
+    {
+        vk::Fence Fence;
+    };
+
+    struct Semaphore::Native
+    {
+        vk::Semaphore Semaphore;
+    };
+
+    struct ImGuiTexture::Native
+    {
+        vk::DescriptorSet Set;
+    };
+}

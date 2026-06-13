@@ -1,5 +1,7 @@
 #include <Veng/Renderer/Backend/SwapChain.h>
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Native.h>
+#include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
 namespace Veng::Renderer
@@ -20,9 +22,23 @@ namespace Veng::Renderer
         }
     }
 
+    static vk::PresentModeKHR GetPresentMode(const vector<vk::PresentModeKHR>& availablePresentModes)
+    {
+        for (const auto& availablePresentMode : availablePresentModes)
+        {
+            if (availablePresentMode == vk::PresentModeKHR::eMailbox)
+            {
+                return availablePresentMode;
+            }
+        }
+
+        return vk::PresentModeKHR::eFifo;
+    }
+
     void SwapChain::Initialize()
     {
-        auto swapChainSupport = Context::Instance().QuerySwapChainSupport(Context::Instance().GetVkPhysicalDevice());
+        auto& contextNative = Context::Instance().GetNative();
+        auto swapChainSupport = contextNative.QuerySwapChainSupport(contextNative.PhysicalDevice);
 
         u32 imageCount = std::max(m_MaxImageCount, swapChainSupport.Capabilities.minImageCount);
 
@@ -38,7 +54,7 @@ namespace Veng::Renderer
         m_Height = extent.height;
 
         vk::SwapchainCreateInfoKHR swapChainCreateInfo{
-            .surface = Context::Instance().GetVkSurface(),
+            .surface = contextNative.Surface,
             .minImageCount = imageCount,
             .imageFormat = m_Format,
             .imageColorSpace = m_ColorSpace,
@@ -47,7 +63,7 @@ namespace Veng::Renderer
             .imageUsage = vk::ImageUsageFlagBits::eColorAttachment
         };
 
-        QueueFamilyIndices indices = Context::Instance().FindQueueFamilies(Context::Instance().GetVkPhysicalDevice());
+        QueueFamilyIndices indices = contextNative.FindQueueFamilies(contextNative.PhysicalDevice);
 
         u32 queueFamilyIndices[] = {
             indices.GraphicsFamily.value(),
@@ -71,13 +87,13 @@ namespace Veng::Renderer
 
         swapChainCreateInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
 
-        swapChainCreateInfo.presentMode = Context::GetPresentMode(swapChainSupport.PresentModes);
+        swapChainCreateInfo.presentMode = GetPresentMode(swapChainSupport.PresentModes);
         swapChainCreateInfo.clipped = VK_TRUE;
 
         swapChainCreateInfo.oldSwapchain = VK_NULL_HANDLE;
 
-        m_VkSwapChain = Context::Instance().GetVkDevice().createSwapchainKHR(swapChainCreateInfo).value;
-        auto images = Context::Instance().GetVkDevice().getSwapchainImagesKHR(m_VkSwapChain).value;
+        m_VkSwapChain = contextNative.Device.createSwapchainKHR(swapChainCreateInfo).value;
+        auto images = contextNative.Device.getSwapchainImagesKHR(m_VkSwapChain).value;
 
         m_ImageCount = images.size();
         m_ImageViews.reserve(m_ImageCount);
@@ -85,14 +101,17 @@ namespace Veng::Renderer
 
         for (auto image : images)
         {
-            m_Images.emplace_back(Image::Create(image, ImageInfo{
+            auto native = CreateUnique<Image::Native>();
+            native->Image = image;
+
+            m_Images.emplace_back(Ref<Image>(new Image(ImageInfo{
                                                     .Name = fmt::format("SwapChain Image [{}]", m_Images.size()),
                                                     .Extent = uvec3{m_Width, m_Height, 1u},
                                                     .MipLevels = 1,
                                                     .Format = FromVk(m_Format),
                                                     .Type = ImageType::Type2D,
                                                     .Usage = ImageUsage::ColorAttachment
-                                                }));
+                                                }, std::move(native))));
 
             m_ImageViews.emplace_back(ImageView::Create(ImageViewInfo{
                 .Name = fmt::format("SwapChain ImageView [{}]", m_ImageViews.size()),
@@ -121,7 +140,7 @@ namespace Veng::Renderer
         m_Images.clear();
         m_ImageViews.clear();
 
-        Context::Instance().GetVkDevice().destroySwapchainKHR(m_VkSwapChain);
+        GetVkDevice(Context::Instance()).destroySwapchainKHR(m_VkSwapChain);
     }
 
     void SwapChain::Invalidated()
@@ -170,8 +189,8 @@ namespace Veng::Renderer
 
     vk::Result SwapChain::AcquireNextImage(Semaphore& semaphore)
     {
-        return Context::Instance().GetVkDevice().acquireNextImageKHR(m_VkSwapChain, UINT64_MAX,
-                                                                     semaphore.GetVkSemaphore(), VK_NULL_HANDLE,
+        return GetVkDevice(Context::Instance()).acquireNextImageKHR(m_VkSwapChain, UINT64_MAX,
+                                                                     semaphore.GetNative().Semaphore, VK_NULL_HANDLE,
                                                                      &m_CurrentImageIndex);
     }
 }

@@ -1,0 +1,49 @@
+// Include-hygiene guard for the public/backend header split (plan 07).
+//
+// This TU includes every public Veng header and is compiled into a target that
+// links veng::veng but is NOT given the Vulkan / GLFW / VMA / nfd include
+// directories (those link PRIVATE to veng). If any public header regresses and
+// pulls in <vulkan/...>, <GLFW/...>, vk_mem_alloc.h or <nfd.h>, this file fails
+// to compile — keeping the boundary from rotting.
+//
+// Veng/Renderer/Native.h is deliberately excluded: it is the one sanctioned
+// escape hatch that exposes raw handles and is expected to need Vulkan headers.
+
+#include <Veng/Application.h>
+#include <Veng/Assert.h>
+#include <Veng/Event.h>
+#include <Veng/Input.h>
+#include <Veng/Log.h>
+#include <Veng/Result.h>
+#include <Veng/Time.h>
+#include <Veng/Veng.h>
+#include <Veng/Window.h>
+#include <Veng/WindowEvents.h>
+
+#include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/Command.h>
+#include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/ComputePipeline.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/DescriptorSetLayout.h>
+#include <Veng/Renderer/DynamicGraphicsPipeline.h>
+#include <Veng/Renderer/Fence.h>
+#include <Veng/Renderer/Framebuffer.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
+#include <Veng/Renderer/ImGuiTexture.h>
+#include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/ImageBarrier.h>
+#include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/PipelineLayout.h>
+#include <Veng/Renderer/RenderPass.h>
+#include <Veng/Renderer/Sampler.h>
+#include <Veng/Renderer/Semaphore.h>
+#include <Veng/Renderer/Shader.h>
+#include <Veng/Renderer/Types.h>
+#include <Veng/Renderer/VertexBufferLayout.h>
+
+int main()
+{
+    return 0;
+}

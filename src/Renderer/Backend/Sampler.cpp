@@ -1,12 +1,16 @@
-#include <Veng/Renderer/Backend/Sampler.h>
+#include <Veng/Renderer/Sampler.h>
 
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
 namespace Veng::Renderer
 {
-    Sampler::Sampler(const SamplerInfo& info) : m_Name(info.Name)
+    Sampler::Native& Sampler::GetNative() const { return *m_Native; }
+
+    Sampler::Sampler(const SamplerInfo& info) : m_Name(info.Name), m_Native(CreateUnique<Native>())
     {
         const vk::SamplerCreateInfo samplerCreateInfo{
             .magFilter = ToVk(info.MagFilter),
@@ -26,13 +30,13 @@ namespace Veng::Renderer
             .unnormalizedCoordinates = info.UnnormalizedCoordinates,
         };
 
-        m_VkSampler = Context::Instance().GetVkDevice().createSampler(samplerCreateInfo).value;
+        m_Native->Sampler = GetVkDevice(Context::Instance()).createSampler(samplerCreateInfo).value;
 
-        DebugMarkers::MarkSampler(m_VkSampler, m_Name);
+        DebugMarkers::MarkSampler(m_Native->Sampler, m_Name);
     }
 
     Sampler::~Sampler()
     {
-        Context::Instance().Retire(m_VkSampler);
+        Context::Instance().GetNative().Retire(m_Native->Sampler);
     }
 }

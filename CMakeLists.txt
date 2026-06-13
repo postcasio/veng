@@ -182,16 +182,40 @@ if (VE_DEBUG)
     target_compile_definitions(veng PUBLIC VE_ENABLE_VALIDATION_LAYERS=1 VE_DEBUG=1)
 endif ()
 
+# glm and fmt appear in veng's public headers (engine vector/matrix types and
+# string formatting), so they stay PUBLIC. Vulkan, GLFW, VMA and nfd are hidden
+# behind the Native idiom (see Veng/Renderer/Native.h) — no public header pulls
+# them in, so they link PRIVATE and stay out of the consumer include graph.
 target_link_libraries(veng PUBLIC
-        Vulkan::Vulkan
-        glfw
         glm::glm
         fmt::fmt
-        GPUOpen::VulkanMemoryAllocator
-        nfd
 )
 
-target_link_libraries(veng PRIVATE ZLIB::ZLIB)
+target_link_libraries(veng PRIVATE
+        Vulkan::Vulkan
+        glfw
+        GPUOpen::VulkanMemoryAllocator
+        nfd
+        ZLIB::ZLIB
+)
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+option(VENG_BUILD_TESTS "Build the test suite" ${PROJECT_IS_TOP_LEVEL})
+
+if (VENG_BUILD_TESTS)
+    enable_testing()
+
+    # Include-hygiene guard: compiles every public header while linking only the
+    # PUBLIC deps of veng (glm, fmt, ImGui). Because Vulkan/GLFW/VMA/nfd link
+    # PRIVATE, this fails to build if a public header leaks a backend header.
+    add_executable(veng_include_hygiene tests/include_hygiene.cpp)
+    target_link_libraries(veng_include_hygiene PRIVATE veng::veng)
+
+    add_test(NAME include_hygiene COMMAND veng_include_hygiene)
+endif ()
 
 # ---------------------------------------------------------------------------
 # Examples

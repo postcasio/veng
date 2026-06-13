@@ -1,7 +1,6 @@
 #pragma once
 
 #include <Veng/Veng.h>
-#include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Types.h>
 
 namespace Veng::Renderer
@@ -38,10 +37,12 @@ namespace Veng::Renderer
         ~Sampler();
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
-        [[nodiscard]] vk::Sampler GetVkSampler() const { return m_VkSampler; }
+
+        struct Native;
+        [[nodiscard]] Native& GetNative() const;
 
     private:
         string m_Name;
-        vk::Sampler m_VkSampler;
+        Unique<Native> m_Native;
     };
 }

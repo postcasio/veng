@@ -1,16 +1,21 @@
 #define VMA_IMPLEMENTATION
-#include <Veng/Renderer/Backend/Context.h>
+#include <Veng/Renderer/Context.h>
 
 #include <set>
 
 #include <Veng/Renderer/Backend/DebugMarkers.h>
+#include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
+
+#include <Veng/Vendor/ImGui.h>
 
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
 
-#include <Veng/Renderer/Backend/ImGuiTexture.h>
+#include <Veng/Renderer/ImGuiTexture.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Vendor/IconsMaterialDesign.h>
+#include <Veng/Window.h>
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
@@ -39,11 +44,17 @@ namespace Veng::Renderer
     }
 #endif
 
-
-
-    vk::PhysicalDevice Context::GetPhysicalDevice()
+    Context::Context() : m_Native(CreateUnique<Native>())
     {
-        auto physicalDevices = m_Instance.enumeratePhysicalDevices().value;
+    }
+
+    Context::~Context() = default;
+
+    Context::Native& Context::GetNative() const { return *m_Native; }
+
+    vk::PhysicalDevice Context::Native::GetPhysicalDevice()
+    {
+        auto physicalDevices = Instance.enumeratePhysicalDevices().value;
 
         for (auto& device : physicalDevices)
         {
@@ -56,7 +67,7 @@ namespace Veng::Renderer
         VE_ASSERT(false, "Failed to find a suitable GPU!");
     }
 
-    bool Context::IsDeviceSuitable(vk::PhysicalDevice device)
+    bool Context::Native::IsDeviceSuitable(vk::PhysicalDevice device)
     {
         QueueFamilyIndices indices = FindQueueFamilies(device);
 
@@ -92,7 +103,7 @@ namespace Veng::Renderer
             VE_ASSERT(false, "Vulkan is not supported on this system!");
         }
 
-        auto extensions = GetRequiredExtensions();
+        auto extensions = m_Native->GetRequiredExtensions();
 
         const vk::ApplicationInfo appInfo{
             .pApplicationName = info.ApplicationName.c_str(),
@@ -122,8 +133,8 @@ namespace Veng::Renderer
 
         instanceCreateInfo.pNext = &debugCreateInfo;
         instanceCreateInfo.enabledLayerCount =
-            static_cast<u32>(m_ValidationLayers.size());
-        instanceCreateInfo.ppEnabledLayerNames = m_ValidationLayers.data();
+            static_cast<u32>(m_Native->ValidationLayers.size());
+        instanceCreateInfo.ppEnabledLayerNames = m_Native->ValidationLayers.data();
 #else
         instanceCreateInfo.pNext = nullptr;
         instanceCreateInfo.enabledLayerCount = 0;
@@ -132,12 +143,12 @@ namespace Veng::Renderer
 
         instanceCreateInfo.flags = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
 
-        m_Instance = createInstance(instanceCreateInfo).value;
+        m_Native->Instance = createInstance(instanceCreateInfo).value;
 
-        VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Instance);
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Native->Instance);
 
 #ifdef VE_ENABLE_VALIDATION_LAYERS
-        m_DebugMessenger = m_Instance.createDebugUtilsMessengerEXT(debugCreateInfo);
+        m_Native->DebugMessenger = m_Native->Instance.createDebugUtilsMessengerEXT(debugCreateInfo);
 #endif
 
         DebugMarkers::Initialize();
@@ -146,38 +157,38 @@ namespace Veng::Renderer
 
         Log::Info("Initializing surface");
 
-        m_Surface = window->GetSurface();
+        m_Native->Surface = GetVkSurface(*window);
 
-        m_PhysicalDevice = GetPhysicalDevice();
+        m_Native->PhysicalDevice = m_Native->GetPhysicalDevice();
 
-        m_Device = CreateDevice();
+        m_Native->Device = m_Native->CreateDevice();
 
-        VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Device);
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Native->Device);
 
         VmaAllocatorCreateInfo allocatorInfo{
-            .physicalDevice = m_PhysicalDevice,
-            .device = m_Device,
-            .instance = m_Instance,
+            .physicalDevice = m_Native->PhysicalDevice,
+            .device = m_Native->Device,
+            .instance = m_Native->Instance,
             .vulkanApiVersion = VK_API_VERSION_1_3,
         };
 
-        vmaCreateAllocator(&allocatorInfo, &m_Allocator);
+        vmaCreateAllocator(&allocatorInfo, &m_Native->Allocator);
 
-        m_GraphicsQueue = m_Device.getQueue(m_QueueFamilies.GraphicsFamily.value(), 0);
-        m_PresentQueue = m_Device.getQueue(m_QueueFamilies.PresentFamily.value(), 0);
+        m_Native->GraphicsQueue = m_Native->Device.getQueue(m_Native->QueueFamilies.GraphicsFamily.value(), 0);
+        m_Native->PresentQueue = m_Native->Device.getQueue(m_Native->QueueFamilies.PresentFamily.value(), 0);
 
-        m_SwapChain = SwapChain::Create({
+        m_Native->SwapChain = SwapChain::Create({
             .MaxImageCount = 2,
             .Width = window->GetWidth(),
             .Height = window->GetHeight(),
             .Format = vk::Format::eR16G16B16A16Sfloat,
         });
 
-        Log::Info("Created {0} swap chain images ({1}x{2})", m_SwapChain->GetImageCount(),
-                  m_SwapChain->GetWidth(), m_SwapChain->GetHeight());
+        Log::Info("Created {0} swap chain images ({1}x{2})", m_Native->SwapChain->GetImageCount(),
+                  m_Native->SwapChain->GetWidth(), m_Native->SwapChain->GetHeight());
 
         Log::Info("Setting initial render extents:");
-        m_RenderExtent = m_SwapChain->GetExtent();
+        m_RenderExtent = m_Native->SwapChain->GetExtent();
         m_InternalRenderExtent = info.InternalRenderExtent;
         m_OutputFormat = info.OutputFormat;
         m_DepthFormat = info.DepthFormat;
@@ -186,9 +197,9 @@ namespace Veng::Renderer
 
         Log::Info("Creating command pool");
 
-        m_CommandPool = CommandPool::Create();
+        m_Native->CommandPool = CommandPool::Create();
 
-        m_DescriptorPool = DescriptorPool::Create({
+        m_Native->DescriptorPool = DescriptorPool::Create({
             .Name = "Primary Pool",
             .MaxSets = 100000,
             .PoolSizes{
@@ -209,7 +220,7 @@ namespace Veng::Renderer
             vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind
         });
 
-        m_ImGuiDescriptorPool = DescriptorPool::Create({
+        m_Native->ImGuiDescriptorPool = DescriptorPool::Create({
             .Name = "ImGui Descriptor Pool",
             .MaxSets = 100000,
             .PoolSizes = {
@@ -226,22 +237,19 @@ namespace Veng::Renderer
             vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind
         });
 
-        m_SynchronizationFrames.resize(m_MaxFramesInFlight);
-        m_RetireBins.resize(m_MaxFramesInFlight);
+        m_Native->SynchronizationFrames.resize(m_Native->MaxFramesInFlight);
+        m_Native->RetireBins.resize(m_Native->MaxFramesInFlight);
 
 
         m_ImGuiRenderPass = RenderPass::Create({
             .Name = "ImGui RenderPass",
             .Attachments = {
                 {
-                    .format = vk::Format::eR16G16B16A16Sfloat,
-                    .samples = vk::SampleCountFlagBits::e1,
-                    .loadOp = vk::AttachmentLoadOp::eClear,
-                    .storeOp = vk::AttachmentStoreOp::eStore,
-                    .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
-                    .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
-                    .initialLayout = vk::ImageLayout::eUndefined,
-                    .finalLayout = vk::ImageLayout::eColorAttachmentOptimal
+                    .Format = Format::RGBA16Sfloat,
+                    .LoadOp = LoadOp::Clear,
+                    .StoreOp = StoreOp::Store,
+                    .InitialLayout = ImageLayout::Undefined,
+                    .FinalLayout = ImageLayout::ColorAttachment
                 }
             }
         });
@@ -260,20 +268,20 @@ namespace Veng::Renderer
         io.ConfigDebugIsDebuggerPresent = true;
 #endif
 
-        GLFWwindow* handle = window->GetHandle();
+        GLFWwindow* handle = GetGlfwWindow(*window);
 
         ImGui_ImplGlfw_InitForVulkan(handle, true);
 
         ImGui_ImplVulkan_InitInfo initInfo = {
-            .Instance = GetVkInstance(),
-            .PhysicalDevice = GetVkPhysicalDevice(),
-            .Device = GetVkDevice(),
-            .Queue = GetVkGraphicsQueue(),
-            .DescriptorPool = m_DescriptorPool->GetVkDescriptorPool(),
-            .MinImageCount = m_SwapChain->GetImageCount(),
-            .ImageCount = m_SwapChain->GetImageCount(),
+            .Instance = m_Native->Instance,
+            .PhysicalDevice = m_Native->PhysicalDevice,
+            .Device = m_Native->Device,
+            .Queue = m_Native->GraphicsQueue,
+            .DescriptorPool = m_Native->DescriptorPool->GetVkDescriptorPool(),
+            .MinImageCount = m_Native->SwapChain->GetImageCount(),
+            .ImageCount = m_Native->SwapChain->GetImageCount(),
             .PipelineInfoMain = {
-                .RenderPass = m_ImGuiRenderPass->GetVkRenderPass(),
+                .RenderPass = m_ImGuiRenderPass->GetNative().RenderPass,
                 .MSAASamples = VK_SAMPLE_COUNT_1_BIT,
             }
         };
@@ -399,8 +407,8 @@ namespace Veng::Renderer
         // Application::Run has already waited the GPU idle. Anything the
         // consumer released in OnDispose has retired into the bins — drain them
         // all before the frames (and their command buffers) go away.
-        DrainAllRetireBins();
-        m_SynchronizationFrames.clear();
+        m_Native->DrainAllRetireBins();
+        m_Native->SynchronizationFrames.clear();
     }
 
     void Context::Dispose()
@@ -417,25 +425,25 @@ namespace Veng::Renderer
         // pass) just retired into the bins. Drain them while the device,
         // allocator and descriptor pool are still alive, then stop accepting
         // retirements — anything dropped after this point is a leak/bug.
-        DrainAllRetireBins();
-        m_Disposed = true;
+        m_Native->DrainAllRetireBins();
+        m_Native->Disposed = true;
 
-        m_ImGuiDescriptorPool.reset();
-        m_DescriptorPool.reset();
-        m_CommandPool.reset();
-        m_SwapChain.reset();
-        m_PresentQueue = nullptr;
-        m_GraphicsQueue = nullptr;
-        vmaDestroyAllocator(m_Allocator);
-        m_Device.destroy();
-        m_Instance.destroySurfaceKHR(m_Surface);
-        m_PhysicalDevice = nullptr;
-        if (m_DebugMessenger)
+        m_Native->ImGuiDescriptorPool.reset();
+        m_Native->DescriptorPool.reset();
+        m_Native->CommandPool.reset();
+        m_Native->SwapChain.reset();
+        m_Native->PresentQueue = nullptr;
+        m_Native->GraphicsQueue = nullptr;
+        vmaDestroyAllocator(m_Native->Allocator);
+        m_Native->Device.destroy();
+        m_Native->Instance.destroySurfaceKHR(m_Native->Surface);
+        m_Native->PhysicalDevice = nullptr;
+        if (m_Native->DebugMessenger)
         {
-            m_Instance.destroyDebugUtilsMessengerEXT(m_DebugMessenger);
-            m_DebugMessenger = nullptr;
+            m_Native->Instance.destroyDebugUtilsMessengerEXT(m_Native->DebugMessenger);
+            m_Native->DebugMessenger = nullptr;
         }
-        m_Instance.destroy();
+        m_Native->Instance.destroy();
         m_Window = nullptr;
         s_Instance = nullptr;
     }
@@ -445,10 +453,33 @@ namespace Veng::Renderer
         return *s_Instance;
     }
 
+    const QueueFamilyIndices& Context::GetQueueFamilies() const
+    {
+        return m_Native->QueueFamilies;
+    }
+
+    SynchronizationFrame& Context::GetCurrentFrame()
+    {
+        return m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight];
+    }
+
+    CommandBuffer& Context::GetCurrentCommandBuffer()
+    {
+        return *GetCurrentFrame().GetCommandBuffer();
+    }
+
+    u32 Context::GetMaxFramesInFlight() const { return m_Native->MaxFramesInFlight; }
+    u32 Context::GetCurrentFrameInFlight() const { return m_Native->CurrentFrameInFlight; }
+
+    uvec2 Context::GetSwapChainExtent() const { return m_Native->SwapChain->GetExtent(); }
+    Format Context::GetSwapChainFormat() const { return m_Native->SwapChain->GetFormat(); }
+    Ref<Image> Context::GetCurrentSwapChainImage() const { return m_Native->SwapChain->GetCurrentImage(); }
+    Ref<ImageView> Context::GetCurrentSwapChainImageView() const { return m_Native->SwapChain->GetCurrentImageView(); }
+
     void Context::ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const
     {
         auto commandBuffer = CommandBuffer::Create();
-        commandBuffer->Begin(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+        commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
 
         function(*commandBuffer);
 
@@ -458,7 +489,7 @@ namespace Veng::Renderer
 
     void Context::AcquireNextImage(Semaphore& semaphore)
     {
-        auto result = m_SwapChain->AcquireNextImage(semaphore);
+        auto result = m_Native->SwapChain->AcquireNextImage(semaphore);
 
         if (result == vk::Result::eErrorOutOfDateKHR)
         {
@@ -474,7 +505,7 @@ namespace Veng::Renderer
 
     void Context::WaitIdle() const
     {
-        m_Device.waitIdle();
+        m_Native->Device.waitIdle();
     }
 
     void Context::RenderImGui(CommandBuffer& commandBuffer)
@@ -483,15 +514,15 @@ namespace Veng::Renderer
 
         commandBuffer.PipelineBarrier({
             .Image = *m_ImGuiImage,
-            .NewLayout = vk::ImageLayout::eColorAttachmentOptimal,
+            .NewLayout = ImageLayout::ColorAttachment,
         });
 
-        vector<vk::ClearValue> clear = {
-            {.color = vk::ClearColorValue(std::array<float, 4>{1.0f, 0.0f, 0.0f, 0.0f})}
+        vector<ClearValue> clear = {
+            ClearColor{1.0f, 0.0f, 0.0f, 0.0f}
         };
 
         commandBuffer.BeginRenderPass(m_ImGuiRenderPass,
-                                      m_ImGuiFramebuffers[GetSwapChain().GetCurrentImageIndex()], clear);
+                                      m_ImGuiFramebuffers[m_Native->SwapChain->GetCurrentImageIndex()], clear);
 
         ImGui::Render();
 
@@ -499,13 +530,13 @@ namespace Veng::Renderer
         ImGui::RenderPlatformWindowsDefault();
 
         ImDrawData* drawData = ImGui::GetDrawData();
-        ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer.GetVkCommandBuffer());
+        ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer.GetNative().CommandBuffer);
 
         commandBuffer.EndRenderPass();
 
         commandBuffer.PipelineBarrier({
             .Image = *m_ImGuiImage,
-            .NewLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+            .NewLayout = ImageLayout::ShaderReadOnly,
         });
     }
 
@@ -525,42 +556,44 @@ namespace Veng::Renderer
 
     Ref<ImGuiTexture> Context::CreateImGuiTexture(const Sampler& sampler, const ImageView& imageView)
     {
-        return ImGuiTexture::Create(
-            ImGui_ImplVulkan_AddTexture(
-                sampler.GetVkSampler(),
-                imageView.GetVkImageView(),
-                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-            )
+        auto native = CreateUnique<ImGuiTexture::Native>();
+
+        native->Set = ImGui_ImplVulkan_AddTexture(
+            sampler.GetNative().Sampler,
+            imageView.GetNative().ImageView,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
         );
+
+        return Ref<ImGuiTexture>(new ImGuiTexture(std::move(native)));
     }
 
     void Context::DestroyImGuiTexture(const ImGuiTexture& texture)
     {
-        ImGui_ImplVulkan_RemoveTexture(texture.GetDescriptorSet());
+        ImGui_ImplVulkan_RemoveTexture(texture.GetNative().Set);
     }
 
-    vector<const char*>& Context::GetRequiredExtensions()
+    vector<const char*>& Context::Native::GetRequiredExtensions()
     {
-        if (m_RequiredExtensions.empty())
+        if (RequiredExtensions.empty())
         {
             u32 glfwExtensionCount = 0;
             const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
-            m_RequiredExtensions = vector<const char*>(glfwExtensions,
+            RequiredExtensions = vector<const char*>(glfwExtensions,
                                                        glfwExtensions + glfwExtensionCount);
 
-            m_RequiredExtensions.emplace_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
-            m_RequiredExtensions.emplace_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
-            m_RequiredExtensions.emplace_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
-            m_RequiredExtensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            RequiredExtensions.emplace_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+            RequiredExtensions.emplace_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+            RequiredExtensions.emplace_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+            RequiredExtensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         }
 
-        return m_RequiredExtensions;
+        return RequiredExtensions;
     }
 
-    QueueFamilyIndices& Context::FindQueueFamilies(vk::PhysicalDevice device)
+    QueueFamilyIndices& Context::Native::FindQueueFamilies(vk::PhysicalDevice device)
     {
-        m_QueueFamilies = {};
+        QueueFamilies = {};
 
         u32 queueFamilyCount = 0;
         device.getQueueFamilyProperties(&queueFamilyCount, nullptr);
@@ -573,15 +606,15 @@ namespace Veng::Renderer
         {
             if (queueFamily.queueFlags & vk::QueueFlagBits::eGraphics)
             {
-                m_QueueFamilies.GraphicsFamily = i;
+                QueueFamilies.GraphicsFamily = i;
             }
 
-            if (vk::Bool32 presentSupport = device.getSurfaceSupportKHR(i, m_Surface).value)
+            if (vk::Bool32 presentSupport = device.getSurfaceSupportKHR(i, Surface).value)
             {
-                m_QueueFamilies.PresentFamily = i;
+                QueueFamilies.PresentFamily = i;
             }
 
-            if (m_QueueFamilies.IsComplete())
+            if (QueueFamilies.IsComplete())
             {
                 break;
             }
@@ -589,26 +622,24 @@ namespace Veng::Renderer
             i++;
         }
 
-        return m_QueueFamilies;
+        return QueueFamilies;
     }
 
-    SwapChainSupportDetails Context::QuerySwapChainSupport(vk::PhysicalDevice device) const
+    SwapChainSupportDetails Context::Native::QuerySwapChainSupport(vk::PhysicalDevice device) const
     {
         return SwapChainSupportDetails{
-            .Capabilities = device.getSurfaceCapabilitiesKHR(m_Surface).value,
-            .Formats = device.getSurfaceFormatsKHR(m_Surface).value,
-            .PresentModes = device.getSurfacePresentModesKHR(m_Surface).value
+            .Capabilities = device.getSurfaceCapabilitiesKHR(Surface).value,
+            .Formats = device.getSurfaceFormatsKHR(Surface).value,
+            .PresentModes = device.getSurfacePresentModesKHR(Surface).value
         };
     }
 
-    bool Context::CheckDeviceExtensionSupport(vk::PhysicalDevice device) const
+    bool Context::Native::CheckDeviceExtensionSupport(vk::PhysicalDevice device) const
     {
         auto availableExtensions = device.enumerateDeviceExtensionProperties(nullptr).value;
 
-        auto& deviceExtensions = m_DeviceExtensions;
-
-        set<string> requiredExtensions(deviceExtensions.begin(),
-                                       deviceExtensions.end());
+        set<string> requiredExtensions(DeviceExtensions.begin(),
+                                       DeviceExtensions.end());
 
         for (const auto& extension : availableExtensions)
         {
@@ -618,9 +649,9 @@ namespace Veng::Renderer
         return requiredExtensions.empty();
     }
 
-    vk::Device Context::CreateDevice()
+    vk::Device Context::Native::CreateDevice()
     {
-        QueueFamilyIndices indices = FindQueueFamilies(m_PhysicalDevice);
+        QueueFamilyIndices indices = FindQueueFamilies(PhysicalDevice);
 
         vector<vk::DeviceQueueCreateInfo> queueCreateInfos;
         set<u32> uniqueQueueFamilies{
@@ -646,7 +677,7 @@ namespace Veng::Renderer
             .shaderSampledImageArrayDynamicIndexing = VK_TRUE
         };
 
-        auto deviceExtensions = m_DeviceExtensions;
+        auto deviceExtensions = DeviceExtensions;
 
         vk::PhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{
             .dynamicRendering = vk::True
@@ -657,7 +688,7 @@ namespace Veng::Renderer
             .features = deviceFeatures
         };
 
-        m_PhysicalDevice.getFeatures2(&features2);
+        PhysicalDevice.getFeatures2(&features2);
 
         vk::PhysicalDeviceVulkan12Features vulkan12Features{
             .pNext = &features2,
@@ -683,12 +714,12 @@ namespace Veng::Renderer
             .ppEnabledExtensionNames = deviceExtensions.data()
         };
 
-        return m_PhysicalDevice.createDevice(deviceCreateInfo, nullptr).value;
+        return PhysicalDevice.createDevice(deviceCreateInfo, nullptr).value;
     }
 
     void Context::CreateImGuiResources()
     {
-        m_ImGuiFramebuffers.resize(m_SwapChain->GetImageCount());
+        m_ImGuiFramebuffers.resize(m_Native->SwapChain->GetImageCount());
 
         m_ImGuiImage = Image::Create({
             .Name = "ImGui Image",
@@ -705,7 +736,7 @@ namespace Veng::Renderer
             .Image = m_ImGuiImage,
         });
 
-        for (size_t i = 0; i < m_SwapChain->GetImageCount(); i++)
+        for (size_t i = 0; i < m_Native->SwapChain->GetImageCount(); i++)
         {
             m_ImGuiFramebuffers[i] = Framebuffer::Create({
                 .Name = fmt::format("ImGui Framebuffer {}", i),
@@ -727,82 +758,82 @@ namespace Veng::Renderer
 
     SynchronizationFrame& Context::AcquireNextFrame()
     {
-        m_SynchronizationFrames[m_CurrentFrameInFlight].GetInFlightFence().Wait();
+        m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight].GetInFlightFence().Wait();
 
         // The fence is now signaled, so the GPU has finished the work that was
         // recorded the last time this frame index was current — anything
         // retired then is safe to destroy.
-        DrainRetireBin(m_RetireBins[m_CurrentFrameInFlight]);
+        m_Native->DrainRetireBin(m_Native->RetireBins[m_Native->CurrentFrameInFlight]);
 
-        return m_SynchronizationFrames[m_CurrentFrameInFlight];
+        return m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight];
     }
 
-    Context::RetireBin& Context::CurrentRetireBin()
+    Context::Native::RetireBin& Context::Native::CurrentRetireBin()
     {
-        VE_ASSERT(!m_Disposed,
+        VE_ASSERT(!Disposed,
                   "Context::Retire after teardown — a resource outlived the rendering context");
-        return m_RetireBins[m_CurrentFrameInFlight];
+        return RetireBins[CurrentFrameInFlight];
     }
 
-    void Context::Retire(vk::Buffer buffer, VmaAllocation allocation)
+    void Context::Native::Retire(vk::Buffer buffer, VmaAllocation allocation)
     {
         CurrentRetireBin().Buffers.emplace_back(buffer, allocation);
     }
 
-    void Context::Retire(vk::Image image, VmaAllocation allocation)
+    void Context::Native::Retire(vk::Image image, VmaAllocation allocation)
     {
         CurrentRetireBin().Images.emplace_back(image, allocation);
     }
 
-    void Context::Retire(vk::ImageView imageView) { CurrentRetireBin().ImageViews.push_back(imageView); }
-    void Context::Retire(vk::Sampler sampler) { CurrentRetireBin().Samplers.push_back(sampler); }
-    void Context::Retire(vk::ShaderModule shaderModule) { CurrentRetireBin().ShaderModules.push_back(shaderModule); }
-    void Context::Retire(vk::Pipeline pipeline) { CurrentRetireBin().Pipelines.push_back(pipeline); }
-    void Context::Retire(vk::PipelineLayout pipelineLayout) { CurrentRetireBin().PipelineLayouts.push_back(pipelineLayout); }
-    void Context::Retire(vk::RenderPass renderPass) { CurrentRetireBin().RenderPasses.push_back(renderPass); }
-    void Context::Retire(vk::Framebuffer framebuffer) { CurrentRetireBin().Framebuffers.push_back(framebuffer); }
-    void Context::Retire(vk::DescriptorSet descriptorSet) { CurrentRetireBin().DescriptorSets.push_back(descriptorSet); }
+    void Context::Native::Retire(vk::ImageView imageView) { CurrentRetireBin().ImageViews.push_back(imageView); }
+    void Context::Native::Retire(vk::Sampler sampler) { CurrentRetireBin().Samplers.push_back(sampler); }
+    void Context::Native::Retire(vk::ShaderModule shaderModule) { CurrentRetireBin().ShaderModules.push_back(shaderModule); }
+    void Context::Native::Retire(vk::Pipeline pipeline) { CurrentRetireBin().Pipelines.push_back(pipeline); }
+    void Context::Native::Retire(vk::PipelineLayout pipelineLayout) { CurrentRetireBin().PipelineLayouts.push_back(pipelineLayout); }
+    void Context::Native::Retire(vk::RenderPass renderPass) { CurrentRetireBin().RenderPasses.push_back(renderPass); }
+    void Context::Native::Retire(vk::Framebuffer framebuffer) { CurrentRetireBin().Framebuffers.push_back(framebuffer); }
+    void Context::Native::Retire(vk::DescriptorSet descriptorSet) { CurrentRetireBin().DescriptorSets.push_back(descriptorSet); }
 
-    void Context::DrainRetireBin(RetireBin& bin)
+    void Context::Native::DrainRetireBin(RetireBin& bin)
     {
         // Destroy dependents before the objects they reference: descriptor sets
         // and framebuffers first, then views, then the images/buffers backing
         // them. Everything in the bin is already GPU-idle.
         for (auto descriptorSet : bin.DescriptorSets)
-            m_Device.freeDescriptorSets(m_DescriptorPool->GetVkDescriptorPool(), descriptorSet);
+            Device.freeDescriptorSets(DescriptorPool->GetVkDescriptorPool(), descriptorSet);
         for (auto framebuffer : bin.Framebuffers)
-            m_Device.destroyFramebuffer(framebuffer);
+            Device.destroyFramebuffer(framebuffer);
         for (auto imageView : bin.ImageViews)
-            m_Device.destroyImageView(imageView);
+            Device.destroyImageView(imageView);
         for (auto& [image, allocation] : bin.Images)
-            vmaDestroyImage(m_Allocator, image, allocation);
+            vmaDestroyImage(Allocator, image, allocation);
         for (auto& [buffer, allocation] : bin.Buffers)
-            vmaDestroyBuffer(m_Allocator, buffer, allocation);
+            vmaDestroyBuffer(Allocator, buffer, allocation);
         for (auto renderPass : bin.RenderPasses)
-            m_Device.destroyRenderPass(renderPass);
+            Device.destroyRenderPass(renderPass);
         for (auto pipeline : bin.Pipelines)
-            m_Device.destroyPipeline(pipeline);
+            Device.destroyPipeline(pipeline);
         for (auto pipelineLayout : bin.PipelineLayouts)
-            m_Device.destroyPipelineLayout(pipelineLayout);
+            Device.destroyPipelineLayout(pipelineLayout);
         for (auto sampler : bin.Samplers)
-            m_Device.destroySampler(sampler);
+            Device.destroySampler(sampler);
         for (auto shaderModule : bin.ShaderModules)
-            m_Device.destroyShaderModule(shaderModule);
+            Device.destroyShaderModule(shaderModule);
 
         bin = {};
     }
 
-    void Context::DrainAllRetireBins()
+    void Context::Native::DrainAllRetireBins()
     {
-        for (auto& bin : m_RetireBins)
+        for (auto& bin : RetireBins)
             DrainRetireBin(bin);
     }
 
     void Context::SubmitFrame(const SynchronizationFrame& frame) const
     {
-        const auto commandBuffer = frame.GetCommandBuffer()->GetVkCommandBuffer();
-        const auto renderFinishedSemaphore = frame.GetRenderFinishedSemaphore().GetVkSemaphore();
-        const auto imageAvailableSemaphore = frame.GetImageAvailableSemaphore().GetVkSemaphore();
+        const auto commandBuffer = frame.GetCommandBuffer()->GetNative().CommandBuffer;
+        const auto renderFinishedSemaphore = frame.GetRenderFinishedSemaphore().GetNative().Semaphore;
+        const auto imageAvailableSemaphore = frame.GetImageAvailableSemaphore().GetNative().Semaphore;
 
         const vk::PipelineStageFlags mask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
 
@@ -816,15 +847,15 @@ namespace Veng::Renderer
             .pSignalSemaphores = &renderFinishedSemaphore,
         };
 
-        VK_ASSERT(m_GraphicsQueue.submit(1, &submitInfo, frame.GetInFlightFence().GetVkFence()),
+        VK_ASSERT(m_Native->GraphicsQueue.submit(1, &submitInfo, frame.GetInFlightFence().GetNative().Fence),
                   "Failed to submit draw command buffer!");
     }
 
     void Context::PresentFrame(const SynchronizationFrame& frame)
     {
-        auto renderFinishedSemaphore = frame.GetRenderFinishedSemaphore().GetVkSemaphore();
-        auto swapChain = m_SwapChain->GetVkSwapChain();
-        auto imageIndex = m_SwapChain->GetCurrentImageIndex();
+        auto renderFinishedSemaphore = frame.GetRenderFinishedSemaphore().GetNative().Semaphore;
+        auto swapChain = m_Native->SwapChain->GetVkSwapChain();
+        auto imageIndex = m_Native->SwapChain->GetCurrentImageIndex();
 
         vk::PresentInfoKHR presentInfo{
             .waitSemaphoreCount = 1,
@@ -834,7 +865,7 @@ namespace Veng::Renderer
             .pImageIndices = &imageIndex
         };
 
-        auto result = m_PresentQueue.presentKHR(presentInfo);
+        auto result = m_Native->PresentQueue.presentKHR(presentInfo);
 
         if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR ||
             m_RenderExtentChanged)
@@ -852,49 +883,35 @@ namespace Veng::Renderer
             VE_ASSERT(false, "failed to present swap chain image!");
         }
 
-        m_CurrentFrameInFlight = (m_CurrentFrameInFlight + 1) % m_MaxFramesInFlight;
+        m_Native->CurrentFrameInFlight = (m_Native->CurrentFrameInFlight + 1) % m_Native->MaxFramesInFlight;
     }
 
     void Context::SubmitImmediateCommands(CommandBuffer& commandBuffer) const
     {
-        const auto commandBufferHandle = commandBuffer.GetVkCommandBuffer();
+        const auto commandBufferHandle = commandBuffer.GetNative().CommandBuffer;
 
         const vk::SubmitInfo submitInfo = {
             .commandBufferCount = 1,
             .pCommandBuffers = &commandBufferHandle
         };
 
-        VK_ASSERT(m_GraphicsQueue.submit(1, &submitInfo, VK_NULL_HANDLE), "failed to submit to queue!");
+        VK_ASSERT(m_Native->GraphicsQueue.submit(1, &submitInfo, VK_NULL_HANDLE), "failed to submit to queue!");
 
         WaitIdle();
-    }
-
-    vk::PresentModeKHR Context::GetPresentMode(
-        const vector<vk::PresentModeKHR>& availablePresentModes)
-    {
-        for (const auto& availablePresentMode : availablePresentModes)
-        {
-            if (availablePresentMode == vk::PresentModeKHR::eMailbox)
-            {
-                return availablePresentMode;
-            }
-        }
-
-        return vk::PresentModeKHR::eFifo;
     }
 
     void Context::UpdateRenderExtent()
     {
         Log::Info("Updating extent {0}x{1}", m_RenderExtent.x, m_RenderExtent.y);
 
-        m_SwapChain->RenderExtentChanged();
+        m_Native->SwapChain->RenderExtentChanged();
 
-        m_RenderExtent = m_SwapChain->GetExtent();
+        m_RenderExtent = m_Native->SwapChain->GetExtent();
 
         DisposeImGuiResources();
         CreateImGuiResources();
 
-        m_SwapChain->Invalidated();
+        m_Native->SwapChain->Invalidated();
 
 #ifdef VE_VIEWPORTS
         ImGui::GetMainViewport()->Size = ImVec2(static_cast<f32>(m_RenderExtent.x),

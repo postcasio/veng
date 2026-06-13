@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
-#include <Veng/Renderer/Backend/Vulkan.h>
+#include <Veng/Renderer/Types.h>
 
 namespace Veng::Renderer
 {
@@ -12,16 +12,11 @@ namespace Veng::Renderer
         string Name;
         Ref<Image> Image;
 
-        vk::ImageViewType ViewType = vk::ImageViewType::e2D;
+        ImageViewType ViewType = ImageViewType::Type2D;
         u32 BaseMipLevel = 0;
         u32 MipLevels = 1;
         u32 BaseArrayLayer = 0;
         u32 ArrayLayers = 1;
-        vk::ComponentMapping Components = {
-            vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity,
-            vk::ComponentSwizzle::eIdentity
-        };
-        vk::ImageViewCreateFlags Flags = {};
     };
 
     class ImageView
@@ -36,14 +31,16 @@ namespace Veng::Renderer
         explicit ImageView(const ImageViewInfo& info);
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
-        [[nodiscard]] vk::ImageView GetVkImageView() const { return m_VkImageView; }
-        [[nodiscard]] vk::Format GetFormat() const { return m_Format; }
+        [[nodiscard]] Format GetFormat() const { return m_Format; }
         [[nodiscard]] Ref<Image> GetImage() const { return m_Image; }
+
+        struct Native;
+        [[nodiscard]] Native& GetNative() const;
 
     private:
         string m_Name;
-        vk::Format m_Format;
-        vk::ImageView m_VkImageView;
+        Format m_Format;
+        Unique<Native> m_Native;
         Ref<Image> m_Image;
     };
 }

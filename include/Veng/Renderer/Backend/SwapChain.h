@@ -1,10 +1,10 @@
 #pragma once
 
-#include <Veng/Renderer/Backend/Framebuffer.h>
+#include <Veng/Renderer/Framebuffer.h>
 #include <Veng/Veng.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
-#include <Veng/Renderer/Backend/Image.h>
-#include <Veng/Renderer/Backend/Semaphore.h>
+#include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/Semaphore.h>
 #include <Veng/Window.h>
 #include <Veng/Renderer/Backend/SwapChainSupport.h>
 

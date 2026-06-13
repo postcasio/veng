@@ -1,8 +1,9 @@
 #include <Veng/Application.h>
 
+#include <Veng/Assert.h>
 #include <Veng/Log.h>
 #include <Veng/Time.h>
-#include <Veng/Renderer/Backend/Command.h>
+#include <Veng/Renderer/Command.h>
 
 namespace Veng
 {

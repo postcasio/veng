@@ -33,6 +33,23 @@ namespace Veng::Renderer
 
     enum class ImageType : u8 { Type1D, Type2D, Type3D };
 
+    enum class ImageLayout : u8
+    {
+        Undefined,
+        General,
+        ColorAttachment,
+        DepthAttachment,
+        ShaderReadOnly,
+        TransferSrc,
+        TransferDst,
+        PresentSrc,
+    };
+
+    enum class ImageViewType : u8
+    {
+        Type1D, Type2D, Type3D, Cube, Array1D, Array2D, CubeArray,
+    };
+
     enum class ImageUsage : u32
     {
         Sampled = 1 << 0,
@@ -78,6 +95,14 @@ namespace Veng::Renderer
     enum class BorderColor : u8 { TransparentBlack, OpaqueBlack, OpaqueWhite };
 
     enum class PipelineBindPoint : u8 { Graphics, Compute };
+
+    enum class CommandBufferLevel : u8 { Primary, Secondary };
+
+    enum class CommandBufferUsage : u32
+    {
+        None = 0,
+        OneTimeSubmit = 1 << 0,
+    };
 
     enum class DescriptorType : u8
     {
@@ -149,4 +174,5 @@ namespace Veng::Renderer
     VE_ENUM_FLAGS(ImageUsage)
     VE_ENUM_FLAGS(BufferUsage)
     VE_ENUM_FLAGS(ShaderStage)
+    VE_ENUM_FLAGS(CommandBufferUsage)
 }

@@ -1,8 +1,9 @@
 #pragma once
 
+#include <span>
+
 #include <Veng/Veng.h>
 #include <Veng/Renderer/Types.h>
-#include <Veng/Renderer/Backend/Vulkan.h>
 
 namespace Veng::Renderer
 {
@@ -29,15 +30,15 @@ namespace Veng::Renderer
         void Upload(std::span<const u8> data) const;
         [[nodiscard]] vector<u8> Download() const;
 
-        [[nodiscard]] vk::Buffer GetVkBuffer() const { return m_VkBuffer; }
-        [[nodiscard]] VmaAllocation GetVmaAllocation() const { return m_VmaAllocation; }
         [[nodiscard]] const string& GetName() const { return m_Name; }
+
+        struct Native;
+        [[nodiscard]] Native& GetNative() const;
 
     private:
         string m_Name;
 
-        vk::Buffer m_VkBuffer;
-        VmaAllocation m_VmaAllocation{};
+        Unique<Native> m_Native;
         u64 m_Size;
     };
 }

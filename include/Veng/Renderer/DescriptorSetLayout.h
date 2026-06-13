@@ -1,7 +1,6 @@
 #pragma once
 
 #include <Veng/Veng.h>
-#include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Types.h>
 
 namespace Veng::Renderer
@@ -31,11 +30,6 @@ namespace Veng::Renderer
         explicit DescriptorSetLayout(const DescriptorSetLayoutInfo& info);
         ~DescriptorSetLayout();
 
-        [[nodiscard]] const vk::DescriptorSetLayout& GetVkDescriptorSetLayout() const
-        {
-            return m_VkDescriptorSetLayout;
-        }
-
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] const vector<DescriptorBinding>& GetBindings() const { return m_Bindings; }
 
@@ -44,10 +38,13 @@ namespace Veng::Renderer
         [[nodiscard]] DescriptorType GetBindingType(u32 binding) const;
         [[nodiscard]] u32 GetBindingCount(u32 binding) const; // descriptor count (array size)
 
+        struct Native;
+        [[nodiscard]] Native& GetNative() const;
+
     private:
         string m_Name;
         vector<DescriptorBinding> m_Bindings;
         map<u32, DescriptorBinding> m_BindingsByNumber;
-        vk::DescriptorSetLayout m_VkDescriptorSetLayout;
+        Unique<Native> m_Native;
     };
 }
