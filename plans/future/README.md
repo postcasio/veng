@@ -75,28 +75,35 @@ bindings/devices). Revisit when gameplay drives the requirements.
 
 ### 5. Unit testing / test infrastructure (firm up soon)
 
-> **Area 5a (harness + pure-logic + one-exe GPU tests) is now
-> [planset-3](../planset-3/README.md)** (in progress). What remains here is **5b**:
-> the in-process multi-case GPU integration suite, deferred until after the
-> de-globalize change (area 3) so it targets the explicit-device API and gets real
-> per-test isolation. The notes below are retained as the area's full vision.
+> **Area 5a is DONE — delivered by [planset-3](../planset-3/README.md)**: doctest
+> framework + CTest wiring, a death harness (separate-process; traps
+> SIGABRT/SIGTRAP/SIGILL and gates on the assert message via
+> `PASS_REGULAR_EXPRESSION` — `WILL_FAIL` does *not* invert a signal death, so the
+> original sketch below was wrong on that point), and base coverage: pure-logic
+> (`Result`, `VertexBufferLayout`), `ToVk`/`FromVk` round-trips, an extracted pure
+> `DecideBarrier`/`ScopeFor` rule + tests, death tests, and a consolidated one-exe
+> GPU band that skips (not fails) with no ICD. Typed-buffer size math is covered
+> end-to-end on the GPU, not extracted.
 
-Today's `tests/` are two CTest smoke/compile guards (`include_hygiene`,
-`headless_smoke`) — no unit-test framework, no pure-logic coverage. Stand up a
-real setup:
+What remains in area 5 after planset-3:
 
-- **Framework:** lightweight header-only (doctest/Catch2). Constraint: `veng`
-  builds `-fno-exceptions` (PRIVATE), but test executables link `veng::veng` and
-  don't inherit it, so a throwing framework is fine in test TUs.
-- **Pure-logic coverage** (no GPU): `Result`/error paths, typed-buffer size math
-  and `VertexBufferLayout` stride, `ToVk`/`FromVk` round-trips, render-graph
-  barrier-decision logic (extract the diff rule so it's device-testable).
-- **Death tests:** `VE_ASSERT` aborts → test as separate processes via exit code
-  (CTest `WILL_FAIL` / fork harness) — e.g. u16-into-U32 index buffer, descriptor
-  type mismatch.
-- **GPU-backed tests** via the headless context (extend `headless_smoke`).
-- **CI:** GPU tests need a Vulkan ICD (MoltenVK / lavapipe / SwiftShader) — gate
-  or skip gracefully where absent.
+- **5b — in-process multi-case GPU integration suite**, deferred until after the
+  de-globalize change (area 3) so it targets the explicit-device API and gets real
+  per-test isolation (stand a `Context` up/down per case). It can't get that
+  isolation while `Context::Instance()` is a singleton, and writing it against the
+  singleton now would mean rewriting it post-de-global — hence the `5a → 3 → 5b`
+  ordering. Its exact shape (fixtures, per-case device lifecycle) is fixed by where
+  de-global lands, so it's specified then, not now. The existing one-exe-per-test
+  GPU band (each its own process → its own singleton) is the stopgap until then.
+- **CI with a software Vulkan ICD** (lavapipe / SwiftShader). planset-3 was
+  deliberately local-dev-only: the GPU band skips where no driver is present, but
+  there is no hosted pipeline and no automated validation gate. Validation errors
+  still don't fail tests (the debug messenger only logs) — a CI gate would need to
+  grep stderr for validation ERRORs, or promote them to failures behind a flag.
+- **Known descriptor-pool / `UPDATE_AFTER_BIND` validation gap** (storage-image,
+  and — surfaced by planset-3's `descriptor_write_paths` — sampled-image pool
+  sizes): not a testing task but a real engine gap the tests now pin. It belongs to
+  the [bindless/descriptor rework](bindless-descriptors.md), not area 5.
 
 ## Ordering & dependencies
 

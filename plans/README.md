@@ -14,11 +14,12 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   is deferred to the future-work areas below.
 
 - **[planset-3](planset-3/README.md)** — unit testing & test infrastructure
-  (🚧 in progress). Promotes the first half of the future "testing" area (area 5a):
-  a header-only framework (doctest), CTest wiring, a death-test harness, and a base
-  suite — pure-logic, type-mapping round-trips, GPU one-exe exercises. The
-  in-process multi-case GPU integration suite (5b) stays in `future/`, deferred
-  until after the de-globalize change.
+  (✅ done, 6 plans). Delivered the first half of the future "testing" area (area
+  5a): a header-only framework (doctest), CTest wiring, a death-test harness, and a
+  base suite — pure-logic, type-mapping round-trips, an extracted barrier-decision
+  rule + tests, death tests, and a consolidated GPU one-exe band that skips with no
+  ICD. The in-process multi-case GPU integration suite (5b) and CI stay in
+  `future/`, deferred until after the de-globalize change.
 
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). The asset system (asset API first, then

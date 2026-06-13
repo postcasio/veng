@@ -184,7 +184,15 @@ param entry*, not a bundle of descriptor sets.
 
 1. **06 addendum first** — static-by-default + the type/feature/pool single source
    of truth, so the existing per-set layer is coherent and bindless flags become an
-   explicit opt-in rather than a global default.
+   explicit opt-in rather than a global default. **Gaps planset-3 now pins** (its
+   `descriptor_write_paths` test reproduces them under `VE_DEBUG`, recorded not
+   fixed): the headless descriptor pool (`Context.cpp`) sizes only `eUniformBuffer`
+   and `eCombinedImageSampler`, so a `StorageImage` *or* a bare `SampledImage`
+   binding draws a pool-size validation WARN; and every binding is created
+   `UPDATE_AFTER_BIND` without the matching device feature, so a `StorageImage`
+   binding draws an ERROR (`descriptorBindingStorageImageUpdateAfterBind` not
+   enabled). The type→{pool size, required feature} single source of truth this
+   step introduces is exactly what closes both.
 2. **De-globalize `Context` (area 3)** — the registry wants an explicit device, not
    a `Context::Instance()` grab.
 3. **Registry + handles, alongside the per-set API** — don't rip out `DescriptorSet`
