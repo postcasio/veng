@@ -14,7 +14,7 @@
 #include <Veng/Renderer/Mesh.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
-#include <Veng/Renderer/Shader.h>
+#include <Veng/Renderer/ShaderAsset.h>
 #include <Veng/Renderer/Texture.h>
 
 #include <glm/gtc/packing.hpp>
@@ -180,6 +180,8 @@ protected:
         m_SceneTexture.reset();
         m_CompositePipeline.reset();
         m_CompositeLayout.reset();
+        m_CompositeVS = {};
+        m_CompositeFS = {};
         m_Sampler.reset();
         m_ImGuiImageView.reset();
         m_DepthImageView.reset();
@@ -193,17 +195,15 @@ private:
     {
         auto& context = GetRenderContext();
 
-        const auto vertexShader = Renderer::Shader::Create(context, {
-            .Name = "composite.vert",
-            .Path = path(HT_SHADER_DIR) / "composite.vert.spv",
-        });
-        VE_ASSERT(vertexShader, "{}", vertexShader.error());
+        const AssetResult<AssetHandle<Renderer::ShaderAsset>> vs =
+            GetAssetManager().LoadSync<Renderer::ShaderAsset>(AssetId{1006});
+        VE_ASSERT(vs.has_value(), "{}", vs.error().Detail);
+        m_CompositeVS = *vs;
 
-        const auto fragmentShader = Renderer::Shader::Create(context, {
-            .Name = "composite.frag",
-            .Path = path(HT_SHADER_DIR) / "composite.frag.spv",
-        });
-        VE_ASSERT(fragmentShader, "{}", fragmentShader.error());
+        const AssetResult<AssetHandle<Renderer::ShaderAsset>> fs =
+            GetAssetManager().LoadSync<Renderer::ShaderAsset>(AssetId{1007});
+        VE_ASSERT(fs.has_value(), "{}", fs.error().Detail);
+        m_CompositeFS = *fs;
 
         m_CompositeLayout = Renderer::PipelineLayout::Create(context, {
             .Name = "Composite Layout",
@@ -220,8 +220,8 @@ private:
             .ColorAttachments = {{.Format = context.GetSwapChainFormat()}},
             .PipelineLayout = m_CompositeLayout,
             .ShaderStages = {
-                {.Stage = Renderer::ShaderStage::Vertex, .Module = vertexShader.value()},
-                {.Stage = Renderer::ShaderStage::Fragment, .Module = fragmentShader.value()},
+                {.Stage = Renderer::ShaderStage::Vertex, .Module = m_CompositeVS.Get()->Module},
+                {.Stage = Renderer::ShaderStage::Fragment, .Module = m_CompositeFS.Get()->Module},
             },
         });
 
@@ -376,6 +376,8 @@ private:
     AssetHandle<Renderer::Mesh> m_CubeMesh;
     AssetHandle<Renderer::Material> m_BrickMaterial;
 
+    AssetHandle<Renderer::ShaderAsset> m_CompositeVS;
+    AssetHandle<Renderer::ShaderAsset> m_CompositeFS;
     Ref<Renderer::PipelineLayout> m_CompositeLayout;
     Ref<Renderer::GraphicsPipeline> m_CompositePipeline;
     Renderer::TextureHandle m_SceneTextureHandle;

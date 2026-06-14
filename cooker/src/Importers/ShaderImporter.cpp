@@ -99,6 +99,12 @@ namespace Veng::Cook
                     return access == SLANG_RESOURCE_ACCESS_READ ? DescriptorTypeSampledImage : DescriptorTypeStorageImage;
                 }
 
+                // RWTexture2D and friends carry the mutable flag, so Slang
+                // reports them as MutableTexture rather than Texture; they are
+                // always read-write storage images.
+                case slang::BindingType::MutableTexture:
+                    return DescriptorTypeStorageImage;
+
                 case slang::BindingType::Sampler:
                     return DescriptorTypeSampler;
 
@@ -107,6 +113,8 @@ namespace Veng::Cook
 
                 case slang::BindingType::TypedBuffer:
                 case slang::BindingType::RawBuffer:
+                case slang::BindingType::MutableTypedBuffer:
+                case slang::BindingType::MutableRawBuffer:
                     return DescriptorTypeStorageBuffer;
 
                 default:

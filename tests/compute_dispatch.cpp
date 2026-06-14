@@ -22,6 +22,7 @@
 #include <cstdio>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/ComputePipeline.h>
@@ -33,7 +34,7 @@
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
-#include <Veng/Renderer/Shader.h>
+#include <Veng/Renderer/ShaderAsset.h>
 #include <Veng/Renderer/Types.h>
 
 #include <support/GpuContext.h>
@@ -64,6 +65,13 @@ int main()
 
     int status = 0;
     {
+        // Shaders reach the GPU only through a cooked pack; mount the test pack
+        // and load each module by id. Handles stay in scope until after the
+        // graph executes so their modules outlive the pipelines.
+        AssetManager assets(context);
+        const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
+        VE_ASSERT(mountResult, "mount test shader pack: {}", mountResult.error());
+
         auto sourceImage = Image::Create(context, {
             .Name = "Compute Source",
             .Extent = {size, size, 1},
@@ -102,11 +110,8 @@ int main()
 
         // --- Compute pipeline: reads `source`, writes `derived`. ---
 
-        const auto computeShader = Shader::Create(context, {
-            .Name = "invert.comp",
-            .Path = path(CD_SHADER_DIR) / "invert.comp.spv",
-        });
-        VE_ASSERT(computeShader, "{}", computeShader.error());
+        const auto computeShaderAsset = assets.LoadSync<ShaderAsset>(AssetId{8001});
+        VE_ASSERT(computeShaderAsset, "load invert.comp: {}", computeShaderAsset.error().Detail);
 
         auto computeSetLayout = DescriptorSetLayout::Create(context, {
             .Name = "Compute Set Layout",
@@ -124,7 +129,7 @@ int main()
         auto computePipeline = ComputePipeline::Create(context, {
             .Name = "Invert Pipeline",
             .PipelineLayout = computeLayout,
-            .ShaderStage = {.Stage = ShaderStage::Compute, .Module = computeShader.value()},
+            .ShaderStage = {.Stage = ShaderStage::Compute, .Module = computeShaderAsset->Get()->Module},
         });
 
         auto computeSet = DescriptorSet::Create(context, {
@@ -137,17 +142,11 @@ int main()
 
         // --- Graphics pipeline: samples `derived`, writes to `output`. ---
 
-        const auto vertexShader = Shader::Create(context, {
-            .Name = "fullscreen.vert",
-            .Path = path(CD_SHADER_DIR) / "fullscreen.vert.spv",
-        });
-        VE_ASSERT(vertexShader, "{}", vertexShader.error());
+        const auto vertexShaderAsset = assets.LoadSync<ShaderAsset>(AssetId{8002});
+        VE_ASSERT(vertexShaderAsset, "load fullscreen.vert: {}", vertexShaderAsset.error().Detail);
 
-        const auto fragmentShader = Shader::Create(context, {
-            .Name = "sample.frag",
-            .Path = path(CD_SHADER_DIR) / "sample.frag.spv",
-        });
-        VE_ASSERT(fragmentShader, "{}", fragmentShader.error());
+        const auto fragmentShaderAsset = assets.LoadSync<ShaderAsset>(AssetId{8003});
+        VE_ASSERT(fragmentShaderAsset, "load sample.frag: {}", fragmentShaderAsset.error().Detail);
 
         auto sampleSetLayout = DescriptorSetLayout::Create(context, {
             .Name = "Sample Set Layout",
@@ -166,8 +165,8 @@ int main()
             .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
             .PipelineLayout = sampleLayout,
             .ShaderStages = {
-                {.Stage = ShaderStage::Vertex, .Module = vertexShader.value()},
-                {.Stage = ShaderStage::Fragment, .Module = fragmentShader.value()},
+                {.Stage = ShaderStage::Vertex, .Module = vertexShaderAsset->Get()->Module},
+                {.Stage = ShaderStage::Fragment, .Module = fragmentShaderAsset->Get()->Module},
             },
         });
 

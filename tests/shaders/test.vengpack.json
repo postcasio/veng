@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "assets": [
+    { "id": 8001, "type": "shader", "source": "invert.comp.shader.json" },
+    { "id": 8002, "type": "shader", "source": "fullscreen.vert.shader.json" },
+    { "id": 8003, "type": "shader", "source": "sample.frag.shader.json" },
+    { "id": 8004, "type": "shader", "source": "bindless_sample.frag.shader.json" }
+  ]
+}

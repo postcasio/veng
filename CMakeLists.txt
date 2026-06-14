@@ -14,7 +14,7 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN OFF)
 include(FetchContent)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Shaders.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AssetPack.cmake)
 
 option(VE_DEBUG "Enable veng debug features (validation layers, asserts)" OFF)
 
@@ -318,19 +318,30 @@ if (VENG_BUILD_TESTS)
     # Compute dispatch test (plan 05): headless graphics -> compute -> graphics
     # render graph proving cmd.Dispatch and the storage-image barrier chain.
     # Skips (SKIP_RETURN_CODE 77) with no Vulkan ICD.
+    # Cooks the GPU tests' Slang shaders into a small .vengpack. The tests mount
+    # it and LoadSync<ShaderAsset> their modules exactly as an app would — the
+    # engine has no runtime Slang compiler, so cooking is the only path to a
+    # shader module. None of these shaders declare vertex inputs, so the pack
+    # needs no REFERENCE for a vertex-layout id.
+    add_asset_pack(veng_test_shaders
+            PACK   tests/shaders/test.vengpack.json
+            OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/test_shaders.vengpack
+            DEPENDS
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/invert.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/fullscreen.vert.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sample.frag.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/bindless_sample.frag.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/invert.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/fullscreen.vert.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sample.frag.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/bindless_sample.frag.shader.json)
+
     add_executable(veng_compute_dispatch tests/compute_dispatch.cpp)
     target_link_libraries(veng_compute_dispatch PRIVATE veng::veng veng_test_support)
+    add_dependencies(veng_compute_dispatch veng_test_shaders)
     target_compile_definitions(veng_compute_dispatch PRIVATE
-            CD_SHADER_DIR="${CMAKE_CURRENT_BINARY_DIR}/shaders"
+            TEST_SHADER_PACK="${CMAKE_CURRENT_BINARY_DIR}/test_shaders.vengpack"
     )
-
-    add_shaders(veng_compute_dispatch_shaders
-            tests/shaders/invert.comp
-            tests/shaders/fullscreen.vert
-            tests/shaders/sample.frag
-            tests/shaders/bindless_sample.frag
-    )
-    add_dependencies(veng_compute_dispatch veng_compute_dispatch_shaders)
 
     add_test(NAME compute_dispatch COMMAND veng_compute_dispatch)
     set_tests_properties(compute_dispatch PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
@@ -354,13 +365,12 @@ if (VENG_BUILD_TESTS)
             tests/gpu/bindless_registry.cpp
     )
     target_link_libraries(veng_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
+    # bindless_registry.cpp and texture_loader.cpp draw with the test shaders
+    # (fullscreen.vert + bindless_sample.frag), loaded by id from the cooked pack.
+    add_dependencies(veng_gpu veng_test_shaders)
     target_compile_definitions(veng_gpu PRIVATE
-            GPU_SHADER_DIR="${CMAKE_CURRENT_BINARY_DIR}/shaders"
+            TEST_SHADER_PACK="${CMAKE_CURRENT_BINARY_DIR}/test_shaders.vengpack"
     )
-    # bindless_registry.cpp draws with tests/shaders/bindless_sample.frag and
-    # fullscreen.vert, compiled into the same ${CMAKE_CURRENT_BINARY_DIR}/shaders
-    # output dir by veng_compute_dispatch_shaders.
-    add_dependencies(veng_gpu veng_compute_dispatch_shaders)
 
     # texture_loader.cpp cooks a fixture pack in-process (plan 06), so it needs
     # the cooker library and the cooker fixtures' directory.
@@ -439,8 +449,6 @@ install(FILES
         ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.h
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/backends
 )
-
-install(FILES cmake/Shaders.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/veng)
 
 install(EXPORT vengTargets
         FILE veng-targets.cmake
