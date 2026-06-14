@@ -198,6 +198,13 @@ doc note them as on-and-unused).
 
 ## Out of scope (named, so it isn't half-built)
 
+- **A deferred renderer / the final material binding model.** veng has no deferred
+  renderer yet, so the example loads a **simple forward-rendering shader material**
+  this phase. The bindless handle + per-material SSBO model is right regardless, but
+  **what a material *is* at runtime (passes, per-object data layout) will change with
+  the renderer architecture** when a deferred path lands — the durable part is the
+  asset/cook side (JSON, validation, cooked blob), not the runtime binding. See
+  [plan 09](09-material.md).
 - **Async / threading** — the whole of future area 2. `LoadSync` only.
 - **Hot-reload / file watching** — needs a watcher and the async swap path; future.
   `Reload(id)` is *not* implemented this planset.

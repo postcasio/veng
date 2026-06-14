@@ -120,6 +120,18 @@ capstone type. Feeds 10.
 
 ## Notes
 
+- **The material binding model here is not final — veng has no deferred renderer
+  yet.** For this phase the example loads a **simple forward-rendering shader
+  material** (one pass, a basic lit/unlit shader sampling the albedo), and the
+  bindless data layout above is the forward-shaped subset of the
+  [bindless doc's table](../future/bindless-descriptors.md#per-draw-data-layout-push-constants-vs-buffers--for-a-deferred-renderer)
+  (which is written for a deferred pipeline — G-buffer geometry pass, a lighting
+  pass reading it). The per-material SSBO + handle model is right regardless, but
+  **what a material *is* (its passes, which params/handles it carries, where the
+  per-object data lives) will change with the renderer architecture** when a
+  deferred path lands. Treat the `Material`/`MaterialData` shape as v1-forward, not
+  the eventual contract — the asset/cook side (JSON, validation, the cooked blob)
+  is the durable part; the runtime binding is expected to evolve.
 - **The material is thin by construction** — handles + an SSBO entry, not a bundle
   of descriptor sets. This is the bindless end-state, reached directly because
   plan 05 came first.
