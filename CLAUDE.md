@@ -361,6 +361,11 @@ and verified, mint the real ids with `vengc generate-id` (optionally with
 Never invent a final id manually. All ids in the codebase, including the core
 pack's built-in layout ids, were minted this way.
 
+**Hardcoded `AssetId` literals in C++ are written in uppercase hexadecimal with a
+`0x` prefix** (`AssetId{0x4DD9F2A1C03B5E76ULL}`) — the form `vengc generate-id`
+emits. This is a representation convention for hand-written code only; JSON asset
+packs keep decimal ids, since JSON has no hex literal.
+
 **Delegate well-scoped chunks to `model: sonnet` subagents** (exploration sweeps,
 mechanical multi-file edits, focused sub-task implementation). Keep orchestration,
 design decisions, verification, and commits on the main thread. Don't spawn for

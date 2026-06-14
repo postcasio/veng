@@ -113,7 +113,7 @@ protected:
         // The primitive generator records this material instance on the produced
         // submesh, so it must be resident before Mesh::Create hands it in.
         const AssetResult<AssetHandle<Veng::Material>> brickMaterial =
-            GetAssetManager().LoadSync<Veng::Material>(AssetId{1003});
+            GetAssetManager().LoadSync<Veng::Material>(AssetId{0x3EB});
         VE_ASSERT(brickMaterial.has_value(), "{}", brickMaterial.error().Detail);
         m_BrickMaterial = *brickMaterial;
 
@@ -201,12 +201,12 @@ private:
         auto& context = GetRenderContext();
 
         const AssetResult<AssetHandle<Veng::Shader>> vs =
-            GetAssetManager().LoadSync<Veng::Shader>(AssetId{1006});
+            GetAssetManager().LoadSync<Veng::Shader>(AssetId{0x3EE});
         VE_ASSERT(vs.has_value(), "{}", vs.error().Detail);
         m_CompositeVS = *vs;
 
         const AssetResult<AssetHandle<Veng::Shader>> fs =
-            GetAssetManager().LoadSync<Veng::Shader>(AssetId{1007});
+            GetAssetManager().LoadSync<Veng::Shader>(AssetId{0x3EF});
         VE_ASSERT(fs.has_value(), "{}", fs.error().Detail);
         m_CompositeFS = *fs;
 

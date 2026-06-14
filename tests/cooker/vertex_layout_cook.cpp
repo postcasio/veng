@@ -33,7 +33,7 @@ TEST_CASE("Cooker: cooks a vertex_layout asset and produces correct blob")
     REQUIRE(reader.has_value());
 
     // The shader_pack.json has vertex_layout asset at id 7001.
-    const optional<ArchiveEntry> entry = reader->Find(AssetId{7001});
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0x1B59});
     REQUIRE(entry.has_value());
     CHECK(entry->Type == AssetType::VertexLayout);
 

@@ -139,7 +139,7 @@ int main(int argc, char** argv)
             packPtrs.push_back(&p);
 
         const AssetId id = GenerateAssetId(packPtrs);
-        fmt::print("{}\n", id.Value);
+        fmt::print("0x{:X}\n", id.Value);
         return 0;
     }
 

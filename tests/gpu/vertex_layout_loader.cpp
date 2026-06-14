@@ -34,7 +34,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "vertex layout loader: cook fixture pa
     REQUIRE(mountResult.has_value());
 
     const AssetResult<AssetHandle<VertexLayout>> handle =
-        assets.LoadSync<VertexLayout>(AssetId{7001});
+        assets.LoadSync<VertexLayout>(AssetId{0x1B59});
     REQUIRE(handle.has_value());
     REQUIRE(handle->IsLoaded());
 

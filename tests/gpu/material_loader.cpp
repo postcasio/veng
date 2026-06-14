@@ -36,7 +36,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "material loader: cook, mount, LoadSyn
     REQUIRE(mountResult.has_value());
 
     // ── Success path ──────────────────────────────────────────────────────────
-    const AssetResult<AssetHandle<Material>> handle = assets.LoadSync<Material>(AssetId{3001});
+    const AssetResult<AssetHandle<Material>> handle = assets.LoadSync<Material>(AssetId{0xBB9});
     REQUIRE(handle.has_value());
     REQUIRE(handle->IsLoaded());
 
@@ -51,7 +51,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "material loader: cook, mount, LoadSyn
     // ── Texture dependency cache coherence ───────────────────────────────────
     // The material load (id 3001) resolves texture id 2001. Loading 2001
     // independently must return the already-cached entry.
-    const AssetResult<AssetHandle<Texture>> texHandle = assets.LoadSync<Texture>(AssetId{2001});
+    const AssetResult<AssetHandle<Texture>> texHandle = assets.LoadSync<Texture>(AssetId{0x7D1});
     REQUIRE(texHandle.has_value());
     REQUIRE(texHandle->IsLoaded());
     CHECK(texHandle->Get()->GetHandle().IsValid());

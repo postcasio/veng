@@ -36,7 +36,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "mesh loader: cook, mount, LoadSync, v
     const VoidResult mountResult = assets.Mount(outArchive);
     REQUIRE(mountResult.has_value());
 
-    const AssetResult<AssetHandle<Mesh>> handle = assets.LoadSync<Mesh>(AssetId{3001});
+    const AssetResult<AssetHandle<Mesh>> handle = assets.LoadSync<Mesh>(AssetId{0xBB9});
     REQUIRE(handle.has_value());
     REQUIRE(handle->IsLoaded());
 

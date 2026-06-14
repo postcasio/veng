@@ -130,8 +130,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "async upload: upload on a worker, the
     const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
     REQUIRE(mountResult.has_value());
 
-    const AssetResult<AssetHandle<Shader>> vertexAsset = assets.LoadSync<Shader>(AssetId{8002});
-    const AssetResult<AssetHandle<Shader>> fragmentAsset = assets.LoadSync<Shader>(AssetId{8004});
+    const AssetResult<AssetHandle<Shader>> vertexAsset = assets.LoadSync<Shader>(AssetId{0x1F42});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset = assets.LoadSync<Shader>(AssetId{0x1F44});
     REQUIRE(vertexAsset.has_value());
     REQUIRE(fragmentAsset.has_value());
 

@@ -78,7 +78,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
     const VoidResult mountResult = assets.Mount(outArchive);
     REQUIRE(mountResult.has_value());
 
-    const AssetResult<AssetHandle<Texture>> handle = assets.LoadSync<Texture>(AssetId{2001});
+    const AssetResult<AssetHandle<Texture>> handle = assets.LoadSync<Texture>(AssetId{0x7D1});
     REQUIRE(handle.has_value());
     REQUIRE(handle->IsLoaded());
 
@@ -101,8 +101,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
     const VoidResult shaderMountResult = shaderAssets.Mount(path(TEST_SHADER_PACK));
     REQUIRE(shaderMountResult.has_value());
 
-    const AssetResult<AssetHandle<Shader>> vertexAsset = shaderAssets.LoadSync<Shader>(AssetId{8002});
-    const AssetResult<AssetHandle<Shader>> fragmentAsset = shaderAssets.LoadSync<Shader>(AssetId{8004});
+    const AssetResult<AssetHandle<Shader>> vertexAsset = shaderAssets.LoadSync<Shader>(AssetId{0x1F42});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset = shaderAssets.LoadSync<Shader>(AssetId{0x1F44});
     REQUIRE(vertexAsset.has_value());
     REQUIRE(fragmentAsset.has_value());
 
@@ -163,7 +163,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: async Load returns pe
     REQUIRE(assets.Mount(outArchive).has_value());
 
     // Load returns immediately with a not-yet-resident handle.
-    AssetHandle<Texture> handle = assets.Load<Texture>(AssetId{2001});
+    AssetHandle<Texture> handle = assets.Load<Texture>(AssetId{0x7D1});
     CHECK_FALSE(handle.IsLoaded());
 
     // The decode + upload run on the task system; the finalize lands on the main

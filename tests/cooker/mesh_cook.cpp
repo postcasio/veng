@@ -31,7 +31,7 @@ TEST_CASE("Cooker: cooks a mesh pack into a CookedMeshHeader + buffers + submesh
     const Result<ArchiveReader> reader = ArchiveReader::Open(outArchive);
     REQUIRE(reader.has_value());
 
-    const optional<ArchiveEntry> entry = reader->Find(AssetId{3001});
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xBB9});
     REQUIRE(entry.has_value());
     CHECK(entry->Type == AssetType::Mesh);
 

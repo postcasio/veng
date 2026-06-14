@@ -26,9 +26,9 @@ namespace
 TEST_CASE("ArchiveWriter/Reader: byte-exact multi-entry round trip")
 {
     ArchiveWriter writer;
-    writer.Add(AssetId{1001}, AssetType::Texture, Bytes({1, 2, 3, 4, 5}));
-    writer.Add(AssetId{1002}, AssetType::Mesh, Bytes({10, 20, 30}));
-    writer.Add(AssetId{1003}, AssetType::Material, Bytes({}));
+    writer.Add(AssetId{0x3E9}, AssetType::Texture, Bytes({1, 2, 3, 4, 5}));
+    writer.Add(AssetId{0x3EA}, AssetType::Mesh, Bytes({10, 20, 30}));
+    writer.Add(AssetId{0x3EB}, AssetType::Material, Bytes({}));
 
     const vector<u8> archive = writer.Build();
 
@@ -37,17 +37,17 @@ TEST_CASE("ArchiveWriter/Reader: byte-exact multi-entry round trip")
 
     CHECK(reader->Entries().size() == 3);
 
-    const optional<ArchiveEntry> texture = reader->Find(AssetId{1001});
+    const optional<ArchiveEntry> texture = reader->Find(AssetId{0x3E9});
     REQUIRE(texture.has_value());
     CHECK(texture->Type == AssetType::Texture);
     CHECK(std::ranges::equal(texture->Blob, Bytes({1, 2, 3, 4, 5})));
 
-    const optional<ArchiveEntry> mesh = reader->Find(AssetId{1002});
+    const optional<ArchiveEntry> mesh = reader->Find(AssetId{0x3EA});
     REQUIRE(mesh.has_value());
     CHECK(mesh->Type == AssetType::Mesh);
     CHECK(std::ranges::equal(mesh->Blob, Bytes({10, 20, 30})));
 
-    const optional<ArchiveEntry> material = reader->Find(AssetId{1003});
+    const optional<ArchiveEntry> material = reader->Find(AssetId{0x3EB});
     REQUIRE(material.has_value());
     CHECK(material->Type == AssetType::Material);
     CHECK(material->Blob.empty());
@@ -56,13 +56,13 @@ TEST_CASE("ArchiveWriter/Reader: byte-exact multi-entry round trip")
 TEST_CASE("ArchiveReader::Find: hits and misses")
 {
     ArchiveWriter writer;
-    writer.Add(AssetId{42}, AssetType::Raw, Bytes({0xAB}));
+    writer.Add(AssetId{0x2A}, AssetType::Raw, Bytes({0xAB}));
 
     const Result<ArchiveReader> reader = ArchiveReader::FromBytes(writer.Build());
     REQUIRE(reader.has_value());
 
-    CHECK(reader->Find(AssetId{42}).has_value());
-    CHECK_FALSE(reader->Find(AssetId{43}).has_value());
+    CHECK(reader->Find(AssetId{0x2A}).has_value());
+    CHECK_FALSE(reader->Find(AssetId{0x2B}).has_value());
     CHECK_FALSE(reader->Find(AssetId{0}).has_value());
 }
 
@@ -82,7 +82,7 @@ TEST_CASE("ArchiveReader: rejects bad magic")
 TEST_CASE("ArchiveReader: rejects version mismatch")
 {
     ArchiveWriter writer;
-    writer.Add(AssetId{1}, AssetType::Raw, Bytes({1}));
+    writer.Add(AssetId{0x1}, AssetType::Raw, Bytes({1}));
 
     vector<u8> archive = writer.Build();
 

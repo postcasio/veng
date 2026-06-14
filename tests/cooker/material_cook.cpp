@@ -54,7 +54,7 @@ TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
 
     // --- Material entry ---
 
-    const optional<ArchiveEntry> entry = reader->Find(AssetId{3001});
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xBB9});
     REQUIRE(entry.has_value());
     CHECK(entry->Type == AssetType::Material);
 
@@ -137,9 +137,9 @@ TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
 
     // --- Referenced shader and texture entries are also present ---
 
-    CHECK(reader->Find(AssetId{4101}).has_value()); // vertex shader
-    CHECK(reader->Find(AssetId{4102}).has_value()); // fragment shader
-    CHECK(reader->Find(AssetId{2001}).has_value()); // texture
+    CHECK(reader->Find(AssetId{0x1005}).has_value()); // vertex shader
+    CHECK(reader->Find(AssetId{0x1006}).has_value()); // fragment shader
+    CHECK(reader->Find(AssetId{0x7D1}).has_value()); // texture
 
     std::filesystem::remove(outArchive);
 }

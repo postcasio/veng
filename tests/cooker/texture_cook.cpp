@@ -30,7 +30,7 @@ TEST_CASE("Cooker: cooks a texture pack into a CookedTextureHeader + RGBA8 pixel
     const Result<ArchiveReader> reader = ArchiveReader::Open(outArchive);
     REQUIRE(reader.has_value());
 
-    const optional<ArchiveEntry> entry = reader->Find(AssetId{2001});
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0x7D1});
     REQUIRE(entry.has_value());
     CHECK(entry->Type == AssetType::Texture);
 

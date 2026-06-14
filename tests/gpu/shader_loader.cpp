@@ -36,7 +36,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "shader loader: cook, mount, LoadSync,
     const VoidResult mountResult = assets.Mount(outArchive);
     REQUIRE(mountResult.has_value());
 
-    const AssetResult<AssetHandle<Shader>> handle = assets.LoadSync<Shader>(AssetId{4001});
+    const AssetResult<AssetHandle<Shader>> handle = assets.LoadSync<Shader>(AssetId{0xFA1});
     REQUIRE(handle.has_value());
     REQUIRE(handle->IsLoaded());
 
@@ -50,7 +50,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "shader loader: cook, mount, LoadSync,
     CHECK(iface.Bindings.empty());
     REQUIRE(iface.PushConstants.size() == 1);
     REQUIRE(iface.VertexLayoutId.has_value());
-    CHECK(*iface.VertexLayoutId == AssetId{7001});
+    CHECK(*iface.VertexLayoutId == AssetId{0x1B59});
 
     CHECK(iface.PushConstants[0].Name == "g_PushConstants");
     CHECK(iface.PushConstants[0].Offset == 0);
@@ -75,7 +75,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "shader loader: cook, mount, LoadSync,
 
     // Load the referenced VertexLayout and verify its 4-element layout.
     const AssetResult<AssetHandle<VertexLayout>> layoutHandle =
-        assets.LoadSync<VertexLayout>(AssetId{7001});
+        assets.LoadSync<VertexLayout>(AssetId{0x1B59});
     REQUIRE(layoutHandle.has_value());
     REQUIRE(layoutHandle->IsLoaded());
 

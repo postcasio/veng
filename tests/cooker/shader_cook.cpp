@@ -46,7 +46,7 @@ TEST_CASE("Cooker: cooks a shader from .slang source via Slang reflection")
     const Result<ArchiveReader> reader = CookShaderPack();
     REQUIRE(reader.has_value());
 
-    const optional<ArchiveEntry> entry = reader->Find(AssetId{4001});
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xFA1});
     REQUIRE(entry.has_value());
     CHECK(entry->Type == AssetType::Shader);
 
@@ -94,7 +94,7 @@ TEST_CASE("Cooker: cooks a fragment shader from .slang source via Slang reflecti
     const Result<ArchiveReader> reader = CookShaderPack();
     REQUIRE(reader.has_value());
 
-    const optional<ArchiveEntry> entry = reader->Find(AssetId{4002});
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xFA2});
     REQUIRE(entry.has_value());
     CHECK(entry->Type == AssetType::Shader);
 

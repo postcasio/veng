@@ -45,12 +45,12 @@ TEST_CASE("Cooker: cooks a raw-only pack into an archive ArchiveReader accepts")
 
     CHECK(reader->Entries().size() == 2);
 
-    const optional<ArchiveEntry> alpha = reader->Find(AssetId{1001});
+    const optional<ArchiveEntry> alpha = reader->Find(AssetId{0x3E9});
     REQUIRE(alpha.has_value());
     CHECK(alpha->Type == AssetType::Raw);
     CHECK(std::ranges::equal(alpha->Blob, ReadFile(fixtureDir / "data" / "alpha.bin")));
 
-    const optional<ArchiveEntry> beta = reader->Find(AssetId{1002});
+    const optional<ArchiveEntry> beta = reader->Find(AssetId{0x3EA});
     REQUIRE(beta.has_value());
     CHECK(beta->Type == AssetType::Raw);
     CHECK(std::ranges::equal(beta->Blob, ReadFile(fixtureDir / "data" / "beta.bin")));
