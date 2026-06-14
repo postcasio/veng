@@ -58,16 +58,18 @@ int main()
         // Clear the image through a render-graph pass (no window, no swapchain).
         context.ImmediateCommands([&](CommandBuffer& cmd)
         {
-            RenderGraph graph;
+            RenderGraph graph(context);
+            const ResourceId target = graph.Import("Target");
             graph.AddPass("clear")
                 .Color({
-                    .View = view,
+                    .Resource = target,
                     .Load = LoadOp::Clear,
                     .Store = StoreOp::Store,
                     .Clear = ClearColor{1.0f, 0.0f, 0.0f, 1.0f},
                 })
-                .Execute([](CommandBuffer&) {});
-            graph.Execute(cmd);
+                .Execute([](PassContext&) {});
+            const RenderGraph::ImportBinding binding{target, view};
+            graph.Execute(cmd, {&binding, 1});
         });
 
         const vector<u8> pixels = image->Download();

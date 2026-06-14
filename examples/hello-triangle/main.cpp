@@ -81,20 +81,6 @@ protected:
             .Image = m_SceneImage,
         });
 
-        // Depth buffer for the mesh draw (the mesh pass depth-tests so faces
-        // resolve correctly regardless of triangle winding).
-        m_DepthImage = Renderer::Image::Create(context, {
-            .Name = "Scene Depth Image",
-            .Extent = {sceneExtent.x, sceneExtent.y, 1},
-            .Format = m_DepthFormat,
-            .Usage = Renderer::ImageUsage::DepthAttachment,
-        });
-
-        m_DepthImageView = Renderer::ImageView::Create(context, {
-            .Name = "Scene Depth Image View",
-            .Image = m_DepthImage,
-        });
-
         m_Sampler = Renderer::Sampler::Create(context, {
             .Name = "Sample Sampler",
             .AddressModeU = Renderer::AddressMode::ClampToEdge,
@@ -189,8 +175,6 @@ protected:
         m_CompositeFS = {};
         m_Sampler.reset();
         m_ImGuiImageView.reset();
-        m_DepthImageView.reset();
-        m_DepthImage.reset();
         m_SceneImageView.reset();
         m_SceneImage.reset();
     }
@@ -248,22 +232,34 @@ private:
         // back to a sampleable layout happens at the next declared read — the
         // out-of-graph ImGui sample (see OnRender's cmd.PrepareForAccess) or, in
         // headless, the composite pass — barriers fall out of declared use.
-        Renderer::RenderGraph graph;
+        //
+        // The scene image is app-owned (ImGui and the composite pass sample it, the
+        // smoke path downloads it) so it is imported; the depth buffer is
+        // written-then-discarded within this pass so it is a graph transient.
+        Renderer::RenderGraph graph(GetRenderContext());
+        const Renderer::ResourceId sceneId = graph.Import("Scene");
+        const Renderer::ResourceId depthId = graph.CreateTransient({
+            .Name = "Scene Depth Image",
+            .Format = m_DepthFormat,
+            .Extent = extent,
+            .Usage = Renderer::ImageUsage::DepthAttachment,
+        });
         graph.AddPass("Scene")
             .Color({
-                .View = m_SceneImageView,
+                .Resource = sceneId,
                 .Load = Renderer::LoadOp::Clear,
                 .Store = Renderer::StoreOp::Store,
                 .Clear = Renderer::ClearColor{0.05f, 0.05f, 0.08f, 1.0f},
             })
             .Depth({
-                .View = m_DepthImageView,
+                .Resource = depthId,
                 .Load = Renderer::LoadOp::Clear,
                 .Store = Renderer::StoreOp::DontCare,
                 .Clear = Renderer::ClearDepth{1.0f, 0},
             })
-            .Execute([this, extent](Renderer::CommandBuffer& cmd)
+            .Execute([this, extent](Renderer::PassContext& ctx)
             {
+                Renderer::CommandBuffer& cmd = ctx.Cmd();
                 cmd.SetViewport({0, 0}, extent);
                 cmd.SetScissor({0, 0}, extent);
 
@@ -326,7 +322,8 @@ private:
             }
         }
 
-        graph.Execute(cmd);
+        const Renderer::RenderGraph::ImportBinding sceneBinding{sceneId, m_SceneImageView};
+        graph.Execute(cmd, {&sceneBinding, 1});
     }
 
     void RenderUserInterface() const
@@ -374,19 +371,25 @@ private:
 
         // Sampling the scene and ImGui views declares the reads that drive their
         // transitions to ShaderReadOnly; rendering the swapchain view declares
-        // the write that drives its transition to ColorAttachment.
-        Renderer::RenderGraph graph;
+        // the write that drives its transition to ColorAttachment. All three are
+        // app-/context-owned, so they are imports; the swapchain view differs each
+        // frame and is supplied per call.
+        Renderer::RenderGraph graph(context);
+        const Renderer::ResourceId swapId = graph.Import("SwapChain");
+        const Renderer::ResourceId sceneId = graph.Import("Scene");
+        const Renderer::ResourceId imguiId = graph.Import("ImGui");
         graph.AddPass("Composite")
             .Color({
-                .View = context.GetCurrentSwapChainImageView(),
+                .Resource = swapId,
                 .Load = Renderer::LoadOp::Clear,
                 .Store = Renderer::StoreOp::Store,
                 .Clear = Renderer::ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
             })
-            .Sample(m_SceneImageView)
-            .Sample(m_ImGuiImageView)
-            .Execute([this, &context, extent](Renderer::CommandBuffer& cmd)
+            .Sample(sceneId)
+            .Sample(imguiId)
+            .Execute([this, &context, extent](Renderer::PassContext& ctx)
             {
+                Renderer::CommandBuffer& cmd = ctx.Cmd();
                 cmd.BindPipeline(m_CompositePipeline);
                 cmd.SetViewport({0, 0}, extent);
                 cmd.SetScissor({0, 0}, extent);
@@ -399,15 +402,18 @@ private:
                 cmd.DrawFullscreenTriangle();
             });
 
-        graph.Execute(cmd);
+        const Renderer::RenderGraph::ImportBinding bindings[] = {
+            {swapId, context.GetCurrentSwapChainImageView()},
+            {sceneId, m_SceneImageView},
+            {imguiId, m_ImGuiImageView},
+        };
+        graph.Execute(cmd, bindings);
     }
 
     Renderer::Format m_SceneFormat = Renderer::Format::Undefined;
     Renderer::Format m_DepthFormat = Renderer::Format::D32Sfloat;
     Ref<Renderer::Image> m_SceneImage;
     Ref<Renderer::ImageView> m_SceneImageView;
-    Ref<Renderer::Image> m_DepthImage;
-    Ref<Renderer::ImageView> m_DepthImageView;
     Ref<Renderer::ImageView> m_ImGuiImageView;
     Ref<Renderer::Sampler> m_Sampler;
 

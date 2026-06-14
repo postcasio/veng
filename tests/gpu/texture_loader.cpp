@@ -113,17 +113,19 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
 
     Context.ImmediateCommands([&](CommandBuffer& cmd)
     {
-        RenderGraph graph;
+        RenderGraph graph(Context);
+        const ResourceId outputId = graph.Import("Output");
 
         graph.AddPass("Sample Loaded Texture")
             .Color({
-                .View = outputView,
+                .Resource = outputId,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
                 .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
             })
-            .Execute([&](CommandBuffer& cmd)
+            .Execute([&](PassContext& ctx)
             {
+                CommandBuffer& cmd = ctx.Cmd();
                 cmd.BindPipeline(pipeline);
                 cmd.SetViewport({0, 0}, {Size, Size});
                 cmd.SetScissor({0, 0}, {Size, Size});
@@ -135,7 +137,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
                 cmd.DrawFullscreenTriangle();
             });
 
-        graph.Execute(cmd);
+        const RenderGraph::ImportBinding binding{outputId, outputView};
+        graph.Execute(cmd, {&binding, 1});
     });
 
     const vector<u8> pixels = outputImage->Download();

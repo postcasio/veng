@@ -31,16 +31,18 @@ namespace
     {
         context.ImmediateCommands([&](CommandBuffer& cmd)
         {
-            RenderGraph graph;
+            RenderGraph graph(context);
+            const ResourceId target = graph.Import("Target");
             graph.AddPass("clear")
                 .Color({
-                    .View = view,
+                    .Resource = target,
                     .Load = LoadOp::Clear,
                     .Store = StoreOp::Store,
                     .Clear = clear,
                 })
-                .Execute([](CommandBuffer&) {});
-            graph.Execute(cmd);
+                .Execute([](PassContext&) {});
+            const RenderGraph::ImportBinding binding{target, view};
+            graph.Execute(cmd, {&binding, 1});
         });
     }
 }

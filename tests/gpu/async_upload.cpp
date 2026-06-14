@@ -143,17 +143,20 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "async upload: upload on a worker, the
     // the sample cannot run before the worker's copy completes.
     CommandBuffer& cmd = Context.BeginFrame();
 
-    RenderGraph graph;
+    RenderGraph graph(Context);
+    const ResourceId outputId = graph.Import("Output");
+    const ResourceId sourceId = graph.Import("Source");
     graph.AddPass("Sample Async-Uploaded Texture")
         .Color({
-            .View = outputView,
+            .Resource = outputId,
             .Load = LoadOp::Clear,
             .Store = StoreOp::Store,
             .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
         })
-        .Sample(sourceView)
-        .Execute([&](CommandBuffer& cmd)
+        .Sample(sourceId)
+        .Execute([&](PassContext& ctx)
         {
+            CommandBuffer& cmd = ctx.Cmd();
             cmd.BindPipeline(pipeline);
             cmd.SetViewport({0, 0}, {Size, Size});
             cmd.SetScissor({0, 0}, {Size, Size});
@@ -164,7 +167,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "async upload: upload on a worker, the
             });
             cmd.DrawFullscreenTriangle();
         });
-    graph.Execute(cmd);
+    const RenderGraph::ImportBinding bindings[] = {
+        {outputId, outputView},
+        {sourceId, sourceView},
+    };
+    graph.Execute(cmd, bindings);
 
     Context.EndFrame();
     Context.WaitIdle();
