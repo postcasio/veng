@@ -171,7 +171,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "async upload: upload on a worker, the
         {outputId, outputView},
         {sourceId, sourceView},
     };
-    graph.Execute(cmd, bindings);
+    graph.Compile()->Execute(cmd, bindings);
 
     Context.EndFrame();
     Context.WaitIdle();

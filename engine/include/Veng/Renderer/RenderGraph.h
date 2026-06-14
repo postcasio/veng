@@ -20,12 +20,20 @@
 // Graphics passes get BeginRendering/EndRendering driven for them from their
 // Color/Depth declarations; the Execute callback only binds and draws. This replaces
 // manual ImageBarrier/layout management entirely — there is no public barrier or
-// layout type. The graph is rebuilt per frame (it is just a vector of pass structs).
+// layout type.
+//
+// RenderGraph is a pure builder. Declaring passes does not execute anything; call
+// Compile() once to derive the barrier/transition schedule, allocate transients,
+// build the per-graphics-pass RenderingInfo, and run one-time validation. The
+// returned CompiledGraph replays that schedule per frame via Execute. A structural
+// change (a pass added/removed, a transient's extent/format changed) is a consumer-
+// driven rebuild + re-Compile(); per-frame data never recompiles.
 namespace Veng::Renderer
 {
     class CommandBuffer;
     class Context;
     class RenderGraph;
+    class CompiledGraph;
 
     // A handle into a render graph's resource table — either a graph-owned transient
     // (allocated and resolved by the graph) or an imported external resource. Opaque;
@@ -60,6 +68,7 @@ namespace Veng::Renderer
 
     private:
         friend class RenderGraph;
+        friend class CompiledGraph;
 
         PassContext(CommandBuffer& cmd, const vector<Ref<ImageView>>& resolved)
             : m_Cmd(cmd), m_Resolved(resolved)
@@ -151,21 +160,21 @@ namespace Veng::Renderer
         PassBuilder AddComputePass(string_view name);
         PassBuilder AddTransferPass(string_view name);
 
-        // Resolve transients, bind the supplied imports, derive the barriers, and run
-        // each pass's Execute in order. Every declared import must appear in
-        // `imports` (asserts otherwise); a graph with no imports takes an empty list.
-        void Execute(CommandBuffer& cmd, std::span<const ImportBinding> imports = {});
+        // Compile the declared passes into a replayable graph: allocate transients,
+        // derive the barrier/transition schedule, build each graphics pass's
+        // RenderingInfo skeleton, and run one-time validation. Single owner — nothing
+        // holds a Ref to a CompiledGraph → Unique, per docs/ownership.md.
+        [[nodiscard]] Unique<CompiledGraph> Compile();
 
     private:
-        // A resource-table entry: either a graph-owned transient (allocated lazily
-        // from its TransientDesc) or an import (resolved from the per-call binding).
+        // A resource-table entry: either a graph-owned transient (allocated at
+        // Compile from its TransientDesc) or an import (resolved per frame from the
+        // call's binding).
         struct Resource
         {
             bool IsImport = false;
             string Name;
-            TransientDesc Desc;            // transient only
-            Ref<Image> Image;              // transient backing, allocated on first use
-            Ref<ImageView> View;           // transient view, allocated on first use
+            TransientDesc Desc; // transient only
         };
 
         // The context this graph allocates transients with (deferred-destruction
@@ -177,5 +186,34 @@ namespace Veng::Renderer
         // Heap-allocated passes so a PassBuilder's reference stays valid as more
         // passes are appended.
         vector<Unique<Pass>> m_Passes;
+    };
+
+    // A compiled, replayable render graph. Built by RenderGraph::Compile(); replayed
+    // each frame. Owns its transient images; retires them through the per-frame
+    // deferred-destruction path on destruction.
+    class CompiledGraph
+    {
+    public:
+        ~CompiledGraph();
+
+        CompiledGraph(const CompiledGraph&) = delete;
+        CompiledGraph& operator=(const CompiledGraph&) = delete;
+
+        // Replay the baked schedule: resolve transients, bind the supplied imports,
+        // emit the scheduled transitions through the tracked-state barrier path, drive
+        // rendering, run each pass callback. Every declared import must appear in
+        // `imports` (asserts otherwise); a graph with no imports takes {}.
+        void Execute(CommandBuffer& cmd, std::span<const RenderGraph::ImportBinding> imports = {});
+
+    private:
+        friend class RenderGraph;
+
+        // The vk:: schedule + the graph-allocated transient images live in Native,
+        // defined in RenderGraph.cpp — the public/backend split keeps this header
+        // backend-free (guarded by the include_hygiene test).
+        struct Native;
+        explicit CompiledGraph(Unique<Native> native);
+
+        Unique<Native> m_Native;
     };
 }

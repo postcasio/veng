@@ -138,7 +138,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
             });
 
         const RenderGraph::ImportBinding binding{outputId, outputView};
-        graph.Execute(cmd, {&binding, 1});
+        graph.Compile()->Execute(cmd, {&binding, 1});
     });
 
     const vector<u8> pixels = outputImage->Download();

@@ -123,7 +123,24 @@ protected:
             CreateCompositePipeline();
 
             m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_Sampler, *m_SceneImageView);
+
+            // A swapchain resize invalidates the composite pass's baked extent;
+            // rebuild + re-Compile() both graphs against the new size. The scene
+            // graph holds the depth transient whose extent must track the scene
+            // image. The headless smoke path has a fixed extent, so this never
+            // fires there.
+            context.AddSwapChainInvalidationCallback([this]
+            {
+                m_SceneGraph = BuildSceneGraph();
+                m_CompositeGraph = BuildCompositeGraph();
+            });
         }
+
+        // Compile the graphs once and replay them every frame. A structural change
+        // (resize) re-Compile()s via the invalidation callback above.
+        m_SceneGraph = BuildSceneGraph();
+        if (GetImGuiLayer())
+            m_CompositeGraph = BuildCompositeGraph();
     }
 
     void OnUpdate(const f32 delta) override
@@ -153,7 +170,7 @@ protected:
         {
             // RenderUserInterface() draws m_SceneTexture via ImGui::Image(), and
             // GetImGuiLayer()->Render(cmd) is what actually records that sampled
-            // read — before CompositeToSwapChain's own .Sample() declaration runs.
+            // read — before the composite pass's own .Sample() declaration runs.
             // ImGui samples outside the graph, so declare the read explicitly:
             // transition the scene image to a sampleable layout before that pass.
             cmd.PrepareForAccess(m_SceneImageView, Renderer::AccessKind::Sample);
@@ -166,6 +183,10 @@ protected:
 
     void OnDispose() override
     {
+        // The compiled graphs own the depth transient; release them so their GPU
+        // resources retire before the context tears down.
+        m_SceneGraph.reset();
+        m_CompositeGraph.reset();
         m_Mesh.reset();
         m_BrickMaterial = {};
         m_SceneTexture.reset();
@@ -223,8 +244,13 @@ private:
         m_SamplerHandle = bindless.Register(m_Sampler);
     }
 
-    void RenderScene(Renderer::CommandBuffer& cmd)
+    // Build and compile the scene graph. Compiled once (in OnInitialize / on
+    // resize) and replayed every frame; the callback closes over only `this` and
+    // reads per-frame state (m_Angle → the MVP) and the scene extent from the
+    // resolved scene image, so no frame-varying value is baked into it.
+    Unique<Renderer::CompiledGraph> BuildSceneGraph()
     {
+        auto& context = GetRenderContext();
         const uvec2 extent = {m_SceneImage->GetWidth(), m_SceneImage->GetHeight()};
 
         // Declare the pass; the graph derives the layout transition and drives
@@ -236,8 +262,8 @@ private:
         // The scene image is app-owned (ImGui and the composite pass sample it, the
         // smoke path downloads it) so it is imported; the depth buffer is
         // written-then-discarded within this pass so it is a graph transient.
-        Renderer::RenderGraph graph(GetRenderContext());
-        const Renderer::ResourceId sceneId = graph.Import("Scene");
+        Renderer::RenderGraph graph(context);
+        m_SceneId = graph.Import("Scene");
         const Renderer::ResourceId depthId = graph.CreateTransient({
             .Name = "Scene Depth Image",
             .Format = m_DepthFormat,
@@ -246,7 +272,7 @@ private:
         });
         graph.AddPass("Scene")
             .Color({
-                .Resource = sceneId,
+                .Resource = m_SceneId,
                 .Load = Renderer::LoadOp::Clear,
                 .Store = Renderer::StoreOp::Store,
                 .Clear = Renderer::ClearColor{0.05f, 0.05f, 0.08f, 1.0f},
@@ -257,9 +283,10 @@ private:
                 .Store = Renderer::StoreOp::DontCare,
                 .Clear = Renderer::ClearDepth{1.0f, 0},
             })
-            .Execute([this, extent](Renderer::PassContext& ctx)
+            .Execute([this](Renderer::PassContext& ctx)
             {
                 Renderer::CommandBuffer& cmd = ctx.Cmd();
+                const uvec2 extent = {m_SceneImage->GetWidth(), m_SceneImage->GetHeight()};
                 cmd.SetViewport({0, 0}, extent);
                 cmd.SetScissor({0, 0}, extent);
 
@@ -307,10 +334,15 @@ private:
                 }
             });
 
+        return graph.Compile();
+    }
+
+    void RenderScene(Renderer::CommandBuffer& cmd)
+    {
         // The mesh's material textures are sampled bindlessly inside the pass, so
         // the graph cannot see them. Acquire each onto the graphics queue (and fold
         // its async upload's transfer-timeline wait into the frame submit) before
-        // executing.
+        // replaying.
         for (const AssetHandle<Veng::Material>& material : m_Mesh->GetMaterials())
         {
             if (!material.IsLoaded())
@@ -322,8 +354,8 @@ private:
             }
         }
 
-        const Renderer::RenderGraph::ImportBinding sceneBinding{sceneId, m_SceneImageView};
-        graph.Execute(cmd, {&sceneBinding, 1});
+        const Renderer::RenderGraph::ImportBinding sceneBinding{m_SceneId, m_SceneImageView};
+        m_SceneGraph->Execute(cmd, {&sceneBinding, 1});
     }
 
     void RenderUserInterface() const
@@ -364,10 +396,12 @@ private:
         Log::Info("Wrote scene capture to {}", outPath);
     }
 
-    void CompositeToSwapChain(Renderer::CommandBuffer& cmd)
+    // Build and compile the composite graph. Compiled once and replayed every
+    // frame; the callback closes over only `this` and reads the swapchain extent
+    // live (fixed for a given swapchain — a resize re-Compile()s the graph).
+    Unique<Renderer::CompiledGraph> BuildCompositeGraph()
     {
         auto& context = GetRenderContext();
-        const uvec2 extent = context.GetSwapChainExtent();
 
         // Sampling the scene and ImGui views declares the reads that drive their
         // transitions to ShaderReadOnly; rendering the swapchain view declares
@@ -375,25 +409,26 @@ private:
         // app-/context-owned, so they are imports; the swapchain view differs each
         // frame and is supplied per call.
         Renderer::RenderGraph graph(context);
-        const Renderer::ResourceId swapId = graph.Import("SwapChain");
-        const Renderer::ResourceId sceneId = graph.Import("Scene");
-        const Renderer::ResourceId imguiId = graph.Import("ImGui");
+        m_SwapId = graph.Import("SwapChain");
+        m_CompositeSceneId = graph.Import("Scene");
+        m_ImGuiId = graph.Import("ImGui");
         graph.AddPass("Composite")
             .Color({
-                .Resource = swapId,
+                .Resource = m_SwapId,
                 .Load = Renderer::LoadOp::Clear,
                 .Store = Renderer::StoreOp::Store,
                 .Clear = Renderer::ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
             })
-            .Sample(sceneId)
-            .Sample(imguiId)
-            .Execute([this, &context, extent](Renderer::PassContext& ctx)
+            .Sample(m_CompositeSceneId)
+            .Sample(m_ImGuiId)
+            .Execute([this](Renderer::PassContext& ctx)
             {
                 Renderer::CommandBuffer& cmd = ctx.Cmd();
+                const uvec2 extent = GetRenderContext().GetSwapChainExtent();
                 cmd.BindPipeline(m_CompositePipeline);
                 cmd.SetViewport({0, 0}, extent);
                 cmd.SetScissor({0, 0}, extent);
-                context.GetBindlessRegistry().Bind(cmd);
+                GetRenderContext().GetBindlessRegistry().Bind(cmd);
                 cmd.PushConstants(CompositePushConstants{
                     .SceneTexture = m_SceneTextureHandle.Index,
                     .ImGuiTexture = m_ImGuiTextureHandle.Index,
@@ -402,12 +437,17 @@ private:
                 cmd.DrawFullscreenTriangle();
             });
 
+        return graph.Compile();
+    }
+
+    void CompositeToSwapChain(Renderer::CommandBuffer& cmd)
+    {
         const Renderer::RenderGraph::ImportBinding bindings[] = {
-            {swapId, context.GetCurrentSwapChainImageView()},
-            {sceneId, m_SceneImageView},
-            {imguiId, m_ImGuiImageView},
+            {m_SwapId, GetRenderContext().GetCurrentSwapChainImageView()},
+            {m_CompositeSceneId, m_SceneImageView},
+            {m_ImGuiId, m_ImGuiImageView},
         };
-        graph.Execute(cmd, bindings);
+        m_CompositeGraph->Execute(cmd, bindings);
     }
 
     Renderer::Format m_SceneFormat = Renderer::Format::Undefined;
@@ -429,6 +469,17 @@ private:
     Renderer::SamplerHandle m_SamplerHandle;
 
     Ref<ImGuiTexture> m_SceneTexture;
+
+    // Compiled once and replayed every frame; re-Compile()d on swapchain resize.
+    Unique<Renderer::CompiledGraph> m_SceneGraph;
+    Unique<Renderer::CompiledGraph> m_CompositeGraph;
+
+    // Import slots bound per frame to Execute. Stable across replays; only the
+    // concrete views they bind to change.
+    Renderer::ResourceId m_SceneId;
+    Renderer::ResourceId m_SwapId;
+    Renderer::ResourceId m_CompositeSceneId;
+    Renderer::ResourceId m_ImGuiId;
 
     f32 m_Angle = 0.0f;
     u32 m_FrameCount = 0;

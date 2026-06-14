@@ -155,7 +155,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "bindless registry: register, bind, an
             {sourceId, sourceView},
             {outputId, outputView},
         };
-        graph.Execute(cmd, bindings);
+        graph.Compile()->Execute(cmd, bindings);
     });
 
     const vector<u8> pixels = outputImage->Download();

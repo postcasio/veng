@@ -69,7 +69,7 @@ int main()
                 })
                 .Execute([](PassContext&) {});
             const RenderGraph::ImportBinding binding{target, view};
-            graph.Execute(cmd, {&binding, 1});
+            graph.Compile()->Execute(cmd, {&binding, 1});
         });
 
         const vector<u8> pixels = image->Download();

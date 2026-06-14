@@ -243,7 +243,7 @@ int main()
                 {derivedId, derivedView},
                 {outputId, outputView},
             };
-            graph.Execute(cmd, bindings);
+            graph.Compile()->Execute(cmd, bindings);
         });
 
         const vector<u8> pixels = outputImage->Download();
