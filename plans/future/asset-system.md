@@ -1,14 +1,17 @@
-# Asset system — design overview (synchronous foundation shipped)
+# Asset system — design overview (foundation + async shipped)
 
 > **The synchronous foundation + bindless material shipped in
-> [planset-5](../planset-5/README.md).** What this document still uniquely holds is
-> the **enduring end-state vision** that depends on threading: the **async `Load`
-> default**, **hot-reload** (`Reload`), and **dependency-graph-driven eviction**.
-> The built, authoritative surface lives elsewhere — `CLAUDE.md` (the Assets /
-> Bindless / Shaders conventions), `docs/ownership.md` (`AssetHandle` vs `Ref`),
+> [planset-5](../planset-5/README.md); the async `Load` default shipped in
+> [planset-6](../planset-6/README.md)** (on the threading/task system, over a
+> transfer queue — `Load` is non-blocking by default, `LoadSync` the blocking
+> sibling). What this document still uniquely holds is the **enduring vision**:
+> **hot-reload** (`Reload`)'s real design, the **editor as the demanding second
+> consumer**, and **dependency-graph-driven eviction** refinements. The built,
+> authoritative surface lives elsewhere — `CLAUDE.md` (the Assets / Bindless /
+> Shaders conventions), `docs/ownership.md` (`AssetHandle` vs `Ref`),
 > [bindless-descriptors.md](bindless-descriptors.md) (the registry), and the
-> planset-5 plans. The Part-1 API sketches below are **superseded** by that
-> surface where they differ; read them as the original direction, not the spec.
+> planset-5 / planset-6 plans. The Part-1 API sketches below are **superseded** by
+> that surface where they differ; read them as the original direction, not the spec.
 >
 > **Decisions now settled (do not reopen):** cooking is **offline-only — no
 > cook-on-demand**; `AssetId` is an **opaque `u64`** (not a content/path hash);
@@ -19,9 +22,14 @@
 > fields**; a `Material` is the **thin bindless** form (handles + a `MaterialData`
 > SSBO entry). The structured `AssetLoadError` promotion also shipped.
 >
-> Still depends on [threading/task system](threading-task-system.md) (area 2) for
-> the async/hot-reload half. Absorbed **all deferred shader work** (planset-1/12
-> and the shader parts of planset-2) — done.
+> **Hot-reload remains future.** Its **re-upload** half is exactly what the
+> planset-6 async path delivers, but its **re-cook** half conflicts head-on with
+> offline-only cooking — `libveng` has no importer or source parser. A runtime
+> `Reload` that re-cooks would reintroduce the cook-on-demand the asset design
+> rejected, so hot-reload needs its own **dev-only** design (most likely a file
+> watcher that shells out to `vengc` and re-mounts the archive, not in-process
+> cooking). Absorbed **all deferred shader work** (planset-1/12 and the shader
+> parts of planset-2) — done.
 
 ## The shape of the phase
 
@@ -145,17 +153,14 @@ public:
 };
 ```
 
-- **`Load` is async, `LoadSync` blocks** — async is the default so the obvious
-  call doesn't stall the frame (mirrors `Buffer/Image::Upload` vs. `UploadSync`,
-  see [threading](threading-task-system.md#how-the-upload-path-changes)). `Load`
-  returns a not-yet-loaded handle and fills it via a
-  [`Task`](threading-task-system.md); the main-thread continuation swaps the
-  cooked resource into the cache entry. `LoadSync` is `Load(...).Get()` under the
-  hood once threading lands. **Sequencing wrinkle:** the thin real-client slice
-  ships *before* threading, so it is synchronous-only — land it as `LoadSync`
-  first (the honest name), then add the async `Load` as the default when the task
-  system arrives. The marked-verbose sync spelling means that early slice never
-  has to be renamed out of the default later.
+- **`Load` is async, `LoadSync` blocks** (shipped) — async is the default so the
+  obvious call doesn't stall the frame (mirrors `Buffer/Image::Upload` vs.
+  `UploadSync`). `Load` returns a not-yet-resident handle and fills it via a
+  [`Task`](threading-task-system.md); the main-thread continuation registers into
+  bindless and swaps the cooked resource into the cache entry. The thin
+  real-client slice landed synchronous-only as `LoadSync` first (planset-5, the
+  honest name), and planset-6 added the async `Load` default on top — the
+  marked-verbose sync spelling meant that early slice never had to be renamed.
 - **Error kind, not a string.** Asset loading is exactly where callers branch on
   *why* a load failed. The README cross-cutting note and `Result.h` both flag
   promoting the error to a structured type. Introduce it here:

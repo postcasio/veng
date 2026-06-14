@@ -1,11 +1,33 @@
-# Threading / task system — design overview (future)
+# Threading / task system — design overview (foundation shipped)
 
-> **Vision / design sketch, not scheduled.** Detail for [area 2](README.md) of
-> the future roadmap. Direction, API surfaces, and decisions — not a firm plan;
-> it becomes its own planset when taken up. Designed against the explicit-device
-> API now that [de-globalizing the context](README.md#3-de-globalize-the-rendering-context--done-planset-4)
-> (planset-4) is done — `Context::Instance()` is gone, so off-thread resource
-> creation is finally *possible*; this phase makes it *correct*.
+> **The threading foundation shipped in [planset-6](../planset-6/README.md).** A
+> `TaskSystem` (fixed worker pool + work queue returning `Task<T>`, owned by
+> `Application`, threaded explicitly, pumped once per frame), a dedicated
+> **transfer queue** with per-worker command pools, a `TimelineSemaphore`
+> primitive, queue-family-aware ownership transfer (the `DecideBarrier` rule
+> extended to emit the acquire half on first graphics use), a transfer-keyed,
+> mutex-guarded retire path (`RetireOnTransfer`), and async-default
+> `Buffer/Image::Upload` + `AssetManager::Load` all landed. The render thread
+> stays single; the `Veng.h` contract now says work runs off it *through the task
+> system*. The authoritative surface lives in `CLAUDE.md`, `Veng.h`,
+> `docs/ownership.md`, and the planset-6 plans.
+>
+> **What this document still uniquely holds is the enduring vision the delivery
+> deliberately left as follow-on:**
+> - **A task *graph*** — inter-job dependencies and a scheduler. `Task<T>` is
+>   shaped so a graph can be layered on without breaking callers; none is built.
+>   The natural next step once gameplay/streaming needs ordered jobs.
+> - **Staging-buffer pooling** — per-worker reusable staging rings instead of
+>   create/destroy per upload (the deferred-destruction queue already makes
+>   per-upload safe, just wasteful). Pool when profiling says so.
+> - **Cancellation** — dropping a `Task<T>` does not cancel the job today
+>   (run-to-completion, result discarded). Revisit if streaming churn demands it.
+>
+> The API sketches below are the original direction; read them as rationale, not
+> as the spec — the shipped signatures differ in places (e.g. `RetireOnTransfer`
+> lives on `Context::Native`, the transfer submit allocates its timeline value
+> under the submission lock, and continuations land through a per-frame
+> `PumpMainThread` rather than a bare `Then`).
 
 ## Why
 

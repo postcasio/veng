@@ -42,15 +42,30 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   pack. Cooking is offline-only (no cook-on-demand); async loading (threading) is
   the named follow-on, not in scope.
 
+- **[planset-6](planset-6/README.md)** — threading / task system, async loads
+  (✅ done, 9 plans). Takes up future area 2 and closes area 1's remaining async
+  half: a `TaskSystem` (fixed worker pool + work queue returning `Task<T>`, owned
+  by `Application` and threaded explicitly, pumped once per frame), a dedicated
+  **transfer queue** with per-worker command pools, a `TimelineSemaphore`
+  primitive, queue-family-aware ownership transfer (the `DecideBarrier` rule
+  extended to emit the acquire half on first graphics use), and a transfer-keyed,
+  mutex-guarded retire path (`RetireOnTransfer`) for worker-dropped staging.
+  `Buffer/Image::Upload` and `AssetManager::Load` become **async by default**;
+  the blocking paths survive as `UploadSync`/`LoadSync`. The `Veng.h` contract is
+  revised: the render thread stays single, but work runs off it through the task
+  system. Hot-reload stays future (its re-cook half conflicts with offline-only
+  cooking). MoltenVK's single-queue collapse is the tested path; the dual-queue
+  discrete path is exercised by the pure barrier-decision unit test.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
-  holding area; not a planset). Remaining areas: a threading/task system
-  (Vulkan-queue-correct async asset loading — which also turns planset-5's
-  `LoadSync` into the async default), the **editor application** (a shared-library
-  game-module model + a cooker-consuming editor with docking, a material node
-  editor, and a scene editor — [editor.md](future/editor.md) /
+  holding area; not a planset). Remaining areas: the **editor application** (a
+  shared-library game-module model + a cooker-consuming editor with docking, a
+  material node editor, and a scene editor — [editor.md](future/editor.md) /
   [game-module.md](future/game-module.md), several plansets), its prerequisite
   scene/entity model, and the event/input systems. Each becomes its own planset
-  when taken up. (Testing areas 5a/5b, de-globalizing the context
-  (area 3), and the asset system's synchronous slice + bindless (area 1) are done
-  — planset-3, planset-4, and planset-5 respectively; the asset system's async
-  half folds into the threading area.)
+  when taken up. (Testing areas 5a/5b, de-globalizing the context (area 3), the
+  asset system's synchronous slice + bindless (area 1), and the threading/task
+  system (area 2 — which also turned area 1's `LoadSync` into the async `Load`
+  default) are done — planset-3, planset-4, planset-5, and planset-6
+  respectively. Hot-reload remains future: its re-cook half conflicts with
+  offline-only cooking and needs a dev-only watcher design.)

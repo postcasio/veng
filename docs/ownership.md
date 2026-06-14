@@ -9,9 +9,9 @@ use is governed by one rule.
 
 - **`Unique<T>`** — a resource with a *single* owner. The GPU may still be using
   it when the owner drops it; that is safe because destruction is deferred (see
-  below). Use `Unique` for: per-frame sync primitives, pools, layouts, and
-  resources a single renderer module owns (e.g. the shaders and pipelines a
-  pass creates and never shares).
+  below). Use `Unique` for: single-owner sync primitives (`Fence`, `Semaphore`,
+  `TimelineSemaphore`), pools, layouts, and resources a single renderer module
+  owns (e.g. the shaders and pipelines a pass creates and never shares).
 
 - **`Ref<T>`** — a resource *genuinely shared* between independent systems, where
   more than one of them needs to keep it alive. Convenience sharing is allowed,
@@ -35,6 +35,23 @@ recording a draw that uses it; the in-flight GPU work finishes against a still-
 valid handle, and the handle is reclaimed a couple of frames later. There is no
 manual "keep this alive until the frame is done" bookkeeping — the old
 `SubmitResource` / command-buffer keep-alive lists are gone.
+
+## The transfer-keyed retire path
+
+An async upload runs on a worker thread, off the frame's fence. The staging
+buffer it allocates is consumed by a copy submitted on the **transfer queue**,
+which signals a monotonic value on the transfer timeline — not the frame fence —
+when the copy completes. Binning that scratch on the current frame's fence would
+free it on the wrong clock. So the upload job nulls the staging wrapper (so its
+destructor does *not* frame-bin retire) and hands the raw handle to
+`Context::Native::RetireOnTransfer(buffer, allocation, timelineValue)`, which
+pins it to that transfer-timeline value; the handle is destroyed only once the
+transfer timeline has reached it.
+
+Because uploads drop resources from worker threads, the whole retire path is
+mutex-guarded: every `Retire` overload and `RetireOnTransfer` take the context's
+retire lock, so an off-thread drop never races the main thread advancing the
+frame or draining a bin.
 
 The one deliberate exception is `DescriptorSet`, which retains `Ref`s to the
 resources it was written with (`DescriptorSet::m_BoundResources`). That is

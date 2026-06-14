@@ -8,19 +8,21 @@ Captured now so the earlier phases stay coherent with where veng is going.
 
 ## Areas
 
-### 1. Asset system — synchronous slice + bindless DONE (planset-5)
+### 1. Asset system — synchronous slice + bindless + async load DONE (planset-5, planset-6)
 
 > **The synchronous slice and the bindless rework are done — delivered by
 > [planset-5](../planset-5/README.md)** (the standalone `vengc` cooker, JSON asset
 > packs cooked into `.vengpack` archives, the shared `assetformat` lib, the
 > engine-side `AssetManager`/`AssetHandle`/`LoadSync`, the texture/mesh/shader/
 > material types with **offline Slang reflection → `ShaderInterface`**, and the
-> **`BindlessRegistry` set-0 subsystem** that makes the material thin). What
-> **remains** is the **async** half — non-blocking `Load` on a transfer queue —
-> which depends on **area 2 (threading)**; `LoadSync` was deliberately named to
-> keep its spelling when async lands. **Design overview:**
-> [asset-system.md](asset-system.md) (trimmed to the enduring async/hot-reload
-> vision); the delivered foundation lives in planset-5.
+> **`BindlessRegistry` set-0 subsystem** that makes the material thin).
+> **The async half is done too — delivered by
+> [planset-6](../planset-6/README.md)**: non-blocking `Load` on a transfer queue
+> is the default, `LoadSync` is the blocking sibling whose spelling it was named
+> to keep. The one piece of this area still future is **hot-reload** (its re-cook
+> half conflicts with offline-only cooking — see below). **Design overview:**
+> [asset-system.md](asset-system.md) (trimmed to the enduring hot-reload / editor
+> vision); the delivered foundation lives in planset-5 and planset-6.
 
 The roadmap began **by defining the asset API** — the general abstraction first,
 concrete types after — and planset-5 followed that order. What it delivered, and
@@ -41,29 +43,45 @@ what is left:
   serializable `ShaderInterface`** (descriptor bindings, push-constant blocks,
   vertex inputs) produced by the cooker via Slang, not at runtime; layouts derive
   from it and engine-provided set 0 is recognized without the author declaring it.
-- **Remaining (async, area 2):** hot-reload (`Reload`) and non-blocking `Load`
-  over a transfer queue — they need the threading/task system.
+- **Async load (done, planset-6):** non-blocking `Load` over a transfer queue,
+  on the threading/task system, is now the default; `LoadSync` is the blocking
+  sibling.
+- **Remaining (future):** hot-reload (`Reload`) — its re-upload half is exactly
+  what the async path delivers, but its re-cook half conflicts with offline-only
+  cooking, so it needs a dev-only watcher design (see below).
 
-### 2. Threading / task system
+### 2. Threading / task system — DONE (planset-6)
 
-Explore this deeply — veng has no standardized concurrency story, and async asset
-loading needs one. planset-1 deliberately shipped a **single-threaded v1
-contract** (documented in `Veng.h`); this phase revisits it. **Design overview:**
-[threading-task-system.md](threading-task-system.md).
+> **Done — delivered by [planset-6](../planset-6/README.md)** (9 plans). A
+> `TaskSystem` (fixed worker pool + work queue returning `Task<T>`, owned by
+> `Application`, threaded explicitly, pumped once per frame) runs decode + upload
+> off the main thread; a dedicated **transfer queue** with per-worker command
+> pools, a **`TimelineSemaphore`** primitive, queue-family-aware ownership
+> transfer (the `DecideBarrier` rule extended to emit the acquire half on first
+> graphics use), and a transfer-keyed, mutex-guarded retire path
+> (`RetireOnTransfer`) for worker-dropped staging compose into an async-default
+> `Buffer/Image::Upload` and `AssetManager::Load`. The render thread stays single;
+> the `Veng.h` contract is revised to say work runs off it *through the task
+> system*. **What remains future:** a task *graph* (inter-job dependencies),
+> staging-buffer pooling, and cancellation — see
+> [threading-task-system.md](threading-task-system.md), trimmed to that enduring
+> vision.
 
-- **A standard way to run work off the main thread** — threads vs. a task/job
-  system vs. a task graph. Open design area; pick a model deliberately rather
-  than ad-hoc `std::thread`s.
-- **Vulkan-queue-correct from the start.** Today asset uploads go through
-  `Context::SubmitImmediateCommands` → `WaitIdle` on the graphics queue, i.e.
-  fully synchronous and main-thread-blocking. Async loading needs: a dedicated
-  **transfer queue**, per-thread command pools (pools are not shareable across
+planset-1 deliberately shipped a **single-threaded v1 contract** (documented in
+`Veng.h`); planset-6 revisited it. The shape that shipped:
+
+- **A task/job system, not raw threads and not a task graph** — a fixed pool
+  draining a work queue, returning `Task<T>` futures. The handle is shaped so a
+  task graph can be layered on later without breaking callers; none is built.
+- **Vulkan-queue-correct from the start.** The old upload path went through
+  `Context::SubmitImmediateCommands` → `WaitIdle` on the graphics queue, fully
+  synchronous and main-thread-blocking. The async path adds a dedicated
+  **transfer queue**, per-worker command pools (pools are not shareable across
   threads), queue-family **ownership transfers** for resources handed to the
-  render queue, and fence/timeline-semaphore sync between loader and render
-  threads — done correctly, not bolted on.
-- **Goal:** load assets (decode + upload) without stalling the frame.
-- Touches the `Context` (queues, pools) and the resource upload paths
-  (`Buffer`/`Image::Upload`). Interacts with de-globalizing the context (area 3).
+  render queue, and **timeline-semaphore** sync between loader and render. On
+  MoltenVK the single-queue collapse is the tested path; the dual-queue discrete
+  path is exercised by the pure barrier-decision unit test.
+- **Goal met:** assets decode + upload without stalling the frame.
 
 ### 3. De-globalize the rendering context — DONE (planset-4)
 
@@ -200,15 +218,22 @@ prerequisite for area 8, and a home for area 2's parallel pass recording.
 A first cut at sequencing — the order to *take the areas up* (each becomes its own
 planset), not a schedule. Refine when each is detailed.
 
-Areas 5a, 3, 5b (+ the validation gate), and area 1's **synchronous slice +
-bindless** are **done** (planset-3, planset-4, planset-5). The thin synchronous
-asset slice was deliberately pulled forward as the "real client" (the
-cross-cutting concern below), so the remaining chain inverts the original order —
-threading now turns the delivered sync loads async:
+Areas 5a, 3, 5b (+ the validation gate), **area 1** (the synchronous slice +
+bindless *and* its async half), and **area 2** (threading) are all **done**
+(planset-3, planset-4, planset-5, planset-6). The thin synchronous asset slice
+was deliberately pulled forward as the "real client" (the cross-cutting concern
+below), then threading turned those delivered sync loads async. That whole
+asset + threading chain is now closed:
 
 ```
-1 sync assets + bindless ✅ ──► 2 threading (async loads)
-4 events/input — independent, gameplay-driven (any time)
+1 sync assets + bindless ✅ ──► 2 threading (async loads) ✅ ──► 1 async Load ✅
+
+remaining:
+  6 editor (game-module → shell → material editor) ──┐  (wants 2's async path ✅)
+  7 scene/entity model ──► 6's scene editor          │
+  8 scene renderer ──► needs 9                        │
+  9 compiled RenderGraph ──► enables 8                ┘
+  4 events/input — independent, gameplay-driven (any time)
 ```
 
 ~~1. Test harness + pure-logic tests (area 5, first half).~~ Done — planset-3.
@@ -222,20 +247,19 @@ planset-4 (plans 05–06).
 (cooker, packs/archives, `AssetManager`/`LoadSync`, texture/mesh/shader/material,
 offline Slang reflection, the `BindlessRegistry` set-0 subsystem).
 
-1. **Threading / task system (area 2).** Design against the explicit-device API
-   (`Context::Instance()` is gone) and the real asset client planset-5 delivered;
-   this is where the single-threaded v1 contract is deliberately lifted, and
-   Vulkan-queue correctness is the hard part. It also delivers **area 1's
-   remaining async half** — non-blocking `Load` over a transfer queue and
-   hot-reload — turning planset-5's `LoadSync` into the async default.
+~~5. Threading / task system (area 2) + area 1's async half.~~ Done — planset-6
+(`TaskSystem`/`Task<T>`, transfer queue + per-worker pools, `TimelineSemaphore`,
+queue-family-aware ownership transfer, transfer-keyed retire, async-default
+`Upload`/`Load`). Hot-reload was named but deferred — its re-cook half conflicts
+with offline-only cooking and needs a dev-only watcher design.
 
-2. **Editor application (area 6).** The authoring environment, spanning several
+1. **Editor application (area 6).** The authoring environment, spanning several
    plansets: the [game-module build model](game-module.md) (shared lib + launcher,
    native-type registration) first, then the [editor shell + framework](editor.md)
    (cook-on-demand, single-window docking, the texture editor), then the node-based
-   **material editor**. It wants area 2's async/hot-reload path for non-stalling
-   live preview, so it follows threading. The **scene editor** within it is gated on
-   the **scene/entity model (area 7)**, which lands ahead of it.
+   **material editor**. It builds on area 2's async path (done) for non-stalling
+   live preview. The **scene editor** within it is gated on the **scene/entity
+   model (area 7)**, which lands ahead of it.
 
 **Event & input (area 4)** is off the critical path — independent of the
 rendering/asset/threading work and driven by gameplay needs, so slot it in
@@ -252,12 +276,12 @@ Resolved: planset-5 pulled the whole synchronous slice (+ bindless) forward
 Not areas of their own — considerations that span the work above and are cheaper
 to decide early than to retrofit.
 
-- **Design infrastructure against a real client.** Threading (2) risks being
-  designed speculatively. Consider pulling a deliberately thin, *synchronous*
-  asset-loading slice (1) forward — just enough to be a real consumer — so it
-  surfaces the requirements that shape the threading API, rather than reworking
-  it after the fact. Infrastructure built against an actual caller tends to be
-  right. *(affects ordering of 1 / 2; de-global (3) is done — planset-4.)*
+- ~~**Design infrastructure against a real client.**~~ **Resolved.** Threading (2)
+  risked being designed speculatively, so planset-5 pulled a thin *synchronous*
+  asset-loading slice (1) forward as a real consumer; planset-6 then built the
+  threading API against that delivered client rather than against a guess. The
+  infrastructure was right because an actual caller shaped it. *(ordering of
+  1 / 2 settled — both done.)*
 - **Higher-level descriptor management + a bindless system** in the asset/material
   phase — not an open question but a requirement. Materials (many textures/
   parameters, per-material sets multiplying across a scene) need descriptor
@@ -307,18 +331,21 @@ to decide early than to retrofit.
   `CookedBlobs.h` / `AssetPack.h`) and the cooker (compute on write + the verify
   tool); the engine loader is deliberately untouched. *(area 1.)*
 - **Process discipline.** Keep planset-1's cadence — small, sample-verified,
-  per-plan increments. planset-4 followed this for de-global (3), which is now
-  done; the same discipline applies to threading (2), where a big-bang sweep
-  would be just as tempting and dangerous.
+  per-plan increments. planset-4 followed this for de-global (3) and planset-6 for
+  threading (2) — nine small plans rather than a big-bang sweep, which on the
+  queue-correctness path would have been just as tempting and dangerous; the same
+  discipline applies to the editor (6) ahead.
 
 ## Status
 
 Vision only beyond what's noted done above. Areas 3 and 5 are complete
-(planset-3, planset-4) and **area 1's synchronous slice + bindless is complete**
-(planset-5); area 1's **async** half (folded into area 2), **area 2** (threading),
-**area 4** (events/input), **area 6** (editor — [editor.md](editor.md) /
+(planset-3, planset-4), **area 1 is complete** — its synchronous slice + bindless
+(planset-5) and its **async** half (planset-6) — and **area 2 (threading) is
+complete** (planset-6). What remains undetailed/unscheduled: **area 4**
+(events/input), **area 6** (editor — [editor.md](editor.md) /
 [game-module.md](game-module.md)), **area 7** (scene/entity model), **area 8**
 (scene renderer — [scene-renderer.md](scene-renderer.md)), and **area 9** (compiled
-RenderGraph — [compiled-rendergraph.md](compiled-rendergraph.md)) remain
-undetailed/unscheduled. Each becomes its own planset (area 6, several) when taken
-up.
+RenderGraph — [compiled-rendergraph.md](compiled-rendergraph.md)); plus
+**hot-reload**, named within area 1 but deferred (its re-cook half conflicts with
+offline-only cooking — needs a dev-only watcher design). Each becomes its own
+planset (area 6, several) when taken up.

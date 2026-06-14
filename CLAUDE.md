@@ -5,10 +5,13 @@ public API under `engine/include/Veng/` and a Vulkan backend hidden behind it.
 Primary dev platform is macOS via MoltenVK; the code is written to be portable
 (a Windows port is anticipated, hence `VE_API`).
 
-**veng v1 is single-threaded by design, not by accident.** The render `Context`
-is constructed explicitly by `Application` and threaded into every resource;
-`Time`, input, and the ImGui integration all assume one driving thread. Do not
-call veng APIs concurrently. A task system is future work (see `plans/future/`).
+**The render thread is single.** The render `Context` is constructed explicitly
+by `Application` and threaded into every resource; `Context::BeginFrame`/
+`EndFrame`, draw recording, `Time`, input, and the ImGui integration all assume
+one driving thread. Work runs off the main thread only through the `TaskSystem`
+(decode + upload on a worker, the result landing back on the main thread via the
+continuation pump). Direct concurrent calls into veng APIs from outside the task
+system are illegal.
 
 ## Layout
 
@@ -240,7 +243,15 @@ Subclass `Application`, override `OnInitialize` / `OnUpdate(delta)` / `OnRender`
 `OnDispose`, and `Run(args)`. ImGui is opt-in (on by default; `nullopt` to skip),
 and a `Headless` flag runs windowless to `RequestExit()` instead of a window
 close — that's the CI/smoke path. `Application` owns the `AssetManager`
-(`GetAssetManager()`) and the render `Context`.
+(`GetAssetManager()`), the render `Context`, and the `TaskSystem`
+(`GetTaskSystem()`).
+
+`Application` owns the `TaskSystem` — a fixed worker pool draining a work queue
+and returning `Task<T>` handles — and threads it explicitly into the `Context`
+(per-worker transfer pools) and the `AssetManager`, the same way the context is
+threaded. It is pumped once per frame: `Frame()` calls
+`TaskSystem::PumpMainThread()` at the top, before `BeginFrame()` advances the
+frame, so off-thread continuations land on the main thread.
 
 ### Assets: cook offline, load by `AssetId`
 
@@ -257,14 +268,23 @@ archive; the engine *mounts* archives and resolves assets against them.
   settings, import options, shader source/entry, and material fields live in
   those files.
 - **Load is by opaque `u64` `AssetId`** through mounted archives.
-  `AssetManager::LoadSync<T>(AssetId)` returns `AssetResult<AssetHandle<T>>`
-  (`std::expected<…, AssetLoadError>` — branch on `AssetError::Kind`, not a
-  string). Dependency loads (a material pulling its textures and shaders) are
-  synchronous and eager.
-- **`AssetManager` is owned by `Application` and constructed with a `Context&`.**
-  `LoadSync` **blocks** (uploads go through today's `UploadSync`/`WaitIdle` path);
-  the verbose name is deliberate — async `Load` is the next planset and keeps the
-  `LoadSync` spelling when it lands.
+  `AssetManager::Load<T>(AssetId)` is **async by default**: it returns a
+  not-yet-resident `AssetHandle<T>` immediately and runs the decode + GPU upload
+  on the task system (transfer queue, no frame stall); poll `IsLoaded()` before
+  using it. `AssetManager::LoadSync<T>(AssetId)` is the **blocking** sibling — it
+  runs the whole pipeline inline and returns a resident handle or a structured
+  error, `AssetResult<AssetHandle<T>>` (`std::expected<…, AssetLoadError>` —
+  branch on `AssetError::Kind`, not a string).
+- **`AssetManager` is owned by `Application` and constructed with a `Context&`
+  and a `TaskSystem&`.** The async `Load` is the obvious call and the
+  non-stalling one; `LoadSync` is the marked-verbose blocking spelling for tests,
+  tools, and the smoke path.
+
+The same split runs underneath at the resource level: `Buffer/Image::Upload`
+(taking a `TaskSystem&`) is **async by default** — it returns a `Task<void>`,
+records the copy on the transfer queue, and never blocks — while `UploadSync`
+is the blocking path (host memcpy + `WaitIdle`) the sync loaders, tests, and
+smoke render use.
 - **`AssetHandle<T>` is refcounted indirection into the manager's cache**, not a
   `Ref` to a GPU resource — see `docs/ownership.md`. Apps drop their handles in
   `OnDispose()` like any other engine resource; `CollectGarbage()` evicts entries

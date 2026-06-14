@@ -8,11 +8,13 @@
 // public API and sample app. They live here, in one self-contained header, so
 // the vocabulary is defined in exactly one place.
 //
-// Threading contract: veng v1 is single-threaded by design, not by accident.
-// The render Context is constructed explicitly and threaded into every
-// resource; Time, input and the ImGui integration all assume they are driven
-// from the same thread that owns it. Do not call veng APIs concurrently from
-// multiple threads; drive the engine from the thread that created the Context.
+// Threading contract: the render thread is single. Context::BeginFrame /
+// EndFrame, draw recording, ImGui, input, and Time are driven from the one
+// thread that owns the Context — never call those concurrently. Work runs off
+// the main thread only through the TaskSystem: a job may decode and upload a
+// resource on a worker (the transfer queue), and its result lands back on the
+// main thread through the continuation pump. Direct concurrent calls into veng
+// APIs from outside the task system are illegal.
 
 #include <filesystem>
 #include <map>
