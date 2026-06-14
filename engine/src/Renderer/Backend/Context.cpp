@@ -10,6 +10,7 @@
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
 #include <Veng/Renderer/Native.h>
+#include <Veng/Task/TaskSystem.h>
 #include <Veng/Window.h>
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
@@ -198,6 +199,18 @@ namespace Veng::Renderer
 
         m_Native->GraphicsQueue = m_Native->Device.getQueue(m_Native->QueueFamilies.GraphicsFamily.value(), 0);
 
+        // Transfer queue. On MoltenVK this resolves to the same family (and
+        // queue index 0) as graphics, so TransferQueue and GraphicsQueue are the
+        // same handle and the submission lock is what keeps them safe.
+        m_Native->TransferQueue = m_Native->Device.getQueue(m_Native->QueueFamilies.TransferFamily.value(), 0);
+
+        Log::Info("Queue families: graphics={0}, transfer={1}{2}",
+                  m_Native->QueueFamilies.GraphicsFamily.value(),
+                  m_Native->QueueFamilies.TransferFamily.value(),
+                  m_Native->QueueFamilies.TransferIsGraphics()
+                      ? " (transfer collapsed onto graphics)"
+                      : " (dedicated transfer family)");
+
         if (!headless)
         {
             m_Native->PresentQueue = m_Native->Device.getQueue(m_Native->QueueFamilies.PresentFamily.value(), 0);
@@ -286,11 +299,24 @@ namespace Veng::Renderer
         m_Native->DrainAllRetireBins();
         m_Native->Disposed = true;
 
+        // Workers have been joined by Application before Dispose, so destroying
+        // the per-worker transfer pools here is unraced.
+        for (auto& transferPool : m_Native->TransferPools)
+        {
+            transferPool.CommandBuffer.reset();
+            if (transferPool.Pool)
+            {
+                m_Native->Device.destroyCommandPool(transferPool.Pool);
+            }
+        }
+        m_Native->TransferPools.clear();
+
         m_Native->DescriptorPool.reset();
         m_Native->CommandPool.reset();
         m_Native->SwapChain.reset();
         m_Native->PresentQueue = nullptr;
         m_Native->GraphicsQueue = nullptr;
+        m_Native->TransferQueue = nullptr;
         vmaDestroyAllocator(m_Native->Allocator);
         m_Native->Device.destroy();
         if (m_Native->Surface)
@@ -305,6 +331,58 @@ namespace Veng::Renderer
         }
         m_Native->Instance.destroy();
         m_Window = nullptr;
+    }
+
+    void Context::InitializeTransferPools(TaskSystem& taskSystem)
+    {
+        const u32 workerCount = taskSystem.GetWorkerCount();
+        const u32 transferFamily = m_Native->QueueFamilies.TransferFamily.value();
+
+        m_Native->TransferPools.resize(workerCount);
+
+        // Create each pool on the worker that owns it. A VkCommandPool may only be
+        // accessed by one thread at a time; creating worker i's pool on worker i
+        // keeps that invariant from the first touch and matches the thread that
+        // records uploads into it. Pool creation is independent per worker, so the
+        // ForEachWorker bodies run concurrently with no shared state.
+        taskSystem.ForEachWorker([this, transferFamily](u32 workerIndex)
+        {
+            m_Native->TransferPools[workerIndex].Pool = m_Native->Device.createCommandPool(vk::CommandPoolCreateInfo{
+                .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+                .queueFamilyIndex = transferFamily,
+            }).value;
+        });
+
+        // Allocate each worker's transfer command buffer from its own pool, serially
+        // on this thread. AllocationPoolOverride is shared mutable state, so it must
+        // not be written from the concurrent ForEachWorker bodies above. Each buffer
+        // comes from a distinct pool no worker is touching yet, so the worker that
+        // later records into it remains the only thread accessing that pool.
+        for (u32 workerIndex = 0; workerIndex < workerCount; ++workerIndex)
+        {
+            auto& transferPool = m_Native->TransferPools[workerIndex];
+            m_Native->AllocationPoolOverride = transferPool.Pool;
+            transferPool.CommandBuffer = CommandBuffer::Create(*this);
+            m_Native->AllocationPoolOverride = nullptr;
+        }
+
+        Log::Info("Created {0} per-worker transfer command pool(s)", workerCount);
+    }
+
+    CommandBuffer& Context::GetTransferCommandBuffer(u32 workerIndex)
+    {
+        VE_ASSERT(workerIndex < m_Native->TransferPools.size(),
+                  "GetTransferCommandBuffer: worker index {} out of range ({} transfer pools) — "
+                  "InitializeTransferPools must run first",
+                  workerIndex, m_Native->TransferPools.size());
+
+        return *m_Native->TransferPools[workerIndex].CommandBuffer;
+    }
+
+    void Context::Native::LockedSubmit(vk::Queue queue, const vk::SubmitInfo& submitInfo, vk::Fence fence)
+    {
+        std::lock_guard lock(SubmitMutex);
+        VK_ASSERT(queue.submit(1, &submitInfo, fence), "failed to submit to queue!");
     }
 
     bool Context::IsHeadless() const { return m_Native->Headless; }
@@ -448,12 +526,23 @@ namespace Veng::Renderer
         vector<vk::QueueFamilyProperties> queueFamilies(queueFamilyCount);
         device.getQueueFamilyProperties(&queueFamilyCount, queueFamilies.data());
 
-        int i = 0;
-        for (const auto& queueFamily : queueFamilies)
+        for (u32 i = 0; i < queueFamilyCount; ++i)
         {
+            const auto& queueFamily = queueFamilies[i];
+
             if (queueFamily.queueFlags & vk::QueueFlagBits::eGraphics)
             {
                 QueueFamilies.GraphicsFamily = i;
+            }
+
+            // Prefer a transfer-capable family that is NOT also graphics — the
+            // dedicated DMA path on discrete GPUs. The graphics family also
+            // implicitly supports transfer (the spec guarantees it), so it is the
+            // fallback below when no transfer-only family exists.
+            if ((queueFamily.queueFlags & vk::QueueFlagBits::eTransfer) &&
+                !(queueFamily.queueFlags & vk::QueueFlagBits::eGraphics))
+            {
+                QueueFamilies.TransferFamily = i;
             }
 
             // Present support is only meaningful when there's a surface.
@@ -461,13 +550,15 @@ namespace Veng::Renderer
             {
                 QueueFamilies.PresentFamily = i;
             }
+        }
 
-            if (QueueFamilies.IsComplete() && (Headless || QueueFamilies.CanPresent()))
-            {
-                break;
-            }
-
-            i++;
+        // MoltenVK (and any GPU with no transfer-only family): collapse transfer
+        // onto graphics. This is the primary dev platform and the tested path —
+        // TransferIsGraphics() is true and no cross-queue ownership transfer is
+        // needed; the submission lock alone serializes the shared queue.
+        if (!QueueFamilies.TransferFamily.has_value())
+        {
+            QueueFamilies.TransferFamily = QueueFamilies.GraphicsFamily;
         }
 
         return QueueFamilies;
@@ -507,6 +598,9 @@ namespace Veng::Renderer
         {
             uniqueQueueFamilies.insert(indices.PresentFamily.value());
         }
+        // No-op when transfer collapses onto graphics (MoltenVK); adds the
+        // dedicated transfer family on a discrete GPU.
+        uniqueQueueFamilies.insert(indices.TransferFamily.value());
 
         f32 queuePriority = 1.0f;
         for (u32 queueFamily : uniqueQueueFamilies)
@@ -648,8 +742,7 @@ namespace Veng::Renderer
                 .pCommandBuffers = &commandBuffer,
             };
 
-            VK_ASSERT(m_Native->GraphicsQueue.submit(1, &headlessSubmit, frame.GetInFlightFence().GetNative().Fence),
-                      "Failed to submit draw command buffer!");
+            m_Native->LockedSubmit(m_Native->GraphicsQueue, headlessSubmit, frame.GetInFlightFence().GetNative().Fence);
             return;
         }
 
@@ -670,8 +763,7 @@ namespace Veng::Renderer
             .pSignalSemaphores = &renderFinishedSemaphore,
         };
 
-        VK_ASSERT(m_Native->GraphicsQueue.submit(1, &submitInfo, frame.GetInFlightFence().GetNative().Fence),
-                  "Failed to submit draw command buffer!");
+        m_Native->LockedSubmit(m_Native->GraphicsQueue, submitInfo, frame.GetInFlightFence().GetNative().Fence);
     }
 
     void Context::PresentFrame(const SynchronizationFrame& frame)
@@ -725,7 +817,7 @@ namespace Veng::Renderer
             .pCommandBuffers = &commandBufferHandle
         };
 
-        VK_ASSERT(m_Native->GraphicsQueue.submit(1, &submitInfo, VK_NULL_HANDLE), "failed to submit to queue!");
+        m_Native->LockedSubmit(m_Native->GraphicsQueue, submitInfo, VK_NULL_HANDLE);
 
         WaitIdle();
     }

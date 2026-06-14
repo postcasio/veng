@@ -26,6 +26,10 @@ namespace Veng
 
         m_TaskSystem = CreateUnique<TaskSystem>();
 
+        // The transfer command pools are keyed by worker index, so they can only
+        // be created once the worker count is known. Done here, before any upload.
+        m_RenderContext.InitializeTransferPools(*m_TaskSystem);
+
         m_AssetManager = CreateUnique<AssetManager>(m_RenderContext);
 
         // ImGui needs a window (GLFW backend), so it's only available windowed.

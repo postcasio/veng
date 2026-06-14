@@ -18,12 +18,20 @@ namespace Veng::Renderer
     CommandBuffer::CommandBuffer(Context& context, const CommandBufferLevel level) :
         m_Context(context), m_Level(level), m_Native(CreateUnique<Native>())
     {
+        // Allocation normally comes from the shared graphics pool. The transfer
+        // setup sets AllocationPoolOverride so a worker's transfer command buffer
+        // is allocated from that worker's own (single-thread) transfer pool.
+        const vk::CommandPool pool = m_Context.GetNative().AllocationPoolOverride
+            ? m_Context.GetNative().AllocationPoolOverride
+            : m_Context.GetNative().CommandPool->GetVkCommandPool();
+
         const vk::CommandBufferAllocateInfo allocInfo{
-            .commandPool = m_Context.GetNative().CommandPool->GetVkCommandPool(),
+            .commandPool = pool,
             .level = ToVk(m_Level),
             .commandBufferCount = 1,
         };
 
+        m_Native->Pool = pool;
         m_Native->CommandBuffer = GetVkDevice(m_Context).allocateCommandBuffers(allocInfo).value[0];
     }
 
@@ -255,10 +263,7 @@ namespace Veng::Renderer
 
     CommandBuffer::~CommandBuffer()
     {
-        GetVkDevice(m_Context).freeCommandBuffers(
-            m_Context.GetNative().CommandPool->GetVkCommandPool(),
-            1, &m_Native->CommandBuffer
-        );
+        GetVkDevice(m_Context).freeCommandBuffers(m_Native->Pool, 1, &m_Native->CommandBuffer);
     }
 
     void CommandBuffer::BindVertexBuffer(const Ref<Buffer>& buffer)

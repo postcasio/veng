@@ -120,6 +120,10 @@ namespace Veng::Renderer
     struct CommandBuffer::Native
     {
         vk::CommandBuffer CommandBuffer;
+        // The pool this buffer was allocated from — a transfer command buffer
+        // comes from a per-worker transfer pool, not the shared graphics pool,
+        // and must be freed back to the pool that owns it.
+        vk::CommandPool Pool;
     };
 
     struct Fence::Native

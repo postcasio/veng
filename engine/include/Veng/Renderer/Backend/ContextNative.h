@@ -5,6 +5,8 @@
 // handle the context owns, the deferred-destruction (retire bin) machinery,
 // and the device-selection helpers that only run during Initialize().
 // Internal-only: included by Natives.h.
+#include <mutex>
+
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Backend/CommandPool.h>
 #include <Veng/Renderer/Backend/DescriptorPool.h>
@@ -13,6 +15,7 @@
 #include <Veng/Renderer/Backend/SynchronizationFrame.h>
 
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 
 namespace Veng::Renderer
@@ -24,6 +27,10 @@ namespace Veng::Renderer
         vk::Device Device;
         vk::Queue GraphicsQueue;
         vk::Queue PresentQueue;
+        // The queue transfer uploads submit to. On MoltenVK this is the same
+        // family as (and may be the same handle as) GraphicsQueue, so every
+        // submit to it serializes through SubmitMutex regardless.
+        vk::Queue TransferQueue;
         vk::SurfaceKHR Surface;
         vk::DebugUtilsMessengerEXT DebugMessenger;
         VmaAllocator Allocator = nullptr;
@@ -47,6 +54,37 @@ namespace Veng::Renderer
         Unique<CommandPool> CommandPool;
         Unique<DescriptorPool> DescriptorPool;
         Unique<BindlessRegistry> Bindless;
+
+        // One transfer command pool per worker, indexed by worker index.
+        // VkCommandPool is not shareable across threads, so each worker records
+        // its uploads into its own pool/buffer; a worker only ever touches the
+        // entry at its own index. Created once via TaskSystem::ForEachWorker in
+        // InitializeTransferPools, destroyed in Dispose after the workers join.
+        struct TransferPool
+        {
+            vk::CommandPool Pool;
+            Ref<CommandBuffer> CommandBuffer;
+        };
+
+        vector<TransferPool> TransferPools{};
+
+        // When non-null, CommandBuffer's constructor allocates from this pool
+        // instead of the shared graphics CommandPool. Set transiently while
+        // allocating a worker's transfer command buffer in InitializeTransferPools.
+        vk::CommandPool AllocationPoolOverride{};
+
+        // Serializes every vkQueueSubmit to a shared queue. vkQueueSubmit is not
+        // thread-safe per VkQueue, and on MoltenVK the transfer and graphics
+        // queues share a family (and may be one handle), so a worker's transfer
+        // submit and the main thread's frame submit must serialize through this.
+        std::mutex SubmitMutex;
+
+        // The monotonic transfer-timeline value. A timeline semaphore must signal
+        // strictly increasing values, so the next value is allocated *under*
+        // SubmitMutex immediately before the submit — never precomputed and raced
+        // for the lock, which could submit values out of order. Pre-increment
+        // makes the first signalled value 1 (0 is the timeline's initial value).
+        u64 TransferTimelineValue = 0;
 
         vector<SynchronizationFrame> SynchronizationFrames{};
         u32 CurrentFrameInFlight = 0;
@@ -90,6 +128,12 @@ namespace Veng::Renderer
         void Retire(vk::Pipeline pipeline);
         void Retire(vk::PipelineLayout pipelineLayout);
         void Retire(vk::DescriptorSet descriptorSet);
+
+        // Submit to a shared queue under SubmitMutex. vkQueueSubmit is not
+        // thread-safe per VkQueue; every submit (frame, immediate, and the
+        // plan-07 transfer submit) funnels through here so worker and main-thread
+        // submits to a collapsed MoltenVK queue cannot race.
+        void LockedSubmit(vk::Queue queue, const vk::SubmitInfo& submitInfo, vk::Fence fence);
 
         vector<const char*>& GetRequiredExtensions();
         vk::PhysicalDevice GetPhysicalDevice();
