@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "assets": [
+    { "id": 1001, "type": "txture", "source": "data/alpha.bin" }
+  ]
+}

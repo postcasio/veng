@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "assets": [
+    { "id": 1001, "type": "raw", "source": "data/alpha.bin" },
+    { "id": 1002, "type": "raw", "source": "data/beta.bin" }
+  ]
+}

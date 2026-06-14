@@ -159,6 +159,18 @@ if (VENG_BUILD_TESTS)
     )
     target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
 
+    # ---- Cooker round trip (plan 03: vengc shell, raw importer) -------------
+    # Cooks fixture packs through libveng_cook end-to-end and reads the
+    # resulting archive back with assetformat's ArchiveReader. Only built
+    # alongside the cooker itself (VENG_BUILD_TOOLS, default ON top-level).
+    if (VENG_BUILD_TOOLS)
+        target_sources(veng_unit PRIVATE tests/cooker/cook_roundtrip.cpp)
+        target_link_libraries(veng_unit PRIVATE veng::cook)
+        target_compile_definitions(veng_unit PRIVATE
+                VENG_COOKER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
+        )
+    endif ()
+
     # The type-mapping (and barrier-decision, plan 04) cases include backend
     # headers (TypeMapping.h → Backend/Vulkan.h, which also pulls in GLFW + VMA),
     # so this target needs those *include dirs* — headers only, no run-time
