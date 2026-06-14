@@ -23,7 +23,12 @@ namespace Veng::Renderer::Backend
         const auto& tracked = native.At(baseLayer, baseMip);
         const SubresourceState current{tracked.Layout, tracked.Stage, tracked.Access};
 
-        const BarrierDecision decision = DecideBarrier(current, newLayout, dstStage, dstAccess);
+        // The acquire half of a queue-family ownership transfer is recorded at the
+        // first graphics use of a transfer-produced resource. No producer marks a
+        // transfer family today, so both families collapse to IGNORED here and the
+        // decision degenerates to the ordinary same-queue transition.
+        const BarrierDecision decision = DecideBarrier(current, newLayout, dstStage, dstAccess,
+                                                       VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
 
         if (decision.NeedsBarrier)
         {
@@ -32,8 +37,8 @@ namespace Veng::Renderer::Backend
                 .dstAccessMask = decision.Dst.Access,
                 .oldLayout = decision.Src.Layout,
                 .newLayout = decision.Dst.Layout,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .srcQueueFamilyIndex = decision.SrcQueueFamilyIndex,
+                .dstQueueFamilyIndex = decision.DstQueueFamilyIndex,
                 .image = native.Image,
                 .subresourceRange = {
                     Utils::GetAspectFlags(ToVk(image.GetFormat())),

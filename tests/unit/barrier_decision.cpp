@@ -7,6 +7,7 @@
 
 #include <Veng/Renderer/Backend/BarrierDecision.h>
 
+using namespace Veng;
 using namespace Veng::Renderer;
 using namespace Veng::Renderer::Backend;
 
@@ -18,6 +19,23 @@ namespace
         vk::PipelineStageFlagBits::eFragmentShader,
         vk::AccessFlagBits::eShaderRead,
     };
+
+    // Distinct family indices for the discrete-queue cases. On the dev box
+    // (MoltenVK) these collapse to the same value, which the family-match cases
+    // model with a shared index.
+    constexpr u32 TransferFamily = 2;
+    constexpr u32 GraphicsFamily = 0;
+
+    // Most cases are single-queue: passing equal families leaves the queue
+    // dimension inert, so the decision is the plain hazard rule.
+    [[nodiscard]] BarrierDecision DecideSameQueue(const SubresourceState& current,
+                                                  vk::ImageLayout newLayout,
+                                                  vk::PipelineStageFlags dstStage,
+                                                  vk::AccessFlags dstAccess)
+    {
+        return DecideBarrier(current, newLayout, dstStage, dstAccess,
+                             GraphicsFamily, GraphicsFamily);
+    }
 }
 
 TEST_CASE("DecideBarrier: first use from Undefined is a layout-change barrier")
@@ -28,10 +46,10 @@ TEST_CASE("DecideBarrier: first use from Undefined is a layout-change barrier")
         vk::AccessFlags{},
     };
 
-    const auto d = DecideBarrier(current,
-                                 vk::ImageLayout::eColorAttachmentOptimal,
-                                 vk::PipelineStageFlagBits::eColorAttachmentOutput,
-                                 vk::AccessFlagBits::eColorAttachmentWrite);
+    const auto d = DecideSameQueue(current,
+                                   vk::ImageLayout::eColorAttachmentOptimal,
+                                   vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                                   vk::AccessFlagBits::eColorAttachmentWrite);
 
     CHECK(d.NeedsBarrier);
     CHECK(d.Src.Layout == vk::ImageLayout::eUndefined);
@@ -42,14 +60,17 @@ TEST_CASE("DecideBarrier: first use from Undefined is a layout-change barrier")
     CHECK(d.NewState.Layout == vk::ImageLayout::eColorAttachmentOptimal);
     CHECK(d.NewState.Stage == vk::PipelineStageFlagBits::eColorAttachmentOutput);
     CHECK(d.NewState.Access == vk::AccessFlagBits::eColorAttachmentWrite);
+    // Same-queue: no ownership transfer.
+    CHECK(d.SrcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
+    CHECK(d.DstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
 }
 
 TEST_CASE("DecideBarrier: read-after-read, same layout, needs no barrier and widens scope")
 {
-    const auto d = DecideBarrier(ShaderRead,
-                                 vk::ImageLayout::eShaderReadOnlyOptimal,
-                                 vk::PipelineStageFlagBits::eComputeShader,
-                                 vk::AccessFlagBits::eShaderRead);
+    const auto d = DecideSameQueue(ShaderRead,
+                                   vk::ImageLayout::eShaderReadOnlyOptimal,
+                                   vk::PipelineStageFlagBits::eComputeShader,
+                                   vk::AccessFlagBits::eShaderRead);
 
     CHECK_FALSE(d.NeedsBarrier);
     // Layout unchanged; stage/access are the OR of current and desired.
@@ -61,10 +82,10 @@ TEST_CASE("DecideBarrier: read-after-read, same layout, needs no barrier and wid
 
 TEST_CASE("DecideBarrier: read -> write at same layout is a write hazard")
 {
-    const auto d = DecideBarrier(ShaderRead,
-                                 vk::ImageLayout::eShaderReadOnlyOptimal,
-                                 vk::PipelineStageFlagBits::eComputeShader,
-                                 vk::AccessFlagBits::eShaderWrite);
+    const auto d = DecideSameQueue(ShaderRead,
+                                   vk::ImageLayout::eShaderReadOnlyOptimal,
+                                   vk::PipelineStageFlagBits::eComputeShader,
+                                   vk::AccessFlagBits::eShaderWrite);
 
     CHECK(d.NeedsBarrier); // dstAccess is a write, despite no layout change
     CHECK(d.Src.Access == vk::AccessFlagBits::eShaderRead);
@@ -80,14 +101,88 @@ TEST_CASE("DecideBarrier: write -> read at same layout is a source-write hazard"
         vk::AccessFlagBits::eShaderWrite,
     };
 
-    const auto d = DecideBarrier(current,
-                                 vk::ImageLayout::eGeneral,
-                                 vk::PipelineStageFlagBits::eComputeShader,
-                                 vk::AccessFlagBits::eShaderRead);
+    const auto d = DecideSameQueue(current,
+                                   vk::ImageLayout::eGeneral,
+                                   vk::PipelineStageFlagBits::eComputeShader,
+                                   vk::AccessFlagBits::eShaderRead);
 
     CHECK(d.NeedsBarrier); // current access is a write
     CHECK(d.Src.Access == vk::AccessFlagBits::eShaderWrite);
     CHECK(d.Dst.Access == vk::AccessFlagBits::eShaderRead);
+}
+
+TEST_CASE("DecideBarrier: transfer-produced, families differ, acquires on first graphics use")
+{
+    // A texture uploaded on the transfer queue (transfer-produced, transfer-dst
+    // layout) first sampled on the graphics queue with a discrete transfer
+    // family present.
+    const SubresourceState produced{
+        vk::ImageLayout::eTransferDstOptimal,
+        vk::PipelineStageFlagBits::eTransfer,
+        vk::AccessFlagBits::eTransferWrite,
+        TransferFamily,
+    };
+
+    const auto d = DecideBarrier(produced,
+                                 vk::ImageLayout::eShaderReadOnlyOptimal,
+                                 vk::PipelineStageFlagBits::eFragmentShader,
+                                 vk::AccessFlagBits::eShaderRead,
+                                 TransferFamily, GraphicsFamily);
+
+    CHECK(d.NeedsBarrier);
+    // The acquire half: transfer releases, graphics acquires.
+    CHECK(d.SrcQueueFamilyIndex == TransferFamily);
+    CHECK(d.DstQueueFamilyIndex == GraphicsFamily);
+    // Layout/stage/access still go transfer-dst -> shader-read.
+    CHECK(d.Src.Layout == vk::ImageLayout::eTransferDstOptimal);
+    CHECK(d.Dst.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
+    CHECK(d.Dst.Stage == vk::PipelineStageFlagBits::eFragmentShader);
+    CHECK(d.Dst.Access == vk::AccessFlagBits::eShaderRead);
+    // After the graphics use the subresource is graphics-produced.
+    CHECK(d.NewState.ProducingFamily == GraphicsFamily);
+}
+
+TEST_CASE("DecideBarrier: transfer-produced, families match, degenerates to a plain transition")
+{
+    // The MoltenVK single-queue collapse: transfer and graphics share a family,
+    // so the same scenario carries no ownership transfer.
+    const SubresourceState produced{
+        vk::ImageLayout::eTransferDstOptimal,
+        vk::PipelineStageFlagBits::eTransfer,
+        vk::AccessFlagBits::eTransferWrite,
+        GraphicsFamily,
+    };
+
+    const auto d = DecideBarrier(produced,
+                                 vk::ImageLayout::eShaderReadOnlyOptimal,
+                                 vk::PipelineStageFlagBits::eFragmentShader,
+                                 vk::AccessFlagBits::eShaderRead,
+                                 GraphicsFamily, GraphicsFamily);
+
+    CHECK(d.NeedsBarrier); // still a layout change
+    // No ownership transfer — both halves collapse to IGNORED.
+    CHECK(d.SrcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
+    CHECK(d.DstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
+    CHECK(d.Src.Layout == vk::ImageLayout::eTransferDstOptimal);
+    CHECK(d.Dst.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
+}
+
+TEST_CASE("DecideBarrier: graphics-produced read-after-read is unchanged by the queue dimension")
+{
+    // Regression guard: a resource that was never on the transfer queue (default
+    // graphics-produced) takes the plain hazard path even with a discrete
+    // transfer family present — no acquire, no spurious barrier.
+    const auto d = DecideBarrier(ShaderRead,
+                                 vk::ImageLayout::eShaderReadOnlyOptimal,
+                                 vk::PipelineStageFlagBits::eComputeShader,
+                                 vk::AccessFlagBits::eShaderRead,
+                                 TransferFamily, GraphicsFamily);
+
+    CHECK_FALSE(d.NeedsBarrier);
+    CHECK(d.SrcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
+    CHECK(d.DstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
+    CHECK(d.NewState.Stage == (vk::PipelineStageFlagBits::eFragmentShader |
+                               vk::PipelineStageFlagBits::eComputeShader));
 }
 
 TEST_CASE("IsWriteAccess classifies write bits and reads")

@@ -19,27 +19,42 @@ namespace Veng::Renderer::Backend
     BarrierDecision DecideBarrier(const SubresourceState& current,
                                   const vk::ImageLayout newLayout,
                                   const vk::PipelineStageFlags dstStage,
-                                  const vk::AccessFlags dstAccess)
+                                  const vk::AccessFlags dstAccess,
+                                  const u32 transferFamily,
+                                  const u32 graphicsFamily)
     {
+        // An acquire is needed only when the subresource was produced on the
+        // transfer family and the two families are genuinely distinct. The
+        // single-queue collapse (transfer == graphics) leaves both indices
+        // IGNORED — an ordinary same-queue transition with no ownership move.
+        const bool acquire = current.ProducingFamily == transferFamily && transferFamily != graphicsFamily;
+        const u32 srcFamily = acquire ? transferFamily : VK_QUEUE_FAMILY_IGNORED;
+        const u32 dstFamily = acquire ? graphicsFamily : VK_QUEUE_FAMILY_IGNORED;
+
         const bool layoutChange = current.Layout != newLayout;
         const bool hazard = layoutChange || IsWriteAccess(current.Access) || IsWriteAccess(dstAccess);
 
-        if (!hazard)
+        if (!hazard && !acquire)
         {
-            // Read-after-read, same layout: no barrier. Widen the tracked read
-            // scope so a later write waits on every prior read; keep the layout.
+            // Read-after-read, same layout, same queue: no barrier. Widen the
+            // tracked read scope so a later write waits on every prior read; keep
+            // the layout. The subresource stays graphics-produced.
             return {
                 .NeedsBarrier = false,
                 .NewState = {current.Layout, current.Stage | dstStage, current.Access | dstAccess},
             };
         }
 
-        const SubresourceState desired{newLayout, dstStage, dstAccess};
+        // After a graphics-queue use the subresource is graphics-produced, so a
+        // later use never re-acquires.
+        const SubresourceState desired{newLayout, dstStage, dstAccess, graphicsFamily};
         return {
             .NeedsBarrier = true,
             .NewState = desired,
             .Src = current,
             .Dst = desired,
+            .SrcQueueFamilyIndex = srcFamily,
+            .DstQueueFamilyIndex = dstFamily,
         };
     }
 
