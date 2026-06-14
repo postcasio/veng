@@ -12,7 +12,7 @@ Captured now so the earlier phases stay coherent with where veng is going.
 
 The headline next phase. veng needs a real asset system, and **the work begins by
 defining the asset API** — the general abstraction first, concrete asset types
-after.
+after. **Design overview:** [asset-system.md](asset-system.md).
 
 - **Asset API (first):** how assets are identified, referenced (handles/refs),
   loaded, cached, lifetime-managed, hot-reloaded, and imported/cooked. This is
@@ -41,7 +41,8 @@ Depends on area 2 (threading) for non-blocking loads.
 
 Explore this deeply — veng has no standardized concurrency story, and async asset
 loading needs one. planset-1 deliberately shipped a **single-threaded v1
-contract** (documented in `Veng.h`); this phase revisits it.
+contract** (documented in `Veng.h`); this phase revisits it. **Design overview:**
+[threading-task-system.md](threading-task-system.md).
 
 - **A standard way to run work off the main thread** — threads vs. a task/job
   system vs. a task graph. Open design area; pick a model deliberately rather
