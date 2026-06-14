@@ -31,6 +31,16 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   Order was `5a → 3 → 5b`, as the future roadmap fixed. Stays
   single-threaded/single-context; threading (area 2) is a later planset.
 
+- **[planset-5](planset-5/README.md)** — the synchronous asset system (📝 proposed,
+  10 plans). Takes up future area 1's **synchronous slice**: a per-lib project
+  reorg, a standalone in-repo **cooker** (`vengc`) that turns hand-written JSON
+  **asset packs** into binary **archives**, a shared `assetformat` lib, and an
+  engine-side `AssetManager` that loads by opaque `u64` `AssetId` via `LoadSync`.
+  Delivers texture (stb), mesh (assimp), shader (**Slang** + offline reflection),
+  and material types, ending with hello-triangle rendering a cooked pack. Cooking
+  is offline-only (no cook-on-demand); async loading (threading) and bindless are
+  the named follow-ons, not in scope.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Remaining areas: the asset system (asset API
   first, then materials/textures/meshes; absorbs offline shader reflection +
