@@ -41,9 +41,10 @@ Resolved up front (they change the structure of every plan):
 4. **Materials author shaders in Slang.** The shader toolchain for materials is
    **Slang** (`slangc` in the cooker), compiled to SPIR-V and **reflected offline**
    into a serializable `ShaderInterface`. The engine still loads plain SPIR-V — it
-   gains no Slang dependency. A material references its shader by **external path**
-   (compiled by the cooker) **or inline base64** (a precompiled SPIR-V blob, for
-   editor-produced materials).
+   gains no Slang dependency. A shader is a first-class asset (a `*.shader.json`
+   naming its `.slang` source, entry point, and optional vertex-layout id); the
+   cooker **always** compiles from source. A material references its vertex/fragment
+   shaders by `AssetId`.
 
 5. **Bindless before materials.** The bindless descriptor subsystem
    ([bindless-descriptors.md](../future/bindless-descriptors.md)) lands as plan 05,
@@ -54,12 +55,15 @@ Resolved up front (they change the structure of every plan):
    (descriptor-policy single source of truth), currently `proposed` — land it first
    (it also closes the documented validation gap).
 
-6. **Every asset type has a JSON source file.** Textures and meshes get their own
-   JSON authoring files, symmetric with materials — a pack entry points at a
-   per-asset `.tex.json` / `.mesh.json` / `.vmat.json`, which in turn references the
-   binary(ies). A texture JSON carries sampler settings + import options; a mesh
-   JSON carries assimp import settings + material overrides. The pack is purely the
-   `id → source` registry; the per-asset settings live in the source files.
+6. **Every asset type has a JSON source file.** Every type — texture, mesh, shader,
+   material — gets its own JSON authoring file: a pack entry points at a per-asset
+   `.tex.json` / `.mesh.json` / `.shader.json` / `.vmat.json`, which in turn
+   references the binary(ies) or `.slang` source. A texture JSON carries sampler
+   settings + import options; a mesh JSON carries assimp import settings + material
+   overrides; a shader JSON names its `.slang` source + entry + vertex-layout id; a
+   material JSON declares its shaders (by id) and an ordered, explicitly-typed field
+   list. The pack is purely the `id → source` registry; the per-asset settings live
+   in the source files.
 
 > **Synchronous-only, by decision.** `AssetManager::LoadSync` blocks; uploads use
 > today's `Image/Buffer::UploadSync` (`WaitIdle`) path. Async `Load`, the transfer
@@ -108,7 +112,9 @@ public headers.
   "assets": [
     { "id": 1001, "type": "texture",  "source": "textures/brick.tex.json" },
     { "id": 1002, "type": "mesh",     "source": "meshes/cube.mesh.json" },
-    { "id": 1003, "type": "material", "source": "materials/brick.vmat.json" }
+    { "id": 1003, "type": "material", "source": "materials/brick.vmat.json" },
+    { "id": 1004, "type": "shader",   "source": "shaders/brick.vert.shader.json" },
+    { "id": 1005, "type": "shader",   "source": "shaders/brick.frag.shader.json" }
   ]
 }
 ```
@@ -118,12 +124,19 @@ public headers.
   "sampler": { "min": "linear", "mag": "linear", "wrap_u": "repeat", "wrap_v": "repeat" } }
 ```
 ```jsonc
-// materials/brick.vmat.json  — a material referring to an external Slang shader
+// materials/brick.vmat.json  — shaders by id + ordered, explicitly-typed fields
 {
-  "shader": { "path": "shaders/brick.slang" },     // OR { "spirv_b64": "…" }
-  "textures": { "albedo": 1001 },                    // by AssetId
-  "params":   { "tint": [1.0, 0.9, 0.8, 1.0] }
+  "shaders": { "vertex": 1004, "fragment": 1005 },
+  "fields": [
+    { "name": "Albedo",        "type": "texture", "id": 1001 },
+    { "name": "AlbedoSampler", "type": "sampler", "texture": "Albedo" },
+    { "name": "Factors",       "type": "vec4",    "value": [1.0, 0.9, 0.8, 1.0] }
+  ]
 }
+```
+```jsonc
+// shaders/brick.vert.shader.json  — .slang source + entry + vertex-layout id
+{ "source": "brick.vert.slang", "entry": "vsMain", "vertex_layout": 5603155022528551788 }
 ```
 ```sh
 vengc cook examples/hello-triangle/assets/sample.vengpack.json -o sample.vengpack
@@ -149,6 +162,7 @@ auto mesh = m_Assets->LoadSync<Mesh>(AssetId{1002}).value();
 | 08 | [Shader via Slang + offline reflection → `ShaderInterface`](08-shader-slang-reflection.md) | Absorbs deferred shader-reflection work; layouts from reflection, set 0 from registry. | done |
 | 08b | [Engine-defined vertex layouts as assets](08b-vertex-layout-enum.md) | Vertex layouts become a first-class asset type; embedded core pack (Canonical/ScreenSpace/PositionOnly); shaders reference a layout by `AssetId`; cooker `--reference` + `generate-id`. | done |
 | 09 | [Material: JSON asset, inline/external shader, bindless `Material`](09-material.md) | The headline; thin handle+SSBO material, validated against the interface. | done |
+| 09b | [Shader & material asset data in their own source files](09b-material-shader-asset-files.md) | Move shader/material authoring data out of the pack into `*.shader.json` / `*.vmat.json`; explicit typed material fields; drop the precompiled-inline shader path. Correction to 09. | proposed |
 | 10 | [Example asset pack: hand-written JSON → build-time cook → load](10-example-pack.md) | `add_asset_pack` CMake fn; the full deliverable demonstrated. | proposed |
 | 11 | [Docs + roadmap re-cut](11-docs-roadmap.md) | `ownership.md`, `CLAUDE.md`, `future/README`, `bindless`/`asset-system`, `plans/README`. | proposed |
 
@@ -188,9 +202,8 @@ via `FetchContent` with pinned tags like the rest:
   never reaches the engine or its consumers.
 - **Slang** — `slangc`/the Slang API for material/shader compilation *and*
   reflection (plan 08). Prefer the prebuilt release binary; document the toolchain
-  requirement. No separate reflection library: the `.slang` path reflects via
-  Slang's own API, and the inline (editor-produced) path carries a
-  `ShaderInterface` the editor already derived — neither needs SPIRV-Reflect.
+  requirement. No separate reflection library: shaders reflect via Slang's own API
+  during the cook — no SPIRV-Reflect.
 - **stb_image** — already vendored (`src/Vendor`); reused by the cooker for texture
   decode (plan 06).
 

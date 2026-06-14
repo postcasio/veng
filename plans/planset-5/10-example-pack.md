@@ -1,8 +1,9 @@
 # Plan 10 — Example asset pack: hand-written JSON → build-time cook → load
 
-**Goal:** the deliverable, demonstrated. hello-triangle gets a **hand-written JSON
-asset pack** referring to a JSON material (which refers to an external Slang shader,
-with an inline-base64 variant shown too), a texture, and a mesh. A new
+**Goal:** the deliverable, demonstrated. hello-triangle ships a **hand-written JSON
+asset pack** — a pure `{ id, type, source }` manifest — naming a texture, a mesh, a
+material, and the material's two shaders, each pointing at its own per-asset source
+file (`*.tex.json` / `*.mesh.json` / `*.vmat.json` / `*.shader.json`). A new
 `add_asset_pack(...)` CMake function cooks the pack with `vengc` at build time into
 a `.vengpack`; the sample mounts it and renders the mesh + material + texture
 entirely **by `AssetId`**. This is the proof that the whole pipeline works end to
@@ -10,35 +11,48 @@ end, and it doubles as the worked example for the docs.
 
 ## Why this is its own plan
 
-The earlier type plans each wired a minimal ad-hoc cook step into the sample. This
-plan consolidates them into the real authoring workflow — a single hand-written
-pack, a reusable build integration (`add_asset_pack`), and a clean
-load-by-id render loop — so the sample reflects how a veng app *actually* ships
-assets, not a series of one-offs.
+The earlier type plans each wired a minimal ad-hoc cook step into the sample, and
+plan 09b put every asset type behind its own source file. This plan consolidates
+the cook into the real authoring workflow — a single hand-written pack, a reusable
+build integration (`add_asset_pack`) replacing the inline `add_custom_command`, and
+a clean load-by-id render loop — so the sample reflects how a veng app *actually*
+ships assets, not a series of one-offs.
 
 ## The authored files (all under `examples/hello-triangle/assets/`)
 
 ```jsonc
-// sample.vengpack.json
+// sample.vengpack.json   — pure { id, type, source } manifest
 {
   "version": 1,
   "assets": [
     { "id": 1001, "type": "texture",  "source": "textures/brick.tex.json" },
     { "id": 1002, "type": "mesh",     "source": "meshes/cube.mesh.json" },
-    { "id": 1003, "type": "material", "source": "materials/brick.vmat.json" }
+    { "id": 1003, "type": "material", "source": "materials/brick.vmat.json" },
+    { "id": 1004, "type": "shader",   "source": "shaders/brick.vert.shader.json" },
+    { "id": 1005, "type": "shader",   "source": "shaders/brick.frag.shader.json" }
   ]
 }
 ```
 ```jsonc
-// materials/brick.vmat.json   (external-shader form)
-{ "shader": { "path": "shaders/brick.slang" },
-  "textures": { "albedo": 1001 },
-  "params": { "tint": [1,1,1,1] } }
+// materials/brick.vmat.json   — explicit, typed, ordered fields (plan 09b)
+{
+  "shaders": { "vertex": 1004, "fragment": 1005 },
+  "fields": [
+    { "name": "Albedo",        "type": "texture", "id": 1001 },
+    { "name": "AlbedoSampler", "type": "sampler", "texture": "Albedo" },
+    { "name": "Factors",       "type": "vec4",    "value": [1.0, 1.0, 1.0, 1.0] }
+  ]
+}
+```
+```jsonc
+// shaders/brick.vert.shader.json   — source-only (plan 09b)
+{ "source": "brick.vert.slang", "entry": "vsMain", "vertex_layout": 5603155022528551788 }
 ```
 
-A second material file demonstrates the **inline** form
-(`{ "shader": { "spirv_b64": "…" } }`) cooked into the same or a sibling pack, so
-both shader-reference paths are exercised by the shipped sample.
+Shaders are always compiled from `source` by the cooker; there is no precompiled
+inline path. The per-asset source files (and the manifest form of the pack) are
+established by plan 09b — this plan consumes them and supplies the build
+integration and the by-id render loop.
 
 ## The CMake integration
 
@@ -75,19 +89,25 @@ void OnDispose() override { m_Material = {}; m_Mesh = {}; }   // release handles
 
 ## Work
 
-1. `cmake/AssetPack.cmake` with `add_asset_pack`; wire it into the sample's
-   `CMakeLists.txt`, replacing the ad-hoc cook steps from plans 06/07.
-2. Author the pack JSON, the per-asset source JSONs (`brick.tex.json`,
-   `cube.mesh.json`, `brick.vmat.json` in both shader forms), and bring in the
-   `brick.png` / `cube.obj` / `brick.slang` binaries they reference.
-3. Rewrite the sample to mount the pack and render purely by `AssetId`; release all
-   handles in `OnDispose`.
+1. `cmake/AssetPack.cmake` with `add_asset_pack` (mirroring `add_shaders`'
+   shape: a custom command running `vengc cook` on the pack JSON, depending on the
+   `vengc` target and the pack's sources, with `--reference` for the engine core
+   pack so the shader's `vertex_layout` id resolves); wire it into the sample's
+   `CMakeLists.txt`, replacing the inline `add_custom_command` cook step.
+2. Confirm the manifest pack + per-asset source files (`brick.tex.json`,
+   `cube.mesh.json`, `brick.vmat.json`, `brick.{vert,frag}.shader.json`) and the
+   `brick.png` / `cube.obj` / `brick.{vert,frag}.slang` binaries they reference are
+   in place — authored by the earlier type plans and converted to source-file form
+   by plan 09b; this plan does not re-author them.
+3. The sample mounts the pack and renders purely by `AssetId`, releasing all handles
+   in `OnDispose` (in place from the type plans — verify it still holds).
 4. Verify the headless smoke path mounts + loads + renders the pack (the
    `Headless` smoke run is the CI gate for this).
 
 ## Dependencies
 
-Plans 06 (texture), 07 (mesh), 09 (material) — every type must exist. The capstone
+Plans 06 (texture), 07 (mesh), 09 (material), 09b (per-asset source files +
+manifest pack) — every type must exist in its source-file form. The capstone
 demonstration.
 
 ## Acceptance

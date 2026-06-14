@@ -25,12 +25,22 @@ finished surface rather than chasing a moving API.
      cook-on-demand); load is by opaque `u64` `AssetId` through mounted
      `.vengpack` archives; `AssetManager` is owned by `Application` and threaded a
      `Context&`; `LoadSync` blocks (async is the next planset); apps release
-     handles in `OnDispose`.
+     handles in `OnDispose`. Authoring shape: a pack is a pure
+     `{ id, type, source }` manifest and **every** asset type — texture, mesh,
+     shader, material — has its own per-asset JSON source file
+     (`*.tex.json` / `*.mesh.json` / `*.shader.json` / `*.vmat.json`) that the
+     entry points at; the manifest holds no per-asset settings.
    - **A "Bindless" note**: set 0 is the engine-provided `BindlessRegistry`
      (textures/samplers/storage arrays), bound once per frame; `PipelineLayout`
      reserves it; author bindings live in sets ≥ 1.
-   - **Shaders**: materials author in **Slang**, compiled + reflected **offline**
-     by the cooker into a `ShaderInterface`; the engine loads SPIR-V only.
+   - **Shaders & materials**: shaders are a first-class asset authored in **Slang**
+     (a `*.shader.json` naming the `.slang` source, entry point, and optional
+     vertex-layout id); the cooker **always** compiles them — there is no
+     precompiled-inline path — and reflects them **offline** into a
+     `ShaderInterface`; the engine loads SPIR-V only. A material (`*.vmat.json`)
+     references its vertex/fragment shaders by `AssetId` and declares an **ordered,
+     explicitly-typed** field list; the cook validates those fields against the
+     fragment shader's reflected `MaterialData`.
    - **Update the validation-gap note**: plan 05 (via planset-2/06) closes the
      descriptor-pool / `UPDATE_AFTER_BIND` gap; remove/replace the corresponding
      allowlist entry and the "known validation gap" paragraph.
@@ -56,8 +66,10 @@ finished surface rather than chasing a moving API.
    it still uniquely holds (async `Load` default, hot-reload, the
    dependency-graph-driven eviction), with a banner that the synchronous foundation
    + bindless material shipped in planset-5 and the resolved decisions
-   (no cook-on-demand, opaque-u64 ids, separate cooker lib, Slang, bindless
-   material) are settled there. Strike the now-answered open-decisions.
+   (no cook-on-demand, opaque-u64 ids, separate cooker lib, Slang always cooked
+   from source — no precompiled-inline path, a per-asset JSON source file for every
+   type, explicitly-typed material fields, bindless material) are settled there.
+   Strike the now-answered open-decisions.
 6. **`plans/README.md`** — update the planset-5 index entry to reflect bindless is
    included; flip its descriptor and future-area cross-refs.
 7. **`plans/planset-5/README.md`** — flip the status column to `done`.
