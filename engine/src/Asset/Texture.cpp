@@ -23,7 +23,7 @@ namespace Veng
             .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
         });
 
-        m_Image->Upload(info.Pixels);
+        m_Image->UploadSync(info.Pixels);
 
         m_View = ImageView::Create(context, {
             .Name = m_Name + " View",

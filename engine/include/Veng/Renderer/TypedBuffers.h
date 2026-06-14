@@ -37,10 +37,10 @@ namespace Veng::Renderer
             }), vertexCount);
         }
 
-        void Upload(std::span<const V> vertices, usize firstVertex = 0) const
+        void UploadSync(std::span<const V> vertices, usize firstVertex = 0) const
         {
-            m_Buffer->Upload({reinterpret_cast<const u8*>(vertices.data()), vertices.size_bytes()},
-                             firstVertex * sizeof(V));
+            m_Buffer->UploadSync({reinterpret_cast<const u8*>(vertices.data()), vertices.size_bytes()},
+                                 firstVertex * sizeof(V));
         }
 
         [[nodiscard]] usize GetVertexCount() const { return m_Count; }
@@ -70,20 +70,20 @@ namespace Veng::Renderer
             }), indexCount, type);
         }
 
-        void Upload(std::span<const u32> indices, usize firstIndex = 0) const
+        void UploadSync(std::span<const u32> indices, usize firstIndex = 0) const
         {
             VE_ASSERT(m_Type == IndexType::U32,
                       "IndexBuffer '{}' is U16; cannot upload u32 indices", m_Buffer->GetName());
-            m_Buffer->Upload({reinterpret_cast<const u8*>(indices.data()), indices.size_bytes()},
-                             firstIndex * sizeof(u32));
+            m_Buffer->UploadSync({reinterpret_cast<const u8*>(indices.data()), indices.size_bytes()},
+                                 firstIndex * sizeof(u32));
         }
 
-        void Upload(std::span<const u16> indices, usize firstIndex = 0) const
+        void UploadSync(std::span<const u16> indices, usize firstIndex = 0) const
         {
             VE_ASSERT(m_Type == IndexType::U16,
                       "IndexBuffer '{}' is U32; cannot upload u16 indices", m_Buffer->GetName());
-            m_Buffer->Upload({reinterpret_cast<const u8*>(indices.data()), indices.size_bytes()},
-                             firstIndex * sizeof(u16));
+            m_Buffer->UploadSync({reinterpret_cast<const u8*>(indices.data()), indices.size_bytes()},
+                                 firstIndex * sizeof(u16));
         }
 
         [[nodiscard]] usize GetIndexCount() const { return m_Count; }
@@ -116,9 +116,9 @@ namespace Veng::Renderer
             }));
         }
 
-        void Upload(const T& value) const
+        void UploadSync(const T& value) const
         {
-            m_Buffer->Upload({reinterpret_cast<const u8*>(&value), sizeof(T)});
+            m_Buffer->UploadSync({reinterpret_cast<const u8*>(&value), sizeof(T)});
         }
 
         [[nodiscard]] const Ref<Buffer>& GetBuffer() const { return m_Buffer; }
@@ -146,10 +146,10 @@ namespace Veng::Renderer
             }), elementCount);
         }
 
-        void Upload(std::span<const T> elements, usize firstElement = 0) const
+        void UploadSync(std::span<const T> elements, usize firstElement = 0) const
         {
-            m_Buffer->Upload({reinterpret_cast<const u8*>(elements.data()), elements.size_bytes()},
-                             firstElement * sizeof(T));
+            m_Buffer->UploadSync({reinterpret_cast<const u8*>(elements.data()), elements.size_bytes()},
+                                 firstElement * sizeof(T));
         }
 
         [[nodiscard]] usize GetElementCount() const { return m_Count; }

@@ -137,14 +137,14 @@ namespace Veng
             .Size = vertexBytes,
             .Usage = Renderer::BufferUsage::Vertex | Renderer::BufferUsage::TransferDst,
         });
-        vertexBuffer->Upload(vertexData);
+        vertexBuffer->UploadSync(vertexData);
 
         const Ref<Renderer::Buffer> indexBuffer = Renderer::Buffer::Create(context, {
             .Name = fmt::format("Mesh {} Indices", id.Value),
             .Size = indexBytes,
             .Usage = Renderer::BufferUsage::Index | Renderer::BufferUsage::TransferDst,
         });
-        indexBuffer->Upload(indexData);
+        indexBuffer->UploadSync(indexData);
 
         const Ref<Veng::Mesh> mesh = Veng::Mesh::Create({
             .Name = fmt::format("Mesh {}", id.Value),

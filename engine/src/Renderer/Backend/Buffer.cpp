@@ -45,7 +45,7 @@ namespace Veng::Renderer
         m_Context.GetNative().Retire(m_Native->Buffer, m_Native->Allocation);
     }
 
-    void Buffer::Upload(const std::span<const u8> data, const u64 offset) const
+    void Buffer::UploadSync(const std::span<const u8> data, const u64 offset) const
     {
         VE_ASSERT(offset + data.size() <= m_Size,
                   "Buffer '{}' upload out of range: offset {} + size {} > buffer size {}",

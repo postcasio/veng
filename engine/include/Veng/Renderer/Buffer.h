@@ -32,7 +32,7 @@ namespace Veng::Renderer
 
         // Copy data into the buffer at byte offset (default 0). offset + size
         // must fit within the buffer.
-        void Upload(std::span<const u8> data, u64 offset = 0) const;
+        void UploadSync(std::span<const u8> data, u64 offset = 0) const;
         [[nodiscard]] vector<u8> Download() const;
 
         [[nodiscard]] const string& GetName() const { return m_Name; }

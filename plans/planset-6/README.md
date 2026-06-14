@@ -147,7 +147,7 @@ draw begins on the first frame it is resident.
 
 | # | Plan | Summary | Status |
 |---|---|---|---|
-| 01 | [`Upload` → `UploadSync` rename](01-upload-sync-rename.md) | Rename the blocking `Buffer/Image::Upload` to `UploadSync` and migrate every caller (incl. `AssetManager` loaders, the sample, tests). Frees the default name. Behaviour-preserving. | proposed |
+| 01 | [`Upload` → `UploadSync` rename](01-upload-sync-rename.md) | Rename the blocking `Buffer/Image::Upload` to `UploadSync` and migrate every caller (incl. `AssetManager` loaders, the sample, tests). Frees the default name. Behaviour-preserving. | done |
 | 02 | [`TaskSystem` + `Task<T>`](02-task-system.md) | Fixed-pool work queue returning futures; `Submit`/`WaitForAll`/`ForEachWorker`; main-thread continuation pump. CPU-only, unit-tested, no Vulkan. | proposed |
 | 03 | [Transfer queue + per-worker command pools](03-transfer-queue-pools.md) | `QueueFamilyIndices::TransferFamily` + selection (dedicated-transfer-preferred, MoltenVK collapse); per-worker transfer pools on `Context`; the submission lock. | proposed |
 | 04 | [`TimelineSemaphore`](04-timeline-semaphore.md) | New `Unique` sync primitive beside `Semaphore`/`Fence`; host/queue signal + wait on a monotonic `u64`. | proposed |

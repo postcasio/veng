@@ -53,7 +53,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "typed buffer roundtrip: VertexBuffer<
     };
 
     auto vertexBuffer = VertexBuffer<Vertex>::Create(Context, "Vertices", count);
-    vertexBuffer.Upload(source);
+    vertexBuffer.UploadSync(source);
 
     const vector<u8> downloaded = vertexBuffer.GetBuffer()->Download();
 
@@ -80,8 +80,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "typed buffer roundtrip: StorageBuffer
 
     // Upload the first two elements, then the last two at firstElement=2 —
     // exercises the firstElement * sizeof(T) offset arithmetic.
-    storageBuffer.Upload(std::span(source).subspan(0, 2), 0);
-    storageBuffer.Upload(std::span(source).subspan(2, 2), 2);
+    storageBuffer.UploadSync(std::span(source).subspan(0, 2), 0);
+    storageBuffer.UploadSync(std::span(source).subspan(2, 2), 2);
 
     const vector<u8> downloaded = storageBuffer.GetBuffer()->Download();
 

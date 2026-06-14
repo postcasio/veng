@@ -183,7 +183,7 @@ namespace Veng::Renderer
                   data.size(), sizeof(MaterialData));
 
         const std::span<const u8> bytes(reinterpret_cast<const u8*>(data.data()), data.size());
-        m_MaterialBuffer->Upload(bytes, static_cast<u64>(handle.Index) * sizeof(MaterialData));
+        m_MaterialBuffer->UploadSync(bytes, static_cast<u64>(handle.Index) * sizeof(MaterialData));
     }
 
     void BindlessRegistry::Release(TextureHandle handle)

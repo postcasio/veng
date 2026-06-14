@@ -52,7 +52,7 @@ namespace Veng::Renderer
         // update it through the backend; consumers no longer reason about layout.
 
         void GenerateMipmaps(CommandBuffer& commandBuffer);
-        void Upload(std::span<const u8> span);
+        void UploadSync(std::span<const u8> span);
         [[nodiscard]] vector<u8> Download();
 
         struct Native;

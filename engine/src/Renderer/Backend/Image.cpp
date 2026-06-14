@@ -131,7 +131,7 @@ namespace Veng::Renderer
         Backend::TransitionImage(commandBuffer, *this, ImageLayout::ShaderReadOnly, 0, 1, m_MipLevels - 1, 1);
     }
 
-    void Image::Upload(std::span<const u8> span)
+    void Image::UploadSync(std::span<const u8> span)
     {
         auto stagingBuffer = Buffer::Create(m_Context, {
             .Name = m_Name + " (Upload)",
@@ -139,7 +139,7 @@ namespace Veng::Renderer
             .Usage = BufferUsage::TransferSrc,
         });
 
-        stagingBuffer->Upload(span);
+        stagingBuffer->UploadSync(span);
 
         auto commandBuffer = CommandBuffer::Create(m_Context);
 

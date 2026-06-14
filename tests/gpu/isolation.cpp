@@ -38,7 +38,7 @@ namespace
         std::array<u8, Size> source{};
         std::iota(source.begin(), source.end(), fillStart);
 
-        buffer->Upload(source);
+        buffer->UploadSync(source);
 
         const vector<u8> downloaded = buffer->Download();
 

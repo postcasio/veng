@@ -153,7 +153,7 @@ namespace
                 .Usage = BufferUsage::TransferDst,
             });
             const u8 data[32] = {};
-            buffer->Upload({data, sizeof(data)}); // offset 0 + 32 > 16
+            buffer->UploadSync({data, sizeof(data)}); // offset 0 + 32 > 16
         });
     }
 
@@ -163,7 +163,7 @@ namespace
         {
             const auto index = IndexBuffer::Create(context, "indices", 4, IndexType::U32);
             const u16 values[4] = {};
-            index.Upload(std::span<const u16>(values)); // buffer is U32
+            index.UploadSync(std::span<const u16>(values)); // buffer is U32
         });
     }
 
@@ -173,7 +173,7 @@ namespace
         {
             const auto index = IndexBuffer::Create(context, "indices", 4, IndexType::U16);
             const u32 values[4] = {};
-            index.Upload(std::span<const u32>(values)); // buffer is U16
+            index.UploadSync(std::span<const u32>(values)); // buffer is U16
         });
     }
 

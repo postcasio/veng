@@ -35,7 +35,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "buffer roundtrip: whole-buffer upload
     std::array<u8, size> source{};
     std::iota(source.begin(), source.end(), u8{0});
 
-    buffer->Upload(source);
+    buffer->UploadSync(source);
 
     const vector<u8> downloaded = buffer->Download();
 
@@ -61,14 +61,14 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "buffer roundtrip: offset upload lands
     std::array<u8, size> source{};
     std::iota(source.begin(), source.end(), u8{0});
 
-    buffer->Upload(source);
+    buffer->UploadSync(source);
 
     // Offset upload: overwrite bytes [16, 24) with a distinct pattern and
     // verify it lands at offset 16, leaving the rest untouched.
     constexpr u64 offset = 16;
     const std::array<u8, 8> patch = {0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9, 0xF8};
 
-    buffer->Upload(patch, offset);
+    buffer->UploadSync(patch, offset);
 
     const vector<u8> afterPatch = buffer->Download();
 
