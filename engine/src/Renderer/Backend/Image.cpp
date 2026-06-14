@@ -3,10 +3,12 @@
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Native.h>
+#include <Veng/Renderer/TimelineSemaphore.h>
 #include <Veng/Renderer/Backend/Barrier.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
+#include <Veng/Task/TaskSystem.h>
 
 #include <vulkan/vulkan_format_traits.hpp>
 
@@ -159,6 +161,57 @@ namespace Veng::Renderer
         commandBuffer->End();
 
         m_Context.SubmitImmediateCommands(*commandBuffer);
+    }
+
+    Task<void> Image::Upload(TaskSystem& tasks, const std::span<const u8> data)
+    {
+        // Capture an owning Ref via shared_from_this so the image cannot be
+        // destroyed before the worker runs, and a copy of the bytes since the
+        // caller's span may not outlive this call.
+        Ref<Image> self = shared_from_this();
+        vector<u8> bytes(data.begin(), data.end());
+
+        return tasks.Submit([self = std::move(self), bytes = std::move(bytes)]
+        {
+            Context& context = self->m_Context;
+            const u32 workerIndex = TaskSystem::GetCurrentWorkerIndex();
+
+            const QueueFamilyIndices& families = context.GetQueueFamilies();
+            const u32 transferFamily = families.TransferFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
+            const u32 graphicsFamily = families.GraphicsFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
+
+            // Staging is host-visible+coherent: a plain memcpy on the worker, no
+            // flush. Buffer::Create is concurrency-safe (VMA is internally
+            // synchronized); command-pool allocation is not, so the copy is
+            // recorded onto this worker's own transfer command buffer.
+            auto staging = Buffer::Create(context, {
+                .Name = self->m_Name + " (Upload)",
+                .Size = bytes.size(),
+                .Usage = BufferUsage::TransferSrc,
+            });
+            staging->UploadSync(bytes);
+
+            CommandBuffer& cmd = context.BeginTransferRecording(workerIndex);
+
+            Backend::TransitionImage(cmd, *self, ImageLayout::TransferDst, 0, self->m_Layers, 0, self->m_MipLevels);
+            cmd.CopyBufferToImage(staging, self);
+
+            // Release the image to the graphics queue (no-op when the families
+            // collapse) and mark it transfer-produced so the first graphics use
+            // acquires it and folds the timeline wait into the frame submit.
+            Backend::ReleaseImageToGraphicsQueue(cmd, *self, transferFamily, graphicsFamily);
+
+            const u64 value = context.SubmitTransfer(workerIndex, context.GetTransferTimeline());
+
+            Backend::MarkProducedOn(*self, transferFamily, value);
+
+            // The staging buffer's GPU lifetime is the transfer timeline, not a
+            // frame fence: release its raw handle and pin it to the value its copy
+            // signalled. Routing it through Buffer::~Buffer would frame-bin retire
+            // it on the wrong lifetime.
+            const ReleasedBuffer released = ReleaseBuffer(*staging);
+            context.GetNative().RetireOnTransfer(released.Buffer, released.Allocation, value);
+        });
     }
 
     vector<u8> Image::Download()

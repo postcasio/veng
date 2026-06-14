@@ -1,9 +1,19 @@
 #pragma once
 
+#include <span>
+
 #include <Veng/Veng.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Types.h>
+
+namespace Veng
+{
+    class TaskSystem;
+
+    template <typename T>
+    class Task;
+}
 
 namespace Veng::Renderer
 {
@@ -52,8 +62,29 @@ namespace Veng::Renderer
         // update it through the backend; consumers no longer reason about layout.
 
         void GenerateMipmaps(CommandBuffer& commandBuffer);
+
+        // Stage and copy data into the image, blocking the caller until the copy
+        // completes (the device is waited). The blocking path.
         void UploadSync(std::span<const u8> span);
+
+        // Stage and copy data into the image on a worker thread, returning
+        // immediately. The copy is recorded onto the worker's transfer command
+        // buffer and submitted on the transfer queue under the submission lock;
+        // the returned Task completes once the work is submitted (not once the
+        // GPU finishes — that is gated by the transfer timeline). On first
+        // graphics use the render graph acquires the image and folds a
+        // transfer-timeline wait into the frame submit. The image is held alive
+        // for the job's duration via shared_from_this(); registration into the
+        // bindless set is the caller's responsibility on the main thread, not the
+        // worker's.
+        [[nodiscard]] Task<void> Upload(TaskSystem& tasks, std::span<const u8> data);
+
         [[nodiscard]] vector<u8> Download();
+
+        // The context this image was created with. Backend transition code reads
+        // it to resolve queue families and register the frame transfer-wait when
+        // acquiring a transfer-produced image on first graphics use.
+        [[nodiscard]] Context& GetContext() const { return m_Context; }
 
         struct Native;
         [[nodiscard]] Native& GetNative() const;

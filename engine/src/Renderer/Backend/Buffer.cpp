@@ -5,6 +5,7 @@
 #include <Veng/Renderer/Backend/DebugMarkers.h>
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
+#include <Veng/Task/TaskSystem.h>
 
 namespace Veng::Renderer
 {
@@ -61,6 +62,23 @@ namespace Veng::Renderer
         VK_RAW_ASSERT(
             vmaCopyMemoryToAllocation(GetVmaAllocator(m_Context), data.data(), m_Native->Allocation, offset, data.size()),
             "failed to upload buffer data!");
+    }
+
+    Task<void> Buffer::Upload(TaskSystem& tasks, const std::span<const u8> data, const u64 offset)
+    {
+        // A Buffer is HOST_VISIBLE | HOST_COHERENT, so an upload is a plain memcpy
+        // with no staging, no GPU command, and no device sync — there is nothing
+        // to gate on a timeline. The worker just runs the blocking memcpy off the
+        // main thread. Capture an owning Ref (shared_from_this) so the buffer
+        // cannot be destroyed before the job runs, and a copy of the bytes since
+        // the caller's span may not outlive this call.
+        Ref<Buffer> self = shared_from_this();
+        vector<u8> bytes(data.begin(), data.end());
+
+        return tasks.Submit([self = std::move(self), bytes = std::move(bytes), offset]
+        {
+            self->UploadSync(bytes, offset);
+        });
     }
 
     vector<u8> Buffer::Download() const

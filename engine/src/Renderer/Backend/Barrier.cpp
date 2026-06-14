@@ -1,7 +1,9 @@
 #include <Veng/Renderer/Backend/Barrier.h>
 
 #include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/TimelineSemaphore.h>
 #include <Veng/Renderer/Backend/BarrierDecision.h>
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
@@ -21,14 +23,35 @@ namespace Veng::Renderer::Backend
         // hazard rule lives in DecideBarrier (Backend/BarrierDecision.h); here we
         // only read/write the device-bound tracked state and emit the barrier.
         const auto& tracked = native.At(baseLayer, baseMip);
-        const SubresourceState current{tracked.Layout, tracked.Stage, tracked.Access};
+        const SubresourceState current{tracked.Layout, tracked.Stage, tracked.Access, tracked.ProducingFamily};
+
+        Context& context = image.GetContext();
+        const QueueFamilyIndices& families = context.GetQueueFamilies();
+        const u32 transferFamily = families.TransferFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
+        const u32 graphicsFamily = families.GraphicsFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
 
         // The acquire half of a queue-family ownership transfer is recorded at the
-        // first graphics use of a transfer-produced resource. No producer marks a
-        // transfer family today, so both families collapse to IGNORED here and the
-        // decision degenerates to the ordinary same-queue transition.
+        // first graphics use of a transfer-produced subresource. When the families
+        // differ the decision carries the ownership indices; when they collapse
+        // (MoltenVK) it degenerates to the ordinary same-queue transition. Either
+        // way, a transfer-produced subresource carries a pending transfer-timeline
+        // value the frame submit must wait — folded in below.
         const BarrierDecision decision = DecideBarrier(current, newLayout, dstStage, dstAccess,
-                                                       VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
+                                                       transferFamily, graphicsFamily);
+
+        // First graphics use of an async-uploaded subresource: fold its
+        // transfer-timeline value into the next frame submit so the sample waits
+        // for the copy, then clear the marker so a later use never re-waits. The
+        // timeline wait is required even when the families collapse — the copy and
+        // the sample are distinct submits on the (shared) queue and only the
+        // timeline orders them.
+        const bool consumesTransfer =
+            tracked.ProducingFamily == transferFamily && tracked.PendingTransferValue != 0;
+
+        if (consumesTransfer)
+        {
+            context.AddFrameTransferWait(context.GetTransferTimeline(), tracked.PendingTransferValue);
+        }
 
         if (decision.NeedsBarrier)
         {
@@ -53,6 +76,9 @@ namespace Veng::Renderer::Backend
 
         // Record the resulting state across the subresource range: a barrier resets
         // it to the desired state; a no-hazard use carries the widened read scope.
+        // The producing family follows the decision (a graphics use marks the
+        // subresource graphics-produced), and the pending transfer wait is cleared
+        // once consumed so a later use never re-waits.
         for (u32 layer = baseLayer; layer < baseLayer + layerCount; layer++)
             for (u32 mip = baseMip; mip < baseMip + mipCount; mip++)
             {
@@ -60,6 +86,11 @@ namespace Veng::Renderer::Backend
                 s.Layout = decision.NewState.Layout;
                 s.Stage = decision.NewState.Stage;
                 s.Access = decision.NewState.Access;
+                s.ProducingFamily = decision.NewState.ProducingFamily;
+                if (consumesTransfer)
+                {
+                    s.PendingTransferValue = 0;
+                }
             }
     }
 
@@ -71,5 +102,55 @@ namespace Veng::Renderer::Backend
                         Utils::GetDestinationStageMask(vkLayout),
                         Utils::GetAccessMask(vkLayout),
                         baseLayer, layerCount, baseMip, mipCount);
+    }
+
+    void MarkProducedOn(Image& image, const u32 producingFamily, const u64 transferValue)
+    {
+        auto& native = image.GetNative();
+        for (u32 layer = 0; layer < native.Layers; layer++)
+            for (u32 mip = 0; mip < native.MipLevels; mip++)
+            {
+                auto& s = native.At(layer, mip);
+                s.ProducingFamily = producingFamily;
+                s.PendingTransferValue = transferValue;
+            }
+    }
+
+    void ReleaseImageToGraphicsQueue(CommandBuffer& cmd, Image& image,
+                                     const u32 transferFamily, const u32 graphicsFamily)
+    {
+        // The single-queue collapse needs no ownership move; the acquire half is
+        // likewise skipped (DecideBarrier collapses both indices to IGNORED).
+        if (transferFamily == graphicsFamily)
+        {
+            return;
+        }
+
+        auto& native = image.GetNative();
+
+        // Release half of the transfer->graphics ownership transfer. Both halves
+        // name the same old/new layout (TransferDst -> ShaderReadOnly); the
+        // acquire half on first graphics use completes the transition. The release
+        // makes no memory available on this queue (dstStage = BottomOfPipe,
+        // dstAccess = none) — that is the acquire's job on the graphics queue.
+        // The tracked layout is left at TransferDst so the acquire sees the
+        // matching old layout.
+        const vk::ImageMemoryBarrier barrier{
+            .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
+            .dstAccessMask = {},
+            .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+            .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+            .srcQueueFamilyIndex = transferFamily,
+            .dstQueueFamilyIndex = graphicsFamily,
+            .image = native.Image,
+            .subresourceRange = {
+                Utils::GetAspectFlags(ToVk(image.GetFormat())),
+                0, native.MipLevels, 0, native.Layers,
+            },
+        };
+
+        cmd.GetNative().CommandBuffer.pipelineBarrier(
+            vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eBottomOfPipe,
+            vk::DependencyFlags{}, 0, nullptr, 0, nullptr, 1, &barrier);
     }
 }

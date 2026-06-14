@@ -65,6 +65,13 @@ namespace Veng::Renderer
         {
             vk::CommandPool Pool;
             Ref<CommandBuffer> CommandBuffer;
+
+            // The transfer-timeline value the last upload submitted from this
+            // worker signalled. The command buffer is reused across uploads, so a
+            // worker must wait this value (the GPU is done reading the buffer)
+            // before resetting and re-recording — resetting it earlier corrupts an
+            // in-flight submit. Zero before the first upload.
+            u64 LastSubmittedValue = 0;
         };
 
         vector<TransferPool> TransferPools{};

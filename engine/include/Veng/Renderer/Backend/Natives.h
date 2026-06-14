@@ -59,6 +59,17 @@ namespace Veng::Renderer
             vk::ImageLayout Layout = vk::ImageLayout::eUndefined;
             vk::PipelineStageFlags Stage = vk::PipelineStageFlagBits::eTopOfPipe;
             vk::AccessFlags Access{};
+
+            // The queue family that last produced this subresource (see
+            // Backend::SubresourceState::ProducingFamily). IGNORED means
+            // graphics-produced — the default until an async upload marks it.
+            u32 ProducingFamily = VK_QUEUE_FAMILY_IGNORED;
+
+            // The transfer-timeline value an async upload signalled for this
+            // subresource. The first graphics use folds this into the frame
+            // submit as a transfer wait, then clears it to 0. Zero means no
+            // pending transfer wait.
+            u64 PendingTransferValue = 0;
         };
 
         u32 Layers = 1;

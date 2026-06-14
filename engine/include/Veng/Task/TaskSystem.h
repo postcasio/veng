@@ -116,11 +116,22 @@ namespace Veng
     class TaskSystem
     {
     public:
+        // Sentinel worker index for any thread that is not a TaskSystem worker
+        // (the main thread, etc.). GetCurrentWorkerIndex never returns this — it
+        // asserts instead.
+        static constexpr u32 NotAWorker = static_cast<u32>(-1);
+
         explicit TaskSystem(const TaskSystemInfo& info = {});
         ~TaskSystem();
 
         TaskSystem(const TaskSystem&) = delete;
         TaskSystem& operator=(const TaskSystem&) = delete;
+
+        // The index of the worker the calling thread is. Valid only inside a job
+        // running on a worker (a Submit-ed callable or a ForEachWorker body);
+        // asserts off a worker. The async upload path uses it to select that
+        // worker's own transfer command pool (GetTransferCommandBuffer).
+        [[nodiscard]] static u32 GetCurrentWorkerIndex();
 
         // Submit a callable returning T (or void). The callable runs on a worker;
         // the returned Task<T> carries its Result back. A callable that returns

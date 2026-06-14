@@ -402,6 +402,71 @@ namespace Veng::Renderer
         VK_ASSERT(queue.submit(1, &submitInfo, fence), "failed to submit to queue!");
     }
 
+    CommandBuffer& Context::BeginTransferRecording(u32 workerIndex)
+    {
+        VE_ASSERT(workerIndex < m_Native->TransferPools.size(),
+                  "BeginTransferRecording: worker index {} out of range ({} transfer pools)",
+                  workerIndex, m_Native->TransferPools.size());
+
+        auto& pool = m_Native->TransferPools[workerIndex];
+
+        // Reuse is timeline-gated: wait the worker's last upload to finish before
+        // resetting its (single, reused) command buffer.
+        if (pool.LastSubmittedValue != 0)
+        {
+            m_Native->TransferTimeline->Wait(pool.LastSubmittedValue);
+        }
+
+        pool.CommandBuffer->Reset();
+        pool.CommandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
+        return *pool.CommandBuffer;
+    }
+
+    u64 Context::SubmitTransfer(u32 workerIndex, const TimelineSemaphore& timeline)
+    {
+        VE_ASSERT(workerIndex < m_Native->TransferPools.size(),
+                  "SubmitTransfer: worker index {} out of range ({} transfer pools)",
+                  workerIndex, m_Native->TransferPools.size());
+
+        auto& pool = m_Native->TransferPools[workerIndex];
+        pool.CommandBuffer->End();
+
+        const auto vkCommandBuffer = pool.CommandBuffer->GetNative().CommandBuffer;
+        const vk::Semaphore vkTimeline = timeline.GetNative().Semaphore;
+
+        // The value is allocated, the signal-info built, and the submit issued all
+        // under one lock: a timeline must signal strictly increasing values, so a
+        // worker must not compute its value and then race another worker for the
+        // queue (which could submit the lower value second).
+        std::lock_guard lock(m_Native->SubmitMutex);
+
+        const u64 value = ++m_Native->TransferTimelineValue;
+
+        const vk::TimelineSemaphoreSubmitInfo timelineInfo{
+            .signalSemaphoreValueCount = 1,
+            .pSignalSemaphoreValues = &value,
+        };
+
+        const vk::SubmitInfo submitInfo{
+            .pNext = &timelineInfo,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &vkCommandBuffer,
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores = &vkTimeline,
+        };
+
+        VK_ASSERT(m_Native->TransferQueue.submit(1, &submitInfo, VK_NULL_HANDLE),
+                  "failed to submit transfer commands!");
+
+        pool.LastSubmittedValue = value;
+        return value;
+    }
+
+    TimelineSemaphore& Context::GetTransferTimeline() const
+    {
+        return *m_Native->TransferTimeline;
+    }
+
     bool Context::IsHeadless() const { return m_Native->Headless; }
 
     const QueueFamilyIndices& Context::GetQueueFamilies() const

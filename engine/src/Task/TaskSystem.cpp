@@ -4,6 +4,11 @@ namespace Veng
 {
     namespace
     {
+        // The worker index of the calling thread, set by WorkerLoop for the
+        // lifetime of the thread. Sentinel on the main thread (and any non-worker
+        // thread): GetCurrentWorkerIndex asserts it is queried only from a worker.
+        thread_local u32 t_CurrentWorkerIndex = TaskSystem::NotAWorker;
+
         u32 DeriveWorkerCount(u32 requested)
         {
             if (requested != 0)
@@ -44,8 +49,18 @@ namespace Veng
         }
     }
 
-    void TaskSystem::WorkerLoop(u32)
+    u32 TaskSystem::GetCurrentWorkerIndex()
     {
+        VE_ASSERT(t_CurrentWorkerIndex != NotAWorker,
+                  "GetCurrentWorkerIndex called off a worker thread — only a job running on a "
+                  "TaskSystem worker has a worker index");
+        return t_CurrentWorkerIndex;
+    }
+
+    void TaskSystem::WorkerLoop(u32 workerIndex)
+    {
+        t_CurrentWorkerIndex = workerIndex;
+
         while (true)
         {
             function<void()> job;

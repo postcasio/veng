@@ -125,6 +125,27 @@ namespace Veng::Renderer
         void AddFrameTransferWait(const TimelineSemaphore& timeline, u64 value);
         void SubmitImmediateCommands(CommandBuffer& commandBuffer) const;
 
+        // Prepare a worker's transfer command buffer for recording a new upload.
+        // The buffer is reused across uploads, so this first waits the worker's
+        // last submitted transfer-timeline value (the GPU is done reading it),
+        // then resets and begins it, returning it for the caller to record into.
+        // Only the owning worker may call this with its own index.
+        [[nodiscard]] CommandBuffer& BeginTransferRecording(u32 workerIndex);
+
+        // End and submit a worker's transfer command buffer on the transfer queue,
+        // signalling the given timeline. The next monotonic timeline value is
+        // allocated *inside* the submission lock — never precomputed and raced for
+        // the lock — recorded as the worker's last submitted value, and returned.
+        // The caller uses the returned value for the staging buffer's
+        // transfer-keyed retire and the render side's frame transfer-wait. No
+        // device wait. Only the owning worker may call this with its own index.
+        [[nodiscard]] u64 SubmitTransfer(u32 workerIndex, const TimelineSemaphore& timeline);
+
+        // The context-owned transfer timeline async uploads signal. Worker copies
+        // signal a strictly increasing value on it (via SubmitTransfer); the frame
+        // submit and the transfer-keyed retire wait/poll it.
+        [[nodiscard]] TimelineSemaphore& GetTransferTimeline() const;
+
         // The transfer command buffer owned by the given worker's transfer pool.
         // VkCommandPool is single-thread: a worker may call this only with its
         // own index, and only the owning worker may record into the returned

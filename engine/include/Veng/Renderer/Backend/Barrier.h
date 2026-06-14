@@ -31,4 +31,17 @@ namespace Veng::Renderer::Backend
                          vk::ImageLayout newLayout,
                          vk::PipelineStageFlags dstStage, vk::AccessFlags dstAccess,
                          u32 baseLayer, u32 layerCount, u32 baseMip, u32 mipCount);
+
+    // Mark every subresource of an image as produced on producingFamily, carrying
+    // the transfer-timeline value its copy signalled. The first graphics use reads
+    // this to emit the ownership-acquire half and fold the timeline value into the
+    // frame submit. Set by the async upload worker after recording its copy.
+    void MarkProducedOn(Image& image, u32 producingFamily, u64 transferValue);
+
+    // Record the release half of a transfer->graphics queue-family ownership
+    // transfer for the whole image (TransferDst -> ShaderReadOnly). A no-op when
+    // the families match (the single-queue collapse). Recorded on the transfer
+    // queue's command buffer; its acquire counterpart lands on first graphics use.
+    void ReleaseImageToGraphicsQueue(CommandBuffer& cmd, Image& image,
+                                     u32 transferFamily, u32 graphicsFamily);
 }
