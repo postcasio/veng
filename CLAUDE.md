@@ -8,8 +8,7 @@ Primary dev platform is macOS via MoltenVK; the code is written to be portable
 **veng v1 is single-threaded by design, not by accident.** The render `Context`
 is constructed explicitly by `Application` and threaded into every resource;
 `Time`, input, and the ImGui integration all assume one driving thread. Do not
-call veng APIs concurrently. (De-globalizing the context is done — see
-`plans/planset-4/`; a task system remains future work — see `plans/future/`.)
+call veng APIs concurrently. A task system is future work (see `plans/future/`).
 
 ## Layout
 
@@ -99,8 +98,7 @@ split is absolute:
   `Veng::Result<T>` = `std::expected<T, std::string>` (`VoidResult` for void).
   See `Result.h`. Callers check truthiness, then `.value()` / `.error()`.
 
-Dom rejects exceptions as not performant for a game engine. This governs **all**
-veng code, not just plan work — no exceptions anywhere.
+No exceptions anywhere — performance is the reason, and the build enforces it.
 
 vulkan.hpp is configured `VULKAN_HPP_NO_EXCEPTIONS` with
 `VULKAN_HPP_ASSERT_ON_RESULT` → `VE_ASSERT` (in `Backend/Vulkan.h`). So:
@@ -114,8 +112,7 @@ vulkan.hpp is configured `VULKAN_HPP_NO_EXCEPTIONS` with
 Use the aliases from `Veng.h`, not the std/glm spellings: `string`, `vector<T>`,
 `map`, `optional`, `path`, `function`; `u8`/`u32`/`u64`/`f32`/`usize`; glm types
 as `vec3`, `mat4`, `uvec2`, `quat`. The public API and sample app are written in
-these and they are considered part of veng's identity (decided in plan 07 — they
-stay).
+these and they are part of veng's identity.
 
 Renderer code uses engine **vocabulary enums** (`Renderer::Format`, `ImageUsage`,
 `ShaderStage`, …) from `Renderer/Types.h`, never `vk::` enums. The backend maps
@@ -193,12 +190,10 @@ which returns a `Result` (file may be missing) — `VE_ASSERT` on it at call sit
 
 The roadmap lives in `plans/` — read it there, don't duplicate it. `plans/README.md`
 indexes the **plansets** (numbered coherent phases) and `plans/future/` (a
-vision/holding area: asset system, threading, de-globalizing the context,
-events/input, testing). Each planset/future README carries the detail, decisions,
-and per-plan status column. As of 2026-06: **planset-1** done (12 plans),
-**planset-2** in progress (rendering API surface cleanup).
+vision/holding area: asset system, threading, events/input, testing). Each
+planset/future README carries the detail, decisions, and per-plan status column.
 
-**How Dom runs plan work** — one plan per session, on his cue. Per plan:
+**Plan work** — one plan per session, on the user's cue. Per plan:
 1. Implement it.
 2. Migrate `examples/hello-triangle` in the *same* pass as the breaking changes.
 3. Verify (clean build, `ctest` green, smoke binary writes a correct-sized PPM).
