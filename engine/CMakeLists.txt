@@ -9,12 +9,14 @@ add_library(veng SHARED
         src/Asset/Loaders/MeshLoader.cpp
         src/Asset/Loaders/RawAssetLoader.cpp
         src/Asset/Loaders/TextureLoader.cpp
+        src/Asset/Loaders/ShaderLoader.cpp
         src/Log.cpp
         src/Time.cpp
         src/Window.cpp
         src/ImGui/ImGuiLayer.cpp
         src/ImGui/ImGuiTexture.cpp
         src/Renderer/RenderGraph.cpp
+        src/Renderer/ShaderInterface.cpp
         src/Renderer/Backend/Barrier.cpp
         src/Renderer/Backend/BarrierDecision.cpp
         src/Renderer/Backend/BindlessRegistry.cpp

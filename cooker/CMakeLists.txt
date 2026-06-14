@@ -48,12 +48,36 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(assimp)
 
+# Slang — .slang compilation + offline reflection (plan 08), the
+# ShaderImporter's implementation detail. Not fetched: the Slang SDK ships as
+# part of the Vulkan SDK and is installed system-wide (slang/slang.h +
+# libslang symlinked into /usr/local/include and /usr/local/lib on macOS).
+# Install the Vulkan SDK (with its Slang component) to build vengc.
+find_path(Slang_INCLUDE_DIR slang/slang.h)
+find_library(Slang_LIBRARY slang)
+
+if (NOT Slang_INCLUDE_DIR OR NOT Slang_LIBRARY)
+    message(FATAL_ERROR
+            "Slang not found (slang/slang.h / libslang). vengc's ShaderImporter "
+            "needs the Slang SDK, which ships with the Vulkan SDK (its installer "
+            "symlinks slang/slang.h and libslang into /usr/local/include and "
+            "/usr/local/lib on macOS). Install/repair the Vulkan SDK, or point "
+            "CMAKE_PREFIX_PATH at a Slang install.")
+endif ()
+
+add_library(slang::slang SHARED IMPORTED)
+set_target_properties(slang::slang PROPERTIES
+        IMPORTED_LOCATION ${Slang_LIBRARY}
+        INTERFACE_INCLUDE_DIRECTORIES ${Slang_INCLUDE_DIR}
+)
+
 add_library(libveng_cook STATIC
         src/Cooker.cpp
         src/BuiltinImporters.cpp
         src/Importers/RawImporter.cpp
         src/Importers/TextureImporter.cpp
         src/Importers/MeshImporter.cpp
+        src/Importers/ShaderImporter.cpp
         src/Vendor/StbImage.cpp
 )
 add_library(veng::cook ALIAS libveng_cook)
@@ -78,9 +102,10 @@ target_include_directories(libveng_cook PRIVATE
 target_compile_definitions(libveng_cook PUBLIC JSON_NOEXCEPTION)
 
 target_link_libraries(libveng_cook PUBLIC veng::assetformat nlohmann_json::nlohmann_json)
-# assimp is an implementation detail of MeshImporter.cpp — PRIVATE so it stays
-# off libveng_cook's public link/include interface (no assimp headers leak).
-target_link_libraries(libveng_cook PRIVATE fmt::fmt assimp::assimp)
+# assimp/Slang are implementation details of MeshImporter.cpp/ShaderImporter.cpp
+# — PRIVATE so they stay off libveng_cook's public link/include interface (no
+# assimp/Slang headers leak).
+target_link_libraries(libveng_cook PRIVATE fmt::fmt assimp::assimp slang::slang)
 
 target_compile_options(libveng_cook PRIVATE -fno-exceptions)
 

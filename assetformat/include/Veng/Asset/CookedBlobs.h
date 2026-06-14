@@ -84,13 +84,70 @@ namespace Veng
         u64 MaterialId = 0; // AssetId
     };
 
-    // Shader: reflected interface + SPIR-V (ShaderInterface serialization
-    // defined in plan 08). Followed by InterfaceBytes bytes of serialized
-    // ShaderInterface, then SpirvBytes bytes of SPIR-V.
+    // Shader: reflected interface + SPIR-V (plan 08). One cooked shader is one
+    // SPIR-V module with one entry point, covering one shader stage — a
+    // material (plan 09) references a vertex-stage and a fragment-stage shader
+    // as separate AssetIds. The blob is, in order:
+    //   CookedShaderHeader
+    //   CookedShaderInterfaceHeader
+    //   CookedDescriptorBinding[BindingCount]
+    //   CookedPushConstantBlock[PushConstantCount]
+    //   CookedVertexInputAttribute[VertexInputCount]
+    //   SPIR-V bytes (SpirvBytes)
+    // InterfaceBytes is the size of the CookedShaderInterfaceHeader + the three
+    // arrays combined, so the loader can seek straight to the SPIR-V.
+
+    // Bindings/blocks/attributes (and the entry point below) are identified by
+    // name; names are fixed-size and nul-terminated, truncated at
+    // k_ShaderNameCapacity - 1 — generous for GLSL/Slang identifiers.
+    inline constexpr usize k_ShaderNameCapacity = 64;
+
     struct CookedShaderHeader
     {
+        // The SPIR-V module's OpEntryPoint name (Slang does not always emit
+        // "main" — Shader::Create's ShaderBinaryInfo::EntryPoint must match
+        // exactly, or pipeline creation fails validation).
+        char EntryPoint[k_ShaderNameCapacity] = {};
         u32 InterfaceBytes = 0;
         u32 SpirvBytes = 0;
+    };
+
+    struct CookedShaderInterfaceHeader
+    {
+        u32 BindingCount = 0;
+        u32 PushConstantCount = 0;
+        u32 VertexInputCount = 0;
+    };
+
+    // One descriptor binding reflected from the shader, set >= 1 (set 0 is the
+    // bindless registry, plan 05 — recognized and excluded by the importer).
+    struct CookedDescriptorBinding
+    {
+        u32 Set = 0;
+        u32 Binding = 0;
+        u32 Type = 0;      // underlying Renderer::DescriptorType
+        u32 Count = 1;
+        u32 StageMask = 0; // underlying Renderer::ShaderStage (bitmask)
+        char Name[k_ShaderNameCapacity] = {};
+    };
+
+    // One push-constant block (or field) reflected from the shader, validated
+    // <=128B at cook time (planset-2/01's guaranteed minimum block size).
+    struct CookedPushConstantBlock
+    {
+        u32 Offset = 0;
+        u32 Size = 0;
+        u32 StageMask = 0; // underlying Renderer::ShaderStage (bitmask)
+        char Name[k_ShaderNameCapacity] = {};
+    };
+
+    // One vertex-input attribute reflected from the vertex stage's entry point
+    // (empty for a non-vertex stage shader).
+    struct CookedVertexInputAttribute
+    {
+        u32 Location = 0;
+        u32 Format = 0; // underlying Renderer::Format
+        char Name[k_ShaderNameCapacity] = {};
     };
 
     // Material: shader ref + params + texture bindings (defined in plan 09).

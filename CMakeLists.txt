@@ -169,6 +169,7 @@ if (VENG_BUILD_TESTS)
                 tests/cooker/cook_roundtrip.cpp
                 tests/cooker/texture_cook.cpp
                 tests/cooker/mesh_cook.cpp
+                tests/cooker/shader_cook.cpp
         )
         target_link_libraries(veng_unit PRIVATE veng::cook)
         target_compile_definitions(veng_unit PRIVATE
@@ -238,6 +239,10 @@ if (VENG_BUILD_TESTS)
     add_test(NAME death.assert_message COMMAND veng_death assert_message)
     set_tests_properties(death.assert_message PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "assert_message case fired")
+
+    add_test(NAME death.shader_vertex_layout_mismatch COMMAND veng_death shader_vertex_layout_mismatch)
+    set_tests_properties(death.shader_vertex_layout_mismatch PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "ShaderInterface::ValidateVertexLayout: mesh has 2 vertex attributes, shader expects 1")
 
     # GPU-coupled death cases (need a headless Context; skip with no driver).
     add_test(NAME death.buffer_upload_overrun COMMAND veng_death buffer_upload_overrun)
@@ -325,6 +330,7 @@ if (VENG_BUILD_TESTS)
         target_sources(veng_gpu PRIVATE
                 tests/gpu/texture_loader.cpp
                 tests/gpu/mesh_loader.cpp
+                tests/gpu/shader_loader.cpp
         )
         target_link_libraries(veng_gpu PRIVATE veng::cook)
         target_compile_definitions(veng_gpu PRIVATE

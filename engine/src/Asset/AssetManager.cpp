@@ -4,6 +4,7 @@
 
 #include "Loaders/MeshLoader.h"
 #include "Loaders/RawAssetLoader.h"
+#include "Loaders/ShaderLoader.h"
 #include "Loaders/TextureLoader.h"
 
 namespace Veng
@@ -31,6 +32,7 @@ namespace Veng
         RegisterLoader(CreateUnique<RawAssetLoader>());
         RegisterLoader(CreateUnique<TextureLoader>());
         RegisterLoader(CreateUnique<MeshLoader>());
+        RegisterLoader(CreateUnique<ShaderLoader>());
     }
 
     AssetManager::~AssetManager() = default;
