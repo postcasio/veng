@@ -72,6 +72,7 @@ set_target_properties(slang::slang PROPERTIES
 )
 
 add_library(libveng_cook STATIC
+        src/AssetPack.cpp
         src/Cooker.cpp
         src/BuiltinImporters.cpp
         src/Importers/RawImporter.cpp

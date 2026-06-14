@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Veng/Asset/Archive.h>
-#include <Veng/Asset/AssetPack.h>
+#include <Veng/Cook/AssetPack.h>
 #include <Veng/Cook/Importer.h>
 
 #include <set>

@@ -6,10 +6,10 @@
 
 #include <span>
 
-namespace Veng
+namespace Veng::Cook
 {
     // A parsed asset pack registry: id -> (type, source). Pure data, populated
-    // by the cooker (which owns JSON parsing) — assetformat stays JSON-free.
+    // by ParseAssetPack (which owns JSON parsing) — assetformat stays JSON-free.
     // Used for cross-pack id resolution during cooking and for AssetId minting.
     struct AssetPackEntry
     {

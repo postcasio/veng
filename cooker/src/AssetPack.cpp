@@ -1,9 +1,9 @@
-#include <Veng/Asset/AssetPack.h>
+#include <Veng/Cook/AssetPack.h>
 
 #include <algorithm>
 #include <random>
 
-namespace Veng
+namespace Veng::Cook
 {
     const AssetPackEntry* AssetPack::FindById(AssetId id) const
     {
