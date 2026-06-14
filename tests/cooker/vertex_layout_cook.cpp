@@ -1,4 +1,4 @@
-// Vertex-layout cook test (planset-5 plan 08b): cooks packs containing
+// Vertex-layout cook test: cooks packs containing
 // vertex_layout assets and verifies the resulting blobs round-trip correctly.
 // Also tests that cooking a shader whose reflected vertex inputs don't match
 // the referenced layout fails with a diagnostic.

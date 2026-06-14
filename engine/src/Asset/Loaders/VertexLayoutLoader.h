@@ -3,7 +3,7 @@
 #include <Veng/Asset/AssetLoader.h>
 #include <Veng/Renderer/VertexLayoutAsset.h>
 
-// The AssetType::VertexLayout loader (planset-5 plan 08b): a
+// The AssetType::VertexLayout loader: a
 // CookedVertexLayoutHeader + CookedVertexLayoutElement[] -> a
 // Renderer::VertexLayoutAsset (a VertexBufferLayout), bridging the cooked
 // underlying-integer enum fields to Veng::Renderer enums.

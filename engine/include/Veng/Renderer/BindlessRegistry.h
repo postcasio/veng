@@ -5,9 +5,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Renderer/Types.h>
 
-// The global bindless descriptor subsystem (planset-5/05). See
-// plans/future/bindless-descriptors.md for the design and
-// plans/planset-5/05-bindless.md for the plan that landed it.
+// The global bindless descriptor subsystem.
 namespace Veng::Renderer
 {
     class Buffer;
@@ -20,7 +18,7 @@ namespace Veng::Renderer
 
     // The per-material entry in the registry's MaterialData SSBO array (set 0,
     // binding BindlessRegistry::MaterialBinding) — the buffer side of the
-    // bindless data layout (planset-5/09). A material's texture references
+    // bindless data layout. A material's texture references
     // become bindless u32 handles packed here; a draw selects its entry with a
     // push-constant materialIndex and the shader reads
     // materials[pc.materialIndex]. v1-forward shape (one albedo texture + its

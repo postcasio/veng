@@ -10,7 +10,7 @@
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>
 
-// Mesh (planset-5 plan 07): a cooked mesh's GPU buffers + draw ranges. A vertex
+// Mesh: a cooked mesh's GPU buffers + draw ranges. A vertex
 // buffer + u32 index buffer in veng's fixed canonical vertex layout
 // (position/normal/tangent/uv, v1), plus a submesh table — each submesh a
 // (index range, material AssetId) draw range. The mesh does not load its

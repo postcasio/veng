@@ -1,7 +1,7 @@
-// Barrier-decision unit cases (planset-3, plan 04). DecideBarrier and ScopeFor
-// were extracted from the device-coupled TransitionImage path into
-// Backend/BarrierDecision.h so the hazard rule is testable without a GPU. These
-// are pure data → data; no Context, no driver.
+// Barrier-decision unit cases. DecideBarrier and ScopeFor live in
+// Backend/BarrierDecision.h, separate from the device-coupled TransitionImage
+// path, so the hazard rule is testable without a GPU. These are pure data →
+// data; no Context, no driver.
 
 #include <doctest/doctest.h>
 

@@ -9,8 +9,8 @@
 namespace Veng::Renderer
 {
     // The declared-use table (Backend::ScopeFor) and the hazard rule it feeds
-    // (Backend::DecideBarrier) now live in Backend/BarrierDecision.h so they are
-    // unit-testable without a device (planset-3, plan 04).
+    // (Backend::DecideBarrier) live in Backend/BarrierDecision.h so they are
+    // unit-testable without a device.
     using Backend::ScopeFor;
 
     RenderGraph::PassBuilder& RenderGraph::PassBuilder::Color(const PassAttachment& attachment)

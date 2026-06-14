@@ -4,7 +4,7 @@
 
 namespace Veng::Cook
 {
-    // Cooks a vertex layout asset (plan 08b) from a .vlayout.json source into a
+    // Cooks a vertex layout asset from a .vlayout.json source into a
     // CookedVertexLayoutHeader + CookedVertexLayoutElement[] blob.
     //
     // Pack entry schema:

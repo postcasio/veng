@@ -105,7 +105,7 @@ namespace Veng::Cook
         {
             return std::unexpected(fmt::format(
                 "material importer: fragment shader {} has no resolvable source path — "
-                "inline-only materials are out of scope this phase",
+                "inline-only (spirv_b64) fragment shaders cannot be reflected for MaterialData layout",
                 fragmentShaderId));
         }
 

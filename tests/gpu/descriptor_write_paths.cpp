@@ -1,5 +1,5 @@
-// Descriptor write paths cases (ported from the planset-3 plan 06 one-exe
-// test): exercises the DescriptorSet::Write overloads for each DescriptorType
+// Descriptor write paths cases: exercises the DescriptorSet::Write overloads
+// for each DescriptorType
 // without a full render — allocate a layout + set per binding type and write
 // a resource into it, asserting the call itself succeeds (VE_ASSERT would
 // abort otherwise).
@@ -11,10 +11,7 @@
 //   - StorageBuffer:        Write(binding, buffer)
 //
 // All bindings here are static (the default — DescriptorBinding::Bindless is
-// false), so none of them set descriptor-indexing flags. planset-2/06 closed
-// the storage-image and sampled-image validation gaps this test previously
-// pinned (no UAB feature / pool size for those types) by making static the
-// default and giving the Primary Pool a budget for every DescriptorType.
+// false), so none of them set descriptor-indexing flags.
 
 #include <doctest/doctest.h>
 

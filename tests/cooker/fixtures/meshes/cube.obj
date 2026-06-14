@@ -1,4 +1,4 @@
-# Unit cube fixture for the mesh cook/load tests (planset-5 plan 07).
+# Unit cube fixture for the mesh cook/load tests.
 # 8 positions, 4 UVs, 6 face normals; 6 quads as 12 triangles. With per-face
 # normals/UVs assimp yields 24 vertices (4 per face) and 36 indices.
 v -0.5 -0.5 -0.5

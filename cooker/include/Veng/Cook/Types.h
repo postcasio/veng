@@ -1,6 +1,6 @@
 #pragma once
 
-// Minimal additional vocabulary for the cooker (planset-5 plan 03), layered on
+// Minimal additional vocabulary for the cooker, layered on
 // top of assetformat's vendored aliases (Veng::u8/u32/u64/usize, vector, path,
 // string, optional, Result, VoidResult — all visible here via enclosing-
 // namespace lookup, since Veng::Cook nests inside Veng). Adds the owning-

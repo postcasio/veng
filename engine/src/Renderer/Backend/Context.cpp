@@ -142,7 +142,7 @@ namespace Veng::Renderer
         };
 
         // Turn on synchronization validation so missing/incorrect barriers from
-        // the render graph are caught at runtime (plan 08 acceptance).
+        // the render graph are caught at runtime.
         constexpr vk::ValidationFeatureEnableEXT enabledValidationFeatures[] = {
             vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
         };

@@ -5,12 +5,11 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 
-// AssetHandle<T> / WeakAssetHandle<T> (planset-5 plan 04): typed, refcounted
-// indirection into AssetManager's cache. AssetManager itself owns the cache
+// AssetHandle<T> / WeakAssetHandle<T>: typed, refcounted indirection into
+// AssetManager's cache. AssetManager itself owns the cache
 // (map<AssetId, Ref<AssetCacheEntry>>); handles share that entry via Ref/WeakRef
-// copies. This indirection is what later enables hot-reload (swap the entry's
-// Resource behind existing handles) — Reload() itself is not implemented this
-// planset.
+// copies. This indirection allows hot-reload (swap the entry's Resource behind
+// existing handles) without invalidating outstanding handles.
 
 namespace Veng
 {
@@ -38,8 +37,7 @@ namespace Veng
     }
 
     // AssetManager::LoadSync<T>/Get<T> map T -> AssetType through this trait;
-    // each concrete asset type specializes it (RawAsset.h, and 06-09 add their
-    // own).
+    // each concrete asset type specializes it.
     template <typename T>
     struct AssetTypeTrait;
 

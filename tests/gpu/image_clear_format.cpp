@@ -1,7 +1,5 @@
-// Image clear + format cases (ported from the planset-3 plan 06 one-exe
-// test): clears off-screen images via the render graph at a non-trivial
-// extent and in a second format, broadening headless_smoke's single 4x4
-// RGBA8Unorm case.
+// Image clear + format cases: clears off-screen images via the render graph
+// at a non-trivial extent and in a second format.
 //
 //   1. A 64x32 RGBA8Unorm image cleared to an exactly-representable colour
 //      (green, fully opaque) and downloaded/verified at that larger extent.

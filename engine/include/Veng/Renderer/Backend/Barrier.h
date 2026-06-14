@@ -1,7 +1,7 @@
 #pragma once
 
-// Internal image-barrier helpers. The public API no longer exposes barriers or
-// layouts at all (plan 07/08) — transitions are either derived by the render
+// Internal image-barrier helpers. The public API does not expose barriers or
+// layouts — transitions are either derived by the render
 // graph from declared passes (RenderGraph) or emitted here by the engine's own
 // transfer/present paths (Image upload/download, ImGui, present).
 #include <Veng/Renderer/Backend/Vulkan.h>

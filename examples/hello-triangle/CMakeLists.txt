@@ -16,7 +16,7 @@ add_shaders(hello_triangle_shaders
 )
 add_dependencies(hello_triangle hello_triangle_shaders)
 
-# Cook the sample asset pack (plan 06) with vengc at build time, into the
+# Cook the sample asset pack with vengc at build time, into the
 # build tree alongside the shaders.
 set(HT_ASSET_DIR "${CMAKE_CURRENT_BINARY_DIR}/assets")
 

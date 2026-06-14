@@ -1,6 +1,5 @@
-// assetformat round-trip tests (planset-5 plan 02): pure, no GPU. Proves the
-// .vengpack container's writer/reader contract before either consumer (cooker,
-// AssetManager) exists.
+// assetformat round-trip tests: pure, no GPU. Proves the .vengpack
+// container's writer/reader contract.
 
 #include <doctest/doctest.h>
 

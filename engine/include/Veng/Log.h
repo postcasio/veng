@@ -12,7 +12,7 @@ namespace Veng::Log
 
     // A sink receives the level and the message body (no timestamp/level prefix
     // — the sink decides how to present it). Called on whatever thread logs;
-    // veng is single-threaded for now, so no synchronization is provided.
+    // veng is single-threaded; no synchronization is provided.
     using Sink = std::function<void(Level, std::string_view)>;
 
     // Replace the log sink. Passing nullptr restores the default stdout sink.

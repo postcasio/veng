@@ -126,8 +126,8 @@ namespace Veng::Renderer
     {
         CombinedImageSampler, SampledImage, StorageImage, UniformBuffer, StorageBuffer,
         // Plain sampler (no image) — the bindless registry's separate sampler
-        // array (BindlessRegistry, planset-5/05). Appended rather than
-        // inserted to avoid renumbering existing values.
+        // array. Appended rather than inserted to avoid renumbering existing
+        // values.
         Sampler,
     };
 

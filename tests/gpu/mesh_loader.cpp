@@ -1,4 +1,4 @@
-// Mesh load test (planset-5 plan 07): cooks the mesh fixture pack in-process,
+// Mesh load test: cooks the mesh fixture pack in-process,
 // mounts it, LoadSync<Mesh>s it through AssetManager, and checks the loaded
 // mesh's vertex/index counts, canonical layout, submesh material override, and
 // GPU buffer sizes — the load-side proof for the mesh vertical slice.

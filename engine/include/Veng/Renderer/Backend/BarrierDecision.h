@@ -1,10 +1,10 @@
 #pragma once
 
-// Pure, device-free barrier-decision logic, extracted from Barrier.cpp so it can
-// be unit-tested without a GPU (planset-3, plan 04). Backend header — it uses
-// vk:: types — so only backend .cpp files and tests include it. The extraction
-// is behaviour-preserving: TransitionImage now reads tracked state, calls
-// DecideBarrier, emits a barrier iff NeedsBarrier, and records NewState.
+// Pure, device-free barrier-decision logic, kept separate from Barrier.cpp so
+// it can be unit-tested without a GPU. Backend header — it uses vk:: types —
+// so only backend .cpp files and tests include it. TransitionImage reads
+// tracked state, calls DecideBarrier, emits a barrier iff NeedsBarrier, and
+// records NewState.
 
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Types.h> // AccessKind (for ScopeFor)

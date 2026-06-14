@@ -1,4 +1,4 @@
-// Vertex-layout load test (planset-5 plan 08b): verifies the full cook→load
+// Vertex-layout load test: verifies the full cook→load
 // round-trip for VertexLayoutAsset and confirms that AssetManager auto-mounts
 // the embedded core pack (containing the engine's built-in layouts) at init.
 

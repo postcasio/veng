@@ -1,4 +1,4 @@
-// Headless smoke test (plan 10): bring up a windowless context, clear an
+// Headless smoke test: bring up a windowless context, clear an
 // off-screen image via the render graph, download it, and verify the pixels.
 //
 // Drives Context directly — no Window, no Application, no swapchain. This is the
@@ -6,7 +6,7 @@
 //
 // Skips cleanly (exit 77, ctest reports it as skipped — see CMakeLists.txt's
 // SKIP_RETURN_CODE) on a machine with no usable Vulkan ICD, via
-// Test::HasVulkanDriver() (planset-3, plan 01/06).
+// Test::HasVulkanDriver().
 
 #include <array>
 #include <cstdio>

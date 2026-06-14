@@ -6,7 +6,7 @@
 
 #include <span>
 
-// The .vengpack archive container (planset-5 plan 02):
+// The .vengpack archive container:
 //
 //   Header
 //     char  magic[8]   "VENGPACK"
@@ -22,14 +22,13 @@
 //     concatenated cooked blobs, each opaque to the container, typed by its
 //     TOC entry
 //
-// v1 assumes the cook host and run host share endianness and struct alignment
-// (true for the macOS dev box) — a portable-archive pass is future, not now.
+// v1 assumes the cook host and run host share endianness and struct alignment.
 
 namespace Veng
 {
     // The container format version written by ArchiveWriter and checked by
     // ArchiveReader. Bump on any layout change; a mismatch is a clean
-    // VersionMismatch error (see AssetError, plan 04), not a crash.
+    // VersionMismatch error (see AssetError.h), not a crash.
     inline constexpr u32 ArchiveFormatVersion = 1;
 
     // One asset as read back from an archive: its id, type, and a view of its

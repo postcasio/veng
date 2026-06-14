@@ -1,5 +1,4 @@
-// doctest entry point for the in-process multi-case GPU integration suite
-// (planset-4, plan 05).
+// doctest entry point for the in-process multi-case GPU integration suite.
 //
 // Custom main (not DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN): checks
 // Test::HasVulkanDriver() first and returns 77 if no usable Vulkan ICD is

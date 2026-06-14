@@ -32,6 +32,6 @@ a rendering change without eyeballing the window:
 HT_SMOKE=/tmp/scene.ppm ./build/examples/hello-triangle/hello_triangle
 ```
 
-Known limitation: the window is non-resizable for now — the composite descriptor
+Known limitation: the window is non-resizable — the composite descriptor
 set references the ImGui image, which is recreated on swapchain invalidation,
-and the sample doesn't re-register it yet. Revisit after plan 04/05.
+and the sample doesn't re-register it.

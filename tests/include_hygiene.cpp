@@ -1,4 +1,4 @@
-// Include-hygiene guard for the public/backend header split (plan 07).
+// Include-hygiene guard for the public/backend header split.
 //
 // This TU includes every public Veng header and is compiled into a target that
 // links veng::veng but is NOT given the Vulkan / GLFW / VMA / nfd include
@@ -9,7 +9,7 @@
 // Veng/Renderer/Native.h is deliberately excluded: it is the one sanctioned
 // escape hatch that exposes raw handles and is expected to need Vulkan headers.
 //
-// The Veng/Asset/* headers (planset-5 plan 02) come from libveng_assetformat,
+// The Veng/Asset/* headers come from libveng_assetformat,
 // linked PUBLIC by veng — this sweep also proves that boundary stays
 // Vulkan-free.
 

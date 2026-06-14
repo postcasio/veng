@@ -3,7 +3,7 @@
 #include <Veng/Asset/AssetLoader.h>
 #include <Veng/Renderer/Material.h>
 
-// The AssetType::Material loader (planset-5 plan 09): a CookedMaterialHeader +
+// The AssetType::Material loader: a CookedMaterialHeader +
 // CookedMaterialField table + packed param block -> a Renderer::Material, which
 // owns its forward graphics pipeline (built here from the vertex/fragment
 // shaders' reflected interface), its MaterialData slot in the bindless registry,

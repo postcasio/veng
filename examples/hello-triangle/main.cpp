@@ -393,7 +393,7 @@ int main(const int argc, char** argv)
 {
     // Smoke mode runs headless: no window or swapchain, render the scene
     // off-screen and dump it. This is the display-free CI path enabled by the
-    // headless context (plan 10).
+    // headless context.
     const bool smoke = std::getenv("HT_SMOKE") != nullptr;
 
     HelloTriangleApp app({

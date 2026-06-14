@@ -1,4 +1,4 @@
-// BindlessRegistry cases (planset-5, plan 05): exercises the global bindless
+// BindlessRegistry cases: exercises the global bindless
 // descriptor subsystem (set 0) end to end.
 //
 //   1. Register an image view and a sampler, bind set 0, and sample the

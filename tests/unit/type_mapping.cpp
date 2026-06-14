@@ -1,4 +1,4 @@
-// Type-mapping round-trips (planset-3, plan 03): lock down the vocabulary-enum
+// Type-mapping round-trips: lock down the vocabulary-enum
 // ↔ Vulkan switches in Backend/TypeMapping.h. A wrong or missing mapping is
 // silent UB at the backend boundary; here it becomes a failing case.
 //
@@ -10,8 +10,9 @@
 //
 // The per-enum arrays below must track Renderer/Types.h: they drive the
 // round-trip / coverage loops, so a new enumerator is one edit here. (The
-// "unmapped enumerator aborts" path is a death, covered in plan 05; here we
-// assert the *currently defined* enumerators all map correctly.)
+// "unmapped enumerator aborts" path is a death, covered by the death-test
+// harness; here we assert the *currently defined* enumerators all map
+// correctly.)
 
 #include <doctest/doctest.h>
 

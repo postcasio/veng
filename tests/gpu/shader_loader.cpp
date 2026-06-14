@@ -1,4 +1,4 @@
-// Shader load test (planset-5 plan 08b): cooks the shader fixture pack in-process,
+// Shader load test: cooks the shader fixture pack in-process,
 // mounts it, LoadSync<ShaderAsset>s it through AssetManager, and checks the
 // loaded ShaderInterface — bindings, push constants, VertexLayoutId — plus the
 // layout-builder helpers (BuildPushConstantRanges, BuildDescriptorSetLayouts,

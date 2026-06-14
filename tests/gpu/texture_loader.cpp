@@ -1,4 +1,4 @@
-// Texture load + bindless sample test (planset-5 plan 06): cooks the texture
+// Texture load + bindless sample test: cooks the texture
 // fixture pack in-process, mounts it, LoadSync<Texture>s it through
 // AssetManager, and samples the result via the bindless registry — the
 // end-to-end proof for the first full asset-type vertical slice.

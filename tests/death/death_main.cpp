@@ -1,4 +1,4 @@
-// Death-test harness (planset-3, plans 01 + 05).
+// Death-test harness.
 //
 // VE_ASSERT calls std::abort(), which doctest cannot trap in-process, so death
 // cases run as separate processes: ctest invokes this binary with a case name
@@ -17,14 +17,13 @@
 // PASS_REGULAR_EXPRESSION overrides (verified against this CMake). So we trap
 // SIGABRT and convert the death into a controlled clean exit *after* the assert
 // message is already on stderr; the message match is then what decides pass/
-// fail. (This contradicts plan 01's assumption that WILL_FAIL inverts a SIGABRT
-// — noted there.)
+// fail.
 //
 // Cases come in two bands:
 //   - Pure-logic: no Context, run with no ICD (registered `death`).
 //   - GPU-coupled: need a headless Context; registered `gpu;death` with
 //     SKIP_RETURN_CODE so they report *skipped* (not failed) on a machine with
-//     no Vulkan driver, via the plan-01 HasVulkanDriver() probe.
+//     no Vulkan driver, via HasVulkanDriver().
 
 #include <csignal>
 #include <cstdlib>

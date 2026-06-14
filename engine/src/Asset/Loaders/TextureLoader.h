@@ -3,7 +3,7 @@
 #include <Veng/Asset/AssetLoader.h>
 #include <Veng/Renderer/Texture.h>
 
-// The AssetType::Texture loader (planset-5 plan 06): cooked
+// The AssetType::Texture loader: cooked
 // CookedTextureHeader + RGBA8 pixels -> Renderer::Texture, registered into the
 // bindless registry by Texture::Create.
 

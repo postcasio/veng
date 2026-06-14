@@ -136,6 +136,39 @@ The sole exception is **the Vulkan API itself**: vulkan.hpp struct fields and
 callback parameters (`pNext`, `pWaitSemaphores`, `pUserData`, …) carry upstream
 Hungarian we don't control. Never rename those — match the API as given.
 
+### Comments — factual reasons, not planning history
+
+A code comment states a fact about the code as it is *now*. It does not narrate
+how the code got here or what is planned for it. The roadmap lives in `plans/`;
+git history records the evolution. Neither belongs in a comment.
+
+**Forbidden in comments:**
+- **Plan/planset citations.** No `(plan 09)`, `(planset-5/05)`, `(plan 08b)`,
+  "the acceptance chain from planset-1/08", "decided in the API rework, plan 07",
+  "see plans/…". The reader of the code has no reason to care which plan landed
+  it. Strip the reference; keep whatever factual statement remains.
+- **Future-work / temporariness.** No "for now", "v1 only / later we will",
+  "future work", "a compiled graph is a later upgrade", "not yet supported",
+  "before 06-09 add real loaders", "this is not the current direction". If a
+  limitation is real, state it as a present-tense fact ("veng is single-threaded;
+  no synchronization is provided") with no promise about the future.
+- **Historical narrative.** No "used to be special-cased inside Context",
+  "ported from the planset-3 one-exe test", "the public API no longer exposes
+  barriers", "extracted from Barrier.cpp", "this contradicts plan 01's
+  assumption". Describe the current structure, not the refactor that produced it.
+
+**Encouraged:** comments that give the *factual reason* a piece of code is
+unusual, surprising, or deliberately restricted — stated plainly, without the
+backstory. "Set 0 is reserved across every pipeline layout for the bindless
+registry; author-declared sets shift to 1+." "MoltenVK requires this buffer to
+be host-visible." "Must run before the swap chain is recreated or the view
+dangles." These earn their place precisely because they state *why*, not *how we
+arrived at it*.
+
+The test: if a sentence would still be true and useful to someone who has never
+seen the roadmap and does not care about the project's history, keep it.
+Otherwise cut it.
+
 ### Resource ownership & lifetime
 
 GPU resources are constructed **only** through static `X::Create(const XInfo&)`

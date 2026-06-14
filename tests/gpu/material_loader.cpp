@@ -1,20 +1,7 @@
-// Material load test (planset-5 plan 09): cooks the material fixture pack
-// in-process, mounts it, LoadSync<Material>s it through AssetManager, and
-// checks the loaded material — pipeline non-null, registry slot valid, and
-// texture dependency resident via the cache.
-//
-// MissingDependency is exercised by loading a material id whose texture
-// dependency was NOT included in any mounted archive: after the main mount we
-// attempt to load a second material (id 3002) that references a texture
-// (id 9999) not present anywhere. The material_bad_texture.json fixture and
-// the cooker fixtures directory are the cook-time side; here we test the
-// runtime (loader) side via a hand-rolled pack built in AssetManager::MountBytes.
-//
-// NOTE: This test will only fully pass once the MaterialImporter is integrated
-// into RegisterBuiltinImporters (the parallel cooker task). Until that lands,
-// the in-process cook produces a pack without material entries, so LoadSync for
-// AssetId{3001} will return NotFound. That is expected; the orchestrator runs
-// the full integration in Phase C.
+// Material load test: cooks the material fixture pack in-process, mounts it,
+// LoadSync<Material>s it through AssetManager, and checks the loaded material
+// — pipeline non-null, registry slot valid, and texture dependency resident
+// via the cache.
 
 #include <filesystem>
 
@@ -68,23 +55,6 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "material loader: cook, mount, LoadSyn
     REQUIRE(texHandle.has_value());
     REQUIRE(texHandle->IsLoaded());
     CHECK(texHandle->Get()->GetHandle().IsValid());
-
-    // ── MissingDependency case ────────────────────────────────────────────────
-    // Attempt to load a material whose texture dependency (id 9999) is not
-    // present in any mounted archive. The loader must propagate this as a
-    // non-Corrupt load failure rather than crashing or returning a corrupt error.
-    //
-    // We use the material_bad_texture.json fixture, which exercises a bad
-    // texture field name at cook time. If that cook fails (the material importer
-    // is not yet registered), we skip this sub-check — it is a cook-time concern
-    // and the loader's own MissingDependency path is covered by the contract of
-    // manager.LoadSync<Texture> propagating AssetError::NotFound through the
-    // chain. The correctness of that propagation is validated by code-review
-    // of MaterialLoader::Load() (step 5 returns std::unexpected on !texResult).
-    //
-    // If the cook succeeds (MaterialImporter integrated), the bad texture
-    // fixture produces a material with a field that references a texture not in
-    // any pack; loading that material will return a NotFound-derived error.
 
     std::filesystem::remove(outArchive);
 }

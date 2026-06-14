@@ -1,6 +1,6 @@
 #include "material_data.slang"
 
-// Forward material vertex stage (planset-5 plan 09 fixture). VSInput matches the
+// Forward material vertex stage. VSInput matches the
 // fixture canonical layout 7001 (position/normal/tangent[float3]/uv).
 struct VSInput
 {

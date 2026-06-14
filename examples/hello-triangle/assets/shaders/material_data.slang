@@ -1,5 +1,5 @@
-// Shared bindless material declarations for the forward material shader
-// (planset-5 plan 09). MaterialData mirrors the engine's Renderer::MaterialData
+// Shared bindless material declarations for the forward material shader.
+// MaterialData mirrors the engine's Renderer::MaterialData
 // (BindlessRegistry.h) byte-for-byte; the set-0 bindings mirror the
 // BindlessRegistry layout (sampled images = 0, samplers = 1, MaterialData
 // array = 3). The cooker reflects MaterialData here to validate a material's

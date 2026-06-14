@@ -9,9 +9,9 @@
 
 #include <span>
 
-// Texture (planset-5 plan 06): the first full asset-type vertical slice. An
-// Image + ImageView + Sampler, uploaded once and registered into the bindless
-// registry (set 0) so it can be sampled via GetHandle()/GetSamplerHandle().
+// Texture: an Image + ImageView + Sampler, uploaded once and registered into
+// the bindless registry (set 0) so it can be sampled via
+// GetHandle()/GetSamplerHandle().
 namespace Veng::Renderer
 {
     class Context;

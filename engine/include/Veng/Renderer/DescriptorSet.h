@@ -73,7 +73,8 @@ namespace Veng::Renderer
         // Ownership of the resources currently written into each binding, keyed
         // by binding number. Re-writing a binding releases exactly what it
         // replaced. This is the ownership list (dangling-descriptor
-        // prevention), distinct from the per-frame retire queue of plan 04.
+        // prevention), distinct from the per-frame retire bin
+        // (Context::AcquireNextFrame).
         map<u32, vector<Ref<void>>> m_BoundPerBinding;
         Ref<DescriptorSetLayout> m_Layout;
     };

@@ -4,7 +4,7 @@
 
 namespace Veng::Cook
 {
-    // Cooks a material (planset-5 plan 09) into a CookedMaterialHeader +
+    // Cooks a material into a CookedMaterialHeader +
     // CookedMaterialField table + packed parameter block (assetformat's
     // CookedBlobs.h). The material JSON references:
     //   - Two Shader pack entries (vertex + fragment) by AssetId.
@@ -14,7 +14,7 @@ namespace Veng::Cook
     //     packed at the reflected byte offset (Kind 0 fields).
     // MaterialData's layout is reflected from the fragment shader's .slang source
     // via SlangReflect::ReflectStructLayout — inline (spirv_b64) fragment shaders
-    // are out of scope this phase (no source to reflect from, located error).
+    // are unsupported: there is no source file to reflect from.
     class MaterialImporter final : public AssetImporter
     {
     public:

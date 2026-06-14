@@ -1,4 +1,4 @@
-// Material cook test (planset-5 plan 09): cooks fixture material_pack.json
+// Material cook test: cooks fixture material_pack.json
 // through libveng_cook and checks the resulting CookedMaterialHeader +
 // CookedMaterialField table + packed parameter block.
 //

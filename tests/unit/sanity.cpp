@@ -1,6 +1,5 @@
-// Trivial sanity case proving the framework + CTest discovery are wired before
-// the real bands (plans 02–04) land. Harmless to keep; safe to delete once
-// those add coverage.
+// Trivial sanity case proving the framework + CTest discovery are wired
+// correctly.
 #include <doctest/doctest.h>
 
 TEST_CASE("framework sanity")

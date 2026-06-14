@@ -2,8 +2,7 @@
 
 #include <Veng/Cook/Cooker.h>
 
-// Registers the cooker's built-in importers (planset-5 plan 03: just `raw`;
-// 06-09 add the texture/mesh/shader/material importers here).
+// Registers the cooker's built-in importers.
 
 namespace Veng::Cook
 {

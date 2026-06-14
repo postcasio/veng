@@ -5,7 +5,7 @@
 
 // The built-in AssetType::Raw loader: cooked blob bytes -> RawAsset, verbatim.
 // Registered by AssetManager's constructor so the mount/resolve/load/cache/GC
-// path is exercisable before 06-09 register real (GPU-backed) loaders.
+// path is exercisable without requiring GPU-backed loaders.
 
 namespace Veng
 {

@@ -1,6 +1,6 @@
 #include "material_data.slang"
 
-// Forward material fragment stage (planset-5 plan 09 fixture): reads the
+// Forward material fragment stage: reads the
 // per-draw MaterialData entry from the bindless set-0 array and samples its
 // albedo texture/sampler by handle, tinted by Factors.
 struct VSOutput

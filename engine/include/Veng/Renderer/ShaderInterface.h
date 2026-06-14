@@ -7,7 +7,7 @@
 
 #include <string_view>
 
-// The shader interface (planset-5 plan 08 / 08b): the descriptor bindings and
+// The shader interface: the descriptor bindings and
 // push-constant blocks reflected from a shader at cook time (Slang's reflection
 // API for the .slang path; supplied directly for the inline-SPIR-V path) and
 // serialized into the cooked blob (assetformat's CookedShaderHeader). Never
@@ -27,10 +27,10 @@ namespace Veng::Renderer
     class DescriptorSetLayout;
 
     // One descriptor binding reflected from a shader's interface. Set is
-    // always >= 1 — set 0 is the bindless registry's reserved set (plan 05)
-    // and is recognized and excluded by the cooker, never part of a
-    // ShaderInterface. Named so a material (plan 09) can resolve a binding by
-    // name rather than hand-declaring set/binding numbers.
+    // always >= 1 — set 0 is the bindless registry's reserved set and is
+    // recognized and excluded by the cooker, never part of a
+    // ShaderInterface. Named so a material can resolve a binding by name
+    // rather than hand-declaring set/binding numbers.
     struct ShaderBinding
     {
         string Name;
@@ -42,8 +42,8 @@ namespace Veng::Renderer
     };
 
     // One push-constant block (or field) reflected from a shader's interface,
-    // <= 128B (planset-2/01's guaranteed minimum push-constant block size,
-    // validated at cook time).
+    // <= 128B (Vulkan's guaranteed minimum push-constant block size, validated
+    // at cook time).
     struct ShaderPushConstant
     {
         string Name;
@@ -62,8 +62,8 @@ namespace Veng::Renderer
         vector<ShaderPushConstant> PushConstants;
         optional<AssetId> VertexLayoutId;
 
-        // Resolves a binding by name (the name-based binding plan 09 needs to
-        // validate/bind a material's params and textures against the shader).
+        // Resolves a binding by name. Used by material binding to validate and
+        // bind params and textures against the shader.
         [[nodiscard]] optional<ShaderBinding> FindBinding(std::string_view name) const;
 
         // This interface's push constants as pipeline-layout ranges, ready to

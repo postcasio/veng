@@ -5,9 +5,9 @@
 #include <Veng/Asset/Types.h>
 #include <Veng/Cook/Types.h>
 
-// Cooker-internal Slang reflection helper (planset-5 plan 09). The
+// Cooker-internal Slang reflection helper. The
 // MaterialImporter does not compile shaders — they are cooked independently as
-// their own Shader pack entries (decision 3) — but it must know the layout of
+// their own Shader pack entries — but it must know the layout of
 // the shared MaterialData struct to validate a material's textures/params and
 // pack their values at the right offsets. This compiles a .slang source and
 // reflects one named struct's fields with their byte offsets (the std430/std140

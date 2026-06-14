@@ -17,7 +17,7 @@ namespace Veng::Renderer
                                                                      m_PushConstantRanges(info.PushConstantRanges)
     {
         // Set 0 is reserved across every pipeline layout for the bindless
-        // registry (planset-5/05) — author-declared sets shift to 1+.
+        // registry — author-declared sets shift to 1+.
         vector<vk::DescriptorSetLayout> descriptorSetLayouts;
         descriptorSetLayouts.reserve(m_DescriptorSetLayouts.size() + 1);
         descriptorSetLayouts.push_back(GetVkDescriptorSetLayout(*context.GetBindlessRegistry().GetSet0Layout()));

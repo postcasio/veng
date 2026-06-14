@@ -147,7 +147,7 @@ namespace Veng
         m_Open = false;
     }
 
-    // veng is single-window for now, so window destruction terminates GLFW.
+    // veng is single-window, so window destruction terminates GLFW.
     Window::~Window()
     {
         if (m_Handle)

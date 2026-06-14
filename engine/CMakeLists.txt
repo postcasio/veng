@@ -85,7 +85,7 @@ endif ()
 
 # glm and fmt appear in veng's public headers (engine vector/matrix types and
 # string formatting), so they stay PUBLIC. veng::assetformat is PUBLIC too —
-# AssetId and friends appear in the public AssetManager API (plan 04). Vulkan,
+# AssetId and friends appear in the public AssetManager API. Vulkan,
 # GLFW, VMA and nfd are hidden behind the Native idiom (see
 # Veng/Renderer/Native.h) — no public header pulls them in, so they link
 # PRIVATE and stay out of the consumer include graph.

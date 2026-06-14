@@ -1,4 +1,4 @@
-// Compute dispatch test (plan 05): brings up a windowless context and runs a
+// Compute dispatch test: brings up a windowless context and runs a
 // three-pass render graph that exercises the full
 // graphics-write -> compute-read/write -> graphics-read chain:
 //
@@ -10,14 +10,13 @@
 //      image, which is downloaded and checked against the expected inverted
 //      colour.
 //
-// This is the acceptance chain from planset-1/08 that could not be exercised
-// without cmd.Dispatch. With validation layers enabled (VE_ENABLE_VALIDATION_LAYERS)
-// this also proves the render graph's derived barriers are sync-validation
-// clean across a compute pass.
+// With validation layers enabled (VE_ENABLE_VALIDATION_LAYERS) this also
+// proves the render graph's derived barriers are sync-validation clean across
+// a compute pass.
 //
 // Skips cleanly (exit 77, ctest reports it as skipped — see CMakeLists.txt's
 // SKIP_RETURN_CODE) on a machine with no usable Vulkan ICD, via
-// Test::HasVulkanDriver() (planset-3, plan 01/06).
+// Test::HasVulkanDriver().
 
 #include <array>
 #include <cstdio>

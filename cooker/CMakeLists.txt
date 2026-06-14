@@ -1,4 +1,4 @@
-# libveng_cook + the vengc CLI (planset-5 plan 03).
+# libveng_cook + the vengc CLI.
 #
 # Offline importer/cooker: parses a JSON asset pack, dispatches each entry to
 # a registered AssetImporter, and writes a .vengpack archive via
@@ -25,7 +25,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
-# assimp — mesh import (plan 07). The one heavy dependency; strictly cooker-only
+# assimp — mesh import. The one heavy dependency; strictly cooker-only
 # (behind VENG_BUILD_TOOLS), so a consumer of libveng never pays for it. Trim it
 # hard: no tools/tests/exports, only the importers veng's fixtures use (OBJ +
 # glTF), and a static lib so vengc stays self-contained.
@@ -48,7 +48,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(assimp)
 
-# Slang — .slang compilation + offline reflection (plan 08), the
+# Slang — .slang compilation + offline reflection, the
 # ShaderImporter's implementation detail. Not fetched: the Slang SDK ships as
 # part of the Vulkan SDK and is installed system-wide (slang/slang.h +
 # libslang symlinked into /usr/local/include and /usr/local/lib on macOS).
@@ -91,7 +91,7 @@ target_include_directories(libveng_cook PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-# stb_image (texture decode, plan 06) — implementation detail of
+# stb_image (texture decode) — implementation detail of
 # src/Vendor/StbImage.cpp and src/Importers/TextureImporter.cpp.
 target_include_directories(libveng_cook PRIVATE
         ${stb_SOURCE_DIR}

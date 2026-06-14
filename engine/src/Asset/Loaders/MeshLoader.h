@@ -3,7 +3,7 @@
 #include <Veng/Asset/AssetLoader.h>
 #include <Veng/Renderer/Mesh.h>
 
-// The AssetType::Mesh loader (planset-5 plan 07): a CookedMeshHeader + attribute
+// The AssetType::Mesh loader: a CookedMeshHeader + attribute
 // descriptor + submesh table + interleaved vertex/index buffers -> a
 // Renderer::Mesh with two GPU buffers (UploadSync), after validating the cooked
 // layout against the engine's canonical VertexBufferLayout.

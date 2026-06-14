@@ -5,7 +5,7 @@
 
 #include <expected>
 
-// The structured asset-load error (planset-5 plan 04). AssetManager::LoadSync
+// The structured asset-load error. AssetManager::LoadSync
 // returns AssetResult<T> = std::expected<T, AssetLoadError> rather than the
 // string-error Veng::Result, so callers can branch on AssetError::Kind without
 // string-matching Detail.

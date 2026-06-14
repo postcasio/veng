@@ -1,4 +1,4 @@
-// Mesh cook test (planset-5 plan 07): cooks a fixture mesh pack through
+// Mesh cook test: cooks a fixture mesh pack through
 // libveng_cook and checks the resulting CookedMeshHeader (assetformat),
 // attribute descriptor, submesh table (incl. the material override), and buffer
 // sizes against the fixture cube.obj + cube.mesh.json.

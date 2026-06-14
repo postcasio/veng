@@ -6,7 +6,7 @@
 #include <Veng/Renderer/Shader.h>
 #include <Veng/Renderer/ShaderInterface.h>
 
-// ShaderAsset (planset-5 plan 08): a loaded shader module + its reflected
+// ShaderAsset: a loaded shader module + its reflected
 // ShaderInterface, as cooked by the Slang importer (or supplied inline for
 // editor-produced shaders). Pipelines build their descriptor-set/pipeline
 // layouts from Interface rather than a hand-declared one.

@@ -2,7 +2,7 @@
 
 #include <Veng/Asset/Types.h>
 
-// Per-type cooked-blob header layouts (planset-5 plan 02). Each header is
+// Per-type cooked-blob header layouts. Each header is
 // followed in the blob by the type's payload, as noted per struct.
 //
 // The cycle-avoidance rule (load-bearing): enum-typed fields below (pixel
@@ -13,14 +13,12 @@
 // on drift, per house style). This keeps assetformat standalone and the
 // cooker buildable without the engine.
 //
-// These headers are defined here as the shared contract; their production
-// (cooker) and consumption (engine loaders) land per-type in plans 06-09, each
-// filling in the reserved fields (mips, layout descriptor, interface bytes,
-// param/binding tables) as that type arrives.
+// These headers are the shared contract between the cooker (production) and the
+// engine loaders (consumption).
 
 namespace Veng
 {
-    // Texture: stb-decoded, single mip v1 (mip table reserved for later).
+    // Texture: stb-decoded, single mip.
     // Sampler fields mirror Veng::Renderer::SamplerInfo, stored as underlying
     // integer/float types per the cycle-avoidance rule above. Followed by
     // Width * Height * bytes-per-pixel(Format) raw pixel bytes.
@@ -41,7 +39,7 @@ namespace Veng
         f32 MaxAnisotropy = 1.0f;
     };
 
-    // Mesh: interleaved vertices + indices in a declared layout (plan 07). The
+    // Mesh: interleaved vertices + indices in a declared layout. The
     // blob is, in order:
     //   CookedMeshHeader
     //   CookedVertexAttribute[AttributeCount]   — the interleaved layout
@@ -90,7 +88,7 @@ namespace Veng
     inline constexpr usize ShaderNameCapacity = 64;
 
     // VertexLayout: a named list of vertex-buffer elements that shaders and
-    // pipelines reference by AssetId (plan 08b). The blob is, in order:
+    // pipelines reference by AssetId. The blob is, in order:
     //   CookedVertexLayoutHeader
     //   CookedVertexLayoutElement[ElementCount]
     struct CookedVertexLayoutHeader
@@ -107,9 +105,9 @@ namespace Veng
         char Name[ShaderNameCapacity] = {};
     };
 
-    // Shader: reflected interface + SPIR-V (plan 08). One cooked shader is one
+    // Shader: reflected interface + SPIR-V. One cooked shader is one
     // SPIR-V module with one entry point, covering one shader stage — a
-    // material (plan 09) references a vertex-stage and a fragment-stage shader
+    // Material asset references a vertex-stage and a fragment-stage shader
     // as separate AssetIds. The blob is, in order:
     //   CookedShaderHeader
     //   CookedShaderInterfaceHeader
@@ -143,7 +141,7 @@ namespace Veng
         "CookedShaderInterfaceHeader must be 16 bytes — guard against padding between the u32 fields and the u64");
 
     // One descriptor binding reflected from the shader, set >= 1 (set 0 is the
-    // bindless registry, plan 05 — recognized and excluded by the importer).
+    // bindless registry — recognized and excluded by the importer).
     struct CookedDescriptorBinding
     {
         u32 Set = 0;
@@ -155,7 +153,7 @@ namespace Veng
     };
 
     // One push-constant block (or field) reflected from the shader, validated
-    // <=128B at cook time (planset-2/01's guaranteed minimum block size).
+    // <=128B at cook time (Vulkan's guaranteed minimum push-constant block size).
     struct CookedPushConstantBlock
     {
         u32 Offset = 0;
@@ -164,7 +162,7 @@ namespace Veng
         char Name[ShaderNameCapacity] = {};
     };
 
-    // Material: a thin bindless material (plan 09) — a vertex + fragment shader
+    // Material: a thin bindless material — a vertex + fragment shader
     // (each an ordinary Shader asset, referenced by AssetId), and a packed
     // MaterialData parameter block described field-by-field. The blob is, in
     // order:

@@ -69,7 +69,7 @@ namespace Veng
         ImGui_ImplGlfw_InitForVulkan(handle, true);
 
         // ImGui draws into the offscreen image via dynamic rendering rather than
-        // a dedicated render pass/framebuffer (plan 03): the only attachment is
+        // a dedicated render pass/framebuffer: the only attachment is
         // the RGBA16Sfloat color attachment that backs m_Image.
         const vk::Format colorAttachmentFormat = ToVk(Format::RGBA16Sfloat);
 
@@ -209,7 +209,7 @@ namespace Veng
         }
 
         // Recreate the offscreen image/view whenever the swap chain is recreated
-        // (resize). This used to be special-cased inside Context.
+        // (resize).
         m_Context.AddSwapChainInvalidationCallback([this]
         {
             DisposeResources();

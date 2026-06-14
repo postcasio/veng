@@ -301,7 +301,7 @@ namespace Veng::Cook
                     continue;
                 }
 
-                // Set 0 is the bindless registry (plan 05) — recognized and excluded
+                // Set 0 is the bindless registry — recognized and excluded
                 // from the declared interface; author bindings live in sets >= 1.
                 const u32 set = param->getBindingSpace();
                 if (set == 0)

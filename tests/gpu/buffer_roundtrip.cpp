@@ -1,4 +1,4 @@
-// Buffer round-trip cases (ported from the planset-3 plan 06 one-exe test):
+// Buffer round-trip cases:
 // Buffer::Create -> Upload -> Download returns the same bytes, including an
 // offset upload landing at the right place.
 //

@@ -8,14 +8,12 @@
 #include <Veng/Asset/AssetLoader.h>
 #include <Veng/Asset/AssetType.h>
 
-// AssetManager (planset-5 plan 04): mounts cooked .vengpack archives, resolves
-// AssetIds against them, and synchronously loads assets via a per-type
-// AssetLoader (see AssetLoader.h), handing back a typed, refcounted
-// AssetHandle<T>.
+// AssetManager: mounts cooked .vengpack archives, resolves AssetIds against
+// them, and synchronously loads assets via a per-type AssetLoader (see
+// AssetLoader.h), handing back a typed, refcounted AssetHandle<T>.
 //
-// Synchronous-only, by decision (see plans/planset-5/README.md): LoadSync
-// blocks. Async Load() is future work (the threading planset); the verbose
-// name is deliberate so it keeps it when that lands.
+// LoadSync is synchronous and blocking; the verbose name is deliberate so call
+// sites stay clearly distinguished if an async path is added later.
 
 namespace Veng::Renderer
 {

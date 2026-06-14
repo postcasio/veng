@@ -11,17 +11,13 @@
 #include <Veng/Renderer/ShaderAsset.h>
 #include <Veng/Renderer/Texture.h>
 
-// Material (planset-5 plan 09): the thin, bindless end-state material. A loaded
-// material owns its forward graphics pipeline (built from the vertex+fragment
-// shaders' reflected layout — set 0 is the BindlessRegistry, sets >= 1 from
-// reflection), a MaterialData entry in the registry's per-material SSBO array,
-// and keeps its shader + texture dependencies resident. Bind() binds the
-// pipeline and pushes the material's index as the per-draw selector; it does NOT
-// swap descriptor sets per draw — set 0 is bound once per frame by the registry.
-//
-// This is v1-forward and expected to evolve with the renderer architecture (see
-// plan 09's notes); the durable contract is the asset/cook side, not the runtime
-// binding shape.
+// Material: the thin, bindless end-state material. A loaded material owns its
+// forward graphics pipeline (built from the vertex+fragment shaders' reflected
+// layout — set 0 is the BindlessRegistry, sets >= 1 from reflection), a
+// MaterialData entry in the registry's per-material SSBO array, and keeps its
+// shader + texture dependencies resident. Bind() binds the pipeline and pushes
+// the material's index as the per-draw selector; it does NOT swap descriptor
+// sets per draw — set 0 is bound once per frame by the registry.
 namespace Veng::Renderer
 {
     class CommandBuffer;

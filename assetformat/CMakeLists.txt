@@ -1,4 +1,4 @@
-# libveng_assetformat — shared archive + cooked-blob format (planset-5 plan 02).
+# libveng_assetformat — shared archive + cooked-blob format.
 #
 # Vulkan-free, importer-free, engine-independent: the one source of truth for
 # the AssetId, archive container, and cooked-blob layouts that both `engine`

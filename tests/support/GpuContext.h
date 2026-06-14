@@ -1,18 +1,15 @@
 #pragma once
 
-// GPU-band test support (planset-3, plan 06): shared bring-up/teardown for the
-// one-exe-per-test GPU band, plus a pixel-compare helper for the downloaded-RGBA8
-// pattern common to those tests.
+// GPU-band test support: shared bring-up/teardown for GPU tests, plus a
+// pixel-compare helper for the downloaded-RGBA8 pattern common to those tests.
 //
 // This header pulls in only public veng APIs (Context, Buffer, ...) — no
 // vk:: / VMA / GLFW types — so it stays clear of the public/backend split the
 // include_hygiene test guards.
 //
 // Each one-exe GPU test owns its own process and its own Context; the
-// in-process veng_gpu suite (planset-4, plan 05) instead constructs one of
-// these per TEST_CASE_FIXTURE for per-case isolation. Either way, this just
-// removes the copy-pasted Initialize/.../Dispose dance and the per-pixel
-// comparison loop that both headless_smoke and compute_dispatch duplicated.
+// in-process veng_gpu suite instead constructs one of these per
+// TEST_CASE_FIXTURE for per-case isolation.
 
 #include <array>
 #include <span>

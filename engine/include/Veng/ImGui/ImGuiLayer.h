@@ -30,8 +30,6 @@ namespace Veng
     // dedicated descriptor pool, and the offscreen image the UI renders into.
     // The application opts in by setting ApplicationInfo::ImGui; headless and
     // non-UI consumers never construct one and pay nothing for ImGui at runtime.
-    //
-    // Extracted from Context (plan 09) — Context no longer knows ImGui exists.
     class ImGuiLayer
     {
     public:

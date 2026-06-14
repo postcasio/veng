@@ -1,6 +1,6 @@
 #include "material_data.slang"
 
-// Forward material vertex stage (planset-5 plan 09). VSInput matches veng's
+// Forward material vertex stage. VSInput matches veng's
 // canonical vertex layout (Mesh::CanonicalLayout / the core pack's canonical
 // layout): position/normal/tangent[float4]/uv — the layout the cooked cube mesh
 // is uploaded in.

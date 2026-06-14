@@ -3,7 +3,7 @@
 
 // Samples a single bindless-registered texture/sampler pair, selected by
 // push-constant indices. Used by the veng_gpu bindless registry test
-// (planset-5/05) to verify Register/Bind round-trips through an actual draw.
+// to verify Register/Bind round-trips through an actual draw.
 
 layout(location = 0) in vec2 v_UV;
 

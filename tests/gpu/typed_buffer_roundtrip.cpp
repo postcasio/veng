@@ -1,10 +1,9 @@
-// Typed-buffer round-trip cases (ported from the planset-3 plan 06 one-exe
-// test): VertexBuffer<V> and StorageBuffer<T> Upload -> Download identity.
+// Typed-buffer round-trip cases: VertexBuffer<V> and StorageBuffer<T>
+// Upload -> Download identity.
 //
-// This is the primary device-side coverage of the typed-buffer size arithmetic
-// (count * sizeof(T)) that plan 02 deliberately left untested device-free: a
-// wrong size computation either produces a too-small/too-large allocation or a
-// download whose byte layout doesn't match what was uploaded, and these cases
+// Device-side coverage of the typed-buffer size arithmetic (count * sizeof(T)):
+// a wrong size computation either produces a too-small/too-large allocation or
+// a download whose byte layout doesn't match what was uploaded, and these cases
 // would mismatch.
 //
 // Buffer::Download/Upload go through VMA's host-visible mapping, not a GPU

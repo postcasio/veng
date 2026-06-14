@@ -18,7 +18,7 @@
 //
 // This replaces manual ImageBarrier/layout management entirely — there is no
 // public barrier or layout type anymore. The graph is rebuilt per frame (it is
-// just a vector of pass structs); a compiled/retained graph is a later upgrade.
+// just a vector of pass structs).
 namespace Veng::Renderer
 {
     class CommandBuffer;

@@ -74,8 +74,8 @@ namespace Veng::Cook
 
         const path modelPath = sourcePath.parent_path() / meshJson["model"].get<string>();
 
-        // Import settings -> assimp post-process flags. Defaults match the plan's
-        // mesh.json example (generate normals + tangents, join identical verts).
+        // Import settings -> assimp post-process flags. Defaults: generate normals +
+        // tangents, join identical verts.
         const json import = meshJson.contains("import") && meshJson["import"].is_object()
             ? meshJson["import"]
             : json::object();

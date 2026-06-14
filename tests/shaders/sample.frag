@@ -8,7 +8,7 @@ layout(location = 0) in vec2 v_UV;
 
 layout(location = 0) out vec4 o_Color;
 
-// set 0 is reserved for the bindless registry (planset-5/05); this set is
+// set 0 is reserved for the bindless registry; this set is
 // bound at FirstSet = 1.
 layout(set = 1, binding = 0) uniform sampler2D u_Source;
 

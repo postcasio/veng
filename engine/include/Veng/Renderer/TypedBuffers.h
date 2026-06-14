@@ -17,8 +17,7 @@
 // Alignment note for UniformBuffer<T>/StorageBuffer<T>: T's C++ layout must
 // match the shader's std140 (UBO) / std430 (SSBO) expectations — veng does not
 // translate layouts. Use alignas and padding to match the shader (vec3 padded
-// to 16 bytes in std140, etc.); plan 12's reflection can validate this against
-// SPIR-V later.
+// to 16 bytes in std140, etc.).
 namespace Veng::Renderer
 {
     template <typename V>

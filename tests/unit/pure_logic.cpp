@@ -1,6 +1,5 @@
-// Pure-logic unit cases (planset-3, plan 02): the engine's device-free logic.
-// No Context, no Vulkan symbol touched — these run with no ICD present and are
-// the safety net for the de-globalize sweep that follows this planset.
+// Pure-logic unit cases: the engine's device-free logic. No Context, no
+// Vulkan symbol touched — these run with no ICD present.
 
 #include <doctest/doctest.h>
 

@@ -1,6 +1,6 @@
-// AssetManager unit cases (planset-5 plan 04): mount/resolve/load/cache/GC,
-// exercised against the built-in AssetType::Raw loader so the path is
-// testable before 06-09 add real (GPU-backed) types. No Vulkan call is made —
+// AssetManager unit cases: mount/resolve/load/cache/GC, exercised against the
+// built-in AssetType::Raw loader so the path is testable (no GPU). No Vulkan
+// call is made —
 // Context is default-constructed (not Initialize()d) and never touched by the
 // Raw loader, so this runs with no ICD present.
 

@@ -8,7 +8,7 @@
 #include <span>
 #include <unordered_map>
 
-// The cooker (planset-5 plan 03): owns the importer table and turns a JSON
+// The cooker: owns the importer table and turns a JSON
 // asset pack into a .vengpack archive.
 //
 // Pack JSON schema:

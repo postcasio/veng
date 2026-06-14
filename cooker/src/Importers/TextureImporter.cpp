@@ -76,7 +76,7 @@ namespace Veng::Cook
             texJson["generate_mips"].get<bool>())
         {
             return std::unexpected(fmt::format(
-                "texture importer: '{}': 'generate_mips' is not yet supported (v1 is single-mip)",
+                "texture importer: '{}': 'generate_mips' is not supported (single-mip output only)",
                 sourcePath.string()));
         }
 

@@ -4,7 +4,7 @@
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Cook/Types.h>
 
-// The cooker-side importer interface (planset-5 plan 03): one AssetImporter
+// The cooker-side importer interface: one AssetImporter
 // per AssetType, registered into a Cooker and dispatched per pack entry.
 // Cook() is offline and Vulkan-free — it turns a pack entry's JSON, plus
 // whatever it references on disk, into cooked blob bytes ready for

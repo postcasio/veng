@@ -7,7 +7,7 @@ namespace Veng::Cook
     // Cooks a mesh's JSON source (e.g. "meshes/cube.mesh.json", referenced from
     // the pack by "source") into a CookedMeshHeader (assetformat) plus the
     // interleaved vertex buffer, index buffer, attribute descriptor, and submesh
-    // table (planset-5 plan 07). The source JSON's "model" path is relative to
+    // table. The source JSON's "model" path is relative to
     // the source JSON's own directory; "import" maps to assimp post-process
     // flags; "materials" assigns per-submesh material AssetIds.
     //

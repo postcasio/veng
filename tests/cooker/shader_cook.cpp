@@ -1,13 +1,13 @@
-// Shader cook test (planset-5 plan 08b): cooks the fixture shader_pack.json
-// through libveng_cook and checks the resulting CookedShaderHeader +
-// CookedShaderInterfaceHeader + reflected tables (bindings, push constants)
-// for both input paths:
+// Shader cook test: cooks the fixture shader_pack.json through libveng_cook
+// and checks the resulting CookedShaderHeader + CookedShaderInterfaceHeader +
+// reflected tables (bindings, push constants) for both input paths:
 //   - .slang source → Slang reflection (entry 4001, mesh.vert.slang)
 //   - inline spirv_b64 + hand-written interface → pass-through (entry 4002)
 //
-// Blob layout (post-08b): header → bindings → push constants → SPIR-V.
-// The per-shader vertex-input table is gone; shaders reference their layout
-// by AssetId (CookedShaderInterfaceHeader::VertexLayoutAssetId).
+// Blob layout: header → bindings → push constants → SPIR-V.
+// Shaders reference their vertex layout by AssetId
+// (CookedShaderInterfaceHeader::VertexLayoutAssetId) rather than embedding a
+// per-shader input table.
 
 #include <cstring>
 #include <filesystem>
