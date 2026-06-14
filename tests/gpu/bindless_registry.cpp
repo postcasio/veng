@@ -95,7 +95,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "bindless registry: register, bind, an
         .AddressModeW = AddressMode::ClampToEdge,
     });
 
-    AssetManager assets(Context);
+    AssetManager assets(Context, Tasks);
     const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
     REQUIRE(mountResult.has_value());
 

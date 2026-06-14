@@ -6,6 +6,7 @@
 
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Renderer/Buffer.h>
+#include <Veng/Task/TaskSystem.h>
 
 namespace Veng
 {
@@ -42,9 +43,9 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::RefAny> MeshLoader::Load(
-        AssetManager& /*manager*/, Renderer::Context& context,
-        AssetId id, std::span<const u8> cooked) const
+    AssetResult<Detail::LoadJob> MeshLoader::Load(
+        AssetManager& /*manager*/, Renderer::Context& context, TaskSystem& tasks,
+        AssetId id, std::span<const u8> cooked, bool async) const
     {
         if (cooked.size() < sizeof(CookedMeshHeader))
             return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than CookedMeshHeader"));
@@ -137,14 +138,27 @@ namespace Veng
             .Size = vertexBytes,
             .Usage = Renderer::BufferUsage::Vertex | Renderer::BufferUsage::TransferDst,
         });
-        vertexBuffer->UploadSync(vertexData);
 
         const Ref<Renderer::Buffer> indexBuffer = Renderer::Buffer::Create(context, {
             .Name = fmt::format("Mesh {} Indices", id.Value),
             .Size = indexBytes,
             .Usage = Renderer::BufferUsage::Index | Renderer::BufferUsage::TransferDst,
         });
-        indexBuffer->UploadSync(indexData);
+
+        // A Buffer is host-visible+coherent, so an upload is a plain memcpy with
+        // no GPU command and no device wait. Async runs it off the main thread;
+        // sync runs it inline. Either way the data is ready before any draw binds
+        // these buffers (a mesh has no bindless registration to defer).
+        if (async)
+        {
+            Task<void> vertexUpload = vertexBuffer->Upload(tasks, vertexData);
+            Task<void> indexUpload = indexBuffer->Upload(tasks, indexData);
+        }
+        else
+        {
+            vertexBuffer->UploadSync(vertexData);
+            indexBuffer->UploadSync(indexData);
+        }
 
         const Ref<Veng::Mesh> mesh = Veng::Mesh::Create({
             .Name = fmt::format("Mesh {}", id.Value),
@@ -156,6 +170,6 @@ namespace Veng
             .SubMeshes = std::move(subMeshes),
         });
 
-        return Detail::RefAny(mesh);
+        return Detail::LoadJob{.Resource = Detail::RefAny(mesh)};
     }
 }

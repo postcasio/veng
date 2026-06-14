@@ -24,15 +24,56 @@ namespace Veng
         m_Fields(info.Fields),
         m_SelectorOffset(info.SelectorOffset)
     {
-        // Allocate a slot in the registry and upload the already-patched
-        // MaterialData (texture handle indices are pre-filled by MaterialLoader).
-        m_Handle = m_Context.GetBindlessRegistry().RegisterMaterial(
-            std::as_bytes(std::span(&m_Params, 1)));
+        // Construction is unregistered: the texture indices in m_Params are not
+        // yet resolved (the textures register on the main thread) and the SSBO
+        // slot is allocated in Finalize().
     }
 
     Material::~Material()
     {
-        m_Context.GetBindlessRegistry().Release(m_Handle);
+        if (m_Registered)
+            m_Context.GetBindlessRegistry().Release(m_Handle);
+    }
+
+    void Material::Finalize(Ref<Renderer::GraphicsPipeline> pipeline)
+    {
+        VE_ASSERT(!m_Registered, "Material::Finalize: '{}' already registered", m_Name);
+        VE_ASSERT(pipeline != nullptr, "Material::Finalize: '{}' given a null pipeline", m_Name);
+
+        m_Pipeline = std::move(pipeline);
+
+        // The textures are Finalize()d by now, so their bindless handles are
+        // valid: patch each TextureHandle/SamplerHandle field in the param block
+        // with the resolved index of the texture it references.
+        for (const MaterialField& field : m_Fields)
+        {
+            if (field.Kind != MaterialField::FieldKind::TextureHandle
+             && field.Kind != MaterialField::FieldKind::SamplerHandle)
+                continue;
+
+            const Texture* tex = nullptr;
+            for (const AssetHandle<Texture>& handle : m_Textures)
+            {
+                if (handle.Id().Value == field.TextureId)
+                {
+                    tex = handle.Get();
+                    break;
+                }
+            }
+            VE_ASSERT(tex != nullptr,
+                      "Material::Finalize: '{}' field '{}' references texture {} not in its dependency set",
+                      m_Name, field.Name, field.TextureId);
+
+            const u32 index = field.Kind == MaterialField::FieldKind::TextureHandle
+                ? tex->GetHandle().Index
+                : tex->GetSamplerHandle().Index;
+            std::memcpy(reinterpret_cast<std::byte*>(&m_Params) + field.Offset, &index, sizeof(u32));
+        }
+
+        // Allocate a slot in the registry and upload the patched MaterialData.
+        m_Handle = m_Context.GetBindlessRegistry().RegisterMaterial(
+            std::as_bytes(std::span(&m_Params, 1)));
+        m_Registered = true;
     }
 
     void Material::Bind(CommandBuffer& cmd) const

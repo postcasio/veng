@@ -14,8 +14,8 @@ namespace Veng
     public:
         [[nodiscard]] AssetType Type() const override { return AssetType::Raw; }
 
-        [[nodiscard]] AssetResult<Detail::RefAny> Load(
-            AssetManager& manager, Renderer::Context& context,
-            AssetId id, std::span<const u8> cooked) const override;
+        [[nodiscard]] AssetResult<Detail::LoadJob> Load(
+            AssetManager& manager, Renderer::Context& context, TaskSystem& tasks,
+            AssetId id, std::span<const u8> cooked, bool async) const override;
     };
 }

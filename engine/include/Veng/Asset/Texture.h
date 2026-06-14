@@ -9,9 +9,16 @@
 
 #include <span>
 
-// Texture: an Image + ImageView + Sampler, uploaded once and registered into
-// the bindless registry (set 0) so it can be sampled via
-// GetHandle()/GetSamplerHandle().
+// Texture: an Image + ImageView + Sampler, sampled bindlessly (set 0) via
+// GetHandle()/GetSamplerHandle() once Finalize() has registered it.
+namespace Veng
+{
+    class TaskSystem;
+
+    template <typename T>
+    class Task;
+}
+
 namespace Veng::Renderer
 {
     class Context;
@@ -30,18 +37,33 @@ namespace Veng
         Renderer::SamplerInfo Sampler;
     };
 
+    // Texture: an Image + ImageView + Sampler. Creation is the worker-legal half
+    // (image/view/sampler create + upload); registration into the bindless
+    // registry is the main-thread Finalize() half — the two are split so the
+    // async asset path can run creation on a worker and Finalize() on the
+    // render-thread continuation. GetHandle()/GetSamplerHandle() are valid only
+    // after Finalize().
     class Texture
     {
     public:
-        static Ref<Texture> Create(Renderer::Context& context, const TextureInfo& info)
-        {
-            return Ref<Texture>(new Texture(context, info));
-        }
+        // Synchronous create + blocking UploadSync. Unregistered; the caller
+        // (the loader / AssetManager) calls Finalize() on the main thread.
+        static Ref<Texture> Create(Renderer::Context& context, const TextureInfo& info);
+
+        // Worker-legal create + async upload recorded on the transfer queue.
+        // Returns the unregistered texture and a Task that completes once the
+        // upload is submitted; the caller waits/registers on the main thread.
+        static Ref<Texture> CreateAsync(Renderer::Context& context, const TextureInfo& info,
+                                        TaskSystem& tasks, Task<void>& outUpload);
 
         ~Texture();
 
         Texture(const Texture&) = delete;
         Texture& operator=(const Texture&) = delete;
+
+        // Register the view + sampler into the bindless registry (set 0). Runs on
+        // the main thread; idempotent guard via VE_ASSERT against double-register.
+        void Finalize();
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] const Ref<Renderer::Image>& GetImage() const { return m_Image; }
@@ -69,6 +91,7 @@ namespace Veng
 
         Renderer::TextureHandle m_TextureHandle;
         Renderer::SamplerHandle m_SamplerHandle;
+        bool m_Registered = false;
     };
 
     template <>

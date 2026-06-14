@@ -1,10 +1,12 @@
 #include <Veng/Asset/Texture.h>
 
+#include <Veng/Assert.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
+#include <Veng/Task/TaskSystem.h>
 
 namespace Veng
 {
@@ -23,8 +25,6 @@ namespace Veng
             .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
         });
 
-        m_Image->UploadSync(info.Pixels);
-
         m_View = ImageView::Create(context, {
             .Name = m_Name + " View",
             .Image = m_Image,
@@ -33,16 +33,40 @@ namespace Veng
         SamplerInfo samplerInfo = info.Sampler;
         samplerInfo.Name = m_Name + " Sampler";
         m_Sampler = Sampler::Create(context, samplerInfo);
+    }
 
-        auto& bindless = context.GetBindlessRegistry();
-        m_TextureHandle = bindless.Register(m_View);
-        m_SamplerHandle = bindless.Register(m_Sampler);
+    Ref<Texture> Texture::Create(Context& context, const TextureInfo& info)
+    {
+        Ref<Texture> texture(new Texture(context, info));
+        texture->m_Image->UploadSync(info.Pixels);
+        return texture;
+    }
+
+    Ref<Texture> Texture::CreateAsync(Context& context, const TextureInfo& info,
+                                      TaskSystem& tasks, Task<void>& outUpload)
+    {
+        Ref<Texture> texture(new Texture(context, info));
+        outUpload = texture->m_Image->Upload(tasks, info.Pixels);
+        return texture;
     }
 
     Texture::~Texture()
     {
+        if (!m_Registered)
+            return;
+
         auto& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_TextureHandle);
         bindless.Release(m_SamplerHandle);
+    }
+
+    void Texture::Finalize()
+    {
+        VE_ASSERT(!m_Registered, "Texture::Finalize: '{}' already registered", m_Name);
+
+        auto& bindless = m_Context.GetBindlessRegistry();
+        m_TextureHandle = bindless.Register(m_View);
+        m_SamplerHandle = bindless.Register(m_Sampler);
+        m_Registered = true;
     }
 }

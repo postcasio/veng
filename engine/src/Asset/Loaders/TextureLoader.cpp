@@ -5,6 +5,7 @@
 #include <fmt/format.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Task/TaskSystem.h>
 
 namespace Veng
 {
@@ -59,9 +60,9 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::RefAny> TextureLoader::Load(
-        AssetManager& /*manager*/, Renderer::Context& context,
-        AssetId id, std::span<const u8> cooked) const
+    AssetResult<Detail::LoadJob> TextureLoader::Load(
+        AssetManager& /*manager*/, Renderer::Context& context, TaskSystem& tasks,
+        AssetId id, std::span<const u8> cooked, bool async) const
     {
         if (cooked.size() < sizeof(CookedTextureHeader))
         {
@@ -111,7 +112,7 @@ namespace Veng
             });
         }
 
-        const Ref<Veng::Texture> texture = Veng::Texture::Create(context, {
+        const TextureInfo info{
             .Name = fmt::format("Texture {}", id.Value),
             .Extent = {header.Width, header.Height},
             .Format = *format,
@@ -126,8 +127,27 @@ namespace Veng
                 .AnisotropyEnabled = header.AnisotropyEnabled != 0,
                 .MaxAnisotropy = header.MaxAnisotropy,
             },
-        });
+        };
 
-        return Detail::RefAny(texture);
+        // Async: create the resource and record the upload on the transfer queue
+        // (no device wait). Sync: create + blocking UploadSync. Either way the
+        // texture comes back unregistered; Finalize registers it on the main
+        // thread.
+        Ref<Veng::Texture> texture;
+        if (async)
+        {
+            Task<void> upload;
+            texture = Veng::Texture::CreateAsync(context, info, tasks, upload);
+        }
+        else
+        {
+            texture = Veng::Texture::Create(context, info);
+        }
+
+        return Detail::LoadJob{
+            .Resource = Detail::RefAny(texture),
+            .Dependencies = {},
+            .Finalize = [texture]() -> VoidResult { texture->Finalize(); return {}; },
+        };
     }
 }

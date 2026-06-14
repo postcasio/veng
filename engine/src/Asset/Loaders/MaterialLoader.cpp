@@ -38,9 +38,117 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::RefAny> MaterialLoader::Load(
-        AssetManager& manager, Renderer::Context& context,
-        AssetId id, std::span<const u8> cooked) const
+    namespace
+    {
+        // Build the material's forward graphics pipeline from the (now-resident)
+        // vertex/fragment shader interfaces. Runs on the main thread at finalize:
+        // the shaders are guaranteed resident, so their Interface is readable, and
+        // the GPU pipeline build is main-thread-only work. A drifted shader (no
+        // selector push-constant range) is a recoverable Corrupt failure.
+        Result<Ref<Renderer::GraphicsPipeline>> BuildPipeline(
+            AssetManager& manager, Renderer::Context& context, AssetId id,
+            const Veng::Shader& vsAsset, const Veng::Shader& fsAsset)
+        {
+            const Renderer::ShaderInterface& vsInterface = vsAsset.Interface;
+            const Renderer::ShaderInterface& fsInterface = fsAsset.Interface;
+
+            vector<Ref<Renderer::DescriptorSetLayout>> descLayouts;
+            descLayouts.push_back(context.GetBindlessRegistry().GetSet0Layout());
+            {
+                const vector<Ref<Renderer::DescriptorSetLayout>> fsLayouts =
+                    fsInterface.BuildDescriptorSetLayouts(context, fmt::format("Material{}", id.Value));
+                for (auto& l : fsLayouts)
+                    descLayouts.push_back(l);
+
+                const vector<Ref<Renderer::DescriptorSetLayout>> vsLayouts =
+                    vsInterface.BuildDescriptorSetLayouts(context, fmt::format("Material{}", id.Value));
+                for (auto& l : vsLayouts)
+                    descLayouts.push_back(l);
+            }
+
+            // Push-constant ranges: merge ranges with identical (Offset, Size) by
+            // OR-ing Stages. The forward push-constant block (MVP + materialIndex)
+            // is declared in both vertex and fragment stages; without merging, two
+            // ranges cover the same bytes and CommandBuffer::PushConstants<T>
+            // asserts ambiguity. After the merge there is exactly one range with
+            // Stages = Vertex|Fragment.
+            vector<Renderer::PushConstantRange> mergedRanges;
+            auto mergeRange = [&](const Renderer::PushConstantRange& incoming)
+            {
+                for (auto& existing : mergedRanges)
+                {
+                    if (existing.Offset == incoming.Offset && existing.Size == incoming.Size)
+                    {
+                        existing.Stages = existing.Stages | incoming.Stages;
+                        return;
+                    }
+                }
+                mergedRanges.push_back(incoming);
+            };
+
+            for (const auto& r : vsInterface.BuildPushConstantRanges())
+                mergeRange(r);
+            for (const auto& r : fsInterface.BuildPushConstantRanges())
+                mergeRange(r);
+
+            bool selectorCovered = false;
+            for (const auto& r : mergedRanges)
+            {
+                if (r.Offset <= MaterialSelectorPushOffset
+                 && r.Offset + r.Size >= MaterialSelectorPushOffset + sizeof(u32))
+                {
+                    selectorCovered = true;
+                    break;
+                }
+            }
+            if (!selectorCovered)
+            {
+                return std::unexpected(fmt::format(
+                    "material: no merged push-constant range covers [{}+4) — "
+                    "the shader does not declare the expected forward materialIndex selector",
+                    MaterialSelectorPushOffset));
+            }
+
+            const Ref<Renderer::PipelineLayout> pipelineLayout = Renderer::PipelineLayout::Create(context, {
+                .Name                = fmt::format("Material {} Layout", id.Value),
+                .DescriptorSetLayouts = descLayouts,
+                .PushConstantRanges  = mergedRanges,
+            });
+
+            // Vertex layout: resolve from the vertex shader's declared
+            // VertexLayoutId. CPU-only and instant, so a synchronous load here is
+            // free even on the async path.
+            optional<Renderer::VertexBufferLayout> vertexBufferLayout;
+            if (vsInterface.VertexLayoutId.has_value())
+            {
+                const AssetResult<AssetHandle<Veng::VertexLayout>> layoutResult =
+                    manager.LoadSync<Veng::VertexLayout>(*vsInterface.VertexLayoutId);
+                if (!layoutResult)
+                    return std::unexpected(layoutResult.error().Detail);
+
+                vertexBufferLayout = layoutResult->Get()->GetLayout();
+            }
+
+            return Renderer::GraphicsPipeline::Create(context, {
+                .Name = fmt::format("Material {} Pipeline", id.Value),
+                .ColorAttachments = {{.Format = context.GetOutputFormat()}},
+                .DepthAttachmentFormat = context.GetDepthFormat(),
+                .VertexBufferLayout = vertexBufferLayout,
+                .PipelineLayout = pipelineLayout,
+                .ShaderStages = {
+                    {.Stage = Renderer::ShaderStage::Vertex,   .Module = vsAsset.Module},
+                    {.Stage = Renderer::ShaderStage::Fragment, .Module = fsAsset.Module},
+                },
+                .CullMode = Renderer::CullMode::Back,
+                .DepthTestEnable = true,
+                .DepthWriteEnable = true,
+            });
+        }
+    }
+
+    AssetResult<Detail::LoadJob> MaterialLoader::Load(
+        AssetManager& manager, Renderer::Context& context, TaskSystem& /*tasks*/,
+        AssetId id, std::span<const u8> cooked, bool async) const
     {
         // ── 1. CookedMaterialHeader ──────────────────────────────────────────
         if (cooked.size() < sizeof(CookedMaterialHeader))
@@ -85,32 +193,49 @@ namespace Veng
         std::memcpy(&params, cooked.data() + cursor, header.ParamBytes);
         cursor += header.ParamBytes;
 
-        // ── 4. Load vertex and fragment shader assets ─────────────────────────
-        const AssetResult<AssetHandle<Veng::Shader>> vsResult =
-            manager.LoadSync<Veng::Shader>(AssetId{header.VertexShaderId});
+        // ── 4. Fan out shader sub-loads ──────────────────────────────────────
+        // Async fans these out as concurrent async loads; sync blocks on each.
+        // Either way the material's Finalize runs only once both are resident
+        // (the manager orders the dependencies' finalizes before the parent's).
+        vector<Ref<Detail::AssetCacheEntry>> dependencies;
+
+        auto loadShader = [&](u64 shaderId) -> AssetResult<AssetHandle<Veng::Shader>>
+        {
+            if (async)
+            {
+                AssetHandle<Veng::Shader> handle = manager.Load<Veng::Shader>(AssetId{shaderId});
+                if (!AssetManager::EntryOf(handle))
+                {
+                    return std::unexpected(AssetLoadError{
+                        .Kind = AssetError::MissingDependency, .Id = AssetId{shaderId},
+                        .Detail = fmt::format("material {}: shader dependency {} did not resolve",
+                                              id.Value, shaderId)});
+                }
+                return handle;
+            }
+            return manager.LoadSync<Veng::Shader>(AssetId{shaderId});
+        };
+
+        const AssetResult<AssetHandle<Veng::Shader>> vsResult = loadShader(header.VertexShaderId);
         if (!vsResult)
             return std::unexpected(vsResult.error());
 
-        const AssetResult<AssetHandle<Veng::Shader>> fsResult =
-            manager.LoadSync<Veng::Shader>(AssetId{header.FragmentShaderId});
+        const AssetResult<AssetHandle<Veng::Shader>> fsResult = loadShader(header.FragmentShaderId);
         if (!fsResult)
             return std::unexpected(fsResult.error());
 
-        const AssetHandle<Veng::Shader>& vsHandle = *vsResult;
-        const AssetHandle<Veng::Shader>& fsHandle = *fsResult;
+        const AssetHandle<Veng::Shader> vsHandle = *vsResult;
+        const AssetHandle<Veng::Shader> fsHandle = *fsResult;
+        dependencies.push_back(AssetManager::EntryOf(vsHandle));
+        dependencies.push_back(AssetManager::EntryOf(fsHandle));
 
-        const Veng::Shader& vsAsset = *vsHandle.Get();
-        const Veng::Shader& fsAsset = *fsHandle.Get();
-
-        // ── 5. Build MaterialField table + resolve textures ───────────────────
+        // ── 5. Build MaterialField table + fan out texture sub-loads ─────────
         vector<Veng::MaterialField> fields;
         fields.reserve(header.FieldCount);
 
         // Track textures by AssetId to deduplicate.
         vector<u64> textureIds;
         vector<AssetHandle<Veng::Texture>> textures;
-
-        auto byte_ptr = [&params]() { return reinterpret_cast<std::byte*>(&params); };
 
         for (u32 i = 0; i < header.FieldCount; ++i)
         {
@@ -128,15 +253,10 @@ namespace Veng
                         i, BridgeName(cf.Name), cf.Kind)));
             }
 
-            fields.push_back(Veng::MaterialField{
-                .Name   = BridgeName(cf.Name),
-                .Offset = cf.Offset,
-                .Size   = cf.Size,
-                .Kind   = kind,
-            });
+            const bool isHandle = kind == Veng::MaterialField::FieldKind::TextureHandle
+                               || kind == Veng::MaterialField::FieldKind::SamplerHandle;
 
-            if (kind == Veng::MaterialField::FieldKind::TextureHandle
-             || kind == Veng::MaterialField::FieldKind::SamplerHandle)
+            if (isHandle)
             {
                 if (cf.TextureId == 0)
                 {
@@ -145,155 +265,65 @@ namespace Veng
                         i, BridgeName(cf.Name))));
                 }
 
-                // Load (or reuse) the texture asset.
-                AssetHandle<Veng::Texture>* texHandle = nullptr;
-                for (usize j = 0; j < textureIds.size(); ++j)
-                {
-                    if (textureIds[j] == cf.TextureId)
-                    {
-                        texHandle = &textures[j];
-                        break;
-                    }
-                }
-
-                if (!texHandle)
-                {
-                    const AssetResult<AssetHandle<Veng::Texture>> texResult =
-                        manager.LoadSync<Veng::Texture>(AssetId{cf.TextureId});
-                    if (!texResult)
-                        return std::unexpected(texResult.error());
-
-                    textureIds.push_back(cf.TextureId);
-                    textures.push_back(*texResult);
-                    texHandle = &textures.back();
-                }
-
-                // Patch the runtime bindless handle index into params at the
-                // field's byte offset.
-                const Veng::Texture& tex = *texHandle->Get();
-                u32 handleIndex;
-                if (kind == Veng::MaterialField::FieldKind::TextureHandle)
-                    handleIndex = tex.GetHandle().Index;
-                else
-                    handleIndex = tex.GetSamplerHandle().Index;
-
                 if (cf.Offset + sizeof(u32) > sizeof(Renderer::MaterialData))
                 {
                     return std::unexpected(Corrupt(id, fmt::format(
                         "material: field {} '{}' offset {} + 4 exceeds MaterialData size {}",
                         i, BridgeName(cf.Name), cf.Offset, sizeof(Renderer::MaterialData))));
                 }
-                std::memcpy(byte_ptr() + cf.Offset, &handleIndex, sizeof(u32));
-            }
-        }
 
-        // ── 6. Build pipeline ─────────────────────────────────────────────────
-        const Renderer::ShaderInterface& vsInterface = vsAsset.Interface;
-        const Renderer::ShaderInterface& fsInterface = fsAsset.Interface;
-
-        // Descriptor set layouts: set 0 (registry) then any sets >= 1 from
-        // fragment + vertex reflection (forward shaders typically declare none).
-        vector<Ref<Renderer::DescriptorSetLayout>> descLayouts;
-        descLayouts.push_back(context.GetBindlessRegistry().GetSet0Layout());
-        {
-            const vector<Ref<Renderer::DescriptorSetLayout>> fsLayouts =
-                fsInterface.BuildDescriptorSetLayouts(context, fmt::format("Material{}", id.Value));
-            for (auto& l : fsLayouts)
-                descLayouts.push_back(l);
-
-            const vector<Ref<Renderer::DescriptorSetLayout>> vsLayouts =
-                vsInterface.BuildDescriptorSetLayouts(context, fmt::format("Material{}", id.Value));
-            for (auto& l : vsLayouts)
-                descLayouts.push_back(l);
-        }
-
-        // Push-constant ranges: merge ranges with identical (Offset, Size) by
-        // OR-ing Stages. The forward push-constant block (MVP + materialIndex)
-        // is declared in both vertex and fragment stages; without merging, two
-        // ranges cover the same bytes and CommandBuffer::PushConstants<T>
-        // asserts ambiguity. After the merge there is exactly one range with
-        // Stages = Vertex|Fragment.
-        vector<Renderer::PushConstantRange> mergedRanges;
-        auto mergeRange = [&](const Renderer::PushConstantRange& incoming)
-        {
-            for (auto& existing : mergedRanges)
-            {
-                if (existing.Offset == incoming.Offset && existing.Size == incoming.Size)
+                // Load (or reuse) the texture asset. The resolved bindless index
+                // is patched into params by Material::Finalize, once the texture
+                // is registered — not here.
+                bool known = false;
+                for (const u64 existing : textureIds)
                 {
-                    existing.Stages = existing.Stages | incoming.Stages;
-                    return;
+                    if (existing == cf.TextureId) { known = true; break; }
+                }
+
+                if (!known)
+                {
+                    AssetHandle<Veng::Texture> texHandle;
+                    if (async)
+                    {
+                        texHandle = manager.Load<Veng::Texture>(AssetId{cf.TextureId});
+                        if (!AssetManager::EntryOf(texHandle))
+                        {
+                            return std::unexpected(AssetLoadError{
+                                .Kind = AssetError::MissingDependency, .Id = AssetId{cf.TextureId},
+                                .Detail = fmt::format("material {}: texture dependency {} did not resolve",
+                                                      id.Value, cf.TextureId)});
+                        }
+                    }
+                    else
+                    {
+                        const AssetResult<AssetHandle<Veng::Texture>> texResult =
+                            manager.LoadSync<Veng::Texture>(AssetId{cf.TextureId});
+                        if (!texResult)
+                            return std::unexpected(texResult.error());
+                        texHandle = *texResult;
+                    }
+
+                    textureIds.push_back(cf.TextureId);
+                    textures.push_back(texHandle);
+                    dependencies.push_back(AssetManager::EntryOf(texHandle));
                 }
             }
-            mergedRanges.push_back(incoming);
-        };
 
-        for (const auto& r : vsInterface.BuildPushConstantRanges())
-            mergeRange(r);
-        for (const auto& r : fsInterface.BuildPushConstantRanges())
-            mergeRange(r);
-
-        // Validate that the merged ranges cover [MaterialSelectorPushOffset,
-        // MaterialSelectorPushOffset + 4). This is the materialIndex field the
-        // forward shader must declare — a missing range means the shader doesn't
-        // follow the forward push-constant convention.
-        {
-            bool selectorCovered = false;
-            for (const auto& r : mergedRanges)
-            {
-                if (r.Offset <= MaterialSelectorPushOffset
-                 && r.Offset + r.Size >= MaterialSelectorPushOffset + sizeof(u32))
-                {
-                    selectorCovered = true;
-                    break;
-                }
-            }
-            if (!selectorCovered)
-            {
-                return std::unexpected(Corrupt(id, fmt::format(
-                    "material: no merged push-constant range covers [{}+4) — "
-                    "the shader does not declare the expected forward materialIndex selector",
-                    MaterialSelectorPushOffset)));
-            }
+            fields.push_back(Veng::MaterialField{
+                .Name      = BridgeName(cf.Name),
+                .Offset    = cf.Offset,
+                .Size      = cf.Size,
+                .Kind      = kind,
+                .TextureId = isHandle ? cf.TextureId : 0,
+            });
         }
 
-        const Ref<Renderer::PipelineLayout> pipelineLayout = Renderer::PipelineLayout::Create(context, {
-            .Name                = fmt::format("Material {} Layout", id.Value),
-            .DescriptorSetLayouts = descLayouts,
-            .PushConstantRanges  = mergedRanges,
-        });
-
-        // Vertex layout: resolve from the vertex shader's declared VertexLayoutId.
-        optional<Renderer::VertexBufferLayout> vertexBufferLayout;
-        if (vsInterface.VertexLayoutId.has_value())
-        {
-            const AssetResult<AssetHandle<Veng::VertexLayout>> layoutResult =
-                manager.LoadSync<Veng::VertexLayout>(*vsInterface.VertexLayoutId);
-            if (!layoutResult)
-                return std::unexpected(layoutResult.error());
-
-            vertexBufferLayout = layoutResult->Get()->GetLayout();
-        }
-
-        const Ref<Renderer::GraphicsPipeline> pipeline = Renderer::GraphicsPipeline::Create(context, {
-            .Name = fmt::format("Material {} Pipeline", id.Value),
-            .ColorAttachments = {{.Format = context.GetOutputFormat()}},
-            .DepthAttachmentFormat = context.GetDepthFormat(),
-            .VertexBufferLayout = vertexBufferLayout,
-            .PipelineLayout = pipelineLayout,
-            .ShaderStages = {
-                {.Stage = Renderer::ShaderStage::Vertex,   .Module = vsAsset.Module},
-                {.Stage = Renderer::ShaderStage::Fragment, .Module = fsAsset.Module},
-            },
-            .CullMode = Renderer::CullMode::Back,
-            .DepthTestEnable = true,
-            .DepthWriteEnable = true,
-        });
-
-        // ── 7. Assemble MaterialInfo and construct Material ───────────────────
+        // ── 6. Construct the unregistered Material ───────────────────────────
         const Veng::MaterialInfo info{
             .Name           = fmt::format("Material {}", id.Value),
             .Context        = &context,
-            .Pipeline       = pipeline,
+            .Pipeline       = nullptr,
             .VertexShader   = vsHandle,
             .FragmentShader = fsHandle,
             .Textures       = std::move(textures),
@@ -303,6 +333,24 @@ namespace Veng
         };
 
         const Ref<Veng::Material> material = Veng::Material::Create(info);
-        return Detail::RefAny(material);
+
+        // ── 7. The main-thread finalize ──────────────────────────────────────
+        // Runs only once every dependency (shaders + textures) is resident: build
+        // the pipeline from their interfaces, then register + patch texture
+        // indices via Material::Finalize.
+        return Detail::LoadJob{
+            .Resource = Detail::RefAny(material),
+            .Dependencies = std::move(dependencies),
+            .Finalize = [&manager, &context, id, vsHandle, fsHandle, material]() -> VoidResult
+            {
+                Result<Ref<Renderer::GraphicsPipeline>> pipeline =
+                    BuildPipeline(manager, context, id, *vsHandle.Get(), *fsHandle.Get());
+                if (!pipeline)
+                    return std::unexpected(pipeline.error());
+
+                material->Finalize(std::move(*pipeline));
+                return {};
+            },
+        };
     }
 }

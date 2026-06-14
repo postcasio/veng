@@ -9,11 +9,13 @@
 #include <Veng/Asset/AssetType.h>
 
 // AssetManager: mounts cooked .vengpack archives, resolves AssetIds against
-// them, and synchronously loads assets via a per-type AssetLoader (see
-// AssetLoader.h), handing back a typed, refcounted AssetHandle<T>.
+// them, and loads assets via a per-type AssetLoader (see AssetLoader.h), handing
+// back a typed, refcounted AssetHandle<T>.
 //
-// LoadSync is synchronous and blocking; the verbose name is deliberate so call
-// sites stay clearly distinguished if an async path is added later.
+// Load is asynchronous: it returns a not-yet-resident handle immediately and
+// fills it in on the main-thread continuation (decode + GPU upload run on the
+// task system). LoadSync is the blocking sibling — it runs the whole pipeline
+// inline and returns a resident handle (or a structured AssetLoadError).
 
 namespace Veng::Renderer
 {
@@ -22,6 +24,8 @@ namespace Veng::Renderer
 
 namespace Veng
 {
+    class TaskSystem;
+
     struct AssetManagerInfo
     {
     };
@@ -29,7 +33,7 @@ namespace Veng
     class VE_API AssetManager
     {
     public:
-        explicit AssetManager(Renderer::Context& context, const AssetManagerInfo& info = {});
+        AssetManager(Renderer::Context& context, TaskSystem& tasks, const AssetManagerInfo& info = {});
         ~AssetManager();
 
         // Opens archive and indexes its TOC. Mounting the same path twice is a
@@ -44,11 +48,28 @@ namespace Veng
         // twice is a no-op.
         VoidResult MountBytes(const path& identity, std::span<const u8> bytes);
 
-        // Resolves id across mounted archives, loads (and caches) it via the
-        // registered AssetLoader for its AssetType, and returns a typed handle.
-        // A cache hit returns immediately without touching the archive or
-        // loader again. Dependency loads (e.g. a material's textures) are
-        // synchronous and eager.
+        // Asynchronous load: returns immediately with a handle that is not yet
+        // resident (IsLoaded() == false). The decode + GPU upload run on the task
+        // system; registration into the bindless registry and the cache swap run
+        // on the main thread during PumpFinalizes() (called from the frame loop).
+        // A cache hit (resident or pending) returns the existing handle. A
+        // resolution failure (NotFound/WrongType) returns an empty handle; a
+        // later load/decode failure leaves the entry permanently pending and logs.
+        template <typename T>
+        AssetHandle<T> Load(AssetId id)
+        {
+            const Ref<Detail::AssetCacheEntry> entry = LoadUntyped(AssetTypeTrait<T>::Type, id);
+            if (!entry)
+                return AssetHandle<T>();
+
+            return AssetHandle<T>(id, entry);
+        }
+
+        // Blocking load: resolves, loads, uploads, and finalizes inline, then
+        // returns a resident handle. Dependency loads are synchronous and eager.
+        // Returns a structured AssetLoadError on failure (branch on
+        // AssetError::Kind). Does not deadlock against the async continuation
+        // queue — it bypasses it entirely.
         template <typename T>
         AssetResult<AssetHandle<T>> LoadSync(AssetId id)
         {
@@ -57,6 +78,15 @@ namespace Veng
                 return std::unexpected(entry.error());
 
             return AssetHandle<T>(id, *entry);
+        }
+
+        // The cache entry backing a handle — loaders use it to record a
+        // material's texture/shader sub-loads as dependencies of its async
+        // finalize. Returns null for an empty handle.
+        template <typename T>
+        [[nodiscard]] static Ref<Detail::AssetCacheEntry> EntryOf(const AssetHandle<T>& handle)
+        {
+            return handle.m_Entry;
         }
 
         // Cached lookup only — never touches mounted archives or loaders.
@@ -70,9 +100,15 @@ namespace Veng
             return AssetHandle<T>(id, it->second);
         }
 
+        // Run any pending async finalizes whose upload completed and whose
+        // dependencies are resident. Called from the frame loop after the task
+        // system's continuation pump, on the main thread.
+        void PumpFinalizes();
+
         // Drops cache entries with no AssetHandle<T> referencing them. Their
         // engine resources retire through the existing per-frame
         // deferred-destruction path (Context::Retire) — safe to call mid-frame.
+        // A still-pending (not-yet-resident) entry is never evicted.
         void CollectGarbage();
 
     private:
@@ -82,15 +118,38 @@ namespace Veng
             ArchiveReader Reader;
         };
 
+        // A submitted-but-not-yet-finalized async load. The cache entry exists
+        // (pending: null Resource); Finalize swaps the resource in once every
+        // Dependency is resident + finalized. The async upload itself need not
+        // have completed: the render graph folds the transfer-timeline wait into
+        // the first frame that samples the resource, so registration is safe
+        // before the GPU copy lands.
+        struct PendingLoad
+        {
+            AssetId Id;
+            Ref<Detail::AssetCacheEntry> Entry;
+            Detail::RefAny Resource;
+            vector<Ref<Detail::AssetCacheEntry>> Dependencies;
+            function<VoidResult()> Finalize;
+        };
+
+        [[nodiscard]] Ref<Detail::AssetCacheEntry> LoadUntyped(AssetType type, AssetId id);
         [[nodiscard]] AssetResult<Ref<Detail::AssetCacheEntry>> LoadSyncUntyped(AssetType type, AssetId id);
+
+        // Resolves id to a loader and cooked blob, validating type. Shared by the
+        // async and sync paths.
+        [[nodiscard]] AssetResult<std::pair<AssetLoader*, ArchiveEntry>> Resolve(AssetType type, AssetId id);
+
         [[nodiscard]] optional<ArchiveEntry> Find(AssetId id) const;
 
         void RegisterLoader(Unique<AssetLoader> loader);
 
         Renderer::Context& m_Context;
+        TaskSystem& m_Tasks;
 
         vector<MountedArchive> m_Mounts;
         unordered_map<AssetType, Unique<AssetLoader>> m_Loaders;
         unordered_map<AssetId, Ref<Detail::AssetCacheEntry>> m_Cache;
+        vector<PendingLoad> m_Pending;
     };
 }

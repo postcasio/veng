@@ -58,9 +58,9 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::RefAny> ShaderLoader::Load(
-        AssetManager& manager, Renderer::Context& context,
-        AssetId id, std::span<const u8> cooked) const
+    AssetResult<Detail::LoadJob> ShaderLoader::Load(
+        AssetManager& manager, Renderer::Context& context, TaskSystem& /*tasks*/,
+        AssetId id, std::span<const u8> cooked, bool /*async*/) const
     {
         if (cooked.size() < sizeof(CookedShaderHeader))
             return std::unexpected(Corrupt(id, "shader: cooked blob smaller than CookedShaderHeader"));
@@ -183,6 +183,6 @@ namespace Veng
             .Interface = std::move(shaderInterface),
         });
 
-        return Detail::RefAny(asset);
+        return Detail::LoadJob{.Resource = Detail::RefAny(asset)};
     }
 }

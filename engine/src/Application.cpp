@@ -30,7 +30,7 @@ namespace Veng
         // be created once the worker count is known. Done here, before any upload.
         m_RenderContext.InitializeTransferPools(*m_TaskSystem);
 
-        m_AssetManager = CreateUnique<AssetManager>(m_RenderContext);
+        m_AssetManager = CreateUnique<AssetManager>(m_RenderContext, *m_TaskSystem);
 
         // ImGui needs a window (GLFW backend), so it's only available windowed.
         if (!m_Info.Headless && m_Info.ImGui)
@@ -106,6 +106,11 @@ namespace Veng
         // must land before AcquireNextFrame, or its GPU-state mutation falls in
         // an ambiguous frame window.
         m_TaskSystem->PumpMainThread();
+
+        // Finalize any async loads whose dependencies are now resident: register
+        // into the bindless registry and swap the resource into its cache entry.
+        // Main-thread-only, same window as the continuation pump.
+        m_AssetManager->PumpFinalizes();
 
         const f32 delta = Time::Update();
 

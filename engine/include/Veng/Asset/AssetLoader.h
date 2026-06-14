@@ -9,9 +9,9 @@
 #include <span>
 
 // The engine-side loader table: one AssetLoader per
-// AssetType, registered into AssetManager and dispatched from LoadSync. This
-// is the only place a type touches Context — mirrors how the cooker keeps its
-// GPU-free Cook() separate (Veng::Cook::AssetImporter).
+// AssetType, registered into AssetManager and dispatched from Load/LoadSync.
+// This is the only place a type touches Context — mirrors how the cooker keeps
+// its GPU-free Cook() separate (Veng::Cook::AssetImporter).
 
 namespace Veng::Renderer
 {
@@ -21,6 +21,35 @@ namespace Veng::Renderer
 namespace Veng
 {
     class AssetManager;
+    class TaskSystem;
+
+    namespace Detail
+    {
+        // The two-phase result a loader hands back. The "worker phase"
+        // (create + record upload + resolve dependencies) has run; the
+        // main-thread "finalize phase" (registration into the bindless registry,
+        // index patching, pipeline build) is deferred into Finalize so the async
+        // path can run it on the render-thread continuation.
+        struct LoadJob
+        {
+            // The created-but-unregistered resource (type-erased; AssetHandle<T>
+            // downcasts it). Swapped into the cache entry once finalized.
+            RefAny Resource;
+
+            // Dependency cache entries this asset's Finalize requires resident
+            // and finalized first (a material's textures + shaders). Empty for a
+            // leaf asset. Keeps the dependencies alive until Finalize runs.
+            vector<Ref<AssetCacheEntry>> Dependencies;
+
+            // Main-thread finalize: register into the bindless registry, patch
+            // resolved indices, build the GPU pipeline, etc. Null if the asset
+            // needs no finalize (Raw/Mesh/Shader/VertexLayout). Runs once every
+            // Dependencies entry is resident (finalized). Returns a VoidResult so
+            // a deferred failure (e.g. a corrupt material the pipeline build
+            // rejects) surfaces as an AssetLoadError on the sync path.
+            function<VoidResult()> Finalize;
+        };
+    }
 
     class AssetLoader
     {
@@ -29,12 +58,15 @@ namespace Veng
 
         [[nodiscard]] virtual AssetType Type() const = 0;
 
-        // Cooked blob (assetformat layout) -> live engine resource, type-erased
-        // as Detail::RefAny (AssetHandle<T> downcasts it). May call
-        // manager.LoadSync<...> to resolve dependencies (synchronous and eager
-        // — a MissingDependency is an AssetLoadError, not a crash).
-        [[nodiscard]] virtual AssetResult<Detail::RefAny> Load(
-            AssetManager& manager, Renderer::Context& context,
-            AssetId id, std::span<const u8> cooked) const = 0;
+        // Cooked blob (assetformat layout) -> a LoadJob: the created, unregistered
+        // engine resource plus its main-thread Finalize and dependency set. When
+        // async is true the loader records GPU uploads through the task system
+        // (no device wait) and resolves dependencies via manager.Load; when
+        // false it uploads through the blocking UploadSync path and resolves
+        // dependencies via manager.LoadSync. A MissingDependency surfaces as an
+        // AssetLoadError, not a crash.
+        [[nodiscard]] virtual AssetResult<Detail::LoadJob> Load(
+            AssetManager& manager, Renderer::Context& context, TaskSystem& tasks,
+            AssetId id, std::span<const u8> cooked, bool async) const = 0;
     };
 }

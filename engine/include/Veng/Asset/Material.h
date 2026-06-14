@@ -37,6 +37,9 @@ namespace Veng
         u32 Offset = 0;
         u32 Size = 0;
         FieldKind Kind{};
+        // For handle fields, the AssetId of the texture whose bindless index is
+        // written here at Finalize() (0 for plain Param fields).
+        u64 TextureId = 0;
     };
 
     // Everything the MaterialLoader assembles before constructing the Material.
@@ -73,6 +76,13 @@ namespace Veng
         Material(const Material&) = delete;
         Material& operator=(const Material&) = delete;
 
+        // Patch the resolved texture/sampler bindless indices into the param
+        // block (the textures must already be Finalize()d), allocate the
+        // per-material SSBO slot, and upload. Runs on the main thread; the
+        // pipeline is supplied here because its GPU build is also main-thread
+        // work the async loader defers to the continuation.
+        void Finalize(Ref<Renderer::GraphicsPipeline> pipeline);
+
         // Binds the material's pipeline and pushes its index as the per-draw
         // selector. Set 0 (the bindless registry) must already be bound for the
         // frame. Issue the mesh draws after this.
@@ -88,6 +98,13 @@ namespace Veng
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const { return m_Pipeline; }
+
+        // The material's resolved texture dependencies. Sampled bindlessly (set
+        // 0), so they are invisible to the render graph: a caller drawing with
+        // this material must PrepareForAccess(tex->GetView(), Sample) before the
+        // draw so an async-uploaded texture is acquired onto the graphics queue
+        // and its transfer-timeline wait folded into the frame submit.
+        [[nodiscard]] std::span<const AssetHandle<Texture>> GetTextures() const { return m_Textures; }
 
     private:
         explicit Material(const MaterialInfo& info);
@@ -107,6 +124,7 @@ namespace Veng
         vector<MaterialField> m_Fields;
         u32 m_SelectorOffset = 0;
         Renderer::MaterialHandle m_Handle;
+        bool m_Registered = false;
     };
 
     template <>

@@ -1,6 +1,8 @@
 #include <Veng/Asset/AssetManager.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Log.h>
+#include <Veng/Task/TaskSystem.h>
 
 #include "Loaders/MaterialLoader.h"
 #include "Loaders/MeshLoader.h"
@@ -37,8 +39,9 @@ namespace Veng
         }
     }
 
-    AssetManager::AssetManager(Renderer::Context& context, const AssetManagerInfo& /*info*/) :
-        m_Context(context)
+    AssetManager::AssetManager(Renderer::Context& context, TaskSystem& tasks, const AssetManagerInfo& /*info*/) :
+        m_Context(context),
+        m_Tasks(tasks)
     {
         RegisterLoader(CreateUnique<RawAssetLoader>());
         RegisterLoader(CreateUnique<TextureLoader>());
@@ -96,6 +99,8 @@ namespace Veng
 
     void AssetManager::CollectGarbage()
     {
+        // A pending (not-yet-resident) entry is referenced by its PendingLoad, so
+        // its use_count is never 1 while in flight — it is never evicted.
         std::erase_if(m_Cache, [](const auto& entry) { return entry.second.use_count() == 1; });
     }
 
@@ -116,23 +121,8 @@ namespace Veng
         return std::nullopt;
     }
 
-    AssetResult<Ref<Detail::AssetCacheEntry>> AssetManager::LoadSyncUntyped(AssetType type, AssetId id)
+    AssetResult<std::pair<AssetLoader*, ArchiveEntry>> AssetManager::Resolve(AssetType type, AssetId id)
     {
-        if (const auto it = m_Cache.find(id); it != m_Cache.end())
-        {
-            if (it->second->Type != type)
-            {
-                return std::unexpected(AssetLoadError{
-                    .Kind = AssetError::WrongType,
-                    .Id = id,
-                    .Detail = fmt::format("asset {} is cached as {}, not {}", id.Value,
-                        ToString(it->second->Type), ToString(type)),
-                });
-            }
-
-            return it->second;
-        }
-
         const optional<ArchiveEntry> found = Find(id);
         if (!found)
         {
@@ -163,14 +153,188 @@ namespace Veng
             });
         }
 
-        AssetResult<Detail::RefAny> resource = loaderIt->second->Load(*this, m_Context, id, found->Blob);
-        if (!resource)
-            return std::unexpected(resource.error());
+        return std::pair{loaderIt->second.get(), *found};
+    }
+
+    Ref<Detail::AssetCacheEntry> AssetManager::LoadUntyped(AssetType type, AssetId id)
+    {
+        // A cache hit (resident or pending) returns the existing entry. A type
+        // mismatch in the cache is a hard misuse (the async path has no error
+        // channel), so it asserts.
+        if (const auto it = m_Cache.find(id); it != m_Cache.end())
+        {
+            VE_ASSERT(it->second->Type == type,
+                "AssetManager::Load: asset {} is cached as {}, not {}", id.Value,
+                ToString(it->second->Type), ToString(type));
+            return it->second;
+        }
+
+        const AssetResult<std::pair<AssetLoader*, ArchiveEntry>> resolved = Resolve(type, id);
+        if (!resolved)
+        {
+            Log::Error("AssetManager::Load: {}", resolved.error().Detail);
+            return nullptr;
+        }
+
+        AssetLoader* loader = resolved->first;
+        const ArchiveEntry& archiveEntry = resolved->second;
+
+        // Run the loader's worker phase (create + record async upload + fan out
+        // dependency sub-loads). The blob lives in the mounted archive reader's
+        // storage, so the span outlives the call.
+        AssetResult<Detail::LoadJob> job = loader->Load(*this, m_Context, m_Tasks, id, archiveEntry.Blob, true);
+        if (!job)
+        {
+            Log::Error("AssetManager::Load: {}", job.error().Detail);
+            return nullptr;
+        }
+
+        // Create the entry in a pending state (null Resource) and return it now.
+        // The resource is held by the PendingLoad until Finalize swaps it in.
+        Ref<Detail::AssetCacheEntry> entry = CreateRef<Detail::AssetCacheEntry>(Detail::AssetCacheEntry{
+            .Id = id,
+            .Type = type,
+            .Resource = nullptr,
+        });
+        m_Cache[id] = entry;
+
+        if (job->Finalize)
+        {
+            m_Pending.push_back(PendingLoad{
+                .Id = id,
+                .Entry = entry,
+                .Resource = std::move(job->Resource),
+                .Dependencies = std::move(job->Dependencies),
+                .Finalize = std::move(job->Finalize),
+            });
+        }
+        else
+        {
+            // No finalize (Raw/Mesh/Shader/VertexLayout): the resource is resident
+            // the moment its worker phase returns — swap it in immediately.
+            entry->Resource = std::move(job->Resource);
+        }
+
+        return entry;
+    }
+
+    void AssetManager::PumpFinalizes()
+    {
+        // Finalize every pending load whose dependencies are all resident. A
+        // material whose textures finalize this same pump waits one more pump
+        // (its dependency entries aren't resident until their own finalize ran);
+        // the loop terminates because each pump makes monotonic progress.
+        bool progressed = true;
+        while (progressed)
+        {
+            progressed = false;
+
+            for (usize i = 0; i < m_Pending.size();)
+            {
+                PendingLoad& pending = m_Pending[i];
+
+                bool depsReady = true;
+                for (const Ref<Detail::AssetCacheEntry>& dep : pending.Dependencies)
+                {
+                    if (dep == nullptr || dep->Resource == nullptr)
+                    {
+                        depsReady = false;
+                        break;
+                    }
+                }
+
+                if (!depsReady)
+                {
+                    ++i;
+                    continue;
+                }
+
+                const VoidResult finalized = pending.Finalize();
+                if (!finalized)
+                {
+                    // A deferred failure leaves the entry permanently pending;
+                    // log and drop the PendingLoad so it isn't retried forever.
+                    Log::Error("AssetManager: async finalize of asset {} failed: {}",
+                               pending.Id.Value, finalized.error());
+                }
+                else
+                {
+                    pending.Entry->Resource = std::move(pending.Resource);
+                }
+
+                m_Pending.erase(m_Pending.begin() + static_cast<std::ptrdiff_t>(i));
+                progressed = true;
+            }
+        }
+    }
+
+    AssetResult<Ref<Detail::AssetCacheEntry>> AssetManager::LoadSyncUntyped(AssetType type, AssetId id)
+    {
+        if (const auto it = m_Cache.find(id); it != m_Cache.end())
+        {
+            if (it->second->Type != type)
+            {
+                return std::unexpected(AssetLoadError{
+                    .Kind = AssetError::WrongType,
+                    .Id = id,
+                    .Detail = fmt::format("asset {} is cached as {}, not {}", id.Value,
+                        ToString(it->second->Type), ToString(type)),
+                });
+            }
+
+            // The id was already Load()ed async and is still pending. A sync
+            // handle must be resident, so drain the finalize queue now (it
+            // finalizes dependencies before dependents) to land it inline.
+            if (it->second->Resource == nullptr)
+            {
+                PumpFinalizes();
+                if (it->second->Resource == nullptr)
+                {
+                    return std::unexpected(AssetLoadError{
+                        .Kind = AssetError::LoadFailed,
+                        .Id = id,
+                        .Detail = fmt::format("asset {} is still pending an async load", id.Value),
+                    });
+                }
+            }
+
+            return it->second;
+        }
+
+        const AssetResult<std::pair<AssetLoader*, ArchiveEntry>> resolved = Resolve(type, id);
+        if (!resolved)
+            return std::unexpected(resolved.error());
+
+        AssetLoader* loader = resolved->first;
+        const ArchiveEntry& archiveEntry = resolved->second;
+
+        // Synchronous worker phase: uploads route through the blocking UploadSync
+        // path, so the GPU data is resident before the resource is registered.
+        AssetResult<Detail::LoadJob> job = loader->Load(*this, m_Context, m_Tasks, id, archiveEntry.Blob, false);
+        if (!job)
+            return std::unexpected(job.error());
+
+        // Finalize inline (on the main thread, blocking) — bypassing the async
+        // continuation queue entirely, so there is no self-deadlock. The
+        // dependencies were resolved through LoadSync above, so they are already
+        // resident and finalized.
+        if (job->Finalize)
+        {
+            const VoidResult finalized = job->Finalize();
+            if (!finalized)
+            {
+                return std::unexpected(AssetLoadError{
+                    .Kind = AssetError::Corrupt,
+                    .Id = id,
+                    .Detail = finalized.error(),
+                });
+            }
+        }
 
         Ref<Detail::AssetCacheEntry> entry = CreateRef<Detail::AssetCacheEntry>(Detail::AssetCacheEntry{
             .Id = id,
             .Type = type,
-            .Resource = std::move(*resource),
+            .Resource = std::move(job->Resource),
         });
 
         m_Cache[id] = entry;

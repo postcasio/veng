@@ -114,10 +114,12 @@ protected:
         VE_ASSERT(cubeMesh.has_value(), "{}", cubeMesh.error().Detail);
         m_CubeMesh = *cubeMesh;
 
-        const AssetResult<AssetHandle<Veng::Material>> brickMaterial =
-            GetAssetManager().LoadSync<Veng::Material>(AssetId{1003});
-        VE_ASSERT(brickMaterial.has_value(), "{}", brickMaterial.error().Detail);
-        m_BrickMaterial = *brickMaterial;
+        // Async load: returns immediately with a not-yet-resident handle. The
+        // material's decode + texture/shader sub-loads + GPU uploads run on the
+        // task system; it lands resident a few frames later via the main-thread
+        // finalize pump. OnRender gates its draw on IsLoaded(), so the frame keeps
+        // running while it loads — no WaitIdle on this path.
+        m_BrickMaterial = GetAssetManager().Load<Veng::Material>(AssetId{1003});
 
         // The compositing path (ImGui overlay + swapchain present) only exists in
         // windowed mode. The headless smoke run renders just the scene and
@@ -262,6 +264,12 @@ private:
                 cmd.SetViewport({0, 0}, extent);
                 cmd.SetScissor({0, 0}, extent);
 
+                // The material is loaded asynchronously: until it is resident the
+                // pass just clears, and the cube draw begins on the first frame it
+                // lands. The mesh is loaded synchronously, so it is always ready.
+                if (!m_BrickMaterial.IsLoaded() || !m_CubeMesh.IsLoaded())
+                    return;
+
                 // The material binds its pipeline (and pushes its per-draw index
                 // selector) first; the bindless registry then binds set 0
                 // (textures, samplers, MaterialData SSBO) into that pipeline's
@@ -287,6 +295,18 @@ private:
                 for (const Veng::SubMesh& subMesh : mesh.GetSubMeshes())
                     cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
             });
+
+        // The brick texture is sampled bindlessly inside the pass, so the graph
+        // cannot see it. Acquire it onto the graphics queue (and fold its async
+        // upload's transfer-timeline wait into the frame submit) before executing.
+        if (m_BrickMaterial.IsLoaded())
+        {
+            for (const AssetHandle<Veng::Texture>& texture : m_BrickMaterial.Get()->GetTextures())
+            {
+                if (texture.IsLoaded())
+                    cmd.PrepareForAccess(texture.Get()->GetView(), Renderer::AccessKind::Sample);
+            }
+        }
 
         graph.Execute(cmd);
     }

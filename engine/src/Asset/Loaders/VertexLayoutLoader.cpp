@@ -44,9 +44,9 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::RefAny> VertexLayoutLoader::Load(
-        AssetManager& /*manager*/, Renderer::Context& /*context*/,
-        AssetId id, std::span<const u8> cooked) const
+    AssetResult<Detail::LoadJob> VertexLayoutLoader::Load(
+        AssetManager& /*manager*/, Renderer::Context& /*context*/, TaskSystem& /*tasks*/,
+        AssetId id, std::span<const u8> cooked, bool /*async*/) const
     {
         if (cooked.size() < sizeof(CookedVertexLayoutHeader))
             return std::unexpected(Corrupt(id, "vertex_layout: cooked blob smaller than CookedVertexLayoutHeader"));
@@ -82,6 +82,6 @@ namespace Veng
             .Layout = Renderer::VertexBufferLayout(elements),
         });
 
-        return Detail::RefAny(asset);
+        return Detail::LoadJob{.Resource = Detail::RefAny(asset)};
     }
 }

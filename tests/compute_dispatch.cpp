@@ -23,6 +23,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Task/TaskSystem.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/ComputePipeline.h>
@@ -68,7 +69,8 @@ int main()
         // Shaders reach the GPU only through a cooked pack; mount the test pack
         // and load each module by id. Handles stay in scope until after the
         // graph executes so their modules outlive the pipelines.
-        AssetManager assets(context);
+        TaskSystem tasks;
+        AssetManager assets(context, tasks);
         const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
         VE_ASSERT(mountResult, "mount test shader pack: {}", mountResult.error());
 

@@ -2,12 +2,14 @@
 
 namespace Veng
 {
-    AssetResult<Detail::RefAny> RawAssetLoader::Load(
-        AssetManager& /*manager*/, Renderer::Context& /*context*/,
-        AssetId /*id*/, std::span<const u8> cooked) const
+    AssetResult<Detail::LoadJob> RawAssetLoader::Load(
+        AssetManager& /*manager*/, Renderer::Context& /*context*/, TaskSystem& /*tasks*/,
+        AssetId /*id*/, std::span<const u8> cooked, bool /*async*/) const
     {
-        return Detail::RefAny(CreateRef<RawAsset>(RawAsset{
-            .Bytes = vector<u8>(cooked.begin(), cooked.end()),
-        }));
+        return Detail::LoadJob{
+            .Resource = Detail::RefAny(CreateRef<RawAsset>(RawAsset{
+                .Bytes = vector<u8>(cooked.begin(), cooked.end()),
+            })),
+        };
     }
 }

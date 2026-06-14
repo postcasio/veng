@@ -29,7 +29,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "vertex layout loader: cook fixture pa
     const VoidResult cookResult = cooker.CookPack(packJson, outArchive);
     REQUIRE(cookResult.has_value());
 
-    AssetManager assets(Context);
+    AssetManager assets(Context, Tasks);
     const VoidResult mountResult = assets.Mount(outArchive);
     REQUIRE(mountResult.has_value());
 
@@ -54,7 +54,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "vertex layout loader: core pack auto-
     // The canonical layout (position/normal/tangent/uv) must be loadable by
     // Mesh::CanonicalLayoutId without any explicit mount call. Tangent is a
     // vec4 (RGBA32Sfloat): xyz tangent + w bitangent handedness.
-    AssetManager assets(Context);
+    AssetManager assets(Context, Tasks);
 
     const AssetResult<AssetHandle<VertexLayout>> handle =
         assets.LoadSync<VertexLayout>(Mesh::CanonicalLayoutId);

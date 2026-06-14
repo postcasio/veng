@@ -74,7 +74,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
     const VoidResult cookResult = cooker.CookPack(packJson, outArchive);
     REQUIRE(cookResult.has_value());
 
-    AssetManager assets(Context);
+    AssetManager assets(Context, Tasks);
     const VoidResult mountResult = assets.Mount(outArchive);
     REQUIRE(mountResult.has_value());
 
@@ -97,7 +97,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
     });
     auto outputView = ImageView::Create(Context, {.Name = "Texture Loader Output View", .Image = outputImage});
 
-    AssetManager shaderAssets(Context);
+    AssetManager shaderAssets(Context, Tasks);
     const VoidResult shaderMountResult = shaderAssets.Mount(path(TEST_SHADER_PACK));
     REQUIRE(shaderMountResult.has_value());
 
@@ -142,6 +142,44 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
 
     REQUIRE(pixels.size() == static_cast<size_t>(Size) * Size * 4);
     CHECK(Test::PixelsMatch(pixels, expected));
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: async Load returns pending, becomes resident after a pump")
+{
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "texture_pack.json";
+    const path outArchive = std::filesystem::temp_directory_path() / "veng_gpu_texture_async.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+
+    // The async upload path records onto the per-worker transfer pools.
+    Context.InitializeTransferPools(Tasks);
+
+    AssetManager assets(Context, Tasks);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    // Load returns immediately with a not-yet-resident handle.
+    AssetHandle<Texture> handle = assets.Load<Texture>(AssetId{2001});
+    CHECK_FALSE(handle.IsLoaded());
+
+    // The decode + upload run on the task system; the finalize lands on the main
+    // thread. Drain both until the handle is resident.
+    for (int i = 0; i < 100 && !handle.IsLoaded(); ++i)
+    {
+        Tasks.WaitForAll();
+        Tasks.PumpMainThread();
+        assets.PumpFinalizes();
+    }
+
+    REQUIRE(handle.IsLoaded());
+    CHECK(handle.Get()->GetFormat() == Format::RGBA8Unorm);
+    CHECK(handle.Get()->GetExtent() == uvec2{Size, Size});
+    CHECK(handle.Get()->GetHandle().IsValid());
+    CHECK(handle.Get()->GetSamplerHandle().IsValid());
 
     std::filesystem::remove(outArchive);
 }
