@@ -41,6 +41,11 @@ namespace Veng::Renderer
     class Mesh
     {
     public:
+        // Well-known AssetId of the canonical layout in the embedded core pack
+        // (canonical = position/normal/tangent/uv, all RGB32Sfloat/RG32Sfloat).
+        // Minted via `vengc generate-id`; must match core.vengpack.json.
+        static constexpr AssetId k_CanonicalLayoutId{5603155022528551788ULL};
+
         static Ref<Mesh> Create(const MeshInfo& info)
         {
             return Ref<Mesh>(new Mesh(info));

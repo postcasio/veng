@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "assets": [
+    { "id": 5603155022528551788, "type": "vertex_layout", "source": "layouts/canonical.vlayout.json" },
+    { "id": 5802985661779036512, "type": "vertex_layout", "source": "layouts/screenspace.vlayout.json" },
+    { "id": 9444255541371061951, "type": "vertex_layout", "source": "layouts/positiononly.vlayout.json" }
+  ]
+}

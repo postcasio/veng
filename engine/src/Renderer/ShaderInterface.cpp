@@ -7,6 +7,7 @@
 
 #include <algorithm>
 
+
 namespace Veng::Renderer
 {
     optional<ShaderBinding> ShaderInterface::FindBinding(std::string_view name) const
@@ -81,20 +82,4 @@ namespace Veng::Renderer
         return layouts;
     }
 
-    void ShaderInterface::ValidateVertexLayout(const VertexBufferLayout& layout) const
-    {
-        const vector<VertexBufferElement>& expected = VertexInputs.GetElements();
-        const vector<VertexBufferElement>& actual = layout.GetElements();
-
-        VE_ASSERT(actual.size() == expected.size(),
-            "ShaderInterface::ValidateVertexLayout: mesh has {} vertex attributes, shader expects {}",
-            actual.size(), expected.size());
-
-        for (usize i = 0; i < expected.size(); ++i)
-        {
-            VE_ASSERT(actual[i].Type == expected[i].Type,
-                "ShaderInterface::ValidateVertexLayout: vertex attribute {} ('{}'): mesh provides format {}, shader expects format {} ('{}')",
-                i, actual[i].Name, static_cast<u32>(actual[i].Type), static_cast<u32>(expected[i].Type), expected[i].Name);
-        }
-    }
 }

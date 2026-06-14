@@ -119,6 +119,46 @@ add_subdirectory(engine)
 add_subdirectory(cooker)
 
 # ---------------------------------------------------------------------------
+# Core pack — cook built-in vertex layouts and embed into libveng
+# (only when vengc is available, i.e. veng is the top-level project)
+# ---------------------------------------------------------------------------
+
+if (TARGET vengc)
+    set(VENG_CORE_PACK_JSON ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/core.vengpack.json)
+    set(VENG_CORE_PACK_BIN  ${CMAKE_CURRENT_BINARY_DIR}/core.vengpack)
+    set(VENG_CORE_PACK_CPP  ${CMAKE_CURRENT_BINARY_DIR}/generated/CoreLayoutPack.cpp)
+
+    add_custom_command(
+        OUTPUT ${VENG_CORE_PACK_BIN}
+        COMMAND $<TARGET_FILE:vengc> cook ${VENG_CORE_PACK_JSON} -o ${VENG_CORE_PACK_BIN}
+        DEPENDS vengc ${VENG_CORE_PACK_JSON}
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/layouts/canonical.vlayout.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/layouts/screenspace.vlayout.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/layouts/positiononly.vlayout.json
+        COMMENT "Cooking veng core pack")
+
+    add_custom_command(
+        OUTPUT ${VENG_CORE_PACK_CPP}
+        COMMAND ${CMAKE_COMMAND}
+                -DINPUT=${VENG_CORE_PACK_BIN}
+                -DOUTPUT=${VENG_CORE_PACK_CPP}
+                -DSYMBOL=g_CoreLayoutPack
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinary.cmake
+        DEPENDS ${VENG_CORE_PACK_BIN} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinary.cmake
+        COMMENT "Embedding veng core pack")
+
+    set_source_files_properties(${VENG_CORE_PACK_CPP} PROPERTIES GENERATED TRUE)
+
+    # Custom target so veng (in a subdirectory scope) can depend on the
+    # generated file produced by a command in this (root) scope.
+    add_custom_target(veng_core_pack_gen DEPENDS ${VENG_CORE_PACK_CPP})
+
+    target_sources(veng PRIVATE ${VENG_CORE_PACK_CPP})
+    add_dependencies(veng veng_core_pack_gen)
+    target_compile_definitions(veng PRIVATE VENG_HAS_CORE_PACK=1)
+endif ()
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
@@ -170,6 +210,7 @@ if (VENG_BUILD_TESTS)
                 tests/cooker/texture_cook.cpp
                 tests/cooker/mesh_cook.cpp
                 tests/cooker/shader_cook.cpp
+                tests/cooker/vertex_layout_cook.cpp
         )
         target_link_libraries(veng_unit PRIVATE veng::cook)
         target_compile_definitions(veng_unit PRIVATE
@@ -239,10 +280,6 @@ if (VENG_BUILD_TESTS)
     add_test(NAME death.assert_message COMMAND veng_death assert_message)
     set_tests_properties(death.assert_message PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "assert_message case fired")
-
-    add_test(NAME death.shader_vertex_layout_mismatch COMMAND veng_death shader_vertex_layout_mismatch)
-    set_tests_properties(death.shader_vertex_layout_mismatch PROPERTIES LABELS death
-            PASS_REGULAR_EXPRESSION "ShaderInterface::ValidateVertexLayout: mesh has 2 vertex attributes, shader expects 1")
 
     # GPU-coupled death cases (need a headless Context; skip with no driver).
     add_test(NAME death.buffer_upload_overrun COMMAND veng_death buffer_upload_overrun)
@@ -331,6 +368,7 @@ if (VENG_BUILD_TESTS)
                 tests/gpu/texture_loader.cpp
                 tests/gpu/mesh_loader.cpp
                 tests/gpu/shader_loader.cpp
+                tests/gpu/vertex_layout_loader.cpp
         )
         target_link_libraries(veng_gpu PRIVATE veng::cook)
         target_compile_definitions(veng_gpu PRIVATE

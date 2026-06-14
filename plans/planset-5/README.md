@@ -147,6 +147,7 @@ auto mesh = m_Assets->LoadSync<Mesh>(AssetId{1002}).value();
 | 06 | [Texture (JSON source + sampler → stb cook → bindless load)](06-texture-slice.md) | First full type; registers into bindless; sample samples a cooked texture via set 0. | done |
 | 07 | [Mesh (JSON source + import settings + overrides → assimp cook)](07-mesh-assimp.md) | Cooked vertex/index buffers; material overrides; sample draws a cooked mesh. | done |
 | 08 | [Shader via Slang + offline reflection → `ShaderInterface`](08-shader-slang-reflection.md) | Absorbs deferred shader-reflection work; layouts from reflection, set 0 from registry. | done |
+| 08b | [Engine-defined vertex layouts as assets](08b-vertex-layout-enum.md) | Vertex layouts become a first-class asset type; embedded core pack (Canonical/ScreenSpace/PositionOnly); shaders reference a layout by `AssetId`; cooker `--reference` + `generate-id`. | done |
 | 09 | [Material: JSON asset, inline/external shader, bindless `Material`](09-material.md) | The headline; thin handle+SSBO material, validated against the interface. | proposed |
 | 10 | [Example asset pack: hand-written JSON → build-time cook → load](10-example-pack.md) | `add_asset_pack` CMake fn; the full deliverable demonstrated. | proposed |
 | 11 | [Docs + roadmap re-cut](11-docs-roadmap.md) | `ownership.md`, `CLAUDE.md`, `future/README`, `bindless`/`asset-system`, `plans/README`. | proposed |

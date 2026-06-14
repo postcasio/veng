@@ -201,6 +201,11 @@ planset/future README carries the detail, decisions, and per-plan status column.
 5. Commit, one commit per plan: `Plan NN: <summary>` (or `planset-N:` / `future:`
    for roadmap-only changes), with a `Co-Authored-By` trailer.
 
+**When a new `AssetId` is needed**, run `vengc generate-id` (optionally with
+`--reference <pack.json>` flags for existing packs) — never invent an id
+manually. All ids in the codebase, including the core pack's built-in layout
+ids, were minted this way.
+
 **Delegate well-scoped chunks to `model: sonnet` subagents** (exploration sweeps,
 mechanical multi-file edits, focused sub-task implementation). Keep orchestration,
 design decisions, verification, and commits on the main thread. Don't spawn for

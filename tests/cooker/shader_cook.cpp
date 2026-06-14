@@ -1,9 +1,13 @@
-// Shader cook test (planset-5 plan 08): cooks the fixture shader_pack.json
+// Shader cook test (planset-5 plan 08b): cooks the fixture shader_pack.json
 // through libveng_cook and checks the resulting CookedShaderHeader +
-// CookedShaderInterfaceHeader + reflected tables (bindings, push constants,
-// vertex inputs) for both input paths:
+// CookedShaderInterfaceHeader + reflected tables (bindings, push constants)
+// for both input paths:
 //   - .slang source → Slang reflection (entry 4001, mesh.vert.slang)
 //   - inline spirv_b64 + hand-written interface → pass-through (entry 4002)
+//
+// Blob layout (post-08b): header → bindings → push constants → SPIR-V.
+// The per-shader vertex-input table is gone; shaders reference their layout
+// by AssetId (CookedShaderInterfaceHeader::VertexLayoutAssetId).
 
 #include <cstring>
 #include <filesystem>
@@ -65,11 +69,11 @@ TEST_CASE("Cooker: cooks a shader from .slang source via Slang reflection")
 
     // mesh.vert.slang: no descriptor bindings (no set >= 1 resources —
     // set 0 is the bindless registry and is excluded), one push-constant
-    // block (PushConstants: float4x4 MVP + float4x4 Model = 128 bytes),
-    // four vertex inputs (Position / Normal / Tangent / UV).
+    // block (PushConstants: float4x4 MVP + float4x4 Model = 128 bytes).
+    // Vertex layout is referenced by AssetId 7001 (canonical.vlayout.json).
     CHECK(interfaceHeader.BindingCount == 0);
     CHECK(interfaceHeader.PushConstantCount == 1);
-    CHECK(interfaceHeader.VertexInputCount == 4);
+    CHECK(interfaceHeader.VertexLayoutAssetId == 7001ULL);
 
     cursor += interfaceHeader.BindingCount * sizeof(CookedDescriptorBinding);
 
@@ -81,22 +85,6 @@ TEST_CASE("Cooker: cooks a shader from .slang source via Slang reflection")
     CHECK(pushConstant.Size == 128);
     CHECK(pushConstant.StageMask == 1u); // ShaderStage::Vertex underlying value
     CHECK(std::string_view(pushConstant.Name) == "g_PushConstants");
-    cursor += interfaceHeader.PushConstantCount * sizeof(CookedPushConstantBlock);
-
-    // Vertex inputs sorted by location: POSITION(0)/NORMAL(1)/TANGENT(2)/TEXCOORD0(3)
-    // map to RGB32Sfloat(9) / RGB32Sfloat(9) / RGB32Sfloat(9) / RG32Sfloat(8).
-    REQUIRE(entry->Blob.size() >= cursor + interfaceHeader.VertexInputCount * sizeof(CookedVertexInputAttribute));
-    const u32 expectedFormats[] = {9, 9, 9, 8};
-    const u32 expectedLocations[] = {0, 1, 2, 3};
-    const std::string_view expectedNames[] = {"a_Position", "a_Normal", "a_Tangent", "a_UV"};
-    for (u32 i = 0; i < interfaceHeader.VertexInputCount; ++i)
-    {
-        CookedVertexInputAttribute attribute{};
-        std::memcpy(&attribute, entry->Blob.data() + cursor + i * sizeof(CookedVertexInputAttribute), sizeof(attribute));
-        CHECK(attribute.Location == expectedLocations[i]);
-        CHECK(attribute.Format == expectedFormats[i]);
-        CHECK(std::string_view(attribute.Name) == expectedNames[i]);
-    }
 
     std::filesystem::remove(std::filesystem::temp_directory_path() / "veng_cooker_shader.vengpack");
 }
@@ -126,10 +114,11 @@ TEST_CASE("Cooker: cooks a shader from inline spirv_b64 + hand-written interface
     cursor += sizeof(CookedShaderInterfaceHeader);
 
     // Inline fixture: one sampled-image binding (set 1, binding 0, fragment),
-    // one push-constant block (16 bytes, fragment), no vertex inputs.
+    // one push-constant block (16 bytes, fragment), no vertex layout
+    // (fragment-only shader, vertex_layout omitted → VertexLayoutAssetId 0).
     CHECK(interfaceHeader.BindingCount == 1);
     CHECK(interfaceHeader.PushConstantCount == 1);
-    CHECK(interfaceHeader.VertexInputCount == 0);
+    CHECK(interfaceHeader.VertexLayoutAssetId == 0ULL);
 
     REQUIRE(entry->Blob.size() >= cursor + sizeof(CookedDescriptorBinding));
     CookedDescriptorBinding binding{};

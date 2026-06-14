@@ -40,6 +40,12 @@ namespace Veng
         VoidResult Mount(const path& archive);
         void Unmount(const path& archive);
 
+        // Mounts an in-memory archive (e.g. an embedded core pack). The bytes
+        // are copied into the reader's own storage. Deduplicates by identity
+        // (a synthetic path string such as "<core>"); mounting the same identity
+        // twice is a no-op.
+        VoidResult MountBytes(const path& identity, std::span<const u8> bytes);
+
         // Resolves id across mounted archives, loads (and caches) it via the
         // registered AssetLoader for its AssetType, and returns a typed handle.
         // A cache hit returns immediately without touching the archive or

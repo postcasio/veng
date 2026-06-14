@@ -1,8 +1,9 @@
-// Shader load test (planset-5 plan 08): cooks the shader fixture pack in-process,
+// Shader load test (planset-5 plan 08b): cooks the shader fixture pack in-process,
 // mounts it, LoadSync<ShaderAsset>s it through AssetManager, and checks the
-// loaded ShaderInterface — bindings, push constants, vertex inputs — plus the
+// loaded ShaderInterface — bindings, push constants, VertexLayoutId — plus the
 // layout-builder helpers (BuildPushConstantRanges, BuildDescriptorSetLayouts,
-// FindBinding, ValidateVertexLayout) against the canonical mesh vertex layout.
+// FindBinding). Also verifies that the referenced VertexLayoutAsset (id 7001)
+// loads and carries the expected 4-element canonical layout.
 
 #include <filesystem>
 
@@ -11,8 +12,8 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
-#include <Veng/Renderer/Mesh.h>
 #include <Veng/Renderer/ShaderAsset.h>
+#include <Veng/Renderer/VertexLayoutAsset.h>
 
 #include <gpu/fixture.h>
 
@@ -45,22 +46,16 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "shader loader: cook, mount, LoadSync,
     const ShaderInterface& iface = asset.Interface;
 
     // mesh.vert.slang: no descriptor bindings (set 0 excluded — bindless
-    // registry), one push constant, four vertex inputs.
+    // registry), one push constant, vertex layout referenced by AssetId 7001.
     CHECK(iface.Bindings.empty());
     REQUIRE(iface.PushConstants.size() == 1);
-    REQUIRE(iface.VertexInputs.GetElements().size() == 4);
+    REQUIRE(iface.VertexLayoutId.has_value());
+    CHECK(*iface.VertexLayoutId == AssetId{7001});
 
     CHECK(iface.PushConstants[0].Name == "g_PushConstants");
     CHECK(iface.PushConstants[0].Offset == 0);
     CHECK(iface.PushConstants[0].Size == 128);
     CHECK(iface.PushConstants[0].Stages == ShaderStage::Vertex);
-
-    // Vertex inputs in location order.
-    const vector<VertexBufferElement>& verts = iface.VertexInputs.GetElements();
-    CHECK(verts[0].Type == Format::RGB32Sfloat); // a_Position
-    CHECK(verts[1].Type == Format::RGB32Sfloat); // a_Normal
-    CHECK(verts[2].Type == Format::RGB32Sfloat); // a_Tangent
-    CHECK(verts[3].Type == Format::RG32Sfloat);  // a_UV
 
     // FindBinding: push constants are not bindings; descriptor lookup misses.
     CHECK(!iface.FindBinding("g_PushConstants").has_value());
@@ -78,10 +73,18 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "shader loader: cook, mount, LoadSync,
     const vector<Ref<DescriptorSetLayout>> layouts = iface.BuildDescriptorSetLayouts(Context, "ShaderTest");
     CHECK(layouts.empty());
 
-    // ValidateVertexLayout: the mesh canonical layout matches what the shader
-    // reflects — this must pass cleanly (no abort).
-    const VertexBufferLayout canonical = Mesh::CanonicalLayout();
-    iface.ValidateVertexLayout(canonical);
+    // Load the referenced VertexLayoutAsset and verify its 4-element layout.
+    const AssetResult<AssetHandle<VertexLayoutAsset>> layoutHandle =
+        assets.LoadSync<VertexLayoutAsset>(AssetId{7001});
+    REQUIRE(layoutHandle.has_value());
+    REQUIRE(layoutHandle->IsLoaded());
+
+    const vector<VertexBufferElement>& elems = layoutHandle->Get()->GetLayout().GetElements();
+    REQUIRE(elems.size() == 4);
+    CHECK(elems[0].Type == Format::RGB32Sfloat); // a_Position
+    CHECK(elems[1].Type == Format::RGB32Sfloat); // a_Normal
+    CHECK(elems[2].Type == Format::RGB32Sfloat); // a_Tangent
+    CHECK(elems[3].Type == Format::RG32Sfloat);  // a_UV
 
     std::filesystem::remove(outArchive);
 }

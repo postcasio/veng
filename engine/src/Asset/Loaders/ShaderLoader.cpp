@@ -5,7 +5,9 @@
 
 #include <fmt/format.h>
 
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Renderer/VertexLayoutAsset.h>
 
 namespace Veng
 {
@@ -43,21 +45,6 @@ namespace Veng
             return static_cast<Renderer::ShaderStage>(value);
         }
 
-        // Only the plain float/vecN formats VertexBufferElement supports
-        // (VertexBufferLayout.cpp's GetFormatSize/GetFormatComponentCount) are
-        // valid vertex-input formats.
-        optional<Renderer::Format> BridgeVertexInputFormat(u32 value)
-        {
-            switch (value)
-            {
-                case static_cast<u32>(Renderer::Format::R32Sfloat): return Renderer::Format::R32Sfloat;
-                case static_cast<u32>(Renderer::Format::RG32Sfloat): return Renderer::Format::RG32Sfloat;
-                case static_cast<u32>(Renderer::Format::RGB32Sfloat): return Renderer::Format::RGB32Sfloat;
-                case static_cast<u32>(Renderer::Format::RGBA32Sfloat): return Renderer::Format::RGBA32Sfloat;
-                default: return std::nullopt;
-            }
-        }
-
         // Cooked names are fixed-size, nul-terminated char arrays (CookedBlobs.h).
         template <usize N>
         string BridgeName(const char (&name)[N])
@@ -72,7 +59,7 @@ namespace Veng
     }
 
     AssetResult<Detail::RefAny> ShaderLoader::Load(
-        AssetManager& /*manager*/, Renderer::Context& context,
+        AssetManager& manager, Renderer::Context& context,
         AssetId id, std::span<const u8> cooked) const
     {
         if (cooked.size() < sizeof(CookedShaderHeader))
@@ -155,42 +142,9 @@ namespace Veng
         }
         cursor += pushConstantBytes;
 
-        const usize vertexInputBytes = static_cast<usize>(interfaceHeader.VertexInputCount) * sizeof(CookedVertexInputAttribute);
-        if (cooked.size() < cursor + vertexInputBytes)
-            return std::unexpected(Corrupt(id, "shader: cooked blob smaller than vertex input table"));
-
-        // Reconstruct VertexInputs in location order: VertexBufferLayout's
-        // element order *is* its attribute location (GraphicsPipeline.cpp).
-        vector<CookedVertexInputAttribute> vertexInputs(interfaceHeader.VertexInputCount);
-        for (u32 i = 0; i < interfaceHeader.VertexInputCount; ++i)
-            std::memcpy(&vertexInputs[i], cooked.data() + cursor + i * sizeof(CookedVertexInputAttribute), sizeof(CookedVertexInputAttribute));
-        cursor += vertexInputBytes;
-
-        std::ranges::sort(vertexInputs, [](const CookedVertexInputAttribute& a, const CookedVertexInputAttribute& b) {
-            return a.Location < b.Location;
-        });
-
-        vector<Renderer::VertexBufferElement> vertexElements;
-        vertexElements.reserve(vertexInputs.size());
-        for (u32 i = 0; i < vertexInputs.size(); ++i)
-        {
-            if (vertexInputs[i].Location != i)
-            {
-                return std::unexpected(Corrupt(id, fmt::format(
-                    "shader: vertex input locations are not contiguous from 0 (got {} at index {})",
-                    vertexInputs[i].Location, i)));
-            }
-
-            const optional<Renderer::Format> format = BridgeVertexInputFormat(vertexInputs[i].Format);
-            if (!format)
-            {
-                return std::unexpected(Corrupt(id, fmt::format(
-                    "shader: vertex input {} has unrecognized format {}", i, vertexInputs[i].Format)));
-            }
-
-            vertexElements.emplace_back(*format, BridgeName(vertexInputs[i].Name));
-        }
-        shaderInterface.VertexInputs = Renderer::VertexBufferLayout(vertexElements);
+        shaderInterface.VertexLayoutId = interfaceHeader.VertexLayoutAssetId != 0
+            ? optional<AssetId>(AssetId{interfaceHeader.VertexLayoutAssetId})
+            : std::nullopt;
 
         const usize expectedInterfaceBytes = cursor - sizeof(CookedShaderHeader);
         if (header.InterfaceBytes != expectedInterfaceBytes)
@@ -198,6 +152,19 @@ namespace Veng
             return std::unexpected(Corrupt(id, fmt::format(
                 "shader: InterfaceBytes {} does not match reflected interface size {}",
                 header.InterfaceBytes, expectedInterfaceBytes)));
+        }
+
+        // If the shader references a vertex layout, load it now to confirm it
+        // exists and is valid — a missing layout is a fatal load error (catches
+        // corrupted blobs or a missing core pack). Per-attribute validation
+        // already happened at cook time; the loader only needs to assert the
+        // asset is resolvable.
+        if (interfaceHeader.VertexLayoutAssetId != 0)
+        {
+            const AssetResult<AssetHandle<Renderer::VertexLayoutAsset>> layout =
+                manager.LoadSync<Renderer::VertexLayoutAsset>(AssetId{interfaceHeader.VertexLayoutAssetId});
+            if (!layout)
+                return std::unexpected(layout.error());
         }
 
         if (cooked.size() < cursor + header.SpirvBytes)

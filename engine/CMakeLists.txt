@@ -8,8 +8,9 @@ add_library(veng SHARED
         src/Asset/AssetManager.cpp
         src/Asset/Loaders/MeshLoader.cpp
         src/Asset/Loaders/RawAssetLoader.cpp
-        src/Asset/Loaders/TextureLoader.cpp
         src/Asset/Loaders/ShaderLoader.cpp
+        src/Asset/Loaders/TextureLoader.cpp
+        src/Asset/Loaders/VertexLayoutLoader.cpp
         src/Log.cpp
         src/Time.cpp
         src/Window.cpp

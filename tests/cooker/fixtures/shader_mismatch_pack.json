@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": 7101,
+      "type": "vertex_layout",
+      "source": "layouts/positiononly.vlayout.json"
+    },
+    {
+      "id": 4101,
+      "type": "shader",
+      "source": "shaders/mesh.vert.slang",
+      "entry": "vsMain",
+      "vertex_layout": 7101
+    }
+  ]
+}

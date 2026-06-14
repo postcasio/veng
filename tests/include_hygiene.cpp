@@ -56,6 +56,7 @@
 #include <Veng/Renderer/TypedBuffers.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>
+#include <Veng/Renderer/VertexLayoutAsset.h>
 
 int main()
 {

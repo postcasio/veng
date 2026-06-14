@@ -200,6 +200,21 @@ to decide early than to retrofit.
   sample. *(area 1.)*
 - **Pipeline caching.** Persist `VkPipelineCache` to disk once materials multiply
   — load-time win, naturally part of the asset/material phase. *(area 1.)*
+- **Content hashes in the vengpack archives.** Carry a content hash per cooked
+  blob (and/or a whole-archive digest) in the pack/archive format. Buys three
+  things that compound as the asset count grows: **integrity verification**
+  (detect a truncated/corrupt blob), **incremental cooking** (skip re-cooking a
+  source whose inputs hash unchanged), and **deduplication** (identical cooked
+  blobs share storage). Decide the hash's scope (per-blob vs. whole-archive),
+  algorithm, and where it sits in the header before the archive format is widely
+  depended on — adding it later is a format-version bump.
+  **The loader does not verify.** Hashing every blob at load would be slow and
+  the hashes are there for tooling, not the hot path — the runtime trusts its
+  packs. Write the hashes in the cooker and expose verification as a separate
+  **`vengc verify`** tool that re-hashes an archive's blobs and reports
+  mismatches on demand. Touches `assetformat` (the on-disk layout in
+  `CookedBlobs.h` / `AssetPack.h`) and the cooker (compute on write + the verify
+  tool); the engine loader is deliberately untouched. *(area 1.)*
 - **Process discipline.** Keep planset-1's cadence — small, sample-verified,
   per-plan increments. planset-4 followed this for de-global (3), which is now
   done; the same discipline applies to threading (2), where a big-bang sweep

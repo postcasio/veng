@@ -6,6 +6,7 @@
 
 add_library(libveng_assetformat STATIC
         src/Archive.cpp
+        src/AssetPack.cpp
 )
 add_library(veng::assetformat ALIAS libveng_assetformat)
 

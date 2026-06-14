@@ -1,0 +1,6 @@
+{
+  "elements": [
+    { "format": "RGB32Sfloat", "name": "a_Position" },
+    { "format": "RG32Sfloat",  "name": "a_UV" }
+  ]
+}

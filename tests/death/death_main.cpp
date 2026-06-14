@@ -40,7 +40,6 @@
 #include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/ShaderInterface.h>
 #include <Veng/Renderer/TypedBuffers.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>
@@ -120,20 +119,6 @@ namespace
         // Proves FatalAssert routes the formatted message to the log sink before
         // aborting.
         VE_ASSERT(false, "assert_message case fired");
-    }
-
-    void RunShaderVertexLayoutMismatch()
-    {
-        // ValidateVertexLayout asserts when the mesh layout element count does
-        // not match the shader's reflected vertex inputs.
-        ShaderInterface iface;
-        iface.VertexInputs = VertexBufferLayout(vector<VertexBufferElement>{{Format::RGB32Sfloat, "a_Position"}});
-
-        const VertexBufferLayout mismatch = {
-            {Format::RGB32Sfloat, "a_Position"},
-            {Format::RGB32Sfloat, "a_Normal"},
-        };
-        iface.ValidateVertexLayout(mismatch); // mesh has 2, shader expects 1
     }
 
     // -- GPU-coupled death cases (need a headless Context) -------------------
@@ -242,7 +227,6 @@ int main(int argc, char** argv)
     else if (name == "vertex_format_unknown") RunVertexFormatUnknown();
     else if (name == "tovk_unmapped") RunToVkUnmapped();
     else if (name == "assert_message") RunAssertMessage();
-    else if (name == "shader_vertex_layout_mismatch") RunShaderVertexLayoutMismatch();
     // GPU-coupled
     else if (name == "buffer_upload_overrun") RunBufferUploadOverrun();
     else if (name == "index_u16_into_u32") RunIndexU16IntoU32();

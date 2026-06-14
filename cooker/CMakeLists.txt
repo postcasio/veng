@@ -78,6 +78,8 @@ add_library(libveng_cook STATIC
         src/Importers/TextureImporter.cpp
         src/Importers/MeshImporter.cpp
         src/Importers/ShaderImporter.cpp
+        src/Importers/VertexLayoutImporter.cpp
+        src/Importers/VertexLayoutSource.cpp
         src/Vendor/StbImage.cpp
 )
 add_library(veng::cook ALIAS libveng_cook)

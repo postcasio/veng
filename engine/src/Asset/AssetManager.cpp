@@ -6,6 +6,15 @@
 #include "Loaders/RawAssetLoader.h"
 #include "Loaders/ShaderLoader.h"
 #include "Loaders/TextureLoader.h"
+#include "Loaders/VertexLayoutLoader.h"
+
+#ifdef VENG_HAS_CORE_PACK
+namespace Veng
+{
+    extern const unsigned char g_CoreLayoutPack[];
+    extern const unsigned long g_CoreLayoutPackSize;
+}
+#endif
 
 namespace Veng
 {
@@ -20,6 +29,7 @@ namespace Veng
                 case AssetType::Mesh: return "Mesh";
                 case AssetType::Shader: return "Shader";
                 case AssetType::Material: return "Material";
+                case AssetType::VertexLayout: return "VertexLayout";
             }
 
             VE_ASSERT(false, "AssetManager: unhandled AssetType {}", static_cast<u32>(type));
@@ -33,6 +43,14 @@ namespace Veng
         RegisterLoader(CreateUnique<TextureLoader>());
         RegisterLoader(CreateUnique<MeshLoader>());
         RegisterLoader(CreateUnique<ShaderLoader>());
+        RegisterLoader(CreateUnique<VertexLayoutLoader>());
+
+#ifdef VENG_HAS_CORE_PACK
+        const VoidResult coreMount = MountBytes(
+            path("<core>"),
+            std::span<const u8>(g_CoreLayoutPack, static_cast<usize>(g_CoreLayoutPackSize)));
+        VE_ASSERT(coreMount.has_value(), "AssetManager: failed to mount embedded core pack: {}", coreMount.error());
+#endif
     }
 
     AssetManager::~AssetManager() = default;
@@ -50,6 +68,22 @@ namespace Veng
             return std::unexpected(reader.error());
 
         m_Mounts.push_back(MountedArchive{.Path = archive, .Reader = std::move(*reader)});
+        return {};
+    }
+
+    VoidResult AssetManager::MountBytes(const path& identity, std::span<const u8> bytes)
+    {
+        for (const MountedArchive& mount : m_Mounts)
+        {
+            if (mount.Path == identity)
+                return {};
+        }
+
+        Result<ArchiveReader> reader = ArchiveReader::FromBytes(bytes);
+        if (!reader)
+            return std::unexpected(reader.error());
+
+        m_Mounts.push_back(MountedArchive{.Path = identity, .Reader = std::move(*reader)});
         return {};
     }
 

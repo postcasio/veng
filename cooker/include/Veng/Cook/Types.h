@@ -9,8 +9,18 @@
 
 #include <Veng/Asset/Types.h>
 
+#include <functional>
 #include <memory>
 #include <nlohmann/json.hpp>
+
+namespace Veng
+{
+    // function alias for the cooker (matches Veng.h's alias). Defined here so
+    // cooker public headers (Importer.h) can use it without pulling in the full
+    // engine Veng.h, and without leaking std:: into the house-style surface.
+    template <typename T>
+    using function = std::function<T>;
+}
 
 namespace Veng::Cook
 {

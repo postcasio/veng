@@ -84,6 +84,29 @@ namespace Veng
         u64 MaterialId = 0; // AssetId
     };
 
+    // Names in cooked blobs are fixed-size and nul-terminated, truncated at
+    // k_ShaderNameCapacity - 1 — generous for GLSL/Slang identifiers. Shared
+    // by shader bindings/blocks/attributes and vertex-layout element names.
+    inline constexpr usize k_ShaderNameCapacity = 64;
+
+    // VertexLayout: a named list of vertex-buffer elements that shaders and
+    // pipelines reference by AssetId (plan 08b). The blob is, in order:
+    //   CookedVertexLayoutHeader
+    //   CookedVertexLayoutElement[ElementCount]
+    struct CookedVertexLayoutHeader
+    {
+        u32 ElementCount = 0;
+        // Followed by ElementCount * CookedVertexLayoutElement.
+    };
+
+    // One vertex-buffer element in location order. Format is the underlying
+    // Renderer::Format integer (cycle-avoidance rule at the top of this file).
+    struct CookedVertexLayoutElement
+    {
+        u32 Format = 0; // underlying Renderer::Format
+        char Name[k_ShaderNameCapacity] = {};
+    };
+
     // Shader: reflected interface + SPIR-V (plan 08). One cooked shader is one
     // SPIR-V module with one entry point, covering one shader stage — a
     // material (plan 09) references a vertex-stage and a fragment-stage shader
@@ -92,15 +115,13 @@ namespace Veng
     //   CookedShaderInterfaceHeader
     //   CookedDescriptorBinding[BindingCount]
     //   CookedPushConstantBlock[PushConstantCount]
-    //   CookedVertexInputAttribute[VertexInputCount]
     //   SPIR-V bytes (SpirvBytes)
-    // InterfaceBytes is the size of the CookedShaderInterfaceHeader + the three
-    // arrays combined, so the loader can seek straight to the SPIR-V.
+    // InterfaceBytes is the size of CookedShaderInterfaceHeader + the two
+    // arrays (bindings + push constants) combined, so the loader can seek
+    // straight to the SPIR-V. The referenced vertex layout is carried as
+    // VertexLayoutAssetId in CookedShaderInterfaceHeader (0 = none).
 
-    // Bindings/blocks/attributes (and the entry point below) are identified by
-    // name; names are fixed-size and nul-terminated, truncated at
-    // k_ShaderNameCapacity - 1 — generous for GLSL/Slang identifiers.
-    inline constexpr usize k_ShaderNameCapacity = 64;
+    // Bindings/blocks (and the entry point below) are identified by name.
 
     struct CookedShaderHeader
     {
@@ -116,8 +137,10 @@ namespace Veng
     {
         u32 BindingCount = 0;
         u32 PushConstantCount = 0;
-        u32 VertexInputCount = 0;
+        u64 VertexLayoutAssetId = 0; // 0 = no vertex inputs (nullopt)
     };
+    static_assert(sizeof(CookedShaderInterfaceHeader) == 16,
+        "CookedShaderInterfaceHeader must be 16 bytes — guard against padding between the u32 fields and the u64");
 
     // One descriptor binding reflected from the shader, set >= 1 (set 0 is the
     // bindless registry, plan 05 — recognized and excluded by the importer).
@@ -138,15 +161,6 @@ namespace Veng
         u32 Offset = 0;
         u32 Size = 0;
         u32 StageMask = 0; // underlying Renderer::ShaderStage (bitmask)
-        char Name[k_ShaderNameCapacity] = {};
-    };
-
-    // One vertex-input attribute reflected from the vertex stage's entry point
-    // (empty for a non-vertex stage shader).
-    struct CookedVertexInputAttribute
-    {
-        u32 Location = 0;
-        u32 Format = 0; // underlying Renderer::Format
         char Name[k_ShaderNameCapacity] = {};
     };
 

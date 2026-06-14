@@ -12,6 +12,8 @@
 
 #include <Veng/Asset/CookedBlobs.h>
 
+#include "VertexLayoutSource.h"
+
 namespace Veng::Cook
 {
     namespace
@@ -32,6 +34,8 @@ namespace Veng::Cook
         constexpr u32 k_DescriptorTypeStorageBuffer = 4;
         constexpr u32 k_DescriptorTypeSampler = 5;
 
+        // Format ordinals (mirroring Renderer::Format) — used for Slang reflection
+        // comparison against VertexLayout element formats.
         constexpr u32 k_FormatR32Sfloat = 7;
         constexpr u32 k_FormatRG32Sfloat = 8;
         constexpr u32 k_FormatRGB32Sfloat = 9;
@@ -110,8 +114,9 @@ namespace Veng::Cook
             }
         }
 
-        // Vertex inputs are restricted to plain float/floatN (the only formats
-        // VertexBufferElement/BridgeVertexInputFormat support, ShaderLoader.cpp).
+        // Maps a Slang-reflected vertex input type to a format ordinal.
+        // Used only in the Slang source path (for element-for-element validation
+        // against the referenced VertexLayout). Only float/floatN are valid.
         Result<u32> MapVertexInputFormat(slang::TypeReflection* type, const string& name,
             const path& sourcePath, const string& entryName)
         {
@@ -144,21 +149,21 @@ namespace Veng::Cook
         }
 
         // Assembles the final cooked blob: CookedShaderHeader, CookedShaderInterfaceHeader,
-        // the three reflected tables, then the SPIR-V (CookedBlobs.h's documented layout).
+        // bindings, push constants, then SPIR-V. No vertex-input table — the layout
+        // is referenced by AssetId (0 = no vertex inputs).
         vector<u8> BuildBlob(const string& entryPoint, std::span<const u8> spirv,
             const vector<CookedDescriptorBinding>& bindings,
             const vector<CookedPushConstantBlock>& pushConstants,
-            const vector<CookedVertexInputAttribute>& vertexInputs)
+            u64 vertexLayoutAssetId)
         {
             CookedShaderInterfaceHeader interfaceHeader{};
             interfaceHeader.BindingCount = static_cast<u32>(bindings.size());
             interfaceHeader.PushConstantCount = static_cast<u32>(pushConstants.size());
-            interfaceHeader.VertexInputCount = static_cast<u32>(vertexInputs.size());
+            interfaceHeader.VertexLayoutAssetId = vertexLayoutAssetId;
 
             const usize bindingBytes = bindings.size() * sizeof(CookedDescriptorBinding);
             const usize pushConstantBytes = pushConstants.size() * sizeof(CookedPushConstantBlock);
-            const usize vertexInputBytes = vertexInputs.size() * sizeof(CookedVertexInputAttribute);
-            const usize interfaceBytes = sizeof(CookedShaderInterfaceHeader) + bindingBytes + pushConstantBytes + vertexInputBytes;
+            const usize interfaceBytes = sizeof(CookedShaderInterfaceHeader) + bindingBytes + pushConstantBytes;
 
             CookedShaderHeader header{};
             SetName(header.EntryPoint, entryPoint);
@@ -175,18 +180,18 @@ namespace Veng::Cook
             cursor += bindingBytes;
             std::memcpy(blob.data() + cursor, pushConstants.data(), pushConstantBytes);
             cursor += pushConstantBytes;
-            std::memcpy(blob.data() + cursor, vertexInputs.data(), vertexInputBytes);
-            cursor += vertexInputBytes;
             std::memcpy(blob.data() + cursor, spirv.data(), spirv.size());
 
             return blob;
         }
 
         // Compiles `entryName` from the .slang file at `sourcePath` to SPIR-V and
-        // reflects its interface via Slang's own reflection API. One cooked shader
-        // covers one entry point/stage (a material, plan 09, references a vertex-
-        // and fragment-stage shader as separate AssetIds).
-        Result<vector<u8>> CookFromSource(const path& sourcePath, const string& entryName)
+        // reflects its interface via Slang's own reflection API. If vertex_layout is
+        // present (non-zero), reflects the vertex stage's inputs and validates them
+        // element-for-element against the referenced layout. If absent, any reflected
+        // vertex inputs are discarded (vertex-pulling / no-input semantics).
+        Result<vector<u8>> CookFromSource(const CookContext& context, const path& sourcePath,
+            const string& entryName, u64 vertexLayoutAssetId)
         {
             ComPtr<slang::IGlobalSession> globalSession;
             if (SLANG_FAILED(slang::createGlobalSession(globalSession.writeRef())))
@@ -316,9 +321,13 @@ namespace Veng::Cook
                 bindings.push_back(binding);
             }
 
-            vector<CookedVertexInputAttribute> vertexInputs;
-            if (isVertexStage)
+            // Reflect vertex inputs and validate against the referenced layout (if any).
+            if (isVertexStage && vertexLayoutAssetId != 0)
             {
+                // Collect reflected inputs sorted by location.
+                struct ReflectedInput { u32 Location; u32 Format; string Name; };
+                vector<ReflectedInput> reflectedInputs;
+
                 for (unsigned i = 0; i < entryPointLayout->getParameterCount(); ++i)
                 {
                     slang::VariableLayoutReflection* param = entryPointLayout->getParameterByIndex(i);
@@ -331,16 +340,10 @@ namespace Veng::Cook
                         for (unsigned f = 0; f < typeLayout->getFieldCount(); ++f)
                         {
                             slang::VariableLayoutReflection* field = typeLayout->getFieldByIndex(f);
-
                             const Result<u32> format = MapVertexInputFormat(field->getType(), field->getName(), sourcePath, entryName);
                             if (!format)
                                 return std::unexpected(format.error());
-
-                            CookedVertexInputAttribute attribute{};
-                            attribute.Location = field->getBindingIndex();
-                            attribute.Format = *format;
-                            SetName(attribute.Name, field->getName());
-                            vertexInputs.push_back(attribute);
+                            reflectedInputs.push_back({field->getBindingIndex(), *format, field->getName()});
                         }
                     }
                     else
@@ -348,32 +351,87 @@ namespace Veng::Cook
                         const Result<u32> format = MapVertexInputFormat(param->getType(), param->getName(), sourcePath, entryName);
                         if (!format)
                             return std::unexpected(format.error());
-
-                        CookedVertexInputAttribute attribute{};
-                        attribute.Location = param->getBindingIndex();
-                        attribute.Format = *format;
-                        SetName(attribute.Name, param->getName());
-                        vertexInputs.push_back(attribute);
+                        reflectedInputs.push_back({param->getBindingIndex(), *format, param->getName()});
                     }
                 }
 
-                std::ranges::sort(vertexInputs, [](const auto& a, const auto& b) { return a.Location < b.Location; });
-                for (usize i = 0; i < vertexInputs.size(); ++i)
+                std::ranges::sort(reflectedInputs, [](const auto& a, const auto& b) { return a.Location < b.Location; });
+                for (usize i = 0; i < reflectedInputs.size(); ++i)
                 {
-                    if (vertexInputs[i].Location != i)
+                    if (reflectedInputs[i].Location != static_cast<u32>(i))
                     {
                         return std::unexpected(fmt::format(
                             "shader importer: '{}': entry point '{}': vertex input locations are not contiguous from 0 (got {} at index {})",
-                            sourcePath.string(), entryName, vertexInputs[i].Location, i));
+                            sourcePath.string(), entryName, reflectedInputs[i].Location, i));
+                    }
+                }
+
+                // Resolve the referenced VertexLayout source.
+                if (!context.Resolve)
+                {
+                    return std::unexpected(fmt::format(
+                        "shader importer: '{}': entry point '{}': vertex_layout {} specified but no resolver available",
+                        sourcePath.string(), entryName, vertexLayoutAssetId));
+                }
+
+                const optional<ResolvedSource> resolved = context.Resolve(AssetId{.Value = vertexLayoutAssetId});
+                if (!resolved)
+                {
+                    return std::unexpected(fmt::format(
+                        "shader importer: '{}': entry point '{}': vertex_layout {} not found in pack or reference packs",
+                        sourcePath.string(), entryName, vertexLayoutAssetId));
+                }
+
+                if (resolved->Type != AssetType::VertexLayout)
+                {
+                    return std::unexpected(fmt::format(
+                        "shader importer: '{}': entry point '{}': asset {} referenced as vertex_layout but has type {}",
+                        sourcePath.string(), entryName, vertexLayoutAssetId,
+                        static_cast<u32>(resolved->Type)));
+                }
+
+                const Result<vector<CookedVertexLayoutElement>> layoutElements =
+                    ReadVertexLayoutFile(resolved->AbsolutePath);
+                if (!layoutElements)
+                {
+                    return std::unexpected(fmt::format(
+                        "shader importer: '{}': entry point '{}': failed to read vertex layout {}: {}",
+                        sourcePath.string(), entryName, vertexLayoutAssetId, layoutElements.error()));
+                }
+
+                // Validate element-for-element (format in location order; names need not match).
+                if (reflectedInputs.size() != layoutElements->size())
+                {
+                    return std::unexpected(fmt::format(
+                        "shader importer: '{}': entry point '{}': reflected {} vertex input(s) but "
+                        "vertex_layout {} has {} element(s)",
+                        sourcePath.string(), entryName, reflectedInputs.size(),
+                        vertexLayoutAssetId, layoutElements->size()));
+                }
+
+                for (usize i = 0; i < reflectedInputs.size(); ++i)
+                {
+                    const u32 reflectedFmt = reflectedInputs[i].Format;
+                    const u32 layoutFmt = (*layoutElements)[i].Format;
+                    if (reflectedFmt != layoutFmt)
+                    {
+                        return std::unexpected(fmt::format(
+                            "shader importer: '{}': entry point '{}': vertex input[{}] '{}' "
+                            "has format ordinal {} but vertex_layout {} element[{}] has format ordinal {}",
+                            sourcePath.string(), entryName, i, reflectedInputs[i].Name,
+                            reflectedFmt, vertexLayoutAssetId, i, layoutFmt));
                     }
                 }
             }
+            // If vertex_layout is absent (vertexLayoutAssetId == 0), any reflected
+            // vertex inputs are discarded — vertex-pulling / no-input semantics.
 
             // Slang's SPIR-V backend names every entry point "main" regardless of
             // its source name (confirmed via spirv-dis), so Shader::Create's
             // ShaderBinaryInfo::EntryPoint is always "main" for this path.
-            return BuildBlob("main", std::span(static_cast<const u8*>(code->getBufferPointer()), code->getBufferSize()),
-                bindings, pushConstants, vertexInputs);
+            return BuildBlob("main",
+                std::span(static_cast<const u8*>(code->getBufferPointer()), code->getBufferSize()),
+                bindings, pushConstants, vertexLayoutAssetId);
         }
 
         optional<u32> ParseDescriptorType(const string& name)
@@ -384,15 +442,6 @@ namespace Veng::Cook
             if (name == "uniform_buffer") return k_DescriptorTypeUniformBuffer;
             if (name == "storage_buffer") return k_DescriptorTypeStorageBuffer;
             if (name == "sampler") return k_DescriptorTypeSampler;
-            return std::nullopt;
-        }
-
-        optional<u32> ParseVertexInputFormat(const string& name)
-        {
-            if (name == "r32_sfloat") return k_FormatR32Sfloat;
-            if (name == "rg32_sfloat") return k_FormatRG32Sfloat;
-            if (name == "rgb32_sfloat") return k_FormatRGB32Sfloat;
-            if (name == "rgba32_sfloat") return k_FormatRGBA32Sfloat;
             return std::nullopt;
         }
 
@@ -456,10 +505,11 @@ namespace Veng::Cook
         }
 
         // The editor/inline path: precompiled SPIR-V (base64) with its ShaderInterface
-        // supplied directly. Validated and passed through unchanged — the editor
-        // already derived the interface while building the shader, so there is
-        // nothing to reflect.
-        Result<vector<u8>> CookInline(const json& entry)
+        // supplied directly. We do NOT reflect/validate vertex inputs from precompiled
+        // SPIR-V — the project deliberately adds no SPIRV-Reflect dependency. The
+        // vertex_layout field is an existence+type check only: if present, we confirm
+        // the asset exists and is AssetType::VertexLayout, then store its id.
+        Result<vector<u8>> CookInline(const CookContext& context, const json& entry)
         {
             if (!entry["spirv_b64"].is_string())
                 return std::unexpected("shader importer: 'spirv_b64' must be a string");
@@ -556,52 +606,47 @@ namespace Veng::Cook
                 }
             }
 
-            vector<CookedVertexInputAttribute> vertexInputs;
-            if (interfaceJson.contains("vertex_inputs"))
+            // Resolve the vertex_layout reference (existence + type check only).
+            // We do NOT validate individual elements against the precompiled SPIR-V
+            // because the project deliberately adds no SPIRV-Reflect dependency —
+            // that validation is only possible on the Slang source path.
+            u64 vertexLayoutAssetId = 0;
+            if (entry.contains("vertex_layout") && entry["vertex_layout"].is_number_unsigned())
             {
-                if (!interfaceJson["vertex_inputs"].is_array())
-                    return std::unexpected("shader importer: 'interface.vertex_inputs' must be an array");
-
-                for (const json& v : interfaceJson["vertex_inputs"])
+                vertexLayoutAssetId = entry["vertex_layout"].get<u64>();
+                if (vertexLayoutAssetId != 0)
                 {
-                    if (!v.is_object() || !v.contains("name") || !v["name"].is_string()
-                        || !v.contains("location") || !v["location"].is_number_unsigned()
-                        || !v.contains("format") || !v["format"].is_string())
+                    if (!context.Resolve)
                     {
-                        return std::unexpected("shader importer: invalid entry in 'interface.vertex_inputs'");
+                        return std::unexpected("shader importer: vertex_layout specified but no resolver available");
                     }
 
-                    const optional<u32> format = ParseVertexInputFormat(v["format"].get<string>());
-                    if (!format)
+                    const optional<ResolvedSource> resolved =
+                        context.Resolve(AssetId{.Value = vertexLayoutAssetId});
+                    if (!resolved)
                     {
-                        return std::unexpected(fmt::format("shader importer: 'interface.vertex_inputs' entry has unrecognized format '{}'",
-                            v["format"].get<string>()));
+                        return std::unexpected(fmt::format(
+                            "shader importer: vertex_layout {} not found in pack or reference packs",
+                            vertexLayoutAssetId));
                     }
 
-                    CookedVertexInputAttribute attribute{};
-                    attribute.Location = v["location"].get<u32>();
-                    attribute.Format = *format;
-                    SetName(attribute.Name, v["name"].get<string>());
-                    vertexInputs.push_back(attribute);
-                }
-
-                vector<CookedVertexInputAttribute> sorted = vertexInputs;
-                std::ranges::sort(sorted, [](const auto& a, const auto& b) { return a.Location < b.Location; });
-                for (usize i = 0; i < sorted.size(); ++i)
-                {
-                    if (sorted[i].Location != i)
-                        return std::unexpected("shader importer: 'interface.vertex_inputs' locations are not contiguous from 0");
+                    if (resolved->Type != AssetType::VertexLayout)
+                    {
+                        return std::unexpected(fmt::format(
+                            "shader importer: asset {} referenced as vertex_layout but has type {}",
+                            vertexLayoutAssetId, static_cast<u32>(resolved->Type)));
+                    }
                 }
             }
 
-            return BuildBlob(entry["entry"].get<string>(), *spirv, bindings, pushConstants, vertexInputs);
+            return BuildBlob(entry["entry"].get<string>(), *spirv, bindings, pushConstants, vertexLayoutAssetId);
         }
     }
 
     Result<vector<u8>> ShaderImporter::Cook(const CookContext& context, const json& entry) const
     {
         if (entry.contains("spirv_b64"))
-            return CookInline(entry);
+            return CookInline(context, entry);
 
         if (!entry.contains("source") || !entry["source"].is_string())
             return std::unexpected("shader importer: missing or invalid 'source'");
@@ -610,6 +655,11 @@ namespace Veng::Cook
             return std::unexpected("shader importer: missing or invalid 'entry'");
 
         const path sourcePath = context.PackDir / entry["source"].get<string>();
-        return CookFromSource(sourcePath, entry["entry"].get<string>());
+
+        u64 vertexLayoutAssetId = 0;
+        if (entry.contains("vertex_layout") && entry["vertex_layout"].is_number_unsigned())
+            vertexLayoutAssetId = entry["vertex_layout"].get<u64>();
+
+        return CookFromSource(context, sourcePath, entry["entry"].get<string>(), vertexLayoutAssetId);
     }
 }
