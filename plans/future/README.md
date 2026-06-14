@@ -169,6 +169,32 @@ descoped scene assets). Interacts with area 4 (events/input) and the
 `TypeRegistry`. Undetailed — gets its own design pass when taken up, ahead of the
 scene editor.
 
+### 8. Scene renderer / render-pipeline architecture
+
+A long-lived, configurable **`SceneRenderer`** sitting on top of `RenderGraph`:
+constructed with an output format + a settings block, it owns its pass resources
+and (eventually) a **compiled** graph, and renders a `Scene` from a camera into an
+**offscreen target it owns**, handing back a sampleable result. The game's main
+view and every editor preview panel are the same object — the editor renders **one
+`Scene` through N `SceneRenderer`s**. An **über-pipeline of interdependent passes**
+(fixed wiring) composed of **reusable, self-contained pass units**. **Design
+overview:** [scene-renderer.md](scene-renderer.md). Depends on the **compiled
+`RenderGraph`** (area 9, the enabling prerequisite), and takes its `Scene`/`Camera`
+from area 7, its first/hardest consumer from area 6 (editor), and its
+frames-in-flight contract + parallel-record story from area 2 (threading).
+
+### 9. Compiled RenderGraph
+
+`RenderGraph` is immediate-mode today — rebuilt per frame, barriers re-derived, no
+transient aliasing. This area **compiles** it: the pass topology, derived barrier
+schedule, and transient allocation/aliasing are computed once and **replayed** per
+frame, with only the per-pass draw callbacks running each frame. It also splits the
+resource model — **graph-owned transients** declared as logical handles (resolved
+per frame, alias-able) vs. **imported** concrete resources (swapchain / owned
+targets) — which is what lets passes be authored as reusable units. **Design
+overview:** [compiled-rendergraph.md](compiled-rendergraph.md). The enabling
+prerequisite for area 8, and a home for area 2's parallel pass recording.
+
 ## Ordering & dependencies
 
 A first cut at sequencing — the order to *take the areas up* (each becomes its own
@@ -291,6 +317,8 @@ Vision only beyond what's noted done above. Areas 3 and 5 are complete
 (planset-3, planset-4) and **area 1's synchronous slice + bindless is complete**
 (planset-5); area 1's **async** half (folded into area 2), **area 2** (threading),
 **area 4** (events/input), **area 6** (editor — [editor.md](editor.md) /
-[game-module.md](game-module.md)), and **area 7** (scene/entity model) remain
+[game-module.md](game-module.md)), **area 7** (scene/entity model), **area 8**
+(scene renderer — [scene-renderer.md](scene-renderer.md)), and **area 9** (compiled
+RenderGraph — [compiled-rendergraph.md](compiled-rendergraph.md)) remain
 undetailed/unscheduled. Each becomes its own planset (area 6, several) when taken
 up.
