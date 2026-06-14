@@ -205,6 +205,13 @@ namespace Veng::Renderer
         // `imports` (asserts otherwise); a graph with no imports takes {}.
         void Execute(CommandBuffer& cmd, std::span<const RenderGraph::ImportBinding> imports = {});
 
+        // The concrete image a transient was allocated to at compile. Two
+        // transients with non-overlapping lifetimes and an equal size class share
+        // one image, so this returns the same Ref for both — the observable proof
+        // that aliasing happened. Null for an import (no graph-owned backing) and
+        // for an invalid id.
+        [[nodiscard]] Ref<Image> ResolvedImage(ResourceId id) const;
+
     private:
         friend class RenderGraph;
 

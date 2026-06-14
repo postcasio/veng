@@ -7,6 +7,7 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Backend/Barrier.h>
 #include <Veng/Renderer/Backend/BarrierDecision.h>
+#include <Veng/Renderer/Backend/TransientAllocation.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 
 namespace Veng::Renderer
@@ -191,29 +192,104 @@ namespace Veng::Renderer
         native->Context = &m_Context;
         native->Resources.resize(m_Resources.size());
 
-        // Allocate each transient its own backing (no aliasing); imports stay
-        // unbacked and are resolved per frame.
         for (usize i = 0; i < m_Resources.size(); i++)
         {
-            const Resource& source = m_Resources[i];
             CompiledGraph::Native::Resource& resource = native->Resources[i];
-            resource.IsImport = source.IsImport;
-            resource.Name = source.Name;
+            resource.IsImport = m_Resources[i].IsImport;
+            resource.Name = m_Resources[i].Name;
+        }
 
-            if (source.IsImport)
-                continue;
+        // Allocate transient backing with aliasing: compute each transient's live
+        // range over the linear pass order plus its size class, let the pure
+        // AssignTransientSlots rule collapse non-overlapping same-key transients
+        // onto a shared slot, then create one image per distinct slot. Imports
+        // stay unbacked and are resolved per frame.
+        //
+        // Two transients sharing a slot share storage, but only across
+        // non-overlapping lifetimes, and the per-frame barrier schedule already
+        // serializes the reuse: the later transient's first write transitions the
+        // slot image from Undefined, and that transition waits on the prior
+        // content's last read through the same DecideBarrier hazard rule that
+        // orders every other access. No aliasing-specific barrier is required.
+        {
+            // The subset of resource-table slots that are transients, in table
+            // order, with their live ranges and size classes.
+            vector<u32> transientSlots;
+            vector<Backend::TransientLifetime> lifetimes;
+            vector<Backend::AllocationKey> keys;
+            // FirstUse seen flag per transient, parallel to transientSlots.
+            vector<bool> firstWriteSeen;
 
-            resource.Image = Image::Create(m_Context, {
-                .Name = source.Desc.Name,
-                .Extent = {source.Desc.Extent.x, source.Desc.Extent.y, 1},
-                .Format = source.Desc.Format,
-                .Usage = source.Desc.Usage,
-            });
+            // Resource slot -> index into the transient arrays, or ~0u for imports.
+            vector<u32> transientIndex(m_Resources.size(), ~0u);
 
-            resource.View = ImageView::Create(m_Context, {
-                .Name = source.Desc.Name + " View",
-                .Image = resource.Image,
-            });
+            for (usize i = 0; i < m_Resources.size(); i++)
+            {
+                if (m_Resources[i].IsImport)
+                    continue;
+
+                transientIndex[i] = static_cast<u32>(transientSlots.size());
+                transientSlots.push_back(static_cast<u32>(i));
+                lifetimes.push_back({.FirstUse = 0, .LastUse = 0});
+                firstWriteSeen.push_back(false);
+                const TransientDesc& desc = m_Resources[i].Desc;
+                keys.push_back({.Format = desc.Format, .Extent = desc.Extent, .Usage = desc.Usage});
+            }
+
+            // Scan passes in order: FirstUse is the first pass that writes a
+            // transient; LastUse is the last pass that touches it (a never-read
+            // transient ends at its write pass, so LastUse == FirstUse).
+            for (u32 passIndex = 0; passIndex < m_Passes.size(); passIndex++)
+            {
+                for (const auto& access : m_Passes[passIndex]->Accesses)
+                {
+                    const u32 ti = transientIndex[access.Resource.Index];
+                    if (ti == ~0u)
+                        continue;
+
+                    Backend::TransientLifetime& life = lifetimes[ti];
+                    if (Backend::IsWriteAccess(ScopeFor(access.Kind).Access) && !firstWriteSeen[ti])
+                    {
+                        life.FirstUse = passIndex;
+                        firstWriteSeen[ti] = true;
+                    }
+                    life.LastUse = passIndex;
+                }
+            }
+
+            const vector<u32> assignment = Backend::AssignTransientSlots(lifetimes, keys);
+
+            u32 slotCount = 0;
+            for (const u32 slot : assignment)
+                slotCount = std::max(slotCount, slot + 1);
+
+            // One image+view per distinct slot, named for the first transient
+            // assigned to it.
+            vector<Ref<Image>> slotImages(slotCount);
+            vector<Ref<ImageView>> slotViews(slotCount);
+
+            for (u32 ti = 0; ti < transientSlots.size(); ti++)
+            {
+                const u32 slot = assignment[ti];
+                if (slotImages[slot] == nullptr)
+                {
+                    const TransientDesc& desc = m_Resources[transientSlots[ti]].Desc;
+                    slotImages[slot] = Image::Create(m_Context, {
+                        .Name = desc.Name,
+                        .Extent = {desc.Extent.x, desc.Extent.y, 1},
+                        .Format = desc.Format,
+                        .Usage = desc.Usage,
+                    });
+                    slotViews[slot] = ImageView::Create(m_Context, {
+                        .Name = desc.Name + " View",
+                        .Image = slotImages[slot],
+                    });
+                }
+
+                CompiledGraph::Native::Resource& resource = native->Resources[transientSlots[ti]];
+                resource.Image = slotImages[slot];
+                resource.View = slotViews[slot];
+            }
         }
 
         // Track which slots have been written by a prior pass, to flag a transient
@@ -295,6 +371,13 @@ namespace Veng::Renderer
     CompiledGraph::CompiledGraph(Unique<Native> native) : m_Native(std::move(native)) {}
 
     CompiledGraph::~CompiledGraph() = default;
+
+    Ref<Image> CompiledGraph::ResolvedImage(const ResourceId id) const
+    {
+        if (!id.IsValid() || id.Index >= m_Native->Resources.size())
+            return nullptr;
+        return m_Native->Resources[id.Index].Image;
+    }
 
     void CompiledGraph::Execute(CommandBuffer& cmd,
                                 const std::span<const RenderGraph::ImportBinding> imports)

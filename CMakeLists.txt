@@ -196,6 +196,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/task_system.cpp
             tests/unit/type_mapping.cpp
             tests/unit/barrier_decision.cpp
+            tests/unit/transient_allocation.cpp
             tests/unit/asset_archive.cpp
             tests/unit/asset_manager.cpp
             tests/unit/primitives.cpp
@@ -368,6 +369,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/timeline_semaphore.cpp
             tests/gpu/transfer_retire.cpp
             tests/gpu/async_upload.cpp
+            tests/gpu/transient_aliasing.cpp
     )
     target_link_libraries(veng_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
     # transfer_retire.cpp reaches through Native.h (raw vk::/VMA handles via the
