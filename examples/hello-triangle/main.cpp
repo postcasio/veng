@@ -274,7 +274,7 @@ private:
                     return;
 
                 cmd.BindVertexBuffer(mesh.GetVertexBuffer());
-                cmd.BindIndexBuffer(mesh.GetIndexBuffer(), mesh.GetIndexType());
+                cmd.BindIndexBuffer(mesh.GetIndexBuffer());
 
                 const f32 aspect = static_cast<f32>(extent.x) / static_cast<f32>(extent.y);
                 mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);

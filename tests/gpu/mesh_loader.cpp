@@ -73,9 +73,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "mesh loader: cook, mount, LoadSync, v
     // GPU buffers sized to the cooked geometry (24 vertices * 48 bytes, 36 u32
     // indices) — consistent with the typed-buffer roundtrip cases' sanity checks.
     REQUIRE(mesh.GetVertexBuffer() != nullptr);
-    REQUIRE(mesh.GetIndexBuffer() != nullptr);
+    REQUIRE(mesh.GetIndexBuffer().GetBuffer() != nullptr);
     CHECK(mesh.GetVertexBuffer()->GetSize() == static_cast<u64>(24) * 48);
-    CHECK(mesh.GetIndexBuffer()->GetSize() == static_cast<u64>(36) * sizeof(u32));
+    CHECK(mesh.GetIndexCount() == 36);
+    CHECK(mesh.GetIndexBuffer().GetBuffer()->GetSize() == static_cast<u64>(36) * sizeof(u32));
 
     std::filesystem::remove(outArchive);
 }

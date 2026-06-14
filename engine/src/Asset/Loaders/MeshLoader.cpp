@@ -8,6 +8,7 @@
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/TypedBuffers.h>
 #include <Veng/Task/TaskSystem.h>
 
 namespace Veng
@@ -172,6 +173,7 @@ namespace Veng
             return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than index buffer"));
 
         const std::span<const u8> indexData = cooked.subspan(cursor, indexBytes);
+        const std::span<const u32> indices(reinterpret_cast<const u32*>(indexData.data()), header.IndexCount);
 
         const Ref<Renderer::Buffer> vertexBuffer = Renderer::Buffer::Create(context, {
             .Name = fmt::format("Mesh {} Vertices", id.Value),
@@ -179,11 +181,8 @@ namespace Veng
             .Usage = Renderer::BufferUsage::Vertex | Renderer::BufferUsage::TransferDst,
         });
 
-        const Ref<Renderer::Buffer> indexBuffer = Renderer::Buffer::Create(context, {
-            .Name = fmt::format("Mesh {} Indices", id.Value),
-            .Size = indexBytes,
-            .Usage = Renderer::BufferUsage::Index | Renderer::BufferUsage::TransferDst,
-        });
+        Renderer::IndexBuffer indexBuffer =
+            Renderer::IndexBuffer::Create(context, fmt::format("Mesh {} Indices", id.Value), header.IndexCount);
 
         // A Buffer is host-visible+coherent, so an upload is a plain memcpy with
         // no GPU command and no device wait. Async runs it off the main thread;
@@ -192,21 +191,19 @@ namespace Veng
         if (async)
         {
             Task<void> vertexUpload = vertexBuffer->Upload(tasks, vertexData);
-            Task<void> indexUpload = indexBuffer->Upload(tasks, indexData);
+            Task<void> indexUpload = indexBuffer.GetBuffer()->Upload(tasks, indexData);
         }
         else
         {
             vertexBuffer->UploadSync(vertexData);
-            indexBuffer->UploadSync(indexData);
+            indexBuffer.UploadSync(indices);
         }
 
         const Ref<Veng::Mesh> mesh = Veng::Mesh::Create({
             .Name = fmt::format("Mesh {}", id.Value),
             .VertexBuffer = vertexBuffer,
-            .IndexBuffer = indexBuffer,
+            .IndexBuffer = std::move(indexBuffer),
             .Layout = canonical,
-            .IndexType = *indexType,
-            .IndexCount = header.IndexCount,
             .SubMeshes = std::move(subMeshes),
             .Materials = std::move(materials),
         });
