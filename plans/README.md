@@ -72,6 +72,23 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   `AssetId`-addressable asset and never touches an archive; custom vertex layouts
   end-to-end stay future.
 
+- **[planset-8](planset-8/README.md)** — compiled `RenderGraph` (✅ done, 4 plans).
+  Takes up future area 9: moves `RenderGraph` from immediate-mode (a fresh vector of
+  pass structs rebuilt every frame, every barrier re-derived per `Execute`) to a
+  **compiled** graph. Splits the resource model — graph-owned **transients**
+  (logical `ResourceId` handles the graph allocates and resolves per frame) vs.
+  late-bound **imports** (external concrete views supplied per frame to `Execute`) —
+  and replaces the bare `CommandBuffer&` callback with a typed **`PassContext`**
+  (`Cmd()` + `Resolved(ResourceId)`), the record-time channel aliasing requires.
+  `RenderGraph` becomes a pure builder whose **`Compile()`** bakes the
+  barrier/transition schedule, transient allocation, per-graphics-pass
+  `RenderingInfo`, and one-time validation into a `CompiledGraph` that **replays**
+  per frame; the consumer re-`Compile()`s only on a structural change (the explicit
+  recompile seam, no internal dirty flag). Transient **aliasing** lands behind a
+  pure, device-free, unit-tested live-range rule (mirroring `DecideBarrier`), so
+  non-overlapping transients share backing. Builds only on the shipped `RenderGraph`
+  and is the enabling prerequisite for the scene renderer (area 8).
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Remaining areas: the **editor application** (a
   shared-library game-module model + a cooker-consuming editor with docking, a

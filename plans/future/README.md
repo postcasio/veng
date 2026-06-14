@@ -201,16 +201,32 @@ overview:** [scene-renderer.md](scene-renderer.md). Depends on the **compiled
 from area 7, its first/hardest consumer from area 6 (editor), and its
 frames-in-flight contract + parallel-record story from area 2 (threading).
 
-### 9. Compiled RenderGraph
+### 9. Compiled RenderGraph — DONE (planset-8)
 
-`RenderGraph` is immediate-mode today — rebuilt per frame, barriers re-derived, no
-transient aliasing. This area **compiles** it: the pass topology, derived barrier
+> **Done — delivered by [planset-8](../planset-8/README.md)** (4 plans).
+> `RenderGraph` becomes a pure **builder** whose `Compile()` bakes the
+> barrier/transition schedule, transient allocation, per-graphics-pass
+> `RenderingInfo`, and one-time validation into a `CompiledGraph` that **replays**
+> per frame — only the per-pass callbacks run. The resource model splits into
+> **graph-owned transients** (logical `ResourceId` handles the graph allocates and
+> resolves per frame, aliased onto shared backing) and late-bound **imports**
+> (external concrete views supplied per frame to `Execute`); the callback takes a
+> typed **`PassContext`** (`Cmd()` + `Resolved(ResourceId)`), the record-time
+> channel aliasing requires. Recompile is consumer-driven on a structural change
+> (no internal dirty flag); transient **aliasing** rides a pure, device-free,
+> unit-tested live-range rule (mirroring `DecideBarrier`). **What remains future:**
+> dead-pass culling, multi-queue / async-compute scheduling, and parallel pass
+> recording into secondary command buffers (area 2's seam) — see
+> [compiled-rendergraph.md](compiled-rendergraph.md), trimmed to that enduring
+> vision.
+
+`RenderGraph` was immediate-mode — rebuilt per frame, barriers re-derived, no
+transient aliasing. This area **compiled** it: the pass topology, derived barrier
 schedule, and transient allocation/aliasing are computed once and **replayed** per
-frame, with only the per-pass draw callbacks running each frame. It also splits the
+frame, with only the per-pass draw callbacks running each frame. It also split the
 resource model — **graph-owned transients** declared as logical handles (resolved
 per frame, alias-able) vs. **imported** concrete resources (swapchain / owned
-targets) — which is what lets passes be authored as reusable units. **Design
-overview:** [compiled-rendergraph.md](compiled-rendergraph.md). The enabling
+targets) — which is what lets passes be authored as reusable units. The enabling
 prerequisite for area 8, and a home for area 2's parallel pass recording.
 
 ## Ordering & dependencies
@@ -219,20 +235,22 @@ A first cut at sequencing — the order to *take the areas up* (each becomes its
 planset), not a schedule. Refine when each is detailed.
 
 Areas 5a, 3, 5b (+ the validation gate), **area 1** (the synchronous slice +
-bindless *and* its async half), and **area 2** (threading) are all **done**
-(planset-3, planset-4, planset-5, planset-6). The thin synchronous asset slice
-was deliberately pulled forward as the "real client" (the cross-cutting concern
-below), then threading turned those delivered sync loads async. That whole
-asset + threading chain is now closed:
+bindless *and* its async half), **area 2** (threading), and **area 9** (the
+compiled `RenderGraph`) are all **done** (planset-3, planset-4, planset-5,
+planset-6, planset-8). The thin synchronous asset slice was deliberately pulled
+forward as the "real client" (the cross-cutting concern below), then threading
+turned those delivered sync loads async; planset-8 then compiled the render graph,
+satisfying area 8's one rendering prerequisite. That whole asset + threading chain
+is closed and the scene renderer's enabling prerequisite is met:
 
 ```
 1 sync assets + bindless ✅ ──► 2 threading (async loads) ✅ ──► 1 async Load ✅
+9 compiled RenderGraph ✅
 
 remaining:
   6 editor (game-module → shell → material editor) ──┐  (wants 2's async path ✅)
   7 scene/entity model ──► 6's scene editor          │
-  8 scene renderer ──► needs 9                        │
-  9 compiled RenderGraph ──► enables 8                ┘
+  8 scene renderer ──► needs 7 (Scene/Camera) + 6    ┘  (9 ✅ — no rendering gate left)
   4 events/input — independent, gameplay-driven (any time)
 ```
 
@@ -252,6 +270,12 @@ offline Slang reflection, the `BindlessRegistry` set-0 subsystem).
 queue-family-aware ownership transfer, transfer-keyed retire, async-default
 `Upload`/`Load`). Hot-reload was named but deferred — its re-cook half conflicts
 with offline-only cooking and needs a dev-only watcher design.
+
+~~6. Compiled RenderGraph (area 9).~~ Done — planset-8 (`RenderGraph` builder →
+`Compile()` → `CompiledGraph::Execute(cmd, imports)` replay, the transient/import
+resource model, the typed `PassContext`, one-time validation, and transient
+aliasing via a pure unit-tested live-range rule). Satisfies area 8's enabling
+prerequisite.
 
 1. **Editor application (area 6).** The authoring environment, spanning several
    plansets: the [game-module build model](game-module.md) (shared lib + launcher,
@@ -340,12 +364,12 @@ to decide early than to retrofit.
 
 Vision only beyond what's noted done above. Areas 3 and 5 are complete
 (planset-3, planset-4), **area 1 is complete** — its synchronous slice + bindless
-(planset-5) and its **async** half (planset-6) — and **area 2 (threading) is
-complete** (planset-6). What remains undetailed/unscheduled: **area 4**
-(events/input), **area 6** (editor — [editor.md](editor.md) /
-[game-module.md](game-module.md)), **area 7** (scene/entity model), **area 8**
-(scene renderer — [scene-renderer.md](scene-renderer.md)), and **area 9** (compiled
-RenderGraph — [compiled-rendergraph.md](compiled-rendergraph.md)); plus
-**hot-reload**, named within area 1 but deferred (its re-cook half conflicts with
-offline-only cooking — needs a dev-only watcher design). Each becomes its own
-planset (area 6, several) when taken up.
+(planset-5) and its **async** half (planset-6) — **area 2 (threading) is
+complete** (planset-6), and **area 9 (compiled `RenderGraph`) is complete**
+(planset-8). What remains undetailed/unscheduled: **area 4** (events/input),
+**area 6** (editor — [editor.md](editor.md) / [game-module.md](game-module.md)),
+**area 7** (scene/entity model), and **area 8** (scene renderer —
+[scene-renderer.md](scene-renderer.md)); plus **hot-reload**, named within area 1
+but deferred (its re-cook half conflicts with offline-only cooking — needs a
+dev-only watcher design). Each becomes its own planset (area 6, several) when taken
+up.
