@@ -168,6 +168,7 @@ if (VENG_BUILD_TESTS)
         target_sources(veng_unit PRIVATE
                 tests/cooker/cook_roundtrip.cpp
                 tests/cooker/texture_cook.cpp
+                tests/cooker/mesh_cook.cpp
         )
         target_link_libraries(veng_unit PRIVATE veng::cook)
         target_compile_definitions(veng_unit PRIVATE
@@ -321,7 +322,10 @@ if (VENG_BUILD_TESTS)
     # texture_loader.cpp cooks a fixture pack in-process (plan 06), so it needs
     # the cooker library and the cooker fixtures' directory.
     if (VENG_BUILD_TOOLS)
-        target_sources(veng_gpu PRIVATE tests/gpu/texture_loader.cpp)
+        target_sources(veng_gpu PRIVATE
+                tests/gpu/texture_loader.cpp
+                tests/gpu/mesh_loader.cpp
+        )
         target_link_libraries(veng_gpu PRIVATE veng::cook)
         target_compile_definitions(veng_gpu PRIVATE
                 GPU_COOKER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"

@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 
+#include "Loaders/MeshLoader.h"
 #include "Loaders/RawAssetLoader.h"
 #include "Loaders/TextureLoader.h"
 
@@ -29,6 +30,7 @@ namespace Veng
     {
         RegisterLoader(CreateUnique<RawAssetLoader>());
         RegisterLoader(CreateUnique<TextureLoader>());
+        RegisterLoader(CreateUnique<MeshLoader>());
     }
 
     AssetManager::~AssetManager() = default;

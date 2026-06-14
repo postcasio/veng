@@ -25,11 +25,35 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
+# assimp — mesh import (plan 07). The one heavy dependency; strictly cooker-only
+# (behind VENG_BUILD_TOOLS), so a consumer of libveng never pays for it. Trim it
+# hard: no tools/tests/exports, only the importers veng's fixtures use (OBJ +
+# glTF), and a static lib so vengc stays self-contained.
+set(ASSIMP_BUILD_TESTS OFF CACHE INTERNAL "")
+set(ASSIMP_INSTALL OFF CACHE INTERNAL "")
+set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE INTERNAL "")
+set(ASSIMP_BUILD_SAMPLES OFF CACHE INTERNAL "")
+set(ASSIMP_NO_EXPORT ON CACHE INTERNAL "")
+set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE INTERNAL "")
+set(ASSIMP_BUILD_OBJ_IMPORTER ON CACHE INTERNAL "")
+set(ASSIMP_BUILD_GLTF_IMPORTER ON CACHE INTERNAL "")
+set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE INTERNAL "")
+set(ASSIMP_INJECT_DEBUG_POSTFIX OFF CACHE INTERNAL "")
+set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "")
+FetchContent_Declare(
+        assimp
+        GIT_REPOSITORY https://github.com/assimp/assimp.git
+        GIT_TAG v5.4.3
+        GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(assimp)
+
 add_library(libveng_cook STATIC
         src/Cooker.cpp
         src/BuiltinImporters.cpp
         src/Importers/RawImporter.cpp
         src/Importers/TextureImporter.cpp
+        src/Importers/MeshImporter.cpp
         src/Vendor/StbImage.cpp
 )
 add_library(veng::cook ALIAS libveng_cook)
@@ -54,7 +78,9 @@ target_include_directories(libveng_cook PRIVATE
 target_compile_definitions(libveng_cook PUBLIC JSON_NOEXCEPTION)
 
 target_link_libraries(libveng_cook PUBLIC veng::assetformat nlohmann_json::nlohmann_json)
-target_link_libraries(libveng_cook PRIVATE fmt::fmt)
+# assimp is an implementation detail of MeshImporter.cpp — PRIVATE so it stays
+# off libveng_cook's public link/include interface (no assimp headers leak).
+target_link_libraries(libveng_cook PRIVATE fmt::fmt assimp::assimp)
 
 target_compile_options(libveng_cook PRIVATE -fno-exceptions)
 

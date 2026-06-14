@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "assets": [
+    { "id": 3001, "type": "mesh", "source": "meshes/cube.mesh.json" }
+  ]
+}

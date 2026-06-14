@@ -11,6 +11,8 @@ target_compile_definitions(hello_triangle PRIVATE
 add_shaders(hello_triangle_shaders
         shaders/triangle.vert
         shaders/triangle.frag
+        shaders/mesh.vert
+        shaders/mesh.frag
         shaders/composite.vert
         shaders/composite.frag
 )
@@ -30,6 +32,8 @@ add_custom_command(
                 ${CMAKE_CURRENT_SOURCE_DIR}/assets/sample.vengpack.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/brick.tex.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/brick.png
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/meshes/cube.mesh.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/meshes/cube.obj
         COMMENT "Cooking hello-triangle asset pack"
 )
 

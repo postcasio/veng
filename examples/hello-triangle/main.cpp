@@ -6,13 +6,15 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
+#include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/Mesh.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Shader.h>
 #include <Veng/Renderer/Texture.h>
-#include <Veng/Renderer/TypedBuffers.h>
 
 #include <glm/gtc/packing.hpp>
 
@@ -23,21 +25,6 @@ using namespace Veng;
 
 namespace
 {
-    struct Vertex
-    {
-        vec2 Position;
-        vec3 Color;
-        vec2 UV;
-    };
-
-    const Vertex k_Vertices[] = {
-        {{0.0f, -0.6f}, {1.0f, 0.2f, 0.2f}, {0.5f, 0.0f}},
-        {{0.6f, 0.6f}, {0.2f, 1.0f, 0.2f}, {1.0f, 1.0f}},
-        {{-0.6f, 0.6f}, {0.2f, 0.2f, 1.0f}, {0.0f, 1.0f}},
-    };
-
-    const u16 k_Indices[] = {0, 1, 2};
-
     // Selects the composite shader's bindless texture/sampler slots
     // (Veng/Renderer/BindlessRegistry.h) — set 0 is bound once via
     // BindlessRegistry::Bind, these indices pick the array elements.
@@ -48,10 +35,19 @@ namespace
         u32 Sampler;
     };
 
-    // Triangle pipeline's fragment-stage push constants (offset 64, past the
-    // vertex stage's mat4 Transform at offset 0) — selects the brick texture's
-    // bindless slots (see Texture::GetHandle / GetSamplerHandle).
-    struct TriangleFragPushConstants
+    // Mesh pipeline's vertex-stage push constants: the MVP for clip-space
+    // positions and the model matrix for transforming normals into world space
+    // (mesh.vert). 128 bytes — the fragment range starts right after it.
+    struct MeshVertPushConstants
+    {
+        mat4 MVP;
+        mat4 Model;
+    };
+
+    // Mesh pipeline's fragment-stage push constants (offset 128, past the two
+    // vertex-stage mat4s) — selects the brick texture's bindless slots (see
+    // Texture::GetHandle / GetSamplerHandle).
+    struct MeshFragPushConstants
     {
         u32 TextureIndex;
         u32 SamplerIndex;
@@ -92,6 +88,20 @@ protected:
             .Image = m_SceneImage,
         });
 
+        // Depth buffer for the cube draw (the mesh pass depth-tests so faces
+        // resolve correctly regardless of triangle winding).
+        m_DepthImage = Renderer::Image::Create(context, {
+            .Name = "Scene Depth Image",
+            .Extent = {sceneExtent.x, sceneExtent.y, 1},
+            .Format = m_DepthFormat,
+            .Usage = Renderer::ImageUsage::DepthAttachment,
+        });
+
+        m_DepthImageView = Renderer::ImageView::Create(context, {
+            .Name = "Scene Depth Image View",
+            .Image = m_DepthImage,
+        });
+
         m_Sampler = Renderer::Sampler::Create(context, {
             .Name = "Sample Sampler",
             .AddressModeU = Renderer::AddressMode::ClampToEdge,
@@ -99,17 +109,10 @@ protected:
             .AddressModeW = Renderer::AddressMode::ClampToEdge,
         });
 
-        m_VertexBuffer = Renderer::VertexBuffer<Vertex>::Create(context, "Triangle Vertices", std::size(k_Vertices));
-        m_VertexBuffer.Upload(k_Vertices);
-
-        m_IndexBuffer = Renderer::IndexBuffer::Create(context, "Triangle Indices", std::size(k_Indices),
-                                                      Renderer::IndexType::U16);
-        m_IndexBuffer.Upload(k_Indices);
-
-        CreateTrianglePipeline();
+        CreateMeshPipeline();
 
         // Cooked at build time (see CMakeLists.txt) from assets/sample.vengpack.json
-        // into HT_ASSET_DIR; mount and load the brick texture by AssetId.
+        // into HT_ASSET_DIR; mount and load the brick texture + cube mesh by AssetId.
         const VoidResult mountResult = GetAssetManager().Mount(path(HT_ASSET_DIR) / "sample.vengpack");
         VE_ASSERT(mountResult, "{}", mountResult.error());
 
@@ -117,6 +120,11 @@ protected:
             GetAssetManager().LoadSync<Renderer::Texture>(AssetId{1001});
         VE_ASSERT(brickTexture.has_value(), "{}", brickTexture.error().Detail);
         m_BrickTexture = *brickTexture;
+
+        const AssetResult<AssetHandle<Renderer::Mesh>> cubeMesh =
+            GetAssetManager().LoadSync<Renderer::Mesh>(AssetId{1002});
+        VE_ASSERT(cubeMesh.has_value(), "{}", cubeMesh.error().Detail);
+        m_CubeMesh = *cubeMesh;
 
         // The compositing path (ImGui overlay + swapchain present) only exists in
         // windowed mode. The headless smoke run renders just the scene and
@@ -174,58 +182,61 @@ protected:
 
     void OnDispose() override
     {
+        m_CubeMesh = {};
         m_BrickTexture = {};
         m_SceneTexture.reset();
         m_CompositePipeline.reset();
         m_CompositeLayout.reset();
-        m_TrianglePipeline.reset();
-        m_TriangleLayout.reset();
-        m_VertexBuffer = {};
-        m_IndexBuffer = {};
+        m_MeshPipeline.reset();
+        m_MeshLayout.reset();
         m_Sampler.reset();
         m_ImGuiImageView.reset();
+        m_DepthImageView.reset();
+        m_DepthImage.reset();
         m_SceneImageView.reset();
         m_SceneImage.reset();
     }
 
 private:
-    void CreateTrianglePipeline()
+    void CreateMeshPipeline()
     {
         auto& context = GetRenderContext();
 
         const auto vertexShader = Renderer::Shader::Create(context, {
-            .Name = "triangle.vert",
-            .Path = path(HT_SHADER_DIR) / "triangle.vert.spv",
+            .Name = "mesh.vert",
+            .Path = path(HT_SHADER_DIR) / "mesh.vert.spv",
         });
         VE_ASSERT(vertexShader, "{}", vertexShader.error());
 
         const auto fragmentShader = Renderer::Shader::Create(context, {
-            .Name = "triangle.frag",
-            .Path = path(HT_SHADER_DIR) / "triangle.frag.spv",
+            .Name = "mesh.frag",
+            .Path = path(HT_SHADER_DIR) / "mesh.frag.spv",
         });
         VE_ASSERT(fragmentShader, "{}", fragmentShader.error());
 
-        m_TriangleLayout = Renderer::PipelineLayout::Create(context, {
-            .Name = "Triangle Layout",
+        m_MeshLayout = Renderer::PipelineLayout::Create(context, {
+            .Name = "Mesh Layout",
             .PushConstantRanges = {
-                Renderer::PushConstantRange::Of<mat4>(Renderer::ShaderStage::Vertex),
-                Renderer::PushConstantRange::Of<TriangleFragPushConstants>(Renderer::ShaderStage::Fragment, sizeof(mat4)),
+                Renderer::PushConstantRange::Of<MeshVertPushConstants>(Renderer::ShaderStage::Vertex),
+                Renderer::PushConstantRange::Of<MeshFragPushConstants>(
+                    Renderer::ShaderStage::Fragment, sizeof(MeshVertPushConstants)),
             },
         });
 
-        m_TrianglePipeline = Renderer::GraphicsPipeline::Create(context, {
-            .Name = "Triangle Pipeline",
+        m_MeshPipeline = Renderer::GraphicsPipeline::Create(context, {
+            .Name = "Mesh Pipeline",
             .ColorAttachments = {{.Format = m_SceneFormat}},
-            .VertexBufferLayout = Renderer::VertexBufferLayout({
-                {Renderer::Format::RG32Sfloat, "a_Position"},
-                {Renderer::Format::RGB32Sfloat, "a_Color"},
-                {Renderer::Format::RG32Sfloat, "a_UV"},
-            }),
-            .PipelineLayout = m_TriangleLayout,
+            .DepthAttachmentFormat = m_DepthFormat,
+            // The cooked mesh is uploaded in veng's canonical vertex layout
+            // (Renderer::Mesh::CanonicalLayout), so the pipeline declares it too.
+            .VertexBufferLayout = Renderer::Mesh::CanonicalLayout(),
+            .PipelineLayout = m_MeshLayout,
             .ShaderStages = {
                 {.Stage = Renderer::ShaderStage::Vertex, .Module = vertexShader.value()},
                 {.Stage = Renderer::ShaderStage::Fragment, .Module = fragmentShader.value()},
             },
+            .DepthTestEnable = true,
+            .DepthWriteEnable = true,
         });
     }
 
@@ -291,26 +302,40 @@ private:
                 .Store = Renderer::StoreOp::Store,
                 .Clear = Renderer::ClearColor{0.05f, 0.05f, 0.08f, 1.0f},
             })
+            .Depth({
+                .View = m_DepthImageView,
+                .Load = Renderer::LoadOp::Clear,
+                .Store = Renderer::StoreOp::DontCare,
+                .Clear = Renderer::ClearDepth{1.0f, 0},
+            })
             .Execute([this, extent](Renderer::CommandBuffer& cmd)
             {
-                cmd.BindPipeline(m_TrianglePipeline);
+                cmd.BindPipeline(m_MeshPipeline);
                 cmd.SetViewport({0, 0}, extent);
                 cmd.SetScissor({0, 0}, extent);
                 GetRenderContext().GetBindlessRegistry().Bind(cmd);
-                cmd.BindVertexBuffer(m_VertexBuffer);
-                cmd.BindIndexBuffer(m_IndexBuffer);
+
+                const Renderer::Mesh& mesh = *m_CubeMesh.Get();
+                cmd.BindVertexBuffer(mesh.GetVertexBuffer());
+                cmd.BindIndexBuffer(mesh.GetIndexBuffer(), mesh.GetIndexType());
 
                 const f32 aspect = static_cast<f32>(extent.x) / static_cast<f32>(extent.y);
-                const mat4 transform = glm::scale(mat4(1.0f), vec3(1.0f / aspect, 1.0f, 1.0f)) *
-                    glm::rotate(mat4(1.0f), m_Angle, vec3(0.0f, 0.0f, 1.0f));
+                mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+                projection[1][1] *= -1.0f; // Vulkan's clip space has Y pointing down.
+                const mat4 view = glm::lookAt(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+                const mat4 model = glm::rotate(mat4(1.0f), m_Angle, glm::normalize(vec3(0.5f, 1.0f, 0.2f)));
 
-                cmd.PushConstants(transform);
-                cmd.PushConstants(TriangleFragPushConstants{
+                cmd.PushConstants(MeshVertPushConstants{
+                    .MVP = projection * view * model,
+                    .Model = model,
+                });
+                cmd.PushConstants(MeshFragPushConstants{
                     .TextureIndex = m_BrickTexture->GetHandle().Index,
                     .SamplerIndex = m_BrickTexture->GetSamplerHandle().Index,
-                }, sizeof(mat4));
+                }, sizeof(MeshVertPushConstants));
 
-                cmd.DrawIndexed(static_cast<u32>(m_IndexBuffer.GetIndexCount()), 1, 0, 0, 0);
+                for (const Renderer::SubMesh& subMesh : mesh.GetSubMeshes())
+                    cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
             });
 
         graph.Execute(cmd);
@@ -390,16 +415,18 @@ private:
     }
 
     Renderer::Format m_SceneFormat = Renderer::Format::Undefined;
+    Renderer::Format m_DepthFormat = Renderer::Format::D32Sfloat;
     Ref<Renderer::Image> m_SceneImage;
     Ref<Renderer::ImageView> m_SceneImageView;
+    Ref<Renderer::Image> m_DepthImage;
+    Ref<Renderer::ImageView> m_DepthImageView;
     Ref<Renderer::ImageView> m_ImGuiImageView;
     Ref<Renderer::Sampler> m_Sampler;
-    Renderer::VertexBuffer<Vertex> m_VertexBuffer;
-    Renderer::IndexBuffer m_IndexBuffer;
 
-    Ref<Renderer::PipelineLayout> m_TriangleLayout;
-    Ref<Renderer::GraphicsPipeline> m_TrianglePipeline;
+    Ref<Renderer::PipelineLayout> m_MeshLayout;
+    Ref<Renderer::GraphicsPipeline> m_MeshPipeline;
     AssetHandle<Renderer::Texture> m_BrickTexture;
+    AssetHandle<Renderer::Mesh> m_CubeMesh;
 
     Ref<Renderer::PipelineLayout> m_CompositeLayout;
     Ref<Renderer::GraphicsPipeline> m_CompositePipeline;

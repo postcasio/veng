@@ -41,10 +41,19 @@ namespace Veng
         f32 MaxAnisotropy = 1.0f;
     };
 
-    // Mesh: interleaved vertices + indices in a declared layout. Followed by a
-    // vertex layout descriptor, the submesh table (CookedSubMesh[SubMeshCount]),
-    // then the vertex and index buffers (plan 07 fills in the layout
-    // descriptor's exact form).
+    // Mesh: interleaved vertices + indices in a declared layout (plan 07). The
+    // blob is, in order:
+    //   CookedMeshHeader
+    //   CookedVertexAttribute[AttributeCount]   — the interleaved layout
+    //   CookedSubMesh[SubMeshCount]             — draw ranges + material ids
+    //   vertex bytes  (VertexCount * VertexStride)
+    //   index bytes   (IndexCount * (IndexType == U16 ? 2 : 4))
+    // The attribute descriptor records the on-disk interleaved format so the
+    // loader can validate it against the engine's canonical VertexBufferLayout
+    // (a loud Corrupt error on mismatch, not silent UB). v1 is a fixed canonical
+    // layout (position/normal/tangent/uv), but the descriptor is stored
+    // self-describingly so a later layout change is a format-version bump, not a
+    // silent reinterpretation.
     struct CookedMeshHeader
     {
         u32 VertexStride = 0;
@@ -52,6 +61,17 @@ namespace Veng
         u32 IndexCount = 0;
         u32 IndexType = 0; // underlying Renderer::IndexType
         u32 SubMeshCount = 0;
+        u32 AttributeCount = 0;
+    };
+
+    // One interleaved vertex attribute, in layout order. Format is stored as the
+    // underlying Renderer::Format integer (cycle-avoidance rule above); Offset
+    // is its byte offset within a vertex (redundant with the running stride, but
+    // stored so validation is a direct field-by-field compare).
+    struct CookedVertexAttribute
+    {
+        u32 Format = 0; // underlying Renderer::Format
+        u32 Offset = 0;
     };
 
     // One draw range within a cooked mesh's index buffer, with the material it
