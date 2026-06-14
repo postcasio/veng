@@ -34,7 +34,7 @@
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
-#include <Veng/Asset/ShaderAsset.h>
+#include <Veng/Asset/Shader.h>
 #include <Veng/Renderer/Types.h>
 
 #include <support/GpuContext.h>
@@ -110,7 +110,7 @@ int main()
 
         // --- Compute pipeline: reads `source`, writes `derived`. ---
 
-        const auto computeShaderAsset = assets.LoadSync<ShaderAsset>(AssetId{8001});
+        const auto computeShaderAsset = assets.LoadSync<Shader>(AssetId{8001});
         VE_ASSERT(computeShaderAsset, "load invert.comp: {}", computeShaderAsset.error().Detail);
 
         auto computeSetLayout = DescriptorSetLayout::Create(context, {
@@ -142,10 +142,10 @@ int main()
 
         // --- Graphics pipeline: samples `derived`, writes to `output`. ---
 
-        const auto vertexShaderAsset = assets.LoadSync<ShaderAsset>(AssetId{8002});
+        const auto vertexShaderAsset = assets.LoadSync<Shader>(AssetId{8002});
         VE_ASSERT(vertexShaderAsset, "load fullscreen.vert: {}", vertexShaderAsset.error().Detail);
 
-        const auto fragmentShaderAsset = assets.LoadSync<ShaderAsset>(AssetId{8003});
+        const auto fragmentShaderAsset = assets.LoadSync<Shader>(AssetId{8003});
         VE_ASSERT(fragmentShaderAsset, "load sample.frag: {}", fragmentShaderAsset.error().Detail);
 
         auto sampleSetLayout = DescriptorSetLayout::Create(context, {

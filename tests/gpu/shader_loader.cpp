@@ -1,8 +1,8 @@
 // Shader load test: cooks the shader fixture pack in-process,
-// mounts it, LoadSync<ShaderAsset>s it through AssetManager, and checks the
+// mounts it, LoadSync<Shader>s it through AssetManager, and checks the
 // loaded ShaderInterface — bindings, push constants, VertexLayoutId — plus the
 // layout-builder helpers (BuildPushConstantRanges, BuildDescriptorSetLayouts,
-// FindBinding). Also verifies that the referenced VertexLayoutAsset (id 7001)
+// FindBinding). Also verifies that the referenced VertexLayout (id 7001)
 // loads and carries the expected 4-element canonical layout.
 
 #include <filesystem>
@@ -12,8 +12,8 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
-#include <Veng/Asset/ShaderAsset.h>
-#include <Veng/Asset/VertexLayoutAsset.h>
+#include <Veng/Asset/Shader.h>
+#include <Veng/Asset/VertexLayout.h>
 
 #include <gpu/fixture.h>
 
@@ -36,11 +36,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "shader loader: cook, mount, LoadSync,
     const VoidResult mountResult = assets.Mount(outArchive);
     REQUIRE(mountResult.has_value());
 
-    const AssetResult<AssetHandle<ShaderAsset>> handle = assets.LoadSync<ShaderAsset>(AssetId{4001});
+    const AssetResult<AssetHandle<Shader>> handle = assets.LoadSync<Shader>(AssetId{4001});
     REQUIRE(handle.has_value());
     REQUIRE(handle->IsLoaded());
 
-    const ShaderAsset& asset = *handle->Get();
+    const Shader& asset = *handle->Get();
     REQUIRE(asset.Module != nullptr);
 
     const ShaderInterface& iface = asset.Interface;
@@ -73,9 +73,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "shader loader: cook, mount, LoadSync,
     const vector<Ref<DescriptorSetLayout>> layouts = iface.BuildDescriptorSetLayouts(Context, "ShaderTest");
     CHECK(layouts.empty());
 
-    // Load the referenced VertexLayoutAsset and verify its 4-element layout.
-    const AssetResult<AssetHandle<VertexLayoutAsset>> layoutHandle =
-        assets.LoadSync<VertexLayoutAsset>(AssetId{7001});
+    // Load the referenced VertexLayout and verify its 4-element layout.
+    const AssetResult<AssetHandle<VertexLayout>> layoutHandle =
+        assets.LoadSync<VertexLayout>(AssetId{7001});
     REQUIRE(layoutHandle.has_value());
     REQUIRE(layoutHandle->IsLoaded());
 

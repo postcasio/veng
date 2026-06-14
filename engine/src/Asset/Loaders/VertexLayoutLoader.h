@@ -1,11 +1,11 @@
 #pragma once
 
 #include <Veng/Asset/AssetLoader.h>
-#include <Veng/Asset/VertexLayoutAsset.h>
+#include <Veng/Asset/VertexLayout.h>
 
 // The AssetType::VertexLayout loader: a
 // CookedVertexLayoutHeader + CookedVertexLayoutElement[] -> a
-// Veng::VertexLayoutAsset (a VertexBufferLayout), bridging the cooked
+// Veng::VertexLayout (a VertexBufferLayout), bridging the cooked
 // underlying-integer enum fields to Veng::Renderer enums.
 
 namespace Veng

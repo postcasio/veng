@@ -1,4 +1,4 @@
-#include <Veng/Renderer/Shader.h>
+#include <Veng/Renderer/ShaderModule.h>
 
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Native.h>
@@ -8,9 +8,9 @@
 
 namespace Veng::Renderer
 {
-    Shader::Native& Shader::GetNative() const { return *m_Native; }
+    ShaderModule::Native& ShaderModule::GetNative() const { return *m_Native; }
 
-    Result<Ref<Shader>> Shader::Create(Context& context, const ShaderInfo& info)
+    Result<Ref<ShaderModule>> ShaderModule::Create(Context& context, const ShaderModuleInfo& info)
     {
         path filePath = std::filesystem::absolute(info.Path);
         std::ifstream file(filePath, std::ios::ate | std::ios::binary);
@@ -28,14 +28,14 @@ namespace Veng::Renderer
 
         file.close();
 
-        return Ref<Shader>(new Shader(context, ShaderBinaryInfo{
+        return Ref<ShaderModule>(new ShaderModule(context, ShaderModuleBinaryInfo{
             .Name = info.Name,
             .Binary = buffer,
             .EntryPoint = info.EntryPoint,
         }));
     }
 
-    Shader::Shader(Context& context, const ShaderBinaryInfo& info) : m_Context(context), m_Name(info.Name), m_EntryPoint(info.EntryPoint),
+    ShaderModule::ShaderModule(Context& context, const ShaderModuleBinaryInfo& info) : m_Context(context), m_Name(info.Name), m_EntryPoint(info.EntryPoint),
                                                     m_Native(CreateUnique<Native>())
     {
         vk::ShaderModuleCreateInfo createInfo{
@@ -46,7 +46,7 @@ namespace Veng::Renderer
         m_Native->Module = GetVkDevice(m_Context).createShaderModule(createInfo).value;
     }
 
-    Shader::~Shader()
+    ShaderModule::~ShaderModule()
     {
         m_Context.GetNative().Retire(m_Native->Module);
     }

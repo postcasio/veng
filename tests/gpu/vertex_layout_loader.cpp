@@ -1,5 +1,5 @@
 // Vertex-layout load test: verifies the full cook→load
-// round-trip for VertexLayoutAsset and confirms that AssetManager auto-mounts
+// round-trip for VertexLayout and confirms that AssetManager auto-mounts
 // the embedded core pack (containing the engine's built-in layouts) at init.
 
 #include <filesystem>
@@ -10,7 +10,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Asset/Mesh.h>
-#include <Veng/Asset/VertexLayoutAsset.h>
+#include <Veng/Asset/VertexLayout.h>
 
 #include <gpu/fixture.h>
 
@@ -33,8 +33,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "vertex layout loader: cook fixture pa
     const VoidResult mountResult = assets.Mount(outArchive);
     REQUIRE(mountResult.has_value());
 
-    const AssetResult<AssetHandle<VertexLayoutAsset>> handle =
-        assets.LoadSync<VertexLayoutAsset>(AssetId{7001});
+    const AssetResult<AssetHandle<VertexLayout>> handle =
+        assets.LoadSync<VertexLayout>(AssetId{7001});
     REQUIRE(handle.has_value());
     REQUIRE(handle->IsLoaded());
 
@@ -56,8 +56,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "vertex layout loader: core pack auto-
     // vec4 (RGBA32Sfloat): xyz tangent + w bitangent handedness.
     AssetManager assets(Context);
 
-    const AssetResult<AssetHandle<VertexLayoutAsset>> handle =
-        assets.LoadSync<VertexLayoutAsset>(Mesh::CanonicalLayoutId);
+    const AssetResult<AssetHandle<VertexLayout>> handle =
+        assets.LoadSync<VertexLayout>(Mesh::CanonicalLayoutId);
     REQUIRE(handle.has_value());
     REQUIRE(handle->IsLoaded());
 

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Veng/Renderer/PipelineLayout.h>
-#include <Veng/Renderer/Shader.h>
+#include <Veng/Renderer/ShaderModule.h>
 
 namespace Veng::Renderer
 {

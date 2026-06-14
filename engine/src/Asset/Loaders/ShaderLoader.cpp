@@ -7,7 +7,7 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
-#include <Veng/Asset/VertexLayoutAsset.h>
+#include <Veng/Asset/VertexLayout.h>
 
 namespace Veng
 {
@@ -161,8 +161,8 @@ namespace Veng
         // asset is resolvable.
         if (interfaceHeader.VertexLayoutAssetId != 0)
         {
-            const AssetResult<AssetHandle<Veng::VertexLayoutAsset>> layout =
-                manager.LoadSync<Veng::VertexLayoutAsset>(AssetId{interfaceHeader.VertexLayoutAssetId});
+            const AssetResult<AssetHandle<Veng::VertexLayout>> layout =
+                manager.LoadSync<Veng::VertexLayout>(AssetId{interfaceHeader.VertexLayoutAssetId});
             if (!layout)
                 return std::unexpected(layout.error());
         }
@@ -172,13 +172,13 @@ namespace Veng
 
         const std::span<const u8> spirv = cooked.subspan(cursor, header.SpirvBytes);
 
-        const Ref<Renderer::Shader> shader = Renderer::Shader::Create(context, {
+        const Ref<Renderer::ShaderModule> shader = Renderer::ShaderModule::Create(context, {
             .Name = fmt::format("Shader {}", id.Value),
             .Binary = spirv,
             .EntryPoint = BridgeName(header.EntryPoint),
         });
 
-        const Ref<Veng::ShaderAsset> asset = CreateRef<Veng::ShaderAsset>(Veng::ShaderAsset{
+        const Ref<Veng::Shader> asset = CreateRef<Veng::Shader>(Veng::Shader{
             .Module = shader,
             .Interface = std::move(shaderInterface),
         });

@@ -11,10 +11,10 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/PipelineLayout.h>
-#include <Veng/Asset/ShaderAsset.h>
+#include <Veng/Asset/Shader.h>
 #include <Veng/Renderer/ShaderInterface.h>
 #include <Veng/Asset/Texture.h>
-#include <Veng/Asset/VertexLayoutAsset.h>
+#include <Veng/Asset/VertexLayout.h>
 
 namespace Veng
 {
@@ -86,21 +86,21 @@ namespace Veng
         cursor += header.ParamBytes;
 
         // ── 4. Load vertex and fragment shader assets ─────────────────────────
-        const AssetResult<AssetHandle<Veng::ShaderAsset>> vsResult =
-            manager.LoadSync<Veng::ShaderAsset>(AssetId{header.VertexShaderId});
+        const AssetResult<AssetHandle<Veng::Shader>> vsResult =
+            manager.LoadSync<Veng::Shader>(AssetId{header.VertexShaderId});
         if (!vsResult)
             return std::unexpected(vsResult.error());
 
-        const AssetResult<AssetHandle<Veng::ShaderAsset>> fsResult =
-            manager.LoadSync<Veng::ShaderAsset>(AssetId{header.FragmentShaderId});
+        const AssetResult<AssetHandle<Veng::Shader>> fsResult =
+            manager.LoadSync<Veng::Shader>(AssetId{header.FragmentShaderId});
         if (!fsResult)
             return std::unexpected(fsResult.error());
 
-        const AssetHandle<Veng::ShaderAsset>& vsHandle = *vsResult;
-        const AssetHandle<Veng::ShaderAsset>& fsHandle = *fsResult;
+        const AssetHandle<Veng::Shader>& vsHandle = *vsResult;
+        const AssetHandle<Veng::Shader>& fsHandle = *fsResult;
 
-        const Veng::ShaderAsset& vsAsset = *vsHandle.Get();
-        const Veng::ShaderAsset& fsAsset = *fsHandle.Get();
+        const Veng::Shader& vsAsset = *vsHandle.Get();
+        const Veng::Shader& fsAsset = *fsHandle.Get();
 
         // ── 5. Build MaterialField table + resolve textures ───────────────────
         vector<Veng::MaterialField> fields;
@@ -266,8 +266,8 @@ namespace Veng
         optional<Renderer::VertexBufferLayout> vertexBufferLayout;
         if (vsInterface.VertexLayoutId.has_value())
         {
-            const AssetResult<AssetHandle<Veng::VertexLayoutAsset>> layoutResult =
-                manager.LoadSync<Veng::VertexLayoutAsset>(*vsInterface.VertexLayoutId);
+            const AssetResult<AssetHandle<Veng::VertexLayout>> layoutResult =
+                manager.LoadSync<Veng::VertexLayout>(*vsInterface.VertexLayoutId);
             if (!layoutResult)
                 return std::unexpected(layoutResult.error());
 

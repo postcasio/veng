@@ -40,7 +40,7 @@ add_library(veng SHARED
         src/Renderer/Backend/PipelineLayout.cpp
         src/Renderer/Backend/Sampler.cpp
         src/Renderer/Backend/Semaphore.cpp
-        src/Renderer/Backend/Shader.cpp
+        src/Renderer/Backend/ShaderModule.cpp
         src/Renderer/Backend/SwapChain.cpp
         src/Renderer/Backend/SynchronizationFrame.cpp
         src/Renderer/Backend/Utils.cpp

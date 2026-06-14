@@ -46,7 +46,7 @@ namespace Veng::Renderer
 
     [[nodiscard]] inline vk::Sampler GetVkSampler(const Sampler& sampler) { return sampler.GetNative().Sampler; }
 
-    [[nodiscard]] inline vk::ShaderModule GetVkShaderModule(const Shader& shader) { return shader.GetNative().Module; }
+    [[nodiscard]] inline vk::ShaderModule GetVkShaderModule(const ShaderModule& shader) { return shader.GetNative().Module; }
 
     [[nodiscard]] inline vk::DescriptorSet GetVkDescriptorSet(const DescriptorSet& descriptorSet) { return descriptorSet.GetNative().Set; }
 

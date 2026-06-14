@@ -18,7 +18,7 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderGraph.h>
-#include <Veng/Asset/ShaderAsset.h>
+#include <Veng/Asset/Shader.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Renderer/Types.h>
 
@@ -38,7 +38,7 @@ namespace
     };
 
     Ref<GraphicsPipeline> CreateSamplePipeline(Context& context, Ref<PipelineLayout>& outLayout,
-                                               const Ref<Shader>& vertexModule, const Ref<Shader>& fragmentModule)
+                                               const Ref<ShaderModule>& vertexModule, const Ref<ShaderModule>& fragmentModule)
     {
         outLayout = PipelineLayout::Create(context, {
             .Name = "Texture Loader Sample Layout",
@@ -101,8 +101,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
     const VoidResult shaderMountResult = shaderAssets.Mount(path(TEST_SHADER_PACK));
     REQUIRE(shaderMountResult.has_value());
 
-    const AssetResult<AssetHandle<ShaderAsset>> vertexAsset = shaderAssets.LoadSync<ShaderAsset>(AssetId{8002});
-    const AssetResult<AssetHandle<ShaderAsset>> fragmentAsset = shaderAssets.LoadSync<ShaderAsset>(AssetId{8004});
+    const AssetResult<AssetHandle<Shader>> vertexAsset = shaderAssets.LoadSync<Shader>(AssetId{8002});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset = shaderAssets.LoadSync<Shader>(AssetId{8004});
     REQUIRE(vertexAsset.has_value());
     REQUIRE(fragmentAsset.has_value());
 

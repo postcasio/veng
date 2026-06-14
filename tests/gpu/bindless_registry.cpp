@@ -25,7 +25,7 @@
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
-#include <Veng/Asset/ShaderAsset.h>
+#include <Veng/Asset/Shader.h>
 #include <Veng/Renderer/Types.h>
 
 #include <gpu/fixture.h>
@@ -46,7 +46,7 @@ namespace
     // Builds a pipeline that draws a fullscreen triangle sampling a single
     // bindless-registered texture/sampler pair selected by push constants.
     Ref<GraphicsPipeline> CreateSamplePipeline(Context& context, Ref<PipelineLayout>& outLayout,
-                                               const Ref<Shader>& vertexModule, const Ref<Shader>& fragmentModule)
+                                               const Ref<ShaderModule>& vertexModule, const Ref<ShaderModule>& fragmentModule)
     {
         outLayout = PipelineLayout::Create(context, {
             .Name = "Bindless Sample Layout",
@@ -99,8 +99,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "bindless registry: register, bind, an
     const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
     REQUIRE(mountResult.has_value());
 
-    const AssetResult<AssetHandle<ShaderAsset>> vertexAsset = assets.LoadSync<ShaderAsset>(AssetId{8002});
-    const AssetResult<AssetHandle<ShaderAsset>> fragmentAsset = assets.LoadSync<ShaderAsset>(AssetId{8004});
+    const AssetResult<AssetHandle<Shader>> vertexAsset = assets.LoadSync<Shader>(AssetId{8002});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset = assets.LoadSync<Shader>(AssetId{8004});
     REQUIRE(vertexAsset.has_value());
     REQUIRE(fragmentAsset.has_value());
 

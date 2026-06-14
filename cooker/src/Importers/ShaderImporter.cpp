@@ -437,8 +437,8 @@ namespace Veng::Cook
             // vertex inputs are discarded — vertex-pulling / no-input semantics.
 
             // Slang's SPIR-V backend names every entry point "main" regardless of
-            // its source name (confirmed via spirv-dis), so Shader::Create's
-            // ShaderBinaryInfo::EntryPoint is always "main" for this path.
+            // its source name (confirmed via spirv-dis), so ShaderModule::Create's
+            // ShaderModuleBinaryInfo::EntryPoint is always "main" for this path.
             return BuildBlob("main",
                 std::span(static_cast<const u8*>(code->getBufferPointer()), code->getBufferSize()),
                 bindings, pushConstants, vertexLayoutAssetId);

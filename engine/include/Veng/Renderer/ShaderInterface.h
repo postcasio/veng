@@ -18,7 +18,7 @@
 // Vertex inputs are no longer embedded per-shader: the shader references its
 // vertex layout by AssetId (VertexLayoutId). nullopt means no vertex input
 // state — the shader has no vertex stage, or performs vertex pulling. An
-// AssetId present references the VertexLayoutAsset this shader was cooked
+// AssetId present references the VertexLayout this shader was cooked
 // against; resolve it via AssetManager to obtain the VertexBufferLayout for
 // pipeline creation.
 namespace Veng::Renderer
@@ -54,7 +54,7 @@ namespace Veng::Renderer
 
     // One cooked shader's reflected shape: descriptor bindings (sets >= 1),
     // push-constant ranges, and — for a vertex-stage shader — the AssetId of
-    // the VertexLayoutAsset this shader was cooked against. nullopt means no
+    // the VertexLayout this shader was cooked against. nullopt means no
     // vertex input state (no vertex stage, or vertex pulling).
     struct ShaderInterface
     {

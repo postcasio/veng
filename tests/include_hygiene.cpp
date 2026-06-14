@@ -25,9 +25,9 @@
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/RawAsset.h>
-#include <Veng/Asset/ShaderAsset.h>
+#include <Veng/Asset/Shader.h>
 #include <Veng/Asset/Texture.h>
-#include <Veng/Asset/VertexLayoutAsset.h>
+#include <Veng/Asset/VertexLayout.h>
 
 #include <Veng/Application.h>
 #include <Veng/Assert.h>
@@ -57,7 +57,7 @@
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Semaphore.h>
-#include <Veng/Renderer/Shader.h>
+#include <Veng/Renderer/ShaderModule.h>
 #include <Veng/Renderer/TypedBuffers.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>

@@ -14,7 +14,7 @@
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
-#include <Veng/Asset/ShaderAsset.h>
+#include <Veng/Asset/Shader.h>
 #include <Veng/Asset/Texture.h>
 
 #include <glm/gtc/packing.hpp>
@@ -195,13 +195,13 @@ private:
     {
         auto& context = GetRenderContext();
 
-        const AssetResult<AssetHandle<Veng::ShaderAsset>> vs =
-            GetAssetManager().LoadSync<Veng::ShaderAsset>(AssetId{1006});
+        const AssetResult<AssetHandle<Veng::Shader>> vs =
+            GetAssetManager().LoadSync<Veng::Shader>(AssetId{1006});
         VE_ASSERT(vs.has_value(), "{}", vs.error().Detail);
         m_CompositeVS = *vs;
 
-        const AssetResult<AssetHandle<Veng::ShaderAsset>> fs =
-            GetAssetManager().LoadSync<Veng::ShaderAsset>(AssetId{1007});
+        const AssetResult<AssetHandle<Veng::Shader>> fs =
+            GetAssetManager().LoadSync<Veng::Shader>(AssetId{1007});
         VE_ASSERT(fs.has_value(), "{}", fs.error().Detail);
         m_CompositeFS = *fs;
 
@@ -376,8 +376,8 @@ private:
     AssetHandle<Veng::Mesh> m_CubeMesh;
     AssetHandle<Veng::Material> m_BrickMaterial;
 
-    AssetHandle<Veng::ShaderAsset> m_CompositeVS;
-    AssetHandle<Veng::ShaderAsset> m_CompositeFS;
+    AssetHandle<Veng::Shader> m_CompositeVS;
+    AssetHandle<Veng::Shader> m_CompositeFS;
     Ref<Renderer::PipelineLayout> m_CompositeLayout;
     Ref<Renderer::GraphicsPipeline> m_CompositePipeline;
     Renderer::TextureHandle m_SceneTextureHandle;

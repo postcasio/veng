@@ -9,21 +9,21 @@ namespace Veng::Renderer
 {
     class Context;
 
-    struct ShaderInfo
+    struct ShaderModuleInfo
     {
         string Name;
         path Path;
         string EntryPoint = "main";
     };
 
-    struct ShaderBinaryInfo
+    struct ShaderModuleBinaryInfo
     {
         string Name;
         std::span<const u8> Binary;
         string EntryPoint = "main";
     };
 
-    class Shader
+    class ShaderModule
     {
     public:
         // Loads SPIR-V from disk. Returns an error Result when the file cannot
@@ -33,17 +33,17 @@ namespace Veng::Renderer
         //
         // Ref, not Unique: shaders are a shared GPU resource (the same module is
         // referenced by PipelineShaderStageInfo on every pipeline that uses it).
-        static Result<Ref<Shader>> Create(Context& context, const ShaderInfo& info);
+        static Result<Ref<ShaderModule>> Create(Context& context, const ShaderModuleInfo& info);
 
-        static Ref<Shader> Create(Context& context, const ShaderBinaryInfo& info)
+        static Ref<ShaderModule> Create(Context& context, const ShaderModuleBinaryInfo& info)
         {
-            return Ref<Shader>(new Shader(context, info));
+            return Ref<ShaderModule>(new ShaderModule(context, info));
         }
 
-        ~Shader();
+        ~ShaderModule();
 
-        Shader(const Shader&) = delete;
-        Shader& operator=(const Shader&) = delete;
+        ShaderModule(const ShaderModule&) = delete;
+        ShaderModule& operator=(const ShaderModule&) = delete;
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] const string& GetEntryPoint() const { return m_EntryPoint; }
@@ -52,7 +52,7 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        Shader(Context& context, const ShaderBinaryInfo& info);
+        ShaderModule(Context& context, const ShaderModuleBinaryInfo& info);
 
         // The context this resource was created with (deferred-destruction
         // back-ref; a resource must not outlive its context).

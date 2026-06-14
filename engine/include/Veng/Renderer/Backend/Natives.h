@@ -19,7 +19,7 @@
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Semaphore.h>
-#include <Veng/Renderer/Shader.h>
+#include <Veng/Renderer/ShaderModule.h>
 #include <Veng/Window.h>
 
 namespace Veng
@@ -87,7 +87,7 @@ namespace Veng::Renderer
         vk::Sampler Sampler;
     };
 
-    struct Shader::Native
+    struct ShaderModule::Native
     {
         vk::ShaderModule Module;
     };

@@ -1,10 +1,10 @@
 #pragma once
 
 #include <Veng/Asset/AssetLoader.h>
-#include <Veng/Asset/ShaderAsset.h>
+#include <Veng/Asset/Shader.h>
 
 // The AssetType::Shader loader: a CookedShaderHeader +
-// reflected interface + SPIR-V -> a Veng::ShaderAsset (Shader module +
+// reflected interface + SPIR-V -> a Veng::Shader (Shader module +
 // ShaderInterface), reconstructing the interface's bindings/push
 // constants/vertex inputs from the cooked, underlying-integer enum fields.
 

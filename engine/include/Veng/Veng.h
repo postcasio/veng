@@ -90,7 +90,7 @@ namespace Veng
     // objects hold references to (buffers, images, views, samplers, shaders,
     // pipelines, descriptor sets/layouts, pipeline layouts, command buffers)
     // returns Ref<X> — multiple owners are normal (e.g. a pipeline holds
-    // Ref<Shader>, a descriptor set holds Ref<ImageView>). A single-owner
+    // Ref<ShaderModule>, a descriptor set holds Ref<ImageView>). A single-owner
     // synchronization primitive (Fence, Semaphore) returns Unique<X> — nothing
     // else ever holds a reference to one.
     template <typename T>

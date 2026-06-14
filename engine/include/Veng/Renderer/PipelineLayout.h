@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Veng/Renderer/DescriptorSetLayout.h>
-#include <Veng/Renderer/Shader.h>
+#include <Veng/Renderer/ShaderModule.h>
 #include <Veng/Renderer/Types.h>
 
 namespace Veng::Renderer
@@ -11,7 +11,7 @@ namespace Veng::Renderer
     struct PipelineShaderStageInfo
     {
         ShaderStage Stage;
-        Ref<Shader> Module;
+        Ref<ShaderModule> Module;
     };
 
     struct PipelineAttachmentInfo

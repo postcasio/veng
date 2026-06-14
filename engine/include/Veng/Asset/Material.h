@@ -6,7 +6,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetType.h>
-#include <Veng/Asset/ShaderAsset.h>
+#include <Veng/Asset/Shader.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
@@ -48,8 +48,8 @@ namespace Veng
         Ref<Renderer::GraphicsPipeline> Pipeline;
 
         // Eager dependencies kept resident for the material's lifetime.
-        AssetHandle<ShaderAsset> VertexShader;
-        AssetHandle<ShaderAsset> FragmentShader;
+        AssetHandle<Shader> VertexShader;
+        AssetHandle<Shader> FragmentShader;
         vector<AssetHandle<Texture>> Textures;
 
         // The packed MaterialData block (handle slots already patched with the
@@ -99,8 +99,8 @@ namespace Veng
         string m_Name;
         Ref<Renderer::GraphicsPipeline> m_Pipeline;
 
-        AssetHandle<ShaderAsset> m_VertexShader;
-        AssetHandle<ShaderAsset> m_FragmentShader;
+        AssetHandle<Shader> m_VertexShader;
+        AssetHandle<Shader> m_FragmentShader;
         vector<AssetHandle<Texture>> m_Textures;
 
         Renderer::MaterialData m_Params{};
