@@ -64,7 +64,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nativefiledialog_extended)
 
-# tinyexr (header used via src/Vendor/TinyExr.cpp; its own targets are not built)
+# tinyexr (header used via engine/src/Vendor/TinyExr.cpp; its own targets are not built)
 FetchContent_Declare(
         tinyexr
         GIT_REPOSITORY https://github.com/syoyo/tinyexr.git
@@ -83,7 +83,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(stb)
 
 # ImGui + imnodes. ImGui/imnodes sources are compiled exactly once, into the
-# veng library itself via src/Vendor/ImGui.cpp (a source-include aggregation
+# veng library itself via engine/src/Vendor/ImGui.cpp (a source-include aggregation
 # TU). imnodes' CMake only needs an imgui target for include propagation, so
 # feed it a header-only INTERFACE target instead of compiling imgui twice.
 FetchContent_Declare(
@@ -109,95 +109,12 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(imnodes)
 
 # ---------------------------------------------------------------------------
-# Library
+# Libraries
 # ---------------------------------------------------------------------------
 
-add_library(veng SHARED
-        src/Application.cpp
-        src/Assert.cpp
-        src/Log.cpp
-        src/Time.cpp
-        src/Window.cpp
-        src/ImGui/ImGuiLayer.cpp
-        src/ImGui/ImGuiTexture.cpp
-        src/Renderer/RenderGraph.cpp
-        src/Renderer/Backend/Barrier.cpp
-        src/Renderer/Backend/BarrierDecision.cpp
-        src/Renderer/Backend/Buffer.cpp
-        src/Renderer/Backend/CommandBuffer.cpp
-        src/Renderer/Backend/CommandPool.cpp
-        src/Renderer/Backend/ComputePipeline.cpp
-        src/Renderer/Backend/Context.cpp
-        src/Renderer/Backend/DebugMarkers.cpp
-        src/Renderer/Backend/DescriptorPool.cpp
-        src/Renderer/Backend/DescriptorSet.cpp
-        src/Renderer/Backend/DescriptorSetLayout.cpp
-        src/Renderer/Backend/Fence.cpp
-        src/Renderer/Backend/GraphicsPipeline.cpp
-        src/Renderer/Backend/Image.cpp
-        src/Renderer/Backend/ImageView.cpp
-        src/Renderer/Backend/PipelineLayout.cpp
-        src/Renderer/Backend/Sampler.cpp
-        src/Renderer/Backend/Semaphore.cpp
-        src/Renderer/Backend/Shader.cpp
-        src/Renderer/Backend/SwapChain.cpp
-        src/Renderer/Backend/SynchronizationFrame.cpp
-        src/Renderer/Backend/Utils.cpp
-        src/Renderer/Backend/VertexBufferLayout.cpp
-        src/Vendor/ImGui.cpp
-        src/Vendor/StbImage.cpp
-        src/Vendor/TinyExr.cpp
-)
-add_library(veng::veng ALIAS veng)
-
-target_include_directories(veng PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-)
-
-# ImGui/imnodes headers are part of veng's public API surface
-# (Veng/Vendor/ImGui.h includes <imgui.h>, <imnodes.h>, ...).
-target_include_directories(veng PUBLIC
-        $<BUILD_INTERFACE:${imgui_SOURCE_DIR}>
-        $<BUILD_INTERFACE:${imnodes_SOURCE_DIR}>
-)
-
-# tinyexr/stb headers are implementation details of the vendor TUs.
-target_include_directories(veng PRIVATE
-        ${tinyexr_SOURCE_DIR}
-        ${stb_SOURCE_DIR}
-)
-
-target_compile_definitions(veng PRIVATE VE_BUILD_SHARED)
-
-# veng raises no exceptions (see Veng/Assert.h): asserts are fatal, recoverable
-# operations return Veng::Result<T>. Building -fno-exceptions is the enforcement
-# mechanism — any stray `throw` becomes a compile error. tinyexr is the one
-# vendor TU that uses exceptions by default, so disable them for it too.
-target_compile_options(veng PRIVATE -fno-exceptions)
-set_source_files_properties(src/Vendor/TinyExr.cpp PROPERTIES
-        COMPILE_DEFINITIONS TINYEXR_USE_EXCEPTIONS=0)
-
-if (VE_DEBUG)
-    target_compile_definitions(veng PUBLIC VE_ENABLE_VALIDATION_LAYERS=1 VE_DEBUG=1)
-endif ()
-
-# glm and fmt appear in veng's public headers (engine vector/matrix types and
-# string formatting), so they stay PUBLIC. Vulkan, GLFW, VMA and nfd are hidden
-# behind the Native idiom (see Veng/Renderer/Native.h) — no public header pulls
-# them in, so they link PRIVATE and stay out of the consumer include graph.
-target_link_libraries(veng PUBLIC
-        glm::glm
-        fmt::fmt
-)
-
-target_link_libraries(veng PRIVATE
-        Vulkan::Vulkan
-        glfw
-        GPUOpen::VulkanMemoryAllocator
-        nfd
-        ZLIB::ZLIB
-)
+add_subdirectory(engine)
+add_subdirectory(assetformat)
+add_subdirectory(cooker)
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -413,7 +330,7 @@ install(TARGETS veng
         INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
-install(DIRECTORY include/Veng DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY engine/include/Veng DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 # Third-party headers reachable from veng's public headers, so that an
 # installed veng is self-contained for find_package consumers.

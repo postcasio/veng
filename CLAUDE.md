@@ -1,9 +1,9 @@
 # veng
 
 A C++26 Vulkan rendering engine. Built as a shared library (`libveng`) with a
-public API under `include/Veng/` and a Vulkan backend hidden behind it. Primary
-dev platform is macOS via MoltenVK; the code is written to be portable (a Windows
-port is anticipated, hence `VE_API`).
+public API under `engine/include/Veng/` and a Vulkan backend hidden behind it.
+Primary dev platform is macOS via MoltenVK; the code is written to be portable
+(a Windows port is anticipated, hence `VE_API`).
 
 **veng v1 is single-threaded by design, not by accident.** The render `Context`
 is constructed explicitly by `Application` and threaded into every resource;
@@ -13,15 +13,27 @@ call veng APIs concurrently. (De-globalizing the context is done — see
 
 ## Layout
 
-- `include/Veng/` — public headers. `Veng.h` is the foundational header every
-  other header builds on (std/glm includes + house-style aliases).
-- `include/Veng/Renderer/` — public renderer API (`Context`, `Buffer`, `Image`,
-  pipelines, `DescriptorSet`, `RenderGraph`, …).
-- `include/Veng/Renderer/Backend/` — backend-only headers (`Vulkan.h`, `Natives.h`,
-  `TypeMapping.h`). **Not** part of the consumer-facing surface.
-- `src/Renderer/Backend/` — the Vulkan implementations of the public renderer
-  classes. (The public class lives in `include/Veng/Renderer/X.h`; its impl lives
-  in `src/Renderer/Backend/X.cpp` — note the path asymmetry.)
+Each library lives in its own root subdirectory; the top-level `CMakeLists.txt`
+is thin (shared deps + `add_subdirectory` per lib).
+
+- `engine/` — `libveng`, the runtime. Links only `assetformat` (loader, no
+  importer deps).
+  - `engine/include/Veng/` — public headers. `Veng.h` is the foundational
+    header every other header builds on (std/glm includes + house-style
+    aliases).
+  - `engine/include/Veng/Renderer/` — public renderer API (`Context`,
+    `Buffer`, `Image`, pipelines, `DescriptorSet`, `RenderGraph`, …).
+  - `engine/include/Veng/Renderer/Backend/` — backend-only headers
+    (`Vulkan.h`, `Natives.h`, `TypeMapping.h`). **Not** part of the
+    consumer-facing surface.
+  - `engine/src/Renderer/Backend/` — the Vulkan implementations of the public
+    renderer classes. (The public class lives in
+    `engine/include/Veng/Renderer/X.h`; its impl lives in
+    `engine/src/Renderer/Backend/X.cpp` — note the path asymmetry.)
+- `assetformat/` — `libveng_assetformat`, the shared archive + cooked-blob
+  format. Vulkan-free, importer-free; linked by both `engine` and `cooker`.
+- `cooker/` — `libveng_cook` + the `vengc` CLI (stb, assimp, Slang, JSON).
+  Never linked by the engine.
 - `examples/hello-triangle/` — the canonical sample app and the smoke test.
 - `tests/` — `include_hygiene`, `headless_smoke`, `compute_dispatch`.
 - `plans/` — the roadmap. See **Working norms** below.
@@ -64,7 +76,7 @@ cmake --build build-debug -j
   HT_SMOKE=/tmp/ht.ppm build/examples/hello-triangle/hello_triangle
   ```
 - **Validation errors do NOT fail tests by themselves.** The debug-messenger
-  callback (`src/Renderer/Backend/Context.cpp`) only `Log::Error`s on validation
+  callback (`engine/src/Renderer/Backend/Context.cpp`) only `Log::Error`s on validation
   errors — it never aborts. So a green `ctest` under `VE_DEBUG` only means
   something if the validation gate ran: `ctest --test-dir build-debug -L
   validation` (the `validation_gate` test) runs the `gpu`-labelled binaries and
@@ -147,7 +159,7 @@ backend handles in a forward-declared `struct Native;` and exposes
 constness describes *its own identity* (name, format, extent), not the GPU state
 behind the handle, which command recording mutates regardless.
 
-`include/Veng/Renderer/Native.h` is the **one** public header that exposes raw
+`engine/include/Veng/Renderer/Native.h` is the **one** public header that exposes raw
 handles — free `GetVkX(const X&)` accessors (e.g. `GetVkBuffer`, `GetVkDevice`)
 for backend/interop code. Reach for it only when interop genuinely needs the raw
 handle.

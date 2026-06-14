@@ -6,7 +6,7 @@
 # Runs each of the gpu-labelled binaries (headless_smoke, compute_dispatch,
 # veng_gpu) and inspects their combined stdout+stderr for lines matching
 # `[ERROR] Vulkan validation: ...`. Under VE_DEBUG these binaries enable the
-# Vulkan validation layers; the debug messenger (src/Renderer/Backend/Context.cpp)
+# Vulkan validation layers; the debug messenger (engine/src/Renderer/Backend/Context.cpp)
 # logs validation ERRORs via Log::Error but never aborts (CLAUDE.md), so a green
 # ctest is not by itself proof of a validation-clean run. This script is that
 # proof: any unallowlisted "Vulkan validation" ERROR line fails the test.
