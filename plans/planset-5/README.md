@@ -140,7 +140,7 @@ auto mesh = m_Assets->LoadSync<Mesh>(AssetId{1002}).value();
 | # | Plan | Summary | Status |
 |---|---|---|---|
 | 01 | [Project reorg into per-lib subdirectories](01-project-reorg.md) | Move engine to `engine/`; scaffold `assetformat/`, `cooker/`; top-level CMake. Behaviour-preserving. | done |
-| 02 | [`assetformat`: AssetId, archive container, blob layouts](02-assetformat-lib.md) | The shared format lib + reader/writer + round-trip tests. | proposed |
+| 02 | [`assetformat`: AssetId, archive container, blob layouts](02-assetformat-lib.md) | The shared format lib + reader/writer + round-trip tests. | done |
 | 03 | [`cooker` lib + `vengc` CLI + JSON pack parsing](03-cooker-cli-json-pack.md) | Stand up the tool; parse the pack JSON; importer-registry skeleton; emit a valid archive. | proposed |
 | 04 | [Runtime: `AssetManager`, `AssetHandle`, pack mount, `LoadSync`](04-asset-manager-runtime.md) | Engine-side registry, structured `AssetLoadError`, deferred eviction. | proposed |
 | 05 | [Bindless descriptor subsystem (`BindlessRegistry`, set 0)](05-bindless.md) | Global arrays bound once per frame; typed handles; set 0 root signature. (Prereq: planset-2/06.) | proposed |

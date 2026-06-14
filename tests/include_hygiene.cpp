@@ -8,6 +8,15 @@
 //
 // Veng/Renderer/Native.h is deliberately excluded: it is the one sanctioned
 // escape hatch that exposes raw handles and is expected to need Vulkan headers.
+//
+// The Veng/Asset/* headers (planset-5 plan 02) come from libveng_assetformat,
+// linked PUBLIC by veng — this sweep also proves that boundary stays
+// Vulkan-free.
+
+#include <Veng/Asset/Archive.h>
+#include <Veng/Asset/AssetId.h>
+#include <Veng/Asset/AssetType.h>
+#include <Veng/Asset/CookedBlobs.h>
 
 #include <Veng/Application.h>
 #include <Veng/Assert.h>

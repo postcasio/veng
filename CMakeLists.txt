@@ -112,8 +112,10 @@ FetchContent_MakeAvailable(imnodes)
 # Libraries
 # ---------------------------------------------------------------------------
 
-add_subdirectory(engine)
+# assetformat first: engine links veng::assetformat, so the target must exist
+# before engine/CMakeLists.txt references it.
 add_subdirectory(assetformat)
+add_subdirectory(engine)
 add_subdirectory(cooker)
 
 # ---------------------------------------------------------------------------
@@ -141,17 +143,19 @@ if (VENG_BUILD_TESTS)
     FetchContent_MakeAvailable(doctest)
     include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
 
-    # ---- Unit band (pure-logic, type-mapping, barrier — plans 02–04) --------
+    # ---- Unit band (pure-logic, type-mapping, barrier, assetformat — plans 02-04) --
     # Single executable hosting the framework-driven cases. main.cpp provides
     # DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN; each band adds its own *.cpp. Links
-    # veng::veng + doctest only. NOTE: -fno-exceptions is PRIVATE to veng, so
-    # this target compiles with exceptions enabled (doctest needs them).
+    # veng::veng (which itself links veng::assetformat PUBLIC) + doctest. NOTE:
+    # -fno-exceptions is PRIVATE to veng/assetformat, so this target compiles
+    # with exceptions enabled (doctest needs them).
     add_executable(veng_unit
             tests/unit/main.cpp
             tests/unit/sanity.cpp
             tests/unit/pure_logic.cpp
             tests/unit/type_mapping.cpp
             tests/unit/barrier_decision.cpp
+            tests/unit/asset_archive.cpp
     )
     target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
 
