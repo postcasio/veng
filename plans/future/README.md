@@ -15,8 +15,8 @@ defining the asset API** — the general abstraction first, concrete asset types
 after. **Design overview:** [asset-system.md](asset-system.md). **The synchronous
 slice is now detailed as its own planset:**
 [planset-5](../planset-5/README.md) (cooker + asset packs + `LoadSync`; Slang +
-offline reflection; sync-only — async + bindless are the follow-ons). Marked done
-here when planset-5 lands.
+offline reflection; **includes the bindless subsystem** so materials are thin —
+async loading is the one follow-on). Marked done here when planset-5 lands.
 
 - **Asset API (first):** how assets are identified, referenced (handles/refs),
   loaded, cached, lifetime-managed, hot-reloaded, and imported/cooked. This is

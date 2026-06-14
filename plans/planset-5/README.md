@@ -8,13 +8,13 @@ in the engine by `AssetId`. By the end, the hello-triangle sample renders a mesh
 material + texture entirely out of a cooked pack.
 
 This is **future [area 1](../future/README.md) — the asset system**, taken up as
-its own planset, scoped to the **synchronous slice**. The broader design vision
-(async loading, the bindless material end-state) lives in
-[asset-system.md](../future/asset-system.md); this planset delivers the
-foundation that vision is built on, without the parts that depend on threading or
-bindless.
+its own planset, scoped to the **synchronous slice** but **including the bindless
+descriptor subsystem** (so materials land as the thin handle-based end-state, not a
+per-set stopgap). The broader design vision (async loading, hot-reload) lives in
+[asset-system.md](../future/asset-system.md); this planset delivers the foundation
+that vision is built on, without the parts that depend on threading.
 
-## The four decisions that shape this planset
+## The decisions that shape this planset
 
 Resolved up front (they change the structure of every plan):
 
@@ -45,15 +45,29 @@ Resolved up front (they change the structure of every plan):
    (compiled by the cooker) **or inline base64** (a precompiled SPIR-V blob, for
    editor-produced materials).
 
+5. **Bindless before materials.** The bindless descriptor subsystem
+   ([bindless-descriptors.md](../future/bindless-descriptors.md)) lands as plan 05,
+   *before* the material type. A `Material` is then the thin end-state — shader
+   handle + texture **handles** + a `MaterialData` SSBO entry, bound through **set 0**
+   once per frame — rather than a bundle of per-set descriptor sets that bindless
+   would later rip out. **Prerequisite:** [planset-2/06](../planset-2/06-descriptor-update-policy.md)
+   (descriptor-policy single source of truth), currently `proposed` — land it first
+   (it also closes the documented validation gap).
+
+6. **Every asset type has a JSON source file.** Textures and meshes get their own
+   JSON authoring files, symmetric with materials — a pack entry points at a
+   per-asset `.tex.json` / `.mesh.json` / `.vmat.json`, which in turn references the
+   binary(ies). A texture JSON carries sampler settings + import options; a mesh
+   JSON carries assimp import settings + material overrides. The pack is purely the
+   `id → source` registry; the per-asset settings live in the source files.
+
 > **Synchronous-only, by decision.** `AssetManager::LoadSync` blocks; uploads use
 > today's `Image/Buffer::UploadSync` (`WaitIdle`) path. Async `Load`, the transfer
 > queue, and the task system are **out of scope** — they are the next planset
 > (future area 2, [threading-task-system.md](../future/threading-task-system.md)),
 > which turns these synchronous loads non-blocking. The async-default naming the
 > threading doc describes is designed so this planset's `LoadSync` keeps its name
-> when async lands. **Bindless is also out of scope** — `Material` binds through
-> today's per-set `DescriptorSet`; the bindless backing
-> ([bindless-descriptors.md](../future/bindless-descriptors.md)) replaces it later.
+> when async lands.
 
 ## New project layout (plan 01)
 
@@ -70,7 +84,7 @@ libraries scaffolded into the new shape:
     src/...
 /cooker/                   libveng_cook + the vengc CLI — stb, assimp, Slang, json
     include/ src/ tool/
-/examples/hello-triangle/  the sample (+ its asset pack, plan 09)
+/examples/hello-triangle/  the sample (+ its asset pack, plan 10)
 /tests/                    include_hygiene, headless_smoke, compute_dispatch, gpu, +new
 /cmake/  /docs/  /plans/
 ```
@@ -85,18 +99,23 @@ loader bridges with a `static_cast` guarded by a `static_assert`/`VE_ASSERT`
 `cooker` links it too. `include_hygiene` is extended to cover `assetformat`'s
 public headers.
 
-## The end-to-end target (plan 09 acceptance)
+## The end-to-end target (plan 10 acceptance)
 
 ```jsonc
-// examples/hello-triangle/assets/sample.vengpack.json  — hand-written
+// examples/hello-triangle/assets/sample.vengpack.json  — hand-written; just id → source
 {
   "version": 1,
   "assets": [
-    { "id": 1001, "type": "texture",  "source": "textures/brick.png" },
-    { "id": 1002, "type": "mesh",     "source": "meshes/cube.obj" },
+    { "id": 1001, "type": "texture",  "source": "textures/brick.tex.json" },
+    { "id": 1002, "type": "mesh",     "source": "meshes/cube.mesh.json" },
     { "id": 1003, "type": "material", "source": "materials/brick.vmat.json" }
   ]
 }
+```
+```jsonc
+// textures/brick.tex.json  — image + sampler/import settings
+{ "image": "brick.png", "srgb": true,
+  "sampler": { "min": "linear", "mag": "linear", "wrap_u": "repeat", "wrap_v": "repeat" } }
 ```
 ```jsonc
 // materials/brick.vmat.json  — a material referring to an external Slang shader
@@ -124,51 +143,62 @@ auto mesh = m_Assets->LoadSync<Mesh>(AssetId{1002}).value();
 | 02 | [`assetformat`: AssetId, archive container, blob layouts](02-assetformat-lib.md) | The shared format lib + reader/writer + round-trip tests. | proposed |
 | 03 | [`cooker` lib + `vengc` CLI + JSON pack parsing](03-cooker-cli-json-pack.md) | Stand up the tool; parse the pack JSON; importer-registry skeleton; emit a valid archive. | proposed |
 | 04 | [Runtime: `AssetManager`, `AssetHandle`, pack mount, `LoadSync`](04-asset-manager-runtime.md) | Engine-side registry, structured `AssetLoadError`, deferred eviction. | proposed |
-| 05 | [Texture vertical slice (stb cook → engine load)](05-texture-slice.md) | First full type, end to end; sample samples a cooked texture. | proposed |
-| 06 | [Mesh (assimp cook → engine load)](06-mesh-assimp.md) | Cooked vertex/index buffers; sample draws a cooked mesh. | proposed |
-| 07 | [Shader via Slang + offline reflection → `ShaderInterface`](07-shader-slang-reflection.md) | Absorbs deferred shader-reflection work; layouts from reflection. | proposed |
-| 08 | [Material: JSON asset, inline/external shader, engine `Material`](08-material.md) | The headline; per-set binding (pre-bindless), validated against the interface. | proposed |
-| 09 | [Example asset pack: hand-written JSON → build-time cook → load](09-example-pack.md) | `add_asset_pack` CMake fn; the full deliverable demonstrated. | proposed |
-| 10 | [Docs + roadmap re-cut](10-docs-roadmap.md) | `ownership.md`, `CLAUDE.md`, `future/README`, `asset-system.md`, `plans/README`. | proposed |
+| 05 | [Bindless descriptor subsystem (`BindlessRegistry`, set 0)](05-bindless.md) | Global arrays bound once per frame; typed handles; set 0 root signature. (Prereq: planset-2/06.) | proposed |
+| 06 | [Texture (JSON source + sampler → stb cook → bindless load)](06-texture-slice.md) | First full type; registers into bindless; sample samples a cooked texture via set 0. | proposed |
+| 07 | [Mesh (JSON source + import settings + overrides → assimp cook)](07-mesh-assimp.md) | Cooked vertex/index buffers; material overrides; sample draws a cooked mesh. | proposed |
+| 08 | [Shader via Slang + offline reflection → `ShaderInterface`](08-shader-slang-reflection.md) | Absorbs deferred shader-reflection work; layouts from reflection, set 0 from registry. | proposed |
+| 09 | [Material: JSON asset, inline/external shader, bindless `Material`](09-material.md) | The headline; thin handle+SSBO material, validated against the interface. | proposed |
+| 10 | [Example asset pack: hand-written JSON → build-time cook → load](10-example-pack.md) | `add_asset_pack` CMake fn; the full deliverable demonstrated. | proposed |
+| 11 | [Docs + roadmap re-cut](11-docs-roadmap.md) | `ownership.md`, `CLAUDE.md`, `future/README`, `bindless`/`asset-system`, `plans/README`. | proposed |
 
 ## Dependency graph
 
 ```
 01 reorg ──► 02 assetformat ──► 03 cooker/CLI ──┐
-                   │                             ├─► 05 texture ──► 06 mesh ──┐
-                   └──────────► 04 AssetManager ─┘                            │
-                                                  07 shader (Slang) ──────────┼─► 08 material ──► 09 example pack ──► 10 docs
+                   │                             │
+                   └──────────► 04 AssetManager ─┤
+                                                 │
+   05 bindless ──────────────────────────────────┼─► 06 texture ──► 07 mesh ──┐
+   (prereq: planset-2/06)                         │                            │
+                                  08 shader (Slang) ───────────────────────────┼─► 09 material ──► 10 example pack ──► 11 docs
 ```
 
 - **01** is the foundation; nothing else can land until the tree is reshaped.
 - **02** (format) and **04** (runtime) are the two contracts; **03** is the tool
   shell. **02 → {03, 04}** because both the cooker and the loader speak the format.
-- **05 texture** is the first vertical slice and the template every later type
+- **05 bindless** is an engine subsystem (prereq: planset-2/06's descriptor-policy
+  fix); it lands before the texture so textures register into it from the start and
+  the material is thin by construction.
+- **06 texture** is the first vertical slice and the template every later type
   copies (cook side in 03's registry, load side in 04's loader table).
-- **07 shader** is independent of 05/06 and can proceed in parallel; **08 material**
-  needs 07 (its shader) and 05 (its textures). **06 mesh** is needed by 09 (the
-  scene) and references materials by id (a forward ref, so it doesn't block on 08).
+- **08 shader** is independent of 06/07 and can proceed in parallel; **09 material**
+  needs 08 (its shader), 06 (its textures), and 05 (the handles/SSBO). **07 mesh**
+  is needed by 10 (the scene) and references materials by id (a forward ref, so it
+  doesn't block on 09).
 
 ## New dependencies (all cooker-only)
 
 The engine gains **only** `libveng_assetformat` (clean, in-repo). The cooker pulls,
 via `FetchContent` with pinned tags like the rest:
 
-- **nlohmann/json** — pack + material JSON parsing (cooker only; the runtime reads
+- **nlohmann/json** — pack + per-asset JSON parsing (cooker only; the runtime reads
   the *binary* archive, never JSON).
-- **assimp** — mesh import (plan 06). The one heavy dependency; cooker-only, so it
+- **assimp** — mesh import (plan 07). The one heavy dependency; cooker-only, so it
   never reaches the engine or its consumers.
-- **Slang** — `slangc` for material/shader compilation (plan 07). Prefer the
+- **Slang** — `slangc` for material/shader compilation (plan 08). Prefer the
   prebuilt release binary; document the toolchain requirement.
-- **SPIRV-Reflect** — uniform offline reflection of the final SPIR-V (plan 07), so
+- **SPIRV-Reflect** — uniform offline reflection of the final SPIR-V (plan 08), so
   both Slang-compiled and inline-precompiled shaders reflect through one path.
 - **stb_image** — already vendored (`src/Vendor`); reused by the cooker for texture
-  decode (plan 05).
+  decode (plan 06).
+
+The **bindless** subsystem (plan 05) adds **no** new dependency — it promotes the
+descriptor-indexing device features veng already enables (CLAUDE.md / the bindless
+doc note them as on-and-unused).
 
 ## Out of scope (named, so it isn't half-built)
 
 - **Async / threading** — the whole of future area 2. `LoadSync` only.
-- **Bindless** — `Material` uses per-set `DescriptorSet`; bindless backing later.
 - **Hot-reload / file watching** — needs a watcher and the async swap path; future.
   `Reload(id)` is *not* implemented this planset.
 - **KTX2 / Basis / GPU-compressed textures, mip generation** — v1 textures are
@@ -183,24 +213,26 @@ correct-sized PPM) → update this table → one commit per plan,
 `Plan NN: <summary>` with a `Co-Authored-By` trailer (`planset-5:` for
 roadmap-only edits).
 
-- **Validation discipline.** Plans that create GPU resources from cooked data
-  (05/06/08) must pass the `VE_DEBUG` validation check (run the relevant binary
-  from `build-debug/`, grep stderr for `Vulkan validation` ERROR) and must not
-  widen the known descriptor-pool gap (CLAUDE.md).
+- **Validation discipline.** Plans that create GPU resources (05/06/07/09) must
+  pass the `VE_DEBUG` validation check (run the relevant binary from `build-debug/`,
+  grep stderr for `Vulkan validation` ERROR). Plan 05 (with planset-2/06) should
+  *narrow* the known descriptor-pool gap and update the validation-gate allowlist
+  (CLAUDE.md) accordingly — no plan may widen it.
 - **Delegation.** The mechanical sweeps — the reorg's path/CMake churn (01), the
-  cooker importer bodies (05/06 cook side) — are good `model: sonnet` subagent
-  work; keep format design (02), the runtime/loader contract (04), and the
-  reflection/material design (07/08) on the main thread.
+  cooker importer bodies (06/07 cook side) — are good `model: sonnet` subagent
+  work; keep format design (02), the runtime/loader contract (04), the bindless
+  subsystem (05), and the reflection/material design (08/09) on the main thread.
 
 > Status legend: `proposed` = drafted, awaiting review; `ready` = reviewed and
 > approved; `done` = landed and verified.
 
 ## On completion
 
-Closes **future area 1's synchronous slice.** Update
-[future/README.md](../future/README.md): mark area 1 taken up by planset-5 (sync),
-leaving area 2 (threading → async loads) and the bindless rework as the named
-follow-ons; re-cut the ordering so the remaining chain is
-`5 (sync assets, done) → 2 threading (async) + bindless`. Update
-[plans/README.md](../README.md) and trim [asset-system.md](../future/asset-system.md)
-to the enduring async/bindless end-state vision.
+Closes **future area 1's synchronous slice and the bindless rework.** Update
+[future/README.md](../future/README.md): mark area 1 taken up by planset-5 (sync +
+bindless), leaving **area 2 (threading → async loads)** as the one remaining chain
+item; re-cut the ordering so the remaining chain is
+`5 (sync assets + bindless, done) → 2 threading (async)`. Update
+[plans/README.md](../README.md), banner [bindless-descriptors.md](../future/bindless-descriptors.md)
+as delivered, and trim [asset-system.md](../future/asset-system.md) to the enduring
+async/hot-reload end-state vision.

@@ -60,9 +60,9 @@ struct CookedTextureHeader { u32 Format; u32 Width, Height; u32 MipCount; /* =1 
 struct CookedMeshHeader   { u32 VertexStride, VertexCount, IndexCount, IndexType;
                             u32 SubMeshCount; /* + layout descriptor + submesh table */ };
 struct CookedSubMesh      { u32 IndexOffset, IndexCount; u64 MaterialId; /* AssetId */ };
-// Shader: reflected interface + SPIR-V (ShaderInterface serialization defined in plan 07)
+// Shader: reflected interface + SPIR-V (ShaderInterface serialization defined in plan 08)
 struct CookedShaderHeader { u32 InterfaceBytes; u32 SpirvBytes; /* + interface + spirv */ };
-// Material: shader ref + params + texture bindings (defined in plan 08)
+// Material: shader ref + params + texture bindings (defined in plan 09)
 struct CookedMaterialHeader { u64 ShaderId; u32 TextureBindingCount; u32 ParamBytes; /* … */ };
 ```
 
@@ -113,5 +113,5 @@ Plan 01 (the `assetformat/` subdir + top-level CMake must exist). Blocks 03 and 
   `k_FormatVersion` constant) so a `VersionMismatch` is a clean reader-side error
   (plan 04's `AssetError`), not a crash.
 - The cooked-blob *headers* are defined here; their *production* (cooker) and
-  *consumption* (engine loaders) land per-type in 05/06/07/08, each filling in the
+  *consumption* (engine loaders) land per-type in 06/07/08/09, each filling in the
   reserved fields (mips, layout descriptor, interface bytes) as that type arrives.

@@ -1,4 +1,4 @@
-# Plan 07 — Shader via Slang + offline reflection → `ShaderInterface`
+# Plan 08 — Shader via Slang + offline reflection → `ShaderInterface`
 
 **Goal:** the shader asset, with **reflection moved offline**. The cooker compiles
 a **Slang** source to SPIR-V and reflects it into a serializable `ShaderInterface`
@@ -14,9 +14,9 @@ planset-2) finally lands.
 Reflection is the keystone the material plan stands on: a `Material` validates its
 params/textures against the shader's interface and builds its layouts from it.
 Settling the interface representation, the Slang toolchain, and the
-reflection-to-layout derivation here — before materials — keeps plan 08 about
+reflection-to-layout derivation here — before materials — keeps plan 09 about
 materials, not shader plumbing. It's also independent of textures/meshes, so it can
-proceed in parallel with 05/06.
+proceed in parallel with 06/07.
 
 ## The interface (serialized at cook time, never derived at runtime)
 
@@ -26,7 +26,7 @@ struct ShaderInterface
     vector<DescriptorBinding> Bindings;       // set, binding, type, count, stageMask
     vector<PushConstantBlock> PushConstants;  // offset, size, stageMask (validated ≤128B, planset-2/01)
     VertexBufferLayout        VertexInputs;   // from the vertex stage
-    // set 0 is flagged engine-provided (reserved for the future bindless registry);
+    // set 0 is flagged engine-provided (the bindless registry, plan 05);
     // the author never declares it — recognized + skipped here.
 };
 struct CookedShaderHeader { u32 InterfaceBytes; u32 SpirvBytes; /* + interface + spirv */ };
@@ -42,7 +42,7 @@ bridges to `Renderer::` enums on load.
   - `{ "type": "shader", "source": "shaders/brick.slang", "entry": ["vsMain","fsMain"] }`
     → invoke **Slang** (`slangc`/the Slang API) → SPIR-V.
   - `{ "type": "shader", "spirv_b64": "…" }` → precompiled SPIR-V, base64-decoded
-    (the editor/inline path; also how materials inline shaders, plan 08).
+    (the editor/inline path; also how materials inline shaders, plan 09).
 - **Reflect the final SPIR-V with SPIRV-Reflect** — one reflection path for both
   forms (Slang-compiled and inline-precompiled), so the cooker doesn't depend on
   Slang's reflection API for the inline case. Produce `ShaderInterface`; recognize
@@ -63,11 +63,13 @@ struct ShaderAsset { Ref<Shader> Module; ShaderInterface Interface; };
   `DescriptorSetLayout` / `PipelineLayout` from a `ShaderInterface` (sets ≥ 1;
   set 0 reserved) instead of the hand-declared `…Info` structs. This is the
   consumed half of planset-1/12 and the missing half of planset-2:
-  - descriptor/pipeline layouts from the interface;
+  - descriptor/pipeline layouts from the interface, **with set 0 supplied by the
+    `BindlessRegistry`** (plan 05's `GetSet0Layout()`) and author bindings in
+    sets ≥ 1;
   - **name-based binding** — resolve a binding by name to its set/binding;
   - **vertex layout validation** — a mesh's `VertexBufferLayout` checked against
     the shader's `VertexInputs` at material/draw setup (a loud mismatch, tightening
-    plan 06's canonical-layout check).
+    plan 07's canonical-layout check).
 
 ## Work
 
@@ -84,24 +86,23 @@ struct ShaderAsset { Ref<Shader> Module; ShaderInterface Interface; };
 
 ## Dependencies
 
-Plans 02 (interface serialization), 03 (importer table), 04 (loader table).
-Independent of 05/06. **Blocks 08** (material needs the interface + derived
-layouts).
+Plans 02 (interface serialization), 03 (importer table), 04 (loader table), and 05
+(set 0 from the registry). Independent of 06/07. **Blocks 09** (material needs the
+interface + derived layouts).
 
 ## Acceptance
 
 - Clean build, `ctest` green incl. the reflection tests.
 - A shader cooked from Slang loads and yields a correct `ShaderInterface`; layouts
-  built from it drive a working pipeline (proven via the sample in 08/09).
+  built from it drive a working pipeline (proven via the sample in 09/10).
 - **Validation-clean** under `VE_DEBUG` for any pipeline built from reflected
   layouts.
 
 ## Notes
 
-- **Set 0 is reserved for the future bindless registry** even though bindless isn't
-  built this planset — recognizing/excluding it now means the bindless rework slots
-  in without re-cooking shaders. Pre-bindless, the material binds its resources in
-  sets ≥ 1 via today's `DescriptorSet`.
+- **Set 0 is the bindless registry** (plan 05) — recognizing/excluding it in
+  reflection is the contract that lets a reflected pipeline layout splice in the
+  registry's set-0 layout while author bindings live in sets ≥ 1.
 - Slang-native reflection (parameter blocks, etc.) is a possible later upgrade; v1
   uses SPIRV-Reflect uniformly for the simpler, single-path story.
 - Push-constant blocks are validated ≤128B at cook time too (the planset-2/01 cap),

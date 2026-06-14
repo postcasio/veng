@@ -5,7 +5,7 @@ an explicit `Context&` — the planset-4 lesson) **mounts** cooked archives, res
 `AssetId`s against them, and synchronously loads assets via a per-type **loader**
 table, handing back a typed, refcounted `AssetHandle<T>`. Introduce the structured
 `AssetLoadError`. No concrete asset types yet beyond a `Raw` blob handle for
-testing — 05–08 register real loaders into this frame.
+testing — 06–09 register real loaders into this frame.
 
 ## Why this is its own plan
 
@@ -122,7 +122,7 @@ and caches the result keyed by `AssetId`.
 ## Dependencies
 
 Plans 01, 02 (`AssetId`, `ArchiveReader`, blob layouts). Independent of the cooker
-(can load a fixture archive). Blocks 05–08 (they register loaders here).
+(can load a fixture archive). Blocks 06–09 (they register loaders here).
 
 ## Acceptance
 

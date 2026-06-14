@@ -1,4 +1,4 @@
-# Plan 09 — Example asset pack: hand-written JSON → build-time cook → load
+# Plan 10 — Example asset pack: hand-written JSON → build-time cook → load
 
 **Goal:** the deliverable, demonstrated. hello-triangle gets a **hand-written JSON
 asset pack** referring to a JSON material (which refers to an external Slang shader,
@@ -23,8 +23,8 @@ assets, not a series of one-offs.
 {
   "version": 1,
   "assets": [
-    { "id": 1001, "type": "texture",  "source": "textures/brick.png", "srgb": true },
-    { "id": 1002, "type": "mesh",     "source": "meshes/cube.obj" },
+    { "id": 1001, "type": "texture",  "source": "textures/brick.tex.json" },
+    { "id": 1002, "type": "mesh",     "source": "meshes/cube.mesh.json" },
     { "id": 1003, "type": "material", "source": "materials/brick.vmat.json" }
   ]
 }
@@ -76,9 +76,10 @@ void OnDispose() override { m_Material = {}; m_Mesh = {}; }   // release handles
 ## Work
 
 1. `cmake/AssetPack.cmake` with `add_asset_pack`; wire it into the sample's
-   `CMakeLists.txt`, replacing the ad-hoc cook steps from plans 05/06.
-2. Author the pack JSON, the material JSON (both shader forms), and bring in the
-   `brick.png` / `cube.obj` / `brick.slang` source assets.
+   `CMakeLists.txt`, replacing the ad-hoc cook steps from plans 06/07.
+2. Author the pack JSON, the per-asset source JSONs (`brick.tex.json`,
+   `cube.mesh.json`, `brick.vmat.json` in both shader forms), and bring in the
+   `brick.png` / `cube.obj` / `brick.slang` binaries they reference.
 3. Rewrite the sample to mount the pack and render purely by `AssetId`; release all
    handles in `OnDispose`.
 4. Verify the headless smoke path mounts + loads + renders the pack (the
@@ -86,7 +87,7 @@ void OnDispose() override { m_Material = {}; m_Mesh = {}; }   // release handles
 
 ## Dependencies
 
-Plans 05 (texture), 06 (mesh), 08 (material) — every type must exist. The capstone
+Plans 06 (texture), 07 (mesh), 09 (material) — every type must exist. The capstone
 demonstration.
 
 ## Acceptance

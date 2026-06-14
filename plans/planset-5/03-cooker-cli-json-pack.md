@@ -6,13 +6,13 @@ a `.vengpack` archive via `assetformat`'s `ArchiveWriter`. The `vengc` CLI expos
 `vengc cook <pack.json> -o <out.vengpack>`. This plan ships the **skeleton**: the
 JSON schema, the importer-registry mechanism, and an end-to-end path that produces
 a valid archive from a pack whose entries use a trivial `raw` importer — concrete
-texture/mesh/shader/material importers arrive in 05–08.
+texture/mesh/shader/material importers arrive in 06–09.
 
 ## Why this is its own plan
 
 The cooker's *shell* — argument handling, JSON parsing, the importer dispatch
 table, error reporting, archive emission — is orthogonal to any one asset type.
-Building it once, proven against a `raw` passthrough importer, means 05/06/07/08
+Building it once, proven against a `raw` passthrough importer, means 06/07/08/09
 each add *only* a `Cook()` body and a registry line, not tool plumbing.
 
 ## The pack JSON schema
@@ -34,7 +34,7 @@ each add *only* a `Cook()` body and a registry line, not tool plumbing.
   importer → a cook error naming the entry.
 - **`source`** is a path **relative to the pack file's directory** (so packs are
   relocatable). Material/inline-shader entries may instead carry inline data
-  (plan 08) — `source` vs inline is per-importer.
+  (plan 09) — `source` vs inline is per-importer.
 - A `vengc mint-id` helper (or just documented "any non-zero u64") covers id
   minting for hand-written packs; the editor mints random ids later.
 
@@ -89,7 +89,7 @@ type, blob)` → `Write(out)`. All `Result<>`, no exceptions.
 ## Dependencies
 
 Plans 01 (the subdir) and 02 (`ArchiveWriter`, `AssetType`, `AssetId`). Blocks the
-cook side of 05/06/07/08.
+cook side of 06/07/08/09.
 
 ## Acceptance
 
@@ -102,7 +102,7 @@ cook side of 05/06/07/08.
 ## Notes
 
 - Keep `CookContext` minimal now; it grows a dependency-id resolver when materials
-  reference textures by id (plan 08) — but cross-asset *resolution* is by raw id,
+  reference textures by id (plan 09) — but cross-asset *resolution* is by raw id,
   so the cooker doesn't need the referenced asset present, only its id.
 - The CLI stays thin — all logic in `libveng_cook` so it's unit-testable without
   spawning a process.
