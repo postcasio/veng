@@ -5,6 +5,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/ImGui/ImGuiLayer.h>
+#include <Veng/Task/TaskSystem.h>
 
 namespace Veng
 {
@@ -39,6 +40,11 @@ namespace Veng
         [[nodiscard]] Renderer::Context& GetRenderContext()
         {
             return m_RenderContext;
+        }
+
+        [[nodiscard]] TaskSystem& GetTaskSystem()
+        {
+            return *m_TaskSystem;
         }
 
         [[nodiscard]] AssetManager& GetAssetManager()
@@ -89,6 +95,12 @@ namespace Veng
         Unique<Window> m_Window;
 
         Renderer::Context m_RenderContext;
+
+        // The CPU concurrency subsystem, constructed beside the Context and
+        // threaded by reference into consumers. Destroyed (joining its workers)
+        // after m_AssetManager: a worker may hold a Context& and touch
+        // AssetManager state, so neither may be torn down while a worker is live.
+        Unique<TaskSystem> m_TaskSystem;
 
         // Constructed after m_RenderContext (it needs a live Context); reset
         // before DisposeResources() so cached assets retire while the context

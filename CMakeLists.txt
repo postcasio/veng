@@ -193,6 +193,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/main.cpp
             tests/unit/sanity.cpp
             tests/unit/pure_logic.cpp
+            tests/unit/task_system.cpp
             tests/unit/type_mapping.cpp
             tests/unit/barrier_decision.cpp
             tests/unit/asset_archive.cpp

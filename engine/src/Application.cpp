@@ -24,6 +24,8 @@ namespace Veng
             .InternalRenderExtent = m_Info.InternalRenderExtent,
         }, m_Window.get());
 
+        m_TaskSystem = CreateUnique<TaskSystem>();
+
         m_AssetManager = CreateUnique<AssetManager>(m_RenderContext);
 
         // ImGui needs a window (GLFW backend), so it's only available windowed.
@@ -65,6 +67,11 @@ namespace Veng
 
         m_RenderContext.WaitIdle();
 
+        // Let every in-flight job finish before OnDispose, so continuations that
+        // hand resources to the application have all run and there is no live
+        // worker touching engine state during teardown.
+        m_TaskSystem->WaitForAll();
+
         // Consumers must release their engine resources here — the context is
         // torn down right after, and resources outliving it are an error.
         OnDispose();
@@ -78,6 +85,11 @@ namespace Veng
         // DisposeResources() drains them.
         m_AssetManager.reset();
 
+        // Join the workers only after the AssetManager is gone: a pending load's
+        // worker holds a Context& and touches AssetManager state, so neither may
+        // be torn down while a worker is live.
+        m_TaskSystem.reset();
+
         m_RenderContext.DisposeResources();
         m_RenderContext.Dispose();
         m_Window.reset();
@@ -85,6 +97,12 @@ namespace Veng
 
     void Application::Frame()
     {
+        // Run main-thread continuations before BeginFrame advances the frame
+        // index: a continuation that registers a resource or retires a handle
+        // must land before AcquireNextFrame, or its GPU-state mutation falls in
+        // an ambiguous frame window.
+        m_TaskSystem->PumpMainThread();
+
         const f32 delta = Time::Update();
 
         if (m_ImGuiLayer)

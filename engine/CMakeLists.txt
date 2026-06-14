@@ -15,6 +15,7 @@ add_library(veng SHARED
         src/Asset/Loaders/TextureLoader.cpp
         src/Asset/Loaders/VertexLayoutLoader.cpp
         src/Log.cpp
+        src/Task/TaskSystem.cpp
         src/Time.cpp
         src/Window.cpp
         src/ImGui/ImGuiLayer.cpp
