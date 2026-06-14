@@ -232,10 +232,34 @@ keep glm/fmt PUBLIC and the backend libs PRIVATE.
 
 ### RenderGraph: barriers fall out of declared use
 
-Don't hand-write layout transitions/barriers. Declare a pass with the views it
+Don't hand-write layout transitions/barriers. Declare a pass with the resources it
 writes (`.Color(...)`) and reads (`.Sample(...)`); the graph derives the layout
-transitions and drives `BeginRendering`/`EndRendering`. See `RenderScene` /
-`CompositeToSwapChain` in the hello-triangle `main.cpp` for the pattern.
+transitions and drives `BeginRendering`/`EndRendering`.
+
+Passes name **logical resources**, addressed by a vk-free `ResourceId`, not a
+concrete `Ref<ImageView>`:
+- **`CreateTransient({.Format, .Extent, .Usage})`** declares a graph-owned
+  transient — the graph allocates its `Image`/`ImageView` at compile, resolves it
+  per frame, and may alias non-overlapping transients onto shared backing.
+- **`Import(name)`** declares an external resource (the swapchain image, an
+  app-owned target). The graph never allocates or aliases it; its concrete view is
+  supplied per frame as an `ImportBinding` passed to `Execute`.
+
+A pass's `Execute` callback receives a **`PassContext`** — `Cmd()` for the command
+buffer and `Resolved(ResourceId)` for a declared transient's concrete view this
+frame. A callback may not capture a transient's view (an aliased transient has no
+fixed backing); it resolves through the context at record time.
+
+`RenderGraph` is a **builder**: declaring passes records nothing. `Compile()`
+derives the barrier/transition schedule, allocates transients, builds each graphics
+pass's `RenderingInfo`, and runs one-time validation, returning a
+`Unique<CompiledGraph>`. `CompiledGraph::Execute(cmd, imports)` replays that baked
+schedule per frame — only the per-pass callbacks run. A consumer re-`Compile()`s
+only on a **structural** change (a pass added/removed, a transient's extent/format
+changed); per-frame data never recompiles. See `BuildSceneGraph` /
+`BuildCompositeGraph` (compile) and `RenderScene` / `CompositeToSwapChain` (replay)
+in the hello-triangle `main.cpp` for the pattern — member compiled graphs held
+across frames, imports bound per frame, re-compiled on resize.
 
 ### Application
 

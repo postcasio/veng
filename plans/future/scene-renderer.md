@@ -3,9 +3,9 @@
 > **Vision / design sketch, not scheduled.** Direction and recommendations for a
 > long-lived, configurable scene-rendering object that sits **on top of**
 > `RenderGraph`. Builds on the shipped renderer / bindless / material foundation
-> (planset-5) and interacts with three other future pieces: the **compiled
-> [`RenderGraph`](compiled-rendergraph.md)** (area 9 — the enabling prerequisite),
-> the
+> (planset-5) and the **compiled [`RenderGraph`](compiled-rendergraph.md)** (area 9,
+> shipped in [planset-8](../planset-8/README.md) — its one enabling rendering
+> prerequisite, now satisfied), and interacts with two other future pieces: the
 > [threading/task system](threading-task-system.md) (area 2 — the frames-in-flight
 > contract and parallel pass recording), and the [editor](editor.md) (area 6 — the
 > prime consumer, whose viewport panels each drive one of these). The **scene** it
@@ -86,10 +86,10 @@ single-offscreen-image → swapchain compositing, one level down).
 
 ## Compile vs. record (designing for the compiled graph)
 
-`RenderGraph` is immediate-mode today (rebuilt per frame — `RenderGraph.h`), but
-the direction is a **compiled** graph for performance. The `SceneRenderer` API
-above is **forward-compatible with that migration by construction**, and that is
-deliberate. Compilation splits the work into two phases:
+`RenderGraph` is **compiled** ([compiled-rendergraph.md](compiled-rendergraph.md) —
+shipped in planset-8): a builder whose `Compile()` returns a `CompiledGraph` that
+replays per frame. The `SceneRenderer` API above is **built around that lifecycle**,
+and that is deliberate. Compilation splits the work into two phases:
 
 - **Compile** (once, at `Create` / `Resize` / `Configure`): pass set + order, the
   derived barrier/layout schedule, transient allocation/aliasing, attachment
@@ -102,10 +102,9 @@ So a compiled graph caches **topology, not draw calls**, and the things that
 invalidate it — topology (a pass on/off) and transient sizing (extent/format) —
 are **exactly `Configure` and `Resize`**. Those two methods are the recompile
 seams; `Execute` never recompiles. A bare `Execute(scene)` that rebuilt everything
-inside would have *no seam to hang compilation off* — putting `Configure`/`Resize`
-in now, while the graph is still immediate-mode, is what buys the compiled
-migration cheaply later. The public shape does not change across the migration;
-only where the graph lives internally does.
+inside would have *no seam to hang compilation off* — `Configure`/`Resize` are the
+seams a consumer re-`Compile()`s on, exactly matching the compiled graph's
+structural-change recompile model.
 
 This rests on **two invariants** — write them down, because everything else
 follows:
@@ -215,11 +214,12 @@ transient allocation gets fixed and hand-waving stops being possible.
 
 ## Open forks & dependencies
 
-- **Compiled [`RenderGraph`](compiled-rendergraph.md) is the enabling
-  prerequisite** (area 9).
-  `SceneRenderer` is designed to ship first against the immediate-mode graph and
-  gain the compiled internals without an API change; the compiled graph can also
-  land independently and `SceneRenderer` benefits for free.
+- **Compiled [`RenderGraph`](compiled-rendergraph.md) — the enabling rendering
+  prerequisite (area 9) — has landed** (planset-8). Its
+  `PassContext::Resolved` / `Compile` / structural-recompile seams match what the
+  `SceneRenderer` API above assumes (its `Configure`/`Resize` are the recompile
+  triggers, `Execute` replays), so the remaining gates are the scene/entity model
+  and the editor, not a rendering prerequisite.
 - **Resolved — self-contained graph** (each renderer owns one graph) over
   contribute-to-a-shared-graph: simpler, correct for N independent offscreen RTs,
   and the shared-graph upside needs cross-pass reordering the linear graph lacks.
@@ -232,6 +232,7 @@ transient allocation gets fixed and hand-waving stops being possible.
 
 ## Status
 
-Vision only. Becomes its own planset when taken up — most naturally alongside or
-just after the compiled-`RenderGraph` work, and ahead of the editor's scene
-viewport, which is its first real consumer.
+Vision only. Becomes its own planset when taken up — its compiled-`RenderGraph`
+prerequisite has landed (planset-8), so it is gated now only on the scene/entity
+model (area 7) and the editor (area 6), whose scene viewport is its first real
+consumer.

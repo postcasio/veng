@@ -190,22 +190,27 @@ int main()
 
         context.ImmediateCommands([&](CommandBuffer& cmd)
         {
-            RenderGraph graph;
+            RenderGraph graph(context);
+
+            const ResourceId sourceId = graph.Import("Source");
+            const ResourceId derivedId = graph.Import("Derived");
+            const ResourceId outputId = graph.Import("Output");
 
             graph.AddPass("Clear Source")
                 .Color({
-                    .View = sourceView,
+                    .Resource = sourceId,
                     .Load = LoadOp::Clear,
                     .Store = StoreOp::Store,
                     .Clear = ClearColor{0.2f, 0.4f, 0.6f, 1.0f},
                 })
-                .Execute([](CommandBuffer&) {});
+                .Execute([](PassContext&) {});
 
             graph.AddComputePass("Invert")
-                .StorageRead(sourceView)
-                .StorageWrite(derivedView)
-                .Execute([&](CommandBuffer& cmd)
+                .StorageRead(sourceId)
+                .StorageWrite(derivedId)
+                .Execute([&](PassContext& ctx)
                 {
+                    CommandBuffer& cmd = ctx.Cmd();
                     cmd.BindPipeline(computePipeline);
                     cmd.BindDescriptorSets({
                         .Sets = {computeSet},
@@ -217,14 +222,15 @@ int main()
 
             graph.AddPass("Sample Derived")
                 .Color({
-                    .View = outputView,
+                    .Resource = outputId,
                     .Load = LoadOp::Clear,
                     .Store = StoreOp::Store,
                     .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
                 })
-                .Sample(derivedView)
-                .Execute([&](CommandBuffer& cmd)
+                .Sample(derivedId)
+                .Execute([&](PassContext& ctx)
                 {
+                    CommandBuffer& cmd = ctx.Cmd();
                     cmd.BindPipeline(samplePipeline);
                     cmd.SetViewport({0, 0}, {size, size});
                     cmd.SetScissor({0, 0}, {size, size});
@@ -232,7 +238,12 @@ int main()
                     cmd.DrawFullscreenTriangle();
                 });
 
-            graph.Execute(cmd);
+            const RenderGraph::ImportBinding bindings[] = {
+                {sourceId, sourceView},
+                {derivedId, derivedView},
+                {outputId, outputView},
+            };
+            graph.Compile()->Execute(cmd, bindings);
         });
 
         const vector<u8> pixels = outputImage->Download();

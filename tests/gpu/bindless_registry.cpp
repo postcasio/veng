@@ -116,27 +116,30 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "bindless registry: register, bind, an
 
     Context.ImmediateCommands([&](CommandBuffer& cmd)
     {
-        RenderGraph graph;
+        RenderGraph graph(Context);
+        const ResourceId sourceId = graph.Import("Source");
+        const ResourceId outputId = graph.Import("Output");
 
         graph.AddPass("Clear Source")
             .Color({
-                .View = sourceView,
+                .Resource = sourceId,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
                 .Clear = ClearColor{0.0f, 0.0f, 1.0f, 1.0f},
             })
-            .Execute([](CommandBuffer&) {});
+            .Execute([](PassContext&) {});
 
         graph.AddPass("Sample Bindless")
             .Color({
-                .View = outputView,
+                .Resource = outputId,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
                 .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
             })
-            .Sample(sourceView)
-            .Execute([&](CommandBuffer& cmd)
+            .Sample(sourceId)
+            .Execute([&](PassContext& ctx)
             {
+                CommandBuffer& cmd = ctx.Cmd();
                 cmd.BindPipeline(pipeline);
                 cmd.SetViewport({0, 0}, {Size, Size});
                 cmd.SetScissor({0, 0}, {Size, Size});
@@ -148,7 +151,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "bindless registry: register, bind, an
                 cmd.DrawFullscreenTriangle();
             });
 
-        graph.Execute(cmd);
+        const RenderGraph::ImportBinding bindings[] = {
+            {sourceId, sourceView},
+            {outputId, outputView},
+        };
+        graph.Compile()->Execute(cmd, bindings);
     });
 
     const vector<u8> pixels = outputImage->Download();
