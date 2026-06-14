@@ -8,8 +8,8 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   buffers. (Plan 12, runtime shader reflection, was intentionally *not* built —
   superseded by planset-2, see below.)
 
-- **[planset-2](planset-2/README.md)** — rendering API surface cleanup (🚧 in
-  progress). Push-constant layout/buffer, attachment formats from render targets,
+- **[planset-2](planset-2/README.md)** — rendering API surface cleanup
+  (✅ done, 6 plans). Push-constant layout/buffer, attachment formats from render targets,
   retiring the legacy render-pass path, and minor ergonomics. Shader-facing work
   is deferred to the future-work areas below.
 
