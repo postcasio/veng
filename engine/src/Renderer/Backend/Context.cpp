@@ -633,8 +633,18 @@ namespace Veng::Renderer
 
         PhysicalDevice.getFeatures2(&features2);
 
+        // Timeline semaphores are a hard requirement for the loader↔render sync
+        // channel — not a fallback. Query support explicitly and fatal-assert if
+        // the device lacks it before enabling the feature below.
+        vk::PhysicalDeviceVulkan12Features supportedVulkan12Features{};
+        vk::PhysicalDeviceFeatures2 supportedFeatures2{ .pNext = &supportedVulkan12Features };
+        PhysicalDevice.getFeatures2(&supportedFeatures2);
+        VE_ASSERT(supportedVulkan12Features.timelineSemaphore,
+                  "Physical device does not support timeline semaphores!");
+
         vk::PhysicalDeviceVulkan12Features vulkan12Features{
             .pNext = &features2,
+            .timelineSemaphore = vk::True,
             .shaderUniformBufferArrayNonUniformIndexing = vk::True,
             .shaderSampledImageArrayNonUniformIndexing = vk::True,
             .shaderStorageBufferArrayNonUniformIndexing = vk::True,

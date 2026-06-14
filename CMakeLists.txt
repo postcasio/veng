@@ -364,6 +364,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/descriptor_write_paths.cpp
             tests/gpu/isolation.cpp
             tests/gpu/bindless_registry.cpp
+            tests/gpu/timeline_semaphore.cpp
     )
     target_link_libraries(veng_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
     # bindless_registry.cpp and texture_loader.cpp draw with the test shaders

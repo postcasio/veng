@@ -62,4 +62,8 @@ namespace Veng::Renderer
     [[nodiscard]] inline vk::Fence GetVkFence(const Fence& fence) { return fence.GetNative().Fence; }
 
     [[nodiscard]] inline vk::Semaphore GetVkSemaphore(const Semaphore& semaphore) { return semaphore.GetNative().Semaphore; }
+
+    // The raw timeline semaphore handle, for the Context submit helper to thread
+    // through VkTimelineSemaphoreSubmitInfo alongside the per-submit u64 value.
+    [[nodiscard]] inline vk::Semaphore GetVkSemaphore(const TimelineSemaphore& semaphore) { return semaphore.GetNative().Semaphore; }
 }

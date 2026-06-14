@@ -44,6 +44,7 @@ add_library(veng SHARED
         src/Renderer/Backend/ShaderModule.cpp
         src/Renderer/Backend/SwapChain.cpp
         src/Renderer/Backend/SynchronizationFrame.cpp
+        src/Renderer/Backend/TimelineSemaphore.cpp
         src/Renderer/Backend/Utils.cpp
         src/Renderer/Backend/VertexBufferLayout.cpp
         src/Vendor/ImGui.cpp

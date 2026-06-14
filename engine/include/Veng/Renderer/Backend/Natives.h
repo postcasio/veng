@@ -20,6 +20,7 @@
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Semaphore.h>
 #include <Veng/Renderer/ShaderModule.h>
+#include <Veng/Renderer/TimelineSemaphore.h>
 #include <Veng/Window.h>
 
 namespace Veng
@@ -132,6 +133,11 @@ namespace Veng::Renderer
     };
 
     struct Semaphore::Native
+    {
+        vk::Semaphore Semaphore;
+    };
+
+    struct TimelineSemaphore::Native
     {
         vk::Semaphore Semaphore;
     };
