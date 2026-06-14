@@ -165,7 +165,10 @@ if (VENG_BUILD_TESTS)
     # resulting archive back with assetformat's ArchiveReader. Only built
     # alongside the cooker itself (VENG_BUILD_TOOLS, default ON top-level).
     if (VENG_BUILD_TOOLS)
-        target_sources(veng_unit PRIVATE tests/cooker/cook_roundtrip.cpp)
+        target_sources(veng_unit PRIVATE
+                tests/cooker/cook_roundtrip.cpp
+                tests/cooker/texture_cook.cpp
+        )
         target_link_libraries(veng_unit PRIVATE veng::cook)
         target_compile_definitions(veng_unit PRIVATE
                 VENG_COOKER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
@@ -314,6 +317,16 @@ if (VENG_BUILD_TESTS)
     # fullscreen.vert, compiled into the same ${CMAKE_CURRENT_BINARY_DIR}/shaders
     # output dir by veng_compute_dispatch_shaders.
     add_dependencies(veng_gpu veng_compute_dispatch_shaders)
+
+    # texture_loader.cpp cooks a fixture pack in-process (plan 06), so it needs
+    # the cooker library and the cooker fixtures' directory.
+    if (VENG_BUILD_TOOLS)
+        target_sources(veng_gpu PRIVATE tests/gpu/texture_loader.cpp)
+        target_link_libraries(veng_gpu PRIVATE veng::cook)
+        target_compile_definitions(veng_gpu PRIVATE
+                GPU_COOKER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
+        )
+    endif ()
 
     add_test(NAME veng_gpu COMMAND veng_gpu)
     set_tests_properties(veng_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)

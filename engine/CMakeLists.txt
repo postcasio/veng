@@ -7,6 +7,7 @@ add_library(veng SHARED
         src/Assert.cpp
         src/Asset/AssetManager.cpp
         src/Asset/Loaders/RawAssetLoader.cpp
+        src/Asset/Loaders/TextureLoader.cpp
         src/Log.cpp
         src/Time.cpp
         src/Window.cpp
@@ -35,6 +36,7 @@ add_library(veng SHARED
         src/Renderer/Backend/Shader.cpp
         src/Renderer/Backend/SwapChain.cpp
         src/Renderer/Backend/SynchronizationFrame.cpp
+        src/Renderer/Backend/Texture.cpp
         src/Renderer/Backend/Utils.cpp
         src/Renderer/Backend/VertexBufferLayout.cpp
         src/Vendor/ImGui.cpp

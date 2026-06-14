@@ -15,3 +15,27 @@ add_shaders(hello_triangle_shaders
         shaders/composite.frag
 )
 add_dependencies(hello_triangle hello_triangle_shaders)
+
+# Cook the sample asset pack (plan 06) with vengc at build time, into the
+# build tree alongside the shaders.
+set(HT_ASSET_DIR "${CMAKE_CURRENT_BINARY_DIR}/assets")
+
+add_custom_command(
+        OUTPUT ${HT_ASSET_DIR}/sample.vengpack
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${HT_ASSET_DIR}
+        COMMAND $<TARGET_FILE:vengc> cook
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/sample.vengpack.json
+                -o ${HT_ASSET_DIR}/sample.vengpack
+        DEPENDS vengc
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/sample.vengpack.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/brick.tex.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/brick.png
+        COMMENT "Cooking hello-triangle asset pack"
+)
+
+add_custom_target(hello_triangle_assets DEPENDS ${HT_ASSET_DIR}/sample.vengpack)
+add_dependencies(hello_triangle hello_triangle_assets)
+
+target_compile_definitions(hello_triangle PRIVATE
+        HT_ASSET_DIR="${HT_ASSET_DIR}"
+)

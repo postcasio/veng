@@ -21,13 +21,24 @@
 namespace Veng
 {
     // Texture: stb-decoded, single mip v1 (mip table reserved for later).
-    // Followed by Width * Height * bytes-per-pixel(Format) raw pixel bytes.
+    // Sampler fields mirror Veng::Renderer::SamplerInfo, stored as underlying
+    // integer/float types per the cycle-avoidance rule above. Followed by
+    // Width * Height * bytes-per-pixel(Format) raw pixel bytes.
     struct CookedTextureHeader
     {
         u32 Format = 0; // underlying Renderer::Format
         u32 Width = 0;
         u32 Height = 0;
         u32 MipCount = 1;
+
+        u32 MinFilter = 0;    // underlying Renderer::Filter
+        u32 MagFilter = 0;    // underlying Renderer::Filter
+        u32 MipmapMode = 0;   // underlying Renderer::MipmapMode
+        u32 AddressModeU = 0; // underlying Renderer::AddressMode
+        u32 AddressModeV = 0; // underlying Renderer::AddressMode
+        u32 AddressModeW = 0; // underlying Renderer::AddressMode
+        u32 AnisotropyEnabled = 0; // bool
+        f32 MaxAnisotropy = 1.0f;
     };
 
     // Mesh: interleaved vertices + indices in a declared layout. Followed by a

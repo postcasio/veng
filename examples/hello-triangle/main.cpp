@@ -3,6 +3,7 @@
 #include <Veng/Log.h>
 #include <Veng/Vendor/ImGui.h>
 
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
@@ -10,6 +11,7 @@
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Shader.h>
+#include <Veng/Renderer/Texture.h>
 #include <Veng/Renderer/TypedBuffers.h>
 
 #include <glm/gtc/packing.hpp>
@@ -25,12 +27,13 @@ namespace
     {
         vec2 Position;
         vec3 Color;
+        vec2 UV;
     };
 
     const Vertex k_Vertices[] = {
-        {{0.0f, -0.6f}, {1.0f, 0.2f, 0.2f}},
-        {{0.6f, 0.6f}, {0.2f, 1.0f, 0.2f}},
-        {{-0.6f, 0.6f}, {0.2f, 0.2f, 1.0f}},
+        {{0.0f, -0.6f}, {1.0f, 0.2f, 0.2f}, {0.5f, 0.0f}},
+        {{0.6f, 0.6f}, {0.2f, 1.0f, 0.2f}, {1.0f, 1.0f}},
+        {{-0.6f, 0.6f}, {0.2f, 0.2f, 1.0f}, {0.0f, 1.0f}},
     };
 
     const u16 k_Indices[] = {0, 1, 2};
@@ -43,6 +46,15 @@ namespace
         u32 SceneTexture;
         u32 ImGuiTexture;
         u32 Sampler;
+    };
+
+    // Triangle pipeline's fragment-stage push constants (offset 64, past the
+    // vertex stage's mat4 Transform at offset 0) — selects the brick texture's
+    // bindless slots (see Texture::GetHandle / GetSamplerHandle).
+    struct TriangleFragPushConstants
+    {
+        u32 TextureIndex;
+        u32 SamplerIndex;
     };
 }
 
@@ -95,6 +107,16 @@ protected:
         m_IndexBuffer.Upload(k_Indices);
 
         CreateTrianglePipeline();
+
+        // Cooked at build time (see CMakeLists.txt) from assets/sample.vengpack.json
+        // into HT_ASSET_DIR; mount and load the brick texture by AssetId.
+        const VoidResult mountResult = GetAssetManager().Mount(path(HT_ASSET_DIR) / "sample.vengpack");
+        VE_ASSERT(mountResult, "{}", mountResult.error());
+
+        const AssetResult<AssetHandle<Renderer::Texture>> brickTexture =
+            GetAssetManager().LoadSync<Renderer::Texture>(AssetId{1001});
+        VE_ASSERT(brickTexture.has_value(), "{}", brickTexture.error().Detail);
+        m_BrickTexture = *brickTexture;
 
         // The compositing path (ImGui overlay + swapchain present) only exists in
         // windowed mode. The headless smoke run renders just the scene and
@@ -152,6 +174,7 @@ protected:
 
     void OnDispose() override
     {
+        m_BrickTexture = {};
         m_SceneTexture.reset();
         m_CompositePipeline.reset();
         m_CompositeLayout.reset();
@@ -186,6 +209,7 @@ private:
             .Name = "Triangle Layout",
             .PushConstantRanges = {
                 Renderer::PushConstantRange::Of<mat4>(Renderer::ShaderStage::Vertex),
+                Renderer::PushConstantRange::Of<TriangleFragPushConstants>(Renderer::ShaderStage::Fragment, sizeof(mat4)),
             },
         });
 
@@ -195,6 +219,7 @@ private:
             .VertexBufferLayout = Renderer::VertexBufferLayout({
                 {Renderer::Format::RG32Sfloat, "a_Position"},
                 {Renderer::Format::RGB32Sfloat, "a_Color"},
+                {Renderer::Format::RG32Sfloat, "a_UV"},
             }),
             .PipelineLayout = m_TriangleLayout,
             .ShaderStages = {
@@ -271,6 +296,7 @@ private:
                 cmd.BindPipeline(m_TrianglePipeline);
                 cmd.SetViewport({0, 0}, extent);
                 cmd.SetScissor({0, 0}, extent);
+                GetRenderContext().GetBindlessRegistry().Bind(cmd);
                 cmd.BindVertexBuffer(m_VertexBuffer);
                 cmd.BindIndexBuffer(m_IndexBuffer);
 
@@ -279,6 +305,10 @@ private:
                     glm::rotate(mat4(1.0f), m_Angle, vec3(0.0f, 0.0f, 1.0f));
 
                 cmd.PushConstants(transform);
+                cmd.PushConstants(TriangleFragPushConstants{
+                    .TextureIndex = m_BrickTexture->GetHandle().Index,
+                    .SamplerIndex = m_BrickTexture->GetSamplerHandle().Index,
+                }, sizeof(mat4));
 
                 cmd.DrawIndexed(static_cast<u32>(m_IndexBuffer.GetIndexCount()), 1, 0, 0, 0);
             });
@@ -369,6 +399,7 @@ private:
 
     Ref<Renderer::PipelineLayout> m_TriangleLayout;
     Ref<Renderer::GraphicsPipeline> m_TrianglePipeline;
+    AssetHandle<Renderer::Texture> m_BrickTexture;
 
     Ref<Renderer::PipelineLayout> m_CompositeLayout;
     Ref<Renderer::GraphicsPipeline> m_CompositePipeline;

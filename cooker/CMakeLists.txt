@@ -29,11 +29,19 @@ add_library(libveng_cook STATIC
         src/Cooker.cpp
         src/BuiltinImporters.cpp
         src/Importers/RawImporter.cpp
+        src/Importers/TextureImporter.cpp
+        src/Vendor/StbImage.cpp
 )
 add_library(veng::cook ALIAS libveng_cook)
 
 target_include_directories(libveng_cook PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
+# stb_image (texture decode, plan 06) — implementation detail of
+# src/Vendor/StbImage.cpp and src/Importers/TextureImporter.cpp.
+target_include_directories(libveng_cook PRIVATE
+        ${stb_SOURCE_DIR}
 )
 
 # JSON_NOEXCEPTION: nlohmann/json's templates appear in libveng_cook's public

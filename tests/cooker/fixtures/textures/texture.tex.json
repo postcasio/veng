@@ -1,0 +1,12 @@
+{
+  "image": "texture_4x4.png",
+  "srgb": false,
+  "sampler": {
+    "min": "nearest",
+    "mag": "nearest",
+    "mipmap": "nearest",
+    "wrap_u": "clamp_to_edge",
+    "wrap_v": "clamp_to_edge",
+    "anisotropy": 0
+  }
+}
