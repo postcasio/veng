@@ -1,13 +1,15 @@
 # Plan 08 — Shader via Slang + offline reflection → `ShaderInterface`
 
-**Goal:** the shader asset, with **reflection moved offline**. The cooker compiles
-a **Slang** source to SPIR-V and reflects it into a serializable `ShaderInterface`
-(descriptor bindings, push-constant blocks, vertex inputs); the cooked shader blob
-is `interface + SPIR-V`. The engine registers a `ShaderAsset` loader that creates a
-`Shader` from the SPIR-V and carries the `ShaderInterface`, from which
-descriptor/pipeline layouts are **derived instead of hand-declared**. This is where
-the long-deferred shader-reflection work (planset-1/12 + the shader parts of
-planset-2) finally lands.
+**Goal:** the shader asset, with **reflection moved offline**. For hand-authored
+shaders, the cooker compiles a **Slang** source to SPIR-V and reflects it — via
+Slang's own reflection API — into a serializable `ShaderInterface` (descriptor
+bindings, push-constant blocks, vertex inputs); for editor-produced inline shaders,
+the interface is supplied directly alongside the SPIR-V (the editor already knows
+it — see Cook side). Either way the cooked shader blob is `interface + SPIR-V`. The
+engine registers a `ShaderAsset` loader that creates a `Shader` from the SPIR-V and
+carries the `ShaderInterface`, from which descriptor/pipeline layouts are **derived
+instead of hand-declared**. This is where the long-deferred shader-reflection work
+(planset-1/12 + the shader parts of planset-2) finally lands.
 
 ## Why this is its own plan
 
@@ -40,16 +42,21 @@ bridges to `Renderer::` enums on load.
 
 - A `ShaderImporter : AssetImporter`. Two input forms:
   - `{ "type": "shader", "source": "shaders/brick.slang", "entry": ["vsMain","fsMain"] }`
-    → invoke **Slang** (`slangc`/the Slang API) → SPIR-V.
-  - `{ "type": "shader", "spirv_b64": "…" }` → precompiled SPIR-V, base64-decoded
-    (the editor/inline path; also how materials inline shaders, plan 09).
-- **Reflect the final SPIR-V with SPIRV-Reflect** — one reflection path for both
-  forms (Slang-compiled and inline-precompiled), so the cooker doesn't depend on
-  Slang's reflection API for the inline case. Produce `ShaderInterface`; recognize
-  `set 0` as engine-provided and exclude it from the declared bindings.
+    → invoke **Slang** (`slangc`/the Slang API) to compile to SPIR-V, then **reflect
+    via Slang's own reflection API** (it already parsed the source to compile it —
+    no second tool needed) to produce `ShaderInterface`. Recognize `set 0` as
+    engine-provided and exclude it from the declared bindings.
+  - `{ "type": "shader", "spirv_b64": "…", "interface": { ... } }` → precompiled
+    SPIR-V, base64-decoded, **with its `ShaderInterface` supplied directly** in the
+    shape `assetformat` defines. This is the editor/inline path (also how materials
+    inline shaders, plan 09): the (future) material editor *produced* this shader
+    from its node graph, so it already knows every binding/param/vertex-input —
+    there is nothing to reflect. The cooker validates the supplied interface's
+    shape and passes it through unchanged.
 - Emit `CookedShaderHeader` + serialized interface + SPIR-V.
-- New cooker deps (pinned, cooker-only): **Slang** (prefer the prebuilt release;
-  document the toolchain requirement) and **SPIRV-Reflect**.
+- New cooker dep (pinned, cooker-only): **Slang** (prefer the prebuilt release;
+  document the toolchain requirement). No separate reflection library — Slang's
+  reflection API covers the only path that needs one.
 
 ## Load side (`libveng`)
 
@@ -73,8 +80,8 @@ struct ShaderAsset { Ref<Shader> Module; ShaderInterface Interface; };
 
 ## Work
 
-1. Cooker: Slang + SPIRV-Reflect deps; `ShaderImporter` (both input forms) +
-   register; a fixture `.slang` shader and a precompiled-SPIR-V fixture.
+1. Cooker: Slang dep; `ShaderImporter` (both input forms) + register; a fixture
+   `.slang` shader and a precompiled-SPIR-V + hand-written-interface fixture.
 2. `assetformat`: finalize the `ShaderInterface` + `CookedShaderHeader`
    serialization (the reserved fields from plan 02).
 3. Engine: `ShaderAsset`, `ShaderLoader`, register; the reflection→layout builder
@@ -102,8 +109,12 @@ interface + derived layouts).
 
 - **Set 0 is the bindless registry** (plan 05) — recognizing/excluding it in
   reflection is the contract that lets a reflected pipeline layout splice in the
-  registry's set-0 layout while author bindings live in sets ≥ 1.
-- Slang-native reflection (parameter blocks, etc.) is a possible later upgrade; v1
-  uses SPIRV-Reflect uniformly for the simpler, single-path story.
+  registry's set-0 layout while author bindings live in sets ≥ 1. The
+  editor-supplied-interface path (inline `spirv_b64`) follows the same contract —
+  the editor never declares set 0 either.
+- **No SPIRV-Reflect.** The `.slang` path reflects via Slang's own reflection API
+  (one tool, already a dependency for compiling); the inline path carries an
+  interface the editor already derived while building the shader. Neither path
+  needs a generic SPIR-V reflection library.
 - Push-constant blocks are validated ≤128B at cook time too (the planset-2/01 cap),
   so an over-budget shader fails the *cook*, not a runtime assert.

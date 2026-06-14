@@ -23,18 +23,20 @@ stopgap.
 ```jsonc
 // materials/brick.vmat.json
 {
-  "shader": { "path": "shaders/brick.slang" },   // OR { "spirv_b64": "…" } (editor/inline)
-  "textures": { "albedo": 1001, "normal": 1005 }, // name → AssetId (names resolved via reflection)
+  "shader": { "path": "shaders/brick.slang" },   // OR { "spirv_b64": "…", "interface": {…} } (editor/inline)
+  "textures": { "albedo": 1001, "normal": 1005 }, // name → AssetId (names resolved via the shader's interface)
   "params":   { "tint": [1.0, 0.9, 0.8, 1.0], "roughness": 0.4 }
 }
 ```
 
-- **Shader reference, two forms** — `path` (the cooker compiles it via the plan 08
-  Slang path) or `spirv_b64` (precompiled, base64-decoded then reflected via
-  SPIRV-Reflect). Inline is how editor-produced materials carry their compiled
-  shader without a separate file. Either way the cooker **materializes the shader as
-  a normal shader asset with its own `AssetId`** (synthetic for inline) so the
-  loader path is uniform and two materials can share a shader by id.
+- **Shader reference, two forms** — `path` (the cooker compiles *and reflects* it
+  via the plan 08 Slang path) or `spirv_b64` + `interface` (precompiled,
+  base64-decoded, with its `ShaderInterface` supplied directly — no reflection).
+  Inline is how editor-produced materials carry their compiled shader, with the
+  interface the editor already derived while building it, without a separate file.
+  Either way the cooker **materializes the shader as a normal shader asset with its
+  own `AssetId`** (synthetic for inline) so the loader path is uniform and two
+  materials can share a shader by id.
 - **`textures` / `params` validated against the reflected interface at cook time** —
   an unknown texture name, a missing required binding, or a wrong-typed param fails
   the **cook** with a located error, not at runtime.

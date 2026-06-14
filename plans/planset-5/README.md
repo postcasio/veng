@@ -185,10 +185,11 @@ via `FetchContent` with pinned tags like the rest:
   the *binary* archive, never JSON).
 - **assimp** — mesh import (plan 07). The one heavy dependency; cooker-only, so it
   never reaches the engine or its consumers.
-- **Slang** — `slangc` for material/shader compilation (plan 08). Prefer the
-  prebuilt release binary; document the toolchain requirement.
-- **SPIRV-Reflect** — uniform offline reflection of the final SPIR-V (plan 08), so
-  both Slang-compiled and inline-precompiled shaders reflect through one path.
+- **Slang** — `slangc`/the Slang API for material/shader compilation *and*
+  reflection (plan 08). Prefer the prebuilt release binary; document the toolchain
+  requirement. No separate reflection library: the `.slang` path reflects via
+  Slang's own API, and the inline (editor-produced) path carries a
+  `ShaderInterface` the editor already derived — neither needs SPIRV-Reflect.
 - **stb_image** — already vendored (`src/Vendor`); reused by the cooker for texture
   decode (plan 06).
 

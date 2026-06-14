@@ -19,8 +19,8 @@ finished surface rather than chasing a moving API.
    - **Layout** section: the per-lib subdirectory tree (`engine/`, `assetformat/`,
      `cooker/`, plus examples/tests) — replaces the old `include/`+`src/` layout.
    - **Build & test**: the `vengc` tool + `VENG_BUILD_TOOLS`; the cooker's
-     heavy/toolchain deps (assimp, Slang, SPIRV-Reflect, json) are cooker-only and
-     never reach `libveng` or its consumers.
+     heavy/toolchain deps (assimp, Slang, json) are cooker-only and never reach
+     `libveng` or its consumers.
    - **A new "Assets" core-conventions subsection**: cook is offline (no
      cook-on-demand); load is by opaque `u64` `AssetId` through mounted
      `.vengpack` archives; `AssetManager` is owned by `Application` and threaded a
