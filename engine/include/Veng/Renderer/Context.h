@@ -188,6 +188,19 @@ namespace Veng::Renderer
         // of Initialize() until Dispose(). See BindlessRegistry.h.
         [[nodiscard]] BindlessRegistry& GetBindlessRegistry() const;
 
+        // Queue a one-time graphics-queue acquire + shader-read transition for a
+        // bindless-sampled resource that has just gone resident. A texture
+        // sampled through set 0 is invisible to the RenderGraph, so the graph
+        // can never derive its layout transition or fold its upload's
+        // transfer-timeline wait into the submit. The resident half of the async
+        // upload (Texture::Finalize) enqueues the view here; BeginFrame drains
+        // the queue into the frame's command buffer before any pass records, so
+        // the resource is in shader-read layout and graphics-owned by the time
+        // anything samples it. The transition is idempotent — it is recorded
+        // once, on the first frame after the resource becomes resident. Called
+        // on the main thread only (same thread as BeginFrame); not synchronized.
+        void EnqueueBindlessAcquire(const Ref<ImageView>& view);
+
         struct Native;
         [[nodiscard]] Native& GetNative() const;
 
@@ -201,6 +214,12 @@ namespace Veng::Renderer
         Format m_DepthFormat = Format::D32Sfloat;
 
         bool m_RenderExtentChanged = false;
+
+        // Bindless-sampled resources awaiting their one-time graphics-queue
+        // acquire; populated by EnqueueBindlessAcquire and drained by BeginFrame.
+        // Holds a Ref so a view enqueued for a texture dropped before the next
+        // frame can't dangle.
+        vector<Ref<ImageView>> m_PendingBindlessAcquires;
 
         Unique<Native> m_Native;
     };

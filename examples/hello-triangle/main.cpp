@@ -311,21 +311,6 @@ private:
                 }
             });
 
-        // The mesh's material textures are sampled bindlessly inside the pass, so
-        // the graph cannot see them. Acquire each onto the graphics queue (and fold
-        // its async upload's transfer-timeline wait into the frame submit) before
-        // executing.
-        for (const AssetHandle<Veng::Material>& material : m_Mesh->GetMaterials())
-        {
-            if (!material.IsLoaded())
-                continue;
-            for (const AssetHandle<Veng::Texture>& texture : material.Get()->GetTextures())
-            {
-                if (texture.IsLoaded())
-                    cmd.PrepareForAccess(texture.Get()->GetView(), Renderer::AccessKind::Sample);
-            }
-        }
-
         graph.Execute(cmd);
     }
 

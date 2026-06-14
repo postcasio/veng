@@ -68,5 +68,10 @@ namespace Veng
         m_TextureHandle = bindless.Register(m_View);
         m_SamplerHandle = bindless.Register(m_Sampler);
         m_Registered = true;
+
+        // The view is sampled bindlessly through set 0, so the RenderGraph never
+        // sees it and can't transition it. The context acquires it onto the
+        // graphics queue at the next frame, before any pass samples it.
+        m_Context.EnqueueBindlessAcquire(m_View);
     }
 }

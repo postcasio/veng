@@ -9,6 +9,7 @@
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
+#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Native.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Window.h>
@@ -281,6 +282,11 @@ namespace Veng::Renderer
 
     void Context::DisposeResources()
     {
+        // Drop any bindless acquires that never reached a frame (a context torn
+        // down without rendering): their views retire into the current bin, which
+        // the drain below reclaims while the device and allocator are still alive.
+        m_PendingBindlessAcquires.clear();
+
         // Application::Run has already waited the GPU idle. Anything the
         // consumer released in OnDispose has retired into the bins — drain them
         // all before the frames (and their command buffers) go away.
@@ -502,6 +508,17 @@ namespace Veng::Renderer
 
         commandBuffer->Begin();
 
+        // Acquire any bindless-sampled resources that went resident since the
+        // last frame onto the graphics queue before any pass records — these are
+        // invisible to the RenderGraph (sampled through set 0), so the graph
+        // can't derive the transition itself. The acquire is idempotent and only
+        // ever does work the first frame after a resource becomes resident.
+        for (const Ref<ImageView>& view : m_PendingBindlessAcquires)
+        {
+            commandBuffer->PrepareForAccess(view, AccessKind::Sample);
+        }
+        m_PendingBindlessAcquires.clear();
+
         return *commandBuffer;
     }
 
@@ -572,6 +589,11 @@ namespace Veng::Renderer
     }
 
     BindlessRegistry& Context::GetBindlessRegistry() const { return *m_Native->Bindless; }
+
+    void Context::EnqueueBindlessAcquire(const Ref<ImageView>& view)
+    {
+        m_PendingBindlessAcquires.push_back(view);
+    }
 
     vector<const char*>& Context::Native::GetRequiredExtensions()
     {
