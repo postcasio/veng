@@ -48,8 +48,9 @@ This is a promotion of existing pieces, not a from-scratch subsystem:
 - **Prior art in-repo:** ImGui's `ImGui_ImplVulkan_AddTexture` is a mini-bindless
   registry — every texture gets a persistent descriptor slot. Same pattern,
   engine-wide.
-- **`UPDATE_AFTER_BIND` is already applied to every binding** — wrong as a default
-  (the 06 addendum), but precisely what a mutated-while-bound global set needs.
+- **`UPDATE_AFTER_BIND` is available as a per-binding opt-in** (`Bindless = true`,
+  [planset-2/06](../planset-2/06-descriptor-update-policy.md)) — precisely what a
+  mutated-while-bound global set needs; the registry's arrayed bindings would set it.
 
 ## The model
 
@@ -182,17 +183,15 @@ param entry*, not a bundle of descriptor sets.
 
 ## Migration / sequencing
 
-1. **06 addendum first** — static-by-default + the type/feature/pool single source
-   of truth, so the existing per-set layer is coherent and bindless flags become an
-   explicit opt-in rather than a global default. **Gaps planset-3 now pins** (its
-   `descriptor_write_paths` test reproduces them under `VE_DEBUG`, recorded not
-   fixed): the headless descriptor pool (`Context.cpp`) sizes only `eUniformBuffer`
-   and `eCombinedImageSampler`, so a `StorageImage` *or* a bare `SampledImage`
-   binding draws a pool-size validation WARN; and every binding is created
-   `UPDATE_AFTER_BIND` without the matching device feature, so a `StorageImage`
-   binding draws an ERROR (`descriptorBindingStorageImageUpdateAfterBind` not
-   enabled). The type→{pool size, required feature} single source of truth this
-   step introduces is exactly what closes both.
+1. **06 addendum first — done.** Static-by-default + the type/feature/pool single
+   source of truth landed in
+   [planset-2/06](../planset-2/06-descriptor-update-policy.md): the existing
+   per-set layer is coherent and bindless flags are now an explicit per-binding
+   opt-in (`DescriptorBinding::Bindless`) rather than a global default. The gaps
+   planset-3 pinned (`descriptor_write_paths` under `VE_DEBUG`) are closed — the
+   Primary Pool sizes every `DescriptorType` via `GetDescriptorTypeInfo`
+   (`TypeMapping.h`), and `descriptorBindingStorageImageUpdateAfterBind` is
+   enabled, so a static `StorageImage` binding (the common case) needs neither.
 2. **De-globalize `Context` (area 3)** — the registry wants an explicit device, not
    a `Context::Instance()` grab.
 3. **Registry + handles, alongside the per-set API** — don't rip out `DescriptorSet`

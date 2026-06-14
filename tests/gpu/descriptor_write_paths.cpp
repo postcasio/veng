@@ -10,21 +10,11 @@
 //   - UniformBuffer:        Write(binding, buffer)
 //   - StorageBuffer:        Write(binding, buffer)
 //
-// Known validation gap (CLAUDE.md, "Known validation gap"): the storage-image
-// descriptor path sets UPDATE_AFTER_BIND without enabling
-// descriptorBindingStorageImageUpdateAfterBind, and the headless descriptor
-// pool has no STORAGE_IMAGE pool size. Under VE_DEBUG this binding's
-// allocate/write produces Vulkan validation messages on stderr — that is the
-// documented gap, not a bug in this test, and it does not fail the write itself
-// or this test at the ctest level (validation errors don't abort, per CLAUDE.md).
-//
-// NEW (discovered by this test, planset-3 plan 06): the headless descriptor
-// pool also has no SAMPLED_IMAGE pool size, so a standalone SampledImage binding
-// emits the same pool-size WARN under VE_DEBUG. Production code reaches sampled
-// images via CombinedImageSampler (which the pool does cover), so this only
-// surfaces with a bare SampledImage descriptor. Same gap family — recorded for
-// the bindless/descriptor rework (plans/future/bindless-descriptors.md), not
-// fixed here.
+// All bindings here are static (the default — DescriptorBinding::Bindless is
+// false), so none of them set descriptor-indexing flags. planset-2/06 closed
+// the storage-image and sampled-image validation gaps this test previously
+// pinned (no UAB feature / pool size for those types) by making static the
+// default and giving the Primary Pool a budget for every DescriptorType.
 
 #include <doctest/doctest.h>
 
@@ -117,12 +107,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "descriptor write paths: all Write ove
             set->Write(0, sampledView);
         });
 
-    // StorageImage — known validation gap (see header comment): the
-    // headless descriptor pool has no STORAGE_IMAGE pool size and
-    // UPDATE_AFTER_BIND is set without the matching device feature, so this
-    // allocate/write may emit Vulkan validation messages under VE_DEBUG.
-    // Validation errors don't abort (CLAUDE.md), so the call still
-    // completes and this test still passes.
+    // StorageImage
     auto storageImageSet = WriteSingleBinding(Context, "Storage Image", DescriptorType::StorageImage,
         ShaderStage::Compute, [&](const Ref<DescriptorSet>& set)
         {

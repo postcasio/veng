@@ -5,6 +5,8 @@
 // this. Switches are exhaustive; an unmapped value is a fatal assert so gaps are
 // loud and the fix is one line.
 
+#include <array>
+
 #include <Veng/Assert.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
@@ -312,17 +314,43 @@ namespace Veng::Renderer
         VE_ASSERT(false, "ToVk(PipelineBindPoint): unmapped value {}", static_cast<u32>(point));
     }
 
-    inline vk::DescriptorType ToVk(DescriptorType type)
+    // Single source of truth for DescriptorType <-> Vulkan: the Vulkan
+    // descriptor type, the Primary Pool's per-type descriptor budget, and
+    // whether the type may be used with a bindless (UpdateAfterBind) binding
+    // on this device. DescriptorSetLayout derives binding flags from
+    // SupportsBindless (see DescriptorSetLayout.cpp) and Context sizes the
+    // Primary Pool from PoolBudget (see Context.cpp) — adding a
+    // DescriptorType updates this one switch.
+    struct DescriptorTypeInfo
+    {
+        vk::DescriptorType VkType;
+        u32 PoolBudget;
+        bool SupportsBindless;
+    };
+
+    inline DescriptorTypeInfo GetDescriptorTypeInfo(DescriptorType type)
     {
         switch (type)
         {
-        case DescriptorType::CombinedImageSampler: return vk::DescriptorType::eCombinedImageSampler;
-        case DescriptorType::SampledImage: return vk::DescriptorType::eSampledImage;
-        case DescriptorType::StorageImage: return vk::DescriptorType::eStorageImage;
-        case DescriptorType::UniformBuffer: return vk::DescriptorType::eUniformBuffer;
-        case DescriptorType::StorageBuffer: return vk::DescriptorType::eStorageBuffer;
+        case DescriptorType::CombinedImageSampler: return {vk::DescriptorType::eCombinedImageSampler, 10000, true};
+        case DescriptorType::SampledImage: return {vk::DescriptorType::eSampledImage, 10000, true};
+        case DescriptorType::StorageImage: return {vk::DescriptorType::eStorageImage, 10000, true};
+        case DescriptorType::UniformBuffer: return {vk::DescriptorType::eUniformBuffer, 10000, true};
+        case DescriptorType::StorageBuffer: return {vk::DescriptorType::eStorageBuffer, 10000, true};
         }
-        VE_ASSERT(false, "ToVk(DescriptorType): unmapped value {}", static_cast<u32>(type));
+        VE_ASSERT(false, "GetDescriptorTypeInfo: unmapped DescriptorType {}", static_cast<u32>(type));
+    }
+
+    // All DescriptorType values, for iterating GetDescriptorTypeInfo (e.g. to
+    // build the Primary Pool's pool sizes).
+    inline constexpr std::array kAllDescriptorTypes = {
+        DescriptorType::CombinedImageSampler, DescriptorType::SampledImage, DescriptorType::StorageImage,
+        DescriptorType::UniformBuffer, DescriptorType::StorageBuffer,
+    };
+
+    inline vk::DescriptorType ToVk(DescriptorType type)
+    {
+        return GetDescriptorTypeInfo(type).VkType;
     }
 
     inline vk::BlendFactor ToVk(BlendFactor factor)

@@ -21,23 +21,18 @@
 # line (the message text after that prefix). A line is allowed if it matches
 # ANY entry below.
 #
-# - Storage-image UPDATE_AFTER_BIND gap (CLAUDE.md "Known validation gap"):
-#   DescriptorSetLayout sets VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT for
-#   STORAGE_IMAGE bindings without the device feature
-#   descriptorBindingStorageImageUpdateAfterBind enabled, and the descriptor
-#   pool has no STORAGE_IMAGE pool size. Seen from compute_dispatch (two
-#   bindings, pBindingFlags[0] and pBindingFlags[1]) and veng_gpu's
-#   descriptor_write_paths case (pBindingFlags[0]). Real fix belongs to
-#   plans/future/bindless-descriptors.md. When that rework lands and closes
-#   this gap, REMOVE this allowlist entry so the gate tightens automatically.
+# Empty: the storage-image UPDATE_AFTER_BIND gap (CLAUDE.md "Known validation
+# gap") was closed by planset-2/06 — DescriptorSetLayout is now static by
+# default (no descriptor-indexing flags unless a binding opts into
+# `Bindless`), descriptorBindingStorageImageUpdateAfterBind is enabled, and the
+# Primary Pool sizes every DescriptorType including StorageImage/SampledImage.
+# Any "Vulkan validation" ERROR now fails the gate.
 #
 # (The benign MoltenVK "buffer robustness" message is logged at [WARN], not
 # [ERROR], so it never reaches this allowlist — noted here for completeness
 # per CLAUDE.md.)
 # ---------------------------------------------------------------------------
-set(VENG_VALIDATION_ALLOWLIST
-    "vkCreateDescriptorSetLayout\\(\\): pCreateInfo->pNext<VkDescriptorSetLayoutBindingFlagsCreateInfo>\\.pBindingFlags\\[[0-9]+\\] includes VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT but pBindings\\[[0-9]+\\]\\.descriptorType is VK_DESCRIPTOR_TYPE_STORAGE_IMAGE but descriptorBindingStorageImageUpdateAfterBind was not enabled\\."
-)
+set(VENG_VALIDATION_ALLOWLIST)
 
 # ---------------------------------------------------------------------------
 # Check one binary's combined stdout+stderr output for unallowlisted

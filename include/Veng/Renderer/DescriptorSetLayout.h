@@ -13,6 +13,13 @@ namespace Veng::Renderer
         DescriptorType Type{};
         u32 Count = 1;
         ShaderStage Stages{};
+        // Static (default, false): written at setup/between frames, then
+        // bound — no descriptor-indexing flags. Bindless (true): may be
+        // updated while a set is bound (e.g. WriteArray into a streaming
+        // table) — opts into UpdateAfterBind/partiallyBound. The engine
+        // derives the Vulkan flags from this intent; see
+        // DescriptorSetLayout.cpp.
+        bool Bindless = false;
     };
 
     struct DescriptorSetLayoutInfo

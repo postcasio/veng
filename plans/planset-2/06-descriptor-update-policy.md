@@ -1,10 +1,27 @@
 # 06 — Descriptor binding flags & update policy (addendum)
 
-> **Addendum, proposed (2026-06-13).** Not part of the original planset-2 scope.
+> **Addendum, done (2026-06-13).** Not part of the original planset-2 scope.
 > It captures a design finding surfaced once the `VE_DEBUG` validation build was
-> repaired (planset-2 follow-up): the descriptor-set abstraction hard-codes
-> Vulkan descriptor-indexing flags on *every* binding, and that hard-coding has
-> silently drifted out of sync. Awaiting review before implementation.
+> repaired (planset-2 follow-up): the descriptor-set abstraction hard-coded
+> Vulkan descriptor-indexing flags on *every* binding, and that hard-coding had
+> silently drifted out of sync.
+>
+> **Implemented as recommended below (parts 1+2; part 3's stopgap is subsumed
+> by part 1):**
+> - `DescriptorBinding::Bindless` (default `false`) — static bindings get no
+>   descriptor-indexing flags at all.
+> - `GetDescriptorTypeInfo(DescriptorType)` in `TypeMapping.h` is the single
+>   table: Vulkan type, Primary Pool budget, and `SupportsBindless`. A
+>   `Bindless = true` binding on a type with `SupportsBindless == false` is a
+>   named `VE_ASSERT`. `DescriptorSetLayout` only sets
+>   `ePartiallyBound | eUpdateAfterBind | eUpdateUnusedWhilePending` (and the
+>   layout's `eUpdateAfterBindPool` flag) for bindings that opt in.
+> - `Context::CreateDevice` now also enables
+>   `descriptorBindingStorageImageUpdateAfterBind`; the Primary Pool sizes a
+>   `vk::DescriptorPoolSize` for every `DescriptorType` (was missing
+>   `SampledImage`/`StorageImage`).
+> - The storage-image validation gap (CLAUDE.md, `cmake/ValidationGate.cmake`)
+>   is closed — the gate's allowlist is now empty.
 
 **Goal:** decide how `UPDATE_AFTER_BIND` (and the other descriptor-indexing
 binding flags) are governed — and fix the underlying coupling bug — without

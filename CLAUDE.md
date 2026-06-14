@@ -63,18 +63,14 @@ cmake --build build-debug -j
   ```sh
   HT_SMOKE=/tmp/ht.ppm build/examples/hello-triangle/hello_triangle
   ```
-- **Validation errors do NOT fail tests.** The debug-messenger callback
-  (`src/Renderer/Backend/Context.cpp`) only `Log::Error`s on validation errors —
-  it never aborts. So `ctest` passing under `VE_DEBUG` is **not** proof of a
-  validation-clean run. To actually check: run the test binaries directly (they
-  live at `build-debug/<name>`, e.g. `build-debug/veng_compute_dispatch`, **not**
-  under `tests/`) and grep stderr for `Vulkan validation` ERROR lines. The benign
-  MoltenVK "buffer robustness" warning can be ignored.
-- **Known validation gap (as of 2026-06-13):** the `compute_dispatch` storage-image
-  descriptor path is not validation-clean — `DescriptorSetLayout` sets
-  `UPDATE_AFTER_BIND` without enabling `descriptorBindingStorageImageUpdateAfterBind`,
-  and the descriptor pool has no `STORAGE_IMAGE` pool size. The triangle/sampled-image
-  path is clean.
+- **Validation errors do NOT fail tests by themselves.** The debug-messenger
+  callback (`src/Renderer/Backend/Context.cpp`) only `Log::Error`s on validation
+  errors — it never aborts. So a green `ctest` under `VE_DEBUG` only means
+  something if the validation gate ran: `ctest --test-dir build-debug -L
+  validation` (the `validation_gate` test) runs the `gpu`-labelled binaries and
+  fails on any unallowlisted `Vulkan validation` ERROR line
+  (`cmake/ValidationGate.cmake`; allowlist currently empty). The benign MoltenVK
+  "buffer robustness" warning is logged at `WARN`, not `ERROR`, and is ignored.
 
 ## Core conventions
 

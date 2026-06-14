@@ -232,23 +232,21 @@ namespace Veng::Renderer
 
         m_Native->CommandPool = CommandPool::Create(*this);
 
+        // One pool size per DescriptorType, budgeted from the single source
+        // of truth (GetDescriptorTypeInfo) so every type the engine knows
+        // about has a budget — adding a DescriptorType updates the pool too.
+        vector<vk::DescriptorPoolSize> poolSizes;
+        poolSizes.reserve(kAllDescriptorTypes.size());
+        for (const auto descriptorType : kAllDescriptorTypes)
+        {
+            const auto typeInfo = GetDescriptorTypeInfo(descriptorType);
+            poolSizes.push_back({.type = typeInfo.VkType, .descriptorCount = typeInfo.PoolBudget});
+        }
+
         m_Native->DescriptorPool = DescriptorPool::Create(*this, {
             .Name = "Primary Pool",
             .MaxSets = 100000,
-            .PoolSizes{
-                {
-                    .type = vk::DescriptorType::eUniformBuffer,
-                    .descriptorCount = 10000
-                },
-                {
-                    .type = vk::DescriptorType::eStorageBuffer,
-                    .descriptorCount = 10000
-                },
-                {
-                    .type = vk::DescriptorType::eCombinedImageSampler,
-                    .descriptorCount = 10000
-                }
-            },
+            .PoolSizes = poolSizes,
             .Flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
             vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind
         });
@@ -540,6 +538,7 @@ namespace Veng::Renderer
             .shaderStorageBufferArrayNonUniformIndexing = vk::True,
             .descriptorBindingUniformBufferUpdateAfterBind = vk::True,
             .descriptorBindingSampledImageUpdateAfterBind = vk::True,
+            .descriptorBindingStorageImageUpdateAfterBind = vk::True,
             .descriptorBindingStorageBufferUpdateAfterBind = vk::True,
             .descriptorBindingUpdateUnusedWhilePending = vk::True,
             .descriptorBindingPartiallyBound = vk::True,

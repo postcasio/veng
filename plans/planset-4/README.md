@@ -44,9 +44,10 @@ own; the testing plans (05–06) build directly on plan 04's explicit-device API
   global; we do not start using the freedom it buys.
 - **Out of scope — the descriptor/bindless rework.** The known descriptor-pool /
   `UPDATE_AFTER_BIND` validation gap (CLAUDE.md) is pinned by planset-3's tests and
-  belongs to [bindless-descriptors](../future/bindless-descriptors.md), not here.
+  belongs to [planset-2/06](../planset-2/06-descriptor-update-policy.md), not here.
   5b and the validation gate must not *widen* it; they may continue to
-  note/xfail it (it is the gate's one allowlisted gap).
+  note/xfail it (it was the gate's one allowlisted gap until planset-2/06 closed
+  it).
 
 ## Design decisions
 

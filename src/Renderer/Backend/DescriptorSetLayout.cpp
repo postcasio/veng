@@ -32,13 +32,33 @@ namespace Veng::Renderer
             });
         }
 
-        vector<vk::DescriptorBindingFlags> bindingFlags(vkBindings.size());
+        // Static by default: a binding written at setup and then bound needs
+        // none of UpdateAfterBind/partiallyBound — those are descriptor-
+        // indexing flags with engine-owned prerequisites (device feature +
+        // pool budget, see GetDescriptorTypeInfo). Bindless opts in.
+        vector<vk::DescriptorBindingFlags> bindingFlags;
+        bindingFlags.reserve(m_Bindings.size());
 
-        bindingFlags.assign(vkBindings.size(),
-                            vk::DescriptorBindingFlagBits::ePartiallyBound |
-                            vk::DescriptorBindingFlagBits::eUpdateAfterBind |
-                            vk::DescriptorBindingFlagBits::eUpdateUnusedWhilePending
-        );
+        bool anyBindless = false;
+        for (const auto& binding : m_Bindings)
+        {
+            if (binding.Bindless)
+            {
+                VE_ASSERT(GetDescriptorTypeInfo(binding.Type).SupportsBindless,
+                          "DescriptorSetLayout '{}': binding {} requests Bindless, but DescriptorType {} "
+                          "does not support UpdateAfterBind on this device",
+                          m_Name, binding.Binding, static_cast<u32>(binding.Type));
+
+                bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound |
+                                       vk::DescriptorBindingFlagBits::eUpdateAfterBind |
+                                       vk::DescriptorBindingFlagBits::eUpdateUnusedWhilePending);
+                anyBindless = true;
+            }
+            else
+            {
+                bindingFlags.push_back({});
+            }
+        }
 
         const vk::DescriptorSetLayoutBindingFlagsCreateInfo descriptorSetLayoutBindingFlagsCreateInfo{
             .bindingCount = static_cast<u32>(vkBindings.size()),
@@ -47,7 +67,8 @@ namespace Veng::Renderer
 
         const vk::DescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo{
             .pNext = &descriptorSetLayoutBindingFlagsCreateInfo,
-            .flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+            .flags = anyBindless ? vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool
+                                  : vk::DescriptorSetLayoutCreateFlags{},
             .bindingCount = static_cast<u32>(vkBindings.size()),
             .pBindings = vkBindings.data(),
         };

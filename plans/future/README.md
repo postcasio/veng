@@ -114,13 +114,12 @@ bindings/devices). Revisit when gameplay drives the requirements.
 >   hosted pipeline and none is planned; this gate is local-only, dependency-free
 >   (`cmake -P`), and runs as part of `ctest`.
 
-- **Known descriptor-pool / `UPDATE_AFTER_BIND` validation gap** (storage-image,
+- ~~**Known descriptor-pool / `UPDATE_AFTER_BIND` validation gap**~~ (storage-image,
   and — surfaced by planset-3's `descriptor_write_paths` — sampled-image pool
-  sizes): not a testing task but a real engine gap the tests now pin, and the
-  validation gate's one allowlist entry. It belongs to the
-  [bindless/descriptor rework](bindless-descriptors.md), not area 5 — when that
-  rework closes the gap, remove the allowlist entry so the gate tightens
-  automatically.
+  sizes): closed by [planset-2/06](../planset-2/06-descriptor-update-policy.md)
+  — static-by-default bindings, the `descriptorBindingStorageImageUpdateAfterBind`
+  feature, and a Primary Pool budget for every `DescriptorType`. The validation
+  gate's allowlist is now empty.
 
 ## Ordering & dependencies
 
@@ -177,13 +176,14 @@ to decide early than to retrofit.
   name-based binding driven by shader reflection, and bindless / descriptor-
   indexing (the modern default) for texture tables and per-draw resource access.
   It deeply shapes the descriptor/layout/material-binding APIs and is painful to
-  retrofit, so design it here. planset-2 explicitly deferred bindless, and the
-  [planset-2/06 addendum](../planset-2/06-descriptor-update-policy.md) found the
-  current descriptor layer already strains a single basic use case — it hard-codes
-  `UPDATE_AFTER_BIND` on every binding with hand-maintained, drift-prone feature/
-  pool prerequisites. That addendum only corrects the *flag-policy altitude* for
-  the existing layer; the real bindless subsystem (large arrays, per-frame
-  streaming, possibly descriptor buffers) is this phase's job. *(area 1.)*
+  retrofit, so design it here. planset-2 explicitly deferred bindless;
+  [planset-2/06](../planset-2/06-descriptor-update-policy.md) (done) corrected
+  the *flag-policy altitude* of the existing layer — static by default,
+  bindless an explicit per-binding opt-in via a single type/feature/pool table.
+  The real bindless subsystem (large arrays, per-frame streaming, possibly
+  descriptor buffers) — sketched in
+  [bindless-descriptors.md](bindless-descriptors.md) — is this phase's job.
+  *(area 1.)*
 - **Structured error type for the asset/import pipeline.** `Result<T>` carries a
   `std::string` today; asset loading is where callers will want to branch on error
   *kind* (not-found / corrupt / version-mismatch / missing-dependency). Expect to

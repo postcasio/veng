@@ -24,13 +24,15 @@ their own.
 | 03 | [Retire the legacy render-pass pipeline surface](03-retire-render-pass.md) | done |
 | 04 | [Minor API cleanups & consistency](04-minor-cleanups.md) | done |
 | 05 | [Compute dispatch](05-compute-dispatch.md) | done |
-| 06 | [Descriptor binding flags & update policy (addendum)](06-descriptor-update-policy.md) | proposed |
+| 06 | [Descriptor binding flags & update policy (addendum)](06-descriptor-update-policy.md) | done |
 
 Plans 01–05 are independent and landed in dependency order (04's pipeline rename
 after 03). Plan 06 is a post-hoc **addendum**: a design finding surfaced once the
 `VE_DEBUG` validation build was repaired — the descriptor-set abstraction
-hard-codes Vulkan binding flags on every binding and the prerequisites have
-drifted. It awaits review.
+hard-coded Vulkan binding flags on every binding and the prerequisites had
+drifted. Landed: static-by-default bindings, a single `DescriptorType` →
+{Vulkan type, pool budget, bindless support} table, and the closed
+storage-image validation gap (the `validation_gate`'s allowlist is now empty).
 
 ## Duplication / surface this phase removes
 
