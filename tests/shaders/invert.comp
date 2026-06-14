@@ -7,8 +7,10 @@
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
-layout(set = 0, binding = 0, rgba8) uniform readonly image2D u_Source;
-layout(set = 0, binding = 1, rgba8) uniform writeonly image2D u_Destination;
+// set 0 is reserved for the bindless registry (planset-5/05); this set is
+// bound at FirstSet = 1.
+layout(set = 1, binding = 0, rgba8) uniform readonly image2D u_Source;
+layout(set = 1, binding = 1, rgba8) uniform writeonly image2D u_Destination;
 
 void main()
 {

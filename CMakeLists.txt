@@ -281,6 +281,7 @@ if (VENG_BUILD_TESTS)
             tests/shaders/invert.comp
             tests/shaders/fullscreen.vert
             tests/shaders/sample.frag
+            tests/shaders/bindless_sample.frag
     )
     add_dependencies(veng_compute_dispatch veng_compute_dispatch_shaders)
 
@@ -303,8 +304,16 @@ if (VENG_BUILD_TESTS)
             tests/gpu/image_clear_format.cpp
             tests/gpu/descriptor_write_paths.cpp
             tests/gpu/isolation.cpp
+            tests/gpu/bindless_registry.cpp
     )
     target_link_libraries(veng_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
+    target_compile_definitions(veng_gpu PRIVATE
+            GPU_SHADER_DIR="${CMAKE_CURRENT_BINARY_DIR}/shaders"
+    )
+    # bindless_registry.cpp draws with tests/shaders/bindless_sample.frag and
+    # fullscreen.vert, compiled into the same ${CMAKE_CURRENT_BINARY_DIR}/shaders
+    # output dir by veng_compute_dispatch_shaders.
+    add_dependencies(veng_gpu veng_compute_dispatch_shaders)
 
     add_test(NAME veng_gpu COMMAND veng_gpu)
     set_tests_properties(veng_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)

@@ -15,6 +15,7 @@ add_library(veng SHARED
         src/Renderer/RenderGraph.cpp
         src/Renderer/Backend/Barrier.cpp
         src/Renderer/Backend/BarrierDecision.cpp
+        src/Renderer/Backend/BindlessRegistry.cpp
         src/Renderer/Backend/Buffer.cpp
         src/Renderer/Backend/CommandBuffer.cpp
         src/Renderer/Backend/CommandPool.cpp

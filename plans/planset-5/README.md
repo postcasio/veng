@@ -143,7 +143,7 @@ auto mesh = m_Assets->LoadSync<Mesh>(AssetId{1002}).value();
 | 02 | [`assetformat`: AssetId, archive container, blob layouts](02-assetformat-lib.md) | The shared format lib + reader/writer + round-trip tests. | done |
 | 03 | [`cooker` lib + `vengc` CLI + JSON pack parsing](03-cooker-cli-json-pack.md) | Stand up the tool; parse the pack JSON; importer-registry skeleton; emit a valid archive. | done |
 | 04 | [Runtime: `AssetManager`, `AssetHandle`, pack mount, `LoadSync`](04-asset-manager-runtime.md) | Engine-side registry, structured `AssetLoadError`, deferred eviction. | done |
-| 05 | [Bindless descriptor subsystem (`BindlessRegistry`, set 0)](05-bindless.md) | Global arrays bound once per frame; typed handles; set 0 root signature. (Prereq: planset-2/06.) | proposed |
+| 05 | [Bindless descriptor subsystem (`BindlessRegistry`, set 0)](05-bindless.md) | Global arrays bound once per frame; typed handles; set 0 root signature. (Prereq: planset-2/06.) | done |
 | 06 | [Texture (JSON source + sampler → stb cook → bindless load)](06-texture-slice.md) | First full type; registers into bindless; sample samples a cooked texture via set 0. | proposed |
 | 07 | [Mesh (JSON source + import settings + overrides → assimp cook)](07-mesh-assimp.md) | Cooked vertex/index buffers; material overrides; sample draws a cooked mesh. | proposed |
 | 08 | [Shader via Slang + offline reflection → `ShaderInterface`](08-shader-slang-reflection.md) | Absorbs deferred shader-reflection work; layouts from reflection, set 0 from registry. | proposed |

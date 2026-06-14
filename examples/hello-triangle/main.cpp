@@ -3,8 +3,8 @@
 #include <Veng/Log.h>
 #include <Veng/Vendor/ImGui.h>
 
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Buffer.h>
-#include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
@@ -34,6 +34,16 @@ namespace
     };
 
     const u16 k_Indices[] = {0, 1, 2};
+
+    // Selects the composite shader's bindless texture/sampler slots
+    // (Veng/Renderer/BindlessRegistry.h) — set 0 is bound once via
+    // BindlessRegistry::Bind, these indices pick the array elements.
+    struct CompositePushConstants
+    {
+        u32 SceneTexture;
+        u32 ImGuiTexture;
+        u32 Sampler;
+    };
 }
 
 class HelloTriangleApp final : public Application
@@ -143,10 +153,8 @@ protected:
     void OnDispose() override
     {
         m_SceneTexture.reset();
-        m_CompositeSet.reset();
         m_CompositePipeline.reset();
         m_CompositeLayout.reset();
-        m_CompositeSetLayout.reset();
         m_TrianglePipeline.reset();
         m_TriangleLayout.reset();
         m_VertexBuffer = {};
@@ -212,27 +220,11 @@ private:
         });
         VE_ASSERT(fragmentShader, "{}", fragmentShader.error());
 
-        m_CompositeSetLayout = Renderer::DescriptorSetLayout::Create(context, {
-            .Name = "Composite Set Layout",
-            .Bindings = {
-                {
-                    .Binding = 0,
-                    .Type = Renderer::DescriptorType::CombinedImageSampler,
-                    .Count = 1,
-                    .Stages = Renderer::ShaderStage::Fragment,
-                },
-                {
-                    .Binding = 1,
-                    .Type = Renderer::DescriptorType::CombinedImageSampler,
-                    .Count = 1,
-                    .Stages = Renderer::ShaderStage::Fragment,
-                },
-            },
-        });
-
         m_CompositeLayout = Renderer::PipelineLayout::Create(context, {
             .Name = "Composite Layout",
-            .DescriptorSetLayouts = {m_CompositeSetLayout},
+            .PushConstantRanges = {
+                Renderer::PushConstantRange::Of<CompositePushConstants>(Renderer::ShaderStage::Fragment),
+            },
         });
 
         m_CompositePipeline = Renderer::GraphicsPipeline::Create(context, {
@@ -248,13 +240,13 @@ private:
             },
         });
 
-        m_CompositeSet = Renderer::DescriptorSet::Create(context, {
-            .Name = "Composite Set",
-            .Layout = m_CompositeSetLayout,
-        });
-
-        m_CompositeSet->Write(0, m_SceneImageView, m_Sampler);
-        m_CompositeSet->Write(1, m_ImGuiImageView, m_Sampler);
+        // Register the scene/ImGui views and the shared sampler into the
+        // bindless registry (set 0) — composite.frag indexes them via push
+        // constants.
+        auto& bindless = context.GetBindlessRegistry();
+        m_SceneTextureHandle = bindless.Register(m_SceneImageView);
+        m_ImGuiTextureHandle = bindless.Register(m_ImGuiImageView);
+        m_SamplerHandle = bindless.Register(m_Sampler);
     }
 
     void RenderScene(Renderer::CommandBuffer& cmd)
@@ -350,12 +342,17 @@ private:
             })
             .Sample(m_SceneImageView)
             .Sample(m_ImGuiImageView)
-            .Execute([this, extent](Renderer::CommandBuffer& cmd)
+            .Execute([this, &context, extent](Renderer::CommandBuffer& cmd)
             {
                 cmd.BindPipeline(m_CompositePipeline);
                 cmd.SetViewport({0, 0}, extent);
                 cmd.SetScissor({0, 0}, extent);
-                cmd.BindDescriptorSets({.Sets = {m_CompositeSet}});
+                context.GetBindlessRegistry().Bind(cmd);
+                cmd.PushConstants(CompositePushConstants{
+                    .SceneTexture = m_SceneTextureHandle.Index,
+                    .ImGuiTexture = m_ImGuiTextureHandle.Index,
+                    .Sampler = m_SamplerHandle.Index,
+                });
                 cmd.DrawFullscreenTriangle();
             });
 
@@ -373,10 +370,11 @@ private:
     Ref<Renderer::PipelineLayout> m_TriangleLayout;
     Ref<Renderer::GraphicsPipeline> m_TrianglePipeline;
 
-    Ref<Renderer::DescriptorSetLayout> m_CompositeSetLayout;
     Ref<Renderer::PipelineLayout> m_CompositeLayout;
     Ref<Renderer::GraphicsPipeline> m_CompositePipeline;
-    Ref<Renderer::DescriptorSet> m_CompositeSet;
+    Renderer::TextureHandle m_SceneTextureHandle;
+    Renderer::TextureHandle m_ImGuiTextureHandle;
+    Renderer::SamplerHandle m_SamplerHandle;
 
     Ref<ImGuiTexture> m_SceneTexture;
 

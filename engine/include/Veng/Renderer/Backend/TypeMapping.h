@@ -337,6 +337,7 @@ namespace Veng::Renderer
         case DescriptorType::StorageImage: return {vk::DescriptorType::eStorageImage, 10000, true};
         case DescriptorType::UniformBuffer: return {vk::DescriptorType::eUniformBuffer, 10000, true};
         case DescriptorType::StorageBuffer: return {vk::DescriptorType::eStorageBuffer, 10000, true};
+        case DescriptorType::Sampler: return {vk::DescriptorType::eSampler, 1000, true};
         }
         VE_ASSERT(false, "GetDescriptorTypeInfo: unmapped DescriptorType {}", static_cast<u32>(type));
     }
@@ -345,7 +346,7 @@ namespace Veng::Renderer
     // build the Primary Pool's pool sizes).
     inline constexpr std::array kAllDescriptorTypes = {
         DescriptorType::CombinedImageSampler, DescriptorType::SampledImage, DescriptorType::StorageImage,
-        DescriptorType::UniformBuffer, DescriptorType::StorageBuffer,
+        DescriptorType::UniformBuffer, DescriptorType::StorageBuffer, DescriptorType::Sampler,
     };
 
     inline vk::DescriptorType ToVk(DescriptorType type)

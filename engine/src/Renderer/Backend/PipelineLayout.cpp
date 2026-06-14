@@ -1,5 +1,6 @@
 #include <Veng/Renderer/PipelineLayout.h>
 
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
@@ -15,8 +16,11 @@ namespace Veng::Renderer
                                                                      m_DescriptorSetLayouts(info.DescriptorSetLayouts),
                                                                      m_PushConstantRanges(info.PushConstantRanges)
     {
+        // Set 0 is reserved across every pipeline layout for the bindless
+        // registry (planset-5/05) — author-declared sets shift to 1+.
         vector<vk::DescriptorSetLayout> descriptorSetLayouts;
-        descriptorSetLayouts.reserve(m_DescriptorSetLayouts.size());
+        descriptorSetLayouts.reserve(m_DescriptorSetLayouts.size() + 1);
+        descriptorSetLayouts.push_back(GetVkDescriptorSetLayout(*context.GetBindlessRegistry().GetSet0Layout()));
 
         for (const auto& descriptorSetLayout : m_DescriptorSetLayouts)
         {

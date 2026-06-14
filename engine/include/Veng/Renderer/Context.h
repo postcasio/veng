@@ -14,6 +14,7 @@ namespace Veng
 
 namespace Veng::Renderer
 {
+    class BindlessRegistry;
     class CommandBuffer;
     class Semaphore;
     class SynchronizationFrame;
@@ -112,6 +113,10 @@ namespace Veng::Renderer
         void ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const;
         void AcquireNextImage(Semaphore& semaphore);
         void WaitIdle() const;
+
+        // The global bindless descriptor registry (set 0). Valid from the end
+        // of Initialize() until Dispose(). See BindlessRegistry.h.
+        [[nodiscard]] BindlessRegistry& GetBindlessRegistry() const;
 
         struct Native;
         [[nodiscard]] Native& GetNative() const;

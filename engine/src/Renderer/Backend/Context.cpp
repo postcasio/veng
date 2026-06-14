@@ -259,6 +259,7 @@ namespace Veng::Renderer
 
         m_Native->RetireBins.resize(m_Native->MaxFramesInFlight);
 
+        m_Native->Bindless = CreateUnique<BindlessRegistry>(*this);
     }
 
     void Context::DisposeResources()
@@ -273,6 +274,11 @@ namespace Veng::Renderer
     void Context::Dispose()
     {
         Log::Info("Disposing rendering context...");
+
+        // Drop the registry's set/layout and registered-resource Refs first —
+        // their destructors retire handles into the current bins, which the
+        // drain below then cleans up while the device is still alive.
+        m_Native->Bindless.reset();
 
         // Drain any handles still in the bins while the device, allocator and
         // descriptor pool are alive, then stop accepting retirements — anything
@@ -404,6 +410,8 @@ namespace Veng::Renderer
     {
         VK_ASSERT(m_Native->Device.waitIdle(), "failed to wait for device idle!");
     }
+
+    BindlessRegistry& Context::GetBindlessRegistry() const { return *m_Native->Bindless; }
 
     vector<const char*>& Context::Native::GetRequiredExtensions()
     {
@@ -567,6 +575,7 @@ namespace Veng::Renderer
         // recorded the last time this frame index was current — anything
         // retired then is safe to destroy.
         m_Native->DrainRetireBin(m_Native->RetireBins[m_Native->CurrentFrameInFlight]);
+        m_Native->Bindless->OnFrameAcquired(m_Native->CurrentFrameInFlight);
 
         return m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight];
     }

@@ -12,6 +12,7 @@
 #include <Veng/Renderer/Backend/SwapChainSupport.h>
 #include <Veng/Renderer/Backend/SynchronizationFrame.h>
 
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Context.h>
 
 namespace Veng::Renderer
@@ -45,6 +46,7 @@ namespace Veng::Renderer
         Unique<SwapChain> SwapChain;
         Unique<CommandPool> CommandPool;
         Unique<DescriptorPool> DescriptorPool;
+        Unique<BindlessRegistry> Bindless;
 
         vector<SynchronizationFrame> SynchronizationFrames{};
         u32 CurrentFrameInFlight = 0;

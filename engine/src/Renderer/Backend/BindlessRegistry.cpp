@@ -1,0 +1,185 @@
+#include <Veng/Renderer/BindlessRegistry.h>
+
+#include <Veng/Assert.h>
+#include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/DescriptorSetLayout.h>
+#include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/Native.h>
+#include <Veng/Renderer/Sampler.h>
+#include <Veng/Renderer/Backend/TypeMapping.h>
+
+namespace Veng::Renderer
+{
+    void BindlessRegistry::SlotArray::Init(u32 capacity, u32 framesInFlight)
+    {
+        Slots.resize(capacity);
+        Free.resize(capacity);
+        for (u32 i = 0; i < capacity; i++)
+        {
+            Free[i] = capacity - 1 - i;
+        }
+        PendingRelease.resize(framesInFlight);
+    }
+
+    u32 BindlessRegistry::SlotArray::Allocate(Ref<void> resource, string_view what)
+    {
+        VE_ASSERT(!Free.empty(), "BindlessRegistry: {} array exhausted ({} slots)", what, Slots.size());
+
+        const u32 index = Free.back();
+        Free.pop_back();
+        Slots[index] = std::move(resource);
+        return index;
+    }
+
+    void BindlessRegistry::SlotArray::ReleaseDeferred(u32 index, u32 currentFrameInFlight)
+    {
+        PendingRelease[currentFrameInFlight].push_back(index);
+    }
+
+    void BindlessRegistry::SlotArray::OnFrameAcquired(u32 frameInFlight)
+    {
+        for (const u32 index : PendingRelease[frameInFlight])
+        {
+            Slots[index].reset();
+            Free.push_back(index);
+        }
+        PendingRelease[frameInFlight].clear();
+    }
+
+    BindlessRegistry::BindlessRegistry(Context& context) : m_Context(context)
+    {
+        m_Layout = DescriptorSetLayout::Create(context, {
+            .Name = "Bindless Set 0 Layout",
+            .Bindings = {
+                {.Binding = k_TextureBinding, .Type = DescriptorType::SampledImage, .Count = k_MaxTextures, .Stages = ShaderStage::All, .Bindless = true},
+                {.Binding = k_SamplerBinding, .Type = DescriptorType::Sampler, .Count = k_MaxSamplers, .Stages = ShaderStage::All, .Bindless = true},
+                {.Binding = k_StorageImageBinding, .Type = DescriptorType::StorageImage, .Count = k_MaxStorageImages, .Stages = ShaderStage::All, .Bindless = true},
+            },
+        });
+
+        m_Set = DescriptorSet::Create(context, {
+            .Name = "Bindless Set 0",
+            .Layout = m_Layout,
+        });
+
+        const u32 framesInFlight = context.GetMaxFramesInFlight();
+        m_Textures.Init(k_MaxTextures, framesInFlight);
+        m_Samplers.Init(k_MaxSamplers, framesInFlight);
+        m_StorageImages.Init(k_MaxStorageImages, framesInFlight);
+    }
+
+    BindlessRegistry::~BindlessRegistry() = default;
+
+    void BindlessRegistry::WriteTexture(u32 index, const Ref<ImageView>& view) const
+    {
+        const vk::DescriptorImageInfo imageInfo{
+            .imageView = GetVkImageView(*view),
+            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        };
+
+        const vk::WriteDescriptorSet write{
+            .dstSet = GetVkDescriptorSet(*m_Set),
+            .dstBinding = k_TextureBinding,
+            .dstArrayElement = index,
+            .descriptorCount = 1,
+            .descriptorType = ToVk(DescriptorType::SampledImage),
+            .pImageInfo = &imageInfo,
+        };
+
+        GetVkDevice(m_Context).updateDescriptorSets(write, {});
+    }
+
+    void BindlessRegistry::WriteSampler(u32 index, const Ref<Sampler>& sampler) const
+    {
+        const vk::DescriptorImageInfo imageInfo{
+            .sampler = GetVkSampler(*sampler),
+        };
+
+        const vk::WriteDescriptorSet write{
+            .dstSet = GetVkDescriptorSet(*m_Set),
+            .dstBinding = k_SamplerBinding,
+            .dstArrayElement = index,
+            .descriptorCount = 1,
+            .descriptorType = ToVk(DescriptorType::Sampler),
+            .pImageInfo = &imageInfo,
+        };
+
+        GetVkDevice(m_Context).updateDescriptorSets(write, {});
+    }
+
+    void BindlessRegistry::WriteStorageImage(u32 index, const Ref<ImageView>& view) const
+    {
+        const vk::DescriptorImageInfo imageInfo{
+            .imageView = GetVkImageView(*view),
+            .imageLayout = vk::ImageLayout::eGeneral,
+        };
+
+        const vk::WriteDescriptorSet write{
+            .dstSet = GetVkDescriptorSet(*m_Set),
+            .dstBinding = k_StorageImageBinding,
+            .dstArrayElement = index,
+            .descriptorCount = 1,
+            .descriptorType = ToVk(DescriptorType::StorageImage),
+            .pImageInfo = &imageInfo,
+        };
+
+        GetVkDevice(m_Context).updateDescriptorSets(write, {});
+    }
+
+    TextureHandle BindlessRegistry::Register(const Ref<ImageView>& sampled)
+    {
+        const u32 index = m_Textures.Allocate(sampled, "texture");
+        WriteTexture(index, sampled);
+        return TextureHandle{index};
+    }
+
+    SamplerHandle BindlessRegistry::Register(const Ref<Sampler>& sampler)
+    {
+        const u32 index = m_Samplers.Allocate(sampler, "sampler");
+        WriteSampler(index, sampler);
+        return SamplerHandle{index};
+    }
+
+    StorageImageHandle BindlessRegistry::RegisterStorage(const Ref<ImageView>& storage)
+    {
+        const u32 index = m_StorageImages.Allocate(storage, "storage image");
+        WriteStorageImage(index, storage);
+        return StorageImageHandle{index};
+    }
+
+    void BindlessRegistry::Release(TextureHandle handle)
+    {
+        if (!handle.IsValid()) return;
+        m_Textures.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
+    }
+
+    void BindlessRegistry::Release(SamplerHandle handle)
+    {
+        if (!handle.IsValid()) return;
+        m_Samplers.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
+    }
+
+    void BindlessRegistry::Release(StorageImageHandle handle)
+    {
+        if (!handle.IsValid()) return;
+        m_StorageImages.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
+    }
+
+    void BindlessRegistry::Bind(CommandBuffer& cmd, PipelineBindPoint bindPoint) const
+    {
+        cmd.BindDescriptorSets({
+            .Sets = {m_Set},
+            .FirstSet = 0,
+            .PipelineBindPoint = bindPoint,
+        });
+    }
+
+    void BindlessRegistry::OnFrameAcquired(u32 frameInFlight)
+    {
+        m_Textures.OnFrameAcquired(frameInFlight);
+        m_Samplers.OnFrameAcquired(frameInFlight);
+        m_StorageImages.OnFrameAcquired(frameInFlight);
+    }
+}
