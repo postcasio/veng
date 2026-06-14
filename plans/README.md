@@ -57,6 +57,21 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   cooking). MoltenVK's single-queue collapse is the tested path; the dual-queue
   discrete path is exercised by the pure barrier-decision unit test.
 
+- **[planset-7](planset-7/README.md)** — runtime primitive meshes (✅ done, 4 plans).
+  A small, self-contained utility planset (not part of any future-area chain). First
+  fixes the mesh's runtime material model — a `SubMesh::MaterialIndex` into a resident
+  `vector<AssetHandle<Material>>` the `Mesh` owns, with `MeshLoader` eager-resolving
+  cooked submesh ids into that list (superseding planset-5's "the mesh does not load
+  its materials" rule). Then adds public CPU geometry (`CanonicalVertex` + `MeshData`)
+  and a `Mesh::Create(Context&, const MeshData&, const string&)` upload factory
+  (blocking `UploadSync`), so a runtime primitive and a cooked mesh are interchangeable
+  to every pipeline and draw call. `Primitives::Cube`/`Plane`/`Sphere` generate
+  `MeshData` with analytic normals/tangents/UVs and an optional material instance; the
+  hello-triangle sample draws a runtime sphere carrying the brick material, no cooked
+  mesh required to put geometry on screen. A runtime primitive is not an
+  `AssetId`-addressable asset and never touches an archive; custom vertex layouts
+  end-to-end stay future.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Remaining areas: the **editor application** (a
   shared-library game-module model + a cooker-consuming editor with docking, a

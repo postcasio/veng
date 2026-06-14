@@ -21,12 +21,17 @@ cmake --build build --target hello_triangle
 ./build/examples/hello-triangle/hello_triangle
 ```
 
-Assets — the cube mesh, the brick material + texture, and every shader (the
-material's two stages and the composite pass) — are authored as a JSON pack
-under `assets/`, cooked to a `.vengpack` by `vengc` at build time, and loaded at
-runtime by `AssetId`. Shaders are written in Slang and compiled to SPIR-V during
-the cook. The cooked pack's path is baked in at compile time, so the binary runs
-from any working directory.
+The scene geometry is a UV sphere built at runtime with `Primitives::Sphere` and
+uploaded via `Mesh::Create` — no cooked mesh is loaded to put it on screen. It
+carries the brick material instance on its submesh and is drawn through the same
+pipeline a cooked mesh would use.
+
+Assets — the brick material + texture, and every shader (the material's two
+stages and the composite pass) — are authored as a JSON pack under `assets/`,
+cooked to a `.vengpack` by `vengc` at build time, and loaded at runtime by
+`AssetId`. Shaders are written in Slang and compiled to SPIR-V during the cook.
+The cooked pack's path is baked in at compile time, so the binary runs from any
+working directory.
 
 Smoke-test mode: set `HT_SMOKE=<path.ppm>` and the app renders 20 frames, dumps
 the scene image to that path as a binary PPM, and exits 0. Useful for verifying

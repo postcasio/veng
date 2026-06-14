@@ -290,6 +290,25 @@ smoke render use.
   `OnDispose()` like any other engine resource; `CollectGarbage()` evicts entries
   no handle references, retiring their GPU resources through the per-frame
   deferred-destruction path.
+- **A `Mesh` can also be built at runtime, no cooker.** `Primitives::Cube` /
+  `Plane` / `Sphere` (`Veng/Asset/Primitives.h`) generate CPU-side `MeshData`
+  (canonical-layout vertices + `u32` indices + a resident material list + an
+  indexed submesh table) with analytic normals/tangents/UVs and an optional
+  `AssetHandle<Material>`; `Mesh::Create(Renderer::Context&, const MeshData&,
+  const string&)` uploads that into a resident `Ref<Mesh>` via the blocking
+  `UploadSync`. A runtime primitive is **not** an `AssetId`-addressable asset and
+  never touches an archive — it is owned by whoever calls the factory and retires
+  through the per-frame deferred-destruction path like any other `Mesh`. It is
+  interchangeable with a cooked mesh at every pipeline and draw call, both being in
+  the canonical layout (`Mesh::CanonicalLayout()`).
+- **A mesh owns its materials; submeshes index them.** A `Mesh` holds a resident
+  `vector<AssetHandle<Material>>` (`GetMaterials()`) and each `SubMesh` carries a
+  `u32 MaterialIndex` into it (`SubMesh::NoMaterial` = unassigned). The cooked
+  on-disk mesh format stores u64 material ids; `MeshLoader` eager-resolves those
+  ids into material instances and builds the list, exactly as `Material` resolves
+  its own texture/shader dependencies — so every asset eager-loads its
+  dependencies. A draw iterates submeshes, binding `GetMaterials()[MaterialIndex]`
+  per range.
 
 ### Bindless: set 0 is the engine's
 

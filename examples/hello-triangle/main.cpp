@@ -12,6 +12,7 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/Primitives.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Asset/Shader.h>
@@ -80,7 +81,7 @@ protected:
             .Image = m_SceneImage,
         });
 
-        // Depth buffer for the cube draw (the mesh pass depth-tests so faces
+        // Depth buffer for the mesh draw (the mesh pass depth-tests so faces
         // resolve correctly regardless of triangle winding).
         m_DepthImage = Renderer::Image::Create(context, {
             .Name = "Scene Depth Image",
@@ -102,18 +103,26 @@ protected:
         });
 
         // Cooked at build time (see CMakeLists.txt) from assets/sample.vengpack.json
-        // into HT_ASSET_DIR; mount and load the cube mesh by AssetId. The mesh
-        // eager-resolves the brick material its submesh references and holds it
-        // resident; the material pulls in its vertex/fragment shaders and the brick
-        // texture as eager dependencies, builds its bindless pipeline, and writes a
-        // MaterialData entry into the registry's per-material SSBO.
+        // into HT_ASSET_DIR; mount and load the brick material by AssetId. Loading
+        // the material pulls in its vertex/fragment shaders and the brick texture as
+        // eager dependencies, builds its bindless pipeline, and writes a MaterialData
+        // entry into the registry's per-material SSBO.
         const VoidResult mountResult = GetAssetManager().Mount(path(HT_ASSET_DIR) / "sample.vengpack");
         VE_ASSERT(mountResult, "{}", mountResult.error());
 
-        const AssetResult<AssetHandle<Veng::Mesh>> cubeMesh =
-            GetAssetManager().LoadSync<Veng::Mesh>(AssetId{1002});
-        VE_ASSERT(cubeMesh.has_value(), "{}", cubeMesh.error().Detail);
-        m_CubeMesh = *cubeMesh;
+        // The primitive generator records this material instance on the produced
+        // submesh, so it must be resident before Mesh::Create hands it in.
+        const AssetResult<AssetHandle<Veng::Material>> brickMaterial =
+            GetAssetManager().LoadSync<Veng::Material>(AssetId{1003});
+        VE_ASSERT(brickMaterial.has_value(), "{}", brickMaterial.error().Detail);
+        m_BrickMaterial = *brickMaterial;
+
+        // Build the geometry at runtime rather than loading a cooked mesh: a UV
+        // sphere in the canonical layout, carrying the brick material instance on
+        // its single submesh. A sphere shows the brick normal/UV mapping better than
+        // a flat face. Mesh::Create uploads synchronously, so it is ready to draw.
+        m_Mesh = Veng::Mesh::Create(
+            context, Veng::Primitives::Sphere(0.8f, 24, 48, m_BrickMaterial), "Demo Sphere");
 
         // The compositing path (ImGui overlay + swapchain present) only exists in
         // windowed mode. The headless smoke run renders just the scene and
@@ -171,7 +180,8 @@ protected:
 
     void OnDispose() override
     {
-        m_CubeMesh = {};
+        m_Mesh.reset();
+        m_BrickMaterial = {};
         m_SceneTexture.reset();
         m_CompositePipeline.reset();
         m_CompositeLayout.reset();
@@ -257,16 +267,13 @@ private:
                 cmd.SetViewport({0, 0}, extent);
                 cmd.SetScissor({0, 0}, extent);
 
-                // The mesh's material is loaded asynchronously: until it is
-                // resident the pass just clears, and the cube draw begins on the
-                // first frame it lands. The mesh itself loads synchronously, so it
-                // is always ready.
-                if (!m_CubeMesh.IsLoaded())
-                    return;
-
-                const Veng::Mesh& mesh = *m_CubeMesh.Get();
+                const Veng::Mesh& mesh = *m_Mesh;
                 const std::span<const AssetHandle<Veng::Material>> materials = mesh.GetMaterials();
 
+                // The brick material loads synchronously in OnInitialize before the
+                // mesh is generated, so the mesh's material list is always resident
+                // here. Guard anyway: an async-loaded material would clear-only until
+                // it lands.
                 bool materialsReady = true;
                 for (const AssetHandle<Veng::Material>& material : materials)
                     materialsReady = materialsReady && material.IsLoaded();
@@ -308,17 +315,14 @@ private:
         // the graph cannot see them. Acquire each onto the graphics queue (and fold
         // its async upload's transfer-timeline wait into the frame submit) before
         // executing.
-        if (m_CubeMesh.IsLoaded())
+        for (const AssetHandle<Veng::Material>& material : m_Mesh->GetMaterials())
         {
-            for (const AssetHandle<Veng::Material>& material : m_CubeMesh.Get()->GetMaterials())
+            if (!material.IsLoaded())
+                continue;
+            for (const AssetHandle<Veng::Texture>& texture : material.Get()->GetTextures())
             {
-                if (!material.IsLoaded())
-                    continue;
-                for (const AssetHandle<Veng::Texture>& texture : material.Get()->GetTextures())
-                {
-                    if (texture.IsLoaded())
-                        cmd.PrepareForAccess(texture.Get()->GetView(), Renderer::AccessKind::Sample);
-                }
+                if (texture.IsLoaded())
+                    cmd.PrepareForAccess(texture.Get()->GetView(), Renderer::AccessKind::Sample);
             }
         }
 
@@ -407,7 +411,8 @@ private:
     Ref<Renderer::ImageView> m_ImGuiImageView;
     Ref<Renderer::Sampler> m_Sampler;
 
-    AssetHandle<Veng::Mesh> m_CubeMesh;
+    AssetHandle<Veng::Material> m_BrickMaterial;
+    Ref<Veng::Mesh> m_Mesh;
 
     AssetHandle<Veng::Shader> m_CompositeVS;
     AssetHandle<Veng::Shader> m_CompositeFS;
