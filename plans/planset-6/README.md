@@ -157,42 +157,81 @@ draw begins on the first frame it is resident.
 | 08 | [`AssetManager::Load` async default + sample migration](08-async-load.md) | Async `Load(AssetId)` returns a not-yet-resident handle filled via a `Task`; the main-thread continuation registers into bindless + swaps it into the cache. Sample loads one asset async. | proposed |
 | 09 | [Docs + roadmap re-cut + `Veng.h` contract](09-docs-roadmap.md) | Revise the `Veng.h` single-threaded note, `ownership.md` (timeline primitive + transfer-keyed retire), `CLAUDE.md`, and `future/README` / `threading-task-system.md` / `asset-system.md`. | proposed |
 
-## Dependency graph (for delegation)
+## Dependency analysis & implementation order
+
+### The dependency graph
+
+The edges that actually constrain ordering (a plan must land after every plan it
+points from):
 
 ```
-01 rename (frees the default name) ──────────────────────────────┐
-02 TaskSystem (CPU pool + futures + pump) ───────────────────────┤
-03 transfer queue + per-worker pools + submit lock ──────────────┤
-04 TimelineSemaphore ────────────────────────────────────────────┼─► 07 async Upload ─► 08 async Load ─► 09 docs
-05 submit-wait + worker-safe retire (needs 04) ──────────────────┤
-06 ownership-transfer barrier rule (pure DecideBarrier) ─────────┘
+01 rename ────────────────────────────────────────────────┐
+                                                           │
+02 TaskSystem ──┬──────────► 03 transfer queue/pools ──────┤
+                │                                          ├─► 07 async Upload ─┬─► 08 async Load ─► 09 docs
+                └──────────────────────────────────────────┼───────────────────┘
+                                                           │
+04 TimelineSemaphore ───────► 05 submit-wait + retire ─────┤
+                                                           │
+06 barrier rule ───────────────────────────────────────────┘
 ```
 
-- **01, 02, 03, 06 are largely parallelizable** (different files: callers/rename, a
-  new CPU subsystem, `Context` queue selection, the pure barrier rule). **05 needs
-  04** (both reference a timeline value). **07 is the join** — it needs the renamed
-  `UploadSync` (01), the pool (02), the transfer pools + submit lock (03), the
-  timeline (04), the submit-wait + transfer-keyed retire (05), and the acquire-half
-  rule + producing-family marker (06).
-- **05 and 07 carry the Vulkan-correctness risk.** 05 opens up the frame submit and
-  makes the retire path thread-safe + transfer-lifetime-correct (a worker-dropped
-  staging buffer freed on the wrong fence is a GPU use-after-free); 07 composes the
-  upload (a resource on the wrong queue or sampled before its timeline value is a
-  GPU race). Both the smoke render can miss — **main thread, validation-verified.**
-- **08** is the asset-layer consumer of 07 and the **largest** plan — before any
-  `TaskSystem` wiring it must carve a worker/finalize seam into loaders that today
-  fuse decode + upload + bindless-registration + pipeline-build in one synchronous
-  constructor/`Load` call. **09** is roadmap-only.
+Edge list: `02→03`, `04→05`, `{01,02,03,04,05,06}→07`, `{02,07}→08`, `08→09`
+(and 09 documents all of 01–08). Two edges the prose flags but the old diagram
+hid: **03 depends on 02** (`ForEachWorker` creates the per-worker pools), and
+**08 depends on 02 directly** (the `AssetManager` ctor takes `TaskSystem&` and the
+continuation pump), not only transitively through 07.
 
-**Delegation guidance.** Plan **01** is a mechanical rename sweep — good
-`model: sonnet` work, but it touches the sample and tests, so land it before the
-others depend on the new name. Plan **02** (`TaskSystem`/`Task<T>`) is a
-self-contained CPU subsystem with unit tests — delegatable with the API reviewed on
-the main thread. Plans **03 / 04 / 06** are focused, each in its own area
-(`Context` queues / a new primitive / the pure barrier rule) — delegatable, design
-reviewed on the main thread. Plans **05 / 07 / 08** carry the queue-correctness,
-the deferred-destruction reroute, and the async-cache design — **keep on the main
-thread** and verify under `VE_DEBUG`.
+### Roots, waves, and the critical path
+
+- **Roots (no dependencies): 01, 02, 04, 06.** These can start immediately and in
+  any relative order — they touch disjoint files (the rename sweep, a new CPU
+  subsystem, a new sync primitive, the pure barrier rule).
+- **The DAG resolves into five waves** — if plans were delegated concurrently this
+  is the dependency-imposed shape, and even run one-at-a-time it is the order:
+
+  | Wave | Plans | Why now |
+  |---|---|---|
+  | 1 | **01, 02, 04, 06** | no dependencies |
+  | 2 | **03** (needs 02), **05** (needs 04) | their single root landed |
+  | 3 | **07** | the join — needs 01·02·03·04·05·06 |
+  | 4 | **08** | needs 07 (+ 02) |
+  | 5 | **09** | documents 01–08 |
+
+- **Critical path = 5 plans.** Two chains tie for longest: `02→03→07→08→09` and
+  `04→05→07→08→09`. **07, 08, 09 are the unavoidable serial tail** — every long
+  path runs through them, so no amount of parallelism shortens the back half. The
+  front (01, 02, 04, 06) is where concurrency, if any, pays off.
+
+### Recommended order
+
+**`01 → 02 → 04 → 06 → 03 → 05 → 07 → 08 → 09`** — a topological sort that front-
+loads the four roots (cheapest + most delegatable first), then the wave-2 pair,
+then the serial tail. (The plain numeric order `01…09` is *also* a valid
+topological sort, since 03 follows 02 and 05 follows 04; this ordering only pulls
+the two independent roots 04 and 06 ahead of 03 so the timeline chain `04→05` and
+the upload chain `02→03` can advance in parallel when delegating.) Land the roots
+before anything that consumes them, then converge on 07.
+
+### Risk & delegation
+
+- **05 and 07 carry the Vulkan-correctness risk.** 05 makes the retire path
+  thread-safe + transfer-lifetime-correct (a worker-dropped staging buffer freed
+  on the wrong fence is a GPU use-after-free) and opens the frame submit to
+  timeline waits; 07 composes the upload (a resource on the wrong queue, or sampled
+  before its timeline value, is a GPU race). The smoke render misses both —
+  **main thread, validation-verified under `VE_DEBUG`.**
+- **08 is the largest plan.** Before any `TaskSystem` wiring it must carve a
+  worker/finalize seam into loaders that today fuse decode + upload +
+  bindless-registration + pipeline-build in one synchronous constructor/`Load`
+  call. **09** is roadmap-only.
+- **Delegatable to `model: sonnet`** (API/design reviewed on the main thread):
+  **01** (mechanical rename sweep — but it edits the sample and tests, so land it
+  before the freed name is depended on), **02** (self-contained CPU subsystem with
+  unit tests), and **03 / 04 / 06** (each isolated in its own area: `Context` queue
+  selection / a new primitive / the pure barrier rule). **Keep 05 / 07 / 08 on the
+  main thread** — the queue-correctness, the deferred-destruction reroute, and the
+  async-cache design.
 
 ## New dependencies
 
