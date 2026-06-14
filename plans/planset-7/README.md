@@ -14,8 +14,8 @@ of resident material instances the mesh owns, instead of carrying a serialized
 This is **not** part of any future-area chain. It is a small, self-contained
 utility planset, useful in three places: standing up geometry in tests and tools
 without the cook step, giving the future editor/scene work ready-made primitives to
-place, and giving sample/demo code a one-liner mesh. It depends on nothing from
-planset-6 and can land independently.
+place, and giving sample/demo code a one-liner mesh. It is self-contained: it
+depends on nothing from any other planset and shares no work with them.
 
 ## The decisions that shape this planset
 
@@ -41,10 +41,13 @@ planset-6 and can land independently.
    `aiProcess_CalcTangentSpace` because arbitrary models have no closed form; a
    generated primitive does, so it gets exact tangents for free.
 
-4. **`UploadSync` now, async `Upload` later for free.** The upload factory uses
-   `UploadSync`, exactly as `MeshLoader` does. When planset-6's async `Upload`
-   becomes the default, the factory switches its calls with no API change —
-   `MeshData` and the generators are upload-policy-agnostic.
+4. **A synchronous factory uses the blocking `UploadSync`.** `Mesh::Create(context,
+   data, name)` returns a resident `Ref<Mesh>` directly — not a `Task<Ref<Mesh>>` —
+   so it uploads with the blocking `UploadSync`, exactly as `MeshLoader` and the
+   smoke path do. (Async `Upload(TaskSystem&) → Task<void>` is the engine default
+   since planset-6; `UploadSync` is its blocking sibling.) `MeshData` and the
+   generators are upload-policy-agnostic, so an async overload of the factory is a
+   later addition with no change to either.
 
 5. **No new asset type, no cook path.** A runtime primitive is *not* an
    `AssetId`-addressable asset and never touches an archive. It is constructed
