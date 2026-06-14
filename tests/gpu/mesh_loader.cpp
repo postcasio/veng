@@ -11,7 +11,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Renderer/Buffer.h>
-#include <Veng/Renderer/Mesh.h>
+#include <Veng/Asset/Mesh.h>
 
 #include <gpu/fixture.h>
 

@@ -1,16 +1,18 @@
-#include <Veng/Renderer/Material.h>
+#include <Veng/Asset/Material.h>
 
 #include <cstring>
 #include <string_view>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/Texture.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
-#include <Veng/Renderer/Texture.h>
 
-namespace Veng::Renderer
+namespace Veng
 {
+    using namespace Renderer;
+
     Material::Material(const MaterialInfo& info) :
         m_Context(*info.Context),
         m_Name(info.Name),

@@ -1,4 +1,4 @@
-#include <Veng/Renderer/Texture.h>
+#include <Veng/Asset/Texture.h>
 
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Context.h>
@@ -6,8 +6,10 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
 
-namespace Veng::Renderer
+namespace Veng
 {
+    using namespace Renderer;
+
     Texture::Texture(Context& context, const TextureInfo& info) :
         m_Context(context),
         m_Name(info.Name),

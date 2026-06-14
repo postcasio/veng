@@ -6,10 +6,10 @@
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetType.h>
+#include <Veng/Asset/ShaderAsset.h>
+#include <Veng/Asset/Texture.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
-#include <Veng/Renderer/ShaderAsset.h>
-#include <Veng/Renderer/Texture.h>
 
 // Material: the thin, bindless end-state material. A loaded material owns its
 // forward graphics pipeline (built from the vertex+fragment shaders' reflected
@@ -22,7 +22,10 @@ namespace Veng::Renderer
 {
     class CommandBuffer;
     class Context;
+}
 
+namespace Veng
+{
     // One reflected MaterialData field, kept at runtime so name-based
     // SetTexture/SetParam can resolve a field by Name (mirrors the cooked
     // CookedMaterialField table).
@@ -40,9 +43,9 @@ namespace Veng::Renderer
     struct MaterialInfo
     {
         string Name;
-        Context* Context = nullptr;
+        Renderer::Context* Context = nullptr;
 
-        Ref<GraphicsPipeline> Pipeline;
+        Ref<Renderer::GraphicsPipeline> Pipeline;
 
         // Eager dependencies kept resident for the material's lifetime.
         AssetHandle<ShaderAsset> VertexShader;
@@ -52,7 +55,7 @@ namespace Veng::Renderer
         // The packed MaterialData block (handle slots already patched with the
         // resolved bindless handles), its reflected field table, and the
         // push-constant offset of the per-draw material selector.
-        MaterialData Params{};
+        Renderer::MaterialData Params{};
         vector<MaterialField> Fields;
         u32 SelectorOffset = 0;
     };
@@ -73,7 +76,7 @@ namespace Veng::Renderer
         // Binds the material's pipeline and pushes its index as the per-draw
         // selector. Set 0 (the bindless registry) must already be bound for the
         // frame. Issue the mesh draws after this.
-        void Bind(CommandBuffer& cmd) const;
+        void Bind(Renderer::CommandBuffer& cmd) const;
 
         // Name-based edits (resolved through the reflected field table); both
         // rewrite the material's SSBO entry in place.
@@ -84,7 +87,7 @@ namespace Veng::Renderer
         [[nodiscard]] u32 GetIndex() const { return m_Handle.Index; }
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
-        [[nodiscard]] const Ref<GraphicsPipeline>& GetPipeline() const { return m_Pipeline; }
+        [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const { return m_Pipeline; }
 
     private:
         explicit Material(const MaterialInfo& info);
@@ -92,25 +95,22 @@ namespace Veng::Renderer
         [[nodiscard]] const MaterialField* FindField(std::string_view name) const;
         void UploadParams() const;
 
-        Context& m_Context;
+        Renderer::Context& m_Context;
         string m_Name;
-        Ref<GraphicsPipeline> m_Pipeline;
+        Ref<Renderer::GraphicsPipeline> m_Pipeline;
 
         AssetHandle<ShaderAsset> m_VertexShader;
         AssetHandle<ShaderAsset> m_FragmentShader;
         vector<AssetHandle<Texture>> m_Textures;
 
-        MaterialData m_Params{};
+        Renderer::MaterialData m_Params{};
         vector<MaterialField> m_Fields;
         u32 m_SelectorOffset = 0;
-        MaterialHandle m_Handle;
+        Renderer::MaterialHandle m_Handle;
     };
-}
 
-namespace Veng
-{
     template <>
-    struct AssetTypeTrait<Renderer::Material>
+    struct AssetTypeTrait<Material>
     {
         static constexpr AssetType Type = AssetType::Material;
     };

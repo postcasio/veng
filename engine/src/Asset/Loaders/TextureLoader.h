@@ -1,10 +1,10 @@
 #pragma once
 
 #include <Veng/Asset/AssetLoader.h>
-#include <Veng/Renderer/Texture.h>
+#include <Veng/Asset/Texture.h>
 
 // The AssetType::Texture loader: cooked
-// CookedTextureHeader + RGBA8 pixels -> Renderer::Texture, registered into the
+// CookedTextureHeader + RGBA8 pixels -> Veng::Texture, registered into the
 // bindless registry by Texture::Create.
 
 namespace Veng

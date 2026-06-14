@@ -7,7 +7,7 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
-#include <Veng/Renderer/VertexLayoutAsset.h>
+#include <Veng/Asset/VertexLayoutAsset.h>
 
 namespace Veng
 {
@@ -161,8 +161,8 @@ namespace Veng
         // asset is resolvable.
         if (interfaceHeader.VertexLayoutAssetId != 0)
         {
-            const AssetResult<AssetHandle<Renderer::VertexLayoutAsset>> layout =
-                manager.LoadSync<Renderer::VertexLayoutAsset>(AssetId{interfaceHeader.VertexLayoutAssetId});
+            const AssetResult<AssetHandle<Veng::VertexLayoutAsset>> layout =
+                manager.LoadSync<Veng::VertexLayoutAsset>(AssetId{interfaceHeader.VertexLayoutAssetId});
             if (!layout)
                 return std::unexpected(layout.error());
         }
@@ -178,7 +178,7 @@ namespace Veng
             .EntryPoint = BridgeName(header.EntryPoint),
         });
 
-        const Ref<Renderer::ShaderAsset> asset = CreateRef<Renderer::ShaderAsset>(Renderer::ShaderAsset{
+        const Ref<Veng::ShaderAsset> asset = CreateRef<Veng::ShaderAsset>(Veng::ShaderAsset{
             .Module = shader,
             .Interface = std::move(shaderInterface),
         });

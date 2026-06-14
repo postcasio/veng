@@ -9,8 +9,8 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
-#include <Veng/Renderer/Mesh.h>
-#include <Veng/Renderer/VertexLayoutAsset.h>
+#include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/VertexLayoutAsset.h>
 
 #include <gpu/fixture.h>
 

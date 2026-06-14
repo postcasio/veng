@@ -22,7 +22,12 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetLoader.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Material.h>
+#include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/RawAsset.h>
+#include <Veng/Asset/ShaderAsset.h>
+#include <Veng/Asset/Texture.h>
+#include <Veng/Asset/VertexLayoutAsset.h>
 
 #include <Veng/Application.h>
 #include <Veng/Assert.h>
@@ -56,7 +61,6 @@
 #include <Veng/Renderer/TypedBuffers.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>
-#include <Veng/Renderer/VertexLayoutAsset.h>
 
 int main()
 {

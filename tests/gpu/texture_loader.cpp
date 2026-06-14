@@ -18,8 +18,8 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderGraph.h>
-#include <Veng/Renderer/ShaderAsset.h>
-#include <Veng/Renderer/Texture.h>
+#include <Veng/Asset/ShaderAsset.h>
+#include <Veng/Asset/Texture.h>
 #include <Veng/Renderer/Types.h>
 
 #include <gpu/fixture.h>

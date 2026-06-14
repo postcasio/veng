@@ -12,8 +12,8 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
-#include <Veng/Renderer/ShaderAsset.h>
-#include <Veng/Renderer/VertexLayoutAsset.h>
+#include <Veng/Asset/ShaderAsset.h>
+#include <Veng/Asset/VertexLayoutAsset.h>
 
 #include <gpu/fixture.h>
 

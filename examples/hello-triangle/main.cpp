@@ -10,12 +10,12 @@
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Material.h>
-#include <Veng/Renderer/Mesh.h>
+#include <Veng/Asset/Material.h>
+#include <Veng/Asset/Mesh.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
-#include <Veng/Renderer/ShaderAsset.h>
-#include <Veng/Renderer/Texture.h>
+#include <Veng/Asset/ShaderAsset.h>
+#include <Veng/Asset/Texture.h>
 
 #include <glm/gtc/packing.hpp>
 
@@ -109,13 +109,13 @@ protected:
         const VoidResult mountResult = GetAssetManager().Mount(path(HT_ASSET_DIR) / "sample.vengpack");
         VE_ASSERT(mountResult, "{}", mountResult.error());
 
-        const AssetResult<AssetHandle<Renderer::Mesh>> cubeMesh =
-            GetAssetManager().LoadSync<Renderer::Mesh>(AssetId{1002});
+        const AssetResult<AssetHandle<Veng::Mesh>> cubeMesh =
+            GetAssetManager().LoadSync<Veng::Mesh>(AssetId{1002});
         VE_ASSERT(cubeMesh.has_value(), "{}", cubeMesh.error().Detail);
         m_CubeMesh = *cubeMesh;
 
-        const AssetResult<AssetHandle<Renderer::Material>> brickMaterial =
-            GetAssetManager().LoadSync<Renderer::Material>(AssetId{1003});
+        const AssetResult<AssetHandle<Veng::Material>> brickMaterial =
+            GetAssetManager().LoadSync<Veng::Material>(AssetId{1003});
         VE_ASSERT(brickMaterial.has_value(), "{}", brickMaterial.error().Detail);
         m_BrickMaterial = *brickMaterial;
 
@@ -195,13 +195,13 @@ private:
     {
         auto& context = GetRenderContext();
 
-        const AssetResult<AssetHandle<Renderer::ShaderAsset>> vs =
-            GetAssetManager().LoadSync<Renderer::ShaderAsset>(AssetId{1006});
+        const AssetResult<AssetHandle<Veng::ShaderAsset>> vs =
+            GetAssetManager().LoadSync<Veng::ShaderAsset>(AssetId{1006});
         VE_ASSERT(vs.has_value(), "{}", vs.error().Detail);
         m_CompositeVS = *vs;
 
-        const AssetResult<AssetHandle<Renderer::ShaderAsset>> fs =
-            GetAssetManager().LoadSync<Renderer::ShaderAsset>(AssetId{1007});
+        const AssetResult<AssetHandle<Veng::ShaderAsset>> fs =
+            GetAssetManager().LoadSync<Veng::ShaderAsset>(AssetId{1007});
         VE_ASSERT(fs.has_value(), "{}", fs.error().Detail);
         m_CompositeFS = *fs;
 
@@ -270,7 +270,7 @@ private:
                 m_BrickMaterial->Bind(cmd);
                 GetRenderContext().GetBindlessRegistry().Bind(cmd);
 
-                const Renderer::Mesh& mesh = *m_CubeMesh.Get();
+                const Veng::Mesh& mesh = *m_CubeMesh.Get();
                 cmd.BindVertexBuffer(mesh.GetVertexBuffer());
                 cmd.BindIndexBuffer(mesh.GetIndexBuffer(), mesh.GetIndexType());
 
@@ -284,7 +284,7 @@ private:
                 // Material::Bind already pushed MaterialIndex at offset 64.
                 cmd.PushConstants(MeshPushConstants{.MVP = projection * view * model});
 
-                for (const Renderer::SubMesh& subMesh : mesh.GetSubMeshes())
+                for (const Veng::SubMesh& subMesh : mesh.GetSubMeshes())
                     cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
             });
 
@@ -373,11 +373,11 @@ private:
     Ref<Renderer::ImageView> m_ImGuiImageView;
     Ref<Renderer::Sampler> m_Sampler;
 
-    AssetHandle<Renderer::Mesh> m_CubeMesh;
-    AssetHandle<Renderer::Material> m_BrickMaterial;
+    AssetHandle<Veng::Mesh> m_CubeMesh;
+    AssetHandle<Veng::Material> m_BrickMaterial;
 
-    AssetHandle<Renderer::ShaderAsset> m_CompositeVS;
-    AssetHandle<Renderer::ShaderAsset> m_CompositeFS;
+    AssetHandle<Veng::ShaderAsset> m_CompositeVS;
+    AssetHandle<Veng::ShaderAsset> m_CompositeFS;
     Ref<Renderer::PipelineLayout> m_CompositeLayout;
     Ref<Renderer::GraphicsPipeline> m_CompositePipeline;
     Renderer::TextureHandle m_SceneTextureHandle;

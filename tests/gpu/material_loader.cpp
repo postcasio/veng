@@ -11,8 +11,8 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Renderer/BindlessRegistry.h>
-#include <Veng/Renderer/Material.h>
-#include <Veng/Renderer/Texture.h>
+#include <Veng/Asset/Material.h>
+#include <Veng/Asset/Texture.h>
 
 #include <gpu/fixture.h>
 

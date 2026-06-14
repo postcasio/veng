@@ -6,6 +6,8 @@ add_library(veng SHARED
         src/Application.cpp
         src/Assert.cpp
         src/Asset/AssetManager.cpp
+        src/Asset/Material.cpp
+        src/Asset/Texture.cpp
         src/Asset/Loaders/MaterialLoader.cpp
         src/Asset/Loaders/MeshLoader.cpp
         src/Asset/Loaders/RawAssetLoader.cpp
@@ -17,7 +19,6 @@ add_library(veng SHARED
         src/Window.cpp
         src/ImGui/ImGuiLayer.cpp
         src/ImGui/ImGuiTexture.cpp
-        src/Renderer/Material.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/ShaderInterface.cpp
         src/Renderer/Backend/Barrier.cpp
@@ -42,7 +43,6 @@ add_library(veng SHARED
         src/Renderer/Backend/Shader.cpp
         src/Renderer/Backend/SwapChain.cpp
         src/Renderer/Backend/SynchronizationFrame.cpp
-        src/Renderer/Backend/Texture.cpp
         src/Renderer/Backend/Utils.cpp
         src/Renderer/Backend/VertexBufferLayout.cpp
         src/Vendor/ImGui.cpp

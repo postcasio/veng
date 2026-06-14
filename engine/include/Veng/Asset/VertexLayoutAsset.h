@@ -10,19 +10,16 @@
 // layouts (Canonical, ScreenSpace, PositionOnly) in an embedded core pack;
 // consumers add more as assets in their own packs. A shader references its
 // layout by AssetId (ShaderInterface::VertexLayoutId).
-namespace Veng::Renderer
+namespace Veng
 {
     struct VertexLayoutAsset
     {
-        VertexBufferLayout Layout = VertexBufferLayout(vector<VertexBufferElement>{});
-        [[nodiscard]] const VertexBufferLayout& GetLayout() const { return Layout; }
+        Renderer::VertexBufferLayout Layout = Renderer::VertexBufferLayout(vector<Renderer::VertexBufferElement>{});
+        [[nodiscard]] const Renderer::VertexBufferLayout& GetLayout() const { return Layout; }
     };
-}
 
-namespace Veng
-{
     template <>
-    struct AssetTypeTrait<Renderer::VertexLayoutAsset>
+    struct AssetTypeTrait<VertexLayoutAsset>
     {
         static constexpr AssetType Type = AssetType::VertexLayout;
     };

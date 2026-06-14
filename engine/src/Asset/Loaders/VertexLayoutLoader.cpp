@@ -78,7 +78,7 @@ namespace Veng
             elements.emplace_back(*format, BridgeName(element.Name));
         }
 
-        const Ref<Renderer::VertexLayoutAsset> asset = CreateRef<Renderer::VertexLayoutAsset>(Renderer::VertexLayoutAsset{
+        const Ref<Veng::VertexLayoutAsset> asset = CreateRef<Veng::VertexLayoutAsset>(Veng::VertexLayoutAsset{
             .Layout = Renderer::VertexBufferLayout(elements),
         });
 

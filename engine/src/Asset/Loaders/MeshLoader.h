@@ -1,11 +1,11 @@
 #pragma once
 
 #include <Veng/Asset/AssetLoader.h>
-#include <Veng/Renderer/Mesh.h>
+#include <Veng/Asset/Mesh.h>
 
 // The AssetType::Mesh loader: a CookedMeshHeader + attribute
 // descriptor + submesh table + interleaved vertex/index buffers -> a
-// Renderer::Mesh with two GPU buffers (UploadSync), after validating the cooked
+// Veng::Mesh with two GPU buffers (UploadSync), after validating the cooked
 // layout against the engine's canonical VertexBufferLayout.
 
 namespace Veng

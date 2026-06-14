@@ -62,7 +62,7 @@ namespace Veng
         // Validate the cooked attribute descriptor against the engine's single
         // canonical layout: count, per-attribute format + offset, and stride
         // must all match, or it's a stale/corrupt archive (loud, not silent UB).
-        const Renderer::VertexBufferLayout canonical = Renderer::Mesh::CanonicalLayout();
+        const Renderer::VertexBufferLayout canonical = Veng::Mesh::CanonicalLayout();
         const vector<Renderer::VertexBufferElement>& elements = canonical.GetElements();
 
         if (header.AttributeCount != elements.size())
@@ -106,12 +106,12 @@ namespace Veng
         if (cooked.size() < cursor + subMeshBytes)
             return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than submesh table"));
 
-        vector<Renderer::SubMesh> subMeshes(header.SubMeshCount);
+        vector<Veng::SubMesh> subMeshes(header.SubMeshCount);
         for (u32 i = 0; i < header.SubMeshCount; ++i)
         {
             CookedSubMesh cookedSubMesh;
             std::memcpy(&cookedSubMesh, cooked.data() + cursor + i * sizeof(CookedSubMesh), sizeof(cookedSubMesh));
-            subMeshes[i] = Renderer::SubMesh{
+            subMeshes[i] = Veng::SubMesh{
                 .IndexOffset = cookedSubMesh.IndexOffset,
                 .IndexCount = cookedSubMesh.IndexCount,
                 .Material = AssetId{cookedSubMesh.MaterialId},
@@ -146,7 +146,7 @@ namespace Veng
         });
         indexBuffer->Upload(indexData);
 
-        const Ref<Renderer::Mesh> mesh = Renderer::Mesh::Create({
+        const Ref<Veng::Mesh> mesh = Veng::Mesh::Create({
             .Name = fmt::format("Mesh {}", id.Value),
             .VertexBuffer = vertexBuffer,
             .IndexBuffer = indexBuffer,

@@ -34,7 +34,7 @@
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
-#include <Veng/Renderer/ShaderAsset.h>
+#include <Veng/Asset/ShaderAsset.h>
 #include <Veng/Renderer/Types.h>
 
 #include <support/GpuContext.h>

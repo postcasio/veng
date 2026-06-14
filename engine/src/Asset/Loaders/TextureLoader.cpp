@@ -111,7 +111,7 @@ namespace Veng
             });
         }
 
-        const Ref<Renderer::Texture> texture = Renderer::Texture::Create(context, {
+        const Ref<Veng::Texture> texture = Veng::Texture::Create(context, {
             .Name = fmt::format("Texture {}", id.Value),
             .Extent = {header.Width, header.Height},
             .Format = *format,

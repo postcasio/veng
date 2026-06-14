@@ -10,19 +10,16 @@
 // ShaderInterface, as cooked by the Slang importer (or supplied inline for
 // editor-produced shaders). Pipelines build their descriptor-set/pipeline
 // layouts from Interface rather than a hand-declared one.
-namespace Veng::Renderer
+namespace Veng
 {
     struct ShaderAsset
     {
-        Ref<Shader> Module;
-        ShaderInterface Interface;
+        Ref<Renderer::Shader> Module;
+        Renderer::ShaderInterface Interface;
     };
-}
 
-namespace Veng
-{
     template <>
-    struct AssetTypeTrait<Renderer::ShaderAsset>
+    struct AssetTypeTrait<ShaderAsset>
     {
         static constexpr AssetType Type = AssetType::Shader;
     };

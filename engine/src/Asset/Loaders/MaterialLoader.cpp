@@ -11,10 +11,10 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/PipelineLayout.h>
-#include <Veng/Renderer/ShaderAsset.h>
+#include <Veng/Asset/ShaderAsset.h>
 #include <Veng/Renderer/ShaderInterface.h>
-#include <Veng/Renderer/Texture.h>
-#include <Veng/Renderer/VertexLayoutAsset.h>
+#include <Veng/Asset/Texture.h>
+#include <Veng/Asset/VertexLayoutAsset.h>
 
 namespace Veng
 {
@@ -86,29 +86,29 @@ namespace Veng
         cursor += header.ParamBytes;
 
         // ── 4. Load vertex and fragment shader assets ─────────────────────────
-        const AssetResult<AssetHandle<Renderer::ShaderAsset>> vsResult =
-            manager.LoadSync<Renderer::ShaderAsset>(AssetId{header.VertexShaderId});
+        const AssetResult<AssetHandle<Veng::ShaderAsset>> vsResult =
+            manager.LoadSync<Veng::ShaderAsset>(AssetId{header.VertexShaderId});
         if (!vsResult)
             return std::unexpected(vsResult.error());
 
-        const AssetResult<AssetHandle<Renderer::ShaderAsset>> fsResult =
-            manager.LoadSync<Renderer::ShaderAsset>(AssetId{header.FragmentShaderId});
+        const AssetResult<AssetHandle<Veng::ShaderAsset>> fsResult =
+            manager.LoadSync<Veng::ShaderAsset>(AssetId{header.FragmentShaderId});
         if (!fsResult)
             return std::unexpected(fsResult.error());
 
-        const AssetHandle<Renderer::ShaderAsset>& vsHandle = *vsResult;
-        const AssetHandle<Renderer::ShaderAsset>& fsHandle = *fsResult;
+        const AssetHandle<Veng::ShaderAsset>& vsHandle = *vsResult;
+        const AssetHandle<Veng::ShaderAsset>& fsHandle = *fsResult;
 
-        const Renderer::ShaderAsset& vsAsset = *vsHandle.Get();
-        const Renderer::ShaderAsset& fsAsset = *fsHandle.Get();
+        const Veng::ShaderAsset& vsAsset = *vsHandle.Get();
+        const Veng::ShaderAsset& fsAsset = *fsHandle.Get();
 
         // ── 5. Build MaterialField table + resolve textures ───────────────────
-        vector<Renderer::MaterialField> fields;
+        vector<Veng::MaterialField> fields;
         fields.reserve(header.FieldCount);
 
         // Track textures by AssetId to deduplicate.
         vector<u64> textureIds;
-        vector<AssetHandle<Renderer::Texture>> textures;
+        vector<AssetHandle<Veng::Texture>> textures;
 
         auto byte_ptr = [&params]() { return reinterpret_cast<std::byte*>(&params); };
 
@@ -116,27 +116,27 @@ namespace Veng
         {
             const CookedMaterialField& cf = cookedFields[i];
 
-            Renderer::MaterialField::FieldKind kind;
+            Veng::MaterialField::FieldKind kind;
             switch (cf.Kind)
             {
-                case 0: kind = Renderer::MaterialField::FieldKind::Param;          break;
-                case 1: kind = Renderer::MaterialField::FieldKind::TextureHandle;  break;
-                case 2: kind = Renderer::MaterialField::FieldKind::SamplerHandle;  break;
+                case 0: kind = Veng::MaterialField::FieldKind::Param;          break;
+                case 1: kind = Veng::MaterialField::FieldKind::TextureHandle;  break;
+                case 2: kind = Veng::MaterialField::FieldKind::SamplerHandle;  break;
                 default:
                     return std::unexpected(Corrupt(id, fmt::format(
                         "material: field {} '{}' has unrecognized Kind {}",
                         i, BridgeName(cf.Name), cf.Kind)));
             }
 
-            fields.push_back(Renderer::MaterialField{
+            fields.push_back(Veng::MaterialField{
                 .Name   = BridgeName(cf.Name),
                 .Offset = cf.Offset,
                 .Size   = cf.Size,
                 .Kind   = kind,
             });
 
-            if (kind == Renderer::MaterialField::FieldKind::TextureHandle
-             || kind == Renderer::MaterialField::FieldKind::SamplerHandle)
+            if (kind == Veng::MaterialField::FieldKind::TextureHandle
+             || kind == Veng::MaterialField::FieldKind::SamplerHandle)
             {
                 if (cf.TextureId == 0)
                 {
@@ -146,7 +146,7 @@ namespace Veng
                 }
 
                 // Load (or reuse) the texture asset.
-                AssetHandle<Renderer::Texture>* texHandle = nullptr;
+                AssetHandle<Veng::Texture>* texHandle = nullptr;
                 for (usize j = 0; j < textureIds.size(); ++j)
                 {
                     if (textureIds[j] == cf.TextureId)
@@ -158,8 +158,8 @@ namespace Veng
 
                 if (!texHandle)
                 {
-                    const AssetResult<AssetHandle<Renderer::Texture>> texResult =
-                        manager.LoadSync<Renderer::Texture>(AssetId{cf.TextureId});
+                    const AssetResult<AssetHandle<Veng::Texture>> texResult =
+                        manager.LoadSync<Veng::Texture>(AssetId{cf.TextureId});
                     if (!texResult)
                         return std::unexpected(texResult.error());
 
@@ -170,9 +170,9 @@ namespace Veng
 
                 // Patch the runtime bindless handle index into params at the
                 // field's byte offset.
-                const Renderer::Texture& tex = *texHandle->Get();
+                const Veng::Texture& tex = *texHandle->Get();
                 u32 handleIndex;
-                if (kind == Renderer::MaterialField::FieldKind::TextureHandle)
+                if (kind == Veng::MaterialField::FieldKind::TextureHandle)
                     handleIndex = tex.GetHandle().Index;
                 else
                     handleIndex = tex.GetSamplerHandle().Index;
@@ -266,8 +266,8 @@ namespace Veng
         optional<Renderer::VertexBufferLayout> vertexBufferLayout;
         if (vsInterface.VertexLayoutId.has_value())
         {
-            const AssetResult<AssetHandle<Renderer::VertexLayoutAsset>> layoutResult =
-                manager.LoadSync<Renderer::VertexLayoutAsset>(*vsInterface.VertexLayoutId);
+            const AssetResult<AssetHandle<Veng::VertexLayoutAsset>> layoutResult =
+                manager.LoadSync<Veng::VertexLayoutAsset>(*vsInterface.VertexLayoutId);
             if (!layoutResult)
                 return std::unexpected(layoutResult.error());
 
@@ -290,7 +290,7 @@ namespace Veng
         });
 
         // ── 7. Assemble MaterialInfo and construct Material ───────────────────
-        const Renderer::MaterialInfo info{
+        const Veng::MaterialInfo info{
             .Name           = fmt::format("Material {}", id.Value),
             .Context        = &context,
             .Pipeline       = pipeline,
@@ -302,7 +302,7 @@ namespace Veng
             .SelectorOffset = MaterialSelectorPushOffset,
         };
 
-        const Ref<Renderer::Material> material = Renderer::Material::Create(info);
+        const Ref<Veng::Material> material = Veng::Material::Create(info);
         return Detail::RefAny(material);
     }
 }
