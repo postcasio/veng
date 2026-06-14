@@ -18,11 +18,13 @@ both must be reflected.
 - **The RenderGraph section.** It currently says "Don't hand-write barriers — declare
   a pass with the views it writes/reads; the graph derives the transitions." Keep that
   core truth and add the now-true facts: passes declare **logical resources**
-  (`CreateTransient` for graph-owned, `Import` for external/late-bound), the callback
-  receives a **`PassContext`** (`Cmd()` + `Resolved(ResourceId)`), and the graph
-  **compiles** its schedule once and **replays** per frame, recompiling only on a
-  structural change (passes added/removed, transient extent/format). State it as
-  present-tense fact, no plan citations (per the comment/doc rules).
+  (`CreateTransient` for graph-owned transients, `Import` for external resources whose
+  view is supplied per frame as an `Execute` binding); the callback receives a
+  **`PassContext`** (`Cmd()` + `Resolved(ResourceId)`); and `RenderGraph` is a
+  **builder** whose **`Compile()`** returns a **`CompiledGraph`** that **replays** the
+  baked schedule per frame via `Execute(cmd, imports)`, the consumer re-`Compile()`ing
+  only on a structural change (passes added/removed, transient extent/format). State it
+  as present-tense fact, no plan citations (per the comment/doc rules).
 - Cross-check the hello-triangle pattern reference (`RenderScene`/`CompositeToSwapChain`)
   still reads correctly against the migrated sample (transients/imports, member graphs).
 

@@ -71,13 +71,22 @@ private:
 // Declare a graph-owned transient. Returns a handle usable in Color/Depth/Sample/…
 [[nodiscard]] ResourceId CreateTransient(const TransientDesc& desc);
 
-// Register an external concrete resource (swapchain image, app-owned target). Its
-// concrete view is late-bound per frame via BindImport before Execute — the
-// acquired swapchain view differs every frame. Returns a handle.
+// Declare an external resource (swapchain image, app-owned target). The graph never
+// allocates or aliases it; its concrete view is supplied per frame as a binding to
+// Execute (the acquired swapchain view differs every frame). Returns a handle.
 [[nodiscard]] ResourceId Import(string_view name);
 
-// Supply an imported resource's concrete view for this frame. Called before Execute.
-void BindImport(ResourceId id, const Ref<ImageView>& view);
+// One import's concrete view for this frame, passed to Execute.
+struct ImportBinding
+{
+    ResourceId Id;
+    Ref<ImageView> View;
+};
+
+// Execute resolves transients, binds the supplied imports, derives barriers, and runs
+// each pass. Every declared import must appear in `imports` (asserts otherwise); a
+// graph with no imports takes an empty list.
+void Execute(CommandBuffer& cmd, std::span<const ImportBinding> imports = {});
 ```
 
 `PassAttachment` and `Access` change their `Ref<ImageView> View` to `ResourceId
@@ -89,14 +98,16 @@ a `ResourceId` (attachments keep their `LoadOp`/`StoreOp`/`ClearValue`). The
 
 The graph owns a resource table: each entry is either a **transient** (a
 `TransientDesc` plus the lazily-created `Ref<Image>`/`Ref<ImageView>` the graph
-allocates) or an **import** (the late-bound `Ref<ImageView>` from `BindImport`).
+allocates) or an **import** (a name/slot whose concrete `Ref<ImageView>` is supplied
+per call in `Execute`'s `imports` list).
 
-`Execute(cmd)` keeps the current immediate-mode loop, with two changes:
+`Execute(cmd, imports)` keeps the current immediate-mode loop, with two changes:
 
 - **Resolve before use.** Allocate any not-yet-backed transient (own allocation, no
   aliasing — that is plan 03) via `Image::Create` from its `TransientDesc`. Resolve
   each access's `ResourceId` to a concrete `ImageView` (transient → its allocated
-  view; import → its bound view; assert an import has been bound). The barrier
+  view; import → the view supplied for its id in `imports`; assert every import is
+  supplied). The barrier
   derivation (`ScopeFor` → `Backend::TransitionImage` reading tracked state) and the
   `BeginRendering` attachment build are **unchanged** — they now operate on the
   resolved view instead of `access.View`.
@@ -116,11 +127,12 @@ the single-copy, persistent behaviour plan 02 formalizes.
   `RenderScene` and reference the returned id in `.Depth(...)`.
 - The **scene image** stays **app-owned and imported**: it is sampled by ImGui and the
   composite pass (across graphs) and downloaded for the smoke capture, so the app must
-  own it. Keep `m_SceneImage`/`m_SceneImageView`; register it with `Import` and
-  `BindImport` it each frame.
-- The **swapchain image** is imported and **late-bound per frame** —
-  `BindImport(swapId, context.GetCurrentSwapChainImageView())` before the composite
-  graph's `Execute`.
+  own it. Keep `m_SceneImage`/`m_SceneImageView`; declare it with `Import` and supply
+  its view in the `Execute` import list each frame (its view is stable between resizes,
+  but binding is uniform).
+- The **swapchain image** is imported and supplied per frame —
+  `graph.Execute(cmd, {{swapId, context.GetCurrentSwapChainImageView()}})` resolves
+  this frame's acquired view.
 - Each pass lambda's signature changes to `(Renderer::PassContext& ctx)`; bodies use
   `ctx.Cmd()`. The depth attachment is referenced by its transient id (no resolved
   view is needed in the scene body, which only draws into the color/depth attachments
