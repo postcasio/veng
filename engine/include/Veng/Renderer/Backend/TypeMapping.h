@@ -344,7 +344,7 @@ namespace Veng::Renderer
 
     // All DescriptorType values, for iterating GetDescriptorTypeInfo (e.g. to
     // build the Primary Pool's pool sizes).
-    inline constexpr std::array kAllDescriptorTypes = {
+    inline constexpr std::array AllDescriptorTypes = {
         DescriptorType::CombinedImageSampler, DescriptorType::SampledImage, DescriptorType::StorageImage,
         DescriptorType::UniformBuffer, DescriptorType::StorageBuffer, DescriptorType::Sampler,
     };

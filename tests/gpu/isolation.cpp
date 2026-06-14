@@ -27,27 +27,27 @@ using namespace Veng::Renderer;
 
 namespace
 {
-    constexpr u64 kSize = 32;
-    constexpr string_view kName = "Isolation Buffer";
+    constexpr u64 Size = 32;
+    constexpr string_view Name = "Isolation Buffer";
 
     void RoundTrip(Context& context, u8 fillStart)
     {
         auto buffer = Buffer::Create(context, {
-            .Name = string(kName),
-            .Size = kSize,
+            .Name = string(Name),
+            .Size = Size,
             .Usage = BufferUsage::TransferSrc | BufferUsage::TransferDst,
         });
 
-        std::array<u8, kSize> source{};
+        std::array<u8, Size> source{};
         std::iota(source.begin(), source.end(), fillStart);
 
         buffer->Upload(source);
 
         const vector<u8> downloaded = buffer->Download();
 
-        REQUIRE(downloaded.size() == kSize);
+        REQUIRE(downloaded.size() == Size);
 
-        for (u64 i = 0; i < kSize; i++)
+        for (u64 i = 0; i < Size; i++)
         {
             CAPTURE(i);
             CHECK(downloaded[i] == source[i]);

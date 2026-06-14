@@ -53,9 +53,9 @@ namespace Veng::Renderer
         m_Layout = DescriptorSetLayout::Create(context, {
             .Name = "Bindless Set 0 Layout",
             .Bindings = {
-                {.Binding = k_TextureBinding, .Type = DescriptorType::SampledImage, .Count = k_MaxTextures, .Stages = ShaderStage::All, .Bindless = true},
-                {.Binding = k_SamplerBinding, .Type = DescriptorType::Sampler, .Count = k_MaxSamplers, .Stages = ShaderStage::All, .Bindless = true},
-                {.Binding = k_StorageImageBinding, .Type = DescriptorType::StorageImage, .Count = k_MaxStorageImages, .Stages = ShaderStage::All, .Bindless = true},
+                {.Binding = TextureBinding, .Type = DescriptorType::SampledImage, .Count = MaxTextures, .Stages = ShaderStage::All, .Bindless = true},
+                {.Binding = SamplerBinding, .Type = DescriptorType::Sampler, .Count = MaxSamplers, .Stages = ShaderStage::All, .Bindless = true},
+                {.Binding = StorageImageBinding, .Type = DescriptorType::StorageImage, .Count = MaxStorageImages, .Stages = ShaderStage::All, .Bindless = true},
             },
         });
 
@@ -65,9 +65,9 @@ namespace Veng::Renderer
         });
 
         const u32 framesInFlight = context.GetMaxFramesInFlight();
-        m_Textures.Init(k_MaxTextures, framesInFlight);
-        m_Samplers.Init(k_MaxSamplers, framesInFlight);
-        m_StorageImages.Init(k_MaxStorageImages, framesInFlight);
+        m_Textures.Init(MaxTextures, framesInFlight);
+        m_Samplers.Init(MaxSamplers, framesInFlight);
+        m_StorageImages.Init(MaxStorageImages, framesInFlight);
     }
 
     BindlessRegistry::~BindlessRegistry() = default;
@@ -81,7 +81,7 @@ namespace Veng::Renderer
 
         const vk::WriteDescriptorSet write{
             .dstSet = GetVkDescriptorSet(*m_Set),
-            .dstBinding = k_TextureBinding,
+            .dstBinding = TextureBinding,
             .dstArrayElement = index,
             .descriptorCount = 1,
             .descriptorType = ToVk(DescriptorType::SampledImage),
@@ -99,7 +99,7 @@ namespace Veng::Renderer
 
         const vk::WriteDescriptorSet write{
             .dstSet = GetVkDescriptorSet(*m_Set),
-            .dstBinding = k_SamplerBinding,
+            .dstBinding = SamplerBinding,
             .dstArrayElement = index,
             .descriptorCount = 1,
             .descriptorType = ToVk(DescriptorType::Sampler),
@@ -118,7 +118,7 @@ namespace Veng::Renderer
 
         const vk::WriteDescriptorSet write{
             .dstSet = GetVkDescriptorSet(*m_Set),
-            .dstBinding = k_StorageImageBinding,
+            .dstBinding = StorageImageBinding,
             .dstArrayElement = index,
             .descriptorCount = 1,
             .descriptorType = ToVk(DescriptorType::StorageImage),

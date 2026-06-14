@@ -25,8 +25,8 @@ using namespace Veng::Renderer;
 
 namespace
 {
-    constexpr u32 kWidth = 64;
-    constexpr u32 kHeight = 32;
+    constexpr u32 Width = 64;
+    constexpr u32 Height = 32;
 
     // Clears `view` (size x extent x 1) through a one-pass render graph.
     void ClearImage(Context& context, const Ref<ImageView>& view, const ClearColor& clear)
@@ -54,7 +54,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "image clear: 64x32 RGBA8Unorm cleared
 
     auto image = Image::Create(Context, {
         .Name = "Clear Target RGBA8",
-        .Extent = {kWidth, kHeight, 1},
+        .Extent = {Width, Height, 1},
         .Format = Format::RGBA8Unorm,
         .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
     });
@@ -65,7 +65,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "image clear: 64x32 RGBA8Unorm cleared
 
     const vector<u8> pixels = image->Download();
 
-    REQUIRE(pixels.size() == static_cast<size_t>(kWidth) * kHeight * 4);
+    REQUIRE(pixels.size() == static_cast<size_t>(Width) * Height * 4);
     CHECK(Test::PixelsMatch(pixels, expected));
 }
 
@@ -75,7 +75,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "image clear: 64x32 R8Unorm cleared to
 
     auto image = Image::Create(Context, {
         .Name = "Clear Target R8",
-        .Extent = {kWidth, kHeight, 1},
+        .Extent = {Width, Height, 1},
         .Format = Format::R8Unorm,
         .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
     });
@@ -88,7 +88,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "image clear: 64x32 R8Unorm cleared to
 
     const vector<u8> pixels = image->Download();
 
-    REQUIRE(pixels.size() == static_cast<size_t>(kWidth) * kHeight);
+    REQUIRE(pixels.size() == static_cast<size_t>(Width) * Height);
 
     for (size_t p = 0; p < pixels.size(); p++)
     {

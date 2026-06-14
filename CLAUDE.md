@@ -119,6 +119,23 @@ Renderer code uses engine **vocabulary enums** (`Renderer::Format`, `ImageUsage`
 them to Vulkan in `Backend/TypeMapping.h` with exhaustive switches that assert on
 unmapped values — so adding a format is a loud one-line fix, not silent UB.
 
+### Identifier naming — no Hungarian notation
+
+**Hungarian notation is forbidden.** Do not prefix an identifier with a tag that
+encodes its *type* or *kind* — neither classic systems-Hungarian (`pszName`,
+`dwCount`, `bEnabled`, `nIndex`, `lpData`, `fScale`) nor a "constant" tag
+(`kMaxTextures`, `k_ArchiveMagic`). Name things for what they are, in PascalCase:
+a constant is `MaxTextures`, not `k_MaxTextures`. The type is the compiler's job,
+not the name's.
+
+The **only** prefixes allowed are *scope* prefixes, which encode storage/linkage,
+not type: `m_` for members, `g_` for globals, `s_` for file-statics. These are
+deliberate house style — keep them.
+
+The sole exception is **the Vulkan API itself**: vulkan.hpp struct fields and
+callback parameters (`pNext`, `pWaitSemaphores`, `pUserData`, …) carry upstream
+Hungarian we don't control. Never rename those — match the API as given.
+
 ### Resource ownership & lifetime
 
 GPU resources are constructed **only** through static `X::Create(const XInfo&)`

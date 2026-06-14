@@ -35,11 +35,11 @@ namespace Veng
 
         optional<Renderer::ShaderStage> BridgeShaderStageMask(u32 value)
         {
-            constexpr u32 k_KnownStages = static_cast<u32>(Renderer::ShaderStage::Vertex)
+            constexpr u32 KnownStages = static_cast<u32>(Renderer::ShaderStage::Vertex)
                 | static_cast<u32>(Renderer::ShaderStage::Fragment)
                 | static_cast<u32>(Renderer::ShaderStage::Compute);
 
-            if (value == 0 || (value & ~k_KnownStages) != 0)
+            if (value == 0 || (value & ~KnownStages) != 0)
                 return std::nullopt;
 
             return static_cast<Renderer::ShaderStage>(value);

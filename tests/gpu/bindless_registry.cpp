@@ -34,7 +34,7 @@ using namespace Veng::Renderer;
 
 namespace
 {
-    constexpr u32 kSize = 4;
+    constexpr u32 Size = 4;
 
     struct SamplePushConstants
     {
@@ -84,7 +84,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "bindless registry: register, bind, an
 
     auto sourceImage = Image::Create(Context, {
         .Name = "Bindless Source",
-        .Extent = {kSize, kSize, 1},
+        .Extent = {Size, Size, 1},
         .Format = Format::RGBA8Unorm,
         .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled,
     });
@@ -92,7 +92,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "bindless registry: register, bind, an
 
     auto outputImage = Image::Create(Context, {
         .Name = "Bindless Output",
-        .Extent = {kSize, kSize, 1},
+        .Extent = {Size, Size, 1},
         .Format = Format::RGBA8Unorm,
         .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
     });
@@ -139,8 +139,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "bindless registry: register, bind, an
             .Execute([&](CommandBuffer& cmd)
             {
                 cmd.BindPipeline(pipeline);
-                cmd.SetViewport({0, 0}, {kSize, kSize});
-                cmd.SetScissor({0, 0}, {kSize, kSize});
+                cmd.SetViewport({0, 0}, {Size, Size});
+                cmd.SetScissor({0, 0}, {Size, Size});
                 bindless.Bind(cmd);
                 cmd.PushConstants(SamplePushConstants{
                     .TextureIndex = textureHandle.Index,
@@ -154,7 +154,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "bindless registry: register, bind, an
 
     const vector<u8> pixels = outputImage->Download();
 
-    REQUIRE(pixels.size() == static_cast<size_t>(kSize) * kSize * 4);
+    REQUIRE(pixels.size() == static_cast<size_t>(Size) * Size * 4);
     CHECK(Test::PixelsMatch(pixels, expected));
 
     bindless.Release(textureHandle);
@@ -169,7 +169,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "bindless registry: released slots are
     {
         auto image = Image::Create(Context, {
             .Name = string(name),
-            .Extent = {kSize, kSize, 1},
+            .Extent = {Size, Size, 1},
             .Format = Format::RGBA8Unorm,
             .Usage = ImageUsage::Sampled,
         });

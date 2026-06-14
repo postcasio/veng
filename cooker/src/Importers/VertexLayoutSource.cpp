@@ -14,24 +14,24 @@ namespace Veng::Cook
         // Underlying-integer ordinals mirroring Veng::Renderer::Format
         // (cycle-avoidance rule, CookedBlobs.h). Only the four float formats
         // that VertexBufferElement supports are valid vertex-layout formats.
-        constexpr u32 k_FormatR32Sfloat = 7;
-        constexpr u32 k_FormatRG32Sfloat = 8;
-        constexpr u32 k_FormatRGB32Sfloat = 9;
-        constexpr u32 k_FormatRGBA32Sfloat = 10;
+        constexpr u32 FormatR32Sfloat = 7;
+        constexpr u32 FormatRG32Sfloat = 8;
+        constexpr u32 FormatRGB32Sfloat = 9;
+        constexpr u32 FormatRGBA32Sfloat = 10;
 
-        void SetName(char (&dest)[k_ShaderNameCapacity], std::string_view name)
+        void SetName(char (&dest)[ShaderNameCapacity], std::string_view name)
         {
-            const usize n = std::min(name.size(), static_cast<usize>(k_ShaderNameCapacity) - 1);
+            const usize n = std::min(name.size(), static_cast<usize>(ShaderNameCapacity) - 1);
             std::memcpy(dest, name.data(), n);
             dest[n] = '\0';
         }
 
         optional<u32> ParseFormatString(const string& name)
         {
-            if (name == "R32Sfloat")    return k_FormatR32Sfloat;
-            if (name == "RG32Sfloat")   return k_FormatRG32Sfloat;
-            if (name == "RGB32Sfloat")  return k_FormatRGB32Sfloat;
-            if (name == "RGBA32Sfloat") return k_FormatRGBA32Sfloat;
+            if (name == "R32Sfloat")    return FormatR32Sfloat;
+            if (name == "RG32Sfloat")   return FormatRG32Sfloat;
+            if (name == "RGB32Sfloat")  return FormatRGB32Sfloat;
+            if (name == "RGBA32Sfloat") return FormatRGBA32Sfloat;
             return std::nullopt;
         }
     }

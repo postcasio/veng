@@ -88,7 +88,7 @@ TEST_CASE("ArchiveReader: rejects version mismatch")
     vector<u8> archive = writer.Build();
 
     // Header layout: magic[8], version (u32), count (u32) — corrupt the version.
-    const u32 badVersion = k_ArchiveFormatVersion + 1;
+    const u32 badVersion = ArchiveFormatVersion + 1;
     std::memcpy(archive.data() + 8, &badVersion, sizeof(badVersion));
 
     const Result<ArchiveReader> reader = ArchiveReader::FromBytes(archive);

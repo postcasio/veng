@@ -23,29 +23,29 @@ namespace Veng::Cook
         // The underlying-integer ordinals below mirror Veng::Renderer::ShaderStage /
         // DescriptorType / Format (Renderer/Types.h) — kept in sync by hand per the
         // cycle-avoidance rule documented in assetformat's CookedBlobs.h.
-        constexpr u32 k_ShaderStageVertex = 1u << 0;
-        constexpr u32 k_ShaderStageFragment = 1u << 1;
-        constexpr u32 k_ShaderStageCompute = 1u << 2;
+        constexpr u32 ShaderStageVertex = 1u << 0;
+        constexpr u32 ShaderStageFragment = 1u << 1;
+        constexpr u32 ShaderStageCompute = 1u << 2;
 
-        constexpr u32 k_DescriptorTypeCombinedImageSampler = 0;
-        constexpr u32 k_DescriptorTypeSampledImage = 1;
-        constexpr u32 k_DescriptorTypeStorageImage = 2;
-        constexpr u32 k_DescriptorTypeUniformBuffer = 3;
-        constexpr u32 k_DescriptorTypeStorageBuffer = 4;
-        constexpr u32 k_DescriptorTypeSampler = 5;
+        constexpr u32 DescriptorTypeCombinedImageSampler = 0;
+        constexpr u32 DescriptorTypeSampledImage = 1;
+        constexpr u32 DescriptorTypeStorageImage = 2;
+        constexpr u32 DescriptorTypeUniformBuffer = 3;
+        constexpr u32 DescriptorTypeStorageBuffer = 4;
+        constexpr u32 DescriptorTypeSampler = 5;
 
         // Format ordinals (mirroring Renderer::Format) — used for Slang reflection
         // comparison against VertexLayout element formats.
-        constexpr u32 k_FormatR32Sfloat = 7;
-        constexpr u32 k_FormatRG32Sfloat = 8;
-        constexpr u32 k_FormatRGB32Sfloat = 9;
-        constexpr u32 k_FormatRGBA32Sfloat = 10;
+        constexpr u32 FormatR32Sfloat = 7;
+        constexpr u32 FormatRG32Sfloat = 8;
+        constexpr u32 FormatRGB32Sfloat = 9;
+        constexpr u32 FormatRGBA32Sfloat = 10;
 
         // Cooked names are fixed-size, nul-terminated char arrays (CookedBlobs.h);
         // truncate rather than fail on an over-long identifier.
-        void SetName(char (&dest)[k_ShaderNameCapacity], std::string_view name)
+        void SetName(char (&dest)[ShaderNameCapacity], std::string_view name)
         {
-            const usize n = std::min(name.size(), static_cast<usize>(k_ShaderNameCapacity) - 1);
+            const usize n = std::min(name.size(), static_cast<usize>(ShaderNameCapacity) - 1);
             std::memcpy(dest, name.data(), n);
             dest[n] = '\0';
         }
@@ -62,9 +62,9 @@ namespace Veng::Cook
         {
             switch (stage)
             {
-                case SLANG_STAGE_VERTEX: return k_ShaderStageVertex;
-                case SLANG_STAGE_FRAGMENT: return k_ShaderStageFragment;
-                case SLANG_STAGE_COMPUTE: return k_ShaderStageCompute;
+                case SLANG_STAGE_VERTEX: return ShaderStageVertex;
+                case SLANG_STAGE_FRAGMENT: return ShaderStageFragment;
+                case SLANG_STAGE_COMPUTE: return ShaderStageCompute;
                 default: return std::nullopt;
             }
         }
@@ -88,24 +88,24 @@ namespace Veng::Cook
             switch (bindingType)
             {
                 case slang::BindingType::CombinedTextureSampler:
-                    return k_DescriptorTypeCombinedImageSampler;
+                    return DescriptorTypeCombinedImageSampler;
 
                 case slang::BindingType::Texture:
                 {
                     slang::TypeLayoutReflection* leaf = typeLayout->getBindingRangeLeafTypeLayout(0);
                     const SlangResourceAccess access = leaf->getResourceAccess();
-                    return access == SLANG_RESOURCE_ACCESS_READ ? k_DescriptorTypeSampledImage : k_DescriptorTypeStorageImage;
+                    return access == SLANG_RESOURCE_ACCESS_READ ? DescriptorTypeSampledImage : DescriptorTypeStorageImage;
                 }
 
                 case slang::BindingType::Sampler:
-                    return k_DescriptorTypeSampler;
+                    return DescriptorTypeSampler;
 
                 case slang::BindingType::ConstantBuffer:
-                    return k_DescriptorTypeUniformBuffer;
+                    return DescriptorTypeUniformBuffer;
 
                 case slang::BindingType::TypedBuffer:
                 case slang::BindingType::RawBuffer:
-                    return k_DescriptorTypeStorageBuffer;
+                    return DescriptorTypeStorageBuffer;
 
                 default:
                     return std::unexpected(fmt::format(
@@ -132,15 +132,15 @@ namespace Veng::Cook
                 return unsupported();
 
             if (type->getKind() == slang::TypeReflection::Kind::Scalar)
-                return k_FormatR32Sfloat;
+                return FormatR32Sfloat;
 
             if (type->getKind() == slang::TypeReflection::Kind::Vector)
             {
                 switch (type->getColumnCount())
                 {
-                    case 2: return k_FormatRG32Sfloat;
-                    case 3: return k_FormatRGB32Sfloat;
-                    case 4: return k_FormatRGBA32Sfloat;
+                    case 2: return FormatRG32Sfloat;
+                    case 3: return FormatRGB32Sfloat;
+                    case 4: return FormatRGBA32Sfloat;
                     default: return unsupported();
                 }
             }
@@ -272,7 +272,7 @@ namespace Veng::Cook
                     sourcePath.string(), entryName));
             }
 
-            const bool isVertexStage = *stageMask == k_ShaderStageVertex;
+            const bool isVertexStage = *stageMask == ShaderStageVertex;
 
             vector<CookedDescriptorBinding> bindings;
             vector<CookedPushConstantBlock> pushConstants;
@@ -436,12 +436,12 @@ namespace Veng::Cook
 
         optional<u32> ParseDescriptorType(const string& name)
         {
-            if (name == "combined_image_sampler") return k_DescriptorTypeCombinedImageSampler;
-            if (name == "sampled_image") return k_DescriptorTypeSampledImage;
-            if (name == "storage_image") return k_DescriptorTypeStorageImage;
-            if (name == "uniform_buffer") return k_DescriptorTypeUniformBuffer;
-            if (name == "storage_buffer") return k_DescriptorTypeStorageBuffer;
-            if (name == "sampler") return k_DescriptorTypeSampler;
+            if (name == "combined_image_sampler") return DescriptorTypeCombinedImageSampler;
+            if (name == "sampled_image") return DescriptorTypeSampledImage;
+            if (name == "storage_image") return DescriptorTypeStorageImage;
+            if (name == "uniform_buffer") return DescriptorTypeUniformBuffer;
+            if (name == "storage_buffer") return DescriptorTypeStorageBuffer;
+            if (name == "sampler") return DescriptorTypeSampler;
             return std::nullopt;
         }
 
@@ -457,9 +457,9 @@ namespace Veng::Cook
                     return std::nullopt;
 
                 const string name = stage.get<string>();
-                if (name == "vertex") mask |= k_ShaderStageVertex;
-                else if (name == "fragment") mask |= k_ShaderStageFragment;
-                else if (name == "compute") mask |= k_ShaderStageCompute;
+                if (name == "vertex") mask |= ShaderStageVertex;
+                else if (name == "fragment") mask |= ShaderStageFragment;
+                else if (name == "compute") mask |= ShaderStageCompute;
                 else return std::nullopt;
             }
 

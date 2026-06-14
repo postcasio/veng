@@ -236,8 +236,8 @@ namespace Veng::Renderer
         // of truth (GetDescriptorTypeInfo) so every type the engine knows
         // about has a budget — adding a DescriptorType updates the pool too.
         vector<vk::DescriptorPoolSize> poolSizes;
-        poolSizes.reserve(kAllDescriptorTypes.size());
-        for (const auto descriptorType : kAllDescriptorTypes)
+        poolSizes.reserve(AllDescriptorTypes.size());
+        for (const auto descriptorType : AllDescriptorTypes)
         {
             const auto typeInfo = GetDescriptorTypeInfo(descriptorType);
             poolSizes.push_back({.type = typeInfo.VkType, .descriptorCount = typeInfo.PoolBudget});

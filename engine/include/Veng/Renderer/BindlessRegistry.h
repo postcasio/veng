@@ -16,30 +16,30 @@ namespace Veng::Renderer
     class Sampler;
 
     // Index into the registry's sampled-image array (set 0, binding
-    // BindlessRegistry::k_TextureBinding). Indexes `texture2D u_Textures[]`.
+    // BindlessRegistry::TextureBinding). Indexes `texture2D u_Textures[]`.
     struct TextureHandle
     {
-        static constexpr u32 k_Invalid = ~0u;
-        u32 Index = k_Invalid;
-        [[nodiscard]] bool IsValid() const { return Index != k_Invalid; }
+        static constexpr u32 Invalid = ~0u;
+        u32 Index = Invalid;
+        [[nodiscard]] bool IsValid() const { return Index != Invalid; }
     };
 
     // Index into the registry's sampler array (set 0, binding
-    // BindlessRegistry::k_SamplerBinding). Indexes `sampler u_Samplers[]`.
+    // BindlessRegistry::SamplerBinding). Indexes `sampler u_Samplers[]`.
     struct SamplerHandle
     {
-        static constexpr u32 k_Invalid = ~0u;
-        u32 Index = k_Invalid;
-        [[nodiscard]] bool IsValid() const { return Index != k_Invalid; }
+        static constexpr u32 Invalid = ~0u;
+        u32 Index = Invalid;
+        [[nodiscard]] bool IsValid() const { return Index != Invalid; }
     };
 
     // Index into the registry's storage-image array (set 0, binding
-    // BindlessRegistry::k_StorageImageBinding). Indexes `image2D u_StorageImages[]`.
+    // BindlessRegistry::StorageImageBinding). Indexes `image2D u_StorageImages[]`.
     struct StorageImageHandle
     {
-        static constexpr u32 k_Invalid = ~0u;
-        u32 Index = k_Invalid;
-        [[nodiscard]] bool IsValid() const { return Index != k_Invalid; }
+        static constexpr u32 Invalid = ~0u;
+        u32 Index = Invalid;
+        [[nodiscard]] bool IsValid() const { return Index != Invalid; }
     };
 
     // The global bindless descriptor set: set 0, reserved in every
@@ -89,13 +89,13 @@ namespace Veng::Renderer
         // while frame-in-flight slot `frameInFlight` was last current.
         void OnFrameAcquired(u32 frameInFlight);
 
-        static constexpr u32 k_TextureBinding = 0;
-        static constexpr u32 k_SamplerBinding = 1;
-        static constexpr u32 k_StorageImageBinding = 2;
+        static constexpr u32 TextureBinding = 0;
+        static constexpr u32 SamplerBinding = 1;
+        static constexpr u32 StorageImageBinding = 2;
 
-        static constexpr u32 k_MaxTextures = 1024;
-        static constexpr u32 k_MaxSamplers = 128;
-        static constexpr u32 k_MaxStorageImages = 512;
+        static constexpr u32 MaxTextures = 1024;
+        static constexpr u32 MaxSamplers = 128;
+        static constexpr u32 MaxStorageImages = 512;
 
     private:
         // A free-list slot allocator with deferred release, one per arrayed

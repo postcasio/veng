@@ -29,7 +29,7 @@ using namespace Veng::Renderer;
 
 namespace
 {
-    constexpr u32 kSize = 4;
+    constexpr u32 Size = 4;
 
     struct SamplePushConstants
     {
@@ -96,13 +96,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
     const AssetHandle<Texture>& textureHandle = *handle;
     const Texture& texture = *textureHandle.Get();
     CHECK(texture.GetFormat() == Format::RGBA8Unorm);
-    CHECK(texture.GetExtent() == uvec2{kSize, kSize});
+    CHECK(texture.GetExtent() == uvec2{Size, Size});
     CHECK(texture.GetHandle().IsValid());
     CHECK(texture.GetSamplerHandle().IsValid());
 
     auto outputImage = Image::Create(Context, {
         .Name = "Texture Loader Output",
-        .Extent = {kSize, kSize, 1},
+        .Extent = {Size, Size, 1},
         .Format = Format::RGBA8Unorm,
         .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
     });
@@ -127,8 +127,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
             .Execute([&](CommandBuffer& cmd)
             {
                 cmd.BindPipeline(pipeline);
-                cmd.SetViewport({0, 0}, {kSize, kSize});
-                cmd.SetScissor({0, 0}, {kSize, kSize});
+                cmd.SetViewport({0, 0}, {Size, Size});
+                cmd.SetScissor({0, 0}, {Size, Size});
                 bindless.Bind(cmd);
                 cmd.PushConstants(SamplePushConstants{
                     .TextureIndex = texture.GetHandle().Index,
@@ -142,7 +142,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
 
     const vector<u8> pixels = outputImage->Download();
 
-    REQUIRE(pixels.size() == static_cast<size_t>(kSize) * kSize * 4);
+    REQUIRE(pixels.size() == static_cast<size_t>(Size) * Size * 4);
     CHECK(Test::PixelsMatch(pixels, expected));
 
     std::filesystem::remove(outArchive);

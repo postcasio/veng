@@ -31,7 +31,7 @@ namespace Veng
         };
         static_assert(sizeof(OnDiskTocEntry) == 32);
 
-        constexpr char k_ArchiveMagic[8] = {'V', 'E', 'N', 'G', 'P', 'A', 'C', 'K'};
+        constexpr char ArchiveMagic[8] = {'V', 'E', 'N', 'G', 'P', 'A', 'C', 'K'};
     }
 
     void ArchiveWriter::Add(AssetId id, AssetType type, std::span<const u8> blob)
@@ -54,8 +54,8 @@ namespace Veng
             [](const Entry* a, const Entry* b) { return a->Id.Value < b->Id.Value; });
 
         OnDiskHeader header{};
-        std::memcpy(header.Magic, k_ArchiveMagic, sizeof(k_ArchiveMagic));
-        header.Version = k_ArchiveFormatVersion;
+        std::memcpy(header.Magic, ArchiveMagic, sizeof(ArchiveMagic));
+        header.Version = ArchiveFormatVersion;
         header.Count = static_cast<u32>(sorted.size());
 
         vector<OnDiskTocEntry> toc;
@@ -118,14 +118,14 @@ namespace Veng
         OnDiskHeader header;
         std::memcpy(&header, bytes.data(), sizeof(header));
 
-        if (std::memcmp(header.Magic, k_ArchiveMagic, sizeof(k_ArchiveMagic)) != 0)
+        if (std::memcmp(header.Magic, ArchiveMagic, sizeof(ArchiveMagic)) != 0)
             return std::unexpected("ArchiveReader::FromBytes: bad magic (not a .vengpack archive)");
 
-        if (header.Version != k_ArchiveFormatVersion)
+        if (header.Version != ArchiveFormatVersion)
         {
             return std::unexpected(fmt::format(
                 "ArchiveReader::FromBytes: version mismatch (expected {}, got {})",
-                k_ArchiveFormatVersion, header.Version));
+                ArchiveFormatVersion, header.Version));
         }
 
         const usize tocBytes = static_cast<usize>(header.Count) * sizeof(OnDiskTocEntry);

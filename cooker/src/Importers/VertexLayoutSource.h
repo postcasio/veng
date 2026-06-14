@@ -8,10 +8,10 @@
 // VertexLayoutImporter and ShaderImporter (for reflected-input validation).
 //
 // Format strings are PascalCase Renderer::Format enum spellings:
-//   "R32Sfloat"    → 7   (k_FormatR32Sfloat)
-//   "RG32Sfloat"   → 8   (k_FormatRG32Sfloat)
-//   "RGB32Sfloat"  → 9   (k_FormatRGB32Sfloat)
-//   "RGBA32Sfloat" → 10  (k_FormatRGBA32Sfloat)
+//   "R32Sfloat"    → 7   (FormatR32Sfloat)
+//   "RG32Sfloat"   → 8   (FormatRG32Sfloat)
+//   "RGB32Sfloat"  → 9   (FormatRGB32Sfloat)
+//   "RGBA32Sfloat" → 10  (FormatRGBA32Sfloat)
 // Any other string is a located error.
 
 namespace Veng::Cook

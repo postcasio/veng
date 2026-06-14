@@ -33,7 +33,7 @@ using namespace Veng::Renderer;
 
 namespace
 {
-    constexpr u32 kSize = 4;
+    constexpr u32 Size = 4;
 
     // Allocates a single-binding layout + set of `type` and writes `write` into
     // binding 0. Returns the set so it stays alive for the caller's scope.
@@ -60,7 +60,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "descriptor write paths: all Write ove
 {
     auto sampledImage = Image::Create(Context, {
         .Name = "Sampled Image",
-        .Extent = {kSize, kSize, 1},
+        .Extent = {Size, Size, 1},
         .Format = Format::RGBA8Unorm,
         .Usage = ImageUsage::Sampled,
     });
@@ -68,7 +68,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "descriptor write paths: all Write ove
 
     auto storageImage = Image::Create(Context, {
         .Name = "Storage Image",
-        .Extent = {kSize, kSize, 1},
+        .Extent = {Size, Size, 1},
         .Format = Format::RGBA8Unorm,
         .Usage = ImageUsage::Storage,
     });

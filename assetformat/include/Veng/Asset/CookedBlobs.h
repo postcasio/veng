@@ -85,9 +85,9 @@ namespace Veng
     };
 
     // Names in cooked blobs are fixed-size and nul-terminated, truncated at
-    // k_ShaderNameCapacity - 1 — generous for GLSL/Slang identifiers. Shared
+    // ShaderNameCapacity - 1 — generous for GLSL/Slang identifiers. Shared
     // by shader bindings/blocks/attributes and vertex-layout element names.
-    inline constexpr usize k_ShaderNameCapacity = 64;
+    inline constexpr usize ShaderNameCapacity = 64;
 
     // VertexLayout: a named list of vertex-buffer elements that shaders and
     // pipelines reference by AssetId (plan 08b). The blob is, in order:
@@ -104,7 +104,7 @@ namespace Veng
     struct CookedVertexLayoutElement
     {
         u32 Format = 0; // underlying Renderer::Format
-        char Name[k_ShaderNameCapacity] = {};
+        char Name[ShaderNameCapacity] = {};
     };
 
     // Shader: reflected interface + SPIR-V (plan 08). One cooked shader is one
@@ -128,7 +128,7 @@ namespace Veng
         // The SPIR-V module's OpEntryPoint name (Slang does not always emit
         // "main" — Shader::Create's ShaderBinaryInfo::EntryPoint must match
         // exactly, or pipeline creation fails validation).
-        char EntryPoint[k_ShaderNameCapacity] = {};
+        char EntryPoint[ShaderNameCapacity] = {};
         u32 InterfaceBytes = 0;
         u32 SpirvBytes = 0;
     };
@@ -151,7 +151,7 @@ namespace Veng
         u32 Type = 0;      // underlying Renderer::DescriptorType
         u32 Count = 1;
         u32 StageMask = 0; // underlying Renderer::ShaderStage (bitmask)
-        char Name[k_ShaderNameCapacity] = {};
+        char Name[ShaderNameCapacity] = {};
     };
 
     // One push-constant block (or field) reflected from the shader, validated
@@ -161,7 +161,7 @@ namespace Veng
         u32 Offset = 0;
         u32 Size = 0;
         u32 StageMask = 0; // underlying Renderer::ShaderStage (bitmask)
-        char Name[k_ShaderNameCapacity] = {};
+        char Name[ShaderNameCapacity] = {};
     };
 
     // Material: shader ref + params + texture bindings (defined in plan 09).

@@ -30,7 +30,7 @@ namespace Veng
     // The container format version written by ArchiveWriter and checked by
     // ArchiveReader. Bump on any layout change; a mismatch is a clean
     // VersionMismatch error (see AssetError, plan 04), not a crash.
-    inline constexpr u32 k_ArchiveFormatVersion = 1;
+    inline constexpr u32 ArchiveFormatVersion = 1;
 
     // One asset as read back from an archive: its id, type, and a view of its
     // cooked blob bytes within the reader's storage. Valid only for the
