@@ -11,8 +11,6 @@ target_compile_definitions(hello_triangle PRIVATE
 add_shaders(hello_triangle_shaders
         shaders/triangle.vert
         shaders/triangle.frag
-        shaders/mesh.vert
-        shaders/mesh.frag
         shaders/composite.vert
         shaders/composite.frag
 )

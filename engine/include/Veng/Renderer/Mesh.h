@@ -43,8 +43,7 @@ namespace Veng::Renderer
     public:
         // Well-known AssetId of the canonical layout in the embedded core pack
         // (canonical = position/normal/tangent/uv; tangent is a vec4 whose w is
-        // the bitangent handedness sign). Minted via `vengc generate-id`; must
-        // match core.vengpack.json.
+        // the bitangent handedness sign). Must match core.vengpack.json.
         static constexpr AssetId CanonicalLayoutId{5603155022528551788ULL};
 
         static Ref<Mesh> Create(const MeshInfo& info)
