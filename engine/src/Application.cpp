@@ -24,6 +24,8 @@ namespace Veng
             .InternalRenderExtent = m_Info.InternalRenderExtent,
         }, m_Window.get());
 
+        m_AssetManager = CreateUnique<AssetManager>(m_RenderContext);
+
         // ImGui needs a window (GLFW backend), so it's only available windowed.
         if (!m_Info.Headless && m_Info.ImGui)
         {
@@ -70,6 +72,11 @@ namespace Veng
         // Shut ImGui down before the context: its backend, descriptor pool and
         // offscreen target must be released while the device is still alive.
         m_ImGuiLayer.reset();
+
+        // Drop every cached asset (regardless of outstanding AssetHandles) so
+        // their engine resources retire into this frame's bins before
+        // DisposeResources() drains them.
+        m_AssetManager.reset();
 
         m_RenderContext.DisposeResources();
         m_RenderContext.Dispose();

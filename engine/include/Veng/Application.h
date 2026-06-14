@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Window.h>
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 
@@ -40,6 +41,11 @@ namespace Veng
             return m_RenderContext;
         }
 
+        [[nodiscard]] AssetManager& GetAssetManager()
+        {
+            return *m_AssetManager;
+        }
+
         // The ImGui layer, or nullptr if the app opted out (ApplicationInfo::ImGui
         // == nullopt).
         [[nodiscard]] ImGuiLayer* GetImGuiLayer() const
@@ -62,8 +68,9 @@ namespace Veng
 
         // Called after the main loop exits and the GPU is idle, immediately
         // before the rendering context is torn down. Release every engine
-        // resource held by the application here (reset Refs/Uniques) —
-        // resources that outlive the context fail on destruction.
+        // resource held by the application here (reset Refs/Uniques,
+        // AssetHandles included) — resources that outlive the context fail on
+        // destruction.
         virtual void OnDispose()
         {
         }
@@ -82,6 +89,11 @@ namespace Veng
         Unique<Window> m_Window;
 
         Renderer::Context m_RenderContext;
+
+        // Constructed after m_RenderContext (it needs a live Context); reset
+        // before DisposeResources() so cached assets retire while the context
+        // is still alive.
+        Unique<AssetManager> m_AssetManager;
 
         Unique<ImGuiLayer> m_ImGuiLayer;
 

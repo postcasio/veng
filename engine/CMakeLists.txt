@@ -5,6 +5,8 @@
 add_library(veng SHARED
         src/Application.cpp
         src/Assert.cpp
+        src/Asset/AssetManager.cpp
+        src/Asset/Loaders/RawAssetLoader.cpp
         src/Log.cpp
         src/Time.cpp
         src/Window.cpp

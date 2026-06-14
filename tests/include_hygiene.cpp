@@ -18,6 +18,12 @@
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/CookedBlobs.h>
 
+#include <Veng/Asset/AssetError.h>
+#include <Veng/Asset/AssetHandle.h>
+#include <Veng/Asset/AssetLoader.h>
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/RawAsset.h>
+
 #include <Veng/Application.h>
 #include <Veng/Assert.h>
 #include <Veng/Event.h>
