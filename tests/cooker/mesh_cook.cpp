@@ -40,7 +40,7 @@ TEST_CASE("Cooker: cooks a mesh pack into a CookedMeshHeader + buffers + submesh
     CookedMeshHeader header{};
     std::memcpy(&header, entry->Blob.data(), sizeof(header));
 
-    CHECK(header.VertexStride == 44); // pos(12) + normal(12) + tangent(12) + uv(8)
+    CHECK(header.VertexStride == 48); // pos(12) + normal(12) + tangent(16) + uv(8)
     CHECK(header.VertexCount == 24);  // 4 per face * 6 faces (per-face normals/UVs)
     CHECK(header.IndexCount == 36);   // 2 triangles * 6 faces
     CHECK(header.IndexType == 1);     // U32
@@ -50,8 +50,8 @@ TEST_CASE("Cooker: cooks a mesh pack into a CookedMeshHeader + buffers + submesh
     usize cursor = sizeof(CookedMeshHeader);
 
     // Attribute descriptor: the canonical position/normal/tangent/uv layout.
-    const u32 expectedFormats[] = {9, 9, 9, 8}; // RGB32, RGB32, RGB32, RG32
-    const u32 expectedOffsets[] = {0, 12, 24, 36};
+    const u32 expectedFormats[] = {9, 9, 10, 8}; // RGB32, RGB32, RGBA32, RG32
+    const u32 expectedOffsets[] = {0, 12, 24, 40};
     for (u32 i = 0; i < header.AttributeCount; ++i)
     {
         CookedVertexAttribute attribute{};

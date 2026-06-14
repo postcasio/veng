@@ -52,18 +52,19 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "vertex layout loader: core pack auto-
 {
     // A freshly-constructed AssetManager auto-mounts the embedded core pack.
     // The canonical layout (position/normal/tangent/uv) must be loadable by
-    // Mesh::k_CanonicalLayoutId without any explicit mount call.
+    // Mesh::CanonicalLayoutId without any explicit mount call. Tangent is a
+    // vec4 (RGBA32Sfloat): xyz tangent + w bitangent handedness.
     AssetManager assets(Context);
 
     const AssetResult<AssetHandle<VertexLayoutAsset>> handle =
-        assets.LoadSync<VertexLayoutAsset>(Mesh::k_CanonicalLayoutId);
+        assets.LoadSync<VertexLayoutAsset>(Mesh::CanonicalLayoutId);
     REQUIRE(handle.has_value());
     REQUIRE(handle->IsLoaded());
 
     const vector<VertexBufferElement>& elems = handle->Get()->GetLayout().GetElements();
     REQUIRE(elems.size() == 4);
-    CHECK(elems[0].Type == Format::RGB32Sfloat); // a_Position
-    CHECK(elems[1].Type == Format::RGB32Sfloat); // a_Normal
-    CHECK(elems[2].Type == Format::RGB32Sfloat); // a_Tangent
-    CHECK(elems[3].Type == Format::RG32Sfloat);  // a_UV
+    CHECK(elems[0].Type == Format::RGB32Sfloat);  // a_Position
+    CHECK(elems[1].Type == Format::RGB32Sfloat);  // a_Normal
+    CHECK(elems[2].Type == Format::RGBA32Sfloat); // a_Tangent (xyz + handedness w)
+    CHECK(elems[3].Type == Format::RG32Sfloat);   // a_UV
 }

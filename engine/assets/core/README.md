@@ -6,5 +6,5 @@ C array (`cmake/EmbedBinary.cmake`), then mounted automatically by
 `AssetManager` before any user pack.
 
 AssetIds here are minted with `vengc generate-id` — never hand-assigned. The
-canonical layout's id is mirrored in `Renderer::Mesh::k_CanonicalLayoutId`; keep
+canonical layout's id is mirrored in `Renderer::Mesh::CanonicalLayoutId`; keep
 the two in sync.

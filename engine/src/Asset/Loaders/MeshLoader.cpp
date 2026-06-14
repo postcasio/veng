@@ -21,6 +21,7 @@ namespace Veng
             {
                 case 8: return Renderer::Format::RG32Sfloat;
                 case 9: return Renderer::Format::RGB32Sfloat;
+                case 10: return Renderer::Format::RGBA32Sfloat;
                 default: return std::nullopt;
             }
         }

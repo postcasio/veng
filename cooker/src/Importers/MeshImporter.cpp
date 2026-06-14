@@ -22,20 +22,23 @@ namespace Veng::Cook
         // the cycle-avoidance rule documented in assetformat's CookedBlobs.h.
         // The engine loader validates a cooked mesh's attribute descriptor
         // against this same layout (MeshLoader).
-        constexpr u32 k_FormatRGB32Sfloat = 9;
-        constexpr u32 k_FormatRG32Sfloat = 8;
-        constexpr u32 k_IndexTypeU32 = 1; // underlying Renderer::IndexType::U32
+        constexpr u32 FormatRGBA32Sfloat = 10;
+        constexpr u32 FormatRGB32Sfloat = 9;
+        constexpr u32 FormatRG32Sfloat = 8;
+        constexpr u32 IndexTypeU32 = 1; // underlying Renderer::IndexType::U32
 
-        // One interleaved vertex in the canonical layout (44 bytes, 11 floats).
+        // One interleaved vertex in the canonical layout (48 bytes, 12 floats).
+        // Tangent is a vec4: xyz is the tangent, w is the handedness sign (±1)
+        // used to reconstruct the bitangent in-shader as cross(N, T.xyz) * T.w.
         struct CanonicalVertex
         {
             f32 Position[3];
             f32 Normal[3];
-            f32 Tangent[3];
+            f32 Tangent[4];
             f32 UV[2];
         };
 
-        static_assert(sizeof(CanonicalVertex) == 44, "canonical vertex must be tightly packed");
+        static_assert(sizeof(CanonicalVertex) == 48, "canonical vertex must be tightly packed");
 
         // Reads a bool field from `import`, returning `fallback` when absent.
         bool ImportFlag(const json& import, const char* key, bool fallback)
@@ -141,6 +144,13 @@ namespace Veng::Cook
                     vertex.Tangent[0] = mesh->mTangents[v].x;
                     vertex.Tangent[1] = mesh->mTangents[v].y;
                     vertex.Tangent[2] = mesh->mTangents[v].z;
+
+                    // Encode handedness: the sign that makes
+                    // cross(N, T) * w reproduce assimp's bitangent. This is
+                    // the single bit that flips across mirrored UV islands and
+                    // cannot be derived from N and T alone.
+                    const aiVector3D expected = mesh->mNormals[v] ^ mesh->mTangents[v];
+                    vertex.Tangent[3] = (expected * mesh->mBitangents[v] < 0.0f) ? -1.0f : 1.0f;
                 }
 
                 if (mesh->HasTextureCoords(0))
@@ -182,17 +192,17 @@ namespace Veng::Cook
         }
 
         const CookedVertexAttribute attributes[] = {
-            {.Format = k_FormatRGB32Sfloat, .Offset = 0},  // position
-            {.Format = k_FormatRGB32Sfloat, .Offset = 12}, // normal
-            {.Format = k_FormatRGB32Sfloat, .Offset = 24}, // tangent
-            {.Format = k_FormatRG32Sfloat, .Offset = 36},  // uv
+            {.Format = FormatRGB32Sfloat, .Offset = 0},   // position
+            {.Format = FormatRGB32Sfloat, .Offset = 12},  // normal
+            {.Format = FormatRGBA32Sfloat, .Offset = 24}, // tangent (xyz + handedness w)
+            {.Format = FormatRG32Sfloat, .Offset = 40},   // uv
         };
 
         CookedMeshHeader header{};
         header.VertexStride = sizeof(CanonicalVertex);
         header.VertexCount = static_cast<u32>(vertices.size());
         header.IndexCount = static_cast<u32>(indices.size());
-        header.IndexType = k_IndexTypeU32;
+        header.IndexType = IndexTypeU32;
         header.SubMeshCount = static_cast<u32>(subMeshes.size());
         header.AttributeCount = static_cast<u32>(std::size(attributes));
 

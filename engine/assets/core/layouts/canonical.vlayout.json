@@ -2,7 +2,7 @@
   "elements": [
     { "format": "RGB32Sfloat", "name": "a_Position" },
     { "format": "RGB32Sfloat", "name": "a_Normal" },
-    { "format": "RGB32Sfloat", "name": "a_Tangent" },
+    { "format": "RGBA32Sfloat", "name": "a_Tangent" },
     { "format": "RG32Sfloat",  "name": "a_UV" }
   ]
 }

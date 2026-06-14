@@ -42,9 +42,10 @@ namespace Veng::Renderer
     {
     public:
         // Well-known AssetId of the canonical layout in the embedded core pack
-        // (canonical = position/normal/tangent/uv, all RGB32Sfloat/RG32Sfloat).
-        // Minted via `vengc generate-id`; must match core.vengpack.json.
-        static constexpr AssetId k_CanonicalLayoutId{5603155022528551788ULL};
+        // (canonical = position/normal/tangent/uv; tangent is a vec4 whose w is
+        // the bitangent handedness sign). Minted via `vengc generate-id`; must
+        // match core.vengpack.json.
+        static constexpr AssetId CanonicalLayoutId{5603155022528551788ULL};
 
         static Ref<Mesh> Create(const MeshInfo& info)
         {
@@ -52,15 +53,18 @@ namespace Veng::Renderer
         }
 
         // veng's fixed canonical vertex layout v1 (position/normal/tangent/uv,
-        // all 32-bit float, 44-byte stride). The cooker writes meshes in this
-        // layout and the loader validates each cooked mesh against it; pipelines
-        // that draw cooked meshes declare it as their VertexBufferLayout.
+        // all 32-bit float, 48-byte stride). Tangent is a vec4: xyz is the
+        // tangent, w is the bitangent handedness sign (±1), so shaders
+        // reconstruct the bitangent as cross(N, T.xyz) * T.w. The cooker writes
+        // meshes in this layout and the loader validates each cooked mesh
+        // against it; pipelines that draw cooked meshes declare it as their
+        // VertexBufferLayout.
         [[nodiscard]] static VertexBufferLayout CanonicalLayout()
         {
             return VertexBufferLayout({
                 {Format::RGB32Sfloat, "a_Position"},
                 {Format::RGB32Sfloat, "a_Normal"},
-                {Format::RGB32Sfloat, "a_Tangent"},
+                {Format::RGBA32Sfloat, "a_Tangent"},
                 {Format::RG32Sfloat, "a_UV"},
             });
         }
