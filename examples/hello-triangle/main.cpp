@@ -10,6 +10,7 @@
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/Material.h>
 #include <Veng/Renderer/Mesh.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
@@ -35,22 +36,13 @@ namespace
         u32 Sampler;
     };
 
-    // Mesh pipeline's vertex-stage push constants: the MVP for clip-space
-    // positions and the model matrix for transforming normals into world space
-    // (mesh.vert). 128 bytes — the fragment range starts right after it.
-    struct MeshVertPushConstants
+    // The material shader's vertex push constant: the MVP for clip-space
+    // positions (brick.vert.slang). It is the leading 64 bytes of the shared
+    // push-constant block; the material's per-draw selector (MaterialIndex)
+    // occupies offset 64 and is pushed by Material::Bind, not here.
+    struct MeshPushConstants
     {
         mat4 MVP;
-        mat4 Model;
-    };
-
-    // Mesh pipeline's fragment-stage push constants (offset 128, past the two
-    // vertex-stage mat4s) — selects the brick texture's bindless slots (see
-    // Texture::GetHandle / GetSamplerHandle).
-    struct MeshFragPushConstants
-    {
-        u32 TextureIndex;
-        u32 SamplerIndex;
     };
 }
 
@@ -109,22 +101,23 @@ protected:
             .AddressModeW = Renderer::AddressMode::ClampToEdge,
         });
 
-        CreateMeshPipeline();
-
         // Cooked at build time (see CMakeLists.txt) from assets/sample.vengpack.json
-        // into HT_ASSET_DIR; mount and load the brick texture + cube mesh by AssetId.
+        // into HT_ASSET_DIR; mount and load the cube mesh + the brick material by
+        // AssetId. The material pulls in its vertex/fragment shaders and the brick
+        // texture as eager dependencies, builds its bindless pipeline, and writes a
+        // MaterialData entry into the registry's per-material SSBO.
         const VoidResult mountResult = GetAssetManager().Mount(path(HT_ASSET_DIR) / "sample.vengpack");
         VE_ASSERT(mountResult, "{}", mountResult.error());
-
-        const AssetResult<AssetHandle<Renderer::Texture>> brickTexture =
-            GetAssetManager().LoadSync<Renderer::Texture>(AssetId{1001});
-        VE_ASSERT(brickTexture.has_value(), "{}", brickTexture.error().Detail);
-        m_BrickTexture = *brickTexture;
 
         const AssetResult<AssetHandle<Renderer::Mesh>> cubeMesh =
             GetAssetManager().LoadSync<Renderer::Mesh>(AssetId{1002});
         VE_ASSERT(cubeMesh.has_value(), "{}", cubeMesh.error().Detail);
         m_CubeMesh = *cubeMesh;
+
+        const AssetResult<AssetHandle<Renderer::Material>> brickMaterial =
+            GetAssetManager().LoadSync<Renderer::Material>(AssetId{1003});
+        VE_ASSERT(brickMaterial.has_value(), "{}", brickMaterial.error().Detail);
+        m_BrickMaterial = *brickMaterial;
 
         // The compositing path (ImGui overlay + swapchain present) only exists in
         // windowed mode. The headless smoke run renders just the scene and
@@ -182,13 +175,11 @@ protected:
 
     void OnDispose() override
     {
+        m_BrickMaterial = {};
         m_CubeMesh = {};
-        m_BrickTexture = {};
         m_SceneTexture.reset();
         m_CompositePipeline.reset();
         m_CompositeLayout.reset();
-        m_MeshPipeline.reset();
-        m_MeshLayout.reset();
         m_Sampler.reset();
         m_ImGuiImageView.reset();
         m_DepthImageView.reset();
@@ -198,48 +189,6 @@ protected:
     }
 
 private:
-    void CreateMeshPipeline()
-    {
-        auto& context = GetRenderContext();
-
-        const auto vertexShader = Renderer::Shader::Create(context, {
-            .Name = "mesh.vert",
-            .Path = path(HT_SHADER_DIR) / "mesh.vert.spv",
-        });
-        VE_ASSERT(vertexShader, "{}", vertexShader.error());
-
-        const auto fragmentShader = Renderer::Shader::Create(context, {
-            .Name = "mesh.frag",
-            .Path = path(HT_SHADER_DIR) / "mesh.frag.spv",
-        });
-        VE_ASSERT(fragmentShader, "{}", fragmentShader.error());
-
-        m_MeshLayout = Renderer::PipelineLayout::Create(context, {
-            .Name = "Mesh Layout",
-            .PushConstantRanges = {
-                Renderer::PushConstantRange::Of<MeshVertPushConstants>(Renderer::ShaderStage::Vertex),
-                Renderer::PushConstantRange::Of<MeshFragPushConstants>(
-                    Renderer::ShaderStage::Fragment, sizeof(MeshVertPushConstants)),
-            },
-        });
-
-        m_MeshPipeline = Renderer::GraphicsPipeline::Create(context, {
-            .Name = "Mesh Pipeline",
-            .ColorAttachments = {{.Format = m_SceneFormat}},
-            .DepthAttachmentFormat = m_DepthFormat,
-            // The cooked mesh is uploaded in veng's canonical vertex layout
-            // (Renderer::Mesh::CanonicalLayout), so the pipeline declares it too.
-            .VertexBufferLayout = Renderer::Mesh::CanonicalLayout(),
-            .PipelineLayout = m_MeshLayout,
-            .ShaderStages = {
-                {.Stage = Renderer::ShaderStage::Vertex, .Module = vertexShader.value()},
-                {.Stage = Renderer::ShaderStage::Fragment, .Module = fragmentShader.value()},
-            },
-            .DepthTestEnable = true,
-            .DepthWriteEnable = true,
-        });
-    }
-
     void CreateCompositePipeline()
     {
         auto& context = GetRenderContext();
@@ -310,9 +259,15 @@ private:
             })
             .Execute([this, extent](Renderer::CommandBuffer& cmd)
             {
-                cmd.BindPipeline(m_MeshPipeline);
                 cmd.SetViewport({0, 0}, extent);
                 cmd.SetScissor({0, 0}, extent);
+
+                // The material binds its pipeline (and pushes its per-draw index
+                // selector) first; the bindless registry then binds set 0
+                // (textures, samplers, MaterialData SSBO) into that pipeline's
+                // layout — BindlessRegistry::Bind uses the currently-bound layout,
+                // so the pipeline must be bound before it.
+                m_BrickMaterial->Bind(cmd);
                 GetRenderContext().GetBindlessRegistry().Bind(cmd);
 
                 const Renderer::Mesh& mesh = *m_CubeMesh.Get();
@@ -325,14 +280,9 @@ private:
                 const mat4 view = glm::lookAt(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
                 const mat4 model = glm::rotate(mat4(1.0f), m_Angle, glm::normalize(vec3(0.5f, 1.0f, 0.2f)));
 
-                cmd.PushConstants(MeshVertPushConstants{
-                    .MVP = projection * view * model,
-                    .Model = model,
-                });
-                cmd.PushConstants(MeshFragPushConstants{
-                    .TextureIndex = m_BrickTexture->GetHandle().Index,
-                    .SamplerIndex = m_BrickTexture->GetSamplerHandle().Index,
-                }, sizeof(MeshVertPushConstants));
+                // The MVP occupies the leading 64 bytes of the shared push block;
+                // Material::Bind already pushed MaterialIndex at offset 64.
+                cmd.PushConstants(MeshPushConstants{.MVP = projection * view * model});
 
                 for (const Renderer::SubMesh& subMesh : mesh.GetSubMeshes())
                     cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
@@ -423,10 +373,8 @@ private:
     Ref<Renderer::ImageView> m_ImGuiImageView;
     Ref<Renderer::Sampler> m_Sampler;
 
-    Ref<Renderer::PipelineLayout> m_MeshLayout;
-    Ref<Renderer::GraphicsPipeline> m_MeshPipeline;
-    AssetHandle<Renderer::Texture> m_BrickTexture;
     AssetHandle<Renderer::Mesh> m_CubeMesh;
+    AssetHandle<Renderer::Material> m_BrickMaterial;
 
     Ref<Renderer::PipelineLayout> m_CompositeLayout;
     Ref<Renderer::GraphicsPipeline> m_CompositePipeline;

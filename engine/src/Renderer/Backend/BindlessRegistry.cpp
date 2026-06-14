@@ -1,6 +1,9 @@
 #include <Veng/Renderer/BindlessRegistry.h>
 
+#include <cstring>
+
 #include <Veng/Assert.h>
+#include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
@@ -56,6 +59,10 @@ namespace Veng::Renderer
                 {.Binding = TextureBinding, .Type = DescriptorType::SampledImage, .Count = MaxTextures, .Stages = ShaderStage::All, .Bindless = true},
                 {.Binding = SamplerBinding, .Type = DescriptorType::Sampler, .Count = MaxSamplers, .Stages = ShaderStage::All, .Bindless = true},
                 {.Binding = StorageImageBinding, .Type = DescriptorType::StorageImage, .Count = MaxStorageImages, .Stages = ShaderStage::All, .Bindless = true},
+                // The MaterialData array is a single storage buffer (the array
+                // lives *inside* it, indexed by materialIndex), not an arrayed
+                // binding — written once below, so no Bindless flag.
+                {.Binding = MaterialBinding, .Type = DescriptorType::StorageBuffer, .Count = 1, .Stages = ShaderStage::All},
             },
         });
 
@@ -64,10 +71,18 @@ namespace Veng::Renderer
             .Layout = m_Layout,
         });
 
+        m_MaterialBuffer = Buffer::Create(context, {
+            .Name = "Bindless MaterialData",
+            .Size = static_cast<u64>(MaxMaterials) * sizeof(MaterialData),
+            .Usage = BufferUsage::Storage | BufferUsage::TransferDst,
+        });
+        m_Set->Write(MaterialBinding, m_MaterialBuffer);
+
         const u32 framesInFlight = context.GetMaxFramesInFlight();
         m_Textures.Init(MaxTextures, framesInFlight);
         m_Samplers.Init(MaxSamplers, framesInFlight);
         m_StorageImages.Init(MaxStorageImages, framesInFlight);
+        m_Materials.Init(MaxMaterials, framesInFlight);
     }
 
     BindlessRegistry::~BindlessRegistry() = default;
@@ -149,6 +164,28 @@ namespace Veng::Renderer
         return StorageImageHandle{index};
     }
 
+    MaterialHandle BindlessRegistry::RegisterMaterial(std::span<const std::byte> data)
+    {
+        VE_ASSERT(data.size() == sizeof(MaterialData),
+                  "BindlessRegistry::RegisterMaterial: data is {} bytes, expected {}",
+                  data.size(), sizeof(MaterialData));
+
+        const u32 index = m_Materials.Allocate(Ref<void>{}, "material");
+        UpdateMaterial(MaterialHandle{index}, data);
+        return MaterialHandle{index};
+    }
+
+    void BindlessRegistry::UpdateMaterial(MaterialHandle handle, std::span<const std::byte> data) const
+    {
+        VE_ASSERT(handle.IsValid(), "BindlessRegistry::UpdateMaterial: invalid handle");
+        VE_ASSERT(data.size() == sizeof(MaterialData),
+                  "BindlessRegistry::UpdateMaterial: data is {} bytes, expected {}",
+                  data.size(), sizeof(MaterialData));
+
+        const std::span<const u8> bytes(reinterpret_cast<const u8*>(data.data()), data.size());
+        m_MaterialBuffer->Upload(bytes, static_cast<u64>(handle.Index) * sizeof(MaterialData));
+    }
+
     void BindlessRegistry::Release(TextureHandle handle)
     {
         if (!handle.IsValid()) return;
@@ -167,6 +204,12 @@ namespace Veng::Renderer
         m_StorageImages.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
     }
 
+    void BindlessRegistry::Release(MaterialHandle handle)
+    {
+        if (!handle.IsValid()) return;
+        m_Materials.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
+    }
+
     void BindlessRegistry::Bind(CommandBuffer& cmd, PipelineBindPoint bindPoint) const
     {
         cmd.BindDescriptorSets({
@@ -181,5 +224,6 @@ namespace Veng::Renderer
         m_Textures.OnFrameAcquired(frameInFlight);
         m_Samplers.OnFrameAcquired(frameInFlight);
         m_StorageImages.OnFrameAcquired(frameInFlight);
+        m_Materials.OnFrameAcquired(frameInFlight);
     }
 }

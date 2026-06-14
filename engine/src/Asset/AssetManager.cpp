@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 
+#include "Loaders/MaterialLoader.h"
 #include "Loaders/MeshLoader.h"
 #include "Loaders/RawAssetLoader.h"
 #include "Loaders/ShaderLoader.h"
@@ -44,6 +45,7 @@ namespace Veng
         RegisterLoader(CreateUnique<MeshLoader>());
         RegisterLoader(CreateUnique<ShaderLoader>());
         RegisterLoader(CreateUnique<VertexLayoutLoader>());
+        RegisterLoader(CreateUnique<MaterialLoader>());
 
 #ifdef VENG_HAS_CORE_PACK
         const VoidResult coreMount = MountBytes(

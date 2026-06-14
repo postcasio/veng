@@ -164,13 +164,42 @@ namespace Veng
         char Name[ShaderNameCapacity] = {};
     };
 
-    // Material: shader ref + params + texture bindings (defined in plan 09).
-    // Followed by TextureBindingCount texture-binding entries, then ParamBytes
-    // bytes of material parameter data.
+    // Material: a thin bindless material (plan 09) — a vertex + fragment shader
+    // (each an ordinary Shader asset, referenced by AssetId), and a packed
+    // MaterialData parameter block described field-by-field. The blob is, in
+    // order:
+    //   CookedMaterialHeader
+    //   CookedMaterialField[FieldCount]   — the reflected MaterialData layout
+    //   packed param block (ParamBytes)   — the full MaterialData std140/std430
+    //     image with scalar/vector params written and texture/sampler handle
+    //     slots left zero (the loader patches them with runtime handles).
+    // The two shader ids reference independent Shader pack entries (a forward
+    // material needs one vertex- and one fragment-stage cooked shader; the
+    // cooked-shader contract is one module / one entry point / one stage).
+    //
+    // The field table is reflected from the shader's MaterialData struct at cook
+    // time, so it is self-describing: the loader patches handle fields by offset,
+    // and name-based Material::SetTexture/SetParam resolve a field by Name. The
+    // engine asserts ParamBytes == sizeof(its MaterialData mirror) on load — a
+    // loud guard against shader/engine drift (cycle-avoidance house style).
     struct CookedMaterialHeader
     {
-        u64 ShaderId = 0; // AssetId
-        u32 TextureBindingCount = 0;
+        u64 VertexShaderId = 0;   // AssetId of the vertex-stage Shader asset
+        u64 FragmentShaderId = 0; // AssetId of the fragment-stage Shader asset
+        u32 FieldCount = 0;
         u32 ParamBytes = 0;
+    };
+
+    // One reflected MaterialData field. Param fields (Kind 0) carry their value
+    // pre-packed in the param block at Offset; handle fields (Kind 1/2) carry an
+    // AssetId in TextureId that the loader resolves to a bindless handle and
+    // writes as a u32 at Offset.
+    struct CookedMaterialField
+    {
+        char Name[ShaderNameCapacity] = {};
+        u32 Offset = 0; // byte offset within the MaterialData block
+        u32 Size = 0;   // byte size of the field
+        u32 Kind = 0;   // 0 = param value, 1 = sampled-image handle, 2 = sampler handle
+        u64 TextureId = 0; // AssetId for Kinds 1/2; 0 for params
     };
 }

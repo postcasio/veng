@@ -1,5 +1,6 @@
 #include <Veng/Cook/BuiltinImporters.h>
 
+#include "Importers/MaterialImporter.h"
 #include "Importers/MeshImporter.h"
 #include "Importers/RawImporter.h"
 #include "Importers/ShaderImporter.h"
@@ -15,5 +16,6 @@ namespace Veng::Cook
         cooker.Register(CreateUnique<MeshImporter>());
         cooker.Register(CreateUnique<ShaderImporter>());
         cooker.Register(CreateUnique<VertexLayoutImporter>());
+        cooker.Register(CreateUnique<MaterialImporter>());
     }
 }

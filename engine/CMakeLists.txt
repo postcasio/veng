@@ -6,6 +6,7 @@ add_library(veng SHARED
         src/Application.cpp
         src/Assert.cpp
         src/Asset/AssetManager.cpp
+        src/Asset/Loaders/MaterialLoader.cpp
         src/Asset/Loaders/MeshLoader.cpp
         src/Asset/Loaders/RawAssetLoader.cpp
         src/Asset/Loaders/ShaderLoader.cpp
@@ -16,6 +17,7 @@ add_library(veng SHARED
         src/Window.cpp
         src/ImGui/ImGuiLayer.cpp
         src/ImGui/ImGuiTexture.cpp
+        src/Renderer/Material.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/ShaderInterface.cpp
         src/Renderer/Backend/Barrier.cpp

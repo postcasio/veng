@@ -2,6 +2,15 @@
   "version": 1,
   "assets": [
     { "id": 1001, "type": "texture", "source": "textures/brick.tex.json" },
-    { "id": 1002, "type": "mesh", "source": "meshes/cube.mesh.json" }
+    { "id": 1002, "type": "mesh", "source": "meshes/cube.mesh.json" },
+    { "id": 1004, "type": "shader", "source": "shaders/brick.vert.slang", "entry": "vsMain", "vertex_layout": 5603155022528551788 },
+    { "id": 1005, "type": "shader", "source": "shaders/brick.frag.slang", "entry": "fsMain" },
+    {
+      "id": 1003,
+      "type": "material",
+      "shaders": { "vertex": 1004, "fragment": 1005 },
+      "textures": { "Albedo": 1001 },
+      "params": { "Factors": [1.0, 1.0, 1.0, 1.0] }
+    }
   ]
 }

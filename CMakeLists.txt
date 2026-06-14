@@ -210,6 +210,7 @@ if (VENG_BUILD_TESTS)
                 tests/cooker/texture_cook.cpp
                 tests/cooker/mesh_cook.cpp
                 tests/cooker/shader_cook.cpp
+                tests/cooker/material_cook.cpp
                 tests/cooker/vertex_layout_cook.cpp
         )
         target_link_libraries(veng_unit PRIVATE veng::cook)
@@ -368,6 +369,7 @@ if (VENG_BUILD_TESTS)
                 tests/gpu/texture_loader.cpp
                 tests/gpu/mesh_loader.cpp
                 tests/gpu/shader_loader.cpp
+                tests/gpu/material_loader.cpp
                 tests/gpu/vertex_layout_loader.cpp
         )
         target_link_libraries(veng_gpu PRIVATE veng::cook)

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "assets": [
+    { "id": 7001, "type": "vertex_layout", "source": "layouts/canonical.vlayout.json" },
+    { "id": 4101, "type": "shader", "source": "shaders/brick.vert.slang", "entry": "vsMain", "vertex_layout": 7001 },
+    { "id": 4102, "type": "shader", "source": "shaders/brick.frag.slang", "entry": "fsMain" },
+    { "id": 2001, "type": "texture", "source": "textures/texture.tex.json" },
+    {
+      "id": 3001,
+      "type": "material",
+      "shaders": { "vertex": 4101, "fragment": 4102 },
+      "textures": { "Albedo": 2001 },
+      "params": { "Factors": [1.0, 0.9, 0.8, 1.0] }
+    }
+  ]
+}

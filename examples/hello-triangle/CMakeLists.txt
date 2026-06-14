@@ -28,12 +28,18 @@ add_custom_command(
         COMMAND $<TARGET_FILE:vengc> cook
                 ${CMAKE_CURRENT_SOURCE_DIR}/assets/sample.vengpack.json
                 -o ${HT_ASSET_DIR}/sample.vengpack
+                # The material's vertex shader references the core canonical
+                # vertex layout by AssetId; resolve it from the engine core pack.
+                --reference ${CMAKE_SOURCE_DIR}/engine/assets/core/core.vengpack.json
         DEPENDS vengc
                 ${CMAKE_CURRENT_SOURCE_DIR}/assets/sample.vengpack.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/brick.tex.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/brick.png
                 ${CMAKE_CURRENT_SOURCE_DIR}/assets/meshes/cube.mesh.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/assets/meshes/cube.obj
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/material_data.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/brick.vert.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/brick.frag.slang
         COMMENT "Cooking hello-triangle asset pack"
 )
 
