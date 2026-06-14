@@ -166,7 +166,7 @@ auto mesh = m_Assets->LoadSync<Mesh>(AssetId{1002}).value();
 | 09 | [Material: JSON asset, inline/external shader, bindless `Material`](09-material.md) | The headline; thin handle+SSBO material, validated against the interface. | done |
 | 09b | [Shader & material asset data in their own source files](09b-material-shader-asset-files.md) | Move shader/material authoring data out of the pack into `*.shader.json` / `*.vmat.json`; explicit typed material fields; drop the precompiled-inline shader path. Correction to 09. | done |
 | 10 | [Example asset pack + project-wide GLSL removal](10-example-pack.md) | `add_asset_pack` CMake fn; the full deliverable demonstrated; **all** remaining GLSL (sample composite pass + GPU-test shaders) ported to Slang shader assets through the cook, then `add_shaders` / `cmake/Shaders.cmake` / `glslc` deleted repo-wide. | done |
-| 11 | [Docs + roadmap re-cut](11-docs-roadmap.md) | `ownership.md`, `CLAUDE.md`, `future/README`, `bindless`/`asset-system`, `plans/README`. | proposed |
+| 11 | [Docs + roadmap re-cut](11-docs-roadmap.md) | `ownership.md`, `CLAUDE.md`, `future/README`, `bindless`/`asset-system`, `plans/README`. | done |
 
 ## Dependency graph
 

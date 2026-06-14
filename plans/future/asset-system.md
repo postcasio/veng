@@ -1,13 +1,27 @@
-# Asset system — design overview (future)
+# Asset system — design overview (synchronous foundation shipped)
 
-> **Vision / design sketch, not scheduled.** Detail for [area 1](README.md) —
-> the headline future phase. Direction, API surfaces, and decisions, not a firm
-> plan; it becomes its own planset (likely several) when taken up. Builds on
-> [de-globalized context](README.md#3-de-globalize-the-rendering-context--done-planset-4)
-> (done, planset-4), the [threading/task system](threading-task-system.md)
-> (area 2, for async loads) and the [bindless rework](bindless-descriptors.md)
-> (the material backing). Absorbs **all deferred shader work** (planset-1/12 and
-> the shader parts of planset-2).
+> **The synchronous foundation + bindless material shipped in
+> [planset-5](../planset-5/README.md).** What this document still uniquely holds is
+> the **enduring end-state vision** that depends on threading: the **async `Load`
+> default**, **hot-reload** (`Reload`), and **dependency-graph-driven eviction**.
+> The built, authoritative surface lives elsewhere — `CLAUDE.md` (the Assets /
+> Bindless / Shaders conventions), `docs/ownership.md` (`AssetHandle` vs `Ref`),
+> [bindless-descriptors.md](bindless-descriptors.md) (the registry), and the
+> planset-5 plans. The Part-1 API sketches below are **superseded** by that
+> surface where they differ; read them as the original direction, not the spec.
+>
+> **Decisions now settled (do not reopen):** cooking is **offline-only — no
+> cook-on-demand**; `AssetId` is an **opaque `u64`** (not a content/path hash);
+> cooking lives in a **separate cooker lib + `vengc`**, never the engine; shaders
+> are authored in **Slang and always compiled from source** (no precompiled-inline
+> path) and **reflected offline** into a `ShaderInterface`; **every** asset type
+> has its own per-asset JSON source file; materials declare **explicitly-typed
+> fields**; a `Material` is the **thin bindless** form (handles + a `MaterialData`
+> SSBO entry). The structured `AssetLoadError` promotion also shipped.
+>
+> Still depends on [threading/task system](threading-task-system.md) (area 2) for
+> the async/hot-reload half. Absorbed **all deferred shader work** (planset-1/12
+> and the shader parts of planset-2) — done.
 
 ## The shape of the phase
 
@@ -42,10 +56,10 @@ Two phases, in order:
 
 ### Identification: `AssetId`
 
-An asset is named by a stable id, not a live path. Recommend a **content/path
-hash** (`u64`) computed at cook time, with the source path kept for diagnostics
-and hot-reload. Stable ids survive moves and let the cooked cache be content-
-addressed.
+An asset is named by a stable id, not a live path. **Shipped as an opaque `u64`**
+the pack author owns (typically minted by `vengc generate-id`) — *not* a
+content/path hash. Hand-assignable in a hand-written pack; no content-addressing.
+(The hash sketch below is the superseded original direction.)
 
 ```cpp
 namespace Veng
@@ -97,9 +111,9 @@ reference to the [`TaskSystem`](threading-task-system.md).
 ```cpp
 struct AssetManagerInfo
 {
-    path     AssetRoot;      // source assets
-    path     CacheRoot;      // cooked/.veng output
-    bool     CookOnDemand = true;   // import a stale/missing cooked form on first load
+    // NOTE: superseded. There is NO CookOnDemand — cooking is offline-only
+    // (vengc), the engine never imports. The shipped AssetManager mounts
+    // prebuilt .vengpack archives and resolves AssetIds; it has no source roots.
 };
 
 class AssetManager
@@ -356,21 +370,23 @@ void OnRender() override
 
 ## Open decisions
 
-- **`AssetId` source** — content hash vs. path hash vs. a GUID baked into a
-  `.meta` sidecar (Unity-style). Content hash is simplest; sidecar GUIDs survive
-  content edits but add a file per asset.
-- **Cooked format** — a bespoke `.veng` binary vs. an existing container
-  (glTF-binary, KTX2 as-is). Bespoke gives one loader and version control; reusing
-  formats saves importer work. Likely a thin bespoke wrapper around
-  format-native payloads.
-- **How much to pull forward** (the README open question) — the API + synchronous
-  `LoadSync` as the threading "real client", vs. keeping the whole phase after
-  threading. Recommend: land the API + sync `Texture` slice early.
-- **Sync slice without bindless** — can the thin slice use today's per-set
-  `DescriptorSet` and migrate to bindless later, or does `Material` need bindless
-  from day one? Lean: textures/meshes ship pre-bindless; `Material` waits for the
-  registry (it is defined *in terms of* handles).
-- **Material editor format** (`.vmat`) — schema for the node graph's cooked output;
-  designed with the editor, not before it.
-- **Reflection toolchain** — SPIRV-Reflect vs. SPIRV-Cross for offline reflection.
-  Decide when the shader-asset importer is built.
+Resolved by planset-5:
+
+- ~~**`AssetId` source.**~~ **Opaque `u64`** the pack author owns (minted by
+  `vengc generate-id`) — no content/path hash, no `.meta` sidecar.
+- ~~**Cooked format.**~~ **Bespoke** `assetformat` archive (`.vengpack`) +
+  cooked-blob structs (`assetformat/.../CookedBlobs.h`) — one loader, versioned.
+- ~~**How much to pull forward.**~~ The **whole synchronous slice + bindless**
+  shipped before threading as the real client.
+- ~~**Sync slice without bindless.**~~ `Material` ships **bindless from day one**
+  (defined in terms of handles + a `MaterialData` SSBO entry); textures register
+  into set 0 from the start.
+- ~~**Reflection toolchain.**~~ **Slang's own reflection API** in the cooker
+  (no SPIRV-Reflect / SPIRV-Cross), emitting a serializable `ShaderInterface`.
+
+Still open (needs the editor / further work):
+
+- **Material editor format** — the loaded `.vmat` path (a node graph's cooked
+  output) is designed with the node-based editor, not before it; planset-5 shipped
+  only the **constructed** path (explicitly-typed fields validated against the
+  shader's reflected `MaterialData`).

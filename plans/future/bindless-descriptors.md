@@ -1,12 +1,16 @@
-# Bindless descriptors — design sketch (future)
+# Bindless descriptors — design (shipped in planset-5)
 
-> **Vision / design sketch, not scheduled.** Detail for the descriptor-strategy
-> cross-cutting concern in [README.md](README.md) (asset/material phase, area 1).
-> Direction and decisions, not a firm plan — it becomes part of a planset when the
-> asset/material work is taken up. Builds on the
-> [planset-2/06 addendum](../planset-2/06-descriptor-update-policy.md), which fixes
-> the *altitude* of today's per-set descriptor layer; this sketch is the real
-> subsystem that layer hands off to.
+> **Shipped — delivered by [planset-5](../planset-5/README.md) (plan 05)** as the
+> `BindlessRegistry` set-0 subsystem (`Veng/Renderer/BindlessRegistry.h`):
+> arrayed, `partiallyBound` + `updateAfterBind` bindings for sampled images,
+> samplers, storage images, and a per-material `MaterialData` SSBO, all in **set 0**
+> (reserved by every `PipelineLayout`), bound once per pipeline bind, with typed
+> `u32` handles and deferred slot release through the per-frame retire window. The
+> model below describes what was built; the **Open decisions** at the end record
+> what was chosen and what genuinely remains for a later (deferred-renderer /
+> growth) pass. Builds on the
+> [planset-2/06 addendum](../planset-2/06-descriptor-update-policy.md), which fixed
+> the *altitude* of the per-set descriptor layer this subsystem hands off from.
 
 ## Why
 
@@ -192,24 +196,35 @@ param entry*, not a bundle of descriptor sets.
    Primary Pool sizes every `DescriptorType` via `GetDescriptorTypeInfo`
    (`TypeMapping.h`), and `descriptorBindingStorageImageUpdateAfterBind` is
    enabled, so a static `StorageImage` binding (the common case) needs neither.
-2. **De-globalize `Context` (area 3)** — the registry wants an explicit device, not
-   a `Context::Instance()` grab.
-3. **Registry + handles, alongside the per-set API** — don't rip out `DescriptorSet`
-   day one (ImGui and simple passes keep it). Migrate textures → material/object
-   buffers → materials incrementally, geometry pass first (it's the deferred
-   bindless-heavy pass).
+2. **De-globalize `Context` (area 3) — done (planset-4).** The registry takes an
+   explicit `Context&`, not a `Context::Instance()` grab.
+3. **Registry + handles, alongside the per-set API — done (planset-5, plan 05).**
+   `DescriptorSet` was not ripped out (ImGui and simple passes keep it); textures
+   and materials register into set 0 while per-frame/per-pass data stays in the
+   per-set layer. The deferred geometry-pass migration waits on a deferred
+   renderer.
 
 ## Open decisions
 
-- **Auto-register vs. explicit.** Every `ImageView::Create` gets a slot
-  automatically (simple, but everything becomes bindless) vs. explicit
-  `registry.Register` (more control). Lean explicit-but-ergonomic.
-- **One mega-set vs. a few typed sets** (textures / storage / buffers split across
-  bindings vs. sets).
-- **Buffers: arrayed SSBO descriptors vs. buffer-device-address.** BDA is already
-  enabled and is cleaner for per-material/per-object blocks (push a 64-bit pointer,
-  skip the descriptor) — but a sharper tool.
-- **Array sizing / growth.** Fixed large capacity (simple) vs. growable (re-create
-  the set when full).
+Resolved by planset-5 (plan 05):
+
+- ~~**Auto-register vs. explicit.**~~ **Explicit** — `BindlessRegistry::Register`
+  (and `RegisterStorage` / `RegisterMaterial`) hands back a typed handle; nothing
+  becomes bindless implicitly on `Create`.
+- ~~**One mega-set vs. a few typed sets.**~~ **One set (set 0)** with typed
+  bindings (`TextureBinding` 0, `SamplerBinding` 1, `StorageImageBinding` 2,
+  `MaterialBinding` 3), not a set per type.
+
+Still open (a deferred-renderer / scaling pass):
+
+- **Buffers beyond `MaterialData`: arrayed SSBO descriptors vs.
+  buffer-device-address.** The per-material `MaterialData` ships as one arrayed
+  SSBO (binding 3). A general per-object buffer-handle path — BDA (already enabled,
+  cleaner for per-object blocks) vs. more arrayed SSBO descriptors — is not yet
+  chosen; no per-object SSBO exists until the renderer needs one.
+- **Array sizing / growth.** Fixed capacities shipped (`MaxTextures` 1024,
+  `MaxSamplers` 128, `MaxStorageImages` 512, `MaxMaterials` 256). Growable arrays
+  (re-create the set when full) are still future.
 - **G-buffer access in the lighting pass:** fixed descriptor set vs. routing the
-  G-buffer attachments through the registry as handles too.
+  G-buffer attachments through the registry as handles too — undecided; veng has
+  no deferred path yet.

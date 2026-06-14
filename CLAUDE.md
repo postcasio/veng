@@ -30,11 +30,14 @@ is thin (shared deps + `add_subdirectory` per lib).
     `engine/include/Veng/Renderer/X.h`; its impl lives in
     `engine/src/Renderer/Backend/X.cpp` — note the path asymmetry.)
 - `assetformat/` — `libveng_assetformat`, the shared archive + cooked-blob
-  format. Vulkan-free, importer-free; linked by both `engine` and `cooker`.
+  format (`Veng/Asset/`: `AssetId`, `AssetType`, `Archive`, `CookedBlobs`).
+  Vulkan-free, importer-free; linked PUBLIC by `engine` and by `cooker`.
 - `cooker/` — `libveng_cook` + the `vengc` CLI (stb, assimp, Slang, JSON).
   Never linked by the engine.
-- `examples/hello-triangle/` — the canonical sample app and the smoke test.
-- `tests/` — `include_hygiene`, `headless_smoke`, `compute_dispatch`.
+- `examples/hello-triangle/` — the canonical sample app and the smoke test;
+  `assets/` holds its hand-written asset pack (cooked at build time).
+- `tests/` — `include_hygiene`, `headless_smoke`, `compute_dispatch`, plus the
+  `unit`, `death`, `gpu`, and `cooker` suites (and `shaders/`, `support/`).
 - `plans/` — the roadmap. See **Working norms** below.
 - `docs/ownership.md` — the resource-ownership rule, in full.
 
@@ -47,11 +50,16 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-Tests/examples build only when veng is the top-level project
-(`PROJECT_IS_TOP_LEVEL`); toggles are `VENG_BUILD_TESTS` / `VENG_BUILD_EXAMPLES`.
+Tests, examples, and the `vengc` cooker tool build only when veng is the
+top-level project (`PROJECT_IS_TOP_LEVEL`); toggles are `VENG_BUILD_TESTS` /
+`VENG_BUILD_EXAMPLES` / `VENG_BUILD_TOOLS`.
 Dependencies (fmt, VMA, nfd, tinyexr, stb, ImGui, imnodes) are pulled via
 `FetchContent` with pinned tags — no system install needed beyond Vulkan, GLFW,
-glm, and zlib (`find_package`).
+glm, and zlib (`find_package`). The cooker's heavy/toolchain deps
+(nlohmann/json, assimp, and Slang for shader compile + reflection) are
+**cooker-only** — gated behind `VENG_BUILD_TOOLS` and never linked into
+`libveng` or its consumers, which load the *binary* archive and never parse a
+source asset.
 
 ### The validation build (`VE_DEBUG`)
 
@@ -224,17 +232,71 @@ writes (`.Color(...)`) and reads (`.Sample(...)`); the graph derives the layout
 transitions and drives `BeginRendering`/`EndRendering`. See `RenderScene` /
 `CompositeToSwapChain` in the hello-triangle `main.cpp` for the pattern.
 
-### Application & shaders
+### Application
 
 Subclass `Application`, override `OnInitialize` / `OnUpdate(delta)` / `OnRender` /
 `OnDispose`, and `Run(args)`. ImGui is opt-in (on by default; `nullopt` to skip),
 and a `Headless` flag runs windowless to `RequestExit()` instead of a window
-close — that's the CI/smoke path.
+close — that's the CI/smoke path. `Application` owns the `AssetManager`
+(`GetAssetManager()`) and the render `Context`.
 
-Shaders are GLSL compiled to SPIR-V by `glslc` via the `add_shaders(target,
-srcs...)` CMake function (`cmake/Shaders.cmake`), output to
-`<build>/shaders/<name>.spv`. Shaders load at runtime through `Shader::Create`,
-which returns a `Result` (file may be missing) — `VE_ASSERT` on it at call sites.
+### Assets: cook offline, load by `AssetId`
+
+Assets are **cooked offline** into a binary archive, never imported at runtime —
+there is no cook-on-demand, no source parser, no re-cook path in `libveng`. The
+`vengc cook` tool (built behind `VENG_BUILD_TOOLS`, wired into the example's
+build) turns a hand-written JSON **asset pack** into a single `.vengpack`
+archive; the engine *mounts* archives and resolves assets against them.
+
+- **An asset pack is a pure `{ id, type, source }` manifest.** It carries no
+  per-asset settings. **Every** asset type — texture, mesh, shader, material —
+  has its own per-asset JSON source file (`*.tex.json` / `*.mesh.json` /
+  `*.shader.json` / `*.vmat.json`) that the manifest entry points at; the sampler
+  settings, import options, shader source/entry, and material fields live in
+  those files.
+- **Load is by opaque `u64` `AssetId`** through mounted archives.
+  `AssetManager::LoadSync<T>(AssetId)` returns `AssetResult<AssetHandle<T>>`
+  (`std::expected<…, AssetLoadError>` — branch on `AssetError::Kind`, not a
+  string). Dependency loads (a material pulling its textures and shaders) are
+  synchronous and eager.
+- **`AssetManager` is owned by `Application` and constructed with a `Context&`.**
+  `LoadSync` **blocks** (uploads go through today's `UploadSync`/`WaitIdle` path);
+  the verbose name is deliberate — async `Load` is the next planset and keeps the
+  `LoadSync` spelling when it lands.
+- **`AssetHandle<T>` is refcounted indirection into the manager's cache**, not a
+  `Ref` to a GPU resource — see `docs/ownership.md`. Apps drop their handles in
+  `OnDispose()` like any other engine resource; `CollectGarbage()` evicts entries
+  no handle references, retiring their GPU resources through the per-frame
+  deferred-destruction path.
+
+### Bindless: set 0 is the engine's
+
+The engine provides a global `BindlessRegistry` (owned by `Context`, reachable via
+`Context::GetBindlessRegistry()`): a few large arrayed, `partiallyBound` +
+`updateAfterBind` bindings (sampled images, samplers, storage images, and the
+per-material `MaterialData` SSBO) living in **set 0**. `Register(...)` allocates a
+free-list slot and returns a typed `u32` handle (`TextureHandle`, `SamplerHandle`,
+`StorageImageHandle`, `MaterialHandle`); `Release` defers the slot reclaim through
+the same per-frame retire window. **`PipelineLayout` reserves set 0 in every
+pipeline** for the registry, bound once per pipeline bind (`registry.Bind(cmd)`),
+not per draw — draws select array elements via push-constant indices. Author-
+declared descriptor sets shift to **set 1+**.
+
+### Shaders & materials
+
+Shaders are a first-class asset authored in **Slang** — a `*.shader.json` names
+its `.slang` source, entry point, and optional vertex-layout `AssetId`. The
+cooker **always** compiles from source (there is no precompiled-inline path) and
+**reflects the shader offline** into a serializable `ShaderInterface`; the engine
+loads plain **SPIR-V** and gains no Slang dependency. (There is no `glslc` /
+`add_shaders` path — GLSL was removed project-wide.)
+
+A material (`*.vmat.json`) references its vertex/fragment shaders by `AssetId` and
+declares an **ordered, explicitly-typed** field list; the cook validates those
+fields against the fragment shader's reflected `MaterialData` block. At runtime a
+`Material` is thin — shader handle + texture **handles** + a `MaterialData` SSBO
+entry, bound through set 0 — and `Material::Bind` pushes its per-draw material
+index.
 
 ## Working norms
 

@@ -31,8 +31,8 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   Order was `5a → 3 → 5b`, as the future roadmap fixed. Stays
   single-threaded/single-context; threading (area 2) is a later planset.
 
-- **[planset-5](planset-5/README.md)** — the synchronous asset system (📝 proposed,
-  10 plans). Takes up future area 1's **synchronous slice**: a per-lib project
+- **[planset-5](planset-5/README.md)** — the synchronous asset system (✅ complete,
+  2026-06). Takes up future area 1's **synchronous slice**: a per-lib project
   reorg, a standalone in-repo **cooker** (`vengc`) that turns hand-written JSON
   **asset packs** into binary **archives**, a shared `assetformat` lib, and an
   engine-side `AssetManager` that loads by opaque `u64` `AssetId` via `LoadSync`.
@@ -43,9 +43,10 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   the named follow-on, not in scope.
 
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
-  holding area; not a planset). Remaining areas: the asset system (asset API
-  first, then materials/textures/meshes; absorbs offline shader reflection +
-  shader-derived layouts), a threading/task system (Vulkan-queue-correct async
-  asset loading), and the event/input systems. Each becomes its own planset when
-  taken up. (Testing areas 5a/5b and de-globalizing the context (area 3) are done
-  — planset-3 and planset-4 respectively.)
+  holding area; not a planset). Remaining areas: a threading/task system
+  (Vulkan-queue-correct async asset loading — which also turns planset-5's
+  `LoadSync` into the async default) and the event/input systems. Each becomes its
+  own planset when taken up. (Testing areas 5a/5b, de-globalizing the context
+  (area 3), and the asset system's synchronous slice + bindless (area 1) are done
+  — planset-3, planset-4, and planset-5 respectively; the asset system's async
+  half folds into the threading area.)

@@ -40,7 +40,34 @@ The one deliberate exception is `DescriptorSet`, which retains `Ref`s to the
 resources it was written with (`DescriptorSet::m_BoundResources`). That is
 *ownership*, not frame-tracking: a set written with an `ImageView` would dangle
 beyond the in-flight window if the view died while the set is still bound in a
-future frame. (Re-evaluated in plan 05.)
+future frame.
+
+## Asset handles and bindless handles are not `Ref`s
+
+Two higher-level handle types sit *above* the `Ref`/`Unique` rule and must not be
+confused with it.
+
+- **`AssetHandle<T>` / `WeakAssetHandle<T>`** (`Veng/Asset/AssetHandle.h`) is a
+  refcounted reference *to an asset*, not to a GPU resource. It is indirection
+  into the `AssetManager`'s cache (`map<AssetId, Ref<AssetCacheEntry>>`): copies
+  share the cache entry and keep the asset resident; dropping the last handle
+  makes the asset evictable on the next `CollectGarbage()`. The *engine resources
+  inside* an asset (its `Ref<Image>`, `Ref<Buffer>`, …) still follow the rule
+  above unchanged — a handle is a reference *to* an asset, never a substitute for
+  the `Ref<T>` *within* one. This indirection is what lets a future hot-reload
+  swap the resource behind a handle without invalidating outstanding handles.
+
+- **Bindless handles** (`TextureHandle`, `SamplerHandle`, `StorageImageHandle`,
+  `MaterialHandle` in `Veng/Renderer/BindlessRegistry.h`) are plain `u32` slot
+  ids, **not owners**. The owning `Ref` lives in the `BindlessRegistry`, which
+  keeps a `Ref` to every registered resource so a live slot can't dangle. A
+  handle is just the index a shader uses to reach the resource through set 0.
+
+Eviction and bindless slot release both defer through the **existing per-frame
+retire queue** — `CollectGarbage()` drops the cache entry's `Ref` (which retires
+the GPU resource), and `BindlessRegistry::Release` returns the slot only after
+`Context::AcquireNextFrame` has cycled past every frame-in-flight that could
+still reference it. There is no second reclamation mechanism.
 
 ## Factory audit
 

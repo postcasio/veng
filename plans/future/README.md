@@ -8,38 +8,41 @@ Captured now so the earlier phases stay coherent with where veng is going.
 
 ## Areas
 
-### 1. Asset system (incl. materials, textures, meshes)
+### 1. Asset system — synchronous slice + bindless DONE (planset-5)
 
-The headline next phase. veng needs a real asset system, and **the work begins by
-defining the asset API** — the general abstraction first, concrete asset types
-after. **Design overview:** [asset-system.md](asset-system.md). **The synchronous
-slice is now detailed as its own planset:**
-[planset-5](../planset-5/README.md) (cooker + asset packs + `LoadSync`; Slang +
-offline reflection; **includes the bindless subsystem** so materials are thin —
-async loading is the one follow-on). Marked done here when planset-5 lands.
+> **The synchronous slice and the bindless rework are done — delivered by
+> [planset-5](../planset-5/README.md)** (the standalone `vengc` cooker, JSON asset
+> packs cooked into `.vengpack` archives, the shared `assetformat` lib, the
+> engine-side `AssetManager`/`AssetHandle`/`LoadSync`, the texture/mesh/shader/
+> material types with **offline Slang reflection → `ShaderInterface`**, and the
+> **`BindlessRegistry` set-0 subsystem** that makes the material thin). What
+> **remains** is the **async** half — non-blocking `Load` on a transfer queue —
+> which depends on **area 2 (threading)**; `LoadSync` was deliberately named to
+> keep its spelling when async lands. **Design overview:**
+> [asset-system.md](asset-system.md) (trimmed to the enduring async/hot-reload
+> vision); the delivered foundation lives in planset-5.
 
-- **Asset API (first):** how assets are identified, referenced (handles/refs),
-  loaded, cached, lifetime-managed, hot-reloaded, and imported/cooked. This is
-  the foundation every asset type plugs into.
-- **Asset types:** materials, textures, meshes, shaders — each an importer +
-  cooked runtime form on top of the asset API.
-- **Materials** specifically: the material becomes the primary rendering
-  interface, not the shader. Bundle a shader (binary) with its uniform/texture
-  data; bind and draw a material instead of juggling pipelines, descriptor sets,
-  push constants and layouts by hand. Two paths: **loaded** (a node-based
-  material editor produces an asset carrying shader binary + parameter data) and
-  **constructed** (reference a shader + explicitly supplied uniform/texture info,
-  validated against what the shader needs). This **requires higher-level
-  descriptor management and a bindless system** — see the descriptor-strategy
-  cross-cutting concern below.
-- This phase **absorbs all deferred shader work** (why planset-1/12 and the
-  shader parts of planset-2 were dropped): **offline shader reflection →
+The roadmap began **by defining the asset API** — the general abstraction first,
+concrete types after — and planset-5 followed that order. What it delivered, and
+what is left:
+
+- **Asset API (done):** assets are identified by an opaque `u64` `AssetId`,
+  referenced by `AssetHandle<T>` (cache indirection, hot-reload-ready),
+  loaded/cached through `AssetManager`, and imported by the offline cooker.
+- **Asset types (done):** texture, mesh, shader, and material — each a cooker
+  importer + a cooked runtime form on top of the asset API.
+- **Materials (done):** the material is the rendering interface, not the shader —
+  a thin bundle of a shader handle, texture **handles**, and a `MaterialData`
+  SSBO entry, bound through bindless set 0. The **constructed** path (reference a
+  shader + explicitly-typed fields, validated against the shader's reflected
+  interface) shipped; the **loaded** path from a node-based material editor is the
+  editor's job, still future.
+- **Deferred shader work (done):** **offline shader reflection →
   serializable `ShaderInterface`** (descriptor bindings, push-constant blocks,
-  vertex inputs) produced by the importer at cook time, not at runtime;
-  descriptor/pipeline layouts derived from it; name-based binding; vertex layout
-  derived from / validated against the shader.
-
-Depends on area 2 (threading) for non-blocking loads.
+  vertex inputs) produced by the cooker via Slang, not at runtime; layouts derive
+  from it and engine-provided set 0 is recognized without the author declaring it.
+- **Remaining (async, area 2):** hot-reload (`Reload`) and non-blocking `Load`
+  over a transfer queue — they need the threading/task system.
 
 ### 2. Threading / task system
 
@@ -126,11 +129,14 @@ bindings/devices). Revisit when gameplay drives the requirements.
 A first cut at sequencing — the order to *take the areas up* (each becomes its own
 planset), not a schedule. Refine when each is detailed.
 
-Areas 5a, 3, and 5b (+ the validation gate) are **done** (planset-3, planset-4).
-The remaining chain is:
+Areas 5a, 3, 5b (+ the validation gate), and area 1's **synchronous slice +
+bindless** are **done** (planset-3, planset-4, planset-5). The thin synchronous
+asset slice was deliberately pulled forward as the "real client" (the
+cross-cutting concern below), so the remaining chain inverts the original order —
+threading now turns the delivered sync loads async:
 
 ```
-2 threading ──► 1 asset system
+1 sync assets + bindless ✅ ──► 2 threading (async loads)
 4 events/input — independent, gameplay-driven (any time)
 ```
 
@@ -141,22 +147,25 @@ The remaining chain is:
 ~~3. GPU / integration tests (area 5, second half) + validation gate.~~ Done —
 planset-4 (plans 05–06).
 
+~~4. Asset system (area 1) — synchronous slice + bindless.~~ Done — planset-5
+(cooker, packs/archives, `AssetManager`/`LoadSync`, texture/mesh/shader/material,
+offline Slang reflection, the `BindlessRegistry` set-0 subsystem).
+
 1. **Threading / task system (area 2).** Design against the explicit-device API
-   (now available — `Context::Instance()` is gone); this is where the
-   single-threaded v1 contract is deliberately lifted, and Vulkan-queue
-   correctness is the hard part.
-2. **Asset system (area 1) — headline, end of the chain.** The general asset API
-   (types, handles, import/cook, *synchronous* load) is largely independent and
-   could be scoped/started earlier, but the headline payoff — loading without
-   stalling the frame — needs threading (step 1 above). Land the API early if
-   convenient; async loading after threading.
+   (`Context::Instance()` is gone) and the real asset client planset-5 delivered;
+   this is where the single-threaded v1 contract is deliberately lifted, and
+   Vulkan-queue correctness is the hard part. It also delivers **area 1's
+   remaining async half** — non-blocking `Load` over a transfer queue and
+   hot-reload — turning planset-5's `LoadSync` into the async default.
 
 **Event & input (area 4)** is off the critical path — independent of the
 rendering/asset/threading work and driven by gameplay needs, so slot it in
 whenever it's wanted.
 
-Open question: how much of the asset API (definition + sync loading) to pull
-forward in parallel with threading, vs. keeping the whole asset phase last.
+~~Open question: how much of the asset API (definition + sync loading) to pull
+forward in parallel with threading, vs. keeping the whole asset phase last.~~
+Resolved: planset-5 pulled the whole synchronous slice (+ bindless) forward
+*before* threading, as the real client; threading now adds async on top.
 
 ## Cross-cutting concerns (weigh when opening each phase)
 
@@ -182,12 +191,13 @@ to decide early than to retrofit.
   bindless an explicit per-binding opt-in via a single type/feature/pool table.
   The real bindless subsystem (large arrays, per-frame streaming, possibly
   descriptor buffers) — sketched in
-  [bindless-descriptors.md](bindless-descriptors.md) — is this phase's job.
-  *(area 1.)*
-- **Structured error type for the asset/import pipeline.** `Result<T>` carries a
-  `std::string` today; asset loading is where callers will want to branch on error
-  *kind* (not-found / corrupt / version-mismatch / missing-dependency). Expect to
-  promote the error to a structured type — `Result.h` already flags this. *(area 1.)*
+  [bindless-descriptors.md](bindless-descriptors.md) — **shipped in planset-5
+  (plan 05)** as the `BindlessRegistry` set-0 subsystem. *(area 1, delivered.)*
+- ~~**Structured error type for the asset/import pipeline.**~~ **Delivered by
+  planset-5** as `AssetLoadError` (`AssetError::Kind` ∈ NotFound / WrongType /
+  Corrupt / VersionMismatch / MissingDependency / LoadFailed); `AssetManager`
+  returns `AssetResult<T>` = `std::expected<T, AssetLoadError>`. *(area 1,
+  resolved.)*
 - ~~**CI with a software Vulkan ICD** (lavapipe / SwiftShader) as part of the
   testing work, not after.~~ Explicitly descoped by planset-4 (plan 06): veng has
   no hosted pipeline and none is planned. The GPU/headless suite stays
@@ -223,5 +233,7 @@ to decide early than to retrofit.
 ## Status
 
 Vision only beyond what's noted done above. Areas 3 and 5 are complete
-(planset-3, planset-4); areas 1, 2, and 4 remain undetailed/unscheduled. Each
-becomes its own planset when taken up.
+(planset-3, planset-4) and **area 1's synchronous slice + bindless is complete**
+(planset-5); area 1's **async** half (folded into area 2), **area 2** (threading),
+and **area 4** (events/input) remain undetailed/unscheduled. Each becomes its own
+planset when taken up.
