@@ -6,15 +6,16 @@ namespace Veng::Cook
 {
     // Cooks a material into a CookedMaterialHeader +
     // CookedMaterialField table + packed parameter block (assetformat's
-    // CookedBlobs.h). The material JSON references:
-    //   - Two Shader pack entries (vertex + fragment) by AssetId.
-    //   - A "textures" map: MaterialData field name → texture AssetId (Kind 1
-    //     handle); an adjacent "<name>Sampler" field is classified as Kind 2.
-    //   - A "params" map: MaterialData field name → scalar or float-array value,
-    //     packed at the reflected byte offset (Kind 0 fields).
-    // MaterialData's layout is reflected from the fragment shader's .slang source
-    // via SlangReflect::ReflectStructLayout — inline (spirv_b64) fragment shaders
-    // are unsupported: there is no source file to reflect from.
+    // CookedBlobs.h). The pack entry's "source" points at a *.vmat.json that
+    // declares:
+    //   - "shaders": the vertex + fragment Shader pack entries by AssetId.
+    //   - "fields": an ordered, explicitly-typed list. Each field carries a
+    //     "type" (texture/sampler/float/vec2/vec3/vec4/uint): texture → Kind 1
+    //     handle (an "id"); sampler → Kind 2 handle reusing a named texture
+    //     field's id; scalar/vector → Kind 0 value packed into the param block.
+    // MaterialData's byte layout is reflected from the fragment shader's .slang
+    // source (located via its *.shader.json) by SlangReflect::ReflectStructLayout;
+    // declared fields are validated against it by name, type, and offset.
     class MaterialImporter final : public AssetImporter
     {
     public:

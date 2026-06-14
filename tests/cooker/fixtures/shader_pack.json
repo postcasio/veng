@@ -1,31 +1,8 @@
 {
   "version": 1,
   "assets": [
-    {
-      "id": 7001,
-      "type": "vertex_layout",
-      "source": "layouts/canonical.vlayout.json"
-    },
-    {
-      "id": 4001,
-      "type": "shader",
-      "source": "shaders/mesh.vert.slang",
-      "entry": "vsMain",
-      "vertex_layout": 7001
-    },
-    {
-      "id": 4002,
-      "type": "shader",
-      "spirv_b64": "AwIjBw==",
-      "entry": "fsMain",
-      "interface": {
-        "bindings": [
-          { "name": "u_Albedo", "set": 1, "binding": 0, "type": "sampled_image", "stages": ["fragment"] }
-        ],
-        "push_constants": [
-          { "name": "u_Params", "offset": 0, "size": 16, "stages": ["fragment"] }
-        ]
-      }
-    }
+    { "id": 7001, "type": "vertex_layout", "source": "layouts/canonical.vlayout.json" },
+    { "id": 4001, "type": "shader", "source": "shaders/mesh.vert.shader.json" },
+    { "id": 4002, "type": "shader", "source": "shaders/brick.frag.shader.json" }
   ]
 }

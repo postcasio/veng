@@ -5,17 +5,16 @@
 namespace Veng::Cook
 {
     // Cooks a shader into a CookedShaderHeader + reflected
-    // ShaderInterface + SPIR-V (assetformat's CookedBlobs.h). Two input forms:
-    //   - { "type": "shader", "source": "shaders/mesh.vert.slang", "entry": "vsMain" }
-    //     compiles the named entry point with the Slang C++ API and reflects its
-    //     interface via Slang's own reflection (no SPIRV-Reflect).
-    //   - { "type": "shader", "spirv_b64": "...", "entry": "main", "interface": {...} }
-    //     precompiled SPIR-V (base64) with its ShaderInterface supplied directly
-    //     (the editor/inline path) — validated and passed through unchanged.
-    // Either way, one cooked shader is one SPIR-V module covering one shader
-    // stage; a Material asset references a vertex- and a fragment-stage
-    // shader as separate AssetIds. Set 0 (the bindless registry) is
-    // recognized and excluded from the reflected/validated interface.
+    // ShaderInterface + SPIR-V (assetformat's CookedBlobs.h). The pack entry's
+    // "source" points at a *.shader.json holding { "source": "<.slang>",
+    // "entry": "...", "vertex_layout": <AssetId, optional> }; the .slang path is
+    // resolved relative to that json's own directory. The named entry point is
+    // compiled with the Slang C++ API and its interface reflected via Slang's
+    // own reflection (no SPIRV-Reflect).
+    // One cooked shader is one SPIR-V module covering one shader stage; a
+    // Material asset references a vertex- and a fragment-stage shader as separate
+    // AssetIds. Set 0 (the bindless registry) is recognized and excluded from the
+    // reflected/validated interface.
     class ShaderImporter final : public AssetImporter
     {
     public:

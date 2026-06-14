@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <fstream>
+#include <map>
+#include <sstream>
 
 #include <fmt/format.h>
 
@@ -52,12 +55,35 @@ namespace Veng::Cook
 
     Result<vector<u8>> MaterialImporter::Cook(const CookContext& context, const json& entry) const
     {
-        // --- 1. Validate and resolve shader references ---
+        // --- 1. Read the external *.vmat.json ---
 
-        if (!entry.contains("shaders") || !entry["shaders"].is_object())
+        if (!entry.contains("source") || !entry["source"].is_string())
+            return std::unexpected("material importer: missing or invalid 'source'");
+
+        const path vmatPath = context.PackDir / entry["source"].get<string>();
+
+        std::ifstream vmatFile(vmatPath, std::ios::binary);
+        if (!vmatFile)
+        {
+            return std::unexpected(
+                fmt::format("material importer: failed to open '{}'", vmatPath.string()));
+        }
+
+        std::ostringstream vmatStream;
+        vmatStream << vmatFile.rdbuf();
+        const json vmat = json::parse(vmatStream.str(), nullptr, false);
+        if (vmat.is_discarded() || !vmat.is_object())
+        {
+            return std::unexpected(
+                fmt::format("material importer: '{}': invalid JSON", vmatPath.string()));
+        }
+
+        // --- 2. Validate and resolve shader references ---
+
+        if (!vmat.contains("shaders") || !vmat["shaders"].is_object())
             return std::unexpected("material importer: missing or invalid 'shaders' object");
 
-        const json& shaders = entry["shaders"];
+        const json& shaders = vmat["shaders"];
 
         if (!shaders.contains("vertex") || !shaders["vertex"].is_number_unsigned())
             return std::unexpected("material importer: 'shaders.vertex' must be an unsigned integer AssetId");
@@ -99,49 +125,191 @@ namespace Veng::Cook
                 fragmentShaderId, static_cast<u32>(fragmentResolved->Type)));
         }
 
-        // Fragment shader must have a source path to reflect MaterialData from.
-        // Inline spirv_b64-only shaders have no AbsolutePath to compile.
+        // The fragment shader supplies the MaterialData layout, so it must resolve
+        // to a source path the cook can reflect.
         if (fragmentResolved->AbsolutePath.empty())
         {
             return std::unexpected(fmt::format(
-                "material importer: fragment shader {} has no resolvable source path — "
-                "inline-only (spirv_b64) fragment shaders cannot be reflected for MaterialData layout",
+                "material importer: fragment shader {} has no resolvable source path",
                 fragmentShaderId));
         }
 
-        // --- 2. Reflect MaterialData from the fragment shader's source ---
+        // --- 3. Reflect MaterialData from the fragment shader's Slang source ---
+
+        // The fragment shader's AbsolutePath points at its *.shader.json, not a .slang.
+        // Read that JSON to locate the actual .slang source relative to its directory.
+        const path shaderJsonPath = fragmentResolved->AbsolutePath;
+
+        std::ifstream shaderJsonFile(shaderJsonPath, std::ios::binary);
+        if (!shaderJsonFile)
+        {
+            return std::unexpected(fmt::format(
+                "material importer: failed to open fragment shader json '{}'",
+                shaderJsonPath.string()));
+        }
+
+        std::ostringstream shaderJsonStream;
+        shaderJsonStream << shaderJsonFile.rdbuf();
+        const json shaderJson = json::parse(shaderJsonStream.str(), nullptr, false);
+        if (shaderJson.is_discarded() || !shaderJson.is_object())
+        {
+            return std::unexpected(fmt::format(
+                "material importer: '{}': invalid JSON", shaderJsonPath.string()));
+        }
+
+        if (!shaderJson.contains("source") || !shaderJson["source"].is_string())
+        {
+            return std::unexpected(fmt::format(
+                "material importer: '{}': missing or invalid 'source'", shaderJsonPath.string()));
+        }
+
+        const path fragSlangPath =
+            shaderJsonPath.parent_path() / shaderJson["source"].get<string>();
 
         const Result<ReflectedStruct> reflected =
-            ReflectStructLayout(fragmentResolved->AbsolutePath, "MaterialData");
+            ReflectStructLayout(fragSlangPath, "MaterialData");
         if (!reflected)
             return std::unexpected(reflected.error());
 
-        // --- 3. Build the zero-initialised param block ---
+        // --- 4. Parse vmat["fields"] into an ordered declared-field list ---
 
-        const u32 paramBytes = reflected->Size;
-        vector<u8> paramBlock(paramBytes, 0);
+        if (!vmat.contains("fields") || !vmat["fields"].is_array())
+            return std::unexpected("material importer: missing or invalid 'fields' array");
 
-        // --- 4. Classify fields and build the CookedMaterialField table ---
+        struct DeclaredField
+        {
+            string Name;
+            string Type;
+            // texture / sampler
+            u64 TextureAssetId = 0;       // texture: the asset id
+            string SamplerTextureName;    // sampler: the name of the referenced texture field
+            // float / vecN / uint
+            vector<f32> FloatValues;
+            u32 UintValue = 0;
+            // bookkeeping
+            bool Matched = false;
+        };
 
-        // Collect the textures map (field name → texture AssetId).
-        // Default to empty object if absent.
-        const json& texturesJson = entry.contains("textures") && entry["textures"].is_object()
-            ? entry["textures"]
-            : json::object();
+        vector<DeclaredField> declaredFields;
+        // name → index in declaredFields, for duplicate detection and sampler lookup
+        std::map<string, usize> declaredByName;
 
-        // Collect the params map (field name → value).
-        const json& paramsJson = entry.contains("params") && entry["params"].is_object()
-            ? entry["params"]
-            : json::object();
+        const json& fieldsJson = vmat["fields"];
 
-        // Track which textures/params keys were consumed.
-        vector<string> matchedTextureKeys;
-        vector<string> matchedParamKeys;
+        for (const json& fieldJson : fieldsJson)
+        {
+            if (!fieldJson.contains("name") || !fieldJson["name"].is_string())
+                return std::unexpected("material importer: field entry missing or invalid 'name'");
+            if (!fieldJson.contains("type") || !fieldJson["type"].is_string())
+                return std::unexpected("material importer: field entry missing or invalid 'type'");
 
-        // Build a set of texture key names for quick lookup.
-        // Also build the sampler pairing: <key>Sampler → key.
-        // We discover sampler-paired fields by checking if the field name ends with
-        // "Sampler" and the prefix matches a texture key.
+            DeclaredField decl;
+            decl.Name = fieldJson["name"].get<string>();
+            decl.Type = fieldJson["type"].get<string>();
+
+            if (declaredByName.count(decl.Name))
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: duplicate declared field '{}'", decl.Name));
+            }
+
+            const vector<string> AllowedTypes = {
+                "texture", "sampler", "float", "vec2", "vec3", "vec4", "uint"
+            };
+            if (std::find(AllowedTypes.begin(), AllowedTypes.end(), decl.Type) == AllowedTypes.end())
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: field '{}' has unknown type '{}'", decl.Name, decl.Type));
+            }
+
+            if (decl.Type == "texture")
+            {
+                if (!fieldJson.contains("id") || !fieldJson["id"].is_number_unsigned())
+                {
+                    return std::unexpected(fmt::format(
+                        "material importer: texture field '{}' must have an unsigned integer 'id'",
+                        decl.Name));
+                }
+                decl.TextureAssetId = fieldJson["id"].get<u64>();
+            }
+            else if (decl.Type == "sampler")
+            {
+                if (!fieldJson.contains("texture") || !fieldJson["texture"].is_string())
+                {
+                    return std::unexpected(fmt::format(
+                        "material importer: sampler field '{}' must have a 'texture' name",
+                        decl.Name));
+                }
+                decl.SamplerTextureName = fieldJson["texture"].get<string>();
+            }
+            else if (decl.Type == "uint")
+            {
+                if (!fieldJson.contains("value") || !fieldJson["value"].is_number_unsigned())
+                {
+                    return std::unexpected(fmt::format(
+                        "material importer: uint field '{}' must have an unsigned integer 'value'",
+                        decl.Name));
+                }
+                decl.UintValue = fieldJson["value"].get<u32>();
+            }
+            else
+            {
+                // float / vec2 / vec3 / vec4
+                const u32 expectedArity =
+                    decl.Type == "float" ? 1u :
+                    decl.Type == "vec2"  ? 2u :
+                    decl.Type == "vec3"  ? 3u : 4u;
+
+                if (!fieldJson.contains("value"))
+                {
+                    return std::unexpected(fmt::format(
+                        "material importer: field '{}' of type '{}' must have a 'value'",
+                        decl.Name, decl.Type));
+                }
+
+                const json& val = fieldJson["value"];
+                if (expectedArity == 1)
+                {
+                    if (!val.is_number())
+                    {
+                        return std::unexpected(fmt::format(
+                            "material importer: float field '{}' 'value' must be a number",
+                            decl.Name));
+                    }
+                    decl.FloatValues.push_back(val.get<f32>());
+                }
+                else
+                {
+                    if (!val.is_array() || val.size() != expectedArity)
+                    {
+                        return std::unexpected(fmt::format(
+                            "material importer: {} field '{}' 'value' must be an array of {} numbers",
+                            decl.Type, decl.Name, expectedArity));
+                    }
+                    for (const json& elem : val)
+                    {
+                        if (!elem.is_number())
+                        {
+                            return std::unexpected(fmt::format(
+                                "material importer: {} field '{}' 'value' array contains a non-number element",
+                                decl.Type, decl.Name));
+                        }
+                        decl.FloatValues.push_back(elem.get<f32>());
+                    }
+                }
+            }
+
+            const usize idx = declaredFields.size();
+            declaredFields.push_back(std::move(decl));
+            declaredByName[declaredFields[idx].Name] = idx;
+        }
+
+        // --- 5. Build the zero-initialized param block ---
+
+        vector<u8> paramBlock(reflected->Size, 0);
+
+        // --- 6. Walk reflected fields in order, producing one CookedMaterialField each ---
+
         vector<CookedMaterialField> fields;
         fields.reserve(reflected->Fields.size());
 
@@ -151,208 +319,167 @@ namespace Veng::Cook
             SetName(cookedField.Name, reflField.Name);
             cookedField.Offset = reflField.Offset;
             cookedField.Size = reflField.Size;
+            cookedField.Kind = 0;
+            cookedField.TextureId = 0;
 
-            // Check if this field is a texture handle (Kind 1).
-            bool classified = false;
-            for (auto it = texturesJson.begin(); it != texturesJson.end(); ++it)
+            auto declIt = declaredByName.find(reflField.Name);
+            if (declIt != declaredByName.end())
             {
-                if (it.key() == reflField.Name)
+                DeclaredField& decl = declaredFields[declIt->second];
+                decl.Matched = true;
+
+                if (decl.Type == "texture")
                 {
-                    // Must be a uint handle slot.
+                    // Must be a scalar uint handle slot.
                     if (reflField.IsFloat || reflField.ComponentCount != 1)
                     {
                         return std::unexpected(fmt::format(
-                            "material importer: textures key '{}' maps to field '{}' "
-                            "but the field is not a scalar uint (IsFloat={}, ComponentCount={})",
-                            it.key(), reflField.Name,
+                            "material importer: texture field '{}' maps to a reflected field that is "
+                            "not a scalar uint (IsFloat={}, ComponentCount={})",
+                            decl.Name,
                             reflField.IsFloat ? "true" : "false",
                             reflField.ComponentCount));
                     }
 
-                    if (!it.value().is_number_unsigned())
-                    {
-                        return std::unexpected(fmt::format(
-                            "material importer: textures['{}'] must be an unsigned integer AssetId",
-                            it.key()));
-                    }
-
-                    const u64 textureId = it.value().get<u64>();
-
-                    // Validate the texture asset exists and is AssetType::Texture.
-                    const optional<ResolvedSource> texResolved = context.Resolve(AssetId{.Value = textureId});
+                    const optional<ResolvedSource> texResolved =
+                        context.Resolve(AssetId{.Value = decl.TextureAssetId});
                     if (!texResolved)
                     {
                         return std::unexpected(fmt::format(
                             "material importer: texture {} for field '{}' not found in pack or reference packs",
-                            textureId, reflField.Name));
+                            decl.TextureAssetId, decl.Name));
                     }
                     if (texResolved->Type != AssetType::Texture)
                     {
                         return std::unexpected(fmt::format(
                             "material importer: asset {} referenced as texture for field '{}' but has type {}",
-                            textureId, reflField.Name, static_cast<u32>(texResolved->Type)));
+                            decl.TextureAssetId, decl.Name,
+                            static_cast<u32>(texResolved->Type)));
                     }
 
                     cookedField.Kind = 1;
-                    cookedField.TextureId = textureId;
-                    matchedTextureKeys.push_back(it.key());
-                    classified = true;
-                    break;
+                    cookedField.TextureId = decl.TextureAssetId;
                 }
-            }
-
-            if (!classified)
-            {
-                // Check if this field is a sampler handle (Kind 2): named "<textureKey>Sampler".
-                for (auto it = texturesJson.begin(); it != texturesJson.end(); ++it)
+                else if (decl.Type == "sampler")
                 {
-                    const string samplerName = it.key() + "Sampler";
-                    if (samplerName == reflField.Name)
+                    // Must be a scalar uint handle slot.
+                    if (reflField.IsFloat || reflField.ComponentCount != 1)
                     {
-                        // Must be a scalar uint.
-                        if (reflField.IsFloat || reflField.ComponentCount != 1)
-                        {
-                            return std::unexpected(fmt::format(
-                                "material importer: sampler field '{}' (paired with texture '{}') "
-                                "is not a scalar uint (IsFloat={}, ComponentCount={})",
-                                reflField.Name, it.key(),
-                                reflField.IsFloat ? "true" : "false",
-                                reflField.ComponentCount));
-                        }
-
-                        if (!it.value().is_number_unsigned())
-                        {
-                            return std::unexpected(fmt::format(
-                                "material importer: textures['{}'] must be an unsigned integer AssetId",
-                                it.key()));
-                        }
-
-                        const u64 textureId = it.value().get<u64>();
-                        cookedField.Kind = 2;
-                        cookedField.TextureId = textureId;
-                        // Sampler fields are implicitly matched by texture key; no separate
-                        // tracking needed since we validate texture keys are consumed below.
-                        classified = true;
-                        break;
+                        return std::unexpected(fmt::format(
+                            "material importer: sampler field '{}' maps to a reflected field that is "
+                            "not a scalar uint (IsFloat={}, ComponentCount={})",
+                            decl.Name,
+                            reflField.IsFloat ? "true" : "false",
+                            reflField.ComponentCount));
                     }
+
+                    // Look up the referenced texture field by name among declared fields.
+                    auto texDeclIt = declaredByName.find(decl.SamplerTextureName);
+                    if (texDeclIt == declaredByName.end() ||
+                        declaredFields[texDeclIt->second].Type != "texture")
+                    {
+                        return std::unexpected(fmt::format(
+                            "material importer: sampler field '{}' references '{}' which is not a "
+                            "declared texture field",
+                            decl.Name, decl.SamplerTextureName));
+                    }
+
+                    cookedField.Kind = 2;
+                    cookedField.TextureId = declaredFields[texDeclIt->second].TextureAssetId;
                 }
-            }
-
-            if (!classified)
-            {
-                // Kind 0: param or ignored pad.
-                cookedField.Kind = 0;
-                cookedField.TextureId = 0;
-
-                // If the field is named in params, pack its value.
-                for (auto it = paramsJson.begin(); it != paramsJson.end(); ++it)
+                else if (decl.Type == "uint")
                 {
-                    if (it.key() == reflField.Name)
+                    // Must be a scalar uint.
+                    if (reflField.IsFloat || reflField.ComponentCount != 1)
                     {
-                        // Field must be float-typed to accept a param value.
-                        if (!reflField.IsFloat)
-                        {
-                            return std::unexpected(fmt::format(
-                                "material importer: params key '{}' maps to field '{}' "
-                                "but the field is not a float type",
-                                it.key(), reflField.Name));
-                        }
-
-                        const json& val = it.value();
-
-                        // Gather the float values from JSON.
-                        vector<f32> floats;
-                        if (val.is_number())
-                        {
-                            floats.push_back(val.get<f32>());
-                        }
-                        else if (val.is_array())
-                        {
-                            for (const json& elem : val)
-                            {
-                                if (!elem.is_number())
-                                {
-                                    return std::unexpected(fmt::format(
-                                        "material importer: params['{}'] array contains a non-number element",
-                                        it.key()));
-                                }
-                                floats.push_back(elem.get<f32>());
-                            }
-                        }
-                        else
-                        {
-                            return std::unexpected(fmt::format(
-                                "material importer: params['{}'] must be a number or array of numbers",
-                                it.key()));
-                        }
-
-                        // Component count must match.
-                        if (static_cast<u32>(floats.size()) != reflField.ComponentCount)
-                        {
-                            return std::unexpected(fmt::format(
-                                "material importer: params['{}'] has {} value(s) but field '{}' "
-                                "has ComponentCount {}",
-                                it.key(), floats.size(), reflField.Name, reflField.ComponentCount));
-                        }
-
-                        // Bounds check before writing.
-                        const usize writeEnd = static_cast<usize>(reflField.Offset) + floats.size() * sizeof(f32);
-                        if (writeEnd > paramBlock.size())
-                        {
-                            return std::unexpected(fmt::format(
-                                "material importer: params['{}'] field '{}' at offset {} + {} bytes "
-                                "exceeds param block size {}",
-                                it.key(), reflField.Name,
-                                reflField.Offset, floats.size() * sizeof(f32),
-                                paramBlock.size()));
-                        }
-
-                        // Write as little-endian f32 (host order == LE on macOS/x86).
-                        std::memcpy(paramBlock.data() + reflField.Offset,
-                            floats.data(), floats.size() * sizeof(f32));
-
-                        matchedParamKeys.push_back(it.key());
-                        break;
+                        return std::unexpected(fmt::format(
+                            "material importer: uint field '{}' maps to a reflected field that is "
+                            "not a scalar uint (IsFloat={}, ComponentCount={})",
+                            decl.Name,
+                            reflField.IsFloat ? "true" : "false",
+                            reflField.ComponentCount));
                     }
+
+                    const usize writeEnd =
+                        static_cast<usize>(reflField.Offset) + sizeof(u32);
+                    if (writeEnd > paramBlock.size())
+                    {
+                        return std::unexpected(fmt::format(
+                            "material importer: uint field '{}' at offset {} + 4 bytes "
+                            "exceeds param block size {}",
+                            decl.Name, reflField.Offset, paramBlock.size()));
+                    }
+
+                    std::memcpy(paramBlock.data() + reflField.Offset, &decl.UintValue, sizeof(u32));
+                    cookedField.Kind = 0;
+                    cookedField.TextureId = 0;
+                }
+                else
+                {
+                    // float / vec2 / vec3 / vec4
+                    const u32 expectedComponents =
+                        decl.Type == "float" ? 1u :
+                        decl.Type == "vec2"  ? 2u :
+                        decl.Type == "vec3"  ? 3u : 4u;
+
+                    if (!reflField.IsFloat || reflField.ComponentCount != expectedComponents)
+                    {
+                        return std::unexpected(fmt::format(
+                            "material importer: {} field '{}' maps to a reflected field with "
+                            "IsFloat={}, ComponentCount={} (expected IsFloat=true, ComponentCount={})",
+                            decl.Type, decl.Name,
+                            reflField.IsFloat ? "true" : "false",
+                            reflField.ComponentCount,
+                            expectedComponents));
+                    }
+
+                    const usize writeEnd =
+                        static_cast<usize>(reflField.Offset) +
+                        decl.FloatValues.size() * sizeof(f32);
+                    if (writeEnd > paramBlock.size())
+                    {
+                        return std::unexpected(fmt::format(
+                            "material importer: {} field '{}' at offset {} + {} bytes "
+                            "exceeds param block size {}",
+                            decl.Type, decl.Name,
+                            reflField.Offset,
+                            decl.FloatValues.size() * sizeof(f32),
+                            paramBlock.size()));
+                    }
+
+                    // Write as little-endian f32 (host order == LE on macOS/x86).
+                    std::memcpy(paramBlock.data() + reflField.Offset,
+                        decl.FloatValues.data(),
+                        decl.FloatValues.size() * sizeof(f32));
+
+                    cookedField.Kind = 0;
+                    cookedField.TextureId = 0;
                 }
             }
+            // No declared field matched this reflected field (e.g. a pad): leave Kind=0, TextureId=0.
 
             fields.push_back(cookedField);
         }
 
-        // --- 5. Validate that every textures/params key matched a field ---
+        // --- 7. Every declared field must match a reflected field ---
 
-        for (auto it = texturesJson.begin(); it != texturesJson.end(); ++it)
+        for (const DeclaredField& decl : declaredFields)
         {
-            const bool consumed = std::find(matchedTextureKeys.begin(), matchedTextureKeys.end(), it.key())
-                != matchedTextureKeys.end();
-            if (!consumed)
+            if (!decl.Matched)
             {
                 return std::unexpected(fmt::format(
-                    "material importer: textures key '{}' does not match any field in MaterialData",
-                    it.key()));
+                    "material importer: field '{}' does not match any field in MaterialData",
+                    decl.Name));
             }
         }
 
-        for (auto it = paramsJson.begin(); it != paramsJson.end(); ++it)
-        {
-            const bool consumed = std::find(matchedParamKeys.begin(), matchedParamKeys.end(), it.key())
-                != matchedParamKeys.end();
-            if (!consumed)
-            {
-                return std::unexpected(fmt::format(
-                    "material importer: params key '{}' does not match any field in MaterialData",
-                    it.key()));
-            }
-        }
-
-        // --- 6. Assemble the blob ---
+        // --- 8. Assemble the blob ---
 
         CookedMaterialHeader header{};
         header.VertexShaderId = vertexShaderId;
         header.FragmentShaderId = fragmentShaderId;
         header.FieldCount = static_cast<u32>(fields.size());
-        header.ParamBytes = paramBytes;
+        header.ParamBytes = reflected->Size;
 
         return BuildBlob(header, fields, paramBlock);
     }

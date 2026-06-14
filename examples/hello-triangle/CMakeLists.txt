@@ -38,6 +38,9 @@ add_custom_command(
                 ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/material_data.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/brick.vert.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/brick.frag.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/brick.vert.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/brick.frag.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/materials/brick.vmat.json
         COMMENT "Cooking hello-triangle asset pack"
 )
 

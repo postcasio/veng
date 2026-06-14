@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <fstream>
 #include <span>
+#include <sstream>
 #include <string_view>
 
 #include <fmt/format.h>
@@ -434,232 +436,46 @@ namespace Veng::Cook
                 bindings, pushConstants, vertexLayoutAssetId);
         }
 
-        optional<u32> ParseDescriptorType(const string& name)
-        {
-            if (name == "combined_image_sampler") return DescriptorTypeCombinedImageSampler;
-            if (name == "sampled_image") return DescriptorTypeSampledImage;
-            if (name == "storage_image") return DescriptorTypeStorageImage;
-            if (name == "uniform_buffer") return DescriptorTypeUniformBuffer;
-            if (name == "storage_buffer") return DescriptorTypeStorageBuffer;
-            if (name == "sampler") return DescriptorTypeSampler;
-            return std::nullopt;
-        }
-
-        optional<u32> ParseShaderStageMask(const json& stages)
-        {
-            if (!stages.is_array() || stages.empty())
-                return std::nullopt;
-
-            u32 mask = 0;
-            for (const json& stage : stages)
-            {
-                if (!stage.is_string())
-                    return std::nullopt;
-
-                const string name = stage.get<string>();
-                if (name == "vertex") mask |= ShaderStageVertex;
-                else if (name == "fragment") mask |= ShaderStageFragment;
-                else if (name == "compute") mask |= ShaderStageCompute;
-                else return std::nullopt;
-            }
-
-            return mask;
-        }
-
-        optional<vector<u8>> DecodeBase64(std::string_view text)
-        {
-            const auto decodeChar = [](char c) -> int
-            {
-                if (c >= 'A' && c <= 'Z') return c - 'A';
-                if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-                if (c >= '0' && c <= '9') return c - '0' + 52;
-                if (c == '+') return 62;
-                if (c == '/') return 63;
-                return -1;
-            };
-
-            vector<u8> out;
-            out.reserve(text.size() / 4 * 3);
-
-            u32 buffer = 0;
-            int bits = 0;
-            for (const char c : text)
-            {
-                if (c == '=' || c == '\n' || c == '\r' || c == ' ')
-                    continue;
-
-                const int value = decodeChar(c);
-                if (value < 0)
-                    return std::nullopt;
-
-                buffer = (buffer << 6) | static_cast<u32>(value);
-                bits += 6;
-                if (bits >= 8)
-                {
-                    bits -= 8;
-                    out.push_back(static_cast<u8>((buffer >> bits) & 0xFF));
-                }
-            }
-
-            return out;
-        }
-
-        // The editor/inline path: precompiled SPIR-V (base64) with its ShaderInterface
-        // supplied directly. We do NOT reflect/validate vertex inputs from precompiled
-        // SPIR-V — the project deliberately adds no SPIRV-Reflect dependency. The
-        // vertex_layout field is an existence+type check only: if present, we confirm
-        // the asset exists and is AssetType::VertexLayout, then store its id.
-        Result<vector<u8>> CookInline(const CookContext& context, const json& entry)
-        {
-            if (!entry["spirv_b64"].is_string())
-                return std::unexpected("shader importer: 'spirv_b64' must be a string");
-
-            const optional<vector<u8>> spirv = DecodeBase64(entry["spirv_b64"].get<string>());
-            if (!spirv)
-                return std::unexpected("shader importer: 'spirv_b64' is not valid base64");
-
-            if (!entry.contains("entry") || !entry["entry"].is_string())
-                return std::unexpected("shader importer: missing or invalid 'entry'");
-
-            if (!entry.contains("interface") || !entry["interface"].is_object())
-                return std::unexpected("shader importer: missing or invalid 'interface'");
-
-            const json& interfaceJson = entry["interface"];
-
-            vector<CookedDescriptorBinding> bindings;
-            if (interfaceJson.contains("bindings"))
-            {
-                if (!interfaceJson["bindings"].is_array())
-                    return std::unexpected("shader importer: 'interface.bindings' must be an array");
-
-                for (const json& b : interfaceJson["bindings"])
-                {
-                    if (!b.is_object() || !b.contains("name") || !b["name"].is_string()
-                        || !b.contains("set") || !b["set"].is_number_unsigned()
-                        || !b.contains("binding") || !b["binding"].is_number_unsigned()
-                        || !b.contains("type") || !b["type"].is_string()
-                        || !b.contains("stages"))
-                    {
-                        return std::unexpected("shader importer: invalid entry in 'interface.bindings'");
-                    }
-
-                    const u32 set = b["set"].get<u32>();
-                    if (set < 1)
-                        return std::unexpected("shader importer: 'interface.bindings' entry targets set 0 (reserved for the bindless registry)");
-
-                    const optional<u32> type = ParseDescriptorType(b["type"].get<string>());
-                    if (!type)
-                    {
-                        return std::unexpected(fmt::format("shader importer: 'interface.bindings' entry has unrecognized type '{}'",
-                            b["type"].get<string>()));
-                    }
-
-                    const optional<u32> stageMask = ParseShaderStageMask(b["stages"]);
-                    if (!stageMask)
-                        return std::unexpected("shader importer: 'interface.bindings' entry has invalid 'stages'");
-
-                    CookedDescriptorBinding binding{};
-                    binding.Set = set;
-                    binding.Binding = b["binding"].get<u32>();
-                    binding.Type = *type;
-                    binding.Count = b.contains("count") && b["count"].is_number_unsigned() ? b["count"].get<u32>() : 1;
-                    binding.StageMask = *stageMask;
-                    SetName(binding.Name, b["name"].get<string>());
-                    bindings.push_back(binding);
-                }
-            }
-
-            vector<CookedPushConstantBlock> pushConstants;
-            if (interfaceJson.contains("push_constants"))
-            {
-                if (!interfaceJson["push_constants"].is_array())
-                    return std::unexpected("shader importer: 'interface.push_constants' must be an array");
-
-                for (const json& p : interfaceJson["push_constants"])
-                {
-                    if (!p.is_object() || !p.contains("name") || !p["name"].is_string()
-                        || !p.contains("offset") || !p["offset"].is_number_unsigned()
-                        || !p.contains("size") || !p["size"].is_number_unsigned()
-                        || !p.contains("stages"))
-                    {
-                        return std::unexpected("shader importer: invalid entry in 'interface.push_constants'");
-                    }
-
-                    const u32 size = p["size"].get<u32>();
-                    if (size == 0 || size > 128)
-                    {
-                        return std::unexpected(fmt::format(
-                            "shader importer: 'interface.push_constants' entry '{}' has invalid size {} (must be 1-128 bytes)",
-                            p["name"].get<string>(), size));
-                    }
-
-                    const optional<u32> stageMask = ParseShaderStageMask(p["stages"]);
-                    if (!stageMask)
-                        return std::unexpected("shader importer: 'interface.push_constants' entry has invalid 'stages'");
-
-                    CookedPushConstantBlock block{};
-                    block.Offset = p["offset"].get<u32>();
-                    block.Size = size;
-                    block.StageMask = *stageMask;
-                    SetName(block.Name, p["name"].get<string>());
-                    pushConstants.push_back(block);
-                }
-            }
-
-            // Resolve the vertex_layout reference (existence + type check only).
-            // We do NOT validate individual elements against the precompiled SPIR-V
-            // because the project deliberately adds no SPIRV-Reflect dependency —
-            // that validation is only possible on the Slang source path.
-            u64 vertexLayoutAssetId = 0;
-            if (entry.contains("vertex_layout") && entry["vertex_layout"].is_number_unsigned())
-            {
-                vertexLayoutAssetId = entry["vertex_layout"].get<u64>();
-                if (vertexLayoutAssetId != 0)
-                {
-                    if (!context.Resolve)
-                    {
-                        return std::unexpected("shader importer: vertex_layout specified but no resolver available");
-                    }
-
-                    const optional<ResolvedSource> resolved =
-                        context.Resolve(AssetId{.Value = vertexLayoutAssetId});
-                    if (!resolved)
-                    {
-                        return std::unexpected(fmt::format(
-                            "shader importer: vertex_layout {} not found in pack or reference packs",
-                            vertexLayoutAssetId));
-                    }
-
-                    if (resolved->Type != AssetType::VertexLayout)
-                    {
-                        return std::unexpected(fmt::format(
-                            "shader importer: asset {} referenced as vertex_layout but has type {}",
-                            vertexLayoutAssetId, static_cast<u32>(resolved->Type)));
-                    }
-                }
-            }
-
-            return BuildBlob(entry["entry"].get<string>(), *spirv, bindings, pushConstants, vertexLayoutAssetId);
-        }
     }
 
     Result<vector<u8>> ShaderImporter::Cook(const CookContext& context, const json& entry) const
     {
-        if (entry.contains("spirv_b64"))
-            return CookInline(context, entry);
-
         if (!entry.contains("source") || !entry["source"].is_string())
             return std::unexpected("shader importer: missing or invalid 'source'");
 
-        if (!entry.contains("entry") || !entry["entry"].is_string())
-            return std::unexpected("shader importer: missing or invalid 'entry'");
+        const path shaderJsonPath = context.PackDir / entry["source"].get<string>();
 
-        const path sourcePath = context.PackDir / entry["source"].get<string>();
+        std::ifstream file(shaderJsonPath, std::ios::binary);
+        std::ostringstream oss;
+        oss << file.rdbuf();
+        const string text = oss.str();
+
+        const json shaderJson = json::parse(text, nullptr, false);
+        if (!shaderJson.is_object())
+        {
+            return std::unexpected(fmt::format("shader importer: '{}': invalid JSON",
+                shaderJsonPath.string()));
+        }
+
+        if (!shaderJson.contains("source") || !shaderJson["source"].is_string())
+        {
+            return std::unexpected(fmt::format("shader importer: '{}': missing or invalid 'source'",
+                shaderJsonPath.string()));
+        }
+
+        if (!shaderJson.contains("entry") || !shaderJson["entry"].is_string())
+        {
+            return std::unexpected(fmt::format("shader importer: '{}': missing or invalid 'entry'",
+                shaderJsonPath.string()));
+        }
+
+        // The .slang path is relative to the .shader.json's own directory.
+        const path slangPath = shaderJsonPath.parent_path() / shaderJson["source"].get<string>();
 
         u64 vertexLayoutAssetId = 0;
-        if (entry.contains("vertex_layout") && entry["vertex_layout"].is_number_unsigned())
-            vertexLayoutAssetId = entry["vertex_layout"].get<u64>();
+        if (shaderJson.contains("vertex_layout") && shaderJson["vertex_layout"].is_number_unsigned())
+            vertexLayoutAssetId = shaderJson["vertex_layout"].get<u64>();
 
-        return CookFromSource(context, sourcePath, entry["entry"].get<string>(), vertexLayoutAssetId);
+        return CookFromSource(context, slangPath, shaderJson["entry"].get<string>(), vertexLayoutAssetId);
     }
 }
