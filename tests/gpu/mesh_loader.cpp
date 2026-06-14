@@ -1,7 +1,8 @@
 // Mesh load test: cooks the mesh fixture pack in-process,
 // mounts it, LoadSync<Mesh>s it through AssetManager, and checks the loaded
-// mesh's vertex/index counts, canonical layout, submesh material override, and
-// GPU buffer sizes — the load-side proof for the mesh vertical slice.
+// mesh's vertex/index counts, canonical layout, resident material list +
+// per-submesh material index, and GPU buffer sizes — the load-side proof for the
+// mesh vertical slice.
 
 #include <filesystem>
 
@@ -11,6 +12,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Renderer/Buffer.h>
+#include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
 
 #include <gpu/fixture.h>
@@ -54,13 +56,19 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "mesh loader: cook, mount, LoadSync, v
         CHECK(layout.GetElements()[i].Offset == canonical.GetElements()[i].Offset);
     }
 
-    // Submesh table: one submesh over the whole index buffer, carrying the
-    // material override (cube.mesh.json's "materials": { "0": 1003 }).
+    // Submesh table: one submesh over the whole index buffer, indexing the mesh's
+    // resident material list (cube.mesh.json's "materials": { "0": 1003 }). The
+    // loader eager-resolves id 1003 into one material instance the mesh owns.
     const std::span<const SubMesh> subMeshes = mesh.GetSubMeshes();
     REQUIRE(subMeshes.size() == 1);
     CHECK(subMeshes[0].IndexOffset == 0);
     CHECK(subMeshes[0].IndexCount == 36);
-    CHECK(subMeshes[0].Material == AssetId{1003});
+    REQUIRE(subMeshes[0].MaterialIndex != SubMesh::NoMaterial);
+
+    const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
+    REQUIRE(materials.size() == 1);
+    REQUIRE(subMeshes[0].MaterialIndex < materials.size());
+    CHECK(materials[subMeshes[0].MaterialIndex].IsLoaded());
 
     // GPU buffers sized to the cooked geometry (24 vertices * 48 bytes, 36 u32
     // indices) — consistent with the typed-buffer roundtrip cases' sanity checks.

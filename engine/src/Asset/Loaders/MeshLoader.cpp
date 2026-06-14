@@ -4,7 +4,9 @@
 
 #include <fmt/format.h>
 
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/Material.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Task/TaskSystem.h>
 
@@ -44,7 +46,7 @@ namespace Veng
     }
 
     AssetResult<Detail::LoadJob> MeshLoader::Load(
-        AssetManager& /*manager*/, Renderer::Context& context, TaskSystem& tasks,
+        AssetManager& manager, Renderer::Context& context, TaskSystem& tasks,
         AssetId id, std::span<const u8> cooked, bool async) const
     {
         if (cooked.size() < sizeof(CookedMeshHeader))
@@ -107,15 +109,53 @@ namespace Veng
         if (cooked.size() < cursor + subMeshBytes)
             return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than submesh table"));
 
+        // Resolve cooked submesh material ids into resident material instances
+        // eagerly — mirroring how Material resolves its texture/shader deps. A
+        // distinct non-zero id becomes one entry in the mesh's material list;
+        // each submesh stores the index of its material (or NoMaterial for id 0).
+        // A failed material load fails the mesh load, same as a missing texture
+        // fails a material load.
+        vector<AssetHandle<Veng::Material>> materials;
+        vector<u64> materialIds;
+
+        auto resolveMaterial = [&](u64 materialId) -> AssetResult<u32>
+        {
+            for (u32 i = 0; i < materialIds.size(); ++i)
+            {
+                if (materialIds[i] == materialId)
+                    return i;
+            }
+
+            const AssetResult<AssetHandle<Veng::Material>> result =
+                manager.LoadSync<Veng::Material>(AssetId{materialId});
+            if (!result)
+                return std::unexpected(result.error());
+
+            const u32 index = static_cast<u32>(materials.size());
+            materialIds.push_back(materialId);
+            materials.push_back(*result);
+            return index;
+        };
+
         vector<Veng::SubMesh> subMeshes(header.SubMeshCount);
         for (u32 i = 0; i < header.SubMeshCount; ++i)
         {
             CookedSubMesh cookedSubMesh;
             std::memcpy(&cookedSubMesh, cooked.data() + cursor + i * sizeof(CookedSubMesh), sizeof(cookedSubMesh));
+
+            u32 materialIndex = Veng::SubMesh::NoMaterial;
+            if (cookedSubMesh.MaterialId != 0)
+            {
+                const AssetResult<u32> resolved = resolveMaterial(cookedSubMesh.MaterialId);
+                if (!resolved)
+                    return std::unexpected(resolved.error());
+                materialIndex = *resolved;
+            }
+
             subMeshes[i] = Veng::SubMesh{
                 .IndexOffset = cookedSubMesh.IndexOffset,
                 .IndexCount = cookedSubMesh.IndexCount,
-                .Material = AssetId{cookedSubMesh.MaterialId},
+                .MaterialIndex = materialIndex,
             };
         }
         cursor += subMeshBytes;
@@ -168,6 +208,7 @@ namespace Veng
             .IndexType = *indexType,
             .IndexCount = header.IndexCount,
             .SubMeshes = std::move(subMeshes),
+            .Materials = std::move(materials),
         });
 
         return Detail::LoadJob{.Resource = Detail::RefAny(mesh)};

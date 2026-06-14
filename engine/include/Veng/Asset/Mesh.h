@@ -6,6 +6,7 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
+#include <Veng/Asset/Material.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>
@@ -13,18 +14,19 @@
 // Mesh: a cooked mesh's GPU buffers + draw ranges. A vertex
 // buffer + u32 index buffer in veng's fixed canonical vertex layout
 // (position/normal/tangent/uv, v1), plus a submesh table — each submesh a
-// (index range, material AssetId) draw range. The mesh does not load its
-// materials; submesh ids are forward references the caller resolves explicitly.
+// (index range, material index) draw range. The mesh owns a list of resident
+// material instances and each submesh indexes into it.
 namespace Veng
 {
-    // One draw range within a mesh's index buffer, with the material it was
-    // authored against. Material is a forward AssetId reference (0 = unassigned)
-    // — the mesh does not eagerly load it.
+    // One draw range within a mesh's index buffer. MaterialIndex selects an entry
+    // in the owning Mesh's material list; NoMaterial leaves the submesh
+    // unassigned, in which case the caller binds its own material.
     struct SubMesh
     {
         u32 IndexOffset = 0;
         u32 IndexCount = 0;
-        AssetId Material;
+        u32 MaterialIndex = NoMaterial;
+        static constexpr u32 NoMaterial = ~0u;
     };
 
     struct MeshInfo
@@ -36,6 +38,7 @@ namespace Veng
         Renderer::IndexType IndexType = Renderer::IndexType::U32;
         u32 IndexCount = 0;
         vector<SubMesh> SubMeshes;
+        vector<AssetHandle<Material>> Materials;
     };
 
     class Mesh
@@ -75,6 +78,7 @@ namespace Veng
         [[nodiscard]] Renderer::IndexType GetIndexType() const { return m_IndexType; }
         [[nodiscard]] u32 GetIndexCount() const { return m_IndexCount; }
         [[nodiscard]] std::span<const SubMesh> GetSubMeshes() const { return m_SubMeshes; }
+        [[nodiscard]] std::span<const AssetHandle<Material>> GetMaterials() const { return m_Materials; }
 
     private:
         explicit Mesh(const MeshInfo& info) :
@@ -84,7 +88,8 @@ namespace Veng
             m_Layout(info.Layout),
             m_IndexType(info.IndexType),
             m_IndexCount(info.IndexCount),
-            m_SubMeshes(info.SubMeshes)
+            m_SubMeshes(info.SubMeshes),
+            m_Materials(info.Materials)
         {
         }
 
@@ -95,6 +100,7 @@ namespace Veng
         Renderer::IndexType m_IndexType;
         u32 m_IndexCount;
         vector<SubMesh> m_SubMeshes;
+        vector<AssetHandle<Material>> m_Materials;
     };
 
     template <>

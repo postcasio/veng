@@ -102,8 +102,9 @@ protected:
         });
 
         // Cooked at build time (see CMakeLists.txt) from assets/sample.vengpack.json
-        // into HT_ASSET_DIR; mount and load the cube mesh + the brick material by
-        // AssetId. The material pulls in its vertex/fragment shaders and the brick
+        // into HT_ASSET_DIR; mount and load the cube mesh by AssetId. The mesh
+        // eager-resolves the brick material its submesh references and holds it
+        // resident; the material pulls in its vertex/fragment shaders and the brick
         // texture as eager dependencies, builds its bindless pipeline, and writes a
         // MaterialData entry into the registry's per-material SSBO.
         const VoidResult mountResult = GetAssetManager().Mount(path(HT_ASSET_DIR) / "sample.vengpack");
@@ -113,13 +114,6 @@ protected:
             GetAssetManager().LoadSync<Veng::Mesh>(AssetId{1002});
         VE_ASSERT(cubeMesh.has_value(), "{}", cubeMesh.error().Detail);
         m_CubeMesh = *cubeMesh;
-
-        // Async load: returns immediately with a not-yet-resident handle. The
-        // material's decode + texture/shader sub-loads + GPU uploads run on the
-        // task system; it lands resident a few frames later via the main-thread
-        // finalize pump. OnRender gates its draw on IsLoaded(), so the frame keeps
-        // running while it loads — no WaitIdle on this path.
-        m_BrickMaterial = GetAssetManager().Load<Veng::Material>(AssetId{1003});
 
         // The compositing path (ImGui overlay + swapchain present) only exists in
         // windowed mode. The headless smoke run renders just the scene and
@@ -177,7 +171,6 @@ protected:
 
     void OnDispose() override
     {
-        m_BrickMaterial = {};
         m_CubeMesh = {};
         m_SceneTexture.reset();
         m_CompositePipeline.reset();
@@ -264,21 +257,22 @@ private:
                 cmd.SetViewport({0, 0}, extent);
                 cmd.SetScissor({0, 0}, extent);
 
-                // The material is loaded asynchronously: until it is resident the
-                // pass just clears, and the cube draw begins on the first frame it
-                // lands. The mesh is loaded synchronously, so it is always ready.
-                if (!m_BrickMaterial.IsLoaded() || !m_CubeMesh.IsLoaded())
+                // The mesh's material is loaded asynchronously: until it is
+                // resident the pass just clears, and the cube draw begins on the
+                // first frame it lands. The mesh itself loads synchronously, so it
+                // is always ready.
+                if (!m_CubeMesh.IsLoaded())
                     return;
 
-                // The material binds its pipeline (and pushes its per-draw index
-                // selector) first; the bindless registry then binds set 0
-                // (textures, samplers, MaterialData SSBO) into that pipeline's
-                // layout — BindlessRegistry::Bind uses the currently-bound layout,
-                // so the pipeline must be bound before it.
-                m_BrickMaterial->Bind(cmd);
-                GetRenderContext().GetBindlessRegistry().Bind(cmd);
-
                 const Veng::Mesh& mesh = *m_CubeMesh.Get();
+                const std::span<const AssetHandle<Veng::Material>> materials = mesh.GetMaterials();
+
+                bool materialsReady = true;
+                for (const AssetHandle<Veng::Material>& material : materials)
+                    materialsReady = materialsReady && material.IsLoaded();
+                if (!materialsReady)
+                    return;
+
                 cmd.BindVertexBuffer(mesh.GetVertexBuffer());
                 cmd.BindIndexBuffer(mesh.GetIndexBuffer(), mesh.GetIndexType());
 
@@ -288,23 +282,43 @@ private:
                 const mat4 view = glm::lookAt(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
                 const mat4 model = glm::rotate(mat4(1.0f), m_Angle, glm::normalize(vec3(0.5f, 1.0f, 0.2f)));
 
-                // The MVP occupies the leading 64 bytes of the shared push block;
-                // Material::Bind already pushed MaterialIndex at offset 64.
-                cmd.PushConstants(MeshPushConstants{.MVP = projection * view * model});
+                const Veng::Renderer::BindlessRegistry& registry = GetRenderContext().GetBindlessRegistry();
 
                 for (const Veng::SubMesh& subMesh : mesh.GetSubMeshes())
+                {
+                    if (subMesh.MaterialIndex == Veng::SubMesh::NoMaterial)
+                        continue;
+
+                    // The submesh's material binds its pipeline (and pushes its
+                    // per-draw index selector) first; the bindless registry then
+                    // binds set 0 (textures, samplers, MaterialData SSBO) into that
+                    // pipeline's layout — BindlessRegistry::Bind uses the
+                    // currently-bound layout, so the pipeline must be bound before
+                    // it. The MVP occupies the leading 64 bytes of the shared push
+                    // block; Material::Bind already pushed MaterialIndex at offset 64.
+                    materials[subMesh.MaterialIndex].Get()->Bind(cmd);
+                    registry.Bind(cmd);
+                    cmd.PushConstants(MeshPushConstants{.MVP = projection * view * model});
+
                     cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
+                }
             });
 
-        // The brick texture is sampled bindlessly inside the pass, so the graph
-        // cannot see it. Acquire it onto the graphics queue (and fold its async
-        // upload's transfer-timeline wait into the frame submit) before executing.
-        if (m_BrickMaterial.IsLoaded())
+        // The mesh's material textures are sampled bindlessly inside the pass, so
+        // the graph cannot see them. Acquire each onto the graphics queue (and fold
+        // its async upload's transfer-timeline wait into the frame submit) before
+        // executing.
+        if (m_CubeMesh.IsLoaded())
         {
-            for (const AssetHandle<Veng::Texture>& texture : m_BrickMaterial.Get()->GetTextures())
+            for (const AssetHandle<Veng::Material>& material : m_CubeMesh.Get()->GetMaterials())
             {
-                if (texture.IsLoaded())
-                    cmd.PrepareForAccess(texture.Get()->GetView(), Renderer::AccessKind::Sample);
+                if (!material.IsLoaded())
+                    continue;
+                for (const AssetHandle<Veng::Texture>& texture : material.Get()->GetTextures())
+                {
+                    if (texture.IsLoaded())
+                        cmd.PrepareForAccess(texture.Get()->GetView(), Renderer::AccessKind::Sample);
+                }
             }
         }
 
@@ -394,7 +408,6 @@ private:
     Ref<Renderer::Sampler> m_Sampler;
 
     AssetHandle<Veng::Mesh> m_CubeMesh;
-    AssetHandle<Veng::Material> m_BrickMaterial;
 
     AssetHandle<Veng::Shader> m_CompositeVS;
     AssetHandle<Veng::Shader> m_CompositeFS;
