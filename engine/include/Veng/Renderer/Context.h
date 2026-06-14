@@ -19,6 +19,7 @@ namespace Veng::Renderer
     class CommandBuffer;
     class Semaphore;
     class SynchronizationFrame;
+    class TimelineSemaphore;
 
     struct QueueFamilyIndices
     {
@@ -113,6 +114,15 @@ namespace Veng::Renderer
 
         void SubmitFrame(const SynchronizationFrame& frame) const;
         void PresentFrame(const SynchronizationFrame& frame);
+
+        // Register a transfer-timeline wait the next frame submit must satisfy
+        // before sampling an async-uploaded resource: the frame's graphics submit
+        // waits timeline >= value at the fragment-shader (sampled-image) stage.
+        // The render side calls this on first graphics use of a just-uploaded
+        // resource; SubmitFrame folds every accumulated wait in and clears the set
+        // each frame. Rides alongside the binary present/acquire semaphores, never
+        // replacing them.
+        void AddFrameTransferWait(const TimelineSemaphore& timeline, u64 value);
         void SubmitImmediateCommands(CommandBuffer& commandBuffer) const;
 
         // The transfer command buffer owned by the given worker's transfer pool.

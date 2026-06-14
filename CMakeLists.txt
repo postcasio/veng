@@ -365,8 +365,18 @@ if (VENG_BUILD_TESTS)
             tests/gpu/isolation.cpp
             tests/gpu/bindless_registry.cpp
             tests/gpu/timeline_semaphore.cpp
+            tests/gpu/transfer_retire.cpp
     )
     target_link_libraries(veng_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
+    # transfer_retire.cpp reaches through Native.h (raw vk::/VMA handles via the
+    # public escape hatch) to drive RetireOnTransfer/ReleaseBuffer, so this target
+    # needs the backend headers' *include dirs* (Vulkan + GLFW + VMA). Allowed:
+    # include-hygiene guards public headers, not test use of the Native escape hatch.
+    target_link_libraries(veng_gpu PRIVATE
+            Vulkan::Vulkan
+            glfw
+            GPUOpen::VulkanMemoryAllocator
+    )
     # bindless_registry.cpp and texture_loader.cpp draw with the test shaders
     # (fullscreen.vert + bindless_sample.frag), loaded by id from the cooked pack.
     add_dependencies(veng_gpu veng_test_shaders)

@@ -272,6 +272,10 @@ namespace Veng::Renderer
 
         m_Native->RetireBins.resize(m_Native->MaxFramesInFlight);
 
+        // The single transfer timeline: worker upload submits signal it, the
+        // frame submit and the transfer-keyed retire drain wait/poll it.
+        m_Native->TransferTimeline = TimelineSemaphore::Create(*this);
+
         m_Native->Bindless = CreateUnique<BindlessRegistry>(*this);
     }
 
@@ -281,6 +285,14 @@ namespace Veng::Renderer
         // consumer released in OnDispose has retired into the bins — drain them
         // all before the frames (and their command buffers) go away.
         m_Native->DrainAllRetireBins();
+
+        // Upload scratch pinned to the transfer timeline never sees an
+        // AcquireNextFrame after the last upload (the headless smoke renders one
+        // frame then exits). The GPU is idle, so every value has been reached:
+        // host-wait the timeline's last signalled value, then reclaim all entries.
+        m_Native->TransferTimeline->Wait(m_Native->TransferTimelineValue);
+        m_Native->DrainTransferRetireList();
+
         m_Native->SynchronizationFrames.clear();
     }
 
@@ -294,9 +306,13 @@ namespace Veng::Renderer
         m_Native->Bindless.reset();
 
         // Drain any handles still in the bins while the device, allocator and
-        // descriptor pool are alive, then stop accepting retirements — anything
-        // dropped after this point is a leak/bug.
+        // descriptor pool are alive. Then host-wait the transfer timeline and
+        // reclaim any upload scratch still pinned to it — both before flipping
+        // Disposed, so a late retire/release is caught rather than leaked. After
+        // this point anything dropped is a leak/bug.
         m_Native->DrainAllRetireBins();
+        m_Native->TransferTimeline->Wait(m_Native->TransferTimelineValue);
+        m_Native->DrainTransferRetireList();
         m_Native->Disposed = true;
 
         // Workers have been joined by Application before Dispose, so destroying
@@ -311,6 +327,7 @@ namespace Veng::Renderer
         }
         m_Native->TransferPools.clear();
 
+        m_Native->TransferTimeline.reset();
         m_Native->DescriptorPool.reset();
         m_Native->CommandPool.reset();
         m_Native->SwapChain.reset();
@@ -679,6 +696,11 @@ namespace Veng::Renderer
         // recorded the last time this frame index was current — anything
         // retired then is safe to destroy.
         m_Native->DrainRetireBin(m_Native->RetireBins[m_Native->CurrentFrameInFlight]);
+
+        // Reclaim any upload scratch whose transfer-timeline value the GPU has
+        // now reached — keyed on the transfer timeline, not this frame's fence.
+        m_Native->DrainTransferRetireList();
+
         m_Native->Bindless->OnFrameAcquired(m_Native->CurrentFrameInFlight);
 
         return m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight];
@@ -691,25 +713,58 @@ namespace Veng::Renderer
         return RetireBins[CurrentFrameInFlight];
     }
 
+    // Every Retire overload, RetireOnTransfer, and both drains hold RetireMutex:
+    // a worker dropping upload scratch must not race the main thread's bin reads,
+    // the bin vectors' reallocation, or the transfer-list drain.
     void Context::Native::Retire(vk::Buffer buffer, VmaAllocation allocation)
     {
+        std::lock_guard lock(RetireMutex);
         CurrentRetireBin().Buffers.emplace_back(buffer, allocation);
     }
 
     void Context::Native::Retire(vk::Image image, VmaAllocation allocation)
     {
+        std::lock_guard lock(RetireMutex);
         CurrentRetireBin().Images.emplace_back(image, allocation);
     }
 
-    void Context::Native::Retire(vk::ImageView imageView) { CurrentRetireBin().ImageViews.push_back(imageView); }
-    void Context::Native::Retire(vk::Sampler sampler) { CurrentRetireBin().Samplers.push_back(sampler); }
-    void Context::Native::Retire(vk::ShaderModule shaderModule) { CurrentRetireBin().ShaderModules.push_back(shaderModule); }
-    void Context::Native::Retire(vk::Pipeline pipeline) { CurrentRetireBin().Pipelines.push_back(pipeline); }
-    void Context::Native::Retire(vk::PipelineLayout pipelineLayout) { CurrentRetireBin().PipelineLayouts.push_back(pipelineLayout); }
-    void Context::Native::Retire(vk::DescriptorSet descriptorSet) { CurrentRetireBin().DescriptorSets.push_back(descriptorSet); }
+    void Context::Native::Retire(vk::ImageView imageView) { std::lock_guard lock(RetireMutex); CurrentRetireBin().ImageViews.push_back(imageView); }
+    void Context::Native::Retire(vk::Sampler sampler) { std::lock_guard lock(RetireMutex); CurrentRetireBin().Samplers.push_back(sampler); }
+    void Context::Native::Retire(vk::ShaderModule shaderModule) { std::lock_guard lock(RetireMutex); CurrentRetireBin().ShaderModules.push_back(shaderModule); }
+    void Context::Native::Retire(vk::Pipeline pipeline) { std::lock_guard lock(RetireMutex); CurrentRetireBin().Pipelines.push_back(pipeline); }
+    void Context::Native::Retire(vk::PipelineLayout pipelineLayout) { std::lock_guard lock(RetireMutex); CurrentRetireBin().PipelineLayouts.push_back(pipelineLayout); }
+    void Context::Native::Retire(vk::DescriptorSet descriptorSet) { std::lock_guard lock(RetireMutex); CurrentRetireBin().DescriptorSets.push_back(descriptorSet); }
+
+    void Context::Native::RetireOnTransfer(vk::Buffer buffer, VmaAllocation allocation, u64 timelineValue)
+    {
+        std::lock_guard lock(RetireMutex);
+        TransferRetireList.emplace_back(buffer, allocation, timelineValue);
+    }
+
+    void Context::Native::DrainTransferRetireList()
+    {
+        std::lock_guard lock(RetireMutex);
+
+        // Hold the lock across the GetValue() read and the erase so a concurrent
+        // RetireOnTransfer cannot append between them and be missed or double-freed.
+        const u64 reached = TransferTimeline->GetValue();
+
+        std::erase_if(TransferRetireList, [this, reached](const TransferRetireEntry& entry)
+        {
+            if (entry.TimelineValue > reached)
+            {
+                return false;
+            }
+
+            vmaDestroyBuffer(Allocator, entry.Buffer, entry.Allocation);
+            return true;
+        });
+    }
 
     void Context::Native::DrainRetireBin(RetireBin& bin)
     {
+        std::lock_guard lock(RetireMutex);
+
         // Destroy dependents before the objects they reference: descriptor sets
         // first, then views, then the images/buffers backing them. Everything in
         // the bin is already GPU-idle.
@@ -740,33 +795,97 @@ namespace Veng::Renderer
             DrainRetireBin(bin);
     }
 
+    void Context::AddFrameTransferWait(const TimelineSemaphore& timeline, const u64 value)
+    {
+        std::lock_guard lock(m_Native->SubmitMutex);
+        m_Native->PendingFrameTransferWaits.emplace_back(timeline.GetNative().Semaphore, value);
+    }
+
     void Context::SubmitFrame(const SynchronizationFrame& frame) const
     {
         const auto commandBuffer = frame.GetCommandBuffer()->GetNative().CommandBuffer;
 
-        // Headless: no swapchain image to wait on or signal for present.
+        // Drain the accumulated transfer-timeline waits under SubmitMutex; the
+        // submit itself re-takes the lock in LockedSubmit. Cleared each frame so
+        // a wait satisfied this frame never re-blocks the next.
+        vector<vk::Semaphore> waitSemaphores;
+        vector<vk::PipelineStageFlags> waitStages;
+        vector<u64> waitValues;
+        {
+            std::lock_guard lock(m_Native->SubmitMutex);
+            for (const auto& [semaphore, value] : m_Native->PendingFrameTransferWaits)
+            {
+                waitSemaphores.push_back(semaphore);
+                // Sample an async-uploaded resource at the fragment-shader stage.
+                waitStages.push_back(vk::PipelineStageFlagBits::eFragmentShader);
+                waitValues.push_back(value);
+            }
+            m_Native->PendingFrameTransferWaits.clear();
+        }
+
+        const bool hasTransferWaits = !waitSemaphores.empty();
+
+        // Headless: no swapchain image to wait on or signal for present. The
+        // transfer waits, if any, are the only waits this branch carries.
         if (m_Native->Headless)
         {
+            if (!hasTransferWaits)
+            {
+                const vk::SubmitInfo headlessSubmit{
+                    .commandBufferCount = 1,
+                    .pCommandBuffers = &commandBuffer,
+                };
+
+                m_Native->LockedSubmit(m_Native->GraphicsQueue, headlessSubmit,
+                                       frame.GetInFlightFence().GetNative().Fence);
+                return;
+            }
+
+            // Binary present/acquire semaphores need no timeline value, so a value
+            // is supplied for every wait semaphore (ignored for binary ones); here
+            // every wait is a timeline wait.
+            const vk::TimelineSemaphoreSubmitInfo timelineInfo{
+                .waitSemaphoreValueCount = static_cast<u32>(waitValues.size()),
+                .pWaitSemaphoreValues = waitValues.data(),
+            };
+
             const vk::SubmitInfo headlessSubmit{
+                .pNext = &timelineInfo,
+                .waitSemaphoreCount = static_cast<u32>(waitSemaphores.size()),
+                .pWaitSemaphores = waitSemaphores.data(),
+                .pWaitDstStageMask = waitStages.data(),
                 .commandBufferCount = 1,
                 .pCommandBuffers = &commandBuffer,
             };
 
-            m_Native->LockedSubmit(m_Native->GraphicsQueue, headlessSubmit, frame.GetInFlightFence().GetNative().Fence);
+            m_Native->LockedSubmit(m_Native->GraphicsQueue, headlessSubmit,
+                                   frame.GetInFlightFence().GetNative().Fence);
             return;
         }
 
         const auto renderFinishedSemaphore = frame.GetRenderFinishedSemaphore().GetNative().Semaphore;
         const auto imageAvailableSemaphore = frame.GetImageAvailableSemaphore().GetNative().Semaphore;
 
-        // Must match the srcStage each swapchain image's first transition is
-        // seeded with — see SwapChain::AcquireWaitStage.
-        const vk::PipelineStageFlags mask = SwapChain::AcquireWaitStage;
+        // The image-available binary semaphore leads the wait arrays; the timeline
+        // waits ride alongside it, never replacing it. Its wait stage must match
+        // the srcStage each swapchain image's first transition is seeded with
+        // (SwapChain::AcquireWaitStage). The binary semaphore's slot in the
+        // timeline-values array is ignored by the driver but must be present so the
+        // value array length matches the semaphore array.
+        waitSemaphores.insert(waitSemaphores.begin(), imageAvailableSemaphore);
+        waitStages.insert(waitStages.begin(), SwapChain::AcquireWaitStage);
+        waitValues.insert(waitValues.begin(), 0);
+
+        const vk::TimelineSemaphoreSubmitInfo timelineInfo{
+            .waitSemaphoreValueCount = static_cast<u32>(waitValues.size()),
+            .pWaitSemaphoreValues = waitValues.data(),
+        };
 
         const vk::SubmitInfo submitInfo{
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &imageAvailableSemaphore,
-            .pWaitDstStageMask = &mask,
+            .pNext = hasTransferWaits ? &timelineInfo : nullptr,
+            .waitSemaphoreCount = static_cast<u32>(waitSemaphores.size()),
+            .pWaitSemaphores = waitSemaphores.data(),
+            .pWaitDstStageMask = waitStages.data(),
             .commandBufferCount = 1,
             .pCommandBuffers = &commandBuffer,
             .signalSemaphoreCount = 1,

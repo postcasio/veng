@@ -42,6 +42,13 @@ namespace Veng::Renderer
 
     Buffer::~Buffer()
     {
+        // A released buffer (ReleaseBuffer) has nulled handles and is owned
+        // elsewhere — its destructor must not retire anything.
+        if (!m_Native->Buffer)
+        {
+            return;
+        }
+
         m_Context.GetNative().Retire(m_Native->Buffer, m_Native->Allocation);
     }
 

@@ -38,6 +38,28 @@ namespace Veng::Renderer
     [[nodiscard]] inline vk::Buffer GetVkBuffer(const Buffer& buffer) { return buffer.GetNative().Buffer; }
     [[nodiscard]] inline VmaAllocation GetVmaAllocation(const Buffer& buffer) { return buffer.GetNative().Allocation; }
 
+    // A buffer's released backend handles. The wrapper no longer owns them.
+    struct ReleasedBuffer
+    {
+        vk::Buffer Buffer;
+        VmaAllocation Allocation;
+    };
+
+    // Release a buffer's raw handles without retiring them: hand the caller the
+    // (vk::Buffer, VmaAllocation) and null the wrapper's Native so its destructor
+    // is a no-op (does not route the handle through Context::Retire). The caller
+    // takes over the GPU lifetime — used by the async upload path to pin staging
+    // scratch to the transfer timeline via Context::Native::RetireOnTransfer
+    // instead of the frame fence.
+    [[nodiscard]] inline ReleasedBuffer ReleaseBuffer(Buffer& buffer)
+    {
+        auto& native = buffer.GetNative();
+        const ReleasedBuffer released{native.Buffer, native.Allocation};
+        native.Buffer = nullptr;
+        native.Allocation = nullptr;
+        return released;
+    }
+
     [[nodiscard]] inline vk::Image GetVkImage(const Image& image) { return image.GetNative().Image; }
     [[nodiscard]] inline VmaAllocation GetVmaAllocation(const Image& image) { return image.GetNative().Allocation; }
     [[nodiscard]] inline const VmaAllocationInfo& GetVmaAllocationInfo(const Image& image) { return image.GetNative().AllocationInfo; }

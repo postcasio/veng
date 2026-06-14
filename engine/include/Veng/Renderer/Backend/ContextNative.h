@@ -17,6 +17,7 @@
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/TimelineSemaphore.h>
 
 namespace Veng::Renderer
 {
@@ -79,12 +80,44 @@ namespace Veng::Renderer
         // submit and the main thread's frame submit must serialize through this.
         std::mutex SubmitMutex;
 
+        // The transfer timeline. Worker upload submits signal a strictly
+        // increasing value on it; the graphics frame submit and the
+        // transfer-keyed retire drain wait/poll it. One per Context, created in
+        // Initialize alongside the queues.
+        Unique<TimelineSemaphore> TransferTimeline;
+
         // The monotonic transfer-timeline value. A timeline semaphore must signal
         // strictly increasing values, so the next value is allocated *under*
         // SubmitMutex immediately before the submit — never precomputed and raced
         // for the lock, which could submit values out of order. Pre-increment
         // makes the first signalled value 1 (0 is the timeline's initial value).
         u64 TransferTimelineValue = 0;
+
+        // Transfer-timeline waits the next frame submit must fold in. A resource
+        // sampled in a frame after an async upload registers its (semaphore,
+        // value) here; SubmitFrame chains them onto the submit and clears the set.
+        // Guarded by SubmitMutex — accumulated on the main thread but read under
+        // the same lock the submit takes.
+        vector<std::pair<vk::Semaphore, u64>> PendingFrameTransferWaits{};
+
+        // Serializes Retire, RetireOnTransfer, the transfer-retire list, and both
+        // their drains. A worker dropping an upload's scratch (via
+        // RetireOnTransfer) must not race the main thread's CurrentFrameInFlight
+        // read, the bin vectors' reallocation, or the transfer-list drain.
+        std::mutex RetireMutex;
+
+        // Raw allocations whose GPU lifetime is the transfer timeline, not a frame
+        // fence. Worker-created upload scratch is released (not retired through a
+        // dtor) into here keyed on the timeline value its copy signals; the main
+        // thread destroys each entry once TransferTimeline reaches that value.
+        struct TransferRetireEntry
+        {
+            vk::Buffer Buffer;
+            VmaAllocation Allocation;
+            u64 TimelineValue;
+        };
+
+        vector<TransferRetireEntry> TransferRetireList{};
 
         vector<SynchronizationFrame> SynchronizationFrames{};
         u32 CurrentFrameInFlight = 0;
@@ -128,6 +161,18 @@ namespace Veng::Renderer
         void Retire(vk::Pipeline pipeline);
         void Retire(vk::PipelineLayout pipelineLayout);
         void Retire(vk::DescriptorSet descriptorSet);
+
+        // Take ownership of a raw allocation whose GPU lifetime is the transfer
+        // timeline. Reclaimed (vmaDestroyBuffer) once TransferTimeline reaches
+        // timelineValue — drained on the main thread in AcquireNextFrame and at
+        // teardown. The caller passes the released raw handle, never a Buffer:
+        // routing it through Buffer::~Buffer would re-defer it into a frame bin,
+        // pinning it to the wrong lifetime.
+        void RetireOnTransfer(vk::Buffer buffer, VmaAllocation allocation, u64 timelineValue);
+
+        // Destroy every transfer-retire entry whose timeline value has been
+        // reached. Holds RetireMutex across the GetValue() read and the erase.
+        void DrainTransferRetireList();
 
         // Submit to a shared queue under SubmitMutex. vkQueueSubmit is not
         // thread-safe per VkQueue; every submit (frame, immediate, and the
