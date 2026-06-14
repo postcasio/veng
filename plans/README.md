@@ -45,8 +45,12 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Remaining areas: a threading/task system
   (Vulkan-queue-correct async asset loading — which also turns planset-5's
-  `LoadSync` into the async default) and the event/input systems. Each becomes its
-  own planset when taken up. (Testing areas 5a/5b, de-globalizing the context
+  `LoadSync` into the async default), the **editor application** (a shared-library
+  game-module model + a cooker-consuming editor with docking, a material node
+  editor, and a scene editor — [editor.md](future/editor.md) /
+  [game-module.md](future/game-module.md), several plansets), its prerequisite
+  scene/entity model, and the event/input systems. Each becomes its own planset
+  when taken up. (Testing areas 5a/5b, de-globalizing the context
   (area 3), and the asset system's synchronous slice + bindless (area 1) are done
   — planset-3, planset-4, and planset-5 respectively; the asset system's async
   half folds into the threading area.)

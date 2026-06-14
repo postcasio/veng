@@ -124,6 +124,51 @@ bindings/devices). Revisit when gameplay drives the requirements.
   feature, and a Primary Pool budget for every `DescriptorType`. The validation
   gate's allowlist is now empty.
 
+### 6. Editor application
+
+The authoring environment — and the "demanding second consumer" flagged in the
+cross-cutting concerns below. Spans **several plansets**; **design overview:**
+[editor.md](editor.md), with the prerequisite build-model change in
+[game-module.md](game-module.md). The shape:
+
+- **Games become a shared library + a launcher** ([game-module.md](game-module.md)).
+  A game is `libgame` (shared, the runtime) + a thin launcher exe + an editor-only
+  `libgame_editor` (shared, never shipped). The editor and the launcher are both
+  *hosts* that load `libgame`; only the editor also loads `libgame_editor`. This is
+  what lets the editor see a game's **native types** — registered through a C-ABI
+  entry point into a `TypeRegistry` (C++ has no reflection), with hand-written field
+  descriptors driving auto-inspectors.
+- **The editor is a cooker consumer** ([editor.md](editor.md)). The runtime never
+  links importers; the editor — a tool — links `libveng_cook` for **cook-on-demand**,
+  reading *source* assets, cooking live (off-thread), and previewing through the
+  normal `AssetManager` path. The planset-5 boundary (importers never reach
+  `libveng`/`libgame`) is preserved exactly.
+- **Docking is already enabled** (ImGui `v1.92.4-docking`); the open call is
+  **single-window docking vs. multi-viewport** — multi-viewport fights the current
+  single-offscreen-image → swapchain compositing model, so v1 stays single-window.
+  Previews reuse the sample's existing `ImGuiLayer::CreateTexture` → `ImGui::Image`
+  render-to-panel pattern, one preview generalized to N.
+- **A `libveng_editor` framework** (panels, an `AssetType`→editor registry,
+  reflection-driven inspectors) that games extend from `libgame_editor` to add
+  **custom views/tools** for their own asset types.
+- **Concrete editors:** texture viewer/settings (the first slice), the node-based
+  **material editor** (imnodes is already vendored; v1 binds params to an
+  author-provided Slang shader — the *loaded* `.vmat` path planset-5 left open),
+  and a **scene editor** that is gated on area 7.
+- **Depends on** the [threading/async-load path](threading-task-system.md) (area 2)
+  for non-stalling live preview / hot-reload, [game-module.md](game-module.md), and
+  area 7 (scene model) for the scene editor.
+
+### 7. Scene / entity model
+
+A prerequisite the **scene editor** (area 6) cannot proceed without, and useful in
+its own right: a transform hierarchy, a component system, component types described
+through the area-6 reflection layer (so inspectors + serialization work), and a
+**scene asset type** that cooks and loads like the others (planset-5 explicitly
+descoped scene assets). Interacts with area 4 (events/input) and the
+`TypeRegistry`. Undetailed — gets its own design pass when taken up, ahead of the
+scene editor.
+
 ## Ordering & dependencies
 
 A first cut at sequencing — the order to *take the areas up* (each becomes its own
@@ -158,9 +203,18 @@ offline Slang reflection, the `BindlessRegistry` set-0 subsystem).
    remaining async half** — non-blocking `Load` over a transfer queue and
    hot-reload — turning planset-5's `LoadSync` into the async default.
 
+2. **Editor application (area 6).** The authoring environment, spanning several
+   plansets: the [game-module build model](game-module.md) (shared lib + launcher,
+   native-type registration) first, then the [editor shell + framework](editor.md)
+   (cook-on-demand, single-window docking, the texture editor), then the node-based
+   **material editor**. It wants area 2's async/hot-reload path for non-stalling
+   live preview, so it follows threading. The **scene editor** within it is gated on
+   the **scene/entity model (area 7)**, which lands ahead of it.
+
 **Event & input (area 4)** is off the critical path — independent of the
 rendering/asset/threading work and driven by gameplay needs, so slot it in
-whenever it's wanted.
+whenever it's wanted. **The scene/entity model (area 7)** is the one prerequisite
+the editor's scene view cannot skip; take it up before that view.
 
 ~~Open question: how much of the asset API (definition + sync loading) to pull
 forward in parallel with threading, vs. keeping the whole asset phase last.~~
@@ -207,7 +261,8 @@ to decide early than to retrofit.
   one push constant) won't surface multi-material/mesh/scene friction; the
   node-based editor will. Develop the editor and the engine API together so it
   exercises the asset/material surface as it's built — it doubles as the richer
-  sample. *(area 1.)*
+  sample. Now a detailed area of its own — see [area 6](#6-editor-application)
+  ([editor.md](editor.md), [game-module.md](game-module.md)). *(area 1 → area 6.)*
 - **Pipeline caching.** Persist `VkPipelineCache` to disk once materials multiply
   — load-time win, naturally part of the asset/material phase. *(area 1.)*
 - **Content hashes in the vengpack archives.** Carry a content hash per cooked
@@ -235,5 +290,7 @@ to decide early than to retrofit.
 Vision only beyond what's noted done above. Areas 3 and 5 are complete
 (planset-3, planset-4) and **area 1's synchronous slice + bindless is complete**
 (planset-5); area 1's **async** half (folded into area 2), **area 2** (threading),
-and **area 4** (events/input) remain undetailed/unscheduled. Each becomes its own
-planset when taken up.
+**area 4** (events/input), **area 6** (editor — [editor.md](editor.md) /
+[game-module.md](game-module.md)), and **area 7** (scene/entity model) remain
+undetailed/unscheduled. Each becomes its own planset (area 6, several) when taken
+up.
