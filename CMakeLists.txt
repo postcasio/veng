@@ -198,6 +198,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/barrier_decision.cpp
             tests/unit/asset_archive.cpp
             tests/unit/asset_manager.cpp
+            tests/unit/primitives.cpp
     )
     target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
 
