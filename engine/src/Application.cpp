@@ -4,6 +4,7 @@
 #include <Veng/Log.h>
 #include <Veng/Time.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/Camera.h>
 
 namespace Veng
 {
@@ -19,6 +20,8 @@ namespace Veng
         m_TypeRegistry.Register<Name>();
         m_TypeRegistry.Register<Transform>();
         m_TypeRegistry.Register<Parent>();
+        m_TypeRegistry.Register<CameraComponent>();
+        m_TypeRegistry.Register<MeshRenderer>();
 
         if (!m_Info.Headless)
         {

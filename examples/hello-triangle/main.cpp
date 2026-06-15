@@ -19,7 +19,13 @@
 #include <Veng/Asset/Shader.h>
 #include <Veng/Asset/Texture.h>
 
+#include <Veng/Scene/Scene.h>
+#include <Veng/Scene/Camera.h>
+#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Transforms.h>
+
 #include <glm/gtc/packing.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <cstdlib>
 #include <fstream>
@@ -47,6 +53,20 @@ namespace
         mat4 MVP;
     };
 }
+
+// A game-defined component: spins its entity about a fixed axis. The engine has
+// no compile-time knowledge of this type — it is registered through the same
+// public TypeRegistry::Register<T> path the engine uses for its own builtins,
+// proving the scene stores, queries, and (via the reflection layer) serializes
+// a type defined entirely in the game's translation unit.
+struct Spinner
+{
+    f32 SpeedRadiansPerSec = 1.0f;
+};
+
+VE_REFLECT(Spinner, 0xAEF00D5EFC2444DAULL)
+    VE_FIELD(SpeedRadiansPerSec, .DisplayName = "Speed", .Tooltip = "Radians per second", .Min = 0.0)
+VE_REFLECT_END();
 
 class HelloTriangleApp final : public Application
 {
@@ -139,6 +159,33 @@ protected:
             });
         }
 
+        // Register the game's own component through the same public path the
+        // engine registers its builtins — the engine has no compile-time
+        // knowledge of Spinner.
+        GetTypeRegistry().Register<Spinner>();
+
+        // Build the runtime scene: one entity carrying its local Transform, a
+        // MeshRenderer, and the game-defined Spinner. The draw queries this
+        // scene for the entity's transform instead of a hand-rolled model
+        // matrix.
+        m_Scene = Scene::Create(GetTypeRegistry());
+        m_Entity = m_Scene->CreateEntity();
+        m_Scene->Add<Transform>(m_Entity, Transform{
+            .Rotation = glm::angleAxis(0.0f, SpinAxis),
+        });
+        // A runtime primitive is not an AssetId-addressable asset, so the handle
+        // stays empty; the resident Ref<Mesh> (m_Mesh) is the geometry. The
+        // MeshRenderer's presence is what the draw query selects on.
+        m_Scene->Add<MeshRenderer>(m_Entity, MeshRenderer{});
+        m_Scene->Add<Spinner>(m_Entity, Spinner{.SpeedRadiansPerSec = 1.0f});
+
+        // Replace the hand-rolled MVP: a Camera looking down -Z at the origin
+        // from (0,0,3), matching the prior view/projection exactly.
+        const uvec2 ext = {m_SceneImage->GetWidth(), m_SceneImage->GetHeight()};
+        const f32 aspect = static_cast<f32>(ext.x) / static_cast<f32>(ext.y);
+        m_Camera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+        m_Camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
         // Compile the graphs once and replay them every frame. A structural change
         // (resize) re-Compile()s via the invalidation callback above.
         m_SceneGraph = BuildSceneGraph();
@@ -148,10 +195,26 @@ protected:
 
     void OnUpdate(const f32 delta) override
     {
-        // Smoke mode captures a fixed pose so the scene is reproducible run to
-        // run and can be golden-compared; the windowed app rotates by accumulated
-        // wall-clock delta.
-        m_Angle = m_SmokeOutput ? SmokeAngle : m_Angle + delta;
+        // Drive rotation through the scene query: each spinning entity advances
+        // its Transform's quaternion about the fixed axis by its speed * delta.
+        // Smoke mode pins the fixed pose so the capture is reproducible run to
+        // run and can be golden-compared; the windowed app rotates by
+        // accumulated wall-clock delta.
+        if (m_SmokeOutput)
+        {
+            m_Scene->Each<Transform, Spinner>([](Entity, Transform& transform, Spinner&)
+            {
+                transform.Rotation = glm::angleAxis(SmokeAngle, SpinAxis);
+            });
+        }
+        else
+        {
+            m_Scene->Each<Transform, Spinner>([delta](Entity, Transform& transform, Spinner& spinner)
+            {
+                const quat step = glm::angleAxis(spinner.SpeedRadiansPerSec * delta, SpinAxis);
+                transform.Rotation = glm::normalize(step * transform.Rotation);
+            });
+        }
 
         // Smoke-test mode: after a few rendered frames, dump the scene image to
         // disk and exit. Runs before this frame's commands are recorded, so the
@@ -193,6 +256,7 @@ protected:
         // resources retire before the context tears down.
         m_SceneGraph.reset();
         m_CompositeGraph.reset();
+        m_Scene.reset();
         m_Mesh.reset();
         m_BrickMaterial = {};
         m_SceneTexture.reset();
@@ -312,32 +376,39 @@ private:
                 cmd.BindVertexBuffer(mesh.GetVertexBuffer());
                 cmd.BindIndexBuffer(mesh.GetIndexBuffer());
 
-                const f32 aspect = static_cast<f32>(extent.x) / static_cast<f32>(extent.y);
-                mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
-                projection[1][1] *= -1.0f; // Vulkan's clip space has Y pointing down.
-                const mat4 view = glm::lookAt(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
-                const mat4 model = glm::rotate(mat4(1.0f), m_Angle, glm::normalize(vec3(0.5f, 1.0f, 0.2f)));
+                const mat4 viewProjection = m_Camera.ViewProjection();
 
                 const Veng::Renderer::BindlessRegistry& registry = GetRenderContext().GetBindlessRegistry();
 
-                for (const Veng::SubMesh& subMesh : mesh.GetSubMeshes())
+                // Source the draw from the scene: each (Transform, MeshRenderer)
+                // entity contributes a model matrix (its world transform). The
+                // runtime primitive lives on m_Mesh; the MeshRenderer selects the
+                // entity for this draw.
+                m_Scene->Each<Transform, MeshRenderer>(
+                    [&](Entity entity, Transform&, MeshRenderer&)
                 {
-                    if (subMesh.MaterialIndex == Veng::SubMesh::NoMaterial)
-                        continue;
+                    const mat4 world = WorldMatrix(*m_Scene, entity);
+                    const mat4 mvp = viewProjection * world;
 
-                    // The submesh's material binds its pipeline (and pushes its
-                    // per-draw index selector) first; the bindless registry then
-                    // binds set 0 (textures, samplers, MaterialData SSBO) into that
-                    // pipeline's layout — BindlessRegistry::Bind uses the
-                    // currently-bound layout, so the pipeline must be bound before
-                    // it. The MVP occupies the leading 64 bytes of the shared push
-                    // block; Material::Bind already pushed MaterialIndex at offset 64.
-                    materials[subMesh.MaterialIndex].Get()->Bind(cmd);
-                    registry.Bind(cmd);
-                    cmd.PushConstants(MeshPushConstants{.MVP = projection * view * model});
+                    for (const Veng::SubMesh& subMesh : mesh.GetSubMeshes())
+                    {
+                        if (subMesh.MaterialIndex == Veng::SubMesh::NoMaterial)
+                            continue;
 
-                    cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
-                }
+                        // The submesh's material binds its pipeline (and pushes its
+                        // per-draw index selector) first; the bindless registry then
+                        // binds set 0 (textures, samplers, MaterialData SSBO) into that
+                        // pipeline's layout — BindlessRegistry::Bind uses the
+                        // currently-bound layout, so the pipeline must be bound before
+                        // it. The MVP occupies the leading 64 bytes of the shared push
+                        // block; Material::Bind already pushed MaterialIndex at offset 64.
+                        materials[subMesh.MaterialIndex].Get()->Bind(cmd);
+                        registry.Bind(cmd);
+                        cmd.PushConstants(MeshPushConstants{.MVP = mvp});
+
+                        cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
+                    }
+                });
             });
 
         return graph.Compile();
@@ -474,8 +545,14 @@ private:
 
     // The fixed rotation the smoke capture renders, in radians.
     static constexpr f32 SmokeAngle = 0.9f;
+    // The axis the spinner rotates about — the same axis the prior hand-rolled
+    // model matrix used, so the rendered orientation is unchanged.
+    static inline const vec3 SpinAxis = glm::normalize(vec3(0.5f, 1.0f, 0.2f));
 
-    f32 m_Angle = 0.0f;
+    Unique<Scene> m_Scene;
+    Entity m_Entity = Entity::Null;
+    Camera m_Camera;
+
     u32 m_FrameCount = 0;
     const char* m_SmokeOutput = nullptr;
 };

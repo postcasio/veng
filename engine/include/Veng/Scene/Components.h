@@ -5,8 +5,12 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Reflection/Reflect.h>
 
+#include <Veng/Asset/AssetHandle.h>
+
 namespace Veng
 {
+    class Mesh;
+
     // The engine's builtin components. Each is a plain reflected type a Scene
     // pools; they are registered into the TypeRegistry at Application startup
     // through the same Register<T> a game uses — not special-cased.
@@ -35,6 +39,14 @@ namespace Veng
     {
         Entity Value = Entity::Null;
     };
+
+    // The bridge from a scene entity to rendering: the mesh it draws. The mesh
+    // owns its materials, so a renderer queries (world Transform, MeshRenderer)
+    // and draws each submesh with its material.
+    struct MeshRenderer
+    {
+        AssetHandle<Mesh> Mesh;
+    };
 }
 
 VE_REFLECT(::Veng::Name, 0xDA40E8FAC8A6DB84ULL)
@@ -49,4 +61,8 @@ VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Parent, 0x5C9855E287465C5EULL)
     VE_FIELD(Value, .DisplayName = "Parent", .ReadOnly = true)
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::MeshRenderer, 0x3C5CB13E46E0450BULL)
+    VE_FIELD(Mesh, .DisplayName = "Mesh")
 VE_REFLECT_END();
