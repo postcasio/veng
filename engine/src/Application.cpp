@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
 #include <Veng/Time.h>
+#include <Veng/Scene/Components.h>
 
 namespace Veng
 {
@@ -13,6 +14,12 @@ namespace Veng
 
     void Application::Initialize()
     {
+        // Pre-register the engine's builtin components through the same path a
+        // game uses — builtins are not special-cased.
+        m_TypeRegistry.Register<Name>("Name");
+        m_TypeRegistry.Register<Transform>("Transform");
+        m_TypeRegistry.Register<Parent>("Parent");
+
         if (!m_Info.Headless)
         {
             m_Window = Window::Create(m_Info.WindowInfo);

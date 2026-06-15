@@ -45,8 +45,10 @@
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/Transforms.h>
 
 #include <support/GpuProbe.h>
 
@@ -173,6 +175,46 @@ namespace
         registry.Register<CollideB>("CollideB");
     }
 
+    TypeRegistry MakeTransformRegistry()
+    {
+        TypeRegistry registry;
+        registry.Register<Name>("Name");
+        registry.Register<Transform>("Transform");
+        registry.Register<Parent>("Parent");
+        return registry;
+    }
+
+    void RunTransformParentCycle()
+    {
+        TypeRegistry registry = MakeTransformRegistry();
+        const Unique<Scene> scene = Scene::Create(registry);
+
+        const Entity a = scene->CreateEntity();
+        const Entity b = scene->CreateEntity();
+        scene->Add<Transform>(a);
+        scene->Add<Transform>(b);
+        // a → b → a forms a cycle; the walk detects revisiting an entity.
+        scene->Add<Parent>(a, Parent{b});
+        scene->Add<Parent>(b, Parent{a});
+
+        (void)WorldMatrix(*scene, a);
+    }
+
+    void RunTransformParentDead()
+    {
+        TypeRegistry registry = MakeTransformRegistry();
+        const Unique<Scene> scene = Scene::Create(registry);
+
+        const Entity child = scene->CreateEntity();
+        const Entity parent = scene->CreateEntity();
+        scene->Add<Transform>(child);
+        scene->Add<Parent>(child, Parent{parent});
+        // Kill the parent: the walk hits a Parent referencing a dead entity.
+        scene->DestroyEntity(parent);
+
+        (void)WorldMatrix(*scene, child);
+    }
+
     // -- GPU-coupled death cases (need a headless Context) -------------------
 
     // Bring up a headless Context, run `body` (which is expected to abort), and
@@ -282,6 +324,8 @@ int main(int argc, char** argv)
     else if (name == "scene_get_stale_entity") RunSceneGetStaleEntity();
     else if (name == "scene_get_missing_component") RunSceneGetMissingComponent();
     else if (name == "type_id_collision") RunTypeIdCollision();
+    else if (name == "transform_parent_cycle") RunTransformParentCycle();
+    else if (name == "transform_parent_dead") RunTransformParentDead();
     // GPU-coupled
     else if (name == "buffer_upload_overrun") RunBufferUploadOverrun();
     else if (name == "index_u16_into_u32") RunIndexU16IntoU32();

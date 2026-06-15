@@ -5,10 +5,19 @@
 #include <Veng/Scene/Entity.h>
 #include <Veng/Reflection/TypeRegistry.h>
 
+#include <array>
 #include <utility>
 
 namespace Veng
 {
+    // Range-for view over every entity holding all of Ts..., yielding
+    // (Entity, Ts&...). Defined after Scene; see Scene::View() below.
+    template <class... Ts>
+    class SceneView;
+
+    class Scene;
+    void ComputeWorldMatrices(const Scene& scene, vector<mat4>& out);
+
     // A runtime ECS world: a generational entity free-list plus one type-erased
     // sparse-set pool per component type that has been Added to an entity. The
     // templated Add/Remove/Get/Has façade resolves T → TypeId through the
@@ -73,6 +82,13 @@ namespace Veng
         }
 
         template <class T>
+        [[nodiscard]] const T* TryGet(Entity entity) const
+        {
+            VE_ASSERT(IsAlive(entity), "TryGet on a dead or stale entity");
+            return static_cast<const T*>(TryGetRaw(entity, m_Registry->IdOf<T>()));
+        }
+
+        template <class T>
         [[nodiscard]] T& Get(Entity entity)
         {
             T* component = TryGet<T>(entity);
@@ -87,8 +103,88 @@ namespace Veng
             return HasRaw(entity, m_Registry->IdOf<T>());
         }
 
+        // Visits every entity holding all of Ts..., calling fn(entity, Ts&...).
+        // The driver is the smallest of the Ts... pools; membership in the rest
+        // is tested through their sparse arrays (the standard sparse-set query,
+        // no archetype bookkeeping). Iteration order is the driver pool's dense
+        // order. Mutating a component through its Ts& is fine; structural changes
+        // — adding/removing components or destroying entities — during iteration
+        // are illegal (the single-threaded model offers no re-entrancy guard).
+        template <class... Ts, class Fn>
+        void Each(Fn&& fn)
+        {
+            static_assert(sizeof...(Ts) > 0, "Each requires at least one component type");
+
+            const std::array<TypeId, sizeof...(Ts)> ids = {m_Registry->IdOf<Ts>()...};
+
+            // Pick the smallest pool to drive iteration. A missing pool has
+            // count 0, so the query is empty and visits nothing.
+            TypeId driver = ids[0];
+            usize best = PoolCount(ids[0]);
+            for (usize i = 1; i < ids.size(); ++i)
+            {
+                const usize count = PoolCount(ids[i]);
+                if (count < best)
+                {
+                    best = count;
+                    driver = ids[i];
+                }
+            }
+
+            const Entity* dense = DensePtr(driver);
+            for (usize i = 0; i < best; ++i)
+            {
+                const Entity entity = dense[i];
+
+                // Fetch each component's storage; skip the entity unless it holds
+                // every Ts. The driver's own lookup is one of these and never
+                // misses, but resolving all of them uniformly keeps the code flat.
+                std::array<void*, sizeof...(Ts)> slots{};
+                bool complete = true;
+                for (usize t = 0; t < ids.size(); ++t)
+                {
+                    slots[t] = TryGetRaw(entity, ids[t]);
+                    if (slots[t] == nullptr)
+                    {
+                        complete = false;
+                        break;
+                    }
+                }
+                if (!complete)
+                {
+                    continue;
+                }
+
+                InvokeEach<Ts...>(fn, entity, slots, std::index_sequence_for<Ts...>{});
+            }
+        }
+
+        // Range-for form of Each, for code that wants break/early-out:
+        //   for (auto [entity, a, b] : scene.View<A, B>()) { … }
+        // Same intersection semantics and same in-iteration structural-change
+        // constraint as Each.
+        template <class... Ts>
+        [[nodiscard]] SceneView<Ts...> View()
+        {
+            return SceneView<Ts...>(*this);
+        }
+
     private:
         explicit Scene(TypeRegistry& registry);
+
+        template <class... Ts, class Fn, usize... Is>
+        static void InvokeEach(Fn&& fn, Entity entity,
+                               const std::array<void*, sizeof...(Ts)>& slots,
+                               std::index_sequence<Is...>)
+        {
+            fn(entity, *static_cast<Ts*>(slots[Is])...);
+        }
+
+        // Dense-iteration access for the query templates, keyed by TypeId so the
+        // impl-only ComponentPool stays out of this header. PoolCount is 0 and
+        // DensePtr is nullptr when no pool exists for the id.
+        [[nodiscard]] usize PoolCount(TypeId id) const;
+        [[nodiscard]] const Entity* DensePtr(TypeId id) const;
 
         // The type-erased façade implementation, defined where ComponentPool is
         // complete. The templated members above resolve T → TypeId and forward
@@ -96,6 +192,7 @@ namespace Veng
         void* AddRaw(Entity entity, TypeId id);
         void RemoveRaw(Entity entity, TypeId id);
         void* TryGetRaw(Entity entity, TypeId id);
+        [[nodiscard]] const void* TryGetRaw(Entity entity, TypeId id) const;
         [[nodiscard]] bool HasRaw(Entity entity, TypeId id) const;
 
         // Resolves (creating on first use) the pool for a registered TypeId.
@@ -111,5 +208,117 @@ namespace Veng
 
         // Keyed by TypeId; a Unique pool created lazily on first Add of a type.
         unordered_map<TypeId, Unique<ComponentPool>> m_Pools;
+
+        template <class...>
+        friend class SceneView;
+
+        // The transform walk enumerates the Transform pool's dense entity list
+        // through the impl-only pool accessors.
+        friend void ComputeWorldMatrices(const Scene& scene, vector<mat4>& out);
+    };
+
+    // The iterable returned by Scene::View<Ts...>(). begin()/end() yield a
+    // forward iterator that visits exactly the entities holding all of Ts...,
+    // in the smallest-pool driver's dense order, dereferencing to a tuple
+    // (Entity, Ts&...) — so a structured binding `auto [e, a, b]` works and
+    // `break` stops early. The same in-iteration structural-change constraint as
+    // Each applies.
+    template <class... Ts>
+    class SceneView
+    {
+        static_assert(sizeof...(Ts) > 0, "View requires at least one component type");
+
+    public:
+        explicit SceneView(Scene& scene) :
+            m_Scene(&scene),
+            m_Ids{scene.m_Registry->IdOf<Ts>()...}
+        {
+            // Drive from the smallest pool; a missing pool (count 0) yields an
+            // empty range.
+            m_Driver = m_Ids[0];
+            usize best = scene.PoolCount(m_Ids[0]);
+            for (usize i = 1; i < m_Ids.size(); ++i)
+            {
+                const usize count = scene.PoolCount(m_Ids[i]);
+                if (count < best)
+                {
+                    best = count;
+                    m_Driver = m_Ids[i];
+                }
+            }
+            m_Count = best;
+            m_Dense = scene.DensePtr(m_Driver);
+        }
+
+        class Iterator
+        {
+        public:
+            Iterator(const SceneView* view, usize index) :
+                m_View(view),
+                m_Index(index)
+            {
+                SkipToMatch();
+            }
+
+            std::tuple<Entity, Ts&...> operator*() const
+            {
+                const Entity entity = m_View->m_Dense[m_Index];
+                return Resolve(entity, std::index_sequence_for<Ts...>{});
+            }
+
+            Iterator& operator++()
+            {
+                ++m_Index;
+                SkipToMatch();
+                return *this;
+            }
+
+            bool operator!=(const Iterator& other) const { return m_Index != other.m_Index; }
+
+        private:
+            // Advance past driver entries that lack one of the other components,
+            // landing on the next full match (or on m_Count, the end).
+            void SkipToMatch()
+            {
+                while (m_Index < m_View->m_Count
+                       && !m_View->Matches(m_View->m_Dense[m_Index]))
+                {
+                    ++m_Index;
+                }
+            }
+
+            template <usize... Is>
+            std::tuple<Entity, Ts&...> Resolve(Entity entity, std::index_sequence<Is...>) const
+            {
+                return std::tuple<Entity, Ts&...>(
+                    entity,
+                    *static_cast<Ts*>(m_View->m_Scene->TryGetRaw(entity, m_View->m_Ids[Is]))...);
+            }
+
+            const SceneView* m_View;
+            usize m_Index;
+        };
+
+        [[nodiscard]] Iterator begin() const { return Iterator(this, 0); }
+        [[nodiscard]] Iterator end() const { return Iterator(this, m_Count); }
+
+    private:
+        [[nodiscard]] bool Matches(Entity entity) const
+        {
+            for (const TypeId id : m_Ids)
+            {
+                if (m_Scene->TryGetRaw(entity, id) == nullptr)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        Scene* m_Scene;
+        std::array<TypeId, sizeof...(Ts)> m_Ids;
+        TypeId m_Driver = InvalidTypeId;
+        usize m_Count = 0;
+        const Entity* m_Dense = nullptr;
     };
 }

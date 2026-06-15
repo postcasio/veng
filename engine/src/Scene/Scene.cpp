@@ -89,10 +89,31 @@ namespace Veng
         return nullptr;
     }
 
+    const void* Scene::TryGetRaw(Entity entity, TypeId id) const
+    {
+        if (const ComponentPool* pool = TryPoolFor(id))
+        {
+            return pool->TryGet(entity);
+        }
+        return nullptr;
+    }
+
     bool Scene::HasRaw(Entity entity, TypeId id) const
     {
         const ComponentPool* pool = TryPoolFor(id);
         return pool != nullptr && pool->Contains(entity);
+    }
+
+    usize Scene::PoolCount(TypeId id) const
+    {
+        const ComponentPool* pool = TryPoolFor(id);
+        return pool != nullptr ? pool->Count() : 0;
+    }
+
+    const Entity* Scene::DensePtr(TypeId id) const
+    {
+        const ComponentPool* pool = TryPoolFor(id);
+        return pool != nullptr ? pool->DenseData() : nullptr;
     }
 
     Scene::ComponentPool& Scene::PoolFor(TypeId id)

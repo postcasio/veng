@@ -50,8 +50,10 @@
 
 #include <Veng/Reflection/TypeRegistry.h>
 
+#include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/Transforms.h>
 
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>

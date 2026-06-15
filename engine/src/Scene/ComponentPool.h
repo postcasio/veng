@@ -43,6 +43,10 @@ namespace Veng
 
         [[nodiscard]] usize Count() const { return m_Dense.size(); }
 
+        // The packed entity list — the iteration order a query drives. Valid
+        // until the next structural change to this pool.
+        [[nodiscard]] const Entity* DenseData() const { return m_Dense.data(); }
+
     private:
         static constexpr u32 Tombstone = ~0u;
 

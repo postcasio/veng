@@ -202,6 +202,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/asset_manager.cpp
             tests/unit/primitives.cpp
             tests/unit/scene_ecs.cpp
+            tests/unit/scene_queries.cpp
     )
     target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
 
@@ -299,6 +300,14 @@ if (VENG_BUILD_TESTS)
     add_test(NAME death.type_id_collision COMMAND veng_death type_id_collision)
     set_tests_properties(death.type_id_collision PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "TypeId collision")
+
+    add_test(NAME death.transform_parent_cycle COMMAND veng_death transform_parent_cycle)
+    set_tests_properties(death.transform_parent_cycle PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "Parent chain forms a cycle")
+
+    add_test(NAME death.transform_parent_dead COMMAND veng_death transform_parent_dead)
+    set_tests_properties(death.transform_parent_dead PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "Parent references a dead or stale entity")
 
     # GPU-coupled death cases (need a headless Context; skip with no driver).
     add_test(NAME death.buffer_upload_overrun COMMAND veng_death buffer_upload_overrun)
