@@ -1,0 +1,20 @@
+{
+  "entities": [
+    {
+      "name": "Root",
+      "components": {
+        "::Veng::Name":         { "Value": "Root" },
+        "::Veng::Transform":    { "Position": [1, 2, 3], "Rotation": [0, 0, 0, 1], "Scale": [1, 1, 1] },
+        "::Veng::MeshRenderer": { "Mesh": 8001 },
+        "Spinner":              { "SpeedRadiansPerSec": 1.5 }
+      }
+    },
+    {
+      "name": "Child",
+      "components": {
+        "::Veng::Transform": { "Position": [0, 0, 0] },
+        "::Veng::Parent":    { "Value": 0 }
+      }
+    }
+  ]
+}

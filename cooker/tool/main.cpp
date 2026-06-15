@@ -140,6 +140,7 @@ int main(int argc, char** argv)
 
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
+        RegisterPrefabImporter(cooker);
 
         const VoidResult result = cooker.CookPack(*packPath, *outPath, referencePacks, types);
         if (!result)

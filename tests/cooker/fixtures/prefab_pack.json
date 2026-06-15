@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "assets": [
+    { "id": 9001, "type": "prefab", "source": "prefabs/scene.prefab.json" }
+  ]
+}

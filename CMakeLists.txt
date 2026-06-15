@@ -212,9 +212,9 @@ if (VENG_BUILD_TESTS)
     )
     target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
 
-    # The reflection round-trip test includes the internal serializer header
-    # (engine/src/Reflection/Serialize.h). That header is pure-CPU and not part
-    # of the public surface, so it lives under src/, not the include/ tree.
+    # Some unit cases reach into engine internals under src/ (the backend
+    # TypeMapping header below); that path is on the include search list so they
+    # compile. The public reflection serializer is on the include/ tree.
     target_include_directories(veng_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/engine/src)
 
 
@@ -489,6 +489,7 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
             tests/cooker/vertex_layout_cook.cpp
             tests/cooker/verify.cpp
             tests/cooker/module_reflect.cpp
+            tests/cooker/prefab_cook.cpp
     )
     target_link_libraries(veng_cooker PRIVATE veng::cook doctest::doctest)
     add_dependencies(veng_cooker hello_triangle veng_bad_version_module)

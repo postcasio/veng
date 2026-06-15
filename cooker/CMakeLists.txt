@@ -146,7 +146,13 @@ target_link_libraries(veng_cook_objs PUBLIC nlohmann_json::nlohmann_json)
 target_compile_options(veng_cook_objs PRIVATE -fno-exceptions)
 
 # libveng_cook — the full cooker library: the veng-free core plus the
-# module-reflection TU (ModuleTypes.cpp), linking veng::veng.
+# module-reflection TU (ModuleTypes.cpp) and the prefab importer
+# (PrefabImporter.cpp), linking veng::veng.
+#
+# PrefabImporter lives here, not in veng_cook_objs, because it reuses libveng's
+# reflection serializer (WriteFields): putting it in the veng-free objects would
+# drag an unresolved libveng symbol into the veng_cook_bootstrap link. The
+# bootstrap cooks no prefabs, so it never needs this importer.
 #
 # veng::veng — the scoped cooker→libveng dependency inversion. Reflecting a
 # module's native types means the cooker process loads libgame (which pulls
@@ -159,7 +165,9 @@ target_compile_options(veng_cook_objs PRIVATE -fno-exceptions)
 # path; ordinary importers (texture/mesh/shader/material) link nothing from
 # libveng. veng's own embedded core pack is cooked by the veng-free bootstrap
 # cooker below to keep this link off the core-pack build edge.
-add_library(libveng_cook STATIC src/ModuleTypes.cpp)
+add_library(libveng_cook STATIC
+        src/ModuleTypes.cpp
+        src/Importers/PrefabImporter.cpp)
 add_library(veng::cook ALIAS libveng_cook)
 target_link_libraries(libveng_cook PUBLIC veng_cook_objs veng::veng veng::assetformat)
 target_link_libraries(libveng_cook PRIVATE fmt::fmt assimp::assimp slang::slang)

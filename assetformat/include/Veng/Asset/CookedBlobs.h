@@ -200,4 +200,48 @@ namespace Veng
         u32 Kind = 0;   // 0 = param value, 1 = sampled-image handle, 2 = sampler handle
         u64 TextureId = 0; // AssetId for Kinds 1/2; 0 for params
     };
+
+    // Prefab: a tree of entities, each carrying components keyed by their stable
+    // TypeId, each component's field values stored as the reflection serializer's
+    // name-keyed record. assetformat treats the records as opaque bytes — the
+    // engine's PrefabLoader interprets them through the TypeRegistry, so this file
+    // gains no reflection/engine dependency (cycle-avoidance rule at the top). The
+    // blob is, in order:
+    //   CookedPrefabHeader
+    //   CookedPrefabEntity[EntityCount]
+    //   CookedPrefabComponent[ComponentCount]   — each entity's components are a
+    //                                             contiguous run (FirstComponent..)
+    //   record blob (RecordBytes)               — the WriteFields records, concatenated
+    //
+    // A Reference (Entity) inside a record stores the prefab-local entity index
+    // (its position in CookedPrefabEntity[]) in the Entity's Index slot, with
+    // Generation written as 0; the loader remaps it to the spawned handle. The
+    // reserved index Entity::Null.Index (~0u) is a null reference the loader leaves
+    // null — never a valid prefab-local index, so null and an intra-prefab
+    // reference never collide.
+
+    // The current prefab-format version; bumped on any layout change, never a
+    // silent reinterpretation. The loader rejects a blob whose Version != this.
+    inline constexpr u32 CookedPrefabVersion = 1u;
+
+    struct CookedPrefabHeader   // blob head
+    {
+        u32 Version = 0;        // == CookedPrefabVersion at cook
+        u32 EntityCount = 0;
+        u32 ComponentCount = 0; // total across all entities
+        u32 RecordBytes = 0;    // size of the trailing record blob
+    };
+
+    struct CookedPrefabEntity   // CookedPrefabEntity[EntityCount]
+    {
+        u32 FirstComponent = 0; // index into the component table
+        u32 ComponentCount = 0; // this entity's components are a contiguous run
+    };
+
+    struct CookedPrefabComponent // CookedPrefabComponent[ComponentCount]
+    {
+        u64 TypeId = 0;         // the component's stable type id
+        u32 RecordOffset = 0;   // into the record blob
+        u32 RecordSize = 0;
+    };
 }

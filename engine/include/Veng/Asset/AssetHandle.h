@@ -15,8 +15,14 @@ namespace Veng
 {
     class AssetManager;
 
+    template <typename T>
+    class AssetHandle;
+
     namespace Detail
     {
+        template <typename T>
+        struct AssetHandleLayoutGuard;
+
         // Type-erased owner of a loaded asset's engine resource (e.g. Ref<RawAsset>,
         // a future Ref<Texture>, ...). AssetHandle<T>::Get() downcasts via
         // static_cast — safe because AssetManager only ever stores the Ref<T>
@@ -88,7 +94,32 @@ namespace Veng
 
         AssetId m_Id;
         Ref<Detail::AssetCacheEntry> m_Entry;
+
+        // The reflection serializer (WriteFields/ReadFields) records an
+        // AssetHandle field by reading/writing its leading u64 AssetId straight
+        // off the field bytes — it relies on m_Id (an AssetId, itself a leading
+        // u64) sitting at offset 0 of the handle. Pin it through a friend so
+        // reordering a member is a loud compile error, not a silent prefab
+        // corruption.
+        template <typename U>
+        friend struct Detail::AssetHandleLayoutGuard;
     };
+
+    namespace Detail
+    {
+        // Befriended by AssetHandle<T> so its offsetof can read the private m_Id;
+        // instantiated below for each builtin AssetHandle leaf.
+        template <typename T>
+        struct AssetHandleLayoutGuard
+        {
+            static_assert(offsetof(AssetHandle<T>, m_Id) == 0,
+                          "AssetHandle<T>::m_Id must be the first member (offset 0) — "
+                          "the reflection serializer reads the AssetId off offset 0");
+            static_assert(offsetof(AssetId, Value) == 0,
+                          "AssetId::Value must be at offset 0 — the reflection "
+                          "serializer reads the raw u64 id off offset 0");
+        };
+    }
 
     // A non-owning reference to a cached asset. Lock() promotes to an
     // AssetHandle<T> while the entry is still resident, or returns nullopt once
@@ -119,4 +150,12 @@ namespace Veng
         AssetId m_Id;
         WeakRef<Detail::AssetCacheEntry> m_Entry;
     };
+
+    namespace Detail
+    {
+        // AssetHandle<T>'s layout is T-independent (an AssetId + a Ref<void>),
+        // so one instantiation pins the offset for every handle type.
+        struct AssetHandleLayoutTag;
+        template struct AssetHandleLayoutGuard<AssetHandleLayoutTag>;
+    }
 }

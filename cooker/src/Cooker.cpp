@@ -26,6 +26,7 @@ namespace Veng::Cook
             if (name == "shader")        return AssetType::Shader;
             if (name == "material")      return AssetType::Material;
             if (name == "vertex_layout") return AssetType::VertexLayout;
+            if (name == "prefab")        return AssetType::Prefab;
 
             return std::nullopt;
         }

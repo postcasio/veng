@@ -15,5 +15,6 @@ namespace Veng
         Shader,
         Material,
         VertexLayout,
+        Prefab,
     };
 }

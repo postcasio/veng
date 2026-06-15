@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "assets": [
+    { "id": 8001, "type": "mesh", "source": "meshes/cube.mesh.json" },
+    { "id": 8002, "type": "texture", "source": "textures/texture.tex.json" }
+  ]
+}
