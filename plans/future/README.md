@@ -155,7 +155,9 @@ cross-cutting concerns below. Spans **several plansets**; **design overview:**
   *hosts* that load `libgame`; only the editor also loads `libgame_editor`. This is
   what lets the editor see a game's **native types** — registered through a C-ABI
   entry point into a `TypeRegistry` (C++ has no reflection), with hand-written field
-  descriptors driving auto-inspectors.
+  descriptors driving auto-inspectors. The build-model + launcher shipped in planset-9
+  (in-tree); **installing `veng_add_game` for downstream `find_package(veng)` consumers
+  remains forward work** (see [game-module.md](game-module.md)).
 - **The editor is a cooker consumer** ([editor.md](editor.md)). The runtime never
   links importers; the editor — a tool — links `libveng_cook` for **cook-on-demand**,
   reading *source* assets, cooking live (off-thread), and previewing through the

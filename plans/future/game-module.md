@@ -205,6 +205,15 @@ veng_add_game(my_game
 It produces `libmy_game` (shared), `my_game-launcher` (exe), and — when `EDITOR`
 sources are given — `libmy_game_editor` (shared, excluded from the shipped set).
 
+`veng_add_game` ships **in-tree only** (it serves the example and the tests). Making it
+callable from a downstream project that consumes an *installed* veng via
+`find_package(veng)` is unbuilt forward work: install the helper `.cmake` files
+(`Game.cmake`, `AssetPack.cmake`) and `launcher_main.cpp`, `include()` them from
+`veng-config.cmake.in`, and resolve `VENG_LAUNCHER_MAIN` to the installed path. This also
+fixes `AssetPack.cmake`'s pre-existing missing install. A full shipped product additionally
+ships `libveng` beside the launcher (the in-tree launcher resolves `libveng` via its build
+rpath).
+
 ## Migrating the sample
 
 `hello-triangle` is the natural acceptance test **and** the smoke test, so migrate
