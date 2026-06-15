@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Reflection/Reflect.h>
 
 namespace Veng
 {
@@ -36,6 +37,16 @@ namespace Veng
     };
 }
 
-VE_TYPE(::Veng::Name, 0xDA40E8FAC8A6DB84ULL);
-VE_TYPE(::Veng::Transform, 0x0AB8E30B2F638555ULL);
-VE_TYPE(::Veng::Parent, 0x5C9855E287465C5EULL);
+VE_REFLECT(::Veng::Name, 0xDA40E8FAC8A6DB84ULL)
+    VE_FIELD(Value, .DisplayName = "Name")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::Transform, 0x0AB8E30B2F638555ULL)
+    VE_FIELD(Position, .DisplayName = "Position", .Tooltip = "Local position, parent space")
+    VE_FIELD(Rotation, .DisplayName = "Rotation")
+    VE_FIELD(Scale, .DisplayName = "Scale", .Min = 0.001)
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::Parent, 0x5C9855E287465C5EULL)
+    VE_FIELD(Value, .DisplayName = "Parent", .ReadOnly = true)
+VE_REFLECT_END();

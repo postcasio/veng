@@ -48,6 +48,9 @@
 #include <Veng/Module/Module.h>
 #include <Veng/Module/ModuleLoader.h>
 
+#include <Veng/Reflection/FieldDescriptor.h>
+#include <Veng/Reflection/Reflect.h>
+#include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
 
 #include <Veng/Scene/Components.h>

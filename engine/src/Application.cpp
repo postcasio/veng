@@ -16,9 +16,9 @@ namespace Veng
     {
         // Pre-register the engine's builtin components through the same path a
         // game uses — builtins are not special-cased.
-        m_TypeRegistry.Register<Name>("Name");
-        m_TypeRegistry.Register<Transform>("Transform");
-        m_TypeRegistry.Register<Parent>("Parent");
+        m_TypeRegistry.Register<Name>();
+        m_TypeRegistry.Register<Transform>();
+        m_TypeRegistry.Register<Parent>();
 
         if (!m_Info.Headless)
         {

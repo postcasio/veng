@@ -203,8 +203,14 @@ if (VENG_BUILD_TESTS)
             tests/unit/primitives.cpp
             tests/unit/scene_ecs.cpp
             tests/unit/scene_queries.cpp
+            tests/unit/reflection.cpp
     )
     target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
+
+    # The reflection round-trip test includes the internal serializer header
+    # (engine/src/Reflection/Serialize.h). That header is pure-CPU and not part
+    # of the public surface, so it lives under src/, not the include/ tree.
+    target_include_directories(veng_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/engine/src)
 
     # ---- Cooker round trip (plan 03: vengc shell, raw importer) -------------
     # Cooks fixture packs through libveng_cook end-to-end and reads the

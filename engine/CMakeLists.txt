@@ -25,6 +25,7 @@ add_library(veng SHARED
         src/Window.cpp
         src/ImGui/ImGuiLayer.cpp
         src/ImGui/ImGuiTexture.cpp
+        src/Reflection/Serialize.cpp
         src/Scene/ComponentPool.cpp
         src/Scene/Scene.cpp
         src/Scene/Transforms.cpp
