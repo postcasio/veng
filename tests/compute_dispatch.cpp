@@ -23,6 +23,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
@@ -70,7 +71,8 @@ int main()
         // and load each module by id. Handles stay in scope until after the
         // graph executes so their modules outlive the pipelines.
         TaskSystem tasks;
-        AssetManager assets(context, tasks);
+        TypeRegistry types;
+        AssetManager assets(context, tasks, types);
         const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
         VE_ASSERT(mountResult, "mount test shader pack: {}", mountResult.error());
 

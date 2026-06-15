@@ -12,7 +12,7 @@ namespace Veng
     class Mesh;
 
     // The engine's builtin components. Each is a plain reflected type a Scene
-    // pools; they are registered into the TypeRegistry at Application startup
+    // pools; they are registered into the TypeRegistry by RegisterBuiltinTypes
     // through the same Register<T> a game uses — not special-cased.
 
     // A human-readable label for an entity. Display/logging only; never an

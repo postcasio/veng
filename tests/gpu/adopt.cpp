@@ -16,7 +16,7 @@ using namespace Veng;
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "AssetManager::Adopt: runtime primitive mesh becomes a first-class, id-less handle")
 {
-    AssetManager assets(Context, Tasks);
+    AssetManager assets(Context, Tasks, Types);
 
     // A runtime primitive — built and uploaded with no cooker, no AssetId, no
     // material (the empty handle leaves the submesh unassigned).

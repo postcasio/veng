@@ -71,7 +71,7 @@ VE_REFLECT_END();
 class HelloTriangleApp final : public Application
 {
 public:
-    explicit HelloTriangleApp(const ApplicationInfo& info) : Application(info)
+    HelloTriangleApp(const ApplicationInfo& info, TypeRegistry& types) : Application(info, types)
     {
     }
 
@@ -158,11 +158,6 @@ protected:
                 m_CompositeGraph = BuildCompositeGraph();
             });
         }
-
-        // Register the game's own component through the same public path the
-        // engine registers its builtins — the engine has no compile-time
-        // knowledge of Spinner.
-        GetTypeRegistry().Register<Spinner>();
 
         // Build the runtime scene: one entity carrying its local Transform, a
         // MeshRenderer, and the game-defined Spinner. The draw queries this
@@ -567,12 +562,17 @@ private:
 // they live in the module beside the app — the launcher stays game-agnostic.
 extern "C" void VengModuleRegister(VengModuleHost* host)
 {
+    // The game registers its own component types here, through the same public
+    // path the engine pre-registers its builtins (already present on the host
+    // registry). The engine has no compile-time knowledge of Spinner.
+    host->Types.Register<Spinner>();
+
     // Smoke mode runs headless: no window or swapchain, render the scene
     // off-screen and dump it. This is the display-free CI path enabled by the
     // headless context.
     const bool smoke = std::getenv("HT_SMOKE") != nullptr;
 
-    host->App.RegisterApplication([smoke]
+    host->App.RegisterApplication([smoke](TypeRegistry& types)
     {
         return Unique<Application>(new HelloTriangleApp(ApplicationInfo{
             .Name = "Hello Triangle",
@@ -589,7 +589,7 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
             // executable-relative resolution the asset pack uses, so the cache
             // stays with the relocatable trio.
             .PipelineCachePath = ExecutableDirectory() / "pipeline_cache.bin",
-        }));
+        }, types));
     });
 }
 

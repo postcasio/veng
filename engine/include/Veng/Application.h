@@ -40,7 +40,11 @@ namespace Veng
     class Application
     {
     public:
-        explicit Application(ApplicationInfo info);
+        // The TypeRegistry is borrowed, not owned: the host (launcher or cooker)
+        // constructs it and pre-registers builtins before the module's
+        // VengModuleRegister runs — which is before this Application exists — so
+        // it lives one frame up and is threaded in here. It must outlive the app.
+        Application(ApplicationInfo info, TypeRegistry& types);
         virtual ~Application() = default;
 
         void Run(vector<string> arguments);
@@ -65,12 +69,12 @@ namespace Veng
             return *m_AssetManager;
         }
 
-        // The engine-owned, process-wide registry of reflected types (a
-        // reflected type is identical across every Scene). Threaded by reference
-        // into Scene::Create — the same explicit-dependency discipline as the
-        // Context / AssetManager / TaskSystem. Register engine builtins at
-        // construction and a game's own component types in OnInitialize, on the
-        // main thread, before any Scene is touched concurrently with workers.
+        // The host-owned, process-wide registry of reflected types (a reflected
+        // type is identical across every Scene). Borrowed: the host pre-registers
+        // the engine builtins and the module registers its own component types,
+        // both before this app exists. Threaded by reference into Scene::Create —
+        // the same explicit-dependency discipline as the Context / AssetManager /
+        // TaskSystem.
         [[nodiscard]] TypeRegistry& GetTypeRegistry()
         {
             return m_TypeRegistry;
@@ -116,10 +120,10 @@ namespace Veng
 
         ApplicationInfo m_Info;
 
-        // Engine-owned and value-held: it carries no GPU state, so it neither
-        // needs the Context alive nor participates in the deferred-destruction
-        // path. Outlives every Scene the app creates.
-        TypeRegistry m_TypeRegistry;
+        // Borrowed from the host (launcher or cooker), which owns it and keeps it
+        // alive past this app. Carries no GPU state and is not in the
+        // deferred-destruction path; outlives every Scene the app creates.
+        TypeRegistry& m_TypeRegistry;
 
         Unique<Window> m_Window;
 

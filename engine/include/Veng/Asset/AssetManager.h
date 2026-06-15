@@ -25,6 +25,7 @@ namespace Veng::Renderer
 namespace Veng
 {
     class TaskSystem;
+    class TypeRegistry;
 
     struct AssetManagerInfo
     {
@@ -33,7 +34,8 @@ namespace Veng
     class VE_API AssetManager
     {
     public:
-        AssetManager(Renderer::Context& context, TaskSystem& tasks, const AssetManagerInfo& info = {});
+        AssetManager(Renderer::Context& context, TaskSystem& tasks, TypeRegistry& types,
+                     const AssetManagerInfo& info = {});
         ~AssetManager();
 
         // Opens archive and indexes its TOC. Mounting the same path twice is a
@@ -170,6 +172,9 @@ namespace Veng
 
         Renderer::Context& m_Context;
         TaskSystem& m_Tasks;
+        // Borrowed: the prefab loader reflects a component's fields through it.
+        // Same explicit-threading discipline as the context and task system.
+        TypeRegistry& m_Types;
 
         vector<MountedArchive> m_Mounts;
         unordered_map<AssetType, Unique<AssetLoader>> m_Loaders;

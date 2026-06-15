@@ -12,6 +12,7 @@
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/RawAsset.h>
+#include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Task/TaskSystem.h>
 
@@ -44,7 +45,8 @@ TEST_CASE("AssetManager: LoadSync<RawAsset> resolves a mounted asset")
 
     Renderer::Context context;
     TaskSystem tasks;
-    AssetManager manager(context, tasks);
+    TypeRegistry types;
+    AssetManager manager(context, tasks, types);
 
     REQUIRE(manager.Mount(archivePath).has_value());
 
@@ -63,7 +65,8 @@ TEST_CASE("AssetManager: LoadSync error kinds — NotFound and WrongType")
 
     Renderer::Context context;
     TaskSystem tasks;
-    AssetManager manager(context, tasks);
+    TypeRegistry types;
+    AssetManager manager(context, tasks, types);
 
     REQUIRE(manager.Mount(archivePath).has_value());
 
@@ -87,7 +90,8 @@ TEST_CASE("AssetManager: Mount is idempotent, Unmount drops resolution for uncac
 
     Renderer::Context context;
     TaskSystem tasks;
-    AssetManager manager(context, tasks);
+    TypeRegistry types;
+    AssetManager manager(context, tasks, types);
 
     REQUIRE(manager.Mount(archivePath).has_value());
     REQUIRE(manager.Mount(archivePath).has_value()); // no-op, not a duplicate TOC
@@ -115,7 +119,8 @@ TEST_CASE("AssetManager: dropping the last AssetHandle makes the entry evictable
 
     Renderer::Context context;
     TaskSystem tasks;
-    AssetManager manager(context, tasks);
+    TypeRegistry types;
+    AssetManager manager(context, tasks, types);
 
     REQUIRE(manager.Mount(archivePath).has_value());
 

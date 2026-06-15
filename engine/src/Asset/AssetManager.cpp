@@ -39,9 +39,11 @@ namespace Veng
         }
     }
 
-    AssetManager::AssetManager(Renderer::Context& context, TaskSystem& tasks, const AssetManagerInfo& /*info*/) :
+    AssetManager::AssetManager(Renderer::Context& context, TaskSystem& tasks, TypeRegistry& types,
+                               const AssetManagerInfo& /*info*/) :
         m_Context(context),
-        m_Tasks(tasks)
+        m_Tasks(tasks),
+        m_Types(types)
     {
         RegisterLoader(CreateUnique<RawAssetLoader>());
         RegisterLoader(CreateUnique<TextureLoader>());

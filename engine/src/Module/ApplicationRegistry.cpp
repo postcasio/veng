@@ -5,7 +5,7 @@
 
 namespace Veng
 {
-    void ApplicationRegistry::RegisterApplication(function<Unique<Application>()> factory)
+    void ApplicationRegistry::RegisterApplication(function<Unique<Application>(TypeRegistry&)> factory)
     {
         VE_ASSERT(!m_Factory, "an Application factory is already registered — one app per module");
         m_Factory = std::move(factory);
@@ -16,13 +16,13 @@ namespace Veng
         return static_cast<bool>(m_Factory);
     }
 
-    Unique<Application> ApplicationRegistry::Create() const
+    Unique<Application> ApplicationRegistry::Create(TypeRegistry& types) const
     {
         if (!m_Factory)
         {
             return nullptr;
         }
 
-        return m_Factory();
+        return m_Factory(types);
     }
 }

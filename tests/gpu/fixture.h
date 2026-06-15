@@ -11,6 +11,7 @@
 
 #include <support/GpuContext.h>
 
+#include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Task/TaskSystem.h>
 
 namespace Veng::Test
@@ -24,5 +25,9 @@ namespace Veng::Test
         // use LoadSync (the blocking UploadSync path, no transfer pool), so the
         // pools are not wired up; a case exercising async Load wires its own.
         TaskSystem Tasks{TaskSystemInfo{.WorkerCount = 2}};
+
+        // A type registry AssetManager takes by reference (the prefab loader
+        // reflects through it). Empty here — these cases load non-prefab assets.
+        TypeRegistry Types;
     };
 }

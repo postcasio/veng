@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Module/ApplicationRegistry.h>
+#include <Veng/Reflection/TypeRegistry.h>
 
 namespace Veng
 {
@@ -12,12 +13,14 @@ namespace Veng
 
     // The host's side of the module contract: what a loaded module registers
     // into. The host owns these for the module's whole lifetime; a module
-    // registers into them and never frees a host object. Registration is a
-    // factory — no live Context/AssetManager is needed here, so none is passed
-    // (Application keeps owning the engine objects).
+    // registers into them and never frees a host object. Registration is
+    // GPU-free — a factory and reflected type descriptors — so no live
+    // Context/AssetManager is needed here; the host owns the registries and
+    // threads them into the Application it later constructs.
     struct VengModuleHost
     {
         ApplicationRegistry& App;    // the module hands the host its Application factory
+        TypeRegistry&        Types;  // the module registers its component/type descriptors
         EditorRegistry*      Editor; // non-null ONLY when loaded by the editor; null otherwise
     };
 }
@@ -37,7 +40,7 @@ extern "C"
 // loader compares them before calling VengModuleRegister. Guarded with #ifndef
 // so a target can force a wrong value with a -D define.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 1u
+#define VENG_MODULE_ABI_VERSION 2u
 #endif
 
 // A module drops this in exactly one translation unit to export the version it

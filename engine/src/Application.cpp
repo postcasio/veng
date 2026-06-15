@@ -3,26 +3,17 @@
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
 #include <Veng/Time.h>
-#include <Veng/Scene/Components.h>
-#include <Veng/Scene/Camera.h>
 
 namespace Veng
 {
-    Application::Application(ApplicationInfo info) :
-        m_Info(std::move(info))
+    Application::Application(ApplicationInfo info, TypeRegistry& types) :
+        m_Info(std::move(info)),
+        m_TypeRegistry(types)
     {
     }
 
     void Application::Initialize()
     {
-        // Pre-register the engine's builtin components through the same path a
-        // game uses — builtins are not special-cased.
-        m_TypeRegistry.Register<Name>();
-        m_TypeRegistry.Register<Transform>();
-        m_TypeRegistry.Register<Parent>();
-        m_TypeRegistry.Register<CameraComponent>();
-        m_TypeRegistry.Register<MeshRenderer>();
-
         if (!m_Info.Headless)
         {
             m_Window = Window::Create(m_Info.WindowInfo);
@@ -41,7 +32,7 @@ namespace Veng
         // be created once the worker count is known. Done here, before any upload.
         m_RenderContext.InitializeTransferPools(*m_TaskSystem);
 
-        m_AssetManager = CreateUnique<AssetManager>(m_RenderContext, *m_TaskSystem);
+        m_AssetManager = CreateUnique<AssetManager>(m_RenderContext, *m_TaskSystem, m_TypeRegistry);
 
         // ImGui needs a window (GLFW backend), so it's only available windowed.
         if (!m_Info.Headless && m_Info.ImGui)

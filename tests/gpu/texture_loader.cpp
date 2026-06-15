@@ -74,7 +74,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
     const VoidResult cookResult = cooker.CookPack(packJson, outArchive);
     REQUIRE(cookResult.has_value());
 
-    AssetManager assets(Context, Tasks);
+    AssetManager assets(Context, Tasks, Types);
     const VoidResult mountResult = assets.Mount(outArchive);
     REQUIRE(mountResult.has_value());
 
@@ -97,7 +97,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
     });
     auto outputView = ImageView::Create(Context, {.Name = "Texture Loader Output View", .Image = outputImage});
 
-    AssetManager shaderAssets(Context, Tasks);
+    AssetManager shaderAssets(Context, Tasks, Types);
     const VoidResult shaderMountResult = shaderAssets.Mount(path(TEST_SHADER_PACK));
     REQUIRE(shaderMountResult.has_value());
 
@@ -162,7 +162,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: async Load returns pe
     // The async upload path records onto the per-worker transfer pools.
     Context.InitializeTransferPools(Tasks);
 
-    AssetManager assets(Context, Tasks);
+    AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
 
     // Load returns immediately with a not-yet-resident handle.

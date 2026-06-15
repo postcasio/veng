@@ -6,13 +6,15 @@
 #include <Veng/Application.h>
 #include <Veng/Assert.h>
 #include <Veng/Module/Module.h>
+#include <Veng/Reflection/TypeRegistry.h>
 
 namespace
 {
     class ProbeApp : public Veng::Application
     {
     public:
-        ProbeApp() : Veng::Application(Veng::ApplicationInfo{}) {}
+        explicit ProbeApp(Veng::TypeRegistry& types)
+            : Veng::Application(Veng::ApplicationInfo{}, types) {}
     };
 }
 
@@ -24,5 +26,6 @@ extern "C" VE_MODULE_EXPORT void VengModuleRegister(Veng::VengModuleHost* host)
     // it ever runs, the test fails loudly.
     VE_ASSERT(false, "wrong-version module entry must never be called");
     host->App.RegisterApplication(
-        [] { return Veng::Unique<Veng::Application>(new ProbeApp()); });
+        [](Veng::TypeRegistry& types)
+        { return Veng::Unique<Veng::Application>(new ProbeApp(types)); });
 }

@@ -126,7 +126,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "async upload: upload on a worker, the
     REQUIRE(textureHandle.IsValid());
     REQUIRE(samplerHandle.IsValid());
 
-    AssetManager assets(Context, Tasks);
+    AssetManager assets(Context, Tasks, Types);
     const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
     REQUIRE(mountResult.has_value());
 

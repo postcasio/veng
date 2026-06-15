@@ -32,7 +32,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "shader loader: cook, mount, LoadSync,
     const VoidResult cookResult = cooker.CookPack(packJson, outArchive);
     REQUIRE(cookResult.has_value());
 
-    AssetManager assets(Context, Tasks);
+    AssetManager assets(Context, Tasks, Types);
     const VoidResult mountResult = assets.Mount(outArchive);
     REQUIRE(mountResult.has_value());
 
