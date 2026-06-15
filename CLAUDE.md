@@ -379,7 +379,14 @@ smoke render use.
   `Ref` to a GPU resource — see `docs/ownership.md`. Apps drop their handles in
   `OnDispose()` like any other engine resource; `CollectGarbage()` evicts entries
   no handle references, retiring their GPU resources through the per-frame
-  deferred-destruction path.
+  deferred-destruction path. **`AssetManager::Adopt<T>(Ref<T>)`** wraps an
+  already-resident, runtime-created resource in an `AssetHandle<T>` so it is usable
+  everywhere a cooked, `AssetId`-loaded handle is. The adopted handle carries the
+  invalid `AssetId` (`Id().IsValid() == false`), and its cache entry is **detached**
+  — never inserted into the `AssetId` map, so `CollectGarbage()` ignores it; it
+  stays alive exactly as long as a handle references it. A reflective serializer
+  records the invalid id as "no asset", so a runtime resource is not a persistable
+  content reference.
 - **A `Mesh` can also be built at runtime, no cooker.** `Primitives::Cube` /
   `Plane` / `Sphere` (`Veng/Asset/Primitives.h`) generate CPU-side `MeshData`
   (canonical-layout vertices + `u32` indices + a resident material list + an
@@ -390,7 +397,9 @@ smoke render use.
   never touches an archive — it is owned by whoever calls the factory and retires
   through the per-frame deferred-destruction path like any other `Mesh`. It is
   interchangeable with a cooked mesh at every pipeline and draw call, both being in
-  the canonical layout (`Mesh::CanonicalLayout()`).
+  the canonical layout (`Mesh::CanonicalLayout()`), and `AssetManager::Adopt`
+  wraps its `Ref<Mesh>` in an (id-less) `AssetHandle<Mesh>` so it is equally usable
+  anywhere a cooked handle is — e.g. a `MeshRenderer`.
 - **A mesh owns its materials; submeshes index them.** A `Mesh` holds a resident
   `vector<AssetHandle<Material>>` (`GetMaterials()`) and each `SubMesh` carries a
   `u32 MaterialIndex` into it (`SubMesh::NoMaterial` = unassigned). The cooked

@@ -73,6 +73,14 @@ confused with it.
   above unchanged — a handle is a reference *to* an asset, never a substitute for
   the `Ref<T>` *within* one. This indirection is what lets a future hot-reload
   swap the resource behind a handle without invalidating outstanding handles.
+  **`AssetManager::Adopt<T>(Ref<T>)`** yields an `AssetHandle<T>` over a
+  runtime-created resource (e.g. a `Mesh` from `Primitives`) so it is usable
+  everywhere a cooked handle is. Its cache entry is **detached** — not in the
+  `AssetId` map, so `CollectGarbage()` never touches it — and is kept alive solely
+  by the handles referencing it; the last drop retires the resource through the
+  per-frame path like any eviction. The handle carries the invalid `AssetId`
+  (a runtime resource has no content identity), so it is not a persistable
+  reference.
 
 - **Bindless handles** (`TextureHandle`, `SamplerHandle`, `StorageImageHandle`,
   `MaterialHandle` in `Veng/Renderer/BindlessRegistry.h`) are plain `u32` slot

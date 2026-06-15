@@ -130,7 +130,7 @@ protected:
         // instance on its single submesh. Its near-uniform tessellation shows the
         // brick UV mapping without the pole clustering of a UV sphere.
         // Mesh::Create uploads synchronously, so it is ready to draw.
-        m_Mesh = Veng::Mesh::Create(
+        const Ref<Veng::Mesh> sphere = Veng::Mesh::Create(
             context, Veng::Primitives::Icosphere(0.8f, 4, m_BrickMaterial), "Demo Sphere");
 
         // The compositing path (ImGui overlay + swapchain present) only exists in
@@ -173,10 +173,15 @@ protected:
         m_Scene->Add<Transform>(m_Entity, Transform{
             .Rotation = glm::angleAxis(0.0f, SpinAxis),
         });
-        // A runtime primitive is not an AssetId-addressable asset, so the handle
-        // stays empty; the resident Ref<Mesh> (m_Mesh) is the geometry. The
-        // MeshRenderer's presence is what the draw query selects on.
-        m_Scene->Add<MeshRenderer>(m_Entity, MeshRenderer{});
+        // Adopt the runtime mesh into an AssetHandle so the MeshRenderer holds it
+        // exactly as it would a cooked mesh — the draw reads the geometry off the
+        // component, not a side-held Ref. The adopted handle owns the mesh's
+        // residency; it carries the invalid AssetId (a runtime mesh has no content
+        // identity), and dropping the scene drops the component, the handle, and
+        // the mesh in turn.
+        m_Scene->Add<MeshRenderer>(m_Entity, MeshRenderer{
+            .Mesh = GetAssetManager().Adopt(sphere),
+        });
         m_Scene->Add<Spinner>(m_Entity, Spinner{.SpeedRadiansPerSec = 1.0f});
 
         // Replace the hand-rolled MVP: a Camera looking down -Z at the origin
@@ -257,7 +262,6 @@ protected:
         m_SceneGraph.reset();
         m_CompositeGraph.reset();
         m_Scene.reset();
-        m_Mesh.reset();
         m_BrickMaterial = {};
         m_SceneTexture.reset();
         m_CompositePipeline.reset();
@@ -360,33 +364,34 @@ private:
                 cmd.SetViewport({0, 0}, extent);
                 cmd.SetScissor({0, 0}, extent);
 
-                const Veng::Mesh& mesh = *m_Mesh;
-                const std::span<const AssetHandle<Veng::Material>> materials = mesh.GetMaterials();
-
-                // The brick material loads synchronously in OnInitialize before the
-                // mesh is generated, so the mesh's material list is always resident
-                // here. Guard anyway: an async-loaded material would clear-only until
-                // it lands.
-                bool materialsReady = true;
-                for (const AssetHandle<Veng::Material>& material : materials)
-                    materialsReady = materialsReady && material.IsLoaded();
-                if (!materialsReady)
-                    return;
-
-                cmd.BindVertexBuffer(mesh.GetVertexBuffer());
-                cmd.BindIndexBuffer(mesh.GetIndexBuffer());
-
                 const mat4 viewProjection = m_Camera.ViewProjection();
 
                 const Veng::Renderer::BindlessRegistry& registry = GetRenderContext().GetBindlessRegistry();
 
-                // Source the draw from the scene: each (Transform, MeshRenderer)
-                // entity contributes a model matrix (its world transform). The
-                // runtime primitive lives on m_Mesh; the MeshRenderer selects the
-                // entity for this draw.
+                // Source the draw entirely from the scene: each (Transform,
+                // MeshRenderer) entity draws its own mesh at its world transform.
+                // The mesh is the MeshRenderer's AssetHandle — cooked or adopted
+                // runtime primitive alike.
                 m_Scene->Each<Transform, MeshRenderer>(
-                    [&](Entity entity, Transform&, MeshRenderer&)
+                    [&](Entity entity, Transform&, MeshRenderer& meshRenderer)
                 {
+                    if (!meshRenderer.Mesh.IsLoaded())
+                        return;
+
+                    const Veng::Mesh& mesh = *meshRenderer.Mesh.Get();
+                    const std::span<const AssetHandle<Veng::Material>> materials = mesh.GetMaterials();
+
+                    // An async-loaded material would clear-only until it lands; the
+                    // sample's brick material is loaded synchronously, so this holds.
+                    bool materialsReady = true;
+                    for (const AssetHandle<Veng::Material>& material : materials)
+                        materialsReady = materialsReady && material.IsLoaded();
+                    if (!materialsReady)
+                        return;
+
+                    cmd.BindVertexBuffer(mesh.GetVertexBuffer());
+                    cmd.BindIndexBuffer(mesh.GetIndexBuffer());
+
                     const mat4 world = WorldMatrix(*m_Scene, entity);
                     const mat4 mvp = viewProjection * world;
 
@@ -520,7 +525,6 @@ private:
     Ref<Renderer::Sampler> m_Sampler;
 
     AssetHandle<Veng::Material> m_BrickMaterial;
-    Ref<Veng::Mesh> m_Mesh;
 
     AssetHandle<Veng::Shader> m_CompositeVS;
     AssetHandle<Veng::Shader> m_CompositeFS;

@@ -89,6 +89,30 @@ namespace Veng
             return handle.m_Entry;
         }
 
+        // Wraps an already-resident, runtime-created resource (e.g. a Mesh built
+        // from Primitives) in an AssetHandle<T> so it is usable everywhere a
+        // cooked, AssetId-loaded handle is. The handle carries the invalid
+        // AssetId (Id().IsValid() == false): a runtime resource has no content
+        // identity, so a reflective serializer records it as "no asset". The
+        // backing cache entry is detached — never inserted into the AssetId map,
+        // so CollectGarbage() leaves it alone — and stays alive for exactly as
+        // long as a handle references it; the last drop retires the resource
+        // through the per-frame deferred-destruction path like any other.
+        // Adopting does not deduplicate: each call yields a distinct entry.
+        template <typename T>
+        [[nodiscard]] AssetHandle<T> Adopt(Ref<T> resource)
+        {
+            VE_ASSERT(resource != nullptr, "AssetManager::Adopt: resource is null");
+
+            auto entry = CreateRef<Detail::AssetCacheEntry>(Detail::AssetCacheEntry{
+                .Id = AssetId{},
+                .Type = AssetTypeTrait<T>::Type,
+                .Resource = std::static_pointer_cast<void>(std::move(resource)),
+            });
+
+            return AssetHandle<T>(AssetId{}, std::move(entry));
+        }
+
         // Cached lookup only — never touches mounted archives or loaders.
         template <typename T>
         [[nodiscard]] optional<AssetHandle<T>> Get(AssetId id) const
