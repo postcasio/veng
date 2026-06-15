@@ -79,14 +79,18 @@ cmake --build build-debug -j 2
 
 ## Verification — read before you trust a green run
 
-- **The `HT_SMOKE` PPM is non-deterministic.** The hello-triangle smoke render
-  rotates the triangle by accumulated wall-clock `delta`, so two runs of the same
-  binary produce different pixels. Do **not** golden-compare it. Verify instead
-  with: clean build, `ctest` green, and the smoke binary exiting 0 having written
-  a correctly-sized PPM (1280×720 RGB ≈ 2,764,816 bytes).
+- **The `HT_SMOKE` capture is golden-checked.** Smoke mode renders a fixed pose
+  (`HelloTriangleApp::SmokeAngle`), so the capture is reproducible run to run; the
+  windowed app still rotates by accumulated wall-clock `delta`. The `smoke_golden`
+  ctest renders the scene headless and fuzzy-compares it against
+  `tests/golden/hello_triangle_scene.png` (`ctest --test-dir build -R
+  smoke_golden`). It is labelled `gpu` and skips cleanly with no Vulkan ICD. If a
+  deliberate render change moves the capture, regenerate the golden:
   ```sh
   HT_SMOKE=/tmp/ht.ppm build/examples/hello-triangle/hello_triangle
+  sips -s format png /tmp/ht.ppm --out tests/golden/hello_triangle_scene.png
   ```
+  The capture is a 1280×720 RGB PPM (≈ 2,764,816 bytes).
 - **Validation errors do NOT fail tests by themselves.** The debug-messenger
   callback (`engine/src/Renderer/Backend/Context.cpp`) only `Log::Error`s on validation
   errors — it never aborts. So a green `ctest` under `VE_DEBUG` only means

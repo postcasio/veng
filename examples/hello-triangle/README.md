@@ -33,9 +33,11 @@ cooked to a `.vengpack` by `vengc` at build time, and loaded at runtime by
 The cooked pack's path is baked in at compile time, so the binary runs from any
 working directory.
 
-Smoke-test mode: set `HT_SMOKE=<path.ppm>` and the app renders 20 frames, dumps
-the scene image to that path as a binary PPM, and exits 0. Useful for verifying
-a rendering change without eyeballing the window:
+Smoke-test mode: set `HT_SMOKE=<path.ppm>` and the app renders 20 frames at a
+fixed pose, dumps the scene image to that path as a binary PPM, and exits 0. The
+fixed pose makes the capture reproducible run to run, so the `smoke_golden` ctest
+fuzzy-compares it against `tests/golden/hello_triangle_scene.png`. Useful for
+verifying a rendering change without eyeballing the window:
 
 ```sh
 HT_SMOKE=/tmp/scene.ppm ./build/examples/hello-triangle/hello_triangle

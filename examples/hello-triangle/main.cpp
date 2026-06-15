@@ -146,7 +146,10 @@ protected:
 
     void OnUpdate(const f32 delta) override
     {
-        m_Angle += delta;
+        // Smoke mode captures a fixed pose so the scene is reproducible run to
+        // run and can be golden-compared; the windowed app rotates by accumulated
+        // wall-clock delta.
+        m_Angle = m_SmokeOutput ? SmokeAngle : m_Angle + delta;
 
         // Smoke-test mode: after a few rendered frames, dump the scene image to
         // disk and exit. Runs before this frame's commands are recorded, so the
@@ -466,6 +469,9 @@ private:
     Renderer::ResourceId m_SwapId;
     Renderer::ResourceId m_CompositeSceneId;
     Renderer::ResourceId m_ImGuiId;
+
+    // The fixed rotation the smoke capture renders, in radians.
+    static constexpr f32 SmokeAngle = 0.9f;
 
     f32 m_Angle = 0.0f;
     u32 m_FrameCount = 0;

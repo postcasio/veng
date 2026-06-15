@@ -310,6 +310,12 @@ if (VENG_BUILD_TESTS)
 
     add_test(NAME include_hygiene COMMAND veng_include_hygiene)
 
+    # Fuzzy image comparator for the golden smoke test (smoke_golden, registered
+    # after the examples). Links no veng/Vulkan — just stb_image, which decodes
+    # both the PPM capture and the PNG golden — so it runs with or without a GPU.
+    add_executable(veng_golden_compare tests/golden_compare.cpp)
+    target_include_directories(veng_golden_compare PRIVATE ${stb_SOURCE_DIR})
+
     # Headless smoke test: brings up a windowless context, renders off-screen and
     # verifies downloaded pixels. Skips (SKIP_RETURN_CODE 77) with no Vulkan ICD.
     add_executable(veng_headless_smoke tests/headless_smoke.cpp)
@@ -431,6 +437,23 @@ option(VENG_BUILD_EXAMPLES "Build the sample applications" ${PROJECT_IS_TOP_LEVE
 
 if (VENG_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif ()
+
+# Golden smoke test: render the hello-triangle scene headless and compare it
+# against the checked-in golden. Needs both the example app and the test
+# comparator, so it's registered here, after the examples subdirectory defines
+# hello_triangle. Labelled `gpu`; the script skips cleanly with no Vulkan ICD.
+if (VENG_BUILD_TESTS AND TARGET hello_triangle AND TARGET veng_golden_compare)
+    add_test(NAME smoke_golden
+        COMMAND ${CMAKE_COMMAND}
+            -D VENG_SMOKE_BIN=$<TARGET_FILE:hello_triangle>
+            -D VENG_COMPARE_BIN=$<TARGET_FILE:veng_golden_compare>
+            -D VENG_PROBE_BIN=$<TARGET_FILE:veng_headless_smoke>
+            -D VENG_GOLDEN=${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/hello_triangle_scene.png
+            -D VENG_TMP=${CMAKE_CURRENT_BINARY_DIR}/smoke_golden_capture.ppm
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SmokeGolden.cmake
+    )
+    set_tests_properties(smoke_golden PROPERTIES LABELS gpu)
 endif ()
 
 # ---------------------------------------------------------------------------
