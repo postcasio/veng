@@ -180,7 +180,7 @@ namespace Veng::Renderer
             .basePipelineIndex = 0,
         };
 
-        m_Native->Pipeline = GetVkDevice(m_Context).createGraphicsPipeline(nullptr, pipelineInfo).value;
+        m_Native->Pipeline = GetVkDevice(m_Context).createGraphicsPipeline(GetVkPipelineCache(m_Context), pipelineInfo).value;
 
         DebugMarkers::MarkPipeline(GetVkDevice(m_Context), m_Native->Pipeline, m_Name);
     }

@@ -34,6 +34,7 @@ namespace Veng::Renderer
     [[nodiscard]] inline vk::Queue GetVkPresentQueue(const Context& context) { return context.GetNative().PresentQueue; }
     [[nodiscard]] inline vk::SurfaceKHR GetVkSurface(const Context& context) { return context.GetNative().Surface; }
     [[nodiscard]] inline VmaAllocator GetVmaAllocator(const Context& context) { return context.GetNative().Allocator; }
+    [[nodiscard]] inline vk::PipelineCache GetVkPipelineCache(const Context& context) { return context.GetNative().PipelineCache; }
 
     [[nodiscard]] inline vk::Buffer GetVkBuffer(const Buffer& buffer) { return buffer.GetNative().Buffer; }
     [[nodiscard]] inline VmaAllocation GetVmaAllocation(const Buffer& buffer) { return buffer.GetNative().Allocation; }

@@ -34,6 +34,7 @@ namespace Veng::Renderer
         vk::Queue TransferQueue;
         vk::SurfaceKHR Surface;
         vk::DebugUtilsMessengerEXT DebugMessenger;
+        vk::PipelineCache PipelineCache;
         VmaAllocator Allocator = nullptr;
 
         const vector<const char*> ValidationLayers = vector<const char*>({"VK_LAYER_KHRONOS_validation"});

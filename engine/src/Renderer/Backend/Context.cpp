@@ -189,6 +189,9 @@ namespace Veng::Renderer
 
         VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Native->Device);
 
+        vk::PipelineCacheCreateInfo cacheInfo{};
+        m_Native->PipelineCache = m_Native->Device.createPipelineCache(cacheInfo).value;
+
         VmaAllocatorCreateInfo allocatorInfo{
             .physicalDevice = m_Native->PhysicalDevice,
             .device = m_Native->Device,
@@ -341,6 +344,7 @@ namespace Veng::Renderer
         m_Native->GraphicsQueue = nullptr;
         m_Native->TransferQueue = nullptr;
         vmaDestroyAllocator(m_Native->Allocator);
+        m_Native->Device.destroyPipelineCache(m_Native->PipelineCache);
         m_Native->Device.destroy();
         if (m_Native->Surface)
         {
