@@ -1,7 +1,7 @@
 {
   "version": 1,
   "assets": [
-    { "id": 1001, "type": "texture",  "source": "textures/brick.tex.json" },
+    { "id": 1001, "type": "texture",  "source": "textures/brick16b.tex.json" },
     { "id": 1002, "type": "mesh",     "source": "meshes/cube.mesh.json" },
     { "id": 1004, "type": "shader",   "source": "shaders/brick.vert.shader.json" },
     { "id": 1005, "type": "shader",   "source": "shaders/brick.frag.shader.json" },

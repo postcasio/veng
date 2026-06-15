@@ -1,0 +1,11 @@
+{
+  "image": "brick16b.png",
+  "srgb": true,
+  "sampler": {
+    "min": "linear",
+    "mag": "linear",
+    "mipmap": "linear",
+    "wrap_u": "repeat",
+    "wrap_v": "repeat"
+  }
+}
