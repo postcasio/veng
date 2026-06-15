@@ -216,6 +216,7 @@ if (VENG_BUILD_TESTS)
                 tests/cooker/shader_cook.cpp
                 tests/cooker/material_cook.cpp
                 tests/cooker/vertex_layout_cook.cpp
+                tests/cooker/verify.cpp
         )
         target_link_libraries(veng_unit PRIVATE veng::cook)
         target_compile_definitions(veng_unit PRIVATE

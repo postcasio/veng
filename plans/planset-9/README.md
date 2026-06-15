@@ -177,7 +177,7 @@ format-version bump later"*).
 | 03 | [Context-owned in-memory cache](03-in-memory-cache.md) | B | A `vk::PipelineCache` in `Context::Native` + a `GetVkPipelineCache` accessor, threaded into both pipeline factories. No disk; pixels unchanged. | done |
 | 04 | [Disk persistence (opt-in)](04-disk-persistence.md) | B | `ApplicationInfo::PipelineCachePath`: seed from the file at init, write at shutdown; `nullopt` keeps plan 03 behaviour. Sample opts in; headless smoke proves the round-trip. | proposed |
 | 05 | [Format v2 + cooker writes hashes](05-format-and-write.md) | C | `ContentHash` per TOC entry + a header digest over the serialized TOC bytes; `ArchiveFormatVersion` → 2; `assetformat` round-trips (no hash dep); cooker computes xxh3-128 + writes; loader reads-but-ignores; re-cook packs. | done |
-| 06 | [`vengc verify`](06-verify-tool.md) | C | A `vengc verify <archive>` subcommand: re-hash blobs + digest, report per-asset, exit nonzero on any mismatch. Cooker-side only. | proposed |
+| 06 | [`vengc verify`](06-verify-tool.md) | C | A `vengc verify <archive>` subcommand: re-hash blobs + digest, report per-asset, exit nonzero on any mismatch. Cooker-side only. | done |
 | 07 | [Docs + roadmap re-cut](07-docs-roadmap.md) | — | One pass over `plans/README.md`, `CLAUDE.md`, and the future docs for all three streams: area 6's game-module prerequisite delivered (reflection handed to the editor), pipeline-caching + content-hashes cross-cutting concerns resolved. | proposed |
 
 ## Dependencies & dispatching

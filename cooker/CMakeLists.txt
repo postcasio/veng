@@ -87,6 +87,7 @@ set_target_properties(slang::slang PROPERTIES
 add_library(libveng_cook STATIC
         src/AssetPack.cpp
         src/Cooker.cpp
+        src/Verify.cpp
         src/BuiltinImporters.cpp
         src/Importers/RawImporter.cpp
         src/Importers/TextureImporter.cpp
@@ -107,7 +108,7 @@ target_include_directories(libveng_cook PUBLIC
 
 # stb_image (texture decode) and xxHash (archive content hashing) — header-only
 # implementation details of src/Vendor/StbImage.cpp / TextureImporter.cpp and
-# src/Vendor/XxHash.cpp / Cooker.cpp respectively.
+# src/Vendor/XxHash.cpp / Cooker.cpp & Verify.cpp respectively.
 target_include_directories(libveng_cook PRIVATE
         ${stb_SOURCE_DIR}
         ${xxhash_SOURCE_DIR}

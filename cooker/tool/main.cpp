@@ -1,6 +1,7 @@
 #include <Veng/Cook/AssetPack.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
+#include <Veng/Cook/Verify.h>
 
 #include <fmt/format.h>
 
@@ -14,7 +15,8 @@ namespace
         fmt::print(stderr,
             "usage:\n"
             "  vengc cook <pack.json> [-o <out.vengpack>] [--reference <pack.json>]...\n"
-            "  vengc generate-id [--reference <pack.json>]...\n");
+            "  vengc generate-id [--reference <pack.json>]...\n"
+            "  vengc verify <archive.vengpack>\n");
     }
 }
 
@@ -144,6 +146,35 @@ int main(int argc, char** argv)
         fmt::print("hex (C++):      0x{:X}\n", id.Value);
         fmt::print("decimal (JSON): {}\n", id.Value);
         return 0;
+    }
+
+    // -------------------------------------------------------------------
+    // vengc verify
+    // -------------------------------------------------------------------
+    if (subcommand == "verify")
+    {
+        optional<path> archivePath;
+
+        for (usize i = 1; i < args.size(); ++i)
+        {
+            if (!archivePath)
+            {
+                archivePath = path(args[i]);
+            }
+            else
+            {
+                fmt::print(stderr, "vengc: unexpected argument '{}'\n", args[i]);
+                return 1;
+            }
+        }
+
+        if (!archivePath)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        return VerifyArchiveCli(*archivePath);
     }
 
     PrintUsage();
