@@ -17,6 +17,8 @@ add_library(veng SHARED
         src/Asset/Loaders/TextureLoader.cpp
         src/Asset/Loaders/VertexLayoutLoader.cpp
         src/Log.cpp
+        src/Module/ApplicationRegistry.cpp
+        src/Module/ModuleLoader.cpp
         src/Task/TaskSystem.cpp
         src/Time.cpp
         src/Window.cpp
@@ -106,4 +108,5 @@ target_link_libraries(veng PRIVATE
         GPUOpen::VulkanMemoryAllocator
         nfd
         ZLIB::ZLIB
+        ${CMAKE_DL_LIBS}
 )

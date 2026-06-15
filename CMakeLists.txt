@@ -310,6 +310,30 @@ if (VENG_BUILD_TESTS)
 
     add_test(NAME include_hygiene COMMAND veng_include_hygiene)
 
+    # ---- Module ABI + loader (plan 01, driver-free) -------------------------
+    # A real game module and a wrong-version variant, each a SHARED library
+    # linking veng::veng and exporting VengModuleRegister + VengModuleAbiVersion.
+    # bad_version_module forces a mismatched ABI version so the loader rejects it.
+    # loader_test loads both through the real platform loader by the path CMake
+    # bakes in, proving the load -> version-check -> register round-trip.
+    add_library(veng_test_module SHARED tests/module/test_module.cpp)
+    target_link_libraries(veng_test_module PRIVATE veng::veng)
+
+    add_library(veng_bad_version_module SHARED tests/module/bad_version_module.cpp)
+    target_link_libraries(veng_bad_version_module PRIVATE veng::veng)
+    target_compile_definitions(veng_bad_version_module PRIVATE VENG_MODULE_ABI_VERSION=999999u)
+
+    add_executable(veng_loader_test tests/module/loader_test.cpp)
+    target_link_libraries(veng_loader_test PRIVATE veng::veng)
+    add_dependencies(veng_loader_test veng_test_module veng_bad_version_module)
+    target_compile_definitions(veng_loader_test PRIVATE
+            VENG_TEST_MODULE_PATH="$<TARGET_FILE:veng_test_module>"
+            VENG_BAD_VERSION_MODULE_PATH="$<TARGET_FILE:veng_bad_version_module>"
+    )
+
+    add_test(NAME loader_test COMMAND veng_loader_test)
+    set_tests_properties(loader_test PROPERTIES LABELS module)
+
     # Fuzzy image comparator for the golden smoke test (smoke_golden, registered
     # after the examples). Links no veng/Vulkan — just stb_image, which decodes
     # both the PPM capture and the PNG golden — so it runs with or without a GPU.

@@ -58,6 +58,17 @@
   #define VE_API __attribute__((visibility("default")))
 #endif
 
+// The export attribute for a module's C-ABI entry point. A module always
+// DEFINES and exports this symbol, so it must carry export semantics on every
+// platform — never dllimport. VE_API cannot be reused: in a consumer VE_API is
+// dllimport on Windows, which would mark the entry the module itself defines as
+// an import (a link error). So VE_MODULE_EXPORT is unconditionally export.
+#if defined(_WIN32)
+  #define VE_MODULE_EXPORT __declspec(dllexport)
+#else
+  #define VE_MODULE_EXPORT __attribute__((visibility("default")))
+#endif
+
 namespace Veng
 {
     using path = std::filesystem::path;

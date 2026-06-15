@@ -44,6 +44,10 @@
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/ImGui/ImGuiTexture.h>
 
+#include <Veng/Module/ApplicationRegistry.h>
+#include <Veng/Module/Module.h>
+#include <Veng/Module/ModuleLoader.h>
+
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/ComputePipeline.h>
