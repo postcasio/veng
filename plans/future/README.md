@@ -189,11 +189,16 @@ cross-cutting concerns below. Spans **several plansets**; **design overview:**
 
 A prerequisite the **scene editor** (area 6) cannot proceed without, and useful in
 its own right: a transform hierarchy, a component system, component types described
-through the area-6 reflection layer (so inspectors + serialization work), and a
-**scene asset type** that cooks and loads like the others (planset-5 explicitly
-descoped scene assets). Interacts with area 4 (events/input) and the
-`TypeRegistry`. Undetailed — gets its own design pass when taken up, ahead of the
-scene editor.
+through the reflection layer (so inspectors + serialization work), and a **scene asset
+type** that cooks and loads like the others (planset-5 explicitly descoped scene
+assets). Interacts with area 4 (events/input) and the `TypeRegistry`.
+
+The **runtime model** — `Scene`/`Entity`, type-erased components, queries, the
+transform hierarchy, `Camera`, the reflection layer with game-defined types, and a
+runtime-built scene — is taken up by **[planset-10](../planset-10/README.md)**. The
+**cooked `.scene` asset** is split off into **[area 10](#10-cooker-side-module-reflection--the-cooker-loads-the-game-module)**
+(prioritized next), because cooking a scene that contains game-defined components needs
+the cooker to reflect those components — i.e. to load the game module.
 
 ### 8. Scene renderer / render-pipeline architecture
 
@@ -237,6 +242,54 @@ per frame, alias-able) vs. **imported** concrete resources (swapchain / owned
 targets) — which is what lets passes be authored as reusable units. The enabling
 prerequisite for area 8, and a home for area 2's parallel pass recording.
 
+### 10. Cooker-side module reflection — the cooker loads the game module
+
+> **Prioritized — the next planset**, taken up immediately after area 7's runtime
+> scene model ([planset-10](../planset-10/README.md)). Its prerequisites are in place:
+> the game-module build model ([planset-9](../planset-9/README.md)) and the reflection
+> layer + runtime `Scene`/`TypeRegistry` (planset-10).
+
+The cooker gains the ability to **`dlopen` the game module and reflect its native
+types**. `vengc` loads `libgame`, calls the C-ABI `VengModuleRegister` with a host
+carrying a `TypeRegistry`, and the module registers its component types — descriptors
+and all — into it, realizing the **`TypeRegistry&`-on-`VengModuleHost`** seam
+planset-10 deferred as additive. The cooker then knows every component's shape, engine
+builtins and game-defined alike.
+
+**Primary deliverable — the cooked `.scene` asset.** A `*.scene.json` source (entities
++ components + field values) cooks into a binary scene blob in the pack, loaded at
+runtime into a `Scene`. The importer **validates the source against the reflected
+component descriptors** — unknown component, wrong field type, missing field caught at
+cook time — exactly as the material importer validates `*.vmat.json` against a shader's
+reflected `ShaderInterface` today. This is the piece planset-10 named as its hardest
+deferred problem; module reflection is its enabler. (planset-10's **name-keyed,
+schema-tolerant** serialization means the cooker can emit a layout-agnostic value tree
+and let the runtime's reflection bind it on load — but with the module loaded the
+cooker also gets full **validation**, not blind passthrough.)
+
+**The cost, recorded honestly** — why it is its own phase, not a footnote:
+
+- **It inverts the cooker → runtime dependency.** The cooker is Vulkan-free and never
+  links `libveng` today; loading `libgame` pulls `libveng` (and its graphics stack)
+  into the cooker's process. The clean separation is relaxed deliberately, scoped to
+  the load path.
+- **It needs a GPU-free registration contract.** Type registration must run with no
+  live `Context`/device (the cooker is headless, no ICD on CI). `Register<T>` + the
+  `Application`-factory lambda are GPU-free by design; this phase makes that a
+  *guaranteed, tested* contract rather than an incidental property.
+- **It adds a build-order edge.** A `.scene` cooks only after `libgame` is built, so
+  the build graph grows a `lib → cook-scenes → bundle` edge (ordinary asset packs stay
+  independent of the lib).
+- **It ties cooking to host == target.** `dlopen` reflection cannot load a
+  cross-compiled target lib on the build host; cooking stays a host-tool activity for
+  host == target (a latent constraint for the anticipated Windows port).
+
+**Secondary payoffs.** A reflected type table is a real source of truth for tooling: a
+generated **type manifest** (names → `TypeId`s) for optional `generate-type-id` dedup,
+and the **same seam the editor's native-type inspectors (area 6) will read** — the
+cooker and the editor share one mechanism for "see a game's types," rather than each
+inventing its own. Splitting it out here means the editor inherits it solved.
+
 ## Ordering & dependencies
 
 A first cut at sequencing — the order to *take the areas up* (each becomes its own
@@ -256,10 +309,13 @@ is closed and the scene renderer's enabling prerequisite is met:
 9 compiled RenderGraph ✅
 
 remaining:
-  6 editor (game-module → shell → material editor) ──┐  (wants 2's async path ✅)
-  7 scene/entity model ──► 6's scene editor          │
-  8 scene renderer ──► needs 7 (Scene/Camera) + 6    ┘  (9 ✅ — no rendering gate left)
-  4 events/input — independent, gameplay-driven (any time)
+  7  scene/entity model (runtime) ──► planset-10 (in progress)
+  10 cooker module reflection + cooked .scene ──► PRIORITIZED NEXT
+        (needs 7 + planset-9 module model)
+  6  editor (shell → material editor → scene editor)   (wants 2's async path ✅;
+        scene editor needs 7 + 10; inspectors reuse 10's module reflection)
+  8  scene renderer ──► needs 7 (Scene/Camera) + 6     (9 ✅ — no rendering gate left)
+  4  events/input — independent, gameplay-driven (any time)
 ```
 
 ~~1. Test harness + pure-logic tests (area 5, first half).~~ Done — planset-3.
@@ -285,15 +341,26 @@ resource model, the typed `PassContext`, one-time validation, and transient
 aliasing via a pure unit-tested live-range rule). Satisfies area 8's enabling
 prerequisite.
 
-1. **Editor application (area 6).** The authoring environment, spanning several
+1. **Scene/entity model — runtime (area 7).** The `Scene`/`Entity`/`TypeRegistry`
+   core, reflection layer, transform hierarchy, `Camera`, and game-defined component
+   types — **in progress as [planset-10](../planset-10/README.md)**.
+
+2. **Cooker-side module reflection + cooked `.scene` (area 10) — PRIORITIZED NEXT.**
+   The cooker `dlopen`s the game module to reflect its native types, realizing the
+   `VengModuleHost` `TypeRegistry&` seam and delivering the cooked `.scene` asset
+   (validated against the reflected descriptors, the way materials are validated
+   against shader reflection). Gated on area 7 (planset-10) + the planset-9 module
+   model — both in place once planset-10 lands.
+
+3. **Editor application (area 6).** The authoring environment, spanning several
    plansets: the [game-module build model](game-module.md) (shared lib + launcher,
-   C-ABI app registration) is **done — planset-9** (in-tree; native-type reflection
-   deferred to the editor shell); next is the [editor shell + framework](editor.md)
-   (cook-on-demand, single-window docking, the texture editor — and now the
-   **type-reflection layer**, designed against the inspector), then the node-based
-   **material editor**. It builds on area 2's async path (done) for non-stalling
-   live preview. The **scene editor** within it is gated on the **scene/entity
-   model (area 7)**, which lands ahead of it.
+   C-ABI app registration) is **done — planset-9** (in-tree); next is the
+   [editor shell + framework](editor.md) (cook-on-demand, single-window docking, the
+   texture editor), then the node-based **material editor**. Its native-type
+   **inspectors reuse area 10's module reflection** rather than re-introducing it. It
+   builds on area 2's async path (done) for non-stalling live preview. The **scene
+   editor** within it is gated on the scene/entity model (area 7) **and** the cooked
+   scene asset (area 10), which land ahead of it.
 
 **Event & input (area 4)** is off the critical path — independent of the
 rendering/asset/threading work and driven by gameplay needs, so slot it in
@@ -378,13 +445,16 @@ Vision only beyond what's noted done above. Areas 3 and 5 are complete
 complete** (planset-6), and **area 9 (compiled `RenderGraph`) is complete**
 (planset-8). **Area 6's first sub-area — the game-module build model — is done
 (planset-9)** (shared lib + launcher + C-ABI app registration, in-tree); the editor
-shell (now owning the type-reflection layer), the material editor, and the scene
-editor remain future, and the **pipeline-caching** and **content-hashes**
-cross-cutting concerns are **resolved** (planset-9). What remains
-undetailed/unscheduled: **area 4** (events/input), the rest of **area 6** (editor —
-[editor.md](editor.md) / [game-module.md](game-module.md)), **area 7**
-(scene/entity model), and **area 8** (scene renderer —
-[scene-renderer.md](scene-renderer.md)); plus **hot-reload**, named within area 1
-but deferred (its re-cook half conflicts with offline-only cooking — needs a
-dev-only watcher design). Each becomes its own planset (area 6, several) when taken
-up.
+shell, the material editor, and the scene editor remain future, and the
+**pipeline-caching** and **content-hashes** cross-cutting concerns are **resolved**
+(planset-9).
+
+**Area 7 (scene/entity model — runtime) is in progress as planset-10**, and **area 10
+(cooker-side module reflection + the cooked `.scene` asset) is the prioritized next
+planset** once it lands. What remains undetailed/unscheduled beyond those: **area 4**
+(events/input), the rest of **area 6** (editor — [editor.md](editor.md) /
+[game-module.md](game-module.md), whose native-type inspectors reuse area 10's module
+reflection), and **area 8** (scene renderer — [scene-renderer.md](scene-renderer.md));
+plus **hot-reload**, named within area 1 but deferred (its re-cook half conflicts with
+offline-only cooking — needs a dev-only watcher design). Each becomes its own planset
+(area 6, several) when taken up.

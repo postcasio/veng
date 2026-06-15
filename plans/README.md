@@ -112,18 +112,29 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   and C each resolve a **cross-cutting concern** (pipeline caching; content hashes)
   from [future/README.md](future/README.md).
 
+- **[planset-10](planset-10/README.md)** — scene / entity model (🚧 in progress,
+  proposed). Takes up future area 7's **runtime** half: a hand-rolled sparse-set ECS
+  (`Scene`/`Entity`, type-erased components, queries), a reflection layer (one stable
+  `TypeId` space authored like `AssetId`, `FieldClass`, `VE_REFLECT` describe-blocks
+  with editor metadata, a tolerant name-keyed serializer), a transform hierarchy, a
+  `Camera`, and **game-defined component types**. The cooked `.scene` asset and the
+  module-ABI registration seam are held back to area 10 (next).
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
-  holding area; not a planset). Remaining areas: the **editor application** (its
+  holding area; not a planset). **The prioritized next planset is area 10 —
+  cooker-side module reflection** (the cooker `dlopen`s the game module to reflect its
+  native types, realizing the `VengModuleHost` `TypeRegistry&` seam and delivering the
+  cooked `.scene` asset). Other remaining areas: the **editor application** (its
   game-module build model is **delivered by planset-9** — the editor shell +
   cooker-on-demand + docking, the material node editor, and the scene editor remain
-  future, with the type-reflection layer now owned by the editor-shell sub-area —
+  future, its native-type inspectors reusing area 10's module reflection —
   [editor.md](future/editor.md) / [game-module.md](future/game-module.md), several
-  plansets), its prerequisite scene/entity model, and the event/input systems. Each
-  becomes its own planset when taken up. (Testing areas 5a/5b, de-globalizing the
-  context (area 3), the asset system's synchronous slice + bindless (area 1), and
-  the threading/task system (area 2 — which also turned area 1's `LoadSync` into the
-  async `Load` default) are done — planset-3, planset-4, planset-5, and planset-6
-  respectively; area 6's **game-module prerequisite** and the **pipeline-caching**
-  and **content-hashes** cross-cutting concerns are resolved by planset-9.
-  Hot-reload remains future: its re-cook half conflicts with offline-only cooking
-  and needs a dev-only watcher design.)
+  plansets), the scene renderer (area 8), and the event/input systems. Each becomes
+  its own planset when taken up. (Testing areas 5a/5b, de-globalizing the context
+  (area 3), the asset system's synchronous slice + bindless (area 1), and the
+  threading/task system (area 2 — which also turned area 1's `LoadSync` into the async
+  `Load` default) are done — planset-3, planset-4, planset-5, and planset-6
+  respectively; area 6's **game-module prerequisite** and the **pipeline-caching** and
+  **content-hashes** cross-cutting concerns are resolved by planset-9; **area 7's
+  runtime half is in progress as planset-10**. Hot-reload remains future: its re-cook
+  half conflicts with offline-only cooking and needs a dev-only watcher design.)
