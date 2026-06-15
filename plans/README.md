@@ -89,15 +89,41 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   non-overlapping transients share backing. Builds only on the shipped `RenderGraph`
   and is the enabling prerequisite for the scene renderer (area 8).
 
+- **[planset-9](planset-9/README.md)** — game-module build model, pipeline cache
+  & archive hashes (✅ done, 7 plans). Bundles three independent shipping-hygiene
+  streams. **(A) Game-module build model** — a game stops being a self-contained
+  exe and becomes `libhello_triangle`-style `libgame` (shared, the runtime) + a
+  thin **launcher** (the shipped exe) that `dlopen`s it through one C-ABI
+  `VengModuleRegister(VengModuleHost*)` entry, into which the module registers its
+  `Application` factory (`ApplicationRegistry`); a `VengModuleAbiVersion` handshake
+  rejects a stale module at load, and `veng_add_game` emits the lib + launcher as a
+  **relocatable trio** (module resolved beside the launcher via `$ORIGIN`/
+  `@loader_path`, pack + assets via `ExecutableDirectory()`). `hello-triangle` ships
+  as `libhello_triangle` + a launcher and the smoke runs through it. Stream A is
+  **future area 6's first sub-area** (the editor's prerequisite); its
+  type-reflection layer is **deferred to the editor-shell planset**, designed
+  against the inspector, and `libgame_editor`/`EditorRegistry` stay future (the ABI
+  carries a reserved-null `EditorRegistry*` for them). **(B) Pipeline cache** — a
+  context-owned `vk::PipelineCache` reused across every pipeline build, with opt-in
+  disk persistence via `ApplicationInfo::PipelineCachePath`. **(C) Archive content
+  hashes** — `.vengpack` format v2 carries a content hash per cooked blob + a
+  table-of-contents digest, cooker-written (xxh3-128) and `vengc verify`-checked;
+  the loader never verifies and `assetformat`/`libveng` gain no hash dependency. B
+  and C each resolve a **cross-cutting concern** (pipeline caching; content hashes)
+  from [future/README.md](future/README.md).
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
-  holding area; not a planset). Remaining areas: the **editor application** (a
-  shared-library game-module model + a cooker-consuming editor with docking, a
-  material node editor, and a scene editor — [editor.md](future/editor.md) /
-  [game-module.md](future/game-module.md), several plansets), its prerequisite
-  scene/entity model, and the event/input systems. Each becomes its own planset
-  when taken up. (Testing areas 5a/5b, de-globalizing the context (area 3), the
-  asset system's synchronous slice + bindless (area 1), and the threading/task
-  system (area 2 — which also turned area 1's `LoadSync` into the async `Load`
-  default) are done — planset-3, planset-4, planset-5, and planset-6
-  respectively. Hot-reload remains future: its re-cook half conflicts with
-  offline-only cooking and needs a dev-only watcher design.)
+  holding area; not a planset). Remaining areas: the **editor application** (its
+  game-module build model is **delivered by planset-9** — the editor shell +
+  cooker-on-demand + docking, the material node editor, and the scene editor remain
+  future, with the type-reflection layer now owned by the editor-shell sub-area —
+  [editor.md](future/editor.md) / [game-module.md](future/game-module.md), several
+  plansets), its prerequisite scene/entity model, and the event/input systems. Each
+  becomes its own planset when taken up. (Testing areas 5a/5b, de-globalizing the
+  context (area 3), the asset system's synchronous slice + bindless (area 1), and
+  the threading/task system (area 2 — which also turned area 1's `LoadSync` into the
+  async `Load` default) are done — planset-3, planset-4, planset-5, and planset-6
+  respectively; area 6's **game-module prerequisite** and the **pipeline-caching**
+  and **content-hashes** cross-cutting concerns are resolved by planset-9.
+  Hot-reload remains future: its re-cook half conflicts with offline-only cooking
+  and needs a dev-only watcher design.)

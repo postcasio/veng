@@ -149,15 +149,21 @@ cross-cutting concerns below. Spans **several plansets**; **design overview:**
 [editor.md](editor.md), with the prerequisite build-model change in
 [game-module.md](game-module.md). The shape:
 
-- **Games become a shared library + a launcher** ([game-module.md](game-module.md)).
-  A game is `libgame` (shared, the runtime) + a thin launcher exe + an editor-only
-  `libgame_editor` (shared, never shipped). The editor and the launcher are both
-  *hosts* that load `libgame`; only the editor also loads `libgame_editor`. This is
-  what lets the editor see a game's **native types** — registered through a C-ABI
-  entry point into a `TypeRegistry` (C++ has no reflection), with hand-written field
-  descriptors driving auto-inspectors. The build-model + launcher shipped in planset-9
-  (in-tree); **installing `veng_add_game` for downstream `find_package(veng)` consumers
-  remains forward work** (see [game-module.md](game-module.md)).
+- **Games become a shared library + a launcher — DONE (planset-9, in-tree)**
+  ([game-module.md](game-module.md)). A game is `libgame` (shared, the runtime) + a
+  thin launcher exe; the launcher `dlopen`s `libgame` and calls one C-ABI
+  `VengModuleRegister` entry, into which the module registers its `Application`
+  factory (`ApplicationRegistry`), with a `VengModuleAbiVersion` handshake and a
+  relocatable launcher/lib/pack trio ([planset-9](../planset-9/README.md)). The
+  editor-only `libgame_editor` (shared, never shipped) + the `EditorRegistry` it
+  registers into + the editor host that loads it are **still future** — the ABI
+  reserves a null `EditorRegistry*` slot for them. The **type-reflection layer**
+  (`TypeRegistry`, the mechanism that lets the editor see a game's **native types** —
+  C++ has no reflection — with hand-written field descriptors driving
+  auto-inspectors) was **deferred out of this prerequisite into the editor-shell
+  sub-area**, to be designed against the real inspector. Also still future:
+  **installing `veng_add_game` for downstream `find_package(veng)` consumers** (see
+  [game-module.md](game-module.md)).
 - **The editor is a cooker consumer** ([editor.md](editor.md)). The runtime never
   links importers; the editor — a tool — links `libveng_cook` for **cook-on-demand**,
   reading *source* assets, cooking live (off-thread), and previewing through the
@@ -281,8 +287,10 @@ prerequisite.
 
 1. **Editor application (area 6).** The authoring environment, spanning several
    plansets: the [game-module build model](game-module.md) (shared lib + launcher,
-   native-type registration) first, then the [editor shell + framework](editor.md)
-   (cook-on-demand, single-window docking, the texture editor), then the node-based
+   C-ABI app registration) is **done — planset-9** (in-tree; native-type reflection
+   deferred to the editor shell); next is the [editor shell + framework](editor.md)
+   (cook-on-demand, single-window docking, the texture editor — and now the
+   **type-reflection layer**, designed against the inspector), then the node-based
    **material editor**. It builds on area 2's async path (done) for non-stalling
    live preview. The **scene editor** within it is gated on the **scene/entity
    model (area 7)**, which lands ahead of it.
@@ -339,23 +347,23 @@ to decide early than to retrofit.
   exercises the asset/material surface as it's built — it doubles as the richer
   sample. Now a detailed area of its own — see [area 6](#6-editor-application)
   ([editor.md](editor.md), [game-module.md](game-module.md)). *(area 1 → area 6.)*
-- **Pipeline caching.** Persist `VkPipelineCache` to disk once materials multiply
-  — load-time win, naturally part of the asset/material phase. *(area 1.)*
-- **Content hashes in the vengpack archives.** Carry a content hash per cooked
-  blob (and/or a whole-archive digest) in the pack/archive format. Buys three
-  things that compound as the asset count grows: **integrity verification**
-  (detect a truncated/corrupt blob), **incremental cooking** (skip re-cooking a
-  source whose inputs hash unchanged), and **deduplication** (identical cooked
-  blobs share storage). Decide the hash's scope (per-blob vs. whole-archive),
-  algorithm, and where it sits in the header before the archive format is widely
-  depended on — adding it later is a format-version bump.
-  **The loader does not verify.** Hashing every blob at load would be slow and
-  the hashes are there for tooling, not the hot path — the runtime trusts its
-  packs. Write the hashes in the cooker and expose verification as a separate
-  **`vengc verify`** tool that re-hashes an archive's blobs and reports
-  mismatches on demand. Touches `assetformat` (the on-disk layout in
-  `CookedBlobs.h` / `AssetPack.h`) and the cooker (compute on write + the verify
-  tool); the engine loader is deliberately untouched. *(area 1.)*
+- ~~**Pipeline caching.**~~ **Resolved — planset-9.** `Context` owns a
+  `vk::PipelineCache` reused across every pipeline build, with opt-in disk
+  persistence via `ApplicationInfo::PipelineCachePath` (seed at init, write at
+  shutdown; a stale/foreign blob starts cold). A veng-chosen **default cache
+  directory** and **off-thread pipeline creation** (which would need cache sync)
+  stay future. *(area 1, resolved.)*
+- ~~**Content hashes in the vengpack archives.**~~ **Resolved — planset-9.** The
+  `.vengpack` format is at **v2**: a content hash per cooked blob **and** a
+  table-of-contents digest (over the serialized TOC bytes), cooker-written via
+  xxh3-128. **The loader does not verify** (the runtime trusts its packs);
+  verification is the separate **`vengc verify`** tool, which re-hashes the blobs +
+  digest and exits nonzero on any mismatch. The hash function lives only in the
+  cooker/verify tool, so `assetformat` (it stores the raw bytes) and `libveng` gain
+  no hash dependency. The per-blob field now **unblocks** **deduplication**
+  (content-addressed storage) and **incremental cooking** (skip re-cooking a source
+  whose inputs hash unchanged) — both build on it with no further format bump.
+  *(area 1, resolved.)*
 - **Process discipline.** Keep planset-1's cadence — small, sample-verified,
   per-plan increments. planset-4 followed this for de-global (3) and planset-6 for
   threading (2) — nine small plans rather than a big-bang sweep, which on the
@@ -368,9 +376,14 @@ Vision only beyond what's noted done above. Areas 3 and 5 are complete
 (planset-3, planset-4), **area 1 is complete** — its synchronous slice + bindless
 (planset-5) and its **async** half (planset-6) — **area 2 (threading) is
 complete** (planset-6), and **area 9 (compiled `RenderGraph`) is complete**
-(planset-8). What remains undetailed/unscheduled: **area 4** (events/input),
-**area 6** (editor — [editor.md](editor.md) / [game-module.md](game-module.md)),
-**area 7** (scene/entity model), and **area 8** (scene renderer —
+(planset-8). **Area 6's first sub-area — the game-module build model — is done
+(planset-9)** (shared lib + launcher + C-ABI app registration, in-tree); the editor
+shell (now owning the type-reflection layer), the material editor, and the scene
+editor remain future, and the **pipeline-caching** and **content-hashes**
+cross-cutting concerns are **resolved** (planset-9). What remains
+undetailed/unscheduled: **area 4** (events/input), the rest of **area 6** (editor —
+[editor.md](editor.md) / [game-module.md](game-module.md)), **area 7**
+(scene/entity model), and **area 8** (scene renderer —
 [scene-renderer.md](scene-renderer.md)); plus **hot-reload**, named within area 1
 but deferred (its re-cook half conflicts with offline-only cooking — needs a
 dev-only watcher design). Each becomes its own planset (area 6, several) when taken

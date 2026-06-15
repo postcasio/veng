@@ -1,125 +1,104 @@
-# Game-module build model — design overview (future)
+# Game-module build model — design overview
 
-> **Vision / design sketch, not scheduled.** Detail for the **editor** area
-> ([README](README.md), [editor.md](editor.md)) — specifically its prerequisite:
-> the change that turns a game from a self-contained executable into a **shared
-> library a host loads**. Direction, surfaces, and recommendations, not a firm
-> plan; it becomes its own planset when taken up. The editor depends on this the
-> way the [asset system](asset-system.md) depends on
-> [threading](threading-task-system.md).
+> **The build model is DELIVERED — [planset-9](../planset-9/README.md)** (stream A).
+> A game is now `libgame` (shared, the runtime) + a thin launcher that `dlopen`s it
+> through a single C-ABI `VengModuleRegister` entry; `veng_add_game` emits the pair
+> in-tree, and `hello-triangle` ships as `libhello_triangle` + a launcher. This doc
+> keeps the **enduring seams** the model fixed and the **editor-only forward work**
+> that builds on them (the type-reflection layer, `libgame_editor`/`EditorRegistry`,
+> and installed-package wiring). Direction for the editor area
+> ([README](README.md), [editor.md](editor.md)) — not a firm plan; the remaining
+> pieces become their own plansets when taken up.
 
-## Why
+## Why (the change that shipped)
 
-Today a game **is** an executable. `examples/hello-triangle/main.cpp` subclasses
-`Application`, defines `int main()`, and links `libveng` straight into one binary.
-A type defined in that executable — a component, a system, a custom asset type —
-is private to it: nothing outside the process can name it.
+A game used to **be** an executable: `examples/hello-triangle/main.cpp` subclassed
+`Application`, defined `int main()`, and linked `libveng` into one binary. A type
+defined in that executable — a component, a system, a custom asset type — was
+private to it; nothing outside the process could name it.
 
-The editor needs to do exactly that. To edit and preview a game's content it must
-**load the game's native types**: enumerate its component types, construct them,
-read/write their fields, drive its custom asset loaders. And the *same* game logic
-must still run **standalone**, with no editor present. One body of game code, two
-hosts that load it:
-
-- the **standalone launcher** (the shipped product), and
-- the **editor** (the authoring environment).
-
-A type that lives in an `.exe` can be loaded by neither a second `.exe` nor the
-editor. So the game's code moves into a **shared library** (`.dylib` / `.so` /
-`.dll`), and the executable shrinks to a thin launcher that loads it. This is the
-foundational build change the whole editor stands on.
+The editor needs the opposite. To edit and preview a game's content it must **load
+the game's native types**: enumerate component types, construct them, read/write
+their fields, drive its custom asset loaders. And the *same* game logic must still
+run **standalone**, with no editor present. One body of game code, two hosts that
+load it — the **launcher** (the shipped product) and the **editor** (the authoring
+environment) — so the game's code lives in a **shared library** and the executable
+shrinks to a thin launcher. planset-9 delivered the launcher half of that.
 
 ## The three artifacts
 
-A game splits into three CMake targets where there was one:
+A game splits into up to three CMake targets where there was one; **planset-9 builds
+the first two**:
 
 ```
 libgame         (shared)  the game's RUNTIME: Application logic, components,
                           systems, custom runtime asset types. Links libveng.
-                          NO editor code. ── shipped.
+                          NO editor code.  ── shipped.        ── DONE (planset-9)
 
-game-launcher   (exe)     thin wrapper: loads libgame, constructs the app,
-                          runs the loop. The shipped standalone product. ── shipped.
+game-launcher   (exe)     thin wrapper: dlopens libgame, constructs the app via
+                          its registered factory, runs the loop. The shipped
+                          standalone product.  ── shipped.    ── DONE (planset-9)
 
 libgame_editor  (shared)  the game's EDITOR extensions: custom panels, custom
                           inspectors, asset editors for the game's own types.
                           Links libveng + libveng_editor + libgame.
-                          Loaded ONLY by the editor. ── never shipped with the game.
+                          Loaded ONLY by the editor.  ── never shipped.  ── future.
 ```
 
-The split is the point. **`libgame` carries no editor code** — the runtime product
-pays nothing for the authoring tools. **`libgame_editor` carries the views and
-tools** the editor draws ([editor.md](editor.md) — "custom editor views and tools,
-not part of the game itself"), and only the editor ever loads it. The launcher and
-the editor are both *hosts*: each `dlopen`s `libgame` (the editor also loads
-`libgame_editor`), calls its entry point, and drives it.
+`libgame_editor` cannot be built until `libveng_editor` exists (the editor planset).
+The ABI is shaped to accept it now (the reserved-null `EditorRegistry*`, below)
+without pulling it forward.
 
-```
-        ┌────────────── game-launcher (exe) ──────────────┐
-ship ►  │  loads libgame → constructs Application → Run()  │
-        └─────────────────────────────────────────────────┘
+## Seam 1 — the module entry point (delivered)
 
-        ┌──────────────────── editor (exe) ───────────────────────┐
-dev  ►  │  loads libgame  (its types, runtime asset loaders)       │
-        │  loads libgame_editor  (its panels, inspectors, editors) │
-        └──────────────────────────────────────────────────────────┘
-```
-
-## Design axis 1 — the module entry point
-
-A host that `dlopen`s a module needs **one** exported symbol to call. Everything
-else the module exposes, it exposes by **registering** through that call — C++ has
-no reflection, so the host cannot discover a module's types by inspection. The
-module hands the host a table.
-
-A single C-ABI entry point, resolved by name after load:
+A host that `dlopen`s a module needs **one** exported symbol to call; everything
+else the module exposes, it exposes by **registering** through that call (C++ has no
+reflection — the host cannot discover a module's types by inspection). A single
+C-ABI entry, resolved by name after load:
 
 ```cpp
-// In libveng (or a small shared "module ABI" header both sides include):
-extern "C"
-{
-    // Exported by every game / editor module. The host dlsym()s this name,
-    // calls it once after load, and the module registers what it provides
-    // into the registries the host passes in.
-    VE_API void VengModuleRegister(VengModuleHost* host);
-}
+extern "C" VE_MODULE_EXPORT void VengModuleRegister(VengModuleHost* host);
 ```
 
-`VengModuleHost` is the **host's side** of the contract — the registries the
-module fills:
+`VengModuleHost` is the host's side of the contract — the registries the module
+fills. planset-9 ships it as **inert registries, no live engine objects**:
 
 ```cpp
 struct VengModuleHost
 {
-    Context&        RenderContext;     // the live engine context
-    AssetManager&   Assets;            // for custom asset-type registration
-    TypeRegistry&   Types;             // component / asset-type descriptors (reflection)
-    EditorRegistry* Editor;            // non-null ONLY when loaded by the editor
+    ApplicationRegistry& App;     // the module registers its Application factory here
+    EditorRegistry*      Editor;  // non-null ONLY when loaded by the editor; null otherwise
 };
 ```
 
-- `libgame` registers **runtime** things: component types, systems, custom asset
-  loaders. It uses `Types` and `Assets`; it ignores `Editor` (null in the
-  launcher).
-- `libgame_editor` registers **editor** things: panels, inspectors, asset editors.
-  It uses `Editor` (guaranteed non-null — only the editor loads it).
+- `libgame` registers its **`Application` factory** through `host->App`; the launcher
+  reads it back and `Run()`s it. It ignores `Editor` (null in the launcher).
+- `libgame_editor` (future) will register **editor** things — panels, inspectors,
+  asset editors — through `host->Editor` (guaranteed non-null; only the editor loads
+  it).
 
-The same entry-point name for both modules keeps the loader uniform; what a module
-*does* in it depends on which registries it touches.
+The editor planset extends this struct **additively** with its reflection registry
+(a `TypeRegistry&`) — a change to a boundary nothing ships against yet.
 
-## Design axis 2 — reflection / type descriptors (the hard part)
+## Seam 2 — type reflection / descriptors (the editor-shell planset's first task)
 
-The editor's auto-generated inspectors ("select an entity, edit its fields")
-require the editor to know a type's **fields** — names, types, offsets — at
-runtime. C++ gives it none of that. The game must **describe** its types.
+> **Deferred out of the build-model prerequisite into the editor-shell sub-area**
+> ([editor.md](editor.md)). It has no consumer until the inspector exists, so it is
+> designed against that real client rather than speculatively here. The **resolved
+> direction** is recorded so that planset does not rebuild it blind.
 
-A lightweight, hand-written **type-descriptor** layer (no codegen v1):
+The editor's auto-generated inspectors ("select an entity, edit its fields") require
+the editor to know a type's **fields** — names, types, offsets — at runtime. C++
+gives none of that, so the game must **describe** its types through a hand-written
+descriptor layer (no codegen v1; a `VE_REFLECT(...)` macro is sugar to consider
+later, a clang-AST pass only if the hand-written burden proves real):
 
 ```cpp
 struct FieldDescriptor
 {
     string_view Name;
-    FieldType   Type;        // F32, Vec3, Vec4, Bool, AssetHandleTexture, ...
+    TypeId      Type;        // an OPEN id, not a closed enum (see below)
+    FieldClass  Class;       // a small closed meta-kind for generic handling
     usize       Offset;      // offsetof(T, member)
 };
 
@@ -127,134 +106,111 @@ struct TypeDescriptor
 {
     string_view             Name;
     usize                   Size;
-    function<void*()>       Construct;        // placement/factory
+    function<void*()>       Construct;
     vector<FieldDescriptor> Fields;
 };
-
-// The game registers each exposed type:
-void VengModuleRegister(VengModuleHost* host)
-{
-    host->Types.Register<Transform>("Transform", {
-        { "Position", FieldType::Vec3, offsetof(Transform, Position) },
-        { "Rotation", FieldType::Quat, offsetof(Transform, Rotation) },
-        { "Scale",    FieldType::Vec3, offsetof(Transform, Scale)    },
-    });
-}
 ```
 
+The **resolved decisions** for that layer:
+
+- **Field types are an open `TypeId`, not a closed engine enum.** Engine builtins —
+  including `AssetHandle<Texture/Mesh/Material>` — are pre-registered **identically**
+  to a game's own asset types, so a game shipping a new asset type **extends the
+  vocabulary with no engine change**.
+- **A small closed `FieldClass` meta-kind** rides alongside the open `TypeId` to
+  carry generic handling (e.g. "this is an asset-handle field", "this is a scalar").
+- **Inheritance is single, non-virtual, base at offset 0**, walked base-first.
+
 The editor walks `TypeDescriptor::Fields` to build an inspector with a widget per
-`FieldType` ([editor.md](editor.md) — reflection-driven inspectors). Recommendation:
-**hand-written descriptors v1**, a `VE_REFLECT(...)` macro for sugar later, and a
-codegen/clang-AST pass only if the hand-written burden proves real. Start with the
-mechanism that needs no toolchain.
+field type. This `TypeRegistry` layer is **shared** between game-module registration
+and the editor's inspector framework — designed once, in the editor-shell planset,
+as the contract for both.
 
-This `TypeRegistry` / descriptor layer is **shared** between the game-module work
-and the editor's inspector framework — design it once, here, as the contract.
+## Seam 3 — the ABI boundary (delivered)
 
-## Design axis 3 — the ABI boundary (get this right or it crashes)
+A shared-library boundary is an ABI boundary. The rules planset-9 fixed:
 
-A shared-library boundary is an ABI boundary. The rules veng must hold:
-
-- **One toolchain, one STL, one flag set on both sides.** Module and host must be
-  built by the same compiler with the same standard library and the same
-  `-fno-exceptions`. veng is **not a binary-plugin platform** — modules are
-  recompiled with the engine, from the same source tree / toolchain. State this
-  assumption loudly; it is what makes passing `string` / `vector` / `Ref<T>`
-  across the boundary safe (mismatched STLs across a DLL boundary is the classic
-  way to corrupt the heap).
+- **One toolchain, one STL, one flag set on both sides.** Module and host are built
+  by the same compiler with the same standard library and the same `-fno-exceptions`,
+  recompiled from one tree. veng is **not a binary-plugin platform** — that is what
+  makes passing `string` / `vector` / `Ref<T>` across the boundary safe (a mismatched
+  STL across a DLL boundary is the classic heap-corruption trap).
 - **The *entry point* is C ABI; the *payload* is C++.** `VengModuleRegister` is
-  `extern "C"` with POD/`VE_API` parameters so the symbol resolves robustly and a
-  stale module fails loudly at load, not mysteriously later. Once it is called,
-  rich engine types flow freely — justified by the same-build assumption above.
-- **Export visibility.** Extend the existing `VE_API` macro (already present for
-  the anticipated Windows port — `__declspec(dllexport/import)` / `visibility`)
-  to cover the game/editor module surface. Default-hidden visibility, explicit
-  exports.
+  `extern "C"` so the symbol resolves robustly; a one-integer `VengModuleAbiVersion`
+  handshake (checked by `ModuleLoader` before the entry runs) makes a stale module
+  fail **loudly at load**, not mysteriously later. Once the entry is called, rich
+  engine types flow freely.
+- **Export visibility.** `VE_MODULE_EXPORT` carries unconditional export semantics on
+  the module entry (it is never `dllimport` — `VE_API` cannot be reused for it).
+  Visibility stays **default-visible**: planset-9 did **not** flip `libveng` to
+  hidden visibility — that hardening bites only on the Windows port (where `VE_API`'s
+  dllimport/dllexport is load-bearing) and is bundled there.
 - **Ownership across the boundary.** The **host owns the registries**; a module
   *registers into* them and the host drops the entries on unload. A module never
-  frees a host object and vice versa. Engine objects (`Context`, `AssetManager`)
-  are passed by reference and owned by the host for the module's whole lifetime.
+  frees a host object and vice versa.
 
 ## What stays out — hot-reloading game code
 
-The tantalizing feature: recompile `libgame`, swap it into the running editor
-without restarting the play session. In C++ this is **notoriously hard** —
-dangling vtables, stale function pointers, file-static state, live objects whose
-layout changed under them. **Out of scope v1.** v1 reloads game code by restarting
-the editor's play session (unload module → reload → reconstruct). Note it as a
-later stretch, gated on a serialize-across-reload story.
+Recompiling `libgame` and swapping it into a running editor without restarting the
+play session is **notoriously hard** in C++ — dangling vtables, stale function
+pointers, file-static state, live objects whose layout changed. **Out of scope.** A
+game-code reload restarts the play session (unload module → reload → reconstruct), a
+later stretch gated on a serialize-across-reload story.
 
 > **Don't conflate it with *asset* hot-reload.** Live-previewing a material as you
 > edit its graph is *asset* reload — recook + re-upload behind a stable
-> `AssetHandle` — and comes from the [asset system's async/hot-reload path](asset-system.md)
+> `AssetHandle` — and comes from the [asset system's async path](asset-system.md)
 > ([threading](threading-task-system.md)), **not** from reloading the game DLL.
-> The editor gets live content preview without ever reloading native code.
 
 ## CMake surface
 
-A `veng_add_game(...)` function, mirroring planset-5's `add_asset_pack`, that emits
-the shared lib + the launcher from one declaration:
+`veng_add_game(...)` emits the shared lib + the launcher from one declaration:
 
 ```cmake
 veng_add_game(my_game
     SOURCES      src/Game.cpp src/Components.cpp ...
-    EDITOR       src/Editor/MaterialNodes.cpp ...   # optional: builds libmy_game_editor
-    ASSET_PACK   assets/game.vengpack.json)         # reuses add_asset_pack
+    ASSET_PACK   my_game_assets)                # an add_asset_pack target to copy beside the launcher
 ```
 
-It produces `libmy_game` (shared), `my_game-launcher` (exe), and — when `EDITOR`
-sources are given — `libmy_game_editor` (shared, excluded from the shipped set).
+It produces `libmy_game` (shared) and `my_game-launcher` (exe), copies the cooked
+pack beside the launcher, and sets the `$ORIGIN`/`@loader_path` rpath so the trio is
+relocatable. The **`EDITOR` arm** (`libmy_game_editor`, excluded from the shipped
+set) is **future** — `libveng_editor` does not exist yet.
 
-`veng_add_game` ships **in-tree only** (it serves the example and the tests). Making it
-callable from a downstream project that consumes an *installed* veng via
-`find_package(veng)` is unbuilt forward work: install the helper `.cmake` files
-(`Game.cmake`, `AssetPack.cmake`) and `launcher_main.cpp`, `include()` them from
-`veng-config.cmake.in`, and resolve `VENG_LAUNCHER_MAIN` to the installed path. This also
-fixes `AssetPack.cmake`'s pre-existing missing install. A full shipped product additionally
-ships `libveng` beside the launcher (the in-tree launcher resolves `libveng` via its build
-rpath).
+`veng_add_game` ships **in-tree only** (it serves the example and the tests, which
+build veng as the top-level project). **Installed-package wiring remains forward
+work:** to make it callable from a downstream project consuming an *installed* veng
+via `find_package(veng)`, install the helper `.cmake` files (`Game.cmake`,
+`AssetPack.cmake`) + `launcher_main.cpp`, `include()` them from
+`veng-config.cmake.in`, and resolve `VENG_LAUNCHER_MAIN` to the installed path. This
+also fixes `AssetPack.cmake`'s pre-existing missing install. A full shipped product
+additionally ships `libveng` beside the launcher (the in-tree launcher resolves
+`libveng` via its build rpath, so the in-tree relocatable copy need not include it).
 
-## Migrating the sample
+## Resolved decisions
 
-`hello-triangle` is the natural acceptance test **and** the smoke test, so migrate
-it carefully. It becomes `libhello_triangle` + a launcher; the headless smoke path
-(`HT_SMOKE`) must keep working through the launcher (the launcher constructs the
-app the same way, just after a `dlopen`). Verify the smoke binary still writes a
-correct-sized PPM through the new two-artifact shape before calling the plan done.
-Whether the minimal smoke keeps a direct-link path for simplicity vs. going fully
-through the module loader is an open question (below).
-
-## Touch points (what this phase adds / modifies)
-
-- **New:** the module ABI (`VengModuleRegister` entry, `VengModuleHost`), a
-  `ModuleLoader` (cross-platform `dlopen`/`LoadLibrary` wrapper in `libveng`), the
-  `TypeRegistry` + `TypeDescriptor`/`FieldDescriptor` reflection layer.
-- **`VE_API` / export macros:** extended to the module surface; default-hidden
-  visibility audited.
-- **`Application`:** must support being **constructed and driven by a host** (the
-  launcher / editor) rather than always owning `main()` — a factory the module
-  exports, or a registration that hands the host an `Application` to run.
-- **CMake:** `veng_add_game(...)`; the example migrated to it.
-- **Depends on:** nothing new in the engine runtime; this is a build/packaging +
-  small-ABI change. The [editor](editor.md) is the consumer that needs it.
-
-## Open decisions
-
-- **Module entry shape** — a single `VengModuleRegister(host)` (recommended) vs.
-  multiple named exports (`VengCreateApplication`, `VengRegisterEditor`, …). One
-  uniform entry keeps the loader simple.
-- **Reflection mechanism** — hand-written descriptors (recommend v1) vs. a
-  `VE_REFLECT` macro vs. clang-AST codegen. Start hand-written; add sugar only if
-  the burden is real.
-- **Where the registries live** — `TypeRegistry` in `libveng` (so the runtime can
-  use component descriptors for serialization too) vs. editor-only. Leaning engine,
-  since a scene/entity model would want descriptors for save/load regardless.
-- **Standalone launcher: thin or registering?** — does the launcher only construct
-  the `Application`, or also let `libgame` register runtime systems (so the same
-  registration path drives both hosts)? Leaning uniform — both hosts call
-  `VengModuleRegister`; only `Editor` differs.
-- **Smoke path** — keep a direct-link fast path for the headless smoke, or route
-  it through the module loader like everything else (one code path, slightly more
-  to keep green).
-- **Hot-reload of game code** — v1 **no** (restart the play session); revisit with
-  a serialize-across-reload design if iteration speed demands it.
+- **Module entry shape — single `VengModuleRegister(host)`.** One uniform entry,
+  resolved by name, for every module and host. (Not multiple named exports.)
+- **Host carries inert registries — no live `Context`/`AssetManager`.** Registration
+  is a *factory* (no GPU work), so the entry needs no live engine objects:
+  `VengModuleHost` is `{ ApplicationRegistry& App; EditorRegistry* Editor; }`, and
+  `Application` keeps owning `Context`/`AssetManager`/`TaskSystem` unchanged. This
+  **departs from this doc's original sketch** (`Context&`/`AssetManager&` on the
+  host): passing live objects in would force inverting `Application`'s ownership for
+  no benefit and contradict "nothing new in the engine runtime." One consequence:
+  registering **custom asset-type loaders** genuinely needs a live `AssetManager`, so
+  it is **out of scope** until a custom asset type exists to drive it; it returns
+  with the host's `AssetManager&` when one does.
+- **Reflection deferred to the editor, with the open-`TypeId` direction** (above) —
+  no consumer until the inspector exists.
+- **A uniform, veng-provided launcher** + the `VengModuleAbiVersion` handshake +
+  **executable-relative resolution** (the module beside the launcher via
+  `$ORIGIN`/`@loader_path`, assets + cache via `ExecutableDirectory()`).
+- **The smoke routes through the launcher + loader** — one shipping code path, no
+  direct-link fast path. (The registered `headless_smoke` ctest links `veng::veng`
+  directly and is untouched; the new `hello_triangle_launcher_smoke` exercises the
+  loader path.)
+- **Default-visible** — the hidden-visibility audit is deferred to the Windows port.
+- **`EditorRegistry*` reserved and null** — forward-declared in `libveng`, always
+  null in the launcher, non-null only for the future editor host.
+- **Game-code hot-reload is out** — restart the play session.

@@ -37,8 +37,11 @@ is thin (shared deps + `add_subdirectory` per lib).
   Vulkan-free, importer-free; linked PUBLIC by `engine` and by `cooker`.
 - `cooker/` — `libveng_cook` + the `vengc` CLI (stb, assimp, Slang, JSON).
   Never linked by the engine.
-- `examples/hello-triangle/` — the canonical sample app and the smoke test;
-  `assets/` holds its hand-written asset pack (cooked at build time).
+- `examples/hello-triangle/` — the canonical sample app and the smoke test. It is
+  a **game module + launcher**, not one binary: `veng_add_game` builds
+  `libhello_triangle` (shared, the app) plus `hello_triangle-launcher` (the exe
+  that `dlopen`s it). `assets/` holds its hand-written asset pack (cooked at build
+  time, copied beside the launcher).
 - `tests/` — `include_hygiene`, `headless_smoke`, `compute_dispatch`, plus the
   `unit`, `death`, `gpu`, and `cooker` suites (and `shaders/`, `support/`).
 - `plans/` — the roadmap. See **Working norms** below.
@@ -84,13 +87,25 @@ cmake --build build-debug -j 2
   windowed app still rotates by accumulated wall-clock `delta`. The `smoke_golden`
   ctest renders the scene headless and fuzzy-compares it against
   `tests/golden/hello_triangle_scene.png` (`ctest --test-dir build -R
-  smoke_golden`). It is labelled `gpu` and skips cleanly with no Vulkan ICD. If a
-  deliberate render change moves the capture, regenerate the golden:
+  smoke_golden`). It is labelled `gpu` and skips cleanly with no Vulkan ICD. The
+  capture runs through the **launcher** (which `dlopen`s `libhello_triangle`), the
+  real shipping path. If a deliberate render change moves the capture, regenerate
+  the golden:
   ```sh
-  HT_SMOKE=/tmp/ht.ppm build/examples/hello-triangle/hello_triangle
+  HT_SMOKE=/tmp/ht.ppm build/examples/hello-triangle/hello_triangle-launcher
   sips -s format png /tmp/ht.ppm --out tests/golden/hello_triangle_scene.png
   ```
   The capture is a 1280×720 RGB PPM (≈ 2,764,816 bytes).
+- **`hello_triangle_launcher_smoke` covers the shipping path automatically.** It
+  runs `hello_triangle-launcher` under `HT_SMOKE` and asserts exit 0 — the one test
+  exercising the full `dlopen` → `VengModuleRegister` → registry → `Run()` chain
+  end-to-end. Labelled `gpu` (`SKIP_RETURN_CODE 77`), it skips with no device and
+  runs under the validation gate like the rest of the `gpu` band. The launcher + lib
+  + pack are a **relocatable trio**: copy the launcher, `libhello_triangle.*`, and
+  `sample.vengpack` into a fresh directory and run from an unrelated working
+  directory — the module (`@loader_path`/`$ORIGIN` rpath) and the pack
+  (`ExecutableDirectory()`-relative mount) resolve beside the launcher, so it still
+  writes a correct-sized PPM and exits 0.
 - **Validation errors do NOT fail tests by themselves.** The debug-messenger
   callback (`engine/src/Renderer/Backend/Context.cpp`) only `Log::Error`s on validation
   errors — it never aborts. So a green `ctest` under `VE_DEBUG` only means
@@ -265,6 +280,17 @@ changed); per-frame data never recompiles. See `BuildSceneGraph` /
 in the hello-triangle `main.cpp` for the pattern — member compiled graphs held
 across frames, imports bound per frame, re-compiled on resize.
 
+### Pipeline cache
+
+`Context` owns a `vk::PipelineCache` created at device init and threaded into both
+the graphics and compute pipeline factories — every pipeline build in a run reuses
+it. Persistence is **opt-in** via `ApplicationInfo::PipelineCachePath`: set → seed
+from the file at startup + write it back at shutdown; `nullopt` (default) keeps it
+in-memory only. A stale/foreign/truncated cache file is safe — Vulkan validates the
+cache header and starts cold on a mismatch; veng feeds the bytes as `pInitialData`
+and never parses them. The cache is touched only on the single render thread, so it
+needs no external sync (off-thread pipeline creation would).
+
 ### Application
 
 Subclass `Application`, override `OnInitialize` / `OnUpdate(delta)` / `OnRender` /
@@ -281,6 +307,34 @@ threaded. It is pumped once per frame: `Frame()` calls
 `TaskSystem::PumpMainThread()` at the top, before `BeginFrame()` advances the
 frame, so off-thread continuations land on the main thread.
 
+### Game modules: a shared lib + a launcher
+
+A game is a **`libgame` (shared)** — the runtime: `Application` logic, components,
+custom runtime types — loaded by a thin **launcher** (the shipped exe). The
+launcher `dlopen`s the module and calls one C-ABI entry,
+`VengModuleRegister(VengModuleHost*)`; the module registers its `Application`
+factory into the host-owned `ApplicationRegistry` (`host->App.RegisterApplication(
+[]{ … })`, one per module). `Application` still owns
+`Context`/`AssetManager`/`TaskSystem` unchanged — the launcher reads the factory
+back, constructs the app, and calls `Run()`. `veng_add_game(<name> SOURCES … [ASSET_PACK …])`
+is the build entry: it emits `lib<name>` + `<name>-launcher` from one declaration.
+
+- **Same toolchain, one STL, one flag set.** Only the *entry* is C ABI; the payload
+  is rich C++ (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a
+  binary-plugin platform — a module is recompiled with the engine from one tree. A
+  one-integer `VengModuleAbiVersion` handshake (checked by `ModuleLoader` before the
+  entry runs) **rejects a stale module loudly at load**, not later.
+- **The relocatable trio.** The module resolves **beside the launcher** via an
+  `$ORIGIN`/`@loader_path` rpath, and assets resolve via `ExecutableDirectory()`
+  (the public executable-relative path helper) with `veng_add_game` copying the
+  cooked pack beside the launcher — so launcher + lib + pack move as one directory.
+- **`EditorRegistry*` is the reserved seam for the future editor host.** The host
+  struct carries `{ ApplicationRegistry& App; EditorRegistry* Editor; }`; the
+  launcher always passes `Editor = nullptr` (the type is only forward-declared in
+  `libveng`). Only the future editor host passes non-null.
+- **Game-code hot-reload is out** — restart the play session. (Distinct from *asset*
+  hot-reload, the async path.)
+
 ### Assets: cook offline, load by `AssetId`
 
 Assets are **cooked offline** into a binary archive, never imported at runtime —
@@ -289,6 +343,14 @@ there is no cook-on-demand, no source parser, no re-cook path in `libveng`. The
 build) turns a hand-written JSON **asset pack** into a single `.vengpack`
 archive; the engine *mounts* archives and resolves assets against them.
 
+- **`.vengpack` archives (format v2) carry content hashes.** Every cooked blob
+  gets a content hash and the table of contents gets a digest (over the serialized
+  TOC bytes), cooker-written via xxh3-128 and checkable with **`vengc verify`** (it
+  re-hashes the blobs + digest and exits nonzero on any mismatch). **The loader
+  never verifies** — hashing is tooling, not the hot path; the runtime trusts its
+  packs. The hash function lives **only** in the cooker/verify tool, so `assetformat`
+  (which stores the raw 16 bytes and computes nothing) and `libveng` gain no hash
+  dependency.
 - **An asset pack is a pure `{ id, type, source }` manifest.** It carries no
   per-asset settings. **Every** asset type — texture, mesh, shader, material —
   has its own per-asset JSON source file (`*.tex.json` / `*.mesh.json` /

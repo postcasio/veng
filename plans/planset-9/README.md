@@ -1,5 +1,13 @@
 # planset-9 — game-module build model, pipeline cache & archive hashes
 
+> ✅ **Done** (7 plans). A game ships as `libgame` + a thin launcher loading it
+> through one versioned C-ABI entry (stream A); `Context` reuses pipeline
+> compilation across a run and optionally across runs (B); `.vengpack` archives
+> carry verifiable content hashes (C); `hello-triangle` ships as
+> `libhello_triangle` + a launcher exercising all three. Area 6's game-module
+> prerequisite is delivered (reflection handed to the editor-shell planset) and the
+> **pipeline-caching** and **content-hashes** cross-cutting concerns are resolved.
+
 **Phase goal:** make a veng game a **shippable product** and harden the shipping path.
 Three streams bundle here because they share that theme. They are **independent in
 design** — each can be implemented and reviewed on its own — but not fully file-disjoint:
@@ -178,7 +186,7 @@ format-version bump later"*).
 | 04 | [Disk persistence (opt-in)](04-disk-persistence.md) | B | `ApplicationInfo::PipelineCachePath`: seed from the file at init, write at shutdown; `nullopt` keeps plan 03 behaviour. Sample opts in; headless smoke proves the round-trip. | done |
 | 05 | [Format v2 + cooker writes hashes](05-format-and-write.md) | C | `ContentHash` per TOC entry + a header digest over the serialized TOC bytes; `ArchiveFormatVersion` → 2; `assetformat` round-trips (no hash dep); cooker computes xxh3-128 + writes; loader reads-but-ignores; re-cook packs. | done |
 | 06 | [`vengc verify`](06-verify-tool.md) | C | A `vengc verify <archive>` subcommand: re-hash blobs + digest, report per-asset, exit nonzero on any mismatch. Cooker-side only. | done |
-| 07 | [Docs + roadmap re-cut](07-docs-roadmap.md) | — | One pass over `plans/README.md`, `CLAUDE.md`, and the future docs for all three streams: area 6's game-module prerequisite delivered (reflection handed to the editor), pipeline-caching + content-hashes cross-cutting concerns resolved. | proposed |
+| 07 | [Docs + roadmap re-cut](07-docs-roadmap.md) | — | One pass over `plans/README.md`, `CLAUDE.md`, and the future docs for all three streams: area 6's game-module prerequisite delivered (reflection handed to the editor), pipeline-caching + content-hashes cross-cutting concerns resolved. | done |
 
 ## Dependencies & dispatching
 
