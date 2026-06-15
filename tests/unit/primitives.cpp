@@ -176,3 +176,49 @@ TEST_CASE("Sphere: vertex count grows with rings and segments")
     CHECK(moreRings > coarse);
     CHECK(moreSegments > coarse);
 }
+
+TEST_CASE("Icosphere: invariants, radius AABB, outward normals")
+{
+    const f32 radius = 0.75f;
+    const MeshData data = Primitives::Icosphere(radius, 2);
+
+    CheckCommonInvariants(data);
+
+    // Every vertex sits on the sphere surface; normal points outward.
+    for (const CanonicalVertex& v : data.Vertices)
+    {
+        CHECK(glm::length(v.Position) == doctest::Approx(radius).epsilon(0.001f));
+        const vec3 outward = glm::normalize(v.Position);
+        CHECK(glm::dot(outward, v.Normal) == doctest::Approx(1.0f).epsilon(0.001f));
+    }
+
+    const Aabb box = ComputeAabb(data);
+    CHECK(box.Min.x == doctest::Approx(-radius).epsilon(0.001f));
+    CHECK(box.Max.x == doctest::Approx(+radius).epsilon(0.001f));
+    CHECK(box.Min.y == doctest::Approx(-radius).epsilon(0.001f));
+    CHECK(box.Max.y == doctest::Approx(+radius).epsilon(0.001f));
+    CHECK(box.Min.z == doctest::Approx(-radius).epsilon(0.001f));
+    CHECK(box.Max.z == doctest::Approx(+radius).epsilon(0.001f));
+}
+
+TEST_CASE("Icosphere: triangle count is 20 * 4^subdivisions")
+{
+    // Seam-splitting duplicates vertices, not triangles, so the index count is
+    // exactly the subdivided-icosahedron face count regardless of the wrap fix.
+    for (u32 subdivisions = 0; subdivisions <= 3; ++subdivisions)
+    {
+        const MeshData data = Primitives::Icosphere(0.5f, subdivisions);
+        const usize triangles = static_cast<usize>(20) * (static_cast<usize>(1) << (2 * subdivisions));
+        CHECK(data.Indices.size() == triangles * 3);
+    }
+}
+
+TEST_CASE("Icosphere: vertex count grows with subdivisions")
+{
+    const usize base = Primitives::Icosphere(0.5f, 0).Vertices.size();
+    const usize once = Primitives::Icosphere(0.5f, 1).Vertices.size();
+    const usize twice = Primitives::Icosphere(0.5f, 2).Vertices.size();
+
+    CHECK(once > base);
+    CHECK(twice > once);
+}

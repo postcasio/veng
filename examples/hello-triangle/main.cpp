@@ -103,12 +103,13 @@ protected:
         VE_ASSERT(brickMaterial.has_value(), "{}", brickMaterial.error().Detail);
         m_BrickMaterial = *brickMaterial;
 
-        // Build the geometry at runtime rather than loading a cooked mesh: a UV
-        // sphere in the canonical layout, carrying the brick material instance on
-        // its single submesh. A sphere shows the brick normal/UV mapping better than
-        // a flat face. Mesh::Create uploads synchronously, so it is ready to draw.
+        // Build the geometry at runtime rather than loading a cooked mesh: a
+        // geodesic icosphere in the canonical layout, carrying the brick material
+        // instance on its single submesh. Its near-uniform tessellation shows the
+        // brick UV mapping without the pole clustering of a UV sphere.
+        // Mesh::Create uploads synchronously, so it is ready to draw.
         m_Mesh = Veng::Mesh::Create(
-            context, Veng::Primitives::Sphere(0.8f, 24, 48, m_BrickMaterial), "Demo Sphere");
+            context, Veng::Primitives::Icosphere(0.8f, 4, m_BrickMaterial), "Demo Sphere");
 
         // The compositing path (ImGui overlay + swapchain present) only exists in
         // windowed mode. The headless smoke run renders just the scene and

@@ -31,4 +31,12 @@ namespace Veng::Primitives
     [[nodiscard]] MeshData Sphere(f32 radius = 0.5f,
                                   u32 rings = 16, u32 segments = 32,
                                   AssetHandle<Material> material = {});
+
+    // Geodesic sphere of `radius` from a subdivided icosahedron: each of the 20
+    // base faces is split `subdivisions` times (4^subdivisions triangles each)
+    // and projected onto the sphere, so vertices are near-uniformly distributed
+    // — no pole clustering. Smooth normals; equirectangular UVs (longitude,
+    // latitude) with the wrap seam split so it does not smear. One submesh.
+    [[nodiscard]] MeshData Icosphere(f32 radius = 0.5f, u32 subdivisions = 3,
+                                     AssetHandle<Material> material = {});
 }

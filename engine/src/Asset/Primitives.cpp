@@ -228,4 +228,128 @@ namespace Veng::Primitives
         FinishSubMesh(data, std::move(material));
         return data;
     }
+
+    MeshData Icosphere(f32 radius, u32 subdivisions, AssetHandle<Material> material)
+    {
+        constexpr f32 Pi = 3.14159265358979323846f;
+
+        // Base icosahedron: 12 unit-length directions (golden-ratio rectangle
+        // corners). Positions/normals/UVs are derived from these at the end.
+        const f32 t = (1.0f + std::sqrt(5.0f)) * 0.5f;
+        vector<vec3> dirs = {
+            glm::normalize(vec3(-1.0f, t, 0.0f)), glm::normalize(vec3(1.0f, t, 0.0f)),
+            glm::normalize(vec3(-1.0f, -t, 0.0f)), glm::normalize(vec3(1.0f, -t, 0.0f)),
+            glm::normalize(vec3(0.0f, -1.0f, t)), glm::normalize(vec3(0.0f, 1.0f, t)),
+            glm::normalize(vec3(0.0f, -1.0f, -t)), glm::normalize(vec3(0.0f, 1.0f, -t)),
+            glm::normalize(vec3(t, 0.0f, -1.0f)), glm::normalize(vec3(t, 0.0f, 1.0f)),
+            glm::normalize(vec3(-t, 0.0f, -1.0f)), glm::normalize(vec3(-t, 0.0f, 1.0f)),
+        };
+
+        // The 20 outward-facing (CCW seen from outside) icosahedron triangles.
+        vector<uvec3> faces = {
+            {0, 11, 5}, {0, 5, 1}, {0, 1, 7}, {0, 7, 10}, {0, 10, 11},
+            {1, 5, 9}, {5, 11, 4}, {11, 10, 2}, {10, 7, 6}, {7, 1, 8},
+            {3, 9, 4}, {3, 4, 2}, {3, 2, 6}, {3, 6, 8}, {3, 8, 9},
+            {4, 9, 5}, {2, 4, 11}, {6, 2, 10}, {8, 6, 7}, {9, 8, 1},
+        };
+
+        // Each pass splits every triangle into four, inserting a unit-length
+        // vertex at each edge midpoint. Midpoints are deduplicated per edge so a
+        // shared edge yields one vertex.
+        for (u32 pass = 0; pass < subdivisions; ++pass)
+        {
+            unordered_map<u64, u32> midpoints;
+            auto midpoint = [&](u32 a, u32 b) -> u32
+            {
+                const u64 key = (static_cast<u64>(std::min(a, b)) << 32) | std::max(a, b);
+                if (const auto it = midpoints.find(key); it != midpoints.end())
+                    return it->second;
+                const u32 index = static_cast<u32>(dirs.size());
+                dirs.push_back(glm::normalize(dirs[a] + dirs[b]));
+                midpoints.emplace(key, index);
+                return index;
+            };
+
+            vector<uvec3> next;
+            next.reserve(faces.size() * 4);
+            for (const uvec3& f : faces)
+            {
+                const u32 ab = midpoint(f.x, f.y);
+                const u32 bc = midpoint(f.y, f.z);
+                const u32 ca = midpoint(f.z, f.x);
+                next.push_back({f.x, ab, ca});
+                next.push_back({f.y, bc, ab});
+                next.push_back({f.z, ca, bc});
+                next.push_back({ab, bc, ca});
+            }
+            faces = std::move(next);
+        }
+
+        // Equirectangular UVs: u = longitude/2pi (0 at +X, wrapping at -X),
+        // v = 0 at the +Y pole to 1 at the -Y pole. No base or midpoint vertex
+        // lands exactly on a pole, so atan2 is always well-defined.
+        auto uvOf = [&](const vec3& d)
+        {
+            f32 u = std::atan2(d.z, d.x) / (2.0f * Pi);
+            if (u < 0.0f)
+                u += 1.0f;
+            return vec2(u, std::acos(std::clamp(d.y, -1.0f, 1.0f)) / Pi);
+        };
+
+        MeshData data;
+        data.Vertices.reserve(dirs.size());
+        for (const vec3& d : dirs)
+        {
+            // East-pointing tangent (increasing longitude); undefined at the
+            // poles, where it falls back to +X.
+            vec3 tangent = glm::cross(d, vec3(0.0f, 1.0f, 0.0f));
+            tangent = glm::length(tangent) > 1e-6f ? glm::normalize(tangent) : vec3(1.0f, 0.0f, 0.0f);
+            data.Vertices.push_back(CanonicalVertex{
+                .Position = d * radius,
+                .Normal = d,
+                .Tangent = vec4(tangent, 1.0f),
+                .UV = uvOf(d),
+            });
+        }
+
+        // A triangle straddling the u = 0/1 wrap interpolates its UV the long way
+        // around the sphere, smearing the whole texture across it. Detect the
+        // straddle (u-span > 0.5) and re-emit its low-u corners against duplicate
+        // vertices carrying u + 1, so the triangle's UVs stay contiguous.
+        unordered_map<u32, u32> wrapped;
+        auto wrap = [&](u32 index) -> u32
+        {
+            if (const auto it = wrapped.find(index); it != wrapped.end())
+                return it->second;
+            CanonicalVertex v = data.Vertices[index];
+            v.UV.x += 1.0f;
+            const u32 dup = static_cast<u32>(data.Vertices.size());
+            data.Vertices.push_back(v);
+            wrapped.emplace(index, dup);
+            return dup;
+        };
+
+        data.Indices.reserve(faces.size() * 3);
+        for (const uvec3& f : faces)
+        {
+            u32 i0 = f.x;
+            u32 i1 = f.y;
+            u32 i2 = f.z;
+            const f32 u0 = data.Vertices[i0].UV.x;
+            const f32 u1 = data.Vertices[i1].UV.x;
+            const f32 u2 = data.Vertices[i2].UV.x;
+            if (std::max({u0, u1, u2}) - std::min({u0, u1, u2}) > 0.5f)
+            {
+                if (u0 < 0.5f) i0 = wrap(i0);
+                if (u1 < 0.5f) i1 = wrap(i1);
+                if (u2 < 0.5f) i2 = wrap(i2);
+            }
+            data.Indices.push_back(i0);
+            data.Indices.push_back(i1);
+            data.Indices.push_back(i2);
+        }
+
+        FinishSubMesh(data, std::move(material));
+        return data;
+    }
 }
