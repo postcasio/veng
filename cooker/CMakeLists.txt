@@ -2,9 +2,9 @@
 #
 # Offline importer/cooker: parses a JSON asset pack, dispatches each entry to
 # a registered AssetImporter, and writes a .vengpack archive via
-# assetformat's ArchiveWriter. nlohmann/json is the first cooker-only
-# dependency; stb/assimp/Slang (06-09) join it later. The engine never links
-# any of these, nor libveng_cook itself.
+# assetformat's ArchiveWriter. All of its dependencies (nlohmann/json, stb,
+# assimp, Slang, xxHash) are cooker-only — the engine never links any of them,
+# nor libveng_cook itself.
 
 option(VENG_BUILD_TOOLS "Build the asset-cooking tools (vengc)" ${PROJECT_IS_TOP_LEVEL})
 
@@ -13,6 +13,19 @@ if (NOT VENG_BUILD_TOOLS)
     add_library(veng::cook ALIAS libveng_cook)
     return()
 endif ()
+
+# xxHash — fast non-crypto hash for archive content hashes (xxh3-128). Consumed
+# header-only (stb pattern): XXH_IMPLEMENTATION is defined in exactly one cooker
+# TU (src/Vendor/XxHash.cpp); every other site includes the header for
+# declarations only. The repo's own CMake project lives under cmake_unofficial/,
+# so populating it adds no build targets — just the header search path below.
+FetchContent_Declare(
+        xxhash
+        GIT_REPOSITORY https://github.com/Cyan4973/xxHash.git
+        GIT_TAG v0.8.2
+        GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(xxhash)
 
 # nlohmann/json — pack + per-asset JSON parsing (cooker-only; the runtime
 # reads the binary archive, never JSON).
@@ -84,6 +97,7 @@ add_library(libveng_cook STATIC
         src/Importers/VertexLayoutImporter.cpp
         src/Importers/VertexLayoutSource.cpp
         src/Vendor/StbImage.cpp
+        src/Vendor/XxHash.cpp
 )
 add_library(veng::cook ALIAS libveng_cook)
 
@@ -91,10 +105,12 @@ target_include_directories(libveng_cook PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-# stb_image (texture decode) — implementation detail of
-# src/Vendor/StbImage.cpp and src/Importers/TextureImporter.cpp.
+# stb_image (texture decode) and xxHash (archive content hashing) — header-only
+# implementation details of src/Vendor/StbImage.cpp / TextureImporter.cpp and
+# src/Vendor/XxHash.cpp / Cooker.cpp respectively.
 target_include_directories(libveng_cook PRIVATE
         ${stb_SOURCE_DIR}
+        ${xxhash_SOURCE_DIR}
 )
 
 # JSON_NOEXCEPTION: nlohmann/json's templates appear in libveng_cook's public

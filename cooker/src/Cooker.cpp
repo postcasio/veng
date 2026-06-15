@@ -1,14 +1,23 @@
 #include <Veng/Cook/Cooker.h>
 
 #include <fstream>
+#include <span>
 #include <sstream>
 
 #include <fmt/format.h>
+#include <xxhash.h>
 
 namespace Veng::Cook
 {
     namespace
     {
+        // xxh3-128 of a byte range, packed into the format's ContentHash.
+        ContentHash Xxh3_128(std::span<const u8> bytes)
+        {
+            const XXH128_hash_t h = XXH3_128bits(bytes.data(), bytes.size());
+            return ContentHash{.Lo = h.low64, .Hi = h.high64};
+        }
+
         optional<AssetType> ParseAssetType(const string& name)
         {
             if (name == "raw")           return AssetType::Raw;
@@ -195,6 +204,21 @@ namespace Veng::Cook
             }
         }
 
+        // The archive digest covers the serialized TOC byte region — the
+        // contiguous run of on-disk TOC entries (id/type/offset/size + each
+        // per-blob hash) between the header and the blob region. Hashing the
+        // bytes in their on-disk order (Build() emits them id-sorted) means
+        // verify re-hashes the same bytes with no separate sort step, and the
+        // header's ArchiveDigest field is not part of the hashed range. Build
+        // once to lay out those bytes, read them back through the reader, hash,
+        // then rebuild with the digest set.
+        const vector<u8> staged = writer.Build();
+        const Result<ArchiveReader> reader = ArchiveReader::FromBytes(staged);
+        if (!reader)
+            return std::unexpected(fmt::format("pack '{}': {}", packJson.string(), reader.error()));
+
+        writer.SetArchiveDigest(Xxh3_128(reader->TocBytes()));
+
         return writer.Write(outArchive);
     }
 
@@ -229,7 +253,7 @@ namespace Veng::Cook
         if (!blob)
             return std::unexpected(blob.error());
 
-        writer.Add(AssetId{.Value = id}, *type, *blob);
+        writer.Add(AssetId{.Value = id}, *type, *blob, Xxh3_128(*blob));
         return {};
     }
 }

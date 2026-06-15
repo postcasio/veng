@@ -18,8 +18,10 @@ namespace Veng
             char Magic[8];
             u32 Version;
             u32 Count;
+            u64 DigestLo; // ContentHash over the serialized TOC bytes
+            u64 DigestHi;
         };
-        static_assert(sizeof(OnDiskHeader) == 16);
+        static_assert(sizeof(OnDiskHeader) == 32);
 
         struct OnDiskTocEntry
         {
@@ -28,19 +30,27 @@ namespace Veng
             u32 Flags;
             u64 Offset;
             u64 Size;
+            u64 HashLo; // ContentHash over this entry's blob bytes
+            u64 HashHi;
         };
-        static_assert(sizeof(OnDiskTocEntry) == 32);
+        static_assert(sizeof(OnDiskTocEntry) == 48);
 
         constexpr char ArchiveMagic[8] = {'V', 'E', 'N', 'G', 'P', 'A', 'C', 'K'};
     }
 
-    void ArchiveWriter::Add(AssetId id, AssetType type, std::span<const u8> blob)
+    void ArchiveWriter::Add(AssetId id, AssetType type, std::span<const u8> blob, ContentHash hash)
     {
         m_Entries.push_back(Entry{
             .Id = id,
             .Type = type,
             .Blob = vector<u8>(blob.begin(), blob.end()),
+            .Hash = hash,
         });
+    }
+
+    void ArchiveWriter::SetArchiveDigest(ContentHash digest)
+    {
+        m_ArchiveDigest = digest;
     }
 
     vector<u8> ArchiveWriter::Build() const
@@ -57,6 +67,8 @@ namespace Veng
         std::memcpy(header.Magic, ArchiveMagic, sizeof(ArchiveMagic));
         header.Version = ArchiveFormatVersion;
         header.Count = static_cast<u32>(sorted.size());
+        header.DigestLo = m_ArchiveDigest.Lo;
+        header.DigestHi = m_ArchiveDigest.Hi;
 
         vector<OnDiskTocEntry> toc;
         toc.reserve(sorted.size());
@@ -70,6 +82,8 @@ namespace Veng
                 .Flags = 0,
                 .Offset = blobOffset,
                 .Size = entry->Blob.size(),
+                .HashLo = entry->Hash.Lo,
+                .HashHi = entry->Hash.Hi,
             });
             blobOffset += entry->Blob.size();
         }
@@ -135,6 +149,10 @@ namespace Veng
         ArchiveReader reader;
         reader.m_Storage.assign(bytes.begin(), bytes.end());
 
+        reader.m_ArchiveDigest = ContentHash{.Lo = header.DigestLo, .Hi = header.DigestHi};
+        reader.m_TocOffset = sizeof(OnDiskHeader);
+        reader.m_TocSize = tocBytes;
+
         const usize blobRegionStart = sizeof(OnDiskHeader) + tocBytes;
 
         reader.m_Toc.reserve(header.Count);
@@ -153,18 +171,21 @@ namespace Veng
 
             const AssetId id{.Value = onDisk.Id};
             const auto type = static_cast<AssetType>(onDisk.Type);
+            const ContentHash hash{.Lo = onDisk.HashLo, .Hi = onDisk.HashHi};
 
             reader.m_Toc.push_back(InternalTocEntry{
                 .Id = id,
                 .Type = type,
                 .Offset = blobRegionStart + onDisk.Offset,
                 .Size = onDisk.Size,
+                .Hash = hash,
             });
 
             reader.m_Entries.push_back(ArchiveTocEntry{
                 .Id = id,
                 .Type = type,
                 .Size = onDisk.Size,
+                .Hash = hash,
             });
         }
 
@@ -205,5 +226,10 @@ namespace Veng
             .Type = it->Type,
             .Blob = std::span<const u8>(m_Storage.data() + it->Offset, it->Size),
         };
+    }
+
+    std::span<const u8> ArchiveReader::TocBytes() const
+    {
+        return std::span<const u8>(m_Storage.data() + m_TocOffset, m_TocSize);
     }
 }

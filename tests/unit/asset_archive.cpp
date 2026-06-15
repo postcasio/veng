@@ -68,7 +68,9 @@ TEST_CASE("ArchiveReader::Find: hits and misses")
 
 TEST_CASE("ArchiveReader: rejects bad magic")
 {
-    vector<u8> bytes(16, 0);
+    // A full (32-byte) v2 header's worth of zeroes, so the magic check is the
+    // first thing to fail rather than the buffer-too-small guard.
+    vector<u8> bytes(32, 0);
     bytes[0] = 'N';
     bytes[1] = 'O';
     bytes[2] = 'P';
