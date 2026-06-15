@@ -1,146 +1,76 @@
-# future — work beyond planset-2 (DRAFT / vision)
+# future — work beyond the current plansets (DRAFT / vision)
 
 > Not a planset and not scheduled — a **holding area** for the larger phases
-> after the surface cleanup. Each area below becomes its **own planset** when
-> taken up and detailed planset-1 style. Direction, not plans.
+> ahead. Each area below becomes its **own planset** when taken up and detailed
+> planset-1 style. Direction, not plans.
 
 Captured now so the earlier phases stay coherent with where veng is going.
 
 ## Areas
 
-### 1. Asset system — synchronous slice + bindless + async load DONE (planset-5, planset-6)
+Numbered for stable cross-references. **DONE** areas are delivered and fully
+documented in their plansets — only a one-paragraph recap and any still-future
+remainder is kept here. The substance of this document is the **remaining**
+areas (4, 6, 7, 8, 10).
 
-> **The synchronous slice and the bindless rework are done — delivered by
-> [planset-5](../planset-5/README.md)** (the standalone `vengc` cooker, JSON asset
-> packs cooked into `.vengpack` archives, the shared `assetformat` lib, the
-> engine-side `AssetManager`/`AssetHandle`/`LoadSync`, the texture/mesh/shader/
-> material types with **offline Slang reflection → `ShaderInterface`**, and the
-> **`BindlessRegistry` set-0 subsystem** that makes the material thin).
-> **The async half is done too — delivered by
-> [planset-6](../planset-6/README.md)**: non-blocking `Load` on a transfer queue
-> is the default, `LoadSync` is the blocking sibling whose spelling it was named
-> to keep. The one piece of this area still future is **hot-reload** (its re-cook
-> half conflicts with offline-only cooking — see below). **Design overview:**
-> [asset-system.md](asset-system.md) (trimmed to the enduring hot-reload / editor
-> vision); the delivered foundation lives in planset-5 and planset-6.
+### 1. Asset system — DONE (planset-5 + planset-6)
 
-The roadmap began **by defining the asset API** — the general abstraction first,
-concrete types after — and planset-5 followed that order. What it delivered, and
-what is left:
-
-- **Asset API (done):** assets are identified by an opaque `u64` `AssetId`,
-  referenced by `AssetHandle<T>` (cache indirection, hot-reload-ready),
-  loaded/cached through `AssetManager`, and imported by the offline cooker.
-- **Asset types (done):** texture, mesh, shader, and material — each a cooker
-  importer + a cooked runtime form on top of the asset API.
-- **Materials (done):** the material is the rendering interface, not the shader —
-  a thin bundle of a shader handle, texture **handles**, and a `MaterialData`
-  SSBO entry, bound through bindless set 0. The **constructed** path (reference a
-  shader + explicitly-typed fields, validated against the shader's reflected
-  interface) shipped; the **loaded** path from a node-based material editor is the
-  editor's job, still future.
-- **Deferred shader work (done):** **offline shader reflection →
-  serializable `ShaderInterface`** (descriptor bindings, push-constant blocks,
-  vertex inputs) produced by the cooker via Slang, not at runtime; layouts derive
-  from it and engine-provided set 0 is recognized without the author declaring it.
-- **Async load (done, planset-6):** non-blocking `Load` over a transfer queue,
-  on the threading/task system, is now the default; `LoadSync` is the blocking
-  sibling.
-- **Remaining (future):** hot-reload (`Reload`) — its re-upload half is exactly
-  what the async path delivers, but its re-cook half conflicts with offline-only
-  cooking, so it needs a dev-only watcher design (see below).
+> **DONE.** The synchronous slice + bindless ([planset-5](../planset-5/README.md))
+> and the async half ([planset-6](../planset-6/README.md)) shipped: the standalone
+> `vengc` cooker, JSON asset packs cooked into `.vengpack` archives, the shared
+> `assetformat` lib, the engine-side `AssetManager`/`AssetHandle`/`LoadSync`, the
+> texture/mesh/shader/material types with **offline Slang reflection →
+> `ShaderInterface`**, the **`BindlessRegistry` set-0 subsystem** that makes the
+> material thin, a structured `AssetLoadError`, and async-default `Load` over a
+> dedicated transfer queue (`LoadSync` the blocking sibling). **Design overview:**
+> [asset-system.md](asset-system.md).
+>
+> **Still future — hot-reload (`Reload`).** Its re-upload half is exactly what the
+> async path delivers, but its re-cook half conflicts with offline-only cooking,
+> so it needs a dev-only watcher design.
 
 ### 2. Threading / task system — DONE (planset-6)
 
-> **Done — delivered by [planset-6](../planset-6/README.md)** (9 plans). A
-> `TaskSystem` (fixed worker pool + work queue returning `Task<T>`, owned by
-> `Application`, threaded explicitly, pumped once per frame) runs decode + upload
-> off the main thread; a dedicated **transfer queue** with per-worker command
-> pools, a **`TimelineSemaphore`** primitive, queue-family-aware ownership
-> transfer (the `DecideBarrier` rule extended to emit the acquire half on first
-> graphics use), and a transfer-keyed, mutex-guarded retire path
-> (`RetireOnTransfer`) for worker-dropped staging compose into an async-default
-> `Buffer/Image::Upload` and `AssetManager::Load`. The render thread stays single;
-> the `Veng.h` contract is revised to say work runs off it *through the task
-> system*. **What remains future:** a task *graph* (inter-job dependencies),
-> staging-buffer pooling, and cancellation — see
-> [threading-task-system.md](threading-task-system.md), trimmed to that enduring
-> vision.
-
-planset-1 deliberately shipped a **single-threaded v1 contract** (documented in
-`Veng.h`); planset-6 revisited it. The shape that shipped:
-
-- **A task/job system, not raw threads and not a task graph** — a fixed pool
-  draining a work queue, returning `Task<T>` futures. The handle is shaped so a
-  task graph can be layered on later without breaking callers; none is built.
-- **Vulkan-queue-correct from the start.** The old upload path went through
-  `Context::SubmitImmediateCommands` → `WaitIdle` on the graphics queue, fully
-  synchronous and main-thread-blocking. The async path adds a dedicated
-  **transfer queue**, per-worker command pools (pools are not shareable across
-  threads), queue-family **ownership transfers** for resources handed to the
-  render queue, and **timeline-semaphore** sync between loader and render. On
-  MoltenVK the single-queue collapse is the tested path; the dual-queue discrete
-  path is exercised by the pure barrier-decision unit test.
-- **Goal met:** assets decode + upload without stalling the frame.
+> **DONE** ([planset-6](../planset-6/README.md), 9 plans). A `TaskSystem` (fixed
+> worker pool + work queue returning `Task<T>`, owned by `Application`, threaded
+> explicitly, pumped once per frame) runs decode + upload off the main thread, over
+> a dedicated **transfer queue** with per-worker command pools, a
+> **`TimelineSemaphore`** primitive, queue-family-aware ownership transfer, and a
+> transfer-keyed retire path — composing into async-default `Buffer/Image::Upload`
+> and `AssetManager::Load`. The render thread stays single; the `Veng.h` contract
+> says work runs off it *through the task system*. **Design overview:**
+> [threading-task-system.md](threading-task-system.md).
+>
+> **Still future:** a task *graph* (inter-job dependencies), staging-buffer pooling,
+> and cancellation.
 
 ### 3. De-globalize the rendering context — DONE (planset-4)
 
-> ~~Taken up by [planset-4](../planset-4/README.md)~~ — **done**. Plans 01–04
-> threaded an explicit `Context&` into every resource `Create`, converted the
-> context-internal primitives off the global, and deleted `Context::Instance()` /
-> `s_Instance` entirely. veng remains single-threaded/single-context (the freedom
-> this buys is not yet used — see area 2).
-
-`Context::Instance()` was a global singleton reached by every resource constructor
-(`Buffer::Create` etc. secretly grabbed it) — the biggest "not-modern" smell:
-blocked more than one device, hid the dependency, coupled tests to global state,
-and fought multi-threaded creation. planset-1 kept it deliberately; planset-4
-removed it via explicit threading (`X::Create(Context&, const XInfo&)`, each
-resource holding a `Context&` back-reference for deferred-destruction `Retire`).
+> **DONE** ([planset-4](../planset-4/README.md), plans 01–04). `Context::Instance()` /
+> `s_Instance` are gone: every resource `Create` takes an explicit `Context&` and
+> holds it as a back-reference for deferred-destruction `Retire`. veng remains
+> single-threaded / single-context.
 
 ### 4. Event & input systems
 
 Thin and partially stubbed: `EventType` declares focus/move events with no
 classes; input lives ad-hoc on `Window` (`MouseButton` unused; no actions/
-bindings/devices). Revisit when gameplay drives the requirements.
+bindings/devices). Off the critical path — revisit when gameplay drives the
+requirements.
 
-### 5. Unit testing / test infrastructure — DONE (5a: planset-3, 5b + validation gate: planset-4)
+### 5. Unit testing / test infrastructure — DONE (planset-3 + planset-4)
 
-> **Area 5a is DONE — delivered by [planset-3](../planset-3/README.md)**: doctest
-> framework + CTest wiring, a death harness (separate-process; traps
-> SIGABRT/SIGTRAP/SIGILL and gates on the assert message via
-> `PASS_REGULAR_EXPRESSION` — `WILL_FAIL` does *not* invert a signal death, so the
-> original sketch below was wrong on that point), and base coverage: pure-logic
-> (`Result`, `VertexBufferLayout`), `ToVk`/`FromVk` round-trips, an extracted pure
-> `DecideBarrier`/`ScopeFor` rule + tests, death tests, and a consolidated one-exe
-> GPU band that skips (not fails) with no ICD. Typed-buffer size math is covered
-> end-to-end on the GPU, not extracted.
->
-> **Area 5b + the validation gate are DONE — delivered by
-> [planset-4](../planset-4/README.md)** (plans 05–06), written *after* its
-> de-global change (plans 01–04), per the `5a → 3 → 5b` ordering below:
->
-> - **5b — in-process multi-case GPU integration suite** (`veng_gpu`, plan 05):
->   a doctest-based executable with per-case `Context` fixtures
->   (`tests/gpu/fixture.h`), giving real per-case isolation now that
->   `Context::Instance()` is gone. Ports the focused GPU exercises from
->   planset-3 plan 06 (buffer/typed-buffer roundtrip, image clear+format,
->   descriptor write paths) plus a new per-case isolation proof. Same
->   skip-with-no-ICD contract as the rest of the `gpu`-labelled band.
-> - **Local validation-error gate** (plan 06): `ctest -L validation` runs the
->   `gpu`-labelled binaries under `build-debug/` (`VE_DEBUG=ON`) and fails if a
->   new `[ERROR] Vulkan validation` line appears, via an allowlist
->   (`cmake/ValidationGate.cmake`) of the one documented, pinned gap below. CI
->   with a hosted software-ICD pipeline was explicitly descoped — veng has no
->   hosted pipeline and none is planned; this gate is local-only, dependency-free
->   (`cmake -P`), and runs as part of `ctest`.
-
-- ~~**Known descriptor-pool / `UPDATE_AFTER_BIND` validation gap**~~ (storage-image,
-  and — surfaced by planset-3's `descriptor_write_paths` — sampled-image pool
-  sizes): closed by [planset-2/06](../planset-2/06-descriptor-update-policy.md)
-  — static-by-default bindings, the `descriptorBindingStorageImageUpdateAfterBind`
-  feature, and a Primary Pool budget for every `DescriptorType`. The validation
-  gate's allowlist is now empty.
+> **DONE.** 5a ([planset-3](../planset-3/README.md)): doctest + CTest wiring, a
+> separate-process death harness (traps SIGABRT/SIGTRAP/SIGILL, gates on the assert
+> message), and base coverage — pure-logic (`Result`, `VertexBufferLayout`),
+> `ToVk`/`FromVk` round-trips, an extracted pure `DecideBarrier`/`ScopeFor` rule, and
+> a consolidated GPU band that skips (not fails) with no ICD. 5b + the validation
+> gate ([planset-4](../planset-4/README.md), plans 05–06): the in-process `veng_gpu`
+> integration suite with per-case `Context` fixtures, and a local `ctest -L
+> validation` gate that fails on any new unallowlisted `Vulkan validation` ERROR
+> (allowlist now empty — the descriptor-pool / `UPDATE_AFTER_BIND` gap was closed by
+> [planset-2/06](../planset-2/06-descriptor-update-policy.md)). CI with a hosted
+> software ICD was explicitly descoped.
 
 ### 6. Editor application
 
@@ -183,7 +113,8 @@ cross-cutting concerns below. Spans **several plansets**; **design overview:**
   and a **scene editor** that is gated on area 7.
 - **Depends on** the [threading/async-load path](threading-task-system.md) (area 2)
   for non-stalling live preview / hot-reload, [game-module.md](game-module.md), and
-  area 7 (scene model) for the scene editor.
+  area 7 (scene model) for the scene editor. Its native-type **inspectors reuse area
+  10's module reflection** rather than re-introducing it.
 
 ### 7. Scene / entity model
 
@@ -195,10 +126,29 @@ assets). Interacts with area 4 (events/input) and the `TypeRegistry`.
 
 The **runtime model** — `Scene`/`Entity`, type-erased components, queries, the
 transform hierarchy, `Camera`, the reflection layer with game-defined types, and a
-runtime-built scene — is taken up by **[planset-10](../planset-10/README.md)**. The
-**cooked `.scene` asset** is split off into **[area 10](#10-cooker-side-module-reflection--the-cooker-loads-the-game-module)**
+runtime-built scene — is taken up by **[planset-10](../planset-10/README.md)** (in
+progress). The **cooked `.scene` asset** is split off into **[area 10](#10-cooker-side-module-reflection--the-cooker-loads-the-game-module)**
 (prioritized next), because cooking a scene that contains game-defined components needs
 the cooker to reflect those components — i.e. to load the game module.
+
+**Named follow-on — unify `ShaderInterface`/`MaterialField` onto the reflection
+layer.** A later planset re-expresses the GPU-data field tables (the cooker's reflected
+shader/material interface) on planset-10's reflection layer, so the editor inspects
+material parameters through the **same generic field-walker** it uses for components,
+rather than a parallel mechanism. planset-10 deliberately **does not** fold this in:
+the two are different mechanisms — `VE_REFLECT` describes **CPU struct layout**
+(`offsetof`-based, hand-authored, in `libveng`), whereas `ShaderInterface`/
+`MaterialField` describe **GPU data layout** (std140/430 offsets, descriptor slots)
+reflected **offline by the cooker from Slang**. Folding it into the CPU-only ECS stream
+would drag the cooker and the material runtime into it. The reflection layer is built
+generic enough to host it (one open `TypeId` space, closed `FieldClass`, a walker that
+is proven *non-component-bound* by planset-10's round-trip tests), so this is additive
+when taken up. **Design caveat to settle when it is:** `FieldDescriptor.Offset` is
+single-purpose today — a C++ `offsetof`. A GPU field's offset is a *different* number
+(a std140/430 buffer offset), so the unification needs `FieldDescriptor` to carry both
+(or a layout/`FieldClass` distinction) for one walker to drive a **CPU memcpy** in the
+component case and a **GPU buffer write** in the material case. Decide that representation
+up front; it is painful to retrofit onto a populated descriptor table.
 
 ### 8. Scene renderer / render-pipeline architecture
 
@@ -209,38 +159,26 @@ and (eventually) a **compiled** graph, and renders a `Scene` from a camera into 
 view and every editor preview panel are the same object — the editor renders **one
 `Scene` through N `SceneRenderer`s**. An **über-pipeline of interdependent passes**
 (fixed wiring) composed of **reusable, self-contained pass units**. **Design
-overview:** [scene-renderer.md](scene-renderer.md). Depends on the **compiled
-`RenderGraph`** (area 9, the enabling prerequisite), and takes its `Scene`/`Camera`
-from area 7, its first/hardest consumer from area 6 (editor), and its
-frames-in-flight contract + parallel-record story from area 2 (threading).
+overview:** [scene-renderer.md](scene-renderer.md). Its enabling prerequisite, the
+**compiled `RenderGraph`** (area 9), has landed; it takes its `Scene`/`Camera` from
+area 7, its first/hardest consumer from area 6 (editor), and its frames-in-flight
+contract + parallel-record story from area 2 (threading).
 
 ### 9. Compiled RenderGraph — DONE (planset-8)
 
-> **Done — delivered by [planset-8](../planset-8/README.md)** (4 plans).
-> `RenderGraph` becomes a pure **builder** whose `Compile()` bakes the
-> barrier/transition schedule, transient allocation, per-graphics-pass
-> `RenderingInfo`, and one-time validation into a `CompiledGraph` that **replays**
-> per frame — only the per-pass callbacks run. The resource model splits into
-> **graph-owned transients** (logical `ResourceId` handles the graph allocates and
-> resolves per frame, aliased onto shared backing) and late-bound **imports**
-> (external concrete views supplied per frame to `Execute`); the callback takes a
-> typed **`PassContext`** (`Cmd()` + `Resolved(ResourceId)`), the record-time
-> channel aliasing requires. Recompile is consumer-driven on a structural change
-> (no internal dirty flag); transient **aliasing** rides a pure, device-free,
-> unit-tested live-range rule (mirroring `DecideBarrier`). **What remains future:**
-> dead-pass culling, multi-queue / async-compute scheduling, and parallel pass
-> recording into secondary command buffers (area 2's seam) — see
-> [compiled-rendergraph.md](compiled-rendergraph.md), trimmed to that enduring
-> vision.
-
-`RenderGraph` was immediate-mode — rebuilt per frame, barriers re-derived, no
-transient aliasing. This area **compiled** it: the pass topology, derived barrier
-schedule, and transient allocation/aliasing are computed once and **replayed** per
-frame, with only the per-pass draw callbacks running each frame. It also split the
-resource model — **graph-owned transients** declared as logical handles (resolved
-per frame, alias-able) vs. **imported** concrete resources (swapchain / owned
-targets) — which is what lets passes be authored as reusable units. The enabling
-prerequisite for area 8, and a home for area 2's parallel pass recording.
+> **DONE** ([planset-8](../planset-8/README.md), 4 plans). `RenderGraph` is a pure
+> **builder** whose `Compile()` bakes the barrier/transition schedule, transient
+> allocation/aliasing, per-graphics-pass `RenderingInfo`, and one-time validation
+> into a `CompiledGraph` that **replays** per frame — only the per-pass callbacks
+> run. The resource model splits into **graph-owned transients** (logical
+> `ResourceId` handles, resolved per frame and aliased onto shared backing) and
+> late-bound **imports**; the callback takes a typed **`PassContext`** (`Cmd()` +
+> `Resolved(ResourceId)`). Transient aliasing rides a pure, device-free, unit-tested
+> live-range rule. Satisfies area 8's enabling prerequisite. **Design overview:**
+> [compiled-rendergraph.md](compiled-rendergraph.md).
+>
+> **Still future:** dead-pass culling, multi-queue / async-compute scheduling, and
+> parallel pass recording into secondary command buffers (area 2's seam).
 
 ### 10. Cooker-side module reflection — the cooker loads the game module
 
@@ -293,16 +231,14 @@ inventing its own. Splitting it out here means the editor inherits it solved.
 ## Ordering & dependencies
 
 A first cut at sequencing — the order to *take the areas up* (each becomes its own
-planset), not a schedule. Refine when each is detailed.
+planset), not a schedule.
 
-Areas 5a, 3, 5b (+ the validation gate), **area 1** (the synchronous slice +
-bindless *and* its async half), **area 2** (threading), and **area 9** (the
-compiled `RenderGraph`) are all **done** (planset-3, planset-4, planset-5,
-planset-6, planset-8). The thin synchronous asset slice was deliberately pulled
-forward as the "real client" (the cross-cutting concern below), then threading
-turned those delivered sync loads async; planset-8 then compiled the render graph,
-satisfying area 8's one rendering prerequisite. That whole asset + threading chain
-is closed and the scene renderer's enabling prerequisite is met:
+**Done:** areas 5a/3/5b + the validation gate (planset-3, planset-4), **area 1**
+(sync slice + bindless *and* async, planset-5 + planset-6), **area 2** (threading,
+planset-6), and **area 9** (compiled `RenderGraph`, planset-8). The thin synchronous
+asset slice was deliberately pulled forward as the "real client", then threading
+turned those sync loads async; planset-8 then compiled the render graph, satisfying
+area 8's one rendering prerequisite. That whole asset + threading chain is closed:
 
 ```
 1 sync assets + bindless ✅ ──► 2 threading (async loads) ✅ ──► 1 async Load ✅
@@ -318,28 +254,7 @@ remaining:
   4  events/input — independent, gameplay-driven (any time)
 ```
 
-~~1. Test harness + pure-logic tests (area 5, first half).~~ Done — planset-3.
-
-~~2. De-globalize the context (area 3).~~ Done — planset-4 (plans 01–04).
-
-~~3. GPU / integration tests (area 5, second half) + validation gate.~~ Done —
-planset-4 (plans 05–06).
-
-~~4. Asset system (area 1) — synchronous slice + bindless.~~ Done — planset-5
-(cooker, packs/archives, `AssetManager`/`LoadSync`, texture/mesh/shader/material,
-offline Slang reflection, the `BindlessRegistry` set-0 subsystem).
-
-~~5. Threading / task system (area 2) + area 1's async half.~~ Done — planset-6
-(`TaskSystem`/`Task<T>`, transfer queue + per-worker pools, `TimelineSemaphore`,
-queue-family-aware ownership transfer, transfer-keyed retire, async-default
-`Upload`/`Load`). Hot-reload was named but deferred — its re-cook half conflicts
-with offline-only cooking and needs a dev-only watcher design.
-
-~~6. Compiled RenderGraph (area 9).~~ Done — planset-8 (`RenderGraph` builder →
-`Compile()` → `CompiledGraph::Execute(cmd, imports)` replay, the transient/import
-resource model, the typed `PassContext`, one-time validation, and transient
-aliasing via a pure unit-tested live-range rule). Satisfies area 8's enabling
-prerequisite.
+The remaining order:
 
 1. **Scene/entity model — runtime (area 7).** The `Scene`/`Entity`/`TypeRegistry`
    core, reflection layer, transform hierarchy, `Camera`, and game-defined component
@@ -362,99 +277,74 @@ prerequisite.
    editor** within it is gated on the scene/entity model (area 7) **and** the cooked
    scene asset (area 10), which land ahead of it.
 
-**Event & input (area 4)** is off the critical path — independent of the
-rendering/asset/threading work and driven by gameplay needs, so slot it in
-whenever it's wanted. **The scene/entity model (area 7)** is the one prerequisite
-the editor's scene view cannot skip; take it up before that view.
+4. **Scene renderer (area 8).** Needs `Scene`/`Camera` (area 7) and its first/hardest
+   consumer, the editor (area 6); area 9's compiled `RenderGraph` prerequisite is met.
 
-~~Open question: how much of the asset API (definition + sync loading) to pull
-forward in parallel with threading, vs. keeping the whole asset phase last.~~
-Resolved: planset-5 pulled the whole synchronous slice (+ bindless) forward
-*before* threading, as the real client; threading now adds async on top.
+**Event & input (area 4)** is off the critical path — independent of the
+rendering/asset/threading work and driven by gameplay needs, so slot it in whenever
+it's wanted.
 
 ## Cross-cutting concerns (weigh when opening each phase)
 
 Not areas of their own — considerations that span the work above and are cheaper
 to decide early than to retrofit.
 
-- ~~**Design infrastructure against a real client.**~~ **Resolved.** Threading (2)
-  risked being designed speculatively, so planset-5 pulled a thin *synchronous*
-  asset-loading slice (1) forward as a real consumer; planset-6 then built the
-  threading API against that delivered client rather than against a guess. The
-  infrastructure was right because an actual caller shaped it. *(ordering of
-  1 / 2 settled — both done.)*
-- **Higher-level descriptor management + a bindless system** in the asset/material
-  phase — not an open question but a requirement. Materials (many textures/
-  parameters, per-material sets multiplying across a scene) need descriptor
-  management above today's per-set `DescriptorSet`/`DescriptorSetLayout` layer:
-  name-based binding driven by shader reflection, and bindless / descriptor-
-  indexing (the modern default) for texture tables and per-draw resource access.
-  It deeply shapes the descriptor/layout/material-binding APIs and is painful to
-  retrofit, so design it here. planset-2 explicitly deferred bindless;
-  [planset-2/06](../planset-2/06-descriptor-update-policy.md) (done) corrected
-  the *flag-policy altitude* of the existing layer — static by default,
-  bindless an explicit per-binding opt-in via a single type/feature/pool table.
-  The real bindless subsystem (large arrays, per-frame streaming, possibly
-  descriptor buffers) — sketched in
-  [bindless-descriptors.md](bindless-descriptors.md) — **shipped in planset-5
-  (plan 05)** as the `BindlessRegistry` set-0 subsystem. *(area 1, delivered.)*
-- ~~**Structured error type for the asset/import pipeline.**~~ **Delivered by
-  planset-5** as `AssetLoadError` (`AssetError::Kind` ∈ NotFound / WrongType /
-  Corrupt / VersionMismatch / MissingDependency / LoadFailed); `AssetManager`
-  returns `AssetResult<T>` = `std::expected<T, AssetLoadError>`. *(area 1,
-  resolved.)*
-- ~~**CI with a software Vulkan ICD** (lavapipe / SwiftShader) as part of the
-  testing work, not after.~~ Explicitly descoped by planset-4 (plan 06): veng has
-  no hosted pipeline and none is planned. The GPU/headless suite stays
-  local-dev-only (skips with no ICD); the validation gate is local too.
-  *(area 5, resolved.)*
+**Open:**
+
 - **The editor is the demanding second consumer.** hello-triangle (one pipeline,
   one push constant) won't surface multi-material/mesh/scene friction; the
   node-based editor will. Develop the editor and the engine API together so it
   exercises the asset/material surface as it's built — it doubles as the richer
   sample. Now a detailed area of its own — see [area 6](#6-editor-application)
-  ([editor.md](editor.md), [game-module.md](game-module.md)). *(area 1 → area 6.)*
-- ~~**Pipeline caching.**~~ **Resolved — planset-9.** `Context` owns a
-  `vk::PipelineCache` reused across every pipeline build, with opt-in disk
-  persistence via `ApplicationInfo::PipelineCachePath` (seed at init, write at
-  shutdown; a stale/foreign blob starts cold). A veng-chosen **default cache
-  directory** and **off-thread pipeline creation** (which would need cache sync)
-  stay future. *(area 1, resolved.)*
-- ~~**Content hashes in the vengpack archives.**~~ **Resolved — planset-9.** The
-  `.vengpack` format is at **v2**: a content hash per cooked blob **and** a
-  table-of-contents digest (over the serialized TOC bytes), cooker-written via
-  xxh3-128. **The loader does not verify** (the runtime trusts its packs);
-  verification is the separate **`vengc verify`** tool, which re-hashes the blobs +
-  digest and exits nonzero on any mismatch. The hash function lives only in the
-  cooker/verify tool, so `assetformat` (it stores the raw bytes) and `libveng` gain
-  no hash dependency. The per-blob field now **unblocks** **deduplication**
-  (content-addressed storage) and **incremental cooking** (skip re-cooking a source
-  whose inputs hash unchanged) — both build on it with no further format bump.
-  *(area 1, resolved.)*
+  ([editor.md](editor.md), [game-module.md](game-module.md)).
 - **Process discipline.** Keep planset-1's cadence — small, sample-verified,
-  per-plan increments. planset-4 followed this for de-global (3) and planset-6 for
-  threading (2) — nine small plans rather than a big-bang sweep, which on the
-  queue-correctness path would have been just as tempting and dangerous; the same
-  discipline applies to the editor (6) ahead.
+  per-plan increments. planset-4 (de-global), planset-6 (threading), and planset-8
+  (compiled graph) all followed it; the same discipline applies to the editor (6)
+  ahead.
+
+**Resolved:**
+
+- **Design infrastructure against a real client** — planset-5 pulled a thin
+  synchronous asset-loading slice (area 1) forward as a real consumer, so planset-6
+  built the threading API against a delivered client, not a guess.
+- **Higher-level descriptor management + bindless** — shipped in planset-5 as the
+  `BindlessRegistry` set-0 subsystem; [planset-2/06](../planset-2/06-descriptor-update-policy.md)
+  first corrected the flag-policy altitude of the existing layer. Sketch:
+  [bindless-descriptors.md](bindless-descriptors.md). *(area 1.)*
+- **Structured error type for the asset/import pipeline** — `AssetLoadError`
+  (`AssetError::Kind` ∈ NotFound / WrongType / Corrupt / VersionMismatch /
+  MissingDependency / LoadFailed); `AssetManager` returns `AssetResult<T>`. *(area 1,
+  planset-5.)*
+- **CI with a software Vulkan ICD** — explicitly descoped (planset-4): veng has no
+  hosted pipeline. The GPU/headless suite and the validation gate stay local-dev-only.
+  *(area 5.)*
+- **Pipeline caching** — `Context` owns a `vk::PipelineCache` reused across every
+  pipeline build, with opt-in disk persistence via
+  `ApplicationInfo::PipelineCachePath`. A default cache directory and off-thread
+  pipeline creation stay future. *(area 1, planset-9.)*
+- **Content hashes in the vengpack archives** — format **v2**: a content hash per
+  cooked blob + a TOC digest, cooker-written (xxh3-128), `vengc verify`-checked; the
+  loader never verifies and `assetformat`/`libveng` gain no hash dependency. Unblocks
+  **deduplication** and **incremental cooking** with no further format bump. *(area 1,
+  planset-9.)*
 
 ## Status
 
-Vision only beyond what's noted done above. Areas 3 and 5 are complete
-(planset-3, planset-4), **area 1 is complete** — its synchronous slice + bindless
-(planset-5) and its **async** half (planset-6) — **area 2 (threading) is
-complete** (planset-6), and **area 9 (compiled `RenderGraph`) is complete**
-(planset-8). **Area 6's first sub-area — the game-module build model — is done
-(planset-9)** (shared lib + launcher + C-ABI app registration, in-tree); the editor
-shell, the material editor, and the scene editor remain future, and the
-**pipeline-caching** and **content-hashes** cross-cutting concerns are **resolved**
-(planset-9).
+Vision only beyond what is marked **DONE** above. **Done:** areas 1 (asset system,
+planset-5 + planset-6), 2 (threading, planset-6), 3 (de-global, planset-4), 5
+(testing, planset-3 + planset-4), and 9 (compiled `RenderGraph`, planset-8); plus area
+6's first sub-area, the game-module build model (planset-9), and the
+**pipeline-caching** and **content-hashes** cross-cutting concerns (planset-9).
 
-**Area 7 (scene/entity model — runtime) is in progress as planset-10**, and **area 10
-(cooker-side module reflection + the cooked `.scene` asset) is the prioritized next
-planset** once it lands. What remains undetailed/unscheduled beyond those: **area 4**
-(events/input), the rest of **area 6** (editor — [editor.md](editor.md) /
-[game-module.md](game-module.md), whose native-type inspectors reuse area 10's module
-reflection), and **area 8** (scene renderer — [scene-renderer.md](scene-renderer.md));
-plus **hot-reload**, named within area 1 but deferred (its re-cook half conflicts with
-offline-only cooking — needs a dev-only watcher design). Each becomes its own planset
-(area 6, several) when taken up.
+**In flight / next:** area 7 (scene/entity model — runtime) is **in progress as
+planset-10**, and area 10 (cooker-side module reflection + the cooked `.scene` asset)
+is the **prioritized next planset** once it lands.
+
+**Undetailed / unscheduled:** area 4 (events/input), the rest of area 6 (editor shell,
+material editor, scene editor — [editor.md](editor.md) / [game-module.md](game-module.md)),
+and area 8 (scene renderer — [scene-renderer.md](scene-renderer.md)); plus two named
+deferrals — **hot-reload** (area 1; its re-cook half conflicts with offline-only cooking,
+needs a dev-only watcher design) and **unifying `ShaderInterface`/`MaterialField` onto
+planset-10's reflection layer** (area 7; kept apart because GPU layout is cooker-reflected
+from Slang, not `offsetof`-based, and `FieldDescriptor.Offset` would need to carry both a
+CPU and a GPU offset). Each becomes its own planset when taken up.
