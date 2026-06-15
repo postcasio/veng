@@ -29,6 +29,11 @@ namespace Veng
         // Headless: create no window and a windowless (off-screen) context. The
         // run loop then runs until RequestExit() rather than the window closing.
         bool Headless = false;
+        // When set, the render context seeds its pipeline cache from this file at
+        // startup (if it exists) and writes the cache back here at shutdown.
+        // nullopt (default) keeps the cache in-memory only — no file is read or
+        // written. The app owns the path; veng does not choose a cache directory.
+        optional<path> PipelineCachePath = std::nullopt;
     };
 
     class Application

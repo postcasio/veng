@@ -2,6 +2,7 @@
 #include <Veng/Renderer/Context.h>
 
 #include <cstring>
+#include <fstream>
 #include <set>
 
 #include <Veng/Renderer/Backend/Barrier.h>
@@ -189,7 +190,29 @@ namespace Veng::Renderer
 
         VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Native->Device);
 
-        vk::PipelineCacheCreateInfo cacheInfo{};
+        m_Native->PipelineCachePath = info.PipelineCachePath;
+
+        // Seed the cache from disk when a path is given and the file exists. A
+        // missing file is the first run, not an error; a stale/foreign/truncated
+        // blob is safe — the driver validates the cache header and silently
+        // starts cold on a mismatch. veng never parses or validates the bytes.
+        vector<u8> initial;
+        if (m_Native->PipelineCachePath)
+        {
+            std::ifstream file(*m_Native->PipelineCachePath, std::ios::binary | std::ios::ate);
+            if (file)
+            {
+                const auto size = static_cast<usize>(file.tellg());
+                initial.resize(size);
+                file.seekg(0);
+                file.read(reinterpret_cast<char*>(initial.data()), static_cast<std::streamsize>(size));
+            }
+        }
+
+        vk::PipelineCacheCreateInfo cacheInfo{
+            .initialDataSize = initial.size(),
+            .pInitialData = initial.empty() ? nullptr : initial.data(),
+        };
         m_Native->PipelineCache = m_Native->Device.createPipelineCache(cacheInfo).value;
 
         VmaAllocatorCreateInfo allocatorInfo{
@@ -344,6 +367,26 @@ namespace Veng::Renderer
         m_Native->GraphicsQueue = nullptr;
         m_Native->TransferQueue = nullptr;
         vmaDestroyAllocator(m_Native->Allocator);
+
+        // Persist the warm cache before destroying it, when a path is set. The
+        // Vulkan fetch is fatal on failure (the .value unwrap asserts) like any
+        // Vulkan call; the file write is recoverable — a warm cache is an
+        // optimization, not correctness, so a failed write logs and teardown
+        // continues.
+        if (m_Native->PipelineCachePath)
+        {
+            const auto data = m_Native->Device.getPipelineCacheData(m_Native->PipelineCache).value;
+            std::ofstream file(*m_Native->PipelineCachePath, std::ios::binary | std::ios::trunc);
+            if (file)
+            {
+                file.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+            }
+            else
+            {
+                Log::Warn("pipeline cache write failed: {}", m_Native->PipelineCachePath->string());
+            }
+        }
+
         m_Native->Device.destroyPipelineCache(m_Native->PipelineCache);
         m_Native->Device.destroy();
         if (m_Native->Surface)

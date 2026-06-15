@@ -35,6 +35,9 @@ namespace Veng::Renderer
         vk::SurfaceKHR Surface;
         vk::DebugUtilsMessengerEXT DebugMessenger;
         vk::PipelineCache PipelineCache;
+        // When set, the pipeline cache is seeded from this file at init and
+        // written back at shutdown. nullopt keeps it in-memory only.
+        optional<path> PipelineCachePath;
         VmaAllocator Allocator = nullptr;
 
         const vector<const char*> ValidationLayers = vector<const char*>({"VK_LAYER_KHRONOS_validation"});

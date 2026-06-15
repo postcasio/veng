@@ -22,6 +22,7 @@ namespace Veng
             .ApplicationName = m_Info.Name,
             .EngineName = m_Info.EngineName,
             .InternalRenderExtent = m_Info.InternalRenderExtent,
+            .PipelineCachePath = m_Info.PipelineCachePath,
         }, m_Window.get());
 
         m_TaskSystem = CreateUnique<TaskSystem>();

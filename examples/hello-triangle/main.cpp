@@ -504,6 +504,10 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                 .CaptureMouse = false,
             },
             .Headless = smoke,
+            // Persist the pipeline cache beside the launcher — the same
+            // executable-relative resolution the asset pack uses, so the cache
+            // stays with the relocatable trio.
+            .PipelineCachePath = ExecutableDirectory() / "pipeline_cache.bin",
         }));
     });
 }

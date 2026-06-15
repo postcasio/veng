@@ -61,6 +61,9 @@ namespace Veng::Renderer
         uvec2 InternalRenderExtent;
         Format OutputFormat = Format::RGBA16Sfloat;
         Format DepthFormat = Format::D32Sfloat;
+        // When set, the pipeline cache is seeded from this file at init and
+        // written back at shutdown. nullopt keeps it in-memory only.
+        optional<path> PipelineCachePath;
     };
 
     class Context
