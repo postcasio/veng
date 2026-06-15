@@ -72,6 +72,14 @@ Add to the asset/scene-facing sections:
 - Add **`AssetType::Prefab`** wherever the asset types are enumerated, and the
   `*.prefab.json` per-asset source to the "every asset type has its own JSON source"
   list.
+- **Update the two sections the seam change makes stale:** the **Game modules**
+  section describes `VengModuleHost` as `{ ApplicationRegistry& App; EditorRegistry*
+  Editor; }` at ABI v1 — add `TypeRegistry& Types` and note the ABI is now v2 and that
+  type registration routes through `VengModuleRegister`; the **Scene & ECS** /
+  `Application` text says `Application` owns the `TypeRegistry`
+  (`Application::GetTypeRegistry()`, threaded into `Scene::Create`) — correct it to
+  host-owned-and-borrowed (the launcher/cooker constructs it, `Application` borrows a
+  `TypeRegistry&` and threads it into the `AssetManager`).
 
 ## Acceptance
 

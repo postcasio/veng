@@ -43,20 +43,30 @@ and the cooker code calls `TypeRegistry`/`ModuleLoader`/serializer symbols from
 A small helper turns a module path into a populated registry:
 
 ```cpp
-// Loads the game module, runs its VengModuleRegister against a cooker-owned host,
-// and returns a TypeRegistry holding builtins + every type the module registered.
-// The Application factory the module also registers is captured into a throwaway
-// ApplicationRegistry and never invoked (the cooker constructs no app). Editor is
-// null. GPU-free — no Context is created. Located Result error on load/ABI failure.
-Result<???> LoadModuleTypes(const path& modulePath);
+// The registry and the module image whose descriptors it points into, kept together:
+// a component's strings/thunks live in the loaded module, so the handle must outlive
+// every use of the registry. Move-only (LoadedModule is non-copyable); declaration
+// order destroys Types before Module.
+struct LoadedModuleTypes
+{
+    LoadedModule Module;   // the RAII dlopen handle (must outlive Types)
+    TypeRegistry Types;    // builtins + every type the module registered
+};
+
+// Loads the game module, runs its VengModuleRegister against a cooker-owned host, and
+// returns the populated registry paired with the live module handle. The Application
+// factory the module also registers is captured into a throwaway ApplicationRegistry
+// and never invoked (the cooker constructs no app). Editor is null. GPU-free — no
+// Context is created. Located Result error on load/ABI failure.
+Result<LoadedModuleTypes> LoadModuleTypes(const path& modulePath);
 ```
 
 The cooker builds `VengModuleHost{ .App = throwaway, .Types = registry, .Editor =
-nullptr }`, calls `RegisterBuiltinTypes(registry)` then `module->Register(host)`,
-and holds the `LoadedModule` alive alongside the registry (the descriptors'
-strings/thunks live in the module image — same lifetime discipline as the launcher,
-plan 01). The registry + the live module handle travel together to the importer
-(plan 03).
+nullptr }`, calls `RegisterBuiltinTypes(registry)` then `module->Register(host)`, and
+returns both in `LoadedModuleTypes` so the `LoadedModule` stays alive alongside the
+registry (the descriptors' strings/thunks live in the module image — same lifetime
+discipline as the launcher, plan 01). The struct travels to the importer (plan 03),
+which reads its `Types` and lets `Module` outlive the cook.
 
 ## The `cook --module` flag — `cooker/tool/main.cpp`, `Cooker`
 
@@ -65,25 +75,50 @@ plan 01). The registry + the live module handle travel together to the importer
   present, the tool calls `LoadModuleTypes` and threads the resulting `TypeRegistry&`
   into the cook.
 - **`Cooker::CookPack`** gains an optional `const TypeRegistry*` (null when no
-  module). It is handed to importers through the `CookContext` (the prefab importer
-  in plan 03 is the only consumer); existing importers ignore it. A prefab entry
-  with a null registry is a located cook error ("prefab cooking requires --module").
+  module). It is handed to importers through the `CookContext`, which gains a field
+  for it in `cooker/include/Veng/Cook/Importer.h`:
+
+  ```cpp
+  struct CookContext
+  {
+      path                PackDir;
+      ResolveFn           Resolve;
+      const TypeRegistry* Types = nullptr;   // ← new; non-null only on a --module cook
+  };
+  ```
+
+  This makes the cooker's public importer header depend on
+  `Veng/Reflection/TypeRegistry.h` from `libveng` — consistent with this plan linking
+  `veng::veng` PUBLIC, but note it is a header-level dependency on the whole importer
+  surface, not just the load path. Existing importers recompile against the widened
+  struct and ignore the field; the prefab importer (plan 03) is the only consumer. A
+  prefab entry with a null `Types` is a located cook error ("prefab cooking requires
+  --module").
 
 ## Secondary — `vengc generate-type-id` + type manifest
 
 The loaded type table is a source of truth, mirroring `generate-id` for assets:
 
 - **`vengc generate-type-id [--module <lib>]`** mints a fresh `u64` `TypeId`,
-  collision-checked against the builtins (and, with `--module`, the game's already-
-  registered ids), printing **both** forms — hex `0x…ULL` for C++ `VE_REFLECT`
-  literals and decimal for JSON (matching `generate-id`'s output and the house id
-  convention).
-- **Type manifest (optional emit):** `vengc cook --module … ` can dump a
-  `names → TypeId` manifest for tooling/debugging. Keep this minimal — a printable
-  table is enough for v1; a persisted manifest artifact is only worth it if a
-  consumer appears.
+  collision-checked against the builtins (it calls `RegisterBuiltinTypes` on a fresh
+  registry to know them; with `--module` it loads the module via `LoadModuleTypes`
+  too, so it also rejects a collision with the game's already-registered ids),
+  printing **both** forms — hex `0x…ULL` for C++ `VE_REFLECT` literals and decimal for
+  JSON (matching `generate-id`'s output and the house id convention).
+- **Type manifest:** `vengc cook --module …` dumps a `names → TypeId` manifest (a
+  printable table) for tooling/debugging — delivered, not deferred. It is a printed
+  table, not a persisted artifact; a persisted manifest file would only be added if a
+  consumer needs to read it back.
 
 ## Tests — `cooker` suite (`-L cooker`) + a headless reflection test
+
+**First, give the cooker tests their own label.** Cooker test TUs currently compile
+into `veng_unit` and discover under `-L unit`; there is no `cooker` label yet. This
+plan introduces a **`cooker`** ctest label and applies it to the existing cooker test
+TUs (the importer/round-trip tests) as well as the new module-reflection tests, so the
+whole cooker suite runs as one band (`ctest -L cooker`) — either by giving the cooker
+TUs their own test target with `LABELS cooker` or by labelling those discovered tests
+`cooker`. The acceptance commands in this plan and plan 03 assume that label exists.
 
 - **Reflect the real module:** a cooker test points `LoadModuleTypes` at the built
   `libhello_triangle` and asserts the registry contains the builtins **and** the

@@ -31,9 +31,13 @@ change to it is a `Version` bump, never a silent reinterpretation — the `Cooke
 precedent):
 
 ```cpp
+// The current prefab-format version; bumped on any layout change, never a silent
+// reinterpretation. The loader (plan 04) rejects a blob whose Version != this.
+inline constexpr u32 CookedPrefabVersion = 1u;
+
 struct CookedPrefabHeader   // blob head
 {
-    u32 Version;            // prefab-format version; loader rejects an unknown one
+    u32 Version;            // == CookedPrefabVersion at cook; loader rejects an unknown one
     u32 EntityCount;
     u32 ComponentCount;     // total across all entities
     u32 RecordBytes;        // size of the trailing record blob
@@ -58,10 +62,14 @@ Notes that make it sufficient: an **entity carries no name field** — a display
 is just a `Name` component (a builtin), serialized like any other; **hierarchy is no
 header field** either — a `Parent` component holds a `Reference` to another entity,
 remapped on load. A `Reference` (`Entity`) inside a record stores the **prefab-local
-entity index** (its position in `CookedPrefabEntity[]`) so the loader remaps it to
-the spawned handle. So the header is purely structural: `TypeId` keys each
+entity index** in the `Entity`'s `Index` slot (its position in `CookedPrefabEntity[]`),
+with `Generation` written as `0` and ignored on load, so the loader remaps it to the
+spawned handle. The one reserved value is `Entity::Null.Index` (`~0u`): a null
+reference cooks to `Entity::Null` and the loader leaves it null rather than indexing
+the entity map — `~0u` is never a valid prefab-local index, so null and an intra-prefab
+reference never collide. So the header is purely structural: `TypeId` keys each
 component, field values are planset-10's record encoding, and every reference is a
-prefab-local index the loader resolves.
+prefab-local index (or the null sentinel) the loader resolves.
 
 ## The `*.prefab.json` source schema
 
@@ -76,18 +84,20 @@ resolves to a `TypeId`, each component a `{ field-name: value }` map:
       "components": {
         "Transform":    { "Position": [0,0,0], "Rotation": [1,0,0,0], "Scale": [1,1,1] },
         "MeshRenderer": { "Mesh": 12345678901234567890 },
-        "Spinner":      { "Speed": 1.5 }
+        "Spinner":      { "SpeedRadiansPerSec": 1.5 }
       }
     }
   ]
 }
 ```
 
-- **Component key → `TypeId`.** A component is named by its registered **type name**
-  (resolved against the reflected registry) or directly by its `TypeId` (decimal,
-  the JSON id convention). Decide one primary spelling in implementation; name-keyed
-  is friendlier to author, the registry maps it to the stable `TypeId` that goes
-  on disk (consistent with cooked data storing ids, not names).
+- **Component key → `TypeId`.** A component is keyed by its registered **type name**
+  (the canonical authored spelling), resolved against the reflected registry to the
+  stable `TypeId` that goes on disk (consistent with cooked data storing ids, not
+  names). The resolver **also** accepts a decimal `TypeId` as the key (the JSON id
+  convention) for a type with no convenient name, but names are the canonical form and
+  every example uses them. An unresolvable key (unknown name, unregistered id) is a
+  located error.
 - **Field values** mirror the material `*.vmat.json` value conventions: scalars as
   numbers/bools, `vecN`/`quat`/`mat4` as arrays, `string` as a string,
   `AssetHandle<…>` as an unsigned `AssetId`, `Entity` references as an index into
@@ -99,9 +109,20 @@ resolves to a `TypeId`, each component a `{ field-name: value }` map:
 
 ## The `PrefabImporter` — `cooker/src/Importers/PrefabImporter.{h,cpp}`
 
+**Prerequisite — promote the serializer to a public header.** `WriteFields`/`ReadFields`
+live in `engine/src/Reflection/Serialize.h`, a private impl path the cooker library
+cannot include (its include dirs are cooker-only). To reuse them per decision 5, this
+plan **promotes that header to `engine/include/Veng/Reflection/Serialize.h`** (the
+functions are already `VE_API`-exported, so only the declaration moves) and adds it to
+`tests/include_hygiene.cpp` — it is pure CPU and must stay backend-free. The runtime
+loader (plan 04) calls `ReadFields` through the same public header. A
+`static_assert(offsetof(...) == 0)` (or a friend-guarded equivalent) pins the
+`AssetHandle`-stores-`AssetId`-at-offset-0 assumption `WriteFields` relies on, rather
+than leaving it a bare comment.
+
 `Type()` returns `AssetType::Prefab`. `Cook(context, entry)` requires the reflected
-`TypeRegistry` (threaded via `CookContext` from plan 02; absent → the located
-"requires --module" error from plan 02). It:
+`TypeRegistry` (read from `CookContext::Types`, threaded in plan 02; absent → the
+located "requires --module" error from plan 02). It:
 
 1. Reads + parses the external `*.prefab.json` (the `source` field, same pattern as
    `MaterialImporter`).
@@ -122,12 +143,17 @@ per `FieldClass`, coerces the JSON value into the field bytes at its `Offset`:
   needs a 3-number array; a `float` needs a number) → write the bytes; mismatch is a
   located error mirroring the material importer's `IsFloat`/`ComponentCount` checks.
 - **`String`** — JSON string → the field's string.
-- **`AssetHandle`** — unsigned `AssetId`; optionally `Resolve`-checked against the
-  pack for type (`MeshRenderer.Mesh` must resolve to `AssetType::Mesh`), the way the
-  material importer checks texture references. Residency is the runtime's job.
+- **`AssetHandle`** — unsigned `AssetId`. `Resolve`-checked against the pack the way
+  the material importer checks texture references: if `CookContext::Resolve` finds the
+  id, its `AssetType` must match the field's expected type (`MeshRenderer.Mesh` must
+  resolve to `AssetType::Mesh`) or it is a located error; if `Resolve` returns
+  `nullopt` (the id is not in this pack or a `--reference` pack) the id is accepted
+  as-is — residency is the runtime's job. An **invalid/absent** id is the "no asset"
+  value (e.g. a `MeshRenderer` whose mesh is supplied at runtime).
 - **`Enum`** — integer in range → underlying int.
-- **`Reference`** (`Entity`) — an index into the file's `entities`; rewritten to the
-  `{Index,Generation}` the loader remaps. Out-of-range index → located error.
+- **`Reference`** (`Entity`) — an index into the file's `entities`, written into the
+  field's `Entity` as `{Index = prefab-local index, Generation = 0}` for the loader to
+  remap (a null reference stays `Entity::Null`). Out-of-range index → located error.
 - **`Struct`** — recurse into the nested type's `Fields`.
 - A field **present in JSON but absent from the descriptor** → located error
   (stricter than the runtime's tolerance: at cook time an unknown field is almost
@@ -142,6 +168,11 @@ component '<TypeName>': field '<f>': <reason>"`.
 the reflected registry, which is per-cook (depends on `--module`), so it is wired to
 read the registry from `CookContext` at `Cook` time rather than at construction —
 keeping `AssetImporter`'s zero-arg-construction shape intact.
+
+The manifest's `"type"` string also needs a mapping: `ParseAssetType` in
+`cooker/src/Cooker.cpp` gains a `"prefab" → AssetType::Prefab` entry (the third site
+the new enum value touches, beside the enum itself and the importer registration), or
+a `prefab`-typed manifest entry fails to parse.
 
 ## Tests — `cooker` suite (`-L cooker`)
 

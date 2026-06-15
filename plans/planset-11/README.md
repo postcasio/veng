@@ -34,8 +34,11 @@ wrong field type, missing field caught at cook time). At runtime it loads throug
 the **same `AssetManager::Load` path as every other asset** (a cached
 `AssetHandle<Prefab>`); the app **spawns** its entities into a mutable `Scene`. The
 `Scene` is an engine primitive, never loaded — it is created empty and populated by
-spawning prefabs. hello-triangle stops building its world in code (planset-10 plan
-04) and instead **loads + spawns a cooked prefab**.
+spawning prefabs. hello-triangle stops building its **entity/component world** in code
+(planset-10 plan 04) and instead **loads + spawns a cooked prefab**; its geometry stays
+a runtime-generated primitive adopted into an `AssetHandle` (a runtime resource carries
+the invalid `AssetId`, so the prefab serializes its mesh field as "no asset" and the app
+assigns the adopted handle to the spawned renderer).
 
 What it **holds back** (named, not silently dropped):
 
@@ -119,8 +122,8 @@ call cannot be an `Application` member — ownership moves **host-side**.
    Registering reflected types touches no `Context`/device — but today that is an
    incidental property of `Register<T>`. This planset makes it a **contract**: a
    public, GPU-free engine function (e.g. `RegisterBuiltinTypes(TypeRegistry&)`)
-   pre-registers `Name`/`Transform`/`Parent`/`Camera`/`MeshRenderer` and the leaf
-   vocabulary, callable by the launcher *and* the headless cooker with no ICD; and
+   pre-registers `Name`/`Transform`/`Parent`/`CameraComponent`/`MeshRenderer` and the
+   leaf vocabulary, callable by the launcher *and* the headless cooker with no ICD; and
    the **`Application` factory lambda + `VengModuleRegister` are GPU-free by design**
    (the factory captures `ApplicationInfo`, it does not construct GPU objects). A
    cooker test loads the module and reflects its types with **no device present**,
@@ -146,7 +149,10 @@ call cannot be an `Application` member — ownership moves **host-side**.
    a type-erased component instance through the registry's lifecycle thunk, binds
    the `*.prefab.json` field values into it (the validation step — decision 6), and
    serializes it; the runtime `PrefabLoader` reconstructs with `ReadFields`. One
-   encoder/decoder, defined once in `libveng`, exercised from both sides. The split
+   encoder/decoder, defined once in `libveng`, exercised from both sides —
+   `WriteFields`/`ReadFields` are promoted to a public header
+   (`engine/include/Veng/Reflection/Serialize.h`, added to `include_hygiene`) so the
+   cooker and the runtime loader both call the same symbols. The split
    is clean: the **JSON→instance binding is cooker-only** (JSON never enters
    `libveng`, and validation belongs there), while the **instance↔bytes
    serialization is shared `libveng` code** — the cooker owns the JSON half, not the
@@ -189,9 +195,9 @@ call cannot be an `Application` member — ownership moves **host-side**.
    **never loaded**. You create one and **spawn** the prefab's entities into it:
    `Prefab::SpawnInto(Scene&, AssetManager&) → vector<Entity>` (the spawned roots)
    creates the entities, `ReadFields` each component, remaps `Entity` `Reference`
-   fields (the cooked `{Index,Generation}` → the fresh handles — the remap
-   planset-10's `Reference` class was recorded to enable), and rehydrates the
-   already-resident `AssetHandle` fields. This mirrors the engine's grain: a `Mesh`
+   fields (a cooked reference stores the **prefab-local entity index**, which spawn
+   resolves to the fresh handle; the invalid-index sentinel `Entity::Null.Index`
+   stays `Entity::Null`), and rehydrates the already-resident `AssetHandle` fields. This mirrors the engine's grain: a `Mesh`
    asset loads uniformly and you *use* it for a draw; a `Prefab` loads uniformly and
    you *spawn* it into a world. There is **no** bespoke `LoadScene` and no cache
    bypass — spawning the same prefab twice spawns two independent copies, and a fresh
@@ -217,12 +223,12 @@ call cannot be an `Application` member — ownership moves **host-side**.
 
 | In scope | Out of scope (later / other phases) |
 |---|---|
-| `TypeRegistry& Types` on `VengModuleHost`; ABI bump `1u→2u`; component registration routed through `VengModuleRegister`; registry ownership moved host-side (launcher constructs + threads into `Application`, which borrows) | Live `Context`/`AssetManager` on the host (still inert — registration is GPU-free); custom asset-type **loader** registration (needs a live `AssetManager`, returns when one is driven) |
+| `TypeRegistry& Types` on `VengModuleHost`; ABI bump `1u→2u`; component registration routed through `VengModuleRegister`; registry ownership moved host-side (launcher constructs + threads into `Application`, which borrows, and on into the `AssetManager` so the prefab loader reflects through it) | Live `Context`/`AssetManager` on the host (still inert — registration is GPU-free); custom asset-type **loader** registration (needs a live `AssetManager`, returns when one is driven) |
 | A GPU-free `RegisterBuiltinTypes(TypeRegistry&)` contract; a headless cooker test reflecting the module's types with no device | A systems/scheduler framework; archetype storage |
 | `vengc` links `veng::veng` and reuses `ModuleLoader` for `cook --module <path>`; the reflected type table; `vengc generate-type-id` + a type manifest | A standalone cooker `dlopen` wrapper (reuse `ModuleLoader`); cross-compiled / host≠target cooking |
 | `AssetType::Prefab`; `CookedPrefabHeader` in `assetformat`; a `PrefabImporter` that parses `*.prefab.json`, **validates** components against reflected descriptors, and emits the `WriteFields` record blob | A new on-disk serialization format (reuse planset-10's name-keyed records); editor authoring UI |
 | A registered `Prefab` `AssetLoader` (cached `AssetHandle<Prefab>` via the standard `Load`/`LoadSync`, embedded refs as `LoadJob` dependencies); `Prefab::SpawnInto(Scene&, AssetManager&) → vector<Entity>` (`ReadFields` per component, `Entity` reference remap, `AssetHandle` rehydration) | A bespoke `LoadScene` / cache bypass (a prefab loads like any asset); making the runtime `Scene` itself a cached/shared resource (it stays `Unique`); prefab nesting / composition |
-| Sample migration: a **fully data-driven** hello-triangle — a cooked sphere mesh + a `*.prefab.json` (`Transform` + `MeshRenderer` + game `Spinner`) cooked via the `MODULE` build edge, **loaded + spawned** at runtime with nothing built in code | The deferred `SceneRenderer`; multi-camera / N-renderer editor wiring |
+| Sample migration: a **data-driven** hello-triangle — a `*.prefab.json` (`Transform` + `MeshRenderer` + game `Spinner`) cooked via the `MODULE` build edge, **loaded + spawned** at runtime; the mesh stays a runtime-adopted primitive the app assigns to the spawned renderer (no entity/component built in code) | The deferred `SceneRenderer`; multi-camera / N-renderer editor wiring; cooking procedural/primitive geometry (the sample's mesh is runtime-adopted, not cooked) |
 
 ## Plans
 
@@ -232,7 +238,7 @@ call cannot be an `Application` member — ownership moves **host-side**.
 | 02 | [`vengc` loads the module — reflected type table + manifest](02-cooker-loads-module.md) | Link `veng::veng` into the prefab-cooking path; `vengc cook --module <path>` reuses `ModuleLoader` to populate a `TypeRegistry` (builtins + game types); `vengc generate-type-id` + a type manifest. A cooker test reflects the hello-triangle module's `Spinner` with no device. No prefab cook yet. | proposed |
 | 03 | [The cooked prefab asset — format + importer + validation](03-prefab-cook.md) | `AssetType::Prefab`; `CookedPrefabHeader` in `assetformat`; the `*.prefab.json` schema; a `PrefabImporter` that validates entities/components against the reflected descriptors and emits the `WriteFields` record blob (reusing the serializer via type-erased instances). Cooker tests for the happy path + each validation failure. | proposed |
 | 04 | [`Prefab` asset loader + `SpawnInto` + sample](04-prefab-spawn-sample.md) | A registered `Prefab` `AssetLoader` (cached `AssetHandle`, embedded refs as dependencies — uniform with every asset); `Prefab::SpawnInto(Scene&, AssetManager&) → vector<Entity>` (`ReadFields`, `Entity` reference remap, `AssetHandle` rehydration). The `add_asset_pack MODULE` / `veng_add_game` build edge. Migrate hello-triangle to author + cook + load + spawn a prefab. The one GPU-touching plan; validation gate + smoke. | proposed |
-| 05 | [Docs + roadmap re-cut](05-docs-roadmap.md) | `plans/README.md` (planset-11 line); `future/README.md` (area 10 **DONE**; remaining: editor, scene renderer; hot-reload still future); `game-module.md` (seam 2 delivered); `CLAUDE.md` (cooked-prefab + cooker-loads-module + GPU-free registration contract). | proposed |
+| 05 | [Docs + roadmap re-cut](05-docs-roadmap.md) | `plans/README.md` (planset-11 line); `future/README.md` (area 10 **DONE**; remaining: editor, scene renderer, events/input; hot-reload still future); `game-module.md` (seam 2 delivered); `CLAUDE.md` (cooked-prefab + cooker-loads-module + GPU-free registration contract). | proposed |
 
 ## Dependencies & dispatching
 
@@ -284,9 +290,11 @@ the docs plan).
   (`ctest --test-dir build-debug -L validation`); it does not change the render path
   materially, so **it may not widen the allowlist** (it is empty).
 - **The smoke PPM is non-deterministic** — verify size + exit 0. The smoke pose is
-  fixed, so `smoke_golden` still applies, but plan 04 swaps the runtime primitive
-  sphere for a **cooked mesh**, so the capture **will** move — regenerate the golden
-  per `CLAUDE.md` and call the deliberate change out in plan 04.
+  fixed, so `smoke_golden` still applies; plan 04 keeps the same runtime-adopted
+  primitive geometry (only its *source* — the entity/components carrying it — moves
+  into a spawned prefab), so the capture is **unchanged** and the golden is **not**
+  regenerated. A green `smoke_golden` is the proof the data-driven path renders
+  identically.
 
 > Status legend: `proposed` = drafted, awaiting review; `ready` = reviewed and
 > approved; `done` = landed and verified.
@@ -303,6 +311,6 @@ spawns instead of building its world in code. Mark **area 10
 delivered** in [future/README.md](../future/README.md) and update
 [game-module.md](../future/game-module.md) (seam 2 — the `TypeRegistry` host wiring
 — delivered), noting that the **editor** (area 6, whose native-type inspectors reuse
-this reflected-descriptor seam) and the **scene renderer** (area 8) remain the
-natural next plansets, and that **hot-reload** (asset and game-code) and the
-**`ShaderInterface`/`MaterialField` unification** stay future.
+this reflected-descriptor seam), the **scene renderer** (area 8), and **events/input**
+(area 4) remain the natural next plansets, and that **hot-reload** (asset and
+game-code) and the **`ShaderInterface`/`MaterialField` unification** stay future.

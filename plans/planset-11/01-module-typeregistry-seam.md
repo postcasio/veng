@@ -62,7 +62,11 @@ for "host-owned, threaded into the app." The move:
   member; take a `TypeRegistry&` (stored as a reference/back-pointer) through the
   `Application` constructor / `ApplicationInfo`, the same explicit-threading
   discipline as `Context`/`AssetManager`/`TaskSystem`. `GetTypeRegistry()` returns
-  the borrowed reference — **callers are unchanged**.
+  the borrowed reference — **callers are unchanged**. `Application` also threads the
+  borrowed `TypeRegistry&` **into the `AssetManager` it constructs** (the
+  `AssetManager` constructor gains a `TypeRegistry&` beside its existing `Context&` /
+  `TaskSystem&`), so the prefab loader plan 04 adds can reflect a component's fields
+  through it — the same explicit threading as the context and task system.
 - **The host owns it.** The launcher constructs the `TypeRegistry`, pre-registers
   builtins, fills the host, calls `Register`, then constructs the app threading the
   registry in. (The exact constructor/`ApplicationInfo` shape settles against
@@ -86,9 +90,10 @@ registry is now owned by whoever loaded the module (launcher here, cooker in pla
 ## The GPU-free builtin-registration contract — engine
 
 planset-10 pre-registers the builtins (`Name`, `Transform`, `Parent`, and — from
-its plan 04 — `Camera`/`CameraComponent`, `MeshRenderer`) somewhere inside the app's
-startup. Extract that into a **public, GPU-free** function the launcher and cooker
-both call:
+its plan 04 — `CameraComponent`, `MeshRenderer`) somewhere inside the app's startup.
+(`Camera` itself is an unreflected value type that builds view/projection; only
+`CameraComponent` is a registered reflected component.) Extract that into a **public,
+GPU-free** function the launcher and cooker both call:
 
 ```cpp
 // Pre-registers the engine's builtin reflected types (leaf vocabulary + builtin
@@ -141,7 +146,7 @@ planset-10 plan 04 registers the game's `Spinner` (and uses the public
 ```cpp
 extern "C" void VengModuleRegister(Veng::VengModuleHost* host)
 {
-    host->Types.Register<HelloTriangle::Spinner>();   // game component, via VE_REFLECT
+    host->Types.Register<Spinner>();   // game component (main.cpp's file scope), via VE_REFLECT
     host->App.RegisterApplication([] { /* unchanged factory */ });
 }
 VE_EXPORT_MODULE_ABI();
@@ -149,7 +154,9 @@ VE_EXPORT_MODULE_ABI();
 
 Builtins are already present (the launcher pre-registered them); the game adds only
 its own types. The app's `OnInitialize` no longer registers components — it consumes
-`GetTypeRegistry()` as before for `Scene::Create`.
+`GetTypeRegistry()` as before for `Scene::Create`. Drop the now-stale
+`Application.h` comment that claims builtins are registered "at construction" — they
+are pre-registered host-side, before the app exists.
 
 ## Tests
 
