@@ -6,6 +6,7 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Task/TaskSystem.h>
+#include <Veng/Reflection/TypeRegistry.h>
 
 namespace Veng
 {
@@ -64,6 +65,17 @@ namespace Veng
             return *m_AssetManager;
         }
 
+        // The engine-owned, process-wide registry of reflected types (a
+        // reflected type is identical across every Scene). Threaded by reference
+        // into Scene::Create — the same explicit-dependency discipline as the
+        // Context / AssetManager / TaskSystem. Register engine builtins at
+        // construction and a game's own component types in OnInitialize, on the
+        // main thread, before any Scene is touched concurrently with workers.
+        [[nodiscard]] TypeRegistry& GetTypeRegistry()
+        {
+            return m_TypeRegistry;
+        }
+
         // The ImGui layer, or nullptr if the app opted out (ApplicationInfo::ImGui
         // == nullopt).
         [[nodiscard]] ImGuiLayer* GetImGuiLayer() const
@@ -103,6 +115,11 @@ namespace Veng
         void Frame();
 
         ApplicationInfo m_Info;
+
+        // Engine-owned and value-held: it carries no GPU state, so it neither
+        // needs the Context alive nor participates in the deferred-destruction
+        // path. Outlives every Scene the app creates.
+        TypeRegistry m_TypeRegistry;
 
         Unique<Window> m_Window;
 

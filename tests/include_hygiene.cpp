@@ -48,6 +48,11 @@
 #include <Veng/Module/Module.h>
 #include <Veng/Module/ModuleLoader.h>
 
+#include <Veng/Reflection/TypeRegistry.h>
+
+#include <Veng/Scene/Entity.h>
+#include <Veng/Scene/Scene.h>
+
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/ComputePipeline.h>

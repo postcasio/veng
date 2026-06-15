@@ -201,6 +201,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/asset_archive.cpp
             tests/unit/asset_manager.cpp
             tests/unit/primitives.cpp
+            tests/unit/scene_ecs.cpp
     )
     target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
 
@@ -286,6 +287,18 @@ if (VENG_BUILD_TESTS)
     add_test(NAME death.assert_message COMMAND veng_death assert_message)
     set_tests_properties(death.assert_message PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "assert_message case fired")
+
+    add_test(NAME death.scene_get_stale_entity COMMAND veng_death scene_get_stale_entity)
+    set_tests_properties(death.scene_get_stale_entity PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "dead or stale entity")
+
+    add_test(NAME death.scene_get_missing_component COMMAND veng_death scene_get_missing_component)
+    set_tests_properties(death.scene_get_missing_component PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "lacks the component")
+
+    add_test(NAME death.type_id_collision COMMAND veng_death type_id_collision)
+    set_tests_properties(death.type_id_collision PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "TypeId collision")
 
     # GPU-coupled death cases (need a headless Context; skip with no driver).
     add_test(NAME death.buffer_upload_overrun COMMAND veng_death buffer_upload_overrun)

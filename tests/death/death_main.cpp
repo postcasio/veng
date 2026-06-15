@@ -44,12 +44,29 @@
 #include <Veng/Renderer/VertexBufferLayout.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
+#include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/Entity.h>
+#include <Veng/Scene/Scene.h>
+
 #include <support/GpuProbe.h>
 
 #include <fmt/format.h>
 
 using namespace Veng;
 using namespace Veng::Renderer;
+
+namespace
+{
+    // ECS death-case fixtures: a component type, plus two distinct types that
+    // deliberately claim the same TypeId to exercise the collision assert.
+    struct DeathPosition { f32 X = 0.0f; };
+    struct CollideA { int Value = 0; };
+    struct CollideB { float Value = 0.0f; };
+}
+
+VE_TYPE(DeathPosition, 0x45680D614D2A8FE4ULL);
+VE_TYPE(CollideA, 0xB87E1263116E0707ULL);
+VE_TYPE(CollideB, 0xB87E1263116E0707ULL); // same id as CollideA — a collision
 
 namespace
 {
@@ -118,6 +135,42 @@ namespace
         // Proves FatalAssert routes the formatted message to the log sink before
         // aborting.
         VE_ASSERT(false, "assert_message case fired");
+    }
+
+    // -- ECS death cases (pure-logic, no device) -----------------------------
+
+    void RunSceneGetStaleEntity()
+    {
+        TypeRegistry registry;
+        registry.Register<DeathPosition>("DeathPosition");
+        const Unique<Scene> scene = Scene::Create(registry);
+
+        const Entity e = scene->CreateEntity();
+        scene->Add<DeathPosition>(e);
+        scene->DestroyEntity(e);
+
+        // e's slot may be recycled, but its generation has been bumped, so the
+        // stale handle fails the IsAlive assert.
+        (void)scene->Get<DeathPosition>(e);
+    }
+
+    void RunSceneGetMissingComponent()
+    {
+        TypeRegistry registry;
+        registry.Register<DeathPosition>("DeathPosition");
+        const Unique<Scene> scene = Scene::Create(registry);
+
+        const Entity e = scene->CreateEntity();
+        // The entity is live but has no DeathPosition: Get asserts present.
+        (void)scene->Get<DeathPosition>(e);
+    }
+
+    void RunTypeIdCollision()
+    {
+        TypeRegistry registry;
+        registry.Register<CollideA>("CollideA");
+        // CollideB claims CollideA's id — a fatal collision assert.
+        registry.Register<CollideB>("CollideB");
     }
 
     // -- GPU-coupled death cases (need a headless Context) -------------------
@@ -226,6 +279,9 @@ int main(int argc, char** argv)
     else if (name == "vertex_format_unknown") RunVertexFormatUnknown();
     else if (name == "tovk_unmapped") RunToVkUnmapped();
     else if (name == "assert_message") RunAssertMessage();
+    else if (name == "scene_get_stale_entity") RunSceneGetStaleEntity();
+    else if (name == "scene_get_missing_component") RunSceneGetMissingComponent();
+    else if (name == "type_id_collision") RunTypeIdCollision();
     // GPU-coupled
     else if (name == "buffer_upload_overrun") RunBufferUploadOverrun();
     else if (name == "index_u16_into_u32") RunIndexU16IntoU32();
