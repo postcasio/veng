@@ -78,6 +78,9 @@ namespace Veng::Cook
         sessionDesc.targetCount = 1;
         sessionDesc.searchPaths = searchPaths;
         sessionDesc.searchPathCount = 1;
+        // Match the compile session so reflected matrix-member offsets agree with
+        // the column-major layout the SPIR-V is generated for.
+        sessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
 
         ComPtr<slang::ISession> session;
         if (SLANG_FAILED(globalSession->createSession(sessionDesc, session.writeRef())))

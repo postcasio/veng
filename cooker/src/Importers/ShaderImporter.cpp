@@ -219,6 +219,9 @@ namespace Veng::Cook
             sessionDesc.targetCount = 1;
             sessionDesc.searchPaths = searchPaths;
             sessionDesc.searchPathCount = 1;
+            // veng uploads glm column-major matrices verbatim; Slang's default is
+            // row-major, which reads them transposed. Match glm so mul(M, v) is M*v.
+            sessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
 
             ComPtr<slang::ISession> session;
             if (SLANG_FAILED(globalSession->createSession(sessionDesc, session.writeRef())))
