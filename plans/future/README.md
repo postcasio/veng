@@ -11,7 +11,8 @@ Captured now so the earlier phases stay coherent with where veng is going.
 Numbered for stable cross-references. **DONE** areas are delivered and fully
 documented in their plansets — only a one-paragraph recap and any still-future
 remainder is kept here. The substance of this document is the **remaining**
-areas (4, 6, 7, 8, 10).
+areas (4, 6, 8, 10) — plus area 7's still-future remainder (its runtime half is
+done; its cooked `.scene` asset is area 10).
 
 ### 1. Asset system — DONE (planset-5 + planset-6)
 
@@ -88,12 +89,15 @@ cross-cutting concerns below. Spans **several plansets**; **design overview:**
   editor-only `libgame_editor` (shared, never shipped) + the `EditorRegistry` it
   registers into + the editor host that loads it are **still future** — the ABI
   reserves a null `EditorRegistry*` slot for them. The **type-reflection layer**
-  (`TypeRegistry`, the mechanism that lets the editor see a game's **native types** —
-  C++ has no reflection — with hand-written field descriptors driving
-  auto-inspectors) was **deferred out of this prerequisite into the editor-shell
-  sub-area**, to be designed against the real inspector. Also still future:
-  **installing `veng_add_game` for downstream `find_package(veng)` consumers** (see
-  [game-module.md](game-module.md)).
+  (`TypeRegistry` + `FieldDescriptor`/`TypeInfo`, the mechanism that lets the editor
+  see a game's **native types** — C++ has no reflection — with hand-written field
+  descriptors driving auto-inspectors) **now exists**: planset-10 pulled it forward to
+  serialize components, and its `FieldDescriptor` already carries the optional editor
+  metadata (`DisplayName`/`Tooltip`/`Min`/`Max`/`Hidden`/…) the inspectors read — so
+  the editor **consumes** it rather than introducing it, and its native-type
+  introspection **reuses area 10's** module reflection to obtain a game's descriptors.
+  Also still future: **installing `veng_add_game` for downstream `find_package(veng)`
+  consumers** (see [game-module.md](game-module.md)).
 - **The editor is a cooker consumer** ([editor.md](editor.md)). The runtime never
   links importers; the editor — a tool — links `libveng_cook` for **cook-on-demand**,
   reading *source* assets, cooking live (off-thread), and previewing through the
@@ -110,26 +114,42 @@ cross-cutting concerns below. Spans **several plansets**; **design overview:**
 - **Concrete editors:** texture viewer/settings (the first slice), the node-based
   **material editor** (imnodes is already vendored; v1 binds params to an
   author-provided Slang shader — the *loaded* `.vmat` path planset-5 left open),
-  and a **scene editor** that is gated on area 7.
+  and a **scene editor** whose area-7 (runtime scene model) gate is now **cleared by
+  planset-10**; its remaining gate is the cooked `.scene` asset (area 10), which lands
+  next.
 - **Depends on** the [threading/async-load path](threading-task-system.md) (area 2)
   for non-stalling live preview / hot-reload, [game-module.md](game-module.md), and
-  area 7 (scene model) for the scene editor. Its native-type **inspectors reuse area
-  10's module reflection** rather than re-introducing it.
+  area 7 (scene model — runtime done) for the scene editor. Its native-type
+  **inspectors reuse area 10's module reflection** rather than re-introducing it.
 
 ### 7. Scene / entity model
 
-A prerequisite the **scene editor** (area 6) cannot proceed without, and useful in
-its own right: a transform hierarchy, a component system, component types described
-through the reflection layer (so inspectors + serialization work), and a **scene asset
-type** that cooks and loads like the others (planset-5 explicitly descoped scene
-assets). Interacts with area 4 (events/input) and the `TypeRegistry`.
-
-The **runtime model** — `Scene`/`Entity`, type-erased components, queries, the
-transform hierarchy, `Camera`, the reflection layer with game-defined types, and a
-runtime-built scene — is taken up by **[planset-10](../planset-10/README.md)** (in
-progress). The **cooked `.scene` asset** is split off into **[area 10](#10-cooker-side-module-reflection--the-cooker-loads-the-game-module)**
-(prioritized next), because cooking a scene that contains game-defined components needs
-the cooker to reflect those components — i.e. to load the game module.
+> **DONE (runtime) — delivered by [planset-10](../planset-10/README.md)** (5 plans).
+> A `Scene` is a runtime ECS world: a generational `Entity` free-list plus one
+> type-erased **sparse-set** pool per component type, with templated
+> `Add`/`Remove`/`Get`/`Has` and multi-component `View`/`Each` queries. An
+> engine-owned **`TypeRegistry`** (threaded into `Scene::Create`) records every
+> reflected type under a stable `u64` **`TypeId` authored like an `AssetId`**, and
+> the pulled-forward **reflection layer** (`Veng/Reflection/`: one open `TypeId`
+> space + closed `FieldClass`, `FieldDescriptor`/`TypeInfo` authored via
+> `VE_REFLECT`/`VE_FIELD` with optional editor metadata) drives a tolerant,
+> name-keyed, recursive generic serializer. Builtins `Name`, `Transform` (local TRS)
+> + `Parent` + the world-matrix walk, `Camera` (+ `CameraComponent`), and
+> `MeshRenderer` are pre-registered through the same path a **game-defined** type
+> uses — hello-triangle builds a one-entity `Scene` with a game-defined `Spinner` and
+> renders through a `Camera`.
+>
+> **Still future — the cooked `.scene` asset and the module-ABI seam are
+> [area 10](#10-cooker-side-module-reflection--the-cooker-loads-the-game-module)**
+> (the prioritized next planset), *not* loose future: cooking a scene that contains
+> game-defined components needs the cooker to reflect those components (load the game
+> module), and the `VengModuleHost` `TypeRegistry&` registration seam planset-10 left
+> additive is realized there. Also still future: a **systems** framework (planset-10
+> ships storage + queries; the app writes its own update loops over `Each`/`View`);
+> **archetype storage** and **dirty-flag** transform propagation (perf optimizations
+> behind the same API); migrating `VE_REFLECT` to inline `[[=…]]` **annotation
+> reflection** once AppleClang gains P2996/P3394; and the named follow-on
+> **re-expressing `ShaderInterface`/`MaterialField`** on this reflection layer (below).
 
 **Named follow-on — unify `ShaderInterface`/`MaterialField` onto the reflection
 layer.** A later planset re-expresses the GPU-data field tables (the cooker's reflected
@@ -159,10 +179,12 @@ and (eventually) a **compiled** graph, and renders a `Scene` from a camera into 
 view and every editor preview panel are the same object — the editor renders **one
 `Scene` through N `SceneRenderer`s**. An **über-pipeline of interdependent passes**
 (fixed wiring) composed of **reusable, self-contained pass units**. **Design
-overview:** [scene-renderer.md](scene-renderer.md). Its enabling prerequisite, the
-**compiled `RenderGraph`** (area 9), has landed; it takes its `Scene`/`Camera` from
-area 7, its first/hardest consumer from area 6 (editor), and its frames-in-flight
-contract + parallel-record story from area 2 (threading).
+overview:** [scene-renderer.md](scene-renderer.md). **Both** its prerequisites are
+now met: the **compiled `RenderGraph`** (area 9) has landed, and its `Scene`/`Camera`
+input (area 7's runtime model) is delivered by planset-10 — so no rendering or scene
+gate remains. It takes its first/hardest consumer from area 6 (editor) and its
+frames-in-flight contract + parallel-record story from area 2 (threading), and is
+sequenced **after** area 10 (cooked `.scene`) and area 6 (editor).
 
 ### 9. Compiled RenderGraph — DONE (planset-8)
 
@@ -235,50 +257,51 @@ planset), not a schedule.
 
 **Done:** areas 5a/3/5b + the validation gate (planset-3, planset-4), **area 1**
 (sync slice + bindless *and* async, planset-5 + planset-6), **area 2** (threading,
-planset-6), and **area 9** (compiled `RenderGraph`, planset-8). The thin synchronous
-asset slice was deliberately pulled forward as the "real client", then threading
-turned those sync loads async; planset-8 then compiled the render graph, satisfying
-area 8's one rendering prerequisite. That whole asset + threading chain is closed:
+planset-6), **area 9** (compiled `RenderGraph`, planset-8), and **area 7's runtime
+half** (scene/entity model, planset-10). The thin synchronous asset slice was
+deliberately pulled forward as the "real client", then threading turned those sync
+loads async; planset-8 then compiled the render graph and planset-10 landed the
+runtime scene model — satisfying **both** of area 8's prerequisites. That whole asset
++ threading + scene chain is closed:
 
 ```
 1 sync assets + bindless ✅ ──► 2 threading (async loads) ✅ ──► 1 async Load ✅
 9 compiled RenderGraph ✅
+7 scene/entity model (runtime) ✅ ──► planset-10
 
 remaining:
-  7  scene/entity model (runtime) ──► planset-10 (in progress)
   10 cooker module reflection + cooked .scene ──► PRIORITIZED NEXT
-        (needs 7 + planset-9 module model)
+        (needs 7 ✅ + planset-9 module model ✅)
   6  editor (shell → material editor → scene editor)   (wants 2's async path ✅;
-        scene editor needs 7 + 10; inspectors reuse 10's module reflection)
-  8  scene renderer ──► needs 7 (Scene/Camera) + 6     (9 ✅ — no rendering gate left)
+        area-7 gate cleared ✅; scene editor needs 10; inspectors reuse 10's
+        module reflection)
+  8  scene renderer ──► needs 6  (7 ✅ Scene/Camera, 9 ✅ — no scene/rendering gate left)
   4  events/input — independent, gameplay-driven (any time)
 ```
 
 The remaining order:
 
-1. **Scene/entity model — runtime (area 7).** The `Scene`/`Entity`/`TypeRegistry`
-   core, reflection layer, transform hierarchy, `Camera`, and game-defined component
-   types — **in progress as [planset-10](../planset-10/README.md)**.
-
-2. **Cooker-side module reflection + cooked `.scene` (area 10) — PRIORITIZED NEXT.**
+1. **Cooker-side module reflection + cooked `.scene` (area 10) — PRIORITIZED NEXT.**
    The cooker `dlopen`s the game module to reflect its native types, realizing the
    `VengModuleHost` `TypeRegistry&` seam and delivering the cooked `.scene` asset
    (validated against the reflected descriptors, the way materials are validated
    against shader reflection). Gated on area 7 (planset-10) + the planset-9 module
-   model — both in place once planset-10 lands.
+   model — both now in place.
 
-3. **Editor application (area 6).** The authoring environment, spanning several
+2. **Editor application (area 6).** The authoring environment, spanning several
    plansets: the [game-module build model](game-module.md) (shared lib + launcher,
    C-ABI app registration) is **done — planset-9** (in-tree); next is the
    [editor shell + framework](editor.md) (cook-on-demand, single-window docking, the
    texture editor), then the node-based **material editor**. Its native-type
    **inspectors reuse area 10's module reflection** rather than re-introducing it. It
    builds on area 2's async path (done) for non-stalling live preview. The **scene
-   editor** within it is gated on the scene/entity model (area 7) **and** the cooked
-   scene asset (area 10), which land ahead of it.
+   editor** within it has its scene/entity-model gate (area 7) **cleared by
+   planset-10**; its remaining gate is the cooked scene asset (area 10), which lands
+   ahead of it.
 
-4. **Scene renderer (area 8).** Needs `Scene`/`Camera` (area 7) and its first/hardest
-   consumer, the editor (area 6); area 9's compiled `RenderGraph` prerequisite is met.
+3. **Scene renderer (area 8).** Its `Scene`/`Camera` (area 7) and compiled
+   `RenderGraph` (area 9) prerequisites are both met; it now waits only on its
+   first/hardest consumer, the editor (area 6).
 
 **Event & input (area 4)** is off the critical path — independent of the
 rendering/asset/threading work and driven by gameplay needs, so slot it in whenever
@@ -332,13 +355,14 @@ to decide early than to retrofit.
 
 Vision only beyond what is marked **DONE** above. **Done:** areas 1 (asset system,
 planset-5 + planset-6), 2 (threading, planset-6), 3 (de-global, planset-4), 5
-(testing, planset-3 + planset-4), and 9 (compiled `RenderGraph`, planset-8); plus area
-6's first sub-area, the game-module build model (planset-9), and the
-**pipeline-caching** and **content-hashes** cross-cutting concerns (planset-9).
+(testing, planset-3 + planset-4), 9 (compiled `RenderGraph`, planset-8), and **area
+7's runtime half** (scene/entity model, planset-10); plus area 6's first sub-area, the
+game-module build model (planset-9), and the **pipeline-caching** and
+**content-hashes** cross-cutting concerns (planset-9).
 
-**In flight / next:** area 7 (scene/entity model — runtime) is **in progress as
-planset-10**, and area 10 (cooker-side module reflection + the cooked `.scene` asset)
-is the **prioritized next planset** once it lands.
+**Next:** area 10 (cooker-side module reflection + the cooked `.scene` asset) is the
+**prioritized next planset** — its prerequisites (area 7 + the planset-9 module model)
+are now in place — followed by area 6 (editor), then area 8 (scene renderer).
 
 **Undetailed / unscheduled:** area 4 (events/input), the rest of area 6 (editor shell,
 material editor, scene editor — [editor.md](editor.md) / [game-module.md](game-module.md)),

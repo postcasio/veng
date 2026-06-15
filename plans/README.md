@@ -112,13 +112,14 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   and C each resolve a **cross-cutting concern** (pipeline caching; content hashes)
   from [future/README.md](future/README.md).
 
-- **[planset-10](planset-10/README.md)** — scene / entity model (🚧 in progress,
-  proposed). Takes up future area 7's **runtime** half: a hand-rolled sparse-set ECS
+- **[planset-10](planset-10/README.md)** — scene / entity model (✅ done, 5 plans).
+  Takes up future area 7's **runtime** half: a hand-rolled sparse-set ECS
   (`Scene`/`Entity`, type-erased components, queries), a reflection layer (one stable
   `TypeId` space authored like `AssetId`, `FieldClass`, `VE_REFLECT` describe-blocks
   with editor metadata, a tolerant name-keyed serializer), a transform hierarchy, a
-  `Camera`, and **game-defined component types**. The cooked `.scene` asset and the
-  module-ABI registration seam are held back to area 10 (next).
+  `Camera`, and **game-defined component types**. The cooked `.scene` asset, a systems
+  framework, and the module-ABI `TypeRegistry&` registration seam are held back — the
+  cooked scene and seam to area 10 (the prioritized next planset).
 
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). **The prioritized next planset is area 10 —
@@ -136,5 +137,5 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   `Load` default) are done — planset-3, planset-4, planset-5, and planset-6
   respectively; area 6's **game-module prerequisite** and the **pipeline-caching** and
   **content-hashes** cross-cutting concerns are resolved by planset-9; **area 7's
-  runtime half is in progress as planset-10**. Hot-reload remains future: its re-cook
+  runtime half is delivered by planset-10**. Hot-reload remains future: its re-cook
   half conflicts with offline-only cooking and needs a dev-only watcher design.)

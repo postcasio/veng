@@ -429,6 +429,61 @@ fields against the fragment shader's reflected `MaterialData` block. At runtime 
 entry, bound through set 0 — and `Material::Bind` pushes its per-draw material
 index.
 
+### Scene & ECS
+
+A `Scene` is a runtime **ECS world**: a generational `Entity` handle
+(`{ u32 Index; u32 Generation; }`, `Entity::Null` empty) over a `TypeId`-keyed,
+type-erased **sparse-set** per-component storage, with templated
+`Add`/`Remove`/`Get`/`TryGet`/`Has` and the multi-component queries `View<Ts...>`
+(range-for, yields `(Entity, Ts&...)`, supports `break`) and `Each<Ts...>`. A query
+drives off the smallest participating pool. **Structural changes during iteration are
+illegal** — adding/removing components or destroying entities mid-`View`/`Each` is API
+misuse; the single-threaded model offers no re-entrancy guard. A stale `Entity` (its
+slot recycled, generation bumped) accessed through the API is a fatal `VE_ASSERT`, not
+silent UB. A **component is just a reflected type a `Scene` pools** — pools are made
+lazily on first `Add` of a type; there is no separate component-id space.
+
+Types register into the engine-owned **`TypeRegistry`** (`Application::GetTypeRegistry()`,
+threaded into `Scene::Create(TypeRegistry&)`), which is generic over *any* reflected
+type — leaf field types, nested structs, and components share **one `TypeId` space**.
+Each type carries a stable `u64` **`TypeId` authored exactly like an `AssetId`**:
+hardcoded `0x…ULL` for engine types, `vengc generate-id` for game types, hex in C++ /
+decimal in JSON. It is a compile-time constant (`TypeIdOf<T>()` reads it off a trait,
+independent of registration order), persisted directly (a scene stores a component's
+`TypeId`, never its name), and byte-identical across the future module boundary; two
+types claiming one id is a **fatal collision assert**. The `TypeInfo.Name` string is
+logs/editor display only. A game registers its own types through the same path as the
+builtins — a **`VE_REFLECT`** describe-block next to the struct, read back by the
+zero-arg `Register<T>()` (a referenced type's schema auto-registers from its trait on
+first reference, so there is no registration-ordering burden).
+
+The reflection layer (`Veng/Reflection/`): an **open** `TypeId` space (a game adds a
+leaf/struct/component with no engine change) and a **closed** `FieldClass`
+(`Scalar`/`Vector`/`Quaternion`/`Matrix`/`String`/`AssetHandle`/`Reference`/`Struct`/
+`Enum`) a generic walker switches on. `FieldDescriptor`s — authored via
+`VE_REFLECT`/`VE_FIELD`, each deriving its `Offset` (`offsetof`) and its field type's
+`TypeId`/`FieldClass` at compile time, restating only the field *name* — drive a
+tolerant, name-keyed, recursive generic serialization (and, later, editor inspectors).
+A `FieldDescriptor` additionally carries **optional editor metadata** (`DisplayName`,
+`Tooltip`, `Min`/`Max`/`Step`, `Hidden`, `ReadOnly`, `Category`) that the serializer
+**ignores** — it reads only `Name`/`Type`/`Offset`. The serialization key (`Name`) is
+kept distinct from the UI label (`DisplayName`), so relabelling never breaks on-disk
+compatibility: **on-disk type identity is the `TypeId`, field identity is the name**.
+
+The builtins are plain reflected components, pre-registered identically to a game's
+own: `Name` (a display label), `Transform` (**local** TRS — `Position`/`Rotation`/
+`Scale`, never a world matrix), `Parent` (the hierarchy link; `WorldMatrix`/
+`ComputeWorldMatrices` walk it as `parent.world * local`, recomputed on demand with no
+dirty-flag cache), `Camera` (a value type building view/projection — Y flipped for
+Vulkan clip space) plus `CameraComponent`, and `MeshRenderer` (holds the
+`AssetHandle<Mesh>` a draw queries — the mesh owns its materials, so a renderer queries
+`(Transform, MeshRenderer)` and draws each submesh with its material).
+
+A `Scene` is **`Unique`, single-owner** — nothing holds a `Ref` to it; the app owns it
+and a renderer reads it per frame as a `const Scene&`. Drop it in `OnDispose()` like
+any other engine resource. The `TypeRegistry` it was created with must outlive it and
+must already have every component type registered.
+
 ## Working norms
 
 The roadmap lives in `plans/` — read it there, don't duplicate it. `plans/README.md`
