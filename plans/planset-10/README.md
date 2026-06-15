@@ -15,23 +15,28 @@ in small per-plan increments. No GPU work lands until the sample migration (plan
 
 A `Scene` is a runtime **ECS world**: a generational `Entity` handle, type-erased
 per-component **sparse-set** storage, templated `Add`/`Remove`/`Get`/`Has`, and
-multi-component **queries**. Component *types* are registered into an
-engine-owned **`TypeRegistry`** that mints a `ComponentId` and stores each type's
-**lifecycle** (construct/destruct/move) and — pulled forward from the editor's
-deferred reflection layer — its **field descriptors**, so a generic walk can
-serialize any component without knowing its C++ type. Engine builtins (`Name`,
-`Transform`, `Parent`, `Camera`, `MeshRenderer`) are pre-registered identically to
-a game's own types; a game registers its components through the same public
-`Register<T>` call.
+multi-component **queries**. Types are registered into an engine-owned
+**`TypeRegistry`** — generic over *any* reflected type, each carrying a **stable
+`TypeId` authored exactly like an `AssetId`** (hardcoded for engine types,
+tool-minted for game types) and storing its **lifecycle** (construct/destruct/move)
+and — pulled forward from the editor's deferred reflection layer — its **field
+descriptors** (with optional editor metadata), so a generic walk can serialize any
+value without knowing its C++ type. A **component is simply a reflected type a `Scene`
+pools**; there is no separate component-id space. Engine builtins (`Name`,
+`Transform`, `Parent`, `Camera`, `MeshRenderer`) are pre-registered identically to a
+game's own types; a game registers its components through the same public path — a
+**`VE_REFLECT`** describe-block read back by `Register<T>()`.
 
 What it **holds back** (named, not silently dropped):
 
 - **The cooked `.scene` asset** (source `*.scene.json` → cooker importer → runtime
   loader). Deferred because cooking a scene that contains *game-defined* components
-  needs the cooker to obtain those component descriptors — i.e. the cooker would
-  have to load the game module. That is the hardest open problem here and gets its
-  own pass. v1 builds a `Scene` in code; the reflection layer (plan 03) is shaped
-  so the serializer drops onto it later with no rework.
+  needs the cooker to obtain those component descriptors — i.e. the cooker would have
+  to load the game module. That is **the prioritized next planset**:
+  [future area 10 — cooker-side module reflection](../future/README.md#10-cooker-side-module-reflection--the-cooker-loads-the-game-module),
+  which `dlopen`s the module to reflect its types. v1 builds a `Scene` in code; the
+  reflection layer (plan 03) — its name-keyed, schema-tolerant serializer — is shaped
+  so that asset drops onto it with no rework.
 - **A systems framework** (registered, scheduled update systems). v1 is **storage
   + queries**; the app writes its own update loops over `Each`/`View`. The query
   API is the seam a scheduler layers onto later.
@@ -42,8 +47,22 @@ What it **holds back** (named, not silently dropped):
 - **The deferred `SceneRenderer`** (area 8, the next planset) and **`SceneView`**
   (its input contract). This planset defines `Scene` and `Camera`; the renderer
   planset defines how it consumes them.
-- **Editor inspectors** (area 6). The reflection layer is built to serve them, but
-  the inspector UI is the editor planset's job.
+- **Editor inspectors** (area 6). The reflection layer — including the per-field
+  editor metadata (`DisplayName`/`Tooltip`/range/etc.) — is built to serve them, but
+  the inspector UI itself is the editor planset's job.
+- **Inline-annotation reflection (C++26 P2996/P3394).** The `VE_REFLECT` describe-block
+  is the authoring surface now; migrating it to inline `[[=…]]` member decorators read
+  by static reflection waits on AppleClang support and is a mechanical re-port behind
+  the same descriptor shape.
+- **Unifying `ShaderInterface`/`MaterialField` onto the reflection layer — named
+  follow-on.** A later planset re-expresses the GPU-data field tables on this
+  reflection layer so the editor inspects material params through the same walker.
+  It is deliberately *not* here: those tables describe **GPU data layout** (std140/430
+  offsets, descriptor slots) reflected **offline by the cooker from Slang**, a
+  different mechanism from `offsetof`-based CPU-struct reflection authored by
+  `VE_REFLECT`; folding it in would drag the cooker and the material runtime into this
+  CPU-only ECS stream. The reflection layer is built generic enough to host it when
+  that planset comes.
 
 ## Relationship to planset-9 (the module model)
 
@@ -68,43 +87,69 @@ registration are fully exercisable in the single-exe world without it.
 ## Decisions
 
 1. **Hand-rolled sparse-set ECS, not EnTT, not archetype.** A from-scratch
-   sparse-set fits the house style and — decisively — lets component identity be a
-   `ComponentId` **minted at registration time**, stable across the eventual module
-   (`dlopen`) boundary, rather than a compiler `type_hash` that is fragile across
-   shared libraries. It also keeps the serialization/reflection seam fully under
-   veng's control. Archetype storage is more cache-friendly for large scenes but
-   far more complex, and runtime-registered component types complicate its layout —
-   a later optimization behind the same API, not a v1 shape.
+   sparse-set fits the house style and — decisively — lets type identity be a
+   **stable `TypeId` authored exactly like an `AssetId`** (see decision 5): a
+   hardcoded `u64` literal for engine types, tool-minted for game types. That id is a
+   compile-time constant *and* byte-identical across the eventual module (`dlopen`)
+   boundary, where a compiler `type_hash` is neither stable nor collision-free across
+   TUs/compilers. It also keeps the serialization/reflection seam fully under veng's
+   control. Archetype storage is more cache-friendly for large scenes but far more
+   complex, and runtime-registered component types complicate its layout — a later
+   optimization behind the same API, not a v1 shape.
 
 2. **Component storage is type-erased.** Because component types are
-   runtime-registered, a pool stores raw bytes sized by `TypeDescriptor::Size` and
+   runtime-registered, a pool stores raw bytes sized by `TypeInfo::Size` and
    manipulates them through the descriptor's lifecycle function pointers
    (default-construct, destruct, move-construct). The templated `Add<T>`/`Get<T>`
-   API is a thin typed façade over the erased pool, resolving `T` → `ComponentId`
-   once per type.
+   API is a thin typed façade over the erased pool, resolving `T` → `TypeId`
+   (a compile-time constant) once per type. A `Scene` keys its pools by `TypeId`; an
+   internal dense pool index (assigned at registration, never persisted) is an
+   optional optimization, not part of the identity. There is no separate component-id
+   space — see decision 5.
 
 3. **`Entity` is a generational handle.** `{ u32 Index; u32 Generation; }` — the
    generation invalidates a handle whose slot was reused, so a stale `Entity` is
    detected (a fatal `VE_ASSERT` on access, not silent UB). `Entity::Null` is the
    empty handle.
 
-4. **The `TypeRegistry` is engine-owned and explicitly threaded.** A component type
+4. **The `TypeRegistry` is engine-owned and explicitly threaded.** A reflected type
    is process-wide (the same across every `Scene`), so `Application` owns the
    registry (`GetTypeRegistry()`) and threads a `TypeRegistry&` into `Scene::Create`
    — the same explicit-dependency discipline as `Context`/`AssetManager`/
    `TaskSystem` (no globals; area 3 stays closed).
 
-5. **Reflection is hand-written descriptors v1.** Field descriptors are written by
-   hand (`game-module.md`'s recommendation); a `VE_REFLECT` sugar macro or codegen
-   is a later convenience, not a v1 dependency. Field leaf types are an **open
-   `TypeId`** (engine builtins — scalars, `vec2/3/4`, `quat`, `mat4`,
-   `AssetHandle<Texture/Mesh/Material>` — pre-registered identically to a game's
-   own types), **not** a closed engine enum, so a game shipping a new field type
-   extends the vocabulary with no engine change. A small **closed `FieldClass`**
-   meta-kind carries generic handling. Component inheritance, when it comes, is
-   **single, non-virtual, base at offset 0, walked base-first** (recorded
-   direction; v1 components are flat structs). This matches the direction
-   planset-9 fixed for the editor.
+5. **Reflection describes *any* type; "component" is a role, not a separate
+   registry. `TypeId` is a stable id authored like `AssetId`.** The reflection layer
+   (`Veng/Reflection/`) is deliberately generic: a `TypeRegistry` holds one `TypeInfo`
+   per registered type — its name, size/align, lifecycle thunks, `FieldClass`, and
+   field descriptors — keyed by a single **`TypeId`**. *Every* reflected thing lives
+   in this one id space: the leaf field types (`Bool`, `F32`, `I32`, `U32`, `U64`,
+   `Vec2/3/4`, `Quat`, `Mat4`, `String`, `AssetHandle<Texture/Mesh/Material>`), nested
+   structs, and components alike. There is **no separate `ComponentId`** — *a component
+   is simply a reflected type a `Scene` has a pool for* (a `Scene` lazily makes a
+   `TypeId`-keyed pool the first time a type is `Add`ed to an entity). This keeps
+   reflection usable beyond the ECS (nested struct fields, asset/settings structs, and
+   — named future work, not unified here — the existing `ShaderInterface`/
+   `MaterialField` tables).
+
+   **`TypeId` is a stable `u64`, authored exactly like `AssetId`** — `vengc
+   generate-id` mints the value, engine builtins (leaves *and* components) carry
+   hardcoded `0x…ULL` hex literals checked into the engine like the core pack's
+   built-in asset ids, JSON keeps decimal, and a game mints its own. It is therefore a
+   compile-time constant (`TypeIdOf<T>()` reads it off a trait), persisted directly
+   (a `.scene` stores a component's `TypeId`, not a name — consistent with cooked data
+   storing ids), and identical across the `dlopen` boundary. Two types claiming the
+   same id is a fatal collision assert. The `TypeInfo.Name` string is for logs/editor
+   display only, never the persisted key.
+
+   `TypeId` is **open** (a game registers a new leaf/struct/component with no engine
+   change; the leaves above are pre-registered identically to a game's own types).
+   `FieldClass` is a small **closed** meta-kind (`Scalar`, `Vector`, `Quaternion`,
+   `Matrix`, `String`, `AssetHandle`, `Reference`, `Struct`, `Enum`) a generic walker
+   switches on — `Reference` is an intra-scene `Entity` reference the future loader
+   remaps. The serializer and the future editor inspector share this one vocabulary.
+   Component inheritance, when it comes, is **single, non-virtual, base at offset 0,
+   walked base-first** (recorded direction; v1 types are flat structs).
 
 6. **`Scene` is `Unique`, single-owner.** Nothing holds a `Ref` to a `Scene`; the
    app owns it and the (future) N `SceneRenderer`s read it per frame as
@@ -129,13 +174,50 @@ registration are fully exercisable in the single-exe world without it.
    keeps hello-triangle's existing `RenderGraph` forward draw, now **sourced from
    the scene**; the deferred pipeline is the next planset.
 
+10. **`VE_REFLECT` is the v1 authoring surface; `FieldDescriptor` carries editor
+    metadata.** Field descriptors are authored through a **describe-block** macro
+    (`VE_REFLECT(T, <TypeId>) … VE_FIELD(member, …) … VE_REFLECT_END()`) placed next
+    to the struct — it carries the type's stable `TypeId` literal (decision 5),
+    derives each field's `Offset` via `offsetof`, and resolves each field's leaf
+    `TypeId` + `FieldClass` from the field type's trait at compile time, so only the
+    field *names* are restated, once. The macro specialises a `VengReflect<T>` trait
+    that the zero-arg `Register<T>()` reads at startup; the raw
+    `Register<T>(name, cls, fields)` overload stays for hand-authoring and leaf-type
+    pre-registration. A referenced type whose schema isn't registered yet is
+    auto-registered from its trait on reference (recursively for nested structs), so
+    there is **no registration-ordering burden**. The macro is pure in-house
+    preprocessor (no third-party dep).
+    `FieldDescriptor` additionally carries **optional, default-empty editor metadata**
+    — `DisplayName`, `Tooltip`, `Min`/`Max`/`Step`, `Hidden`, `ReadOnly`, `Category`
+    — which the serializer **ignores** (it reads only `Name`/`Type`/`Offset`); the
+    serialization key (`Name`) is kept separate from the human label (`DisplayName`)
+    so relabelling never breaks on-disk compatibility. The slots are built now to
+    serve the future editor (area 6) **without** building any inspector UI. `VE_REFLECT`
+    and this metadata struct are the deliberate **forward-port target for C++26
+    annotations (P3394)** — when the toolchain (AppleClang) gains P2996/P3394, the
+    block migrates to inline `[[=…]]` decorators read by static reflection, a
+    mechanical change behind the same `TypeInfo`/`FieldDescriptor` shape.
+
+11. **Serialization is schema-driven and tolerant.** The generic walk reads only the
+    descriptors, never a concrete type. A component blob is keyed at the top by the
+    component's stable `TypeId`; *within* a blob, fields are written **name-keyed**
+    (`{ field-name, value }`), so adding, removing, or reordering a field does not
+    corrupt older data — a field absent on load keeps its default-constructed value.
+    The walk **recurses** into `Struct`-class fields (via the nested type's `Fields`),
+    serializes an `AssetHandle` field as its underlying `AssetId` (rehydration is the
+    deferred loader's job), serializes an `Enum` field as its underlying integer, and
+    records a `Reference` (`Entity`) field as `{ Index, Generation }` for the loader to
+    remap. Type identity on disk is the `TypeId`; field identity within a type is the
+    name. (Per-field stable ids are deliberately *not* minted — fields are local to a
+    type, names suffice.)
+
 ## Scope of this phase
 
 | In scope | Out of scope (later / other phases) |
 |---|---|
-| Generational `Entity`; `Scene` world (entity free-list + type-erased sparse-set component pools); templated `Add`/`Remove`/`Get`/`Has`; multi-component `View`/`Each` queries | A systems/scheduler framework; archetype storage; deferred entity-destruction batching beyond what correctness needs |
-| `TypeRegistry` (engine-owned, threaded): `ComponentId` minting, per-type lifecycle (construct/destruct/move); public `Register<T>` for **game-defined** components | The module-ABI host wiring (`TypeRegistry&` on `VengModuleHost`) — additive seam, lands with/after planset-9 |
-| Reflection: `TypeId` (open) + `FieldClass` (closed) + `FieldDescriptor`/`TypeDescriptor`; hand-written descriptors for builtins; a generic field-walk proven by an in-memory serialize round-trip | The cooked `.scene` asset (source/cooker/loader); editor inspectors; `VE_REFLECT` macro / codegen; component inheritance |
+| Generational `Entity`; `Scene` world (entity free-list + `TypeId`-keyed type-erased sparse-set component pools); templated `Add`/`Remove`/`Get`/`Has`; multi-component `View`/`Each` queries | A systems/scheduler framework; archetype storage; deferred entity-destruction batching beyond what correctness needs |
+| `TypeRegistry` (engine-owned, threaded): generic over **any** reflected type, each a stable `u64` `TypeId` authored like an `AssetId` + per-type lifecycle (construct/destruct/move); public `Register<T>`/`VE_REFLECT` for **game-defined** types; a component is just a reflected type a `Scene` pools | The module-ABI host wiring (`TypeRegistry&` on `VengModuleHost`) — additive seam, lands with/after planset-9; unifying `ShaderInterface`/`MaterialField` onto it (named follow-on) |
+| Reflection: one open `TypeId` space (leaves + structs + components) + closed `FieldClass`; `FieldDescriptor` (with optional editor metadata) / `TypeInfo`; `VE_REFLECT` describe-block authoring; a tolerant, name-keyed, recursive generic field-walk proven by an in-memory serialize round-trip | The cooked `.scene` asset (source/cooker/loader); editor inspector UI; inline `[[=…]]` annotation reflection (P2996/P3394); component inheritance |
 | Builtins: `Name`, `Transform` (local TRS), `Parent` + world-matrix walk, `Camera` value type + `CameraComponent`, `MeshRenderer` | Dirty-flag transform caching; skinning/animation; scene graph beyond a parent link |
 | Sample migration: hello-triangle builds a `Scene` (one entity: `Transform` + `MeshRenderer` + a game-defined `Spinner`), drives rotation through a query, renders via `Camera` | The deferred `SceneRenderer` and `SceneView` (next planset); multi-camera / N-renderer editor wiring |
 
@@ -143,9 +225,9 @@ registration are fully exercisable in the single-exe world without it.
 
 | # | Plan | Summary | Status |
 |---|---|---|---|
-| 01 | [Entity + Scene core + `TypeRegistry` lifecycle](01-entity-scene-core.md) | Generational `Entity`; `Scene` (entity free-list + type-erased sparse-set pools); `TypeRegistry` minting `ComponentId` + per-type construct/destruct/move; templated `Add`/`Remove`/`Get`/`Has`. Pure CPU; unit + death tests. No sample change. | proposed |
+| 01 | [Entity + Scene core + `TypeRegistry` lifecycle](01-entity-scene-core.md) | Generational `Entity`; `Scene` (entity free-list + `TypeId`-keyed type-erased sparse-set pools); `TypeRegistry` recording each reflected type under its stable authored `TypeId` + per-type construct/destruct/move; templated `Add`/`Remove`/`Get`/`Has`. Pure CPU; unit + death tests. No sample change. | proposed |
 | 02 | [Queries + builtin components + transform hierarchy](02-queries-hierarchy.md) | `View<T...>`/`Each`; builtins `Name`, `Transform` (local TRS), `Parent`; the world-matrix walk. Engine pre-registers builtins (lifecycle only). Unit tests. No sample change. | proposed |
-| 03 | [Reflection: `TypeId` + `FieldDescriptor`/`TypeDescriptor`](03-reflection-layer.md) | The open `TypeId` vocabulary (engine field-type builtins) + closed `FieldClass`; `FieldDescriptor`/`TypeDescriptor`; hand-written field descriptors for the builtins; a generic serialize/deserialize **round-trip** in memory proving save/load-readiness. The consciously-pulled-forward layer. | proposed |
+| 03 | [Reflection: open `TypeId` + `FieldDescriptor`/`TypeInfo` + `VE_REFLECT`](03-reflection-layer.md) | The single open `TypeId` space (leaves + structs + components) + closed `FieldClass`; `FieldDescriptor` (with editor-metadata slots) / `TypeInfo`; the `VE_REFLECT` describe-block re-authoring the builtins; a generic serialize/deserialize **round-trip** in memory proving save/load-readiness. The consciously-pulled-forward layer. | proposed |
 | 04 | [`Camera` + `MeshRenderer` + game-defined registration + sample](04-camera-mesh-sample.md) | `Camera` value type + `CameraComponent`; `MeshRenderer`; the public `Register<T>` path for game-defined components; migrate hello-triangle to a `Scene` + `Camera`, with a game-defined `Spinner` updated over a query. The one GPU-touching plan. | proposed |
 | 05 | [Docs + roadmap re-cut](05-docs-roadmap.md) | `plans/README.md` (planset-10 line), `future/README.md` (area 7 done; area 8 unblocked for `Scene`/`Camera`; cooked-scene-asset, systems, and the module-ABI registration seam remain future), `CLAUDE.md` (a Scene/ECS section). | proposed |
 
@@ -161,14 +243,16 @@ One ordered chain — each plan builds on the last:
 - **Recommended single-threaded order:** `01 → 02 → 03 → 04 → 05`, the house
   "one plan per session" cadence.
 - **Keep on the main thread:** the contract-setting plans — **01** (the storage +
-  registry shape, the type-erasure decision), **03** (the reflection vocabulary,
-  the open-`TypeId`/closed-`FieldClass` split), and **04** (the sample shape + the
-  game-defined registration path) — plus **05** (docs).
+  registry shape, the type-erasure decision, the single `TypeId` space), **03** (the
+  reflection vocabulary, the open-`TypeId`/closed-`FieldClass` split, the reflection-
+  is-generic-not-component decision, the `VE_REFLECT`/metadata surface), and **04**
+  (the sample shape + the game-defined registration path) — plus **05** (docs).
 - **Good `model: sonnet` delegation** once those contracts are fixed: **02**'s
   query iteration + the transform-hierarchy walk (mechanical given 01's storage),
-  and **03**'s per-builtin hand-written field descriptors + the round-trip test
-  harness (given the vocabulary 03 sets). Keep the `TypeId`/`FieldClass` design and
-  the sparse-set internals on the main thread.
+  and **03**'s per-builtin descriptors + the `VE_REFLECT` `FOR_EACH` preprocessor
+  machinery + the round-trip test harness (given the vocabulary 03 sets). Keep the
+  `TypeId`/`FieldClass` design, the reflection/component split, and the sparse-set
+  internals on the main thread.
 
 ## Process & conventions
 

@@ -35,12 +35,20 @@ present-tense constraint stated in the header, matching the single-threaded mode
 struct Name      { string Value; };
 struct Transform { vec3 Position{0}; quat Rotation{1,0,0,0}; vec3 Scale{1}; };
 struct Parent    { Entity Value = Entity::Null; };
+
+VE_TYPE(Name,      0x…ULL);   // stable TypeId, minted like an AssetId
+VE_TYPE(Transform, 0x…ULL);
+VE_TYPE(Parent,    0x…ULL);
 ```
 
-`Transform` is **local** (relative to the parent, or to world for a root). The
-engine registers these into the `TypeRegistry` at `Application` startup, through the
-same `Register<T>` a game uses — builtins are not special-cased. (`Camera`,
-`CameraComponent`, and `MeshRenderer` arrive in plan 04.)
+`VE_TYPE(T, id)` is the minimal id declaration from plan 01 (it specialises
+`VengReflect<T>` with just the `Id`); plan 03 replaces these with full `VE_REFLECT`
+blocks that also carry the fields. `Transform` is **local** (relative to the parent,
+or to world for a root). The engine registers these into the `TypeRegistry` at
+`Application` startup (lifecycle-only this plan), through the same `Register<T>` a game
+uses — builtins are not special-cased. (`Camera`, `CameraComponent`, and
+`MeshRenderer` arrive in plan 04.) Real ids are minted with `vengc generate-id` once
+the build is green, per the working norms.
 
 ## World-matrix walk — `engine/src/Scene/Transforms.*`
 
