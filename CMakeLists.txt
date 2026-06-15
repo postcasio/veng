@@ -124,15 +124,20 @@ add_subdirectory(cooker)
 # (only when vengc is available, i.e. veng is the top-level project)
 # ---------------------------------------------------------------------------
 
-if (TARGET vengc)
+# Cooked by the veng-free bootstrap cooker, NOT vengc: vengc links veng::veng
+# (the module-reflection dependency inversion), so cooking veng's own embedded
+# core pack with vengc would form a build cycle (veng -> core-pack cook -> vengc
+# -> veng). veng_cook_bootstrap links only the cooker's veng-free core, so veng
+# can depend on it.
+if (TARGET veng_cook_bootstrap)
     set(VENG_CORE_PACK_JSON ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/core.vengpack.json)
     set(VENG_CORE_PACK_BIN  ${CMAKE_CURRENT_BINARY_DIR}/core.vengpack)
     set(VENG_CORE_PACK_CPP  ${CMAKE_CURRENT_BINARY_DIR}/generated/CoreLayoutPack.cpp)
 
     add_custom_command(
         OUTPUT ${VENG_CORE_PACK_BIN}
-        COMMAND $<TARGET_FILE:vengc> cook ${VENG_CORE_PACK_JSON} -o ${VENG_CORE_PACK_BIN}
-        DEPENDS vengc ${VENG_CORE_PACK_JSON}
+        COMMAND $<TARGET_FILE:veng_cook_bootstrap> cook ${VENG_CORE_PACK_JSON} -o ${VENG_CORE_PACK_BIN}
+        DEPENDS veng_cook_bootstrap ${VENG_CORE_PACK_JSON}
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/layouts/canonical.vlayout.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/layouts/screenspace.vlayout.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/layouts/positiononly.vlayout.json
@@ -212,25 +217,6 @@ if (VENG_BUILD_TESTS)
     # of the public surface, so it lives under src/, not the include/ tree.
     target_include_directories(veng_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/engine/src)
 
-    # ---- Cooker round trip (plan 03: vengc shell, raw importer) -------------
-    # Cooks fixture packs through libveng_cook end-to-end and reads the
-    # resulting archive back with assetformat's ArchiveReader. Only built
-    # alongside the cooker itself (VENG_BUILD_TOOLS, default ON top-level).
-    if (VENG_BUILD_TOOLS)
-        target_sources(veng_unit PRIVATE
-                tests/cooker/cook_roundtrip.cpp
-                tests/cooker/texture_cook.cpp
-                tests/cooker/mesh_cook.cpp
-                tests/cooker/shader_cook.cpp
-                tests/cooker/material_cook.cpp
-                tests/cooker/vertex_layout_cook.cpp
-                tests/cooker/verify.cpp
-        )
-        target_link_libraries(veng_unit PRIVATE veng::cook)
-        target_compile_definitions(veng_unit PRIVATE
-                VENG_COOKER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
-        )
-    endif ()
 
     # The type-mapping (and barrier-decision, plan 04) cases include backend
     # headers (TypeMapping.h → Backend/Vulkan.h, which also pulls in GLFW + VMA),
@@ -485,6 +471,36 @@ endif ()
 # comparator, so it's registered here, after the examples subdirectory defines
 # hello_triangle-launcher. Labelled `gpu`; the script skips cleanly with no
 # Vulkan ICD.
+# ---- Cooker band (`-L cooker`) ------------------------------------------------
+# The cooker suite is its own executable + label, separate from `veng_unit`'s
+# `unit` band: it links veng::cook (which links veng::veng for module reflection)
+# and the module-reflection test loads the real libhello_triangle, so it is
+# registered after the examples subdirectory defines that module. Like veng_unit
+# it compiles with exceptions (doctest needs them); -fno-exceptions is PRIVATE to
+# veng/cook.
+if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
+    add_executable(veng_cooker
+            tests/unit/main.cpp
+            tests/cooker/cook_roundtrip.cpp
+            tests/cooker/texture_cook.cpp
+            tests/cooker/mesh_cook.cpp
+            tests/cooker/shader_cook.cpp
+            tests/cooker/material_cook.cpp
+            tests/cooker/vertex_layout_cook.cpp
+            tests/cooker/verify.cpp
+            tests/cooker/module_reflect.cpp
+    )
+    target_link_libraries(veng_cooker PRIVATE veng::cook doctest::doctest)
+    add_dependencies(veng_cooker hello_triangle veng_bad_version_module)
+    target_compile_definitions(veng_cooker PRIVATE
+            VENG_COOKER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
+            VENG_HELLO_TRIANGLE_MODULE_PATH="$<TARGET_FILE:hello_triangle>"
+            VENG_BAD_VERSION_MODULE_PATH="$<TARGET_FILE:veng_bad_version_module>"
+    )
+
+    doctest_discover_tests(veng_cooker PROPERTIES LABELS cooker)
+endif ()
+
 if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_golden_compare)
     add_test(NAME smoke_golden
         COMMAND ${CMAKE_COMMAND}

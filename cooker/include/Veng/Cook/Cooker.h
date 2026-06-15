@@ -35,10 +35,12 @@ namespace Veng::Cook
         // Parses packJson, cooks every entry through its registered importer,
         // and writes the resulting archive to outArchive. referencePacks lists
         // additional uncooked pack JSON files whose assets can be resolved by
-        // AssetId during cooking (e.g. a core layout pack). Errors are located:
+        // AssetId during cooking (e.g. a core layout pack). types is the loaded
+        // module's reflected descriptors (non-null only on a --module cook),
+        // handed to importers through the CookContext. Errors are located:
         // "pack '<path>': asset[<n>]: <reason>".
         [[nodiscard]] VoidResult CookPack(const path& packJson, const path& outArchive,
-            std::span<const path> referencePacks = {}) const;
+            std::span<const path> referencePacks = {}, const TypeRegistry* types = nullptr) const;
 
     private:
         [[nodiscard]] VoidResult CookEntry(const CookContext& context, const json& entry,

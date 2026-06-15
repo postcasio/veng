@@ -3,6 +3,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Cook/Types.h>
+#include <Veng/Reflection/TypeRegistry.h>
 
 // The cooker-side importer interface: one AssetImporter
 // per AssetType, registered into a Cooker and dispatched per pack entry.
@@ -30,6 +31,10 @@ namespace Veng::Cook
     {
         path PackDir;
         function<optional<ResolvedSource>(AssetId)> Resolve;
+        // The module's reflected type descriptors, non-null only on a --module
+        // cook. An importer that needs to validate against component schemas
+        // (the prefab importer) reads it; the others ignore it.
+        const TypeRegistry* Types = nullptr;
     };
 
     class AssetImporter

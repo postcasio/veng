@@ -133,13 +133,32 @@ namespace Veng::Cook
     }
 
     VoidResult Cooker::CookPack(const path& packJson, const path& outArchive,
-        std::span<const path> referencePacks) const
+        std::span<const path> referencePacks, const TypeRegistry* types) const
     {
         const Result<json> packResult = ReadAndValidatePack(packJson);
         if (!packResult)
             return std::unexpected(packResult.error());
 
         const json& pack = *packResult;
+
+        // A prefab entry cooks against the loaded module's reflected component
+        // descriptors, so it requires --module. Caught here before resolution
+        // parsing (which classifies entry types) so the message names the cause.
+        if (types == nullptr)
+        {
+            const json& assets = pack["assets"];
+            for (usize index = 0; index < assets.size(); ++index)
+            {
+                const json& entry = assets[index];
+                if (entry.is_object() && entry.contains("type") && entry["type"].is_string()
+                    && entry["type"].get<string>() == "prefab")
+                {
+                    return std::unexpected(fmt::format(
+                        "pack '{}': asset[{}]: prefab cooking requires --module",
+                        packJson.string(), index));
+                }
+            }
+        }
 
         // Build the main AssetPack for resolution.
         const Result<AssetPack> mainPackResult = ParseAssetPack(packJson);
@@ -188,6 +207,7 @@ namespace Veng::Cook
         const CookContext context{
             .PackDir = packJson.parent_path(),
             .Resolve = resolve,
+            .Types = types,
         };
 
         ArchiveWriter writer;

@@ -127,6 +127,11 @@ namespace Veng
 
         [[nodiscard]] usize Count() const { return m_Types.size(); }
 
+        // Read-only view over every registered (id, info) pair, for tooling that
+        // enumerates the table (a reflected type manifest, an editor's type
+        // picker). Iteration order is unspecified.
+        [[nodiscard]] const unordered_map<TypeId, TypeInfo>& All() const { return m_Types; }
+
     private:
         template <class T>
         TypeId RegisterImpl(TypeId id, string name, FieldClass cls, vector<FieldDescriptor> fields)
