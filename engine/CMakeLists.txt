@@ -16,6 +16,7 @@ add_library(veng SHARED
         src/Asset/Loaders/ShaderLoader.cpp
         src/Asset/Loaders/TextureLoader.cpp
         src/Asset/Loaders/VertexLayoutLoader.cpp
+        src/ExecutableDirectory.cpp
         src/Log.cpp
         src/Module/ApplicationRegistry.cpp
         src/Module/ModuleLoader.cpp

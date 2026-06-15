@@ -1,10 +1,6 @@
-add_executable(hello_triangle main.cpp)
-
-target_link_libraries(hello_triangle PRIVATE veng::veng)
-
-# Cook the sample asset pack with vengc at build time, into the build tree. The
-# sample bakes the directory in via a compile definition so it can be run from
-# any working directory.
+# Cook the sample asset pack with vengc at build time, into the build tree.
+# veng_add_game copies the cooked pack beside the launcher; the app mounts it
+# from ExecutableDirectory() so the launcher + module + pack are relocatable.
 set(HT_ASSET_DIR "${CMAKE_CURRENT_BINARY_DIR}/assets")
 
 add_asset_pack(hello_triangle_assets
@@ -28,8 +24,10 @@ add_asset_pack(hello_triangle_assets
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/composite.vert.shader.json
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/composite.frag.shader.json
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/materials/brick.vmat.json)
-add_dependencies(hello_triangle hello_triangle_assets)
 
-target_compile_definitions(hello_triangle PRIVATE
-        HT_ASSET_DIR="${HT_ASSET_DIR}"
-)
+# The game splits into libhello_triangle (the runtime) and hello_triangle-launcher
+# (the shipped exe that dlopens it). veng_add_game copies the cooked pack beside
+# the launcher so the trio is a relocatable directory.
+veng_add_game(hello_triangle
+        SOURCES    main.cpp
+        ASSET_PACK hello_triangle_assets)

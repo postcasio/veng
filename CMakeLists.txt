@@ -15,6 +15,7 @@ include(FetchContent)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AssetPack.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Game.cmake)
 
 option(VE_DEBUG "Enable veng debug features (validation layers, asserts)" OFF)
 
@@ -436,21 +437,6 @@ if (VENG_BUILD_TESTS)
 
     add_test(NAME veng_gpu COMMAND veng_gpu)
     set_tests_properties(veng_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
-
-    # ---- Local validation-error gate (plan 06) ------------------------------
-    # ctest -L validation: runs the gpu-labelled binaries that emit Vulkan
-    # validation messages under VE_DEBUG and fails if a new [ERROR] Vulkan
-    # validation line appears (see cmake/ValidationGate.cmake for the allowlist
-    # of documented gaps). Under the default (non-VE_DEBUG) build no validation
-    # layers are enabled, so this is trivially green.
-    add_test(NAME validation_gate
-        COMMAND ${CMAKE_COMMAND}
-            -D VENG_GATE_BIN_HEADLESS_SMOKE=$<TARGET_FILE:veng_headless_smoke>
-            -D VENG_GATE_BIN_COMPUTE_DISPATCH=$<TARGET_FILE:veng_compute_dispatch>
-            -D VENG_GATE_BIN_GPU=$<TARGET_FILE:veng_gpu>
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidationGate.cmake
-    )
-    set_tests_properties(validation_gate PROPERTIES LABELS validation)
 endif ()
 
 # ---------------------------------------------------------------------------
@@ -464,13 +450,15 @@ if (VENG_BUILD_EXAMPLES)
 endif ()
 
 # Golden smoke test: render the hello-triangle scene headless and compare it
-# against the checked-in golden. Needs both the example app and the test
+# against the checked-in golden. Runs through the launcher (which dlopens
+# libhello_triangle), the real shipping path. Needs the launcher and the test
 # comparator, so it's registered here, after the examples subdirectory defines
-# hello_triangle. Labelled `gpu`; the script skips cleanly with no Vulkan ICD.
-if (VENG_BUILD_TESTS AND TARGET hello_triangle AND TARGET veng_golden_compare)
+# hello_triangle-launcher. Labelled `gpu`; the script skips cleanly with no
+# Vulkan ICD.
+if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_golden_compare)
     add_test(NAME smoke_golden
         COMMAND ${CMAKE_COMMAND}
-            -D VENG_SMOKE_BIN=$<TARGET_FILE:hello_triangle>
+            -D VENG_SMOKE_BIN=$<TARGET_FILE:hello_triangle-launcher>
             -D VENG_COMPARE_BIN=$<TARGET_FILE:veng_golden_compare>
             -D VENG_PROBE_BIN=$<TARGET_FILE:veng_headless_smoke>
             -D VENG_GOLDEN=${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/hello_triangle_scene.png
@@ -478,6 +466,36 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle AND TARGET veng_golden_compare)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SmokeGolden.cmake
     )
     set_tests_properties(smoke_golden PROPERTIES LABELS gpu)
+
+    # Automated launcher smoke: exercises the real dlopen -> VengModuleRegister ->
+    # registry -> Run() binary path end-to-end. Runs the launcher with HT_SMOKE
+    # pointed at a temp PPM (so it renders headless and exits) and asserts exit 0.
+    # SKIP_RETURN_CODE 77 matches the rest of the gpu band. The only test covering
+    # the migration's headline shipping path.
+    add_test(NAME hello_triangle_launcher_smoke
+        COMMAND $<TARGET_FILE:hello_triangle-launcher>)
+    set_tests_properties(hello_triangle_launcher_smoke PROPERTIES
+        LABELS gpu SKIP_RETURN_CODE 77
+        ENVIRONMENT "HT_SMOKE=${CMAKE_CURRENT_BINARY_DIR}/hello_triangle_launcher_smoke.ppm")
+
+    # ---- Local validation-error gate ----------------------------------------
+    # ctest -L validation: runs the gpu-labelled binaries that emit Vulkan
+    # validation messages under VE_DEBUG and fails if a new [ERROR] Vulkan
+    # validation line appears (see cmake/ValidationGate.cmake for the allowlist
+    # of documented gaps). Includes the launcher path so the real shipping shape
+    # runs under the gate too. Registered after the examples subdirectory so the
+    # launcher target exists. Under the default (non-VE_DEBUG) build no validation
+    # layers are enabled, so this is trivially green.
+    add_test(NAME validation_gate
+        COMMAND ${CMAKE_COMMAND}
+            -D VENG_GATE_BIN_HEADLESS_SMOKE=$<TARGET_FILE:veng_headless_smoke>
+            -D VENG_GATE_BIN_COMPUTE_DISPATCH=$<TARGET_FILE:veng_compute_dispatch>
+            -D VENG_GATE_BIN_GPU=$<TARGET_FILE:veng_gpu>
+            -D VENG_GATE_BIN_LAUNCHER=$<TARGET_FILE:hello_triangle-launcher>
+            -D VENG_GATE_LAUNCHER_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/validation_gate_launcher.ppm
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidationGate.cmake
+    )
+    set_tests_properties(validation_gate PROPERTIES LABELS validation)
 endif ()
 
 # ---------------------------------------------------------------------------

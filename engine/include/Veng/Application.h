@@ -9,6 +9,13 @@
 
 namespace Veng
 {
+    // The directory containing the running executable (for the launcher, the
+    // launcher binary). A game mounts its asset pack relative to this so the
+    // launcher + module + pack are a relocatable trio resolved beside the binary,
+    // not at an absolute build-tree path. path-typed, so it pulls in no backend
+    // include — include_hygiene stays green.
+    [[nodiscard]] VE_API path ExecutableDirectory();
+
     struct ApplicationInfo
     {
         string Name = "Veng Application";

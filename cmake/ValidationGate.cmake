@@ -81,11 +81,23 @@ set(VENG_GATE_NAMES
     "veng_headless_smoke"
     "veng_compute_dispatch"
     "veng_gpu"
+    "hello_triangle-launcher"
 )
 set(VENG_GATE_PATHS
     "${VENG_GATE_BIN_HEADLESS_SMOKE}"
     "${VENG_GATE_BIN_COMPUTE_DISPATCH}"
     "${VENG_GATE_BIN_GPU}"
+    "${VENG_GATE_BIN_LAUNCHER}"
+)
+# Per-binary extra environment (empty for most). The launcher runs windowed by
+# default; HT_SMOKE makes it render headless and exit, so the gate can run it
+# display-free like the rest of the band. VENG_GATE_LAUNCHER_CAPTURE is the temp
+# PPM path passed in by the test registration.
+set(VENG_GATE_ENVS
+    ""
+    ""
+    ""
+    "HT_SMOKE=${VENG_GATE_LAUNCHER_CAPTURE}"
 )
 
 list(LENGTH VENG_GATE_NAMES VENG_GATE_COUNT)
@@ -94,13 +106,19 @@ math(EXPR VENG_GATE_LAST "${VENG_GATE_COUNT} - 1")
 foreach (INDEX RANGE ${VENG_GATE_LAST})
     list(GET VENG_GATE_NAMES ${INDEX} BINARY_NAME)
     list(GET VENG_GATE_PATHS ${INDEX} BINARY_PATH)
+    list(GET VENG_GATE_ENVS ${INDEX} BINARY_ENV)
 
     if (NOT EXISTS "${BINARY_PATH}")
         message(FATAL_ERROR "validation_gate: ${BINARY_NAME} binary not found at '${BINARY_PATH}' — build it first.")
     endif ()
 
+    set(ENV_PREFIX)
+    if (BINARY_ENV)
+        set(ENV_PREFIX ${CMAKE_COMMAND} -E env ${BINARY_ENV})
+    endif ()
+
     execute_process(
-        COMMAND "${BINARY_PATH}"
+        COMMAND ${ENV_PREFIX} "${BINARY_PATH}"
         OUTPUT_VARIABLE BINARY_STDOUT
         ERROR_VARIABLE BINARY_STDERR
         RESULT_VARIABLE BINARY_RESULT

@@ -1,6 +1,7 @@
 #include <Veng/Application.h>
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
+#include <Veng/Module/Module.h>
 #include <Veng/Vendor/ImGui.h>
 
 #include <Veng/Asset/AssetManager.h>
@@ -88,12 +89,13 @@ protected:
             .AddressModeW = Renderer::AddressMode::ClampToEdge,
         });
 
-        // Cooked at build time (see CMakeLists.txt) from assets/sample.vengpack.json
-        // into HT_ASSET_DIR; mount and load the brick material by AssetId. Loading
-        // the material pulls in its vertex/fragment shaders and the brick texture as
-        // eager dependencies, builds its bindless pipeline, and writes a MaterialData
-        // entry into the registry's per-material SSBO.
-        const VoidResult mountResult = GetAssetManager().Mount(path(HT_ASSET_DIR) / "sample.vengpack");
+        // Cooked at build time (see CMakeLists.txt) and copied beside the launcher
+        // by veng_add_game; mount it from the executable's directory so the trio
+        // (launcher + module + pack) resolves wherever it is copied. Loading the
+        // brick material pulls in its vertex/fragment shaders and the brick texture
+        // as eager dependencies, builds its bindless pipeline, and writes a
+        // MaterialData entry into the registry's per-material SSBO.
+        const VoidResult mountResult = GetAssetManager().Mount(ExecutableDirectory() / "sample.vengpack");
         VE_ASSERT(mountResult, "{}", mountResult.error());
 
         // The primitive generator records this material instance on the produced
@@ -478,27 +480,32 @@ private:
     const char* m_SmokeOutput = nullptr;
 };
 
-int main(const int argc, char** argv)
+// The module's entry point: the launcher dlopens this library and calls this
+// once, and the game registers the factory that constructs its Application. The
+// factory captures the HT_SMOKE/headless decision and the ApplicationInfo, so
+// they live in the module beside the app — the launcher stays game-agnostic.
+extern "C" void VengModuleRegister(VengModuleHost* host)
 {
     // Smoke mode runs headless: no window or swapchain, render the scene
     // off-screen and dump it. This is the display-free CI path enabled by the
     // headless context.
     const bool smoke = std::getenv("HT_SMOKE") != nullptr;
 
-    HelloTriangleApp app({
-        .Name = "Hello Triangle",
-        .InternalRenderExtent = {1280, 720},
-        .WindowInfo = {
-            .Extent = {1280, 720},
-            .Resizable = false,
-            .EventCallback = [](Event&) {},
-            .Title = "veng — Hello Triangle",
-            .CaptureMouse = false,
-        },
-        .Headless = smoke,
+    host->App.RegisterApplication([smoke]
+    {
+        return Unique<Application>(new HelloTriangleApp(ApplicationInfo{
+            .Name = "Hello Triangle",
+            .InternalRenderExtent = {1280, 720},
+            .WindowInfo = {
+                .Extent = {1280, 720},
+                .Resizable = false,
+                .EventCallback = [](Event&) {},
+                .Title = "veng — Hello Triangle",
+                .CaptureMouse = false,
+            },
+            .Headless = smoke,
+        }));
     });
-
-    app.Run(vector<string>(argv, argv + argc));
-
-    return 0;
 }
+
+VE_EXPORT_MODULE_ABI()

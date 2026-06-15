@@ -43,4 +43,7 @@ function(add_asset_pack TARGET_NAME)
             COMMENT "Cooking asset pack ${TARGET_NAME}")
 
     add_custom_target(${TARGET_NAME} DEPENDS ${ARG_OUTPUT})
+    # Record the cooked file's path so veng_add_game can copy it beside the
+    # launcher without the caller restating it.
+    set_target_properties(${TARGET_NAME} PROPERTIES VENG_ASSET_PACK_OUTPUT ${ARG_OUTPUT})
 endfunction()
