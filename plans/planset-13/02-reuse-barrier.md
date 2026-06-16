@@ -5,8 +5,10 @@ handed-out output is the one renderer-owned image read by a *separate* graph (th
 composite), so no single graph derives the barrier serializing frame N+1's write against
 frame N's read. The fix is the engine's existing escape hatch —
 `PrepareForAccess(output, AccessKind::ColorAttachment)` before each frame's scene render —
-the symmetric partner to the composite's existing `PrepareForAccess(output, Sample)`,
-bracketing the cross-graph handoff in both directions. **Single-copy output retained, zero
+the reverse of the consumer's read transition, bracketing the cross-graph handoff in both
+directions. It works without a semaphore or a ring **because the consumer read and the next
+producer write both record on veng's single graphics queue in submission order**, so the
+barrier's source scope reaches the prior frame's read. **Single-copy output retained, zero
 added memory, no ring.** Then extend planset-12's two-renderer test to multiple frames so
 the barrier holds under the N-renderer shape.
 
@@ -21,34 +23,40 @@ overlap, not ringed render targets). The two-renderer multi-frame extension is g
 
 ## The barrier
 
-The composite already transitions the output for its read:
-`PrepareForAccess(GetOutput(), AccessKind::Sample)` before sampling. The missing partner is
-the **reverse** transition before the output is written again next frame:
+The consumer transitions the output for its read: the composite declares `.Sample(output)`
+in its own graph, and the windowed ImGui path calls
+`PrepareForAccess(GetOutput(), AccessKind::Sample)` directly (the context's bindless-acquire
+also transitions it to `Sample` at frame start). Each leaves the output in `ShaderReadOnly`.
+The missing partner is the **reverse** transition before the output is written again next
+frame. It is **owned by the renderer** — `SceneRenderer::Execute` emits it before replaying
+its internal graph, since the output is the renderer's resource and its handed-out contract:
 
 ```cpp
-// Before SceneRenderer::Execute each frame (the scene render writes the output as a
-// color attachment; the previous frame's composite left it in ShaderReadOnly).
-cmd.PrepareForAccess(m_SceneRenderer->GetOutput(), Renderer::AccessKind::ColorAttachment);
-m_SceneRenderer->Execute(cmd, view);
+// SceneRenderer::Execute, before replaying the internal graph. The scene render writes the
+// output as a color attachment; the previous frame's consumer left it in ShaderReadOnly.
+cmd.PrepareForAccess(m_Output, Renderer::AccessKind::ColorAttachment);
+m_Graph->Execute(cmd, imports, &view);
 ```
 
 `PrepareForAccess` "funnels into the same barrier path as the graph (ScopeFor +
 DecideBarrier) and updates the image's tracked state" (`CommandBuffer.h`), so this emits a
-`ShaderReadOnly → ColorAttachment` transition whose source scope covers the prior frame's
-composite read — serializing frame N+1's output write behind frame N's composite read, and
-leaving the image's tracked state correct so the scene graph's own acquire sees no further
-hazard.
+`ShaderReadOnly → ColorAttachment` transition. Its source scope covers the prior frame's read
+**because that read and this write are both on the single graphics queue in submission
+order** — a pipeline barrier's first synchronization scope reaches every command earlier in
+submission order on the same queue, not just the current command buffer. The transition
+serializes frame N+1's write behind frame N's read and leaves the tracked state correct, so
+the scene graph's own acquire sees no further hazard.
 
-- **Placement:** before `SceneRenderer::Execute` (the app drives both graphs, so the app is
-  the one place that sees both the consumer read and the next producer write). The
-  over-serialization is negligible — the g-buffer reuse barrier already gates the next
-  frame's geometry a few passes earlier, so this adds a sliver of tail dependency, not a
-  stall.
-- **Encapsulation note:** the app-side call mirrors the existing composite-side
-  `PrepareForAccess(Sample)`. If preferred, the symmetric transition can instead be owned by
-  the renderer (the output is its resource and its handed-out contract), keeping both halves
-  of the cross-graph handoff named in one place; pick the placement that reads cleanest
-  against the sample's existing composite barrier and state it as a present-tense fact.
+- **Placement: renderer-owned, not consumer-owned.** `SceneRenderer::Execute` emits the
+  `ColorAttachment` transition itself, so no consumer can forget it. This matters for the
+  editor — the planset's motivating N-renderer consumer: a consumer-side barrier would have to
+  be repeated correctly per renderer per frame, and a single omission is a silent cross-frame
+  hazard with no compile-time signal. The consumer still owns the *read*-side `Sample`
+  transition (it owns the read); the renderer owns the *write*-side transition (it owns the
+  resource). State that asymmetry as a present-tense fact.
+- **Cost:** the over-serialization is negligible — the g-buffer reuse barrier already gates
+  the next frame's geometry a few passes earlier, so this adds a sliver of tail dependency,
+  not a stall.
 
 ### If plan 01 found the output already clean
 
@@ -62,10 +70,12 @@ gate. The single-copy output is retained either way; **no ring** is built.
 
 Next to the output handoff (and reflected in `CLAUDE.md` by plan 03), a present-tense
 comment: the output's cross-frame reuse needs an explicit `PrepareForAccess` barrier because
-no single graph spans the composite's read and the next scene render's write; the internal
-g-buffer/depth/HDR targets need none because each lives in the renderer's own graph, which
-transitions it from its prior-frame layout on the next `Execute` and so serializes its own
-reuse. No "future work" phrasing, no plan citation (CLAUDE.md).
+no single graph spans the consumer's read and the next scene render's write — but both record
+on the single graphics queue in submission order, so the barrier's source scope reaches the
+prior frame's read (no semaphore or ring). The internal g-buffer/depth/HDR targets need none
+because each lives in the renderer's own graph, which transitions it from its prior-frame
+layout on the next `Execute` and so serializes its own reuse. No "future work" phrasing, no
+plan citation (CLAUDE.md).
 
 ## The two-renderer multi-frame extension
 

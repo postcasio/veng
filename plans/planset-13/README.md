@@ -39,14 +39,19 @@ asserts `== 1`).
 The output is the only renderer-owned image read by a *separate* compiled graph (the
 composite) — so the producing `SceneRenderer` graph cannot derive the barrier serializing
 frame N+1's write against frame N's composite read; that bridging barrier is nobody's job.
-That is a **potential** write-after-read. But whether it is a **live** hazard today is
-unknown, because **nothing exercises frame overlap**: the headless smoke renders **one**
-frame and exits, so the validation gate's only GPU driver never has two frames in flight.
-A green gate proves single-frame cleanliness and says nothing cross-frame. The engine also
-already tracks each image's layout across graph boundaries (`PrepareForAccess` "updates the
-image's tracked state, so a later graph pass declaring the same use correctly sees no
-hazard", `CommandBuffer.h`), so the single-copy output may already be serialized — or may
-race. **planset-13 settles it with a test before building any fix.**
+That is a **potential** write-after-read. Whether it is a **live** hazard today is
+unproven: the headless smoke renders 20 frames, so frames *do* overlap at FIF=2 — but its
+capture reads the output through `Image::Download` (a `WaitIdle` immediate submit) and the
+headless path has **no cross-graph consumer** (no composite, no ImGui), so the specific
+producer-writes-N+1-while-consumer-reads-N handoff never happens in the gated run. The
+windowed path *does* have that consumer, but CI is headless-only, so the validation gate's
+GPU driver never exercises the cross-graph output handoff under frame overlap. A green gate
+proves single-frame cleanliness and says nothing cross-frame for that handoff. The engine
+also already tracks each image's layout across graph boundaries (`PrepareForAccess` "updates
+the image's tracked state, so a later graph pass declaring the same use correctly sees no
+hazard", `CommandBuffer.h`), so the single-copy output may already be serialized by the
+scene graph's derived acquire — or may race. **planset-13 settles it with a test before
+building any fix.**
 
 ## Why a barrier, not a ring
 
@@ -62,22 +67,33 @@ frame's version). The handed-out output is **neither**:
   early passes; FIF=2's real payoff is **CPU/GPU** overlap (record/submit/logic for frame
   N+1 while the GPU runs frame N), which needs no ringed render targets. Ringing the output
   buys no meaningful concurrency.
-- **The cheap fix is the engine's own idiom.** The composite already calls
-  `PrepareForAccess(output, Sample)` before it reads; the **symmetric**
-  `PrepareForAccess(output, ColorAttachment)` before each frame's scene render emits the
-  cross-graph reuse barrier — ordered after the prior frame's composite read, via the same
-  `ScopeFor + DecideBarrier` path — for **one barrier and zero bytes**. The over-
-  serialization is negligible: the g-buffer reuse barrier already gates the next frame's
+- **The cheap fix is the engine's own idiom.** The consumer transitions the output for its
+  read — the composite declares `.Sample(output)` in its own graph and (windowed) the ImGui
+  path calls `PrepareForAccess(output, Sample)` directly, leaving the output in
+  `ShaderReadOnly`. The **reverse** `PrepareForAccess(output, ColorAttachment)` before each
+  frame's scene render emits the cross-graph reuse barrier, via the same
+  `ScopeFor + DecideBarrier` path, for **one barrier and zero bytes**. It serializes frame
+  N+1's write behind frame N's read **because both record on the single graphics queue in
+  submission order**: a pipeline barrier's first synchronization scope covers every command
+  earlier in submission order *on the same queue* — not only the current command buffer — so
+  the next frame's barrier reaches the prior frame's read with no semaphore and no ring. The
+  over-serialization is negligible: the g-buffer reuse barrier already gates the next frame's
   geometry a few passes earlier, so this adds a sliver of tail dependency, not a stall.
 
-**When the ring *is* warranted (documented, not built):** a genuinely **async or
-multi-rate** consumer — one that samples an *older* frame's output while the renderer races
-ahead to a newer frame (temporal reprojection / TAA history, a renderer running at a
-different cadence than its consumer). veng has no such consumer: the editor's ImGui samples
-*this* frame's viewport within *this* frame's ordered UI pass. That case is the same class
-as **history-buffer ringing**, already named future, and it rings a *different* resource
-(the history target), not this output. So the ring is recorded as the escalation for that
-future, and v1 ships the barrier.
+**When the ring (or a semaphore) *is* warranted (documented, not built):** two distinct
+triggers. **(1)** A genuinely **async or multi-rate** consumer — one that samples an *older*
+frame's output while the renderer races ahead to a newer frame (temporal reprojection / TAA
+history, a renderer running at a different cadence than its consumer). veng has no such
+consumer: the editor's ImGui samples *this* frame's viewport within *this* frame's ordered
+UI pass. That case is the same class as **history-buffer ringing**, already named future, and
+it rings a *different* resource (the history target), not this output. **(2)** Either side of
+the handoff moving to a **second queue** — an async-compute pass, or a dedicated present/UI
+queue. The barrier suffices only while the consumer read and the next producer write share
+the single graphics queue in submission order; a cross-queue handoff needs an explicit
+semaphore (or the ring) because submission order no longer relates them. veng is
+single-graphics-queue (with an async *transfer* queue for uploads only), so this trigger is
+inactive. So the ring/semaphore is recorded as the escalation for those futures, and v1 ships
+the barrier.
 
 ## What this delivers, and what it holds back
 
@@ -103,18 +119,24 @@ What it **holds back** (named, not silently dropped):
 
 ## Decisions
 
-1. **Measure before fixing.** The cross-graph output hazard is potential, not proven —
-   nothing drives frame overlap today (smoke = one frame). A multi-frame overlap GPU test
-   under synchronization validation is built **first**, as the oracle that decides whether a
-   fix is needed and, after, stands as the regression gate. No fix is committed on the
-   strength of reasoning alone.
+1. **Measure, then fix — and keep the test regardless.** The cross-graph output hazard is
+   potential, not proven: frames overlap today (the smoke renders 20), but no *gated* run
+   exercises the cross-graph output handoff under that overlap (the headless capture is a
+   `WaitIdle` `Download` with no composite/ImGui consumer). A multi-frame overlap GPU test
+   under synchronization validation is built **first**. It is worth building either way — it
+   is the first cross-frame exercise of the sync gate and stands as a permanent regression
+   gate — and its verdict tells us whether the barrier closed a *live* hazard or merely makes
+   an already-serialized handoff explicit. The barrier ships in both cases (decision 2); the
+   measurement settles which it is, not whether to act.
 
 2. **A cross-graph reuse barrier, not a per-FIF ring.** If the output races, the fix is the
-   engine's existing escape hatch — `PrepareForAccess(output, AccessKind::ColorAttachment)`
-   before each frame's scene render — symmetric with the composite's existing
-   `PrepareForAccess(output, Sample)`, bracketing the cross-graph handoff in both
-   directions. Zero extra memory; negligible over-serialization (the internal reuse barriers
-   already serialize there). The single-copy output is retained.
+   engine's existing escape hatch — a renderer-owned `PrepareForAccess(output,
+   AccessKind::ColorAttachment)` inside `SceneRenderer::Execute`, the reverse of the
+   consumer's `Sample` transition, bracketing the cross-graph handoff in both directions. It
+   needs no semaphore or ring because the consumer read and the next producer write both
+   record on the single graphics queue in submission order, so the barrier's source scope
+   reaches the prior frame's read. Zero extra memory; negligible over-serialization (the
+   internal reuse barriers already serialize there). The single-copy output is retained.
    - **Rejected — ring the output per frame-in-flight:** `MaxFramesInFlight ×` a
      full-resolution texture per renderer, for no meaningful concurrency (the internal
      single-copy targets already serialize consecutive frames; FIF's real win is CPU/GPU
@@ -126,16 +148,20 @@ What it **holds back** (named, not silently dropped):
 3. **Remove the `== 1` guard, do not relax it.** It encodes a false premise (FIF is already
    2) and aborts at launch. It is deleted; in its place a present-tense fact next to the
    output handoff states why the cross-graph reuse needs an explicit barrier (no single
-   graph spans the producer's write and the consumer's read) and why the internal targets
-   need none (each lives in one graph that serializes its own reuse). No "future work"
-   phrasing (CLAUDE.md).
+   graph spans the producer's write and the consumer's read, but both record on the single
+   graphics queue in submission order, so the barrier's source scope reaches the prior
+   frame's read — no semaphore or ring) and why the internal targets need none (each lives in
+   one graph that serializes its own reuse). No "future work" phrasing (CLAUDE.md).
 
-4. **The ring is documented as a bounded future escalation.** Recorded in
-   `future/scene-renderer.md` and `CLAUDE.md` as: *ring the handed-out output (or any
-   target read across a frame boundary) only when a consumer samples an older frame while
-   the renderer races ahead — the temporal/history-buffer case — which rings the history
-   target, not this output.* Named precisely so a later temporal effect adds it in the right
-   place, without pre-paying its memory now.
+4. **The ring (or a semaphore) is documented as a bounded future escalation.** Recorded in
+   `future/scene-renderer.md` and `CLAUDE.md` as two triggers: *(a)* ring the handed-out
+   output (or any target read across a frame boundary) when a consumer samples an older frame
+   while the renderer races ahead — the temporal/history-buffer case — which rings the history
+   target, not this output; and *(b)* add an explicit cross-queue semaphore (or the ring) when
+   either side of the handoff moves off the single graphics queue (async compute, a dedicated
+   present/UI queue), since the barrier's submission-order reach holds only on one queue. Named
+   precisely so a later temporal effect or a second queue adds the right mechanism in the right
+   place, without pre-paying anything now.
 
 ## Scope of this phase
 
@@ -152,7 +178,7 @@ What it **holds back** (named, not silently dropped):
 | # | Plan | Summary | Status |
 |---|---|---|---|
 | 01 | [The overlap oracle + drop the false guard](01-overlap-oracle.md) | **Remove** planset-12's `Create`-time `== 1` assert (it aborts at FIF=2, and blocks the test). Build the standing oracle: a GPU test that drives **more frames than `MaxFramesInFlight`**, reads back an earlier frame's output while a later frame is in flight, and asserts the readback is uncorrupted, run under **synchronization validation** — reporting whether the single-copy output races across frames (and confirming the internal g-buffer/depth/HDR targets are clean). **Pixels unchanged**; `smoke_golden` stays unchanged. | proposed |
-| 02 | [The minimal cross-graph reuse barrier](02-reuse-barrier.md) | Outcome-driven by plan 01. If the output races: apply `PrepareForAccess(output, AccessKind::ColorAttachment)` before each frame's scene render — the symmetric reuse barrier — making the overlap oracle sync-clean with **zero added memory**, single-copy output retained; document the cross-graph reuse contract. If plan 01 shows the compiled graph already serializes via tracked state: land the explicit barrier as the documented contract anyway and keep the oracle as the regression gate. Either way: **no ring**. Extend the two-renderer test to multiple frames. | proposed |
+| 02 | [The minimal cross-graph reuse barrier](02-reuse-barrier.md) | Outcome-driven by plan 01. If the output races: apply a renderer-owned `PrepareForAccess(output, AccessKind::ColorAttachment)` inside `SceneRenderer::Execute` — the reverse of the consumer's `Sample` transition, sound on the single graphics queue without a semaphore or ring — making the overlap oracle sync-clean with **zero added memory**, single-copy output retained; document the cross-graph reuse contract. If plan 01 shows the compiled graph already serializes via tracked state: land the explicit barrier as the documented contract anyway and keep the oracle as the regression gate. Either way: **no ring**. Extend the two-renderer test to multiple frames. | proposed |
 | 03 | [Docs + roadmap re-cut](03-docs-roadmap.md) | `future/scene-renderer.md` (FIF section → **delivered**: the cross-graph reuse barrier; single-copy internals; the ring as a bounded future escalation for temporal/async consumers); `future/README.md` (area 8 FIF follow-on done; history-buffer ringing + parallel record named future); `CLAUDE.md` (the `SceneRenderer` FIF contract + the reuse-barrier idiom); `plans/README.md` (planset-13 line). Note that this **supersedes planset-12 decision 6's guard**. | proposed |
 
 ## Dependencies & dispatching
@@ -186,9 +212,11 @@ a `Co-Authored-By` trailer (`planset-13:` for the docs plan).
 - **The look does not change — `smoke_golden` stays unchanged.** The fix is pure
   synchronization (a barrier), not pixels; any single frame renders identically.
   `smoke_golden` is **not** regenerated.
-- **The smoke path cannot prove this planset.** It renders one frame; overlap never
-  happens. The GPU overlap test (plan 01) under **synchronization validation** is the only
-  oracle that exercises the hazard — a green smoke is necessary, not sufficient.
+- **The smoke path cannot prove this planset.** Its 20 frames overlap at FIF=2, but the
+  headless capture is a `WaitIdle` `Download` with no cross-graph consumer, so it never
+  exercises the producer-write-vs-consumer-read handoff. The GPU overlap test (plan 01) under
+  **synchronization validation** — with a non-`WaitIdle`, per-frame readback — is the only
+  oracle that exercises the hazard; a green smoke is necessary, not sufficient.
 - **Zero new memory; no per-frame allocation.** The fix is a recorded barrier, not a
   resource. No ring, no extra image, no bindless change.
 - **Public headers stay backend-free.** `AccessKind::ColorAttachment` and
