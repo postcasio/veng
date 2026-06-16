@@ -77,21 +77,26 @@ struct VengModuleHost
   asset editors — through `host->Editor` (guaranteed non-null; only the editor loads
   it).
 
-The editor planset extends this struct **additively** with its reflection registry
-(a `TypeRegistry&`) — a change to a boundary nothing ships against yet.
+**planset-11 extended this struct additively** with its reflection registry
+(`TypeRegistry& Types`, between `App` and `Editor`) and bumped the ABI `1u→2u` — see
+seam 2 below.
 
-## Seam 2 — type reflection / descriptors (the editor-shell planset's first task)
+## Seam 2 — type reflection / descriptors — DELIVERED (planset-11)
 
-> **Deferred out of the build-model prerequisite into the editor-shell sub-area**
-> ([editor.md](editor.md)). It has no consumer until the inspector exists, so it is
-> designed against that real client rather than speculatively here. The **resolved
-> direction** is recorded so that planset does not rebuild it blind.
+> **DONE — [planset-11](../planset-11/README.md).** `VengModuleHost` carries
+> `TypeRegistry& Types`, a module registers its component descriptors through
+> `VengModuleRegister`, and a host (launcher *or* cooker) reflects them. The
+> reflection layer itself (`TypeRegistry` + `FieldDescriptor`/`TypeInfo`, authored
+> via `VE_REFLECT`/`VE_FIELD`) was pulled forward by planset-10 to serialize
+> components; planset-11 wired it onto the module ABI so the cooker reflects a game's
+> types to validate prefabs, and the **editor's native-type inspectors reuse this same
+> seam**. The **resolved direction** below held — recorded here as it shipped.
 
 The editor's auto-generated inspectors ("select an entity, edit its fields") require
 the editor to know a type's **fields** — names, types, offsets — at runtime. C++
-gives none of that, so the game must **describe** its types through a hand-written
-descriptor layer (no codegen v1; a `VE_REFLECT(...)` macro is sugar to consider
-later, a clang-AST pass only if the hand-written burden proves real):
+gives none of that, so the game **describes** its types through a hand-written
+descriptor layer (no codegen; a `VE_REFLECT(...)` describe-block is the authoring
+form, a clang-AST pass only if the hand-written burden proves real):
 
 ```cpp
 struct FieldDescriptor
@@ -122,9 +127,11 @@ The **resolved decisions** for that layer:
 - **Inheritance is single, non-virtual, base at offset 0**, walked base-first.
 
 The editor walks `TypeDescriptor::Fields` to build an inspector with a widget per
-field type. This `TypeRegistry` layer is **shared** between game-module registration
-and the editor's inspector framework — designed once, in the editor-shell planset,
-as the contract for both.
+field type. This `TypeRegistry` layer is **shared** between game-module registration,
+the cooker's prefab validation, and the editor's inspector framework — one contract
+for all three, delivered by planset-11 (the host-wiring) on planset-10's reflection
+layer. (The shipped descriptor types are `FieldDescriptor`/`TypeInfo`; the
+`FieldDescriptor`/`TypeDescriptor` sketch above is the original direction.)
 
 ## Seam 3 — the ABI boundary (delivered)
 
@@ -192,17 +199,29 @@ additionally ships `libveng` beside the launcher (the in-tree launcher resolves
 - **Module entry shape — single `VengModuleRegister(host)`.** One uniform entry,
   resolved by name, for every module and host. (Not multiple named exports.)
 - **Host carries inert registries — no live `Context`/`AssetManager`.** Registration
-  is a *factory* (no GPU work), so the entry needs no live engine objects:
-  `VengModuleHost` is `{ ApplicationRegistry& App; EditorRegistry* Editor; }`, and
-  `Application` keeps owning `Context`/`AssetManager`/`TaskSystem` unchanged. This
-  **departs from this doc's original sketch** (`Context&`/`AssetManager&` on the
-  host): passing live objects in would force inverting `Application`'s ownership for
-  no benefit and contradict "nothing new in the engine runtime." One consequence:
-  registering **custom asset-type loaders** genuinely needs a live `AssetManager`, so
-  it is **out of scope** until a custom asset type exists to drive it; it returns
-  with the host's `AssetManager&` when one does.
-- **Reflection deferred to the editor, with the open-`TypeId` direction** (above) —
-  no consumer until the inspector exists.
+  is GPU-free (a *factory* + reflected type descriptors), so the entry needs no live
+  engine objects: `VengModuleHost` is `{ ApplicationRegistry& App; TypeRegistry&
+  Types; EditorRegistry* Editor; }` (planset-9 shipped it without `Types`; planset-11
+  added it, ABI `1u→2u`), and `Application` keeps owning
+  `Context`/`AssetManager`/`TaskSystem` unchanged. This **departs from this doc's
+  original sketch** (`Context&`/`AssetManager&` on the host): passing live objects in
+  would force inverting `Application`'s ownership for no benefit and contradict
+  "nothing new in the engine runtime." One consequence: registering **custom
+  asset-type loaders** genuinely needs a live `AssetManager`, so it is **out of scope**
+  until a custom asset type exists to drive it; it returns with the host's
+  `AssetManager&` when one does.
+- **The host owns the `TypeRegistry`; the engine borrows it (planset-11).** Because
+  `VengModuleRegister` runs **before** the `Application` exists (the app's factory is
+  obtained from that very call), a registry the module fills then cannot be an
+  `Application` member. The **launcher *or* cooker** constructs the `TypeRegistry`,
+  pre-registers the builtins (a GPU-free `RegisterBuiltinTypes`), fills it through
+  `VengModuleRegister`, then threads it into the `Application`, which **borrows** a
+  `TypeRegistry&`. This mirrors `ApplicationRegistry` (already a launcher-owned local)
+  and **supersedes planset-10's Application-owned registry** (its decision 4).
+- **Reflection delivered by planset-11; the editor reuses it.** The open-`TypeId`
+  direction (above) shipped: the module registers descriptors via `VengModuleRegister`
+  into the host's `TypeRegistry`, the cooker reflects them to validate prefabs, and the
+  editor's native-type inspectors **reuse the same seam** rather than reintroducing it.
 - **A uniform, veng-provided launcher** + the `VengModuleAbiVersion` handshake +
   **executable-relative resolution** (the module beside the launcher via
   `$ORIGIN`/`@loader_path`, assets + cache via `ExecutableDirectory()`).

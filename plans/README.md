@@ -121,21 +121,41 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   framework, and the module-ABI `TypeRegistry&` registration seam are held back — the
   cooked scene and seam to area 10 (the prioritized next planset).
 
+- **[planset-11](planset-11/README.md)** — cooker-side module reflection + the
+  cooked prefab asset (✅ done, 5 plans). Takes up future area 10. The cooker
+  `dlopen`s `libgame` to **reflect its native component types** — realizing the
+  additive `VengModuleHost` `TypeRegistry&` seam (ABI `1u→2u`), with the registry
+  now **host-owned** (the launcher/cooker constructs it, pre-registers the builtins
+  via a GPU-free `RegisterBuiltinTypes`, fills it through `VengModuleRegister`, and
+  threads it into the `Application`, which borrows a `TypeRegistry&`). On that, a
+  **cooked prefab asset**: a `*.prefab.json` (entities + components + values) cooks
+  into an `AssetType::Prefab` blob — **validated against the reflected descriptors**,
+  the way materials are validated against shader reflection — that loads through the
+  same `AssetManager::Load` path as every asset (a cached `AssetHandle<Prefab>`) and
+  **spawns** its entities into a mutable `Scene` (`Prefab::SpawnInto`, entity
+  references remapped, `AssetHandle` fields rehydrated). The cooked blob reuses
+  planset-10's name-keyed `WriteFields` record encoding; the prefab-cooking path
+  links `veng::veng` and reuses `ModuleLoader` (the one scoped relaxation of the
+  Vulkan-free cooker). hello-triangle ships a cooked prefab it loads + spawns
+  instead of building its world in code. **Supersedes planset-10 decision 4** — the
+  `TypeRegistry` is now host-owned, not an `Application` member. Cross-compiled
+  cooking (host ≠ target) stays out.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
-  holding area; not a planset). **The prioritized next planset is area 10 —
-  cooker-side module reflection** (the cooker `dlopen`s the game module to reflect its
-  native types, realizing the `VengModuleHost` `TypeRegistry&` seam and delivering the
-  cooked `.scene` asset). Other remaining areas: the **editor application** (its
-  game-module build model is **delivered by planset-9** — the editor shell +
-  cooker-on-demand + docking, the material node editor, and the scene editor remain
-  future, its native-type inspectors reusing area 10's module reflection —
+  holding area; not a planset). The remaining areas are the **editor application**
+  (the prioritized next planset — its game-module build model is **delivered by
+  planset-9** and its native-type inspectors **reuse area 10's module reflection**,
+  delivered by planset-11; the editor shell + cooker-on-demand + docking, the
+  material node editor, and the scene editor remain future —
   [editor.md](future/editor.md) / [game-module.md](future/game-module.md), several
-  plansets), the scene renderer (area 8), and the event/input systems. Each becomes
-  its own planset when taken up. (Testing areas 5a/5b, de-globalizing the context
-  (area 3), the asset system's synchronous slice + bindless (area 1), and the
-  threading/task system (area 2 — which also turned area 1's `LoadSync` into the async
-  `Load` default) are done — planset-3, planset-4, planset-5, and planset-6
+  plansets), the **scene renderer** (area 8), and the **event/input** systems (area
+  4). Each becomes its own planset when taken up. (Testing areas 5a/5b, de-globalizing
+  the context (area 3), the asset system's synchronous slice + bindless (area 1), and
+  the threading/task system (area 2 — which also turned area 1's `LoadSync` into the
+  async `Load` default) are done — planset-3, planset-4, planset-5, and planset-6
   respectively; area 6's **game-module prerequisite** and the **pipeline-caching** and
   **content-hashes** cross-cutting concerns are resolved by planset-9; **area 7's
-  runtime half is delivered by planset-10**. Hot-reload remains future: its re-cook
-  half conflicts with offline-only cooking and needs a dev-only watcher design.)
+  runtime half is delivered by planset-10**; and **area 10 — cooker-side module
+  reflection + the cooked prefab asset — is delivered by planset-11**, realizing the
+  `VengModuleHost` `TypeRegistry&` seam. Hot-reload remains future: its re-cook half
+  conflicts with offline-only cooking and needs a dev-only watcher design.)

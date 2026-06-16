@@ -36,7 +36,10 @@ is thin (shared deps + `add_subdirectory` per lib).
   format (`Veng/Asset/`: `AssetId`, `AssetType`, `Archive`, `CookedBlobs`).
   Vulkan-free, importer-free; linked PUBLIC by `engine` and by `cooker`.
 - `cooker/` — `libveng_cook` + the `vengc` CLI (stb, assimp, Slang, JSON).
-  Never linked by the engine.
+  Never linked by the engine. Its **prefab-cooking path** links `veng::veng` and
+  reuses `ModuleLoader` to `dlopen` a game module and reflect its types — the one
+  place the Vulkan-free cooker relaxes its separation, scoped to that load path
+  (the graphics stack is linked but never initialized).
 - `examples/hello-triangle/` — the canonical sample app and the smoke test. It is
   a **game module + launcher**, not one binary: `veng_add_game` builds
   `libhello_triangle` (shared, the app) plus `hello_triangle-launcher` (the exe
@@ -314,24 +317,28 @@ custom runtime types — loaded by a thin **launcher** (the shipped exe). The
 launcher `dlopen`s the module and calls one C-ABI entry,
 `VengModuleRegister(VengModuleHost*)`; the module registers its `Application`
 factory into the host-owned `ApplicationRegistry` (`host->App.RegisterApplication(
-[]{ … })`, one per module). `Application` still owns
-`Context`/`AssetManager`/`TaskSystem` unchanged — the launcher reads the factory
-back, constructs the app, and calls `Run()`. `veng_add_game(<name> SOURCES … [ASSET_PACK …])`
-is the build entry: it emits `lib<name>` + `<name>-launcher` from one declaration.
+[]{ … })`, one per module) **and registers its reflected component/type descriptors
+into the host-owned `TypeRegistry`** (`host->Types`, `Register<T>()` per type).
+`Application` still owns `Context`/`AssetManager`/`TaskSystem` unchanged — the
+launcher reads the factory back, constructs the app, and calls `Run()`.
+`veng_add_game(<name> SOURCES … [ASSET_PACK …])` is the build entry: it emits
+`lib<name>` + `<name>-launcher` from one declaration.
 
 - **Same toolchain, one STL, one flag set.** Only the *entry* is C ABI; the payload
   is rich C++ (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a
   binary-plugin platform — a module is recompiled with the engine from one tree. A
   one-integer `VengModuleAbiVersion` handshake (checked by `ModuleLoader` before the
-  entry runs) **rejects a stale module loudly at load**, not later.
+  entry runs) **rejects a stale module loudly at load**, not later. The ABI is at
+  **version 2** (`VENG_MODULE_ABI_VERSION`); a module built against an older header
+  fails the handshake at load.
 - **The relocatable trio.** The module resolves **beside the launcher** via an
   `$ORIGIN`/`@loader_path` rpath, and assets resolve via `ExecutableDirectory()`
   (the public executable-relative path helper) with `veng_add_game` copying the
   cooked pack beside the launcher — so launcher + lib + pack move as one directory.
 - **`EditorRegistry*` is the reserved seam for the future editor host.** The host
-  struct carries `{ ApplicationRegistry& App; EditorRegistry* Editor; }`; the
-  launcher always passes `Editor = nullptr` (the type is only forward-declared in
-  `libveng`). Only the future editor host passes non-null.
+  struct carries `{ ApplicationRegistry& App; TypeRegistry& Types; EditorRegistry*
+  Editor; }`; the launcher always passes `Editor = nullptr` (the type is only
+  forward-declared in `libveng`). Only the future editor host passes non-null.
 - **Game-code hot-reload is out** — restart the play session. (Distinct from *asset*
   hot-reload, the async path.)
 
@@ -352,11 +359,11 @@ archive; the engine *mounts* archives and resolves assets against them.
   (which stores the raw 16 bytes and computes nothing) and `libveng` gain no hash
   dependency.
 - **An asset pack is a pure `{ id, type, source }` manifest.** It carries no
-  per-asset settings. **Every** asset type — texture, mesh, shader, material —
-  has its own per-asset JSON source file (`*.tex.json` / `*.mesh.json` /
-  `*.shader.json` / `*.vmat.json`) that the manifest entry points at; the sampler
-  settings, import options, shader source/entry, and material fields live in
-  those files.
+  per-asset settings. **Every** asset type — texture, mesh, shader, material,
+  prefab — has its own per-asset JSON source file (`*.tex.json` / `*.mesh.json` /
+  `*.shader.json` / `*.vmat.json` / `*.prefab.json`) that the manifest entry points
+  at; the sampler settings, import options, shader source/entry, material fields,
+  and prefab entities/components live in those files.
 - **Load is by opaque `u64` `AssetId`** through mounted archives.
   `AssetManager::Load<T>(AssetId)` is **async by default**: it returns a
   not-yet-resident `AssetHandle<T>` immediately and runs the decode + GPU upload
@@ -365,10 +372,34 @@ archive; the engine *mounts* archives and resolves assets against them.
   runs the whole pipeline inline and returns a resident handle or a structured
   error, `AssetResult<AssetHandle<T>>` (`std::expected<…, AssetLoadError>` —
   branch on `AssetError::Kind`, not a string).
-- **`AssetManager` is owned by `Application` and constructed with a `Context&`
-  and a `TaskSystem&`.** The async `Load` is the obvious call and the
+- **`AssetManager` is owned by `Application` and constructed with a `Context&`,
+  a `TaskSystem&`, and the borrowed `TypeRegistry&`** (the registry the prefab
+  loader reflects components through). The async `Load` is the obvious call and the
   non-stalling one; `LoadSync` is the marked-verbose blocking spelling for tests,
   tools, and the smoke path.
+- **The cooker loads the game module to reflect its types.** `vengc cook --module
+  <lib>` `dlopen`s the game module and reflects its component types into a
+  `TypeRegistry` (reusing `ModuleLoader`, ABI-version check included), so the
+  `PrefabImporter` validates a prefab's components against the **real** reflected
+  descriptors — an unknown component, a wrong field type, or a malformed value is a
+  located cook-time error, the way the material importer validates `*.vmat.json`
+  against a shader's reflected `MaterialData`. A field absent from the source keeps
+  its default-constructed value (schema tolerance), so omission is allowed,
+  type-mismatch is not. `vengc generate-type-id` mints a collision-free `TypeId`
+  (the `TypeId` analogue of `generate-id`) and `vengc` can emit a type manifest.
+- **Type registration is GPU-free, by contract.** `RegisterBuiltinTypes(TypeRegistry&)`
+  (public, in `Veng/Scene/BuiltinTypes.h`), `Register<T>()`, and a module's
+  `VengModuleRegister` (the `Application` factory + the type registration) touch
+  **no** `Context`/device — the headless cooker reflects a module's types with no
+  ICD present, and a no-device cooker test pins the contract. The **host** (launcher
+  or cooker) owns the `TypeRegistry`: it constructs it, pre-registers the builtins,
+  puts it in the `VengModuleHost` as `Types`, calls `VengModuleRegister` (at which
+  point the module registers its component types), and threads it onward.
+- **Build-order edge: `add_asset_pack(... MODULE <lib>)`.** A pack containing
+  prefabs names its game module; the build graph grows a `lib → cook → bundle` edge
+  so the pack cooks after its lib is built. Packs without prefabs stay
+  module-independent. `veng_add_game` wires the example's prefab pack to depend on
+  `libhello_triangle`.
 
 The same split runs underneath at the resource level: `Buffer/Image::Upload`
 (taking a `TaskSystem&`) is **async by default** — it returns a `Task<void>`,
@@ -408,6 +439,21 @@ smoke render use.
   its own texture/shader dependencies — so every asset eager-loads its
   dependencies. A draw iterates submeshes, binding `GetMaterials()[MaterialIndex]`
   per range.
+- **Cooked prefabs load like every other asset; a `Scene` is what you spawn into.**
+  A `*.prefab.json` (entities + components + field values) cooks into an
+  `AssetType::Prefab` blob and loads through the **identical**
+  `AssetManager::Load`/`LoadSync` path — a cached `AssetHandle<Prefab>` whose embedded
+  asset references (a `MeshRenderer`'s mesh, a `Material`, …) are resolved as ordinary
+  load-time dependencies, exactly as a `Material` resolves its textures and shaders.
+  The cooked blob **is** the reflection serializer's name-keyed `WriteFields` record
+  encoding, per component, wrapped in an entity/component table — not a new format.
+  A `Scene` is an engine primitive, **never loaded**; you create one and spawn into it:
+  `Prefab::SpawnInto(Scene&, AssetManager&) const → vector<Entity>` (the spawned roots)
+  creates the entities, `ReadFields` each component, remaps intra-prefab `Entity`
+  reference fields to the fresh handles, and rehydrates the embedded `AssetHandle`
+  fields. Spawning the same prefab twice spawns two independent copies — a prefab is a
+  reusable recipe, not a singleton. `SpawnInto` lives on `Prefab`, so the dependency
+  points asset → primitive; the `Scene` primitive gains no asset-system dependency.
 
 ### Bindless: set 0 is the engine's
 
@@ -452,14 +498,18 @@ slot recycled, generation bumped) accessed through the API is a fatal `VE_ASSERT
 silent UB. A **component is just a reflected type a `Scene` pools** — pools are made
 lazily on first `Add` of a type; there is no separate component-id space.
 
-Types register into the engine-owned **`TypeRegistry`** (`Application::GetTypeRegistry()`,
-threaded into `Scene::Create(TypeRegistry&)`), which is generic over *any* reflected
+Types register into the **`TypeRegistry`** — **host-owned, borrowed by the engine**:
+the host (launcher or cooker) constructs it, pre-registers the builtins, fills it via
+`VengModuleRegister`, and threads it in; `Application` borrows a `TypeRegistry&`
+(`Application::GetTypeRegistry()`) and threads it into the `AssetManager` and into
+`Scene::Create(TypeRegistry&)`. It is generic over *any* reflected
 type — leaf field types, nested structs, and components share **one `TypeId` space**.
 Each type carries a stable `u64` **`TypeId` authored exactly like an `AssetId`**:
 hardcoded `0x…ULL` for engine types, `vengc generate-id` for game types, hex in C++ /
 decimal in JSON. It is a compile-time constant (`TypeIdOf<T>()` reads it off a trait,
 independent of registration order), persisted directly (a scene stores a component's
-`TypeId`, never its name), and byte-identical across the future module boundary; two
+`TypeId`, never its name), and byte-identical across the module boundary (so the
+cooker reflecting a module reads the same ids the runtime does); two
 types claiming one id is a **fatal collision assert**. The `TypeInfo.Name` string is
 logs/editor display only. A game registers its own types through the same path as the
 builtins — a **`VE_REFLECT`** describe-block next to the struct, read back by the
