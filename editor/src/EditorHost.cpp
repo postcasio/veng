@@ -302,7 +302,7 @@ namespace VengEditor
             {
                 for (PanelSlot& slot : m_Panels)
                 {
-                    const string title(slot.Panel->Title());
+                    const string title(slot.Panel->GetTitle());
                     ImGui::MenuItem(title.c_str(), nullptr, &slot.Open);
                 }
                 ImGui::EndMenu();
@@ -336,8 +336,15 @@ namespace VengEditor
             if (!slot.Open)
                 continue;
 
-            const string title(slot.Panel->Title());
-            if (ImGui::Begin(title.c_str(), &slot.Open))
+            const string title(slot.Panel->GetTitle());
+            const ImGuiWindowFlags flags = slot.Panel->GetWindowFlags();
+            const bool noPadding = (flags & ImGuiWindowFlags_NoScrollbar) != 0;
+            if (noPadding)
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+            const bool open = ImGui::Begin(title.c_str(), &slot.Open, flags);
+            if (noPadding)
+                ImGui::PopStyleVar();
+            if (open)
                 slot.Panel->OnImGui();
             ImGui::End();
         }

@@ -41,7 +41,7 @@ namespace VengEditor
                            Veng::ImGuiLayer& imgui, CookDriver cook);
         ~TextureEditorPanel() override;
 
-        [[nodiscard]] Veng::string_view Title() const override { return m_Title; }
+        [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
         void OnImGui() override;
 
     private:

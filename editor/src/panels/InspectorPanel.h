@@ -24,7 +24,7 @@ namespace VengEditor
     public:
         InspectorPanel(Veng::AssetManager& assets, Veng::EditorRegistry& editors);
 
-        [[nodiscard]] Veng::string_view Title() const override { return "Inspector"; }
+        [[nodiscard]] Veng::string_view GetTitle() const override { return "Inspector"; }
         void OnImGui() override;
 
         // Set by the host each frame: the live scene the inspector reads and the

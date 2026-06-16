@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <imgui.h>
 
 namespace VengEditor
 {
@@ -12,7 +13,8 @@ namespace VengEditor
     public:
         virtual ~EditorPanel() = default;
 
-        [[nodiscard]] virtual Veng::string_view Title() const = 0;
+        [[nodiscard]] virtual Veng::string_view GetTitle() const = 0;
+        [[nodiscard]] virtual ImGuiWindowFlags GetWindowFlags() const { return 0; }
         virtual void OnImGui() = 0;
     };
 }

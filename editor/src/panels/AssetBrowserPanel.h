@@ -21,7 +21,7 @@ namespace VengEditor
     public:
         AssetBrowserPanel(Veng::path packPath, Veng::EditorRegistry& editors);
 
-        [[nodiscard]] Veng::string_view Title() const override { return "Asset Browser"; }
+        [[nodiscard]] Veng::string_view GetTitle() const override { return "Asset Browser"; }
         void OnImGui() override;
 
         // Panels opened by double-clicking an asset since the last call, moved out

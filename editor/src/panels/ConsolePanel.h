@@ -15,7 +15,7 @@ namespace VengEditor
         ConsolePanel();
         ~ConsolePanel() override;
 
-        [[nodiscard]] Veng::string_view Title() const override { return "Console"; }
+        [[nodiscard]] Veng::string_view GetTitle() const override { return "Console"; }
         void OnImGui() override;
 
     private:

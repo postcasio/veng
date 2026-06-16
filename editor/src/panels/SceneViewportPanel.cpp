@@ -160,11 +160,6 @@ namespace VengEditor
         const uvec2 wanted{static_cast<u32>(available.x), static_cast<u32>(available.y)};
         m_PendingExtent = wanted;
 
-        const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
-        const f32 aspect = static_cast<f32>(output->GetImage()->GetHeight()) /
-                           static_cast<f32>(output->GetImage()->GetWidth());
-
-        ImGui::Image(static_cast<ImTextureID>(m_Texture->GetTextureId()),
-                     {available.x, available.x * aspect});
+        ImGui::Image(static_cast<ImTextureID>(m_Texture->GetTextureId()), available);
     }
 }

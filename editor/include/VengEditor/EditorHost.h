@@ -98,13 +98,16 @@ namespace VengEditor
 
         EditorHostInfo m_Info;
 
-        Veng::Unique<Registries> m_Registries;
-
-        // The loaded modules outlive every registered closure and reflected
-        // descriptor (which are code/data in the module images), so they are
-        // released last in OnDispose-then-destructor order.
+        // The loaded modules must outlive every registered closure and reflected
+        // descriptor (code/data in the module images). Declared before m_Registries
+        // so they are destroyed AFTER it (C++ destroys members in reverse
+        // declaration order).
         Veng::Unique<Veng::LoadedModule> m_GameModule;
         Veng::optional<Veng::LoadedModule> m_EditorModule;
+
+        // Declared after the modules so it is destroyed first; its ApplicationRegistry
+        // holds a function<> whose closure code lives in the game module.
+        Veng::Unique<Registries> m_Registries;
 
         // The host-owned panel set: built-ins plus any game-contributed panels,
         // each with an open/close flag the Window menu toggles.
