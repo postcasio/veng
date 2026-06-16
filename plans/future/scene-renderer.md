@@ -282,23 +282,30 @@ strictly more bandwidth than the forward draw it replaces for a one-cube scene. 
 trades that bandwidth for the architecture; on-tile/subpass-fused deferred (the
 Apple-friendly form) is a future optimization behind the same `ScenePass` mechanism.
 
-## Frames-in-flight contract — DELIVERED (v1 single-in-flight)
+## Frames-in-flight contract — DELIVERED (cross-graph reuse barrier)
 
-- **v1 (single render thread):** a `SceneRenderer` instance is **single-in-flight**.
-  The renderer-owned images (g-buffer, depth, HDR, output) are **single-copy**, sized
-  to the output. One `Execute` resolves and completes before the next begins; within
-  a frame, written-then-read images (g-buffer, HDR) are correctly ordered by the
-  graph's derived barriers, and the retire path covers *destruction* safety on
-  resize/reconfigure. The cross-frame ring-buffer hazard does not arise: the output
-  is **consumed in the frame it is written** — a compositor samples `GetOutput()` for
-  the same frame the renderer wrote it. The two-renderer interleaved test pins
-  instance independence (each its own barrier domain).
-- **Still future — frames-in-flight > 1 (area 2):** the hazard is the **output**
-  image (a compositor sampling frame N's result while the renderer writes N+1's) and
-  any image read across an `Execute` boundary. The fix — ring-buffer those per
-  frame-in-flight, or fence execution — is a **compile-time allocation decision** for
-  the compiled graph, recorded here as the named next increment. It has no consumer
-  while the render thread is single and nothing drives FIF > 1 yet.
+- **The renderer-owned images are single-copy.** The g-buffer, depth, HDR, and output
+  images are one copy each, sized to the output. The internal targets need no barrier
+  of their own: each lives in the renderer's own graph, which derives the barriers
+  that serialize its reuse across frames.
+- **The handed-out output stays single-copy across frames-in-flight.** Its cross-frame
+  reuse is serialized by a renderer-owned `PrepareForAccess(ColorAttachment)` barrier
+  recorded before each `Execute` — the reverse of the consumer's `PrepareForAccess(Sample)`
+  read transition. The two bracket a handoff that crosses graphs (the renderer's graph
+  writes the output, the consumer's graph reads it), which no single graph can derive a
+  barrier for. The barrier suffices without a semaphore or a ring because the consumer's
+  read and the next frame's write both record on the **single graphics queue** in
+  submission order, so the barrier's first synchronization scope reaches the prior frame's
+  read. The two-renderer interleaved test pins instance independence (each its own barrier
+  domain).
+- **Ring/semaphore is the bounded future escalation** with two precise triggers:
+  - *(a) Temporal/history-buffer consumer:* ring the handed-out output (or any target
+    read across a frame boundary) when a consumer samples an older frame while the
+    renderer races ahead — a TAA/motion-blur history read, not the same-frame composite.
+  - *(b) Off-queue handoff:* add an explicit cross-queue semaphore (or the ring) if
+    either side of the handoff moves off the single graphics queue (async compute, a
+    dedicated present/UI queue) — the barrier's submission-order reach holds only on one
+    queue.
 
 ## Still future — the named next increments
 
@@ -311,7 +318,6 @@ mechanism this delivers:
 - **Multiple & typed lights:** point/spot/area lights, multiple lights, and
   clustered/tiled light culling. v1's lighting pass reads **one** directional light
   from the `SceneView`.
-- **Frames-in-flight > 1** with ring-buffered output (above).
 - **Parallel pass recording** into secondary command buffers (area 2's seam): the
   `SceneView`-rides-the-record-context choice is made *for* it, but no parallel
   recording is built.
@@ -334,6 +340,9 @@ mechanism this delivers:
 the owned imported target, `SceneView`, the `ScenePass` + `ScenePassContext`
 reusable-unit framework, the self-contained-graph-per-renderer resolution, the
 minimal deferred **g-buffer → directional-light → tonemap** chain, and the directional
-`Light`. **Still future:** the remaining batteries, multiple & typed lights,
-frames-in-flight > 1 with ring-buffered output, and parallel pass recording — each
-named above as a next increment behind the same mechanism.
+`Light`, and the **frames-in-flight correctness** — a cross-graph reuse barrier
+(`PrepareForAccess(ColorAttachment)` before each `Execute`) that serializes the
+single-copy output across frames-in-flight with zero added memory. **Still future:**
+the remaining batteries, multiple & typed lights, history-buffer ringing for temporal
+effects, cross-queue synchronization, and parallel pass recording — each named above as
+a next increment behind the same mechanism.

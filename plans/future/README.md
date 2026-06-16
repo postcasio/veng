@@ -205,13 +205,17 @@ up front; it is painful to retrofit onto a populated descriptor table.
 > bloom, MSAA, a transparent/forward pass (a second material contract), a post stack,
 > and a G2 PBR g-buffer target that extends the `GBufferOutput` struct — each its own
 > increment behind the same `ScenePass` + `Configure`-recompile mechanism; **multiple
-> & typed lights** (point/spot, light culling); **frames-in-flight > 1** with
-> ring-buffered output (v1 is single-in-flight: renderer-owned images are single-copy
-> and the output is consumed in the frame it is written, so no ring buffer is needed
-> while the render thread is single); and **parallel pass recording** into secondary
-> command buffers (area 2's seam — the user-pointer channel is shaped for it, but it
-> is not built). The editor's scene viewport (area 6) is now a **consumer** of this
-> delivered `SceneRenderer`, not a blocker for it.
+> & typed lights** (point/spot, light culling); the **G2 PBR g-buffer target** that
+> extends the `GBufferOutput` struct; **history-buffer ringing** for temporal effects
+> (TAA/motion-blur reading an older frame); **cross-queue synchronization** (an explicit
+> semaphore once a handoff side moves off the single graphics queue); and **parallel pass
+> recording** into secondary command buffers (area 2's seam — the user-pointer channel is
+> shaped for it, but it is not built). The **frames-in-flight follow-on is done**: a
+> cross-graph reuse barrier (`PrepareForAccess(ColorAttachment)` before each `Execute`)
+> serializes the single-copy output across frames-in-flight with no ring — both halves of
+> the handoff record on the single graphics queue in submission order, so the barrier
+> reaches the prior frame's read. The editor's scene viewport (area 6) is now a
+> **consumer** of this delivered `SceneRenderer`, not a blocker for it.
 
 ### 9. Compiled RenderGraph — DONE (planset-8)
 
@@ -379,7 +383,8 @@ shell, material editor, scene editor — [editor.md](editor.md) /
 [game-module.md](game-module.md)); plus the named still-future increments of areas
 done in part — area 8's remaining **batteries** (shadows/SSAO/bloom/MSAA/
 transparent/post + a G2 PBR g-buffer target), **multiple/typed lights**, and
-**frames-in-flight > 1** with ring-buffered output ([scene-renderer.md](scene-renderer.md));
+**history-buffer ringing / cross-queue sync** for temporal effects and off-queue handoffs
+([scene-renderer.md](scene-renderer.md));
 **hot-reload** (area 1; its re-cook half conflicts with offline-only cooking, needs a
 dev-only watcher design); and **unifying `ShaderInterface`/`MaterialField` onto
 planset-10's reflection layer** (area 7; kept apart because GPU layout is cooker-reflected

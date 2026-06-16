@@ -166,8 +166,21 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   editor (area 6) by choice — the editor inherits the multi-viewport consumer solved.
   Held back as named future increments: the rest of the über-pipeline batteries
   (shadows, SSAO, bloom, MSAA, transparent/forward pass, post stack), multiple/typed
-  lights + light culling, frames-in-flight > 1 with ring-buffered output, and parallel
-  pass recording.
+  lights + light culling, and parallel pass recording. **Frames-in-flight > 1 is
+  delivered in planset-13** by a cross-graph reuse barrier (ring-buffered output
+  reserved for a future temporal/async consumer).
+
+- **[planset-13](planset-13/README.md)** — `SceneRenderer` frames-in-flight
+  correctness + roadmap re-cut (✅ done). Corrects the false single-in-flight comment
+  and closes the cross-graph output reuse hazard with a renderer-owned
+  `PrepareForAccess(ColorAttachment)` barrier recorded before each `Execute` — the
+  reverse of the consumer's `Sample` transition. The output stays **single-copy** with
+  **zero added memory**; a per-frame-in-flight ring is rejected and documented as a
+  future escalation (a temporal/history-buffer consumer reading an older frame, or a
+  handoff side moving off the single graphics queue). The barrier suffices without a
+  semaphore or ring because both halves of the handoff record on the single graphics
+  queue in submission order. **Supersedes planset-12 decision 6** (which deferred FIF >
+  1 to a ring).
 
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). The remaining areas are the **editor application**
@@ -187,5 +200,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   is delivered by planset-11**, realizing the `VengModuleHost` `TypeRegistry&` seam;
   and **area 8 — the `SceneRenderer` deferred über-pipeline — is delivered by
   planset-12** (its minimal-deferred spine + a directional `Light`, the remaining
-  batteries named future). Hot-reload remains future: its re-cook half conflicts with
+  batteries named future), with its **frames-in-flight > 1** correctness delivered in
+  **planset-13** by a cross-graph reuse barrier (ring-buffered output reserved for a
+  future temporal/async consumer). Hot-reload remains future: its re-cook half conflicts with
   offline-only cooking and needs a dev-only watcher design.)

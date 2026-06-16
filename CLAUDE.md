@@ -339,6 +339,18 @@ graph's derived barriers, and the retire path covers destruction safety on
 `Resize`/`Configure`. The output is consumed in the frame it is written — a
 compositor samples `GetOutput()` for the same frame the renderer wrote it.
 
+**Frames-in-flight contract.** The output stays single-copy across frames-in-flight.
+A consumer transitions it for its read (`PrepareForAccess(Sample)`) and the next
+frame's scene render transitions it back (`PrepareForAccess(ColorAttachment)`,
+recorded by the renderer before each `Execute`), bracketing a cross-graph handoff no
+single graph can derive a barrier for. This barrier suffices without a semaphore or a
+ring because both halves record on the single graphics queue in submission order, so
+the barrier's first synchronization scope reaches the prior frame's read; the internal
+targets (g-buffer, depth, HDR) are single-copy and serialized by the renderer's own
+graph. Ringing the output — or a cross-queue semaphore — is reserved for a future
+async/temporal consumer (TAA/history-buffer reads of an older frame) or a handoff side
+moving off the single graphics queue.
+
 **The deferred opaque material g-buffer contract.** Going deferred changes what an
 opaque material's **fragment shader outputs** — from final swapchain color to
 **g-buffer channels**, written through a single engine-provided `GBufferOutput`
