@@ -38,6 +38,7 @@ namespace Veng::Cook
                 case AssetType::Shader:       return "shader";
                 case AssetType::Material:     return "material";
                 case AssetType::VertexLayout: return "vertex_layout";
+                case AssetType::Prefab:       return "prefab";
             }
             return "unknown";
         }
