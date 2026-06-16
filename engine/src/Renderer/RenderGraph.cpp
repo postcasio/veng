@@ -380,7 +380,8 @@ namespace Veng::Renderer
     }
 
     void CompiledGraph::Execute(CommandBuffer& cmd,
-                                const std::span<const RenderGraph::ImportBinding> imports)
+                                const std::span<const RenderGraph::ImportBinding> imports,
+                                void* userData)
     {
         Native& native = *m_Native;
 
@@ -486,7 +487,7 @@ namespace Veng::Renderer
 
                 if (pass.Execute)
                 {
-                    PassContext context(cmd, resolved);
+                    PassContext context(cmd, resolved, userData);
                     pass.Execute(context);
                 }
 
@@ -494,7 +495,7 @@ namespace Veng::Renderer
             }
             else if (pass.Execute)
             {
-                PassContext context(cmd, resolved);
+                PassContext context(cmd, resolved, userData);
                 pass.Execute(context);
             }
         }

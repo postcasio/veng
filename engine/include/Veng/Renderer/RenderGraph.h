@@ -66,12 +66,18 @@ namespace Veng::Renderer
         // the id is not a resource resolved for this graph.
         [[nodiscard]] ImageView& Resolved(ResourceId id) const;
 
+        // An opaque per-Execute pointer the caller threads through to pass
+        // callbacks; null unless the Execute call set it. RenderGraph never reads
+        // its target — a Scene-aware layer sets it and reads it back through a typed
+        // wrapper, keeping the graph free of any dependency on what it points at.
+        [[nodiscard]] void* UserData() const { return m_UserData; }
+
     private:
         friend class RenderGraph;
         friend class CompiledGraph;
 
-        PassContext(CommandBuffer& cmd, const vector<Ref<ImageView>>& resolved)
-            : m_Cmd(cmd), m_Resolved(resolved)
+        PassContext(CommandBuffer& cmd, const vector<Ref<ImageView>>& resolved, void* userData)
+            : m_Cmd(cmd), m_Resolved(resolved), m_UserData(userData)
         {
         }
 
@@ -79,6 +85,7 @@ namespace Veng::Renderer
         // The graph's resource table resolved to concrete views, indexed by
         // ResourceId::Index. Owned by the executing RenderGraph for the call.
         const vector<Ref<ImageView>>& m_Resolved;
+        void* m_UserData = nullptr;
     };
 
     struct PassAttachment
@@ -202,8 +209,12 @@ namespace Veng::Renderer
         // Replay the baked schedule: resolve transients, bind the supplied imports,
         // emit the scheduled transitions through the tracked-state barrier path, drive
         // rendering, run each pass callback. Every declared import must appear in
-        // `imports` (asserts otherwise); a graph with no imports takes {}.
-        void Execute(CommandBuffer& cmd, std::span<const RenderGraph::ImportBinding> imports = {});
+        // `imports` (asserts otherwise); a graph with no imports takes {}. `userData`
+        // is forwarded verbatim to every pass callback's PassContext::UserData();
+        // null leaves it null.
+        void Execute(CommandBuffer& cmd,
+                     std::span<const RenderGraph::ImportBinding> imports = {},
+                     void* userData = nullptr);
 
         // The concrete image a transient was allocated to at compile. Two
         // transients with non-overlapping lifetimes and an equal size class share
