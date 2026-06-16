@@ -45,6 +45,13 @@ namespace VengEditor
         // the output is ready for the ImGui::Image sample.
         void Render(Veng::Renderer::CommandBuffer& cmd);
 
+        // The scene the viewport renders, read by the inspector as a const Scene*.
+        [[nodiscard]] Veng::Scene& GetScene() const { return *m_Scene; }
+
+        // The prefab's spawned root entity — the inspector's default selection,
+        // the sphere carrying Name/Transform/MeshRenderer/Spinner.
+        [[nodiscard]] Veng::optional<Veng::Entity> PrimaryEntity() const { return m_PrimaryEntity; }
+
         void OnImGui() override;
 
     private:
@@ -65,8 +72,13 @@ namespace VengEditor
         Veng::Ref<Veng::Renderer::Sampler> m_Sampler;
         Veng::Ref<Veng::ImGuiTexture> m_Texture;
 
+        Veng::optional<Veng::Entity> m_PrimaryEntity;
+
         Veng::uvec2 m_RenderExtent{};
         Veng::uvec2 m_PendingExtent{};
-        Veng::f32 m_TimeAccum = 0.0f;
+
+        // Per-entity accumulated spin angle (keyed by entity index), advanced each
+        // frame by the entity's Spinner speed.
+        Veng::map<Veng::u32, Veng::f32> m_SpinAccum;
     };
 }

@@ -27,6 +27,7 @@ namespace Veng
 namespace VengEditor
 {
     class SceneViewportPanel;
+    class InspectorPanel;
 
     struct EditorHostInfo
     {
@@ -94,6 +95,10 @@ namespace VengEditor
         // Non-owning: points into m_Panels' viewport slot, used to drive the scene
         // render before the UI is built each frame.
         SceneViewportPanel* m_Viewport = nullptr;
+
+        // Non-owning: points into m_Panels' inspector slot, fed the viewport's
+        // scene and the current selection each frame before the UI is built.
+        InspectorPanel* m_Inspector = nullptr;
 
         // The present pipeline: a fullscreen blit of the ImGui output into the
         // swapchain, addressed through the bindless set 0.

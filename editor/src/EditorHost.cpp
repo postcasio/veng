@@ -160,7 +160,9 @@ namespace VengEditor
 
         m_Panels.push_back({CreateUnique<AssetBrowserPanel>(
             ExecutableDirectory() / "sample.vengpack", m_Registries->Editor), true});
-        m_Panels.push_back({CreateUnique<InspectorPanel>(), true});
+        auto inspector = CreateUnique<InspectorPanel>(GetAssetManager(), m_Registries->Editor);
+        m_Inspector = inspector.get();
+        m_Panels.push_back({std::move(inspector), true});
         m_Panels.push_back({CreateUnique<ConsolePanel>(), true});
 
         for (Unique<EditorPanel>& panel : m_Registries->Editor.Panels())
@@ -231,6 +233,10 @@ namespace VengEditor
         // so its output is sampleable when ImGui draws it into the viewport panel.
         m_Viewport->Render(cmd);
 
+        // Feed the inspector the viewport's live scene and selection. With no
+        // hierarchy panel yet, the viewport's prefab root is the default selection.
+        m_Inspector->SetSelection(&m_Viewport->GetScene(), m_Viewport->PrimaryEntity());
+
         ImGui::DockSpaceOverViewport();
         DrawMenuBar();
 
@@ -258,6 +264,7 @@ namespace VengEditor
     {
         m_Panels.clear();
         m_Viewport = nullptr;
+        m_Inspector = nullptr;
         m_PresentGraph.reset();
         m_BlitPipeline.reset();
         m_BlitLayout.reset();

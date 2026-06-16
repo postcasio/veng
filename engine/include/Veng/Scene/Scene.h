@@ -175,6 +175,13 @@ namespace Veng
             }
         }
 
+        // Calls fn(typeId, componentPtr) for every component the entity holds,
+        // across all pools. Type-erased: the caller resolves each TypeId through
+        // the registry to walk the component's fields without knowing its C++
+        // type at compile time (the inspector's driver). Iteration order over the
+        // pools is unspecified.
+        void ForEachComponent(Entity entity, const function<void(TypeId, void*)>& fn);
+
         // Range-for form of Each, for code that wants break/early-out:
         //   for (auto [entity, a, b] : scene.View<A, B>()) { … }
         // Same intersection semantics and same in-iteration structural-change

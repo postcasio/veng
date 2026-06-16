@@ -11,6 +11,7 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Time.h>
@@ -82,6 +83,7 @@ namespace VengEditor
         VE_ASSERT(!roots.empty(), "prefab spawned no root entities");
 
         m_Scene->Get<MeshRenderer>(roots[0]).Mesh = m_Assets.Adopt(sphere);
+        m_PrimaryEntity = roots[0];
 
         const Entity lightEntity = m_Scene->CreateEntity();
         m_Scene->Add<Light>(lightEntity) = Light{
@@ -116,14 +118,32 @@ namespace VengEditor
         }
 
         const f32 delta = Time::GetDeltaTime();
-        m_TimeAccum += delta;
 
-        // Spin every entity carrying a Transform. The game's Spinner component is
-        // not visible to libveng_editor, so the viewport drives rotation directly
-        // off the Transform; the directional light has no Transform and stays put.
-        m_Scene->Each<Transform>([this](Entity, Transform& transform)
+        // Spin every entity carrying a Transform, advancing each by its Spinner's
+        // speed. The game's Spinner type is not a compile-time symbol in
+        // libveng_editor, so the viewport reads its speed reflectively (by field
+        // name through the TypeRegistry) — which is what makes editing Spinner.Speed
+        // in the inspector change the visible rotation rate. An entity without a
+        // Spinner (or one whose field is absent) advances at the default rate.
+        m_Scene->Each<Transform>([this, delta](Entity entity, Transform& transform)
         {
-            transform.Rotation = glm::angleAxis(m_TimeAccum, SpinAxis);
+            f32 speed = 1.0f;
+            m_Scene->ForEachComponent(entity, [this, &speed](TypeId id, void* component)
+            {
+                const TypeInfo& info = m_Types.Info(id);
+                for (const FieldDescriptor& field : info.Fields)
+                {
+                    if (field.Class == FieldClass::Scalar
+                        && field.Type == m_Types.IdOf<f32>()
+                        && field.Name == "SpeedRadiansPerSec")
+                    {
+                        speed = *reinterpret_cast<const f32*>(static_cast<u8*>(component) + field.Offset);
+                    }
+                }
+            });
+
+            m_SpinAccum[entity.Index] += delta * speed;
+            transform.Rotation = glm::angleAxis(m_SpinAccum[entity.Index], SpinAxis);
         });
 
         const Renderer::SceneView view{.World = *m_Scene, .Camera = m_Camera, .Delta = delta};

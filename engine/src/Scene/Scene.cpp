@@ -104,6 +104,19 @@ namespace Veng
         return pool != nullptr && pool->Contains(entity);
     }
 
+    void Scene::ForEachComponent(Entity entity, const function<void(TypeId, void*)>& fn)
+    {
+        VE_ASSERT(IsAlive(entity), "ForEachComponent on a dead or stale entity");
+
+        for (auto& [id, pool] : m_Pools)
+        {
+            if (void* component = pool->TryGet(entity))
+            {
+                fn(id, component);
+            }
+        }
+    }
+
     usize Scene::PoolCount(TypeId id) const
     {
         const ComponentPool* pool = TryPoolFor(id);
