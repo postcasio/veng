@@ -141,6 +141,34 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   `TypeRegistry` is now host-owned, not an `Application` member. Cross-compiled
   cooking (host ≠ target) stays out.
 
+- **[planset-12](planset-12/README.md)** — the `SceneRenderer`, a deferred
+  über-pipeline on `RenderGraph` (✅ done, 5 plans). Takes up future area 8. A
+  long-lived, configurable **`SceneRenderer`** (`Unique`, single-owner) that owns an
+  offscreen target and renders a `Scene` from a `Camera` through an **internal
+  compiled `RenderGraph`** of reusable, self-contained **`ScenePass`** units, handing
+  back a sampleable result. Its surface is the **lifetime split** —
+  `Create`/`Resize`/`Configure`/`Execute`/`GetOutput` — where `Configure`/`Resize`
+  rebuild + re-`Compile()` and `Execute` only replays; the per-frame `SceneView`
+  reaches passes through an **opaque user-pointer** channel on `PassContext` (so
+  `RenderGraph` stays scene-agnostic). On that shell it delivers a **minimal deferred
+  spine** — g-buffer geometry pass (MRT albedo + world-normal + depth, written by an
+  opaque material's fragment shader via a `GBufferOutput` contract) → deferred
+  directional-lighting pass (→ HDR) → tonemap (HDR → output) — with a `DebugView`
+  setting re-wiring the pass set as the settings-drive-recompile proof, plus a
+  directional **`Light`** builtin (its `TypeId` minted with planset-11's `vengc
+  generate-type-id`). hello-triangle migrates its **main view** onto one
+  `SceneRenderer` (composite samples `GetOutput()`, ImGui unchanged); a two-renderer
+  interleaved GPU test proves the design-for-N surface, one wired. Prerequisites met:
+  the **compiled `RenderGraph`** ([planset-8](planset-8/README.md)) gives the
+  builder/`Compile()`/replay lifecycle, the runtime **`Scene`/`Camera`**
+  ([planset-10](planset-10/README.md)) the per-frame input, and
+  [planset-11](planset-11/README.md) the `TypeId` minter. Taken up **before** the
+  editor (area 6) by choice — the editor inherits the multi-viewport consumer solved.
+  Held back as named future increments: the rest of the über-pipeline batteries
+  (shadows, SSAO, bloom, MSAA, transparent/forward pass, post stack), multiple/typed
+  lights + light culling, frames-in-flight > 1 with ring-buffered output, and parallel
+  pass recording.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). The remaining areas are the **editor application**
   (the prioritized next planset — its game-module build model is **delivered by
@@ -148,14 +176,16 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   delivered by planset-11; the editor shell + cooker-on-demand + docking, the
   material node editor, and the scene editor remain future —
   [editor.md](future/editor.md) / [game-module.md](future/game-module.md), several
-  plansets), the **scene renderer** (area 8), and the **event/input** systems (area
-  4). Each becomes its own planset when taken up. (Testing areas 5a/5b, de-globalizing
-  the context (area 3), the asset system's synchronous slice + bindless (area 1), and
-  the threading/task system (area 2 — which also turned area 1's `LoadSync` into the
-  async `Load` default) are done — planset-3, planset-4, planset-5, and planset-6
-  respectively; area 6's **game-module prerequisite** and the **pipeline-caching** and
-  **content-hashes** cross-cutting concerns are resolved by planset-9; **area 7's
-  runtime half is delivered by planset-10**; and **area 10 — cooker-side module
-  reflection + the cooked prefab asset — is delivered by planset-11**, realizing the
-  `VengModuleHost` `TypeRegistry&` seam. Hot-reload remains future: its re-cook half
-  conflicts with offline-only cooking and needs a dev-only watcher design.)
+  plansets) and the **event/input** systems (area 4). Each becomes its own planset
+  when taken up. (Testing areas 5a/5b, de-globalizing the context (area 3), the asset
+  system's synchronous slice + bindless (area 1), and the threading/task system (area
+  2 — which also turned area 1's `LoadSync` into the async `Load` default) are done —
+  planset-3, planset-4, planset-5, and planset-6 respectively; area 6's **game-module
+  prerequisite** and the **pipeline-caching** and **content-hashes** cross-cutting
+  concerns are resolved by planset-9; **area 7's runtime half is delivered by
+  planset-10**; **area 10 — cooker-side module reflection + the cooked prefab asset —
+  is delivered by planset-11**, realizing the `VengModuleHost` `TypeRegistry&` seam;
+  and **area 8 — the `SceneRenderer` deferred über-pipeline — is delivered by
+  planset-12** (its minimal-deferred spine + a directional `Light`, the remaining
+  batteries named future). Hot-reload remains future: its re-cook half conflicts with
+  offline-only cooking and needs a dev-only watcher design.)

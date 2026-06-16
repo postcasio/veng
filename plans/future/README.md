@@ -11,9 +11,9 @@ Captured now so the earlier phases stay coherent with where veng is going.
 Numbered for stable cross-references. **DONE** areas are delivered and fully
 documented in their plansets — only a one-paragraph recap and any still-future
 remainder is kept here. The substance of this document is the **remaining**
-areas (4, 6, 8) — plus the still-future remainders of areas done in part (area 7's
-systems framework + the `ShaderInterface`/`MaterialField` unification; the
-hot-reload tail of area 1).
+areas (4, 6) — plus the still-future remainders of areas done in part (area 8's
+remaining über-pipeline batteries + multi-light + FIF>1; area 7's systems framework
++ the `ShaderInterface`/`MaterialField` unification; the hot-reload tail of area 1).
 
 ### 1. Asset system — DONE (planset-5 + planset-6)
 
@@ -179,21 +179,39 @@ single-purpose today — a C++ `offsetof`. A GPU field's offset is a *different*
 component case and a **GPU buffer write** in the material case. Decide that representation
 up front; it is painful to retrofit onto a populated descriptor table.
 
-### 8. Scene renderer / render-pipeline architecture
+### 8. Scene renderer / render-pipeline architecture — DONE (planset-12)
 
-A long-lived, configurable **`SceneRenderer`** sitting on top of `RenderGraph`:
-constructed with an output format + a settings block, it owns its pass resources
-and (eventually) a **compiled** graph, and renders a `Scene` from a camera into an
-**offscreen target it owns**, handing back a sampleable result. The game's main
-view and every editor preview panel are the same object — the editor renders **one
-`Scene` through N `SceneRenderer`s**. An **über-pipeline of interdependent passes**
-(fixed wiring) composed of **reusable, self-contained pass units**. **Design
-overview:** [scene-renderer.md](scene-renderer.md). **Both** its prerequisites are
-now met: the **compiled `RenderGraph`** (area 9) has landed, and its `Scene`/`Camera`
-input (area 7's runtime model) is delivered by planset-10 — so no rendering or scene
-gate remains. It takes its first/hardest consumer from area 6 (editor) and its
-frames-in-flight contract + parallel-record story from area 2 (threading), and is
-sequenced **after** area 10 (cooked `.scene`) and area 6 (editor).
+> **DONE** ([planset-12](../planset-12/README.md), 5 plans). A long-lived,
+> configurable **`SceneRenderer`** (`Unique`, single-owner) sitting on top of
+> `RenderGraph`: constructed with an output format + a settings block, it owns an
+> **offscreen target** and an **internal compiled `RenderGraph`** of reusable,
+> self-contained **`ScenePass`** units, and renders a `Scene` from a `Camera` into
+> that target, handing back a sampleable result. Its surface is the **lifetime
+> split** — `Create`/`Resize`/`Configure`/`Execute`/`GetOutput`, where
+> `Configure`/`Resize` rebuild + re-`Compile()` and `Execute` only replays — and the
+> per-frame `SceneView` reaches passes through an **opaque user-pointer** channel on
+> `PassContext` (so `RenderGraph` stays scene-agnostic). On that shell landed the
+> **minimal deferred spine**: a g-buffer geometry pass (MRT albedo + world-normal +
+> depth, written by an opaque material's fragment shader via a `GBufferOutput`
+> contract) → a deferred directional-lighting pass (→ HDR) → a tonemap pass (HDR →
+> output), with a `DebugView` setting re-wiring the pass set as the
+> settings-drive-recompile proof. A directional **`Light`** builtin joins the scene
+> model (its `TypeId` minted with planset-11's `vengc generate-type-id`).
+> hello-triangle renders its main view through one `SceneRenderer`; a two-renderer
+> interleaved GPU test proves the design-for-N surface, with one wired. **Design
+> overview:** [scene-renderer.md](scene-renderer.md).
+>
+> **Still future:** the rest of the über-pipeline **batteries** — shadows, SSAO,
+> bloom, MSAA, a transparent/forward pass (a second material contract), a post stack,
+> and a G2 PBR g-buffer target that extends the `GBufferOutput` struct — each its own
+> increment behind the same `ScenePass` + `Configure`-recompile mechanism; **multiple
+> & typed lights** (point/spot, light culling); **frames-in-flight > 1** with
+> ring-buffered output (v1 is single-in-flight: renderer-owned images are single-copy
+> and the output is consumed in the frame it is written, so no ring buffer is needed
+> while the render thread is single); and **parallel pass recording** into secondary
+> command buffers (area 2's seam — the user-pointer channel is shaped for it, but it
+> is not built). The editor's scene viewport (area 6) is now a **consumer** of this
+> delivered `SceneRenderer`, not a blocker for it.
 
 ### 9. Compiled RenderGraph — DONE (planset-8)
 
@@ -250,12 +268,14 @@ planset), not a schedule.
 **Done:** areas 5a/3/5b + the validation gate (planset-3, planset-4), **area 1**
 (sync slice + bindless *and* async, planset-5 + planset-6), **area 2** (threading,
 planset-6), **area 9** (compiled `RenderGraph`, planset-8), **area 7's runtime half**
-(scene/entity model, planset-10), and **area 10** (cooker module reflection + the
-cooked prefab asset, planset-11). The thin synchronous asset slice was deliberately
-pulled forward as the "real client", then threading turned those sync loads async;
-planset-8 then compiled the render graph, planset-10 landed the runtime scene model —
-satisfying **both** of area 8's prerequisites — and planset-11 closed area 10. That
-whole asset + threading + scene + cook chain is closed:
+(scene/entity model, planset-10), **area 10** (cooker module reflection + the cooked
+prefab asset, planset-11), and **area 8** (the `SceneRenderer` deferred über-pipeline,
+planset-12). The thin synchronous asset slice was deliberately pulled forward as the
+"real client", then threading turned those sync loads async; planset-8 then compiled
+the render graph, planset-10 landed the runtime scene model — satisfying **both** of
+area 8's prerequisites — planset-11 closed area 10, and planset-12 took up area 8
+**before** the editor (so the editor inherits the multi-viewport consumer solved).
+That whole asset + threading + scene + cook + render chain is closed:
 
 ```
 1 sync assets + bindless ✅ ──► 2 threading (async loads) ✅ ──► 1 async Load ✅
@@ -263,12 +283,14 @@ whole asset + threading + scene + cook chain is closed:
 7 scene/entity model (runtime) ✅ ──► planset-10
 10 cooker module reflection + cooked prefab ✅ ──► planset-11
         (realized the VengModuleHost TypeRegistry& seam)
+8 scene renderer (deferred über-pipeline) ✅ ──► planset-12
+        (taken up before the editor; minimal-deferred spine + a directional Light)
 
 remaining:
   6  editor (shell → material editor → scene editor)   (PRIORITIZED NEXT; wants 2's
         async path ✅; area-7 gate cleared ✅; scene editor's area-10 gate cleared ✅;
-        inspectors reuse 10's module reflection ✅)
-  8  scene renderer ──► needs 6  (7 ✅ Scene/Camera, 9 ✅ — no scene/rendering gate left)
+        inspectors reuse 10's module reflection ✅; its scene viewport consumes the
+        delivered area-8 SceneRenderer ✅)
   4  events/input — independent, gameplay-driven (any time)
 ```
 
@@ -283,11 +305,9 @@ The remaining order:
    than re-introducing it. It builds on area 2's async path (done) for non-stalling
    live preview. The **scene editor** within it has **both** its gates met — the
    area-7 runtime scene model (planset-10) and the area-10 cooked prefab asset +
-   module reflection (planset-11).
-
-2. **Scene renderer (area 8).** Its `Scene`/`Camera` (area 7) and compiled
-   `RenderGraph` (area 9) prerequisites are both met; it now waits only on its
-   first/hardest consumer, the editor (area 6).
+   module reflection (planset-11) — and its **scene viewport is now a consumer of the
+   delivered area-8 `SceneRenderer`** (planset-12), rendering one `Scene` through N
+   instances with no API change.
 
 **Event & input (area 4)** is off the critical path — independent of the
 rendering/asset/threading work and driven by gameplay needs, so slot it in whenever
@@ -342,21 +362,26 @@ to decide early than to retrofit.
 Vision only beyond what is marked **DONE** above. **Done:** areas 1 (asset system,
 planset-5 + planset-6), 2 (threading, planset-6), 3 (de-global, planset-4), 5
 (testing, planset-3 + planset-4), 9 (compiled `RenderGraph`, planset-8), **area
-7's runtime half** (scene/entity model, planset-10), and **area 10** (cooker-side
-module reflection + the cooked prefab asset, planset-11); plus area 6's first
+7's runtime half** (scene/entity model, planset-10), **area 10** (cooker-side
+module reflection + the cooked prefab asset, planset-11), and **area 8** (the
+`SceneRenderer` deferred über-pipeline, planset-12); plus area 6's first
 sub-area, the game-module build model (planset-9), and the **pipeline-caching** and
 **content-hashes** cross-cutting concerns (planset-9).
 
 **Next:** area 6 (the editor) is the **prioritized next planset** — its game-module
-prerequisite (planset-9) and the module-reflection seam its inspectors reuse
-(planset-11) are both in place — followed by area 8 (scene renderer). Area 4
-(events/input) is off the critical path, slotted in whenever wanted.
+prerequisite (planset-9), the module-reflection seam its inspectors reuse
+(planset-11), and the area-8 `SceneRenderer` its scene viewport consumes (planset-12)
+are all in place. Area 4 (events/input) is off the critical path, slotted in whenever
+wanted.
 
-**Undetailed / unscheduled:** area 4 (events/input), the rest of area 6 (editor shell,
-material editor, scene editor — [editor.md](editor.md) / [game-module.md](game-module.md)),
-and area 8 (scene renderer — [scene-renderer.md](scene-renderer.md)); plus two named
-deferrals — **hot-reload** (area 1; its re-cook half conflicts with offline-only cooking,
-needs a dev-only watcher design) and **unifying `ShaderInterface`/`MaterialField` onto
+**Undetailed / unscheduled:** area 4 (events/input) and the rest of area 6 (editor
+shell, material editor, scene editor — [editor.md](editor.md) /
+[game-module.md](game-module.md)); plus the named still-future increments of areas
+done in part — area 8's remaining **batteries** (shadows/SSAO/bloom/MSAA/
+transparent/post + a G2 PBR g-buffer target), **multiple/typed lights**, and
+**frames-in-flight > 1** with ring-buffered output ([scene-renderer.md](scene-renderer.md));
+**hot-reload** (area 1; its re-cook half conflicts with offline-only cooking, needs a
+dev-only watcher design); and **unifying `ShaderInterface`/`MaterialField` onto
 planset-10's reflection layer** (area 7; kept apart because GPU layout is cooker-reflected
 from Slang, not `offsetof`-based, and `FieldDescriptor.Offset` would need to carry both a
 CPU and a GPU offset). Each becomes its own planset when taken up.

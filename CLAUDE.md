@@ -278,10 +278,80 @@ pass's `RenderingInfo`, and runs one-time validation, returning a
 `Unique<CompiledGraph>`. `CompiledGraph::Execute(cmd, imports)` replays that baked
 schedule per frame — only the per-pass callbacks run. A consumer re-`Compile()`s
 only on a **structural** change (a pass added/removed, a transient's extent/format
-changed); per-frame data never recompiles. See `BuildSceneGraph` /
-`BuildCompositeGraph` (compile) and `RenderScene` / `CompositeToSwapChain` (replay)
-in the hello-triangle `main.cpp` for the pattern — member compiled graphs held
-across frames, imports bound per frame, re-compiled on resize.
+changed); per-frame data never recompiles. See `BuildCompositeGraph` (compile) and
+`CompositeToSwapChain` (replay) in the hello-triangle `main.cpp` for the pattern —
+a member compiled graph held across frames, imports bound per frame, re-compiled on
+resize.
+
+### SceneRenderer: the deferred über-pipeline
+
+`SceneRenderer` is a long-lived, configurable render pipeline on top of
+`RenderGraph`: it owns an offscreen target, renders a `Scene` from a `Camera`
+through an **internal compiled `RenderGraph`** of reusable `ScenePass` units, and
+hands back a sampleable result. It is **`Unique`, single-owner** (nothing holds a
+`Ref` to one); `Create(const SceneRendererInfo&)` is the factory.
+
+Its surface is a **lifetime split** keyed on how often each piece of state changes:
+- `Create(info)` — once: allocate persistent resources (output, g-buffer, HDR
+  targets; fullscreen pipelines), build + compile the graph.
+- `Resize(extent)` — recreate the extent-sized images via the retire path,
+  re-register them into bindless, rebuild + re-`Compile()`.
+- `Configure(settings)` — recreate affected resources, rebuild + re-`Compile()` the
+  topology.
+- `Execute(cmd, view)` — every frame: replay the graph against this frame's
+  `SceneView`. **Never** reallocates or recompiles.
+- `GetOutput()` — the sampleable `Ref<ImageView>` of the owned result. **Resize and
+  Configure invalidate it** (the old image retires, a new one is created); a
+  consumer caching a bindless `TextureHandle` or ImGui texture from it must re-fetch
+  and re-register after those calls.
+
+The renderer's pipeline images (g-buffer albedo + world-normal, depth, HDR, output)
+are **renderer-owned `Image`/`ImageView`s `Import`ed** into the internal graph — not
+graph transients — because a fullscreen pass samples an upstream target through the
+bindless set-0 array, which needs a `Ref<ImageView>` to `Register` (a transient
+exposes only a per-frame `ImageView&`). They are registered into bindless once at
+`Create` (re-registered on `Resize`) and reach the sampling pass as `TextureHandle`s
+through `PassIO`.
+
+The per-frame `SceneView { const Scene& World; const Camera& Camera; Light Light;
+f32 Delta; }` reaches pass callbacks through an **opaque `void* userData`** channel
+on `RenderGraph::PassContext` / `CompiledGraph::Execute` — so `RenderGraph` stays
+scene-agnostic. A `ScenePass` reads it back through a typed `ScenePassContext`
+(`Cmd()` / `View()` / `Resolved(id)`); `View()` asserts the pointer is non-null
+before the reinterpret, and `SceneRenderer` sets it on every `Execute`.
+
+A `ScenePass` is a reusable, self-contained pipeline stage (`Configure` / `Resize` /
+`Declare(RenderGraph&, const PassIO&)`) that **contributes** one or more
+`RenderGraph` passes into the renderer's single internal graph — it is not a
+`RenderGraph::Pass`. The renderer owns the **wiring** (which pass reads whose
+target, via the named-slot `PassIO`); each pass owns **itself** (sizing, declared
+reads/writes, recording). It knows only how to record, never what feeds it.
+
+The über-pipeline is **batteries-included, not extensible**: a bespoke pass graph
+still means dropping to `RenderGraph` directly (the composite path the sample
+retains). `SceneRendererSettings { DebugView Mode; f32 Exposure; }` carries the
+topology/sizing knobs — `Mode` (Final / Albedo / Normal / Depth) re-wires the pass
+set through `Configure`, the recompile seam; a per-frame value rides `SceneView`.
+
+The renderer-owned images are **single-copy**: one `Execute` resolves and completes
+before the next begins, written-then-read images within a frame are ordered by the
+graph's derived barriers, and the retire path covers destruction safety on
+`Resize`/`Configure`. The output is consumed in the frame it is written — a
+compositor samples `GetOutput()` for the same frame the renderer wrote it.
+
+**The deferred opaque material g-buffer contract.** Going deferred changes what an
+opaque material's **fragment shader outputs** — from final swapchain color to
+**g-buffer channels**, written through a single engine-provided `GBufferOutput`
+struct (`float4 Albedo : SV_Target0; float4 Normal : SV_Target1;`). Albedo is
+sRGB-encoded (sampled back as linear); the normal is world-space in a signed float
+format. Depth is the depth attachment, also sampled by the lighting pass — the only
+depth target read as a texture in the engine. The g-buffer layout (channels,
+formats, usage) is fixed in `Renderer/GBuffer.h`, agreed on by the geometry pass's
+`RenderingInfo` and every material pipeline. This is the **v1 minimum** channel set
+(a G2 PBR target extends the one `GBufferOutput` struct) and the **opaque** contract
+(a transparent/forward material outputs final color through a separate fragment
+entry, not a change to this one). Set-0 bindless, `MaterialData`, and texture
+handles are unchanged — only the fragment shader's outputs move to the g-buffer.
 
 ### Pipeline cache
 
@@ -534,9 +604,12 @@ own: `Name` (a display label), `Transform` (**local** TRS — `Position`/`Rotati
 `Scale`, never a world matrix), `Parent` (the hierarchy link; `WorldMatrix`/
 `ComputeWorldMatrices` walk it as `parent.world * local`, recomputed on demand with no
 dirty-flag cache), `Camera` (a value type building view/projection — Y flipped for
-Vulkan clip space) plus `CameraComponent`, and `MeshRenderer` (holds the
+Vulkan clip space) plus `CameraComponent`, `MeshRenderer` (holds the
 `AssetHandle<Mesh>` a draw queries — the mesh owns its materials, so a renderer queries
-`(Transform, MeshRenderer)` and draws each submesh with its material).
+`(Transform, MeshRenderer)` and draws each submesh with its material), and `Light` (a
+directional light — `Direction`/`Color`/`Intensity`; `SceneRenderer::Execute` selects
+the first `Light` entity into the `SceneView`, or a zero-intensity default → flat
+ambient when the scene has none).
 
 A `Scene` is **`Unique`, single-owner** — nothing holds a `Ref` to it; the app owns it
 and a renderer reads it per frame as a `const Scene&`. Drop it in `OnDispose()` like
