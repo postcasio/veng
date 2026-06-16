@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Assert.h>
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/SceneRenderer.h>
 
@@ -51,10 +52,33 @@ namespace Veng::Renderer
     // The wiring a SceneRenderer hands each pass: a named-slot struct, not a flat
     // in/out pair. The renderer fills the slots a given pass reads/writes; resources
     // flow both directions (a pass may produce one a later pass consumes), and a
-    // pass may declare multiple RenderGraph passes. The forward case is degenerate:
-    // one imported output id.
+    // pass may declare multiple RenderGraph passes.
+    //
+    // The renderer owns the g-buffer/HDR/output images and Imports them into the
+    // graph; the ids name those imports and the handles name the bindless slots a
+    // sampling pass reads through. The geometry pass writes the g-buffer; a
+    // fullscreen pass reads it (by handle) and writes the output. The HDR slot is
+    // the lighting pass's target.
     struct PassIO
     {
+        // The g-buffer the geometry pass writes and a fullscreen pass samples.
+        ResourceId GBufferAlbedo;  // G0 — base color
+        ResourceId GBufferNormal;  // G1 — world-space normal
+        ResourceId GBufferDepth;   // depth attachment, also a sampled source
+
+        // The bindless texture slots the renderer registered for the g-buffer
+        // images, threaded to whichever pass samples them.
+        TextureHandle AlbedoHandle;
+        TextureHandle NormalHandle;
+        TextureHandle DepthHandle;
+
+        // The HDR target a lighting pass writes (and a tail pass samples).
+        ResourceId Hdr;
+        TextureHandle HdrHandle;
+
+        // The shared sampler bindless slot a fullscreen pass samples through.
+        SamplerHandle SamplerHandle;
+
         // The imported output id the terminal pass writes.
         ResourceId Output;
     };

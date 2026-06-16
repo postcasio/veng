@@ -9,6 +9,7 @@
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/GBuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Asset/Shader.h>
@@ -129,10 +130,18 @@ namespace Veng
                 vertexBufferLayout = layoutResult->Get()->GetLayout();
             }
 
+            // An opaque material renders into the deferred g-buffer: two color
+            // attachments (G0 albedo, G1 world-normal) and the shared depth
+            // attachment, each color target opaque (no blend). The fragment
+            // shader writes both through GBufferOutput; the attachment formats are
+            // the fixed g-buffer contract, not the context's output format.
             return Renderer::GraphicsPipeline::Create(context, {
                 .Name = fmt::format("Material {} Pipeline", id.Value),
-                .ColorAttachments = {{.Format = context.GetOutputFormat()}},
-                .DepthAttachmentFormat = context.GetDepthFormat(),
+                .ColorAttachments = {
+                    {.Format = Renderer::GBuffer::AlbedoFormat, .Blend = Renderer::BlendState::Opaque()},
+                    {.Format = Renderer::GBuffer::NormalFormat, .Blend = Renderer::BlendState::Opaque()},
+                },
+                .DepthAttachmentFormat = Renderer::GBuffer::DepthFormat,
                 .VertexBufferLayout = vertexBufferLayout,
                 .PipelineLayout = pipelineLayout,
                 .ShaderStages = {

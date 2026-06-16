@@ -1,7 +1,8 @@
 #include "material_data.slang"
 
-// Forward material vertex stage. VSInput matches the
-// fixture canonical layout 7001 (position/normal/tangent[float3]/uv).
+// Deferred material vertex stage. VSInput matches the fixture canonical layout
+// 7001 (position/normal/tangent[float3]/uv). The normal is carried to world
+// space by the push-constant NormalMatrix for the g-buffer write.
 struct VSInput
 {
     float3 a_Position : POSITION;
@@ -14,6 +15,7 @@ struct VSOutput
 {
     float4 sv_position : SV_Position;
     float2 v_UV : TEXCOORD0;
+    float3 v_WorldNormal : NORMAL;
 };
 
 [shader("vertex")]
@@ -22,5 +24,6 @@ VSOutput vsMain(VSInput input)
     VSOutput output;
     output.sv_position = mul(g_PC.MVP, float4(input.a_Position, 1.0));
     output.v_UV = input.a_UV;
+    output.v_WorldNormal = mul(g_PC.NormalMatrix, input.a_Normal);
     return output;
 }

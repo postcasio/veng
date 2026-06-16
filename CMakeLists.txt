@@ -141,6 +141,10 @@ if (TARGET veng_cook_bootstrap)
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/layouts/canonical.vlayout.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/layouts/screenspace.vlayout.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/layouts/positiononly.vlayout.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/fullscreen.vert.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/fullscreen.vert.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/albedo_blit.frag.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/albedo_blit.frag.shader.json
         COMMENT "Cooking veng core pack")
 
     add_custom_command(
@@ -449,6 +453,10 @@ if (VENG_BUILD_TESTS)
         target_link_libraries(veng_gpu PRIVATE veng::cook)
         target_compile_definitions(veng_gpu PRIVATE
                 GPU_COOKER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
+                # The deferred g-buffer oracle (scene_renderer.cpp) cooks this pack
+                # in-process: a brick material on the core canonical layout, drawn
+                # through the SceneRenderer to assert the albedo blit.
+                GPU_GBUFFER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
         )
     endif ()
 

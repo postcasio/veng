@@ -1,14 +1,19 @@
-// SceneRenderer cases: prove the renderer shell produces a valid, sampleable
-// output of the requested extent/format from a Scene + Camera, and that Resize
-// recreates that output at a new extent while keeping it sampleable.
+// SceneRenderer cases. The first proves the renderer shell produces a valid,
+// sampleable output of the requested extent/format from a Scene + Camera, that
+// the deferred g-buffer images allocate with the contracted formats/usage, and
+// that Resize recreates the output + g-buffer at a new extent. Its scene is a
+// primitive cube with a materialless MeshRenderer (the geometry pass clears the
+// g-buffer and draws nothing), and the proof of sampleability is a fullscreen
+// pass reading GetOutput() through bindless into an RGBA8 target.
 //
-// The scene is a primitive cube with a MeshRenderer (no material, so the forward
-// pass clears and draws nothing) — enough to exercise Execute end to end. The
-// proof of sampleability is a fullscreen pass that reads GetOutput() through the
-// bindless set and writes an RGBA8 target the test downloads: the renderer's
-// cleared output (the forward clear color) shows through.
+// The second (cooker-gated) is the deferred albedo oracle: it cooks a brick
+// material on the core canonical layout, draws a cube through the SceneRenderer,
+// downloads the albedo-blit output, and asserts spread sample points (a lit cube
+// texel, a background texel) plus a whole-frame mean-luminance invariant — the
+// automated correctness gate for the deferred plan.
 
 #include <array>
+#include <cmath>
 
 #include <doctest/doctest.h>
 
@@ -17,6 +22,7 @@
 #include <Veng/Asset/Primitives.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/GBuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
@@ -169,6 +175,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
         .Context = Context,
+        .Assets = assets,
         .OutputFormat = Context.GetOutputFormat(),
         .Extent = initialExtent,
         .Settings = {},
@@ -180,6 +187,22 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(output->GetImage()->GetWidth() == initialExtent.x);
     CHECK(output->GetImage()->GetHeight() == initialExtent.y);
     CHECK(output->GetImage()->GetFormat() == Context.GetOutputFormat());
+
+    // The g-buffer images allocate at the renderer's extent with the fixed
+    // contracted formats and usages.
+    auto CheckGBuffer = [](const Ref<ImageView>& view, uvec2 extent, Format format, ImageUsage usage)
+    {
+        REQUIRE(view != nullptr);
+        const Ref<Image>& image = view->GetImage();
+        CHECK(image->GetWidth() == extent.x);
+        CHECK(image->GetHeight() == extent.y);
+        CHECK(image->GetFormat() == format);
+        CHECK(HasFlag(image->GetUsage(), usage));
+    };
+    CheckGBuffer(renderer->GetAlbedoView(), initialExtent, GBuffer::AlbedoFormat, GBuffer::ColorUsage);
+    CheckGBuffer(renderer->GetNormalView(), initialExtent, GBuffer::NormalFormat, GBuffer::ColorUsage);
+    CheckGBuffer(renderer->GetDepthView(), initialExtent, GBuffer::DepthFormat, GBuffer::DepthUsage);
+    const Ref<ImageView> albedoView = renderer->GetAlbedoView();
 
     Context.ImmediateCommands([&](CommandBuffer& cmd)
     {
@@ -203,6 +226,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(resized->GetImage()->GetWidth() == resizedExtent.x);
     CHECK(resized->GetImage()->GetHeight() == resizedExtent.y);
 
+    // Resize also recreates every g-buffer image at the new extent (re-registering
+    // their bindless handles); the prior views are stale.
+    CHECK(renderer->GetAlbedoView().get() != albedoView.get());
+    CheckGBuffer(renderer->GetAlbedoView(), resizedExtent, GBuffer::AlbedoFormat, GBuffer::ColorUsage);
+    CheckGBuffer(renderer->GetNormalView(), resizedExtent, GBuffer::NormalFormat, GBuffer::ColorUsage);
+    CheckGBuffer(renderer->GetDepthView(), resizedExtent, GBuffer::DepthFormat, GBuffer::DepthUsage);
+
     Context.ImmediateCommands([&](CommandBuffer& cmd)
     {
         renderer->Execute(cmd, Renderer::SceneView{*scene, camera, 0.0f});
@@ -212,3 +242,122 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(resampled.size() == static_cast<size_t>(resizedExtent.x) * resizedExtent.y * 4);
     CHECK(resampled[3] == 255);
 }
+
+#ifdef GPU_GBUFFER_FIXTURE_DIR
+
+#include <filesystem>
+
+#include <glm/gtc/packing.hpp>
+
+#include <Veng/Cook/BuiltinImporters.h>
+#include <Veng/Cook/Cooker.h>
+#include <Veng/Asset/Material.h>
+
+namespace
+{
+    // One RGBA16F output texel decoded to a linear vec3 (the SceneRenderer output
+    // is RGBA16Sfloat; the smoke path decodes it the same way).
+    vec3 DecodeTexel(const vector<u8>& rgba16f, u32 width, u32 x, u32 y)
+    {
+        const auto* halves = reinterpret_cast<const u16*>(rgba16f.data());
+        const usize base = (static_cast<usize>(y) * width + x) * 4;
+        return vec3(glm::unpackHalf1x16(halves[base + 0]),
+                    glm::unpackHalf1x16(halves[base + 1]),
+                    glm::unpackHalf1x16(halves[base + 2]));
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: deferred albedo oracle — a brick cube blits its albedo, "
+                  "the background shows the g-buffer clear, mean luminance is in range")
+{
+    RegisterBuiltinTypes(Types);
+
+    // Cook the g-buffer fixture pack (brick material on the core canonical layout)
+    // in-process and mount it; the core pack (auto-mounted) supplies the canonical
+    // layout the brick vertex shader references and the blit shaders the renderer
+    // loads.
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive = std::filesystem::temp_directory_path() / "veng_gpu_gbuffer.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    const VoidResult cookResult = cooker.CookPack(fixtureDir / "gbuffer_pack.json", outArchive);
+    REQUIRE(cookResult.has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    const VoidResult mountResult = assets.Mount(outArchive);
+    REQUIRE(mountResult.has_value());
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B}); // 9003
+    REQUIRE(material.has_value());
+    REQUIRE(material->IsLoaded());
+
+    constexpr uvec2 extent{128, 128};
+
+    // A cube filling the view, the brick material on its single submesh.
+    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Oracle Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    Camera camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {},
+    });
+
+    Context.ImmediateCommands([&](CommandBuffer& cmd)
+    {
+        renderer->Execute(cmd, Renderer::SceneView{*scene, camera, 0.0f});
+    });
+
+    const Ref<Image> output = renderer->GetOutput()->GetImage();
+    const vector<u8> pixels = output->Download();
+    REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8); // RGBA16F = 8 bytes/texel
+
+    // The 1x1-color brick texture (linear (200, 80, 40)/255) sampled and written
+    // through the sRGB G0 round-trip, blit back to the linear output. The center
+    // covers a cube face; a corner is background (the G0 clear color).
+    const vec3 center = DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
+    const vec3 corner = DecodeTexel(pixels, extent.x, 2, 2);
+
+    // Center is the brick albedo: red-dominant, distinctly not the clear color.
+    CHECK(center.r > 0.5f);
+    CHECK(center.r > center.g);
+    CHECK(center.g > center.b);
+    CHECK(center.r == doctest::Approx(200.0f / 255.0f).epsilon(0.05f));
+    CHECK(center.g == doctest::Approx(80.0f / 255.0f).epsilon(0.08f));
+    CHECK(center.b == doctest::Approx(40.0f / 255.0f).epsilon(0.10f));
+
+    // Corner is the g-buffer albedo clear (0.05, 0.05, 0.08), round-tripped — dark
+    // and clearly not the brick color.
+    CHECK(corner.r < 0.2f);
+    CHECK(corner.b >= corner.r); // the clear's blue tint survives
+
+    // Whole-frame mean luminance: bounded between the dark background and the
+    // brick albedo, catching a global error (a black g-buffer, a wiped albedo, a
+    // gamma slip). The cube covers a large central fraction of the frame.
+    f64 luminanceSum = 0.0;
+    for (u32 y = 0; y < extent.y; ++y)
+        for (u32 x = 0; x < extent.x; ++x)
+        {
+            const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+            luminanceSum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+        }
+    const f64 meanLuminance = luminanceSum / (static_cast<f64>(extent.x) * extent.y);
+    CHECK(meanLuminance > 0.05);
+    CHECK(meanLuminance < 0.45);
+
+    std::filesystem::remove(outArchive);
+}
+
+#endif // GPU_GBUFFER_FIXTURE_DIR

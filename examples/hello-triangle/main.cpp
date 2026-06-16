@@ -78,11 +78,14 @@ protected:
         m_SmokeOutput = std::getenv("HT_SMOKE");
 
         // The main view renders through one SceneRenderer: it owns its offscreen
-        // output (created at the context's output format), an internal compiled
-        // graph, and the forward draw. The sample composites GetOutput() and the
-        // smoke path downloads it.
+        // output (created at the context's output format), the deferred g-buffer,
+        // an internal compiled graph, and the deferred draw. It loads its
+        // fullscreen-blit shaders from the engine core pack through the asset
+        // manager. The sample composites GetOutput() and the smoke path downloads
+        // it.
         m_SceneRenderer = Renderer::SceneRenderer::Create({
             .Context = context,
+            .Assets = GetAssetManager(),
             .OutputFormat = context.GetOutputFormat(),
             .Extent = sceneExtent,
             .Settings = {},

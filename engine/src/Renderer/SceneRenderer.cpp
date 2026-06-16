@@ -1,15 +1,23 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/ScenePass.h>
 
+#include <glm/gtc/matrix_inverse.hpp>
+
 #include <Veng/Assert.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/GBuffer.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/PipelineLayout.h>
+#include <Veng/Renderer/Sampler.h>
 
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/Shader.h>
 
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
@@ -19,23 +27,51 @@ namespace Veng::Renderer
 {
     namespace
     {
-        // The material shader's vertex push constant: the MVP for clip-space
-        // positions. It is the leading 64 bytes of the shared push-constant block;
-        // the material's per-draw selector (MaterialIndex) occupies offset 64 and is
-        // pushed by Material::Bind.
+        // The engine core pack's fullscreen-blit shaders, addressed by their
+        // hardcoded core-pack ids (the AssetManager auto-mounts the core pack).
+        constexpr AssetId FullscreenVertId{0xF46DD3C6F2AE0628ULL};
+        constexpr AssetId AlbedoBlitFragId{0xF90F709155D04BE7ULL};
+
+        // The shared push-constant block both brick stages declare: the vertex
+        // stage's MVP (offset 0) and the per-draw MaterialIndex (offset 64,
+        // pushed by Material::Bind) and NormalMatrix (offset 80). The renderer
+        // pushes MVP and NormalMatrix; Material::Bind pushes the selector in
+        // between. NormalMatrix is a column-major float3x3 — three columns padded
+        // to 16 bytes each (the std140 / Slang-column-major matrix layout).
         struct MeshPushConstants
         {
             mat4 MVP;
         };
 
-        // The single forward pass unit: draws every (Transform, MeshRenderer) entity
-        // into the renderer's imported output as a color attachment, with a
-        // write-only depth transient. Sourced entirely from the per-frame SceneView.
-        class ForwardScenePass final : public ScenePass
+        constexpr u32 NormalMatrixPushOffset = 80;
+
+        struct NormalMatrixPush
+        {
+            vec4 Column0;
+            vec4 Column1;
+            vec4 Column2;
+        };
+
+        static_assert(sizeof(NormalMatrixPush) == 48, "NormalMatrix push must be a column-major float3x3 (48 bytes)");
+
+        // The albedo-blit fragment shader's push block: the bindless slots it
+        // samples the g-buffer albedo through.
+        struct AlbedoBlitPushConstants
+        {
+            u32 AlbedoTexture;
+            u32 Sampler;
+        };
+
+        // The deferred g-buffer geometry pass: draws every (Transform, MeshRenderer)
+        // entity into the renderer's imported g-buffer (G0 albedo, G1 world-normal)
+        // with the shared depth attachment. Each material's pipeline writes both
+        // color targets through its GBufferOutput. Sourced from the per-frame
+        // SceneView.
+        class GBufferScenePass final : public ScenePass
         {
         public:
-            ForwardScenePass(Context& context, Format depthFormat, uvec2 extent)
-                : m_Context(context), m_DepthFormat(depthFormat), m_Extent(extent)
+            GBufferScenePass(Context& context, uvec2 extent)
+                : m_Context(context), m_Extent(extent)
             {
             }
 
@@ -43,26 +79,24 @@ namespace Veng::Renderer
 
             void Declare(RenderGraph& graph, const PassIO& io) override
             {
-                // Depth is write-only (cleared, never sampled), so a graph transient
-                // is correct here.
-                const ResourceId depthId = graph.CreateTransient({
-                    .Name = "Scene Depth Image",
-                    .Format = m_DepthFormat,
-                    .Extent = m_Extent,
-                    .Usage = ImageUsage::DepthAttachment,
-                });
-
-                graph.AddPass("Scene")
+                graph.AddPass("Scene GBuffer")
                     .Color({
-                        .Resource = io.Output,
+                        .Resource = io.GBufferAlbedo,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
                         .Clear = ClearColor{0.05f, 0.05f, 0.08f, 1.0f},
                     })
-                    .Depth({
-                        .Resource = depthId,
+                    .Color({
+                        .Resource = io.GBufferNormal,
                         .Load = LoadOp::Clear,
-                        .Store = StoreOp::DontCare,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 0.0f},
+                    })
+                    .Depth({
+                        .Resource = io.GBufferDepth,
+                        .Load = LoadOp::Clear,
+                        // Stored: the lighting pass reads depth as a texture.
+                        .Store = StoreOp::Store,
                         .Clear = ClearDepth{1.0f, 0},
                     })
                     .Execute([this](PassContext& inner)
@@ -109,6 +143,17 @@ namespace Veng::Renderer
                     const mat4 world = WorldMatrix(view.World, entity);
                     const mat4 mvp = viewProjection * world;
 
+                    // The normal matrix is the inverse-transpose of the model's
+                    // upper 3x3 — correct under non-uniform scale. Packed
+                    // column-major into three 16-byte-aligned columns matching the
+                    // shader's column-major float3x3.
+                    const mat3 normalMatrix = glm::inverseTranspose(mat3(world));
+                    const NormalMatrixPush normalPush{
+                        .Column0 = vec4(normalMatrix[0], 0.0f),
+                        .Column1 = vec4(normalMatrix[1], 0.0f),
+                        .Column2 = vec4(normalMatrix[2], 0.0f),
+                    };
+
                     for (const SubMesh& subMesh : mesh.GetSubMeshes())
                     {
                         if (subMesh.MaterialIndex == SubMesh::NoMaterial)
@@ -119,11 +164,12 @@ namespace Veng::Renderer
                         // binds set 0 into that pipeline's layout — Bind uses the
                         // currently-bound layout, so the pipeline must be bound
                         // before it. The MVP occupies the leading 64 bytes of the
-                        // shared push block; Material::Bind already pushed
-                        // MaterialIndex at offset 64.
+                        // shared push block, the NormalMatrix offset 80;
+                        // Material::Bind already pushed MaterialIndex at offset 64.
                         materials[subMesh.MaterialIndex].Get()->Bind(cmd);
                         registry.Bind(cmd);
                         cmd.PushConstants(MeshPushConstants{.MVP = mvp});
+                        cmd.PushConstants(normalPush, NormalMatrixPushOffset);
 
                         cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                     }
@@ -131,12 +177,59 @@ namespace Veng::Renderer
             }
 
             Context& m_Context;
-            Format m_DepthFormat;
+            uvec2 m_Extent;
+        };
+
+        // The fullscreen albedo-blit pass: samples the g-buffer albedo (G0)
+        // through its bindless handle and writes the renderer's imported output —
+        // an unlit albedo view. Declaring .Sample(albedo) lets the graph derive
+        // the color-attachment → shader-read transition on G0.
+        class AlbedoBlitScenePass final : public ScenePass
+        {
+        public:
+            AlbedoBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent)
+                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent)
+            {
+            }
+
+            void Resize(const uvec2 extent) override { m_Extent = extent; }
+
+            void Declare(RenderGraph& graph, const PassIO& io) override
+            {
+                const TextureHandle albedoHandle = io.AlbedoHandle;
+                const SamplerHandle samplerHandle = io.SamplerHandle;
+
+                graph.AddPass("Albedo Blit")
+                    .Color({
+                        .Resource = io.Output,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                    })
+                    .Sample(io.GBufferAlbedo)
+                    .Execute([this, albedoHandle, samplerHandle](PassContext& inner)
+                    {
+                        CommandBuffer& cmd = inner.Cmd();
+                        cmd.BindPipeline(m_Pipeline);
+                        cmd.SetViewport({0, 0}, m_Extent);
+                        cmd.SetScissor({0, 0}, m_Extent);
+                        m_Context.GetBindlessRegistry().Bind(cmd);
+                        cmd.PushConstants(AlbedoBlitPushConstants{
+                            .AlbedoTexture = albedoHandle.Index,
+                            .Sampler = samplerHandle.Index,
+                        });
+                        cmd.DrawFullscreenTriangle();
+                    });
+            }
+
+        private:
+            Context& m_Context;
+            Ref<GraphicsPipeline> m_Pipeline;
             uvec2 m_Extent;
         };
     }
 
-    // Holds the compiled graph + the stable import-binding slot rebound per Execute.
+    // Holds the compiled graph + the stable import bindings rebound per Execute.
     // Kept out of the header so SceneRenderer.h needs no CompiledGraph definition.
     struct SceneRenderer::Internal
     {
@@ -150,19 +243,57 @@ namespace Veng::Renderer
 
     SceneRenderer::SceneRenderer(const SceneRendererInfo& info)
         : m_Context(info.Context),
+          m_Assets(info.Assets),
           m_OutputFormat(info.OutputFormat),
           m_Extent(info.Extent),
           m_Settings(info.Settings),
           m_Internal(CreateUnique<Internal>())
     {
-        m_Passes.push_back(CreateUnique<ForwardScenePass>(
-            m_Context, m_Context.GetDepthFormat(), m_Extent));
+        CreateBlitPipeline();
+
+        m_Passes.push_back(CreateUnique<GBufferScenePass>(m_Context, m_Extent));
+        m_Passes.push_back(CreateUnique<AlbedoBlitScenePass>(m_Context, m_BlitPipeline, m_Extent));
 
         CreateOutput();
+        CreateGBuffer();
         Rebuild();
     }
 
-    SceneRenderer::~SceneRenderer() = default;
+    SceneRenderer::~SceneRenderer()
+    {
+        // Release the bindless slots through the per-frame retire window before the
+        // images they name retire.
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        bindless.Release(m_AlbedoHandle);
+        bindless.Release(m_NormalHandle);
+        bindless.Release(m_DepthHandle);
+        bindless.Release(m_SamplerHandle);
+    }
+
+    void SceneRenderer::CreateBlitPipeline()
+    {
+        const AssetResult<AssetHandle<Veng::Shader>> vs = m_Assets.LoadSync<Veng::Shader>(FullscreenVertId);
+        VE_ASSERT(vs.has_value(), "SceneRenderer: fullscreen vertex shader load failed: {}", vs.error().Detail);
+        const AssetResult<AssetHandle<Veng::Shader>> fs = m_Assets.LoadSync<Veng::Shader>(AlbedoBlitFragId);
+        VE_ASSERT(fs.has_value(), "SceneRenderer: albedo-blit fragment shader load failed: {}", fs.error().Detail);
+
+        m_BlitLayout = PipelineLayout::Create(m_Context, {
+            .Name = "SceneRenderer Blit Layout",
+            .PushConstantRanges = {
+                PushConstantRange::Of<AlbedoBlitPushConstants>(ShaderStage::Fragment),
+            },
+        });
+
+        m_BlitPipeline = GraphicsPipeline::Create(m_Context, {
+            .Name = "SceneRenderer Albedo Blit Pipeline",
+            .ColorAttachments = {{.Format = m_OutputFormat}},
+            .PipelineLayout = m_BlitLayout,
+            .ShaderStages = {
+                {.Stage = ShaderStage::Vertex, .Module = vs->Get()->Module},
+                {.Stage = ShaderStage::Fragment, .Module = fs->Get()->Module},
+            },
+        });
+    }
 
     void SceneRenderer::CreateOutput()
     {
@@ -182,12 +313,80 @@ namespace Veng::Renderer
         });
     }
 
+    void SceneRenderer::CreateGBuffer()
+    {
+        // The g-buffer is renderer-owned (sampled downstream, so not a graph
+        // transient): the geometry pass writes it, the blit/lighting pass samples
+        // it through bindless. Dropping the old Refs retires them; releasing the
+        // old slots defers through the same per-frame window.
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        bindless.Release(m_AlbedoHandle);
+        bindless.Release(m_NormalHandle);
+        bindless.Release(m_DepthHandle);
+
+        m_AlbedoImage = Image::Create(m_Context, {
+            .Name = "SceneRenderer GBuffer Albedo",
+            .Extent = {m_Extent.x, m_Extent.y, 1},
+            .Format = GBuffer::AlbedoFormat,
+            .Usage = GBuffer::ColorUsage,
+        });
+        m_AlbedoView = ImageView::Create(m_Context, {.Name = "SceneRenderer GBuffer Albedo View", .Image = m_AlbedoImage});
+
+        m_NormalImage = Image::Create(m_Context, {
+            .Name = "SceneRenderer GBuffer Normal",
+            .Extent = {m_Extent.x, m_Extent.y, 1},
+            .Format = GBuffer::NormalFormat,
+            .Usage = GBuffer::ColorUsage,
+        });
+        m_NormalView = ImageView::Create(m_Context, {.Name = "SceneRenderer GBuffer Normal View", .Image = m_NormalImage});
+
+        m_DepthImage = Image::Create(m_Context, {
+            .Name = "SceneRenderer GBuffer Depth",
+            .Extent = {m_Extent.x, m_Extent.y, 1},
+            .Format = GBuffer::DepthFormat,
+            .Usage = GBuffer::DepthUsage,
+        });
+        m_DepthView = ImageView::Create(m_Context, {.Name = "SceneRenderer GBuffer Depth View", .Image = m_DepthImage});
+
+        if (!m_Sampler)
+        {
+            m_Sampler = Sampler::Create(m_Context, {
+                .Name = "SceneRenderer GBuffer Sampler",
+                .AddressModeU = AddressMode::ClampToEdge,
+                .AddressModeV = AddressMode::ClampToEdge,
+                .AddressModeW = AddressMode::ClampToEdge,
+            });
+            m_SamplerHandle = bindless.Register(m_Sampler);
+        }
+
+        m_AlbedoHandle = bindless.Register(m_AlbedoView);
+        m_NormalHandle = bindless.Register(m_NormalView);
+        m_DepthHandle = bindless.Register(m_DepthView);
+    }
+
     void SceneRenderer::Rebuild()
     {
         RenderGraph graph(m_Context);
+        const ResourceId albedoId = graph.Import("SceneRenderer GBuffer Albedo");
+        const ResourceId normalId = graph.Import("SceneRenderer GBuffer Normal");
+        const ResourceId depthId = graph.Import("SceneRenderer GBuffer Depth");
         m_OutputId = graph.Import("SceneRenderer Output");
 
-        const PassIO io{.Output = m_OutputId};
+        const PassIO io{
+            .GBufferAlbedo = albedoId,
+            .GBufferNormal = normalId,
+            .GBufferDepth = depthId,
+            .AlbedoHandle = m_AlbedoHandle,
+            .NormalHandle = m_NormalHandle,
+            .DepthHandle = m_DepthHandle,
+            .SamplerHandle = m_SamplerHandle,
+            .Output = m_OutputId,
+        };
+
+        m_AlbedoId = albedoId;
+        m_NormalId = normalId;
+        m_DepthId = depthId;
+
         for (const Unique<ScenePass>& pass : m_Passes)
         {
             pass->Configure(m_Settings);
@@ -202,6 +401,7 @@ namespace Veng::Renderer
     {
         m_Extent = extent;
         CreateOutput();
+        CreateGBuffer();
         Rebuild();
     }
 
@@ -213,9 +413,17 @@ namespace Veng::Renderer
 
     void SceneRenderer::Execute(CommandBuffer& cmd, const SceneView& view)
     {
-        const RenderGraph::ImportBinding binding{m_OutputId, m_OutputView};
-        m_Internal->Graph->Execute(cmd, {&binding, 1}, const_cast<SceneView*>(&view));
+        const RenderGraph::ImportBinding bindings[] = {
+            {m_AlbedoId, m_AlbedoView},
+            {m_NormalId, m_NormalView},
+            {m_DepthId, m_DepthView},
+            {m_OutputId, m_OutputView},
+        };
+        m_Internal->Graph->Execute(cmd, bindings, const_cast<SceneView*>(&view));
     }
 
     Ref<ImageView> SceneRenderer::GetOutput() const { return m_OutputView; }
+    Ref<ImageView> SceneRenderer::GetAlbedoView() const { return m_AlbedoView; }
+    Ref<ImageView> SceneRenderer::GetNormalView() const { return m_NormalView; }
+    Ref<ImageView> SceneRenderer::GetDepthView() const { return m_DepthView; }
 }

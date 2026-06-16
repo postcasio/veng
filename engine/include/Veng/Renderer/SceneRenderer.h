@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
@@ -19,6 +20,7 @@
 namespace Veng
 {
     class Scene;
+    class AssetManager;
 }
 
 namespace Veng::Renderer
@@ -26,6 +28,8 @@ namespace Veng::Renderer
     class Context;
     class CommandBuffer;
     class ScenePass;
+    class Image;
+    class Sampler;
 
     // Topology/sizing knobs. A change here is a Configure → recompile: a knob that
     // turns a pass on/off or re-wires the pass set lives here, not in SceneView.
@@ -36,6 +40,10 @@ namespace Veng::Renderer
     struct SceneRendererInfo
     {
         Context& Context;
+        // The renderer's passes load their engine shaders (the fullscreen blit,
+        // the lighting pass) from the core pack through this manager; it must
+        // outlive the renderer.
+        AssetManager& Assets;
         Format OutputFormat = Format::Undefined; // a format, not a caller-owned target
         uvec2 Extent = {};
         SceneRendererSettings Settings;
@@ -76,15 +84,30 @@ namespace Veng::Renderer
         // The sampleable view of the owned result. Invalidated by Resize/Configure.
         [[nodiscard]] Ref<ImageView> GetOutput() const;
 
+        // The deferred g-buffer the geometry pass writes — the sampleable views
+        // and their bindless slots. Renderer-owned and imported into the internal
+        // graph; recreated and re-registered on Resize. Exposed for tests and
+        // tooling that inspect the intermediate targets; a normal consumer reads
+        // only GetOutput().
+        [[nodiscard]] Ref<ImageView> GetAlbedoView() const;
+        [[nodiscard]] Ref<ImageView> GetNormalView() const;
+        [[nodiscard]] Ref<ImageView> GetDepthView() const;
+
     private:
         explicit SceneRenderer(const SceneRendererInfo& info);
 
         // Recreate the owned output image/view at the current extent/format.
         void CreateOutput();
+        // Recreate the g-buffer images/views at the current extent and (re-)register
+        // them and the shared sampler into the bindless registry.
+        void CreateGBuffer();
+        // Build the engine-owned fullscreen-blit pipeline once at Create.
+        void CreateBlitPipeline();
         // Rebuild the RenderGraph from the pass units and re-Compile().
         void Rebuild();
 
         Context& m_Context;
+        AssetManager& m_Assets;
         Format m_OutputFormat;
         uvec2 m_Extent;
         SceneRendererSettings m_Settings;
@@ -92,12 +115,40 @@ namespace Veng::Renderer
         Ref<Image> m_OutputImage;
         Ref<ImageView> m_OutputView;
 
+        // The g-buffer targets: G0 albedo, G1 world-normal, depth. Renderer-owned
+        // (sampled downstream, so not graph transients) and imported.
+        Ref<Image> m_AlbedoImage;
+        Ref<ImageView> m_AlbedoView;
+        Ref<Image> m_NormalImage;
+        Ref<ImageView> m_NormalView;
+        Ref<Image> m_DepthImage;
+        Ref<ImageView> m_DepthView;
+
+        // The shared sampler a fullscreen pass samples the g-buffer through.
+        Ref<Sampler> m_Sampler;
+
+        // Bindless slots for the g-buffer views + the sampler, registered once at
+        // Create and re-registered on Resize (the old slots released through the
+        // per-frame retire window).
+        TextureHandle m_AlbedoHandle;
+        TextureHandle m_NormalHandle;
+        TextureHandle m_DepthHandle;
+        SamplerHandle m_SamplerHandle;
+
+        // The engine-owned fullscreen-blit pipeline + layout the AlbedoBlitScenePass
+        // records with. Built once from the core pack's blit shaders.
+        Ref<class GraphicsPipeline> m_BlitPipeline;
+        Ref<class PipelineLayout> m_BlitLayout;
+
         // The renderer owns its pass units in fixed wiring order and walks them on
         // every rebuild.
         vector<Unique<ScenePass>> m_Passes;
 
-        // The imported-output id every rebuild re-declares, threaded to the pass
-        // units through PassIO.
+        // The imported ids every rebuild re-declares, bound to their concrete
+        // views per Execute and threaded to the pass units through PassIO.
+        ResourceId m_AlbedoId;
+        ResourceId m_NormalId;
+        ResourceId m_DepthId;
         ResourceId m_OutputId;
 
         // Compiled once per Create/Resize/Configure, replayed every Execute. The
