@@ -6,6 +6,7 @@
 
 #include "Loaders/MaterialLoader.h"
 #include "Loaders/MeshLoader.h"
+#include "Loaders/PrefabLoader.h"
 #include "Loaders/RawAssetLoader.h"
 #include "Loaders/ShaderLoader.h"
 #include "Loaders/TextureLoader.h"
@@ -33,6 +34,7 @@ namespace Veng
                 case AssetType::Shader: return "Shader";
                 case AssetType::Material: return "Material";
                 case AssetType::VertexLayout: return "VertexLayout";
+                case AssetType::Prefab: return "Prefab";
             }
 
             VE_ASSERT(false, "AssetManager: unhandled AssetType {}", static_cast<u32>(type));
@@ -51,6 +53,7 @@ namespace Veng
         RegisterLoader(CreateUnique<ShaderLoader>());
         RegisterLoader(CreateUnique<VertexLayoutLoader>());
         RegisterLoader(CreateUnique<MaterialLoader>());
+        RegisterLoader(CreateUnique<PrefabLoader>());
 
 #ifdef VENG_HAS_CORE_PACK
         const VoidResult coreMount = MountBytes(
@@ -184,7 +187,7 @@ namespace Veng
         // Run the loader's worker phase (create + record async upload + fan out
         // dependency sub-loads). The blob lives in the mounted archive reader's
         // storage, so the span outlives the call.
-        AssetResult<Detail::LoadJob> job = loader->Load(*this, m_Context, m_Tasks, id, archiveEntry.Blob, true);
+        AssetResult<Detail::LoadJob> job = loader->Load(*this, m_Context, m_Tasks, m_Types, id, archiveEntry.Blob, true);
         if (!job)
         {
             Log::Error("AssetManager::Load: {}", job.error().Detail);
@@ -312,7 +315,7 @@ namespace Veng
 
         // Synchronous worker phase: uploads route through the blocking UploadSync
         // path, so the GPU data is resident before the resource is registered.
-        AssetResult<Detail::LoadJob> job = loader->Load(*this, m_Context, m_Tasks, id, archiveEntry.Blob, false);
+        AssetResult<Detail::LoadJob> job = loader->Load(*this, m_Context, m_Tasks, m_Types, id, archiveEntry.Blob, false);
         if (!job)
             return std::unexpected(job.error());
 

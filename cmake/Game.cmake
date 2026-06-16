@@ -8,6 +8,10 @@
 # (lib<name>_editor) is reserved for the editor planset — libveng_editor does not
 # exist yet — and is intentionally not emitted here.
 #
+# A prefab-bearing ASSET_PACK declares add_asset_pack(... MODULE <name>) so its
+# cook reflects lib<name>'s native component types and the build graph orders
+# lib<name> -> cook -> copy beside launcher. The relocatable trio is preserved.
+#
 # In-tree only this planset: it serves the example and the tests, which build veng
 # as the top-level project. Installed-package wiring (resolving the launcher source
 # from an installed veng) is a separate packaging concern, out of scope here.

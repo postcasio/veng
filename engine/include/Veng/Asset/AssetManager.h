@@ -115,6 +115,17 @@ namespace Veng
             return AssetHandle<T>(AssetId{}, std::move(entry));
         }
 
+        // The cache entry for an id, or null if it is not cached. Untyped — the
+        // prefab loader's spawn uses it to rehydrate an embedded handle whose
+        // dependency was already loaded (and whose entry the prefab keeps
+        // resident), without naming the asset's concrete type. Never touches
+        // mounted archives or loaders.
+        [[nodiscard]] Ref<Detail::AssetCacheEntry> CachedEntry(AssetId id) const
+        {
+            const auto it = m_Cache.find(id);
+            return it == m_Cache.end() ? nullptr : it->second;
+        }
+
         // Cached lookup only — never touches mounted archives or loaders.
         template <typename T>
         [[nodiscard]] optional<AssetHandle<T>> Get(AssetId id) const

@@ -57,6 +57,22 @@ namespace Veng
 
         [[nodiscard]] usize EntityCount() const { return m_LiveCount; }
 
+        // The registry this scene was created with — the one its components'
+        // descriptors are resolved against. Prefab spawning walks descriptors
+        // through it.
+        [[nodiscard]] TypeRegistry& GetTypeRegistry() const { return *m_Registry; }
+
+        // Type-erased add: adds a default-constructed component of the given
+        // TypeId to the entity and returns its slot. The templated Add<T> resolves
+        // T -> TypeId and forwards here; prefab spawning, which only knows a
+        // component's TypeId, calls it directly. The id must name a registered
+        // type the scene can pool.
+        void* AddComponent(Entity entity, TypeId id)
+        {
+            VE_ASSERT(IsAlive(entity), "AddComponent on a dead or stale entity");
+            return AddRaw(entity, id);
+        }
+
         template <class T>
         T& Add(Entity entity, T value = {})
         {

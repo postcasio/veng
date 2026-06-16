@@ -5,6 +5,9 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 
+#include <cstddef>
+#include <cstring>
+
 // AssetHandle<T> / WeakAssetHandle<T>: typed, refcounted indirection into
 // AssetManager's cache. AssetManager itself owns the cache
 // (map<AssetId, Ref<AssetCacheEntry>>); handles share that entry via Ref/WeakRef
@@ -118,6 +121,10 @@ namespace Veng
             static_assert(offsetof(AssetId, Value) == 0,
                           "AssetId::Value must be at offset 0 — the reflection "
                           "serializer reads the raw u64 id off offset 0");
+            static_assert(offsetof(AssetHandle<T>, m_Entry) == sizeof(AssetId),
+                          "AssetHandle<T>::m_Entry must immediately follow the AssetId — "
+                          "the prefab loader rehydrates a type-erased handle's cache entry "
+                          "at this fixed offset");
         };
     }
 
@@ -157,5 +164,25 @@ namespace Veng
         // so one instantiation pins the offset for every handle type.
         struct AssetHandleLayoutTag;
         template struct AssetHandleLayoutGuard<AssetHandleLayoutTag>;
+
+        // AssetHandle<T>'s members are T-independent: { AssetId m_Id;
+        // Ref<AssetCacheEntry> m_Entry; }. The cache entry Ref sits immediately
+        // after the leading AssetId (offset 0, pinned by the layout guard above).
+        // sizeof(AssetId) is 8 and Ref is 8-aligned, so this offset is stable for
+        // every handle type — letting the prefab loader rehydrate a type-erased
+        // AssetHandle field by id without naming its concrete T.
+        inline constexpr usize AssetHandleEntryOffset = sizeof(AssetId);
+
+        // Writes an id + resolved cache entry into the type-erased AssetHandle
+        // field at handlePtr (default-constructed: a null entry Ref). Used by the
+        // prefab loader's spawn to rehydrate an embedded handle from its cooked
+        // AssetId. A null entry leaves the handle empty (the "no asset" case).
+        inline void RehydrateHandleField(void* handlePtr, AssetId id, Ref<AssetCacheEntry> entry)
+        {
+            std::memcpy(handlePtr, &id, sizeof(id));
+            auto* entrySlot = reinterpret_cast<Ref<AssetCacheEntry>*>(
+                static_cast<u8*>(handlePtr) + AssetHandleEntryOffset);
+            *entrySlot = std::move(entry);
+        }
     }
 }

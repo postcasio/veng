@@ -9,6 +9,9 @@ add_asset_pack(hello_triangle_assets
         # The material's vertex shader references the core canonical vertex
         # layout by AssetId; resolve it from the engine core pack.
         REFERENCE ${CMAKE_SOURCE_DIR}/engine/assets/core/core.vengpack.json
+        # The pack carries a prefab whose components include the game's Spinner,
+        # so the cook reflects libhello_triangle's native types via --module.
+        MODULE hello_triangle
         DEPENDS
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/brick.tex.json
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/brick.png
@@ -23,7 +26,8 @@ add_asset_pack(hello_triangle_assets
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/composite.frag.slang
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/composite.vert.shader.json
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/composite.frag.shader.json
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets/materials/brick.vmat.json)
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/materials/brick.vmat.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/sphere.prefab.json)
 
 # The game splits into libhello_triangle (the runtime) and hello_triangle-launcher
 # (the shipped exe that dlopens it). veng_add_game copies the cooked pack beside

@@ -3,6 +3,7 @@
 #     OUTPUT    <out.vengpack>             # absolute path in the build tree
 #     [DEPENDS   <source files...>]        # re-cook triggers (per-asset sources + binaries)
 #     [REFERENCE <reference pack.json...>] # packs whose ids the cook may resolve
+#     [MODULE    <lib target>]             # game module to dlopen for prefab reflection
 # )
 #
 # Cooks a JSON asset pack with vengc into OUTPUT and wraps it in a custom target:
@@ -11,8 +12,12 @@
 # REFERENCE entries become `--reference` flags so a shader's vertex-layout id (or
 # any cross-pack id) resolves against an already-authored pack (e.g. the engine
 # core pack).
+# MODULE names a game library target whose native component types a prefab entry
+# cooks against: the cook gains `--module $<TARGET_FILE:lib>` and the custom
+# command DEPENDS on the lib, so the build graph adds `lib -> cook`. Packs with no
+# MODULE are independent of any lib.
 function(add_asset_pack TARGET_NAME)
-    cmake_parse_arguments(ARG "" "PACK;OUTPUT" "DEPENDS;REFERENCE" ${ARGN})
+    cmake_parse_arguments(ARG "" "PACK;OUTPUT;MODULE" "DEPENDS;REFERENCE" ${ARGN})
 
     if (NOT ARG_PACK)
         message(FATAL_ERROR "add_asset_pack(${TARGET_NAME}): PACK is required")
@@ -35,11 +40,20 @@ function(add_asset_pack TARGET_NAME)
 
     cmake_path(GET ARG_OUTPUT PARENT_PATH OUTPUT_DIR)
 
+    # A MODULE pack reflects the game module's native types: pass the built lib to
+    # vengc and order the cook after the lib (lib -> cook).
+    set(MODULE_ARGS)
+    set(MODULE_DEP)
+    if (ARG_MODULE)
+        set(MODULE_ARGS --module $<TARGET_FILE:${ARG_MODULE}>)
+        set(MODULE_DEP ${ARG_MODULE})
+    endif ()
+
     add_custom_command(
             OUTPUT ${ARG_OUTPUT}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTPUT_DIR}
-            COMMAND $<TARGET_FILE:vengc> cook ${PACK_ABS} -o ${ARG_OUTPUT} ${REFERENCE_ARGS}
-            DEPENDS vengc ${PACK_ABS} ${ARG_DEPENDS}
+            COMMAND $<TARGET_FILE:vengc> cook ${PACK_ABS} -o ${ARG_OUTPUT} ${REFERENCE_ARGS} ${MODULE_ARGS}
+            DEPENDS vengc ${PACK_ABS} ${ARG_DEPENDS} ${MODULE_DEP}
             COMMENT "Cooking asset pack ${TARGET_NAME}")
 
     add_custom_target(${TARGET_NAME} DEPENDS ${ARG_OUTPUT})

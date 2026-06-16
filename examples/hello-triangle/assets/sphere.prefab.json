@@ -1,0 +1,18 @@
+{
+  "entities": [
+    {
+      "name": "Sphere",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [0.0, 0.0, 0.0],
+          "Rotation": [0.0, 0.0, 0.0, 1.0],
+          "Scale": [1.0, 1.0, 1.0]
+        },
+        "::Veng::MeshRenderer": {},
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.0
+        }
+      }
+    }
+  ]
+}

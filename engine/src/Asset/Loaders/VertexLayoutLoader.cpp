@@ -46,7 +46,7 @@ namespace Veng
 
     AssetResult<Detail::LoadJob> VertexLayoutLoader::Load(
         AssetManager& /*manager*/, Renderer::Context& /*context*/, TaskSystem& /*tasks*/,
-        AssetId id, std::span<const u8> cooked, bool /*async*/) const
+        TypeRegistry& /*types*/, AssetId id, std::span<const u8> cooked, bool /*async*/) const
     {
         if (cooked.size() < sizeof(CookedVertexLayoutHeader))
             return std::unexpected(Corrupt(id, "vertex_layout: cooked blob smaller than CookedVertexLayoutHeader"));

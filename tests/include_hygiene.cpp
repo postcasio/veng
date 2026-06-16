@@ -24,6 +24,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/Prefab.h>
 #include <Veng/Asset/Primitives.h>
 #include <Veng/Asset/RawAsset.h>
 #include <Veng/Asset/Shader.h>

@@ -8,10 +8,12 @@ add_library(veng SHARED
         src/Asset/AssetManager.cpp
         src/Asset/Material.cpp
         src/Asset/Mesh.cpp
+        src/Asset/Prefab.cpp
         src/Asset/Primitives.cpp
         src/Asset/Texture.cpp
         src/Asset/Loaders/MaterialLoader.cpp
         src/Asset/Loaders/MeshLoader.cpp
+        src/Asset/Loaders/PrefabLoader.cpp
         src/Asset/Loaders/RawAssetLoader.cpp
         src/Asset/Loaders/ShaderLoader.cpp
         src/Asset/Loaders/TextureLoader.cpp

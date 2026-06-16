@@ -16,6 +16,6 @@ namespace Veng
 
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(
             AssetManager& manager, Renderer::Context& context, TaskSystem& tasks,
-            AssetId id, std::span<const u8> cooked, bool async) const override;
+            TypeRegistry& types, AssetId id, std::span<const u8> cooked, bool async) const override;
     };
 }

@@ -148,7 +148,7 @@ namespace Veng
 
     AssetResult<Detail::LoadJob> MaterialLoader::Load(
         AssetManager& manager, Renderer::Context& context, TaskSystem& /*tasks*/,
-        AssetId id, std::span<const u8> cooked, bool async) const
+        TypeRegistry& /*types*/, AssetId id, std::span<const u8> cooked, bool async) const
     {
         // ── 1. CookedMaterialHeader ──────────────────────────────────────────
         if (cooked.size() < sizeof(CookedMaterialHeader))

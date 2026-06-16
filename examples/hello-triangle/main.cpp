@@ -13,6 +13,7 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/Prefab.h>
 #include <Veng/Asset/Primitives.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
@@ -159,25 +160,26 @@ protected:
             });
         }
 
-        // Build the runtime scene: one entity carrying its local Transform, a
-        // MeshRenderer, and the game-defined Spinner. The draw queries this
-        // scene for the entity's transform instead of a hand-rolled model
-        // matrix.
+        // Build the runtime scene by spawning a cooked prefab: it carries the
+        // entity's local Transform, a MeshRenderer (its Mesh field "no asset",
+        // since a runtime primitive has no content identity), and the game-defined
+        // Spinner. The Scene is an engine primitive — created empty and populated
+        // by spawning, never loaded.
         m_Scene = Scene::Create(GetTypeRegistry());
-        m_Entity = m_Scene->CreateEntity();
-        m_Scene->Add<Transform>(m_Entity, Transform{
-            .Rotation = glm::angleAxis(0.0f, SpinAxis),
-        });
-        // Adopt the runtime mesh into an AssetHandle so the MeshRenderer holds it
-        // exactly as it would a cooked mesh — the draw reads the geometry off the
-        // component, not a side-held Ref. The adopted handle owns the mesh's
-        // residency; it carries the invalid AssetId (a runtime mesh has no content
-        // identity), and dropping the scene drops the component, the handle, and
-        // the mesh in turn.
-        m_Scene->Add<MeshRenderer>(m_Entity, MeshRenderer{
-            .Mesh = GetAssetManager().Adopt(sphere),
-        });
-        m_Scene->Add<Spinner>(m_Entity, Spinner{.SpeedRadiansPerSec = 1.0f});
+
+        const AssetResult<AssetHandle<Veng::Prefab>> prefab =
+            GetAssetManager().LoadSync<Veng::Prefab>(AssetId{0xA123F30FD219F2D5ULL});
+        VE_ASSERT(prefab.has_value(), "{}", prefab.error().Detail);
+
+        const vector<Entity> roots = prefab->Get()->SpawnInto(*m_Scene, GetAssetManager());
+        VE_ASSERT(!roots.empty(), "prefab spawned no root entities");
+
+        // Adopt the runtime mesh into an AssetHandle and assign it to the spawned
+        // renderer — the one piece wired in code, because the prefab cannot
+        // reference a runtime resource by id. The adopted handle owns the mesh's
+        // residency; dropping the scene drops the component, the handle, and the
+        // mesh in turn.
+        m_Scene->Get<MeshRenderer>(roots[0]).Mesh = GetAssetManager().Adopt(sphere);
 
         // Replace the hand-rolled MVP: a Camera looking down -Z at the origin
         // from (0,0,3), matching the prior view/projection exactly.
@@ -549,7 +551,6 @@ private:
     static inline const vec3 SpinAxis = glm::normalize(vec3(0.5f, 1.0f, 0.2f));
 
     Unique<Scene> m_Scene;
-    Entity m_Entity = Entity::Null;
     Camera m_Camera;
 
     u32 m_FrameCount = 0;

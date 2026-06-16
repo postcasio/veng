@@ -22,6 +22,7 @@ namespace Veng
 {
     class AssetManager;
     class TaskSystem;
+    class TypeRegistry;
 
     namespace Detail
     {
@@ -65,8 +66,13 @@ namespace Veng
         // false it uploads through the blocking UploadSync path and resolves
         // dependencies via manager.LoadSync. A MissingDependency surfaces as an
         // AssetLoadError, not a crash.
+        //
+        // `types` is the engine-owned TypeRegistry threaded through the
+        // AssetManager; the prefab loader reflects a component's fields against it
+        // to surface embedded AssetHandle ids as dependencies. Every other loader
+        // ignores it.
         [[nodiscard]] virtual AssetResult<Detail::LoadJob> Load(
             AssetManager& manager, Renderer::Context& context, TaskSystem& tasks,
-            AssetId id, std::span<const u8> cooked, bool async) const = 0;
+            TypeRegistry& types, AssetId id, std::span<const u8> cooked, bool async) const = 0;
     };
 }
