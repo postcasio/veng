@@ -33,6 +33,12 @@ target_compile_options(veng_editor PRIVATE -fno-exceptions)
 target_compile_definitions(veng_editor PRIVATE VE_BUILD_SHARED)
 
 # The editor launcher source veng_add_editor compiles per game (mirrors
-# VENG_LAUNCHER_MAIN in Game.cmake).
+# VENG_LAUNCHER_MAIN in Game.cmake), plus the cook-on-demand seam (CookSession).
+# CookSession links libveng_cook — compiled into the exe, never into
+# libveng_editor, so the importer dependency stays out of the framework library.
 set(VENG_EDITOR_MAIN "${CMAKE_CURRENT_SOURCE_DIR}/src/editor_main.cpp"
     CACHE INTERNAL "veng editor launcher source")
+set(VENG_EDITOR_COOK_SESSION "${CMAKE_CURRENT_SOURCE_DIR}/src/CookSession.cpp"
+    CACHE INTERNAL "veng editor cook-on-demand source")
+set(VENG_EDITOR_EXE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    CACHE INTERNAL "veng editor exe-private include dir (CookSession.h)")

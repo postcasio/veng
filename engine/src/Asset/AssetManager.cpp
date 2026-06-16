@@ -115,8 +115,72 @@ namespace Veng
         m_Loaders[type] = std::move(loader);
     }
 
+    MountHandle::~MountHandle()
+    {
+        Release();
+    }
+
+    MountHandle::MountHandle(MountHandle&& other) noexcept :
+        m_Manager(other.m_Manager),
+        m_Token(other.m_Token)
+    {
+        other.m_Manager = nullptr;
+        other.m_Token = 0;
+    }
+
+    MountHandle& MountHandle::operator=(MountHandle&& other) noexcept
+    {
+        if (this != &other)
+        {
+            Release();
+            m_Manager = other.m_Manager;
+            m_Token = other.m_Token;
+            other.m_Manager = nullptr;
+            other.m_Token = 0;
+        }
+        return *this;
+    }
+
+    void MountHandle::Release()
+    {
+        if (m_Manager)
+        {
+            m_Manager->UnmountMemory(m_Token);
+            m_Manager = nullptr;
+            m_Token = 0;
+        }
+    }
+
+    MountHandle AssetManager::MountMemory(vector<u8> archiveBytes, string debugName)
+    {
+        Result<ArchiveReader> reader = ArchiveReader::FromBytes(archiveBytes);
+        VE_ASSERT(reader.has_value(), "AssetManager::MountMemory: '{}': {}", debugName, reader.error());
+
+        const u64 token = m_NextMemoryToken++;
+        m_MemoryMounts.push_back(MemoryMount{
+            .Token = token,
+            .DebugName = std::move(debugName),
+            .Reader = std::move(*reader),
+        });
+
+        return MountHandle(*this, token);
+    }
+
+    void AssetManager::UnmountMemory(u64 token)
+    {
+        std::erase_if(m_MemoryMounts, [token](const MemoryMount& mount) { return mount.Token == token; });
+    }
+
     optional<ArchiveEntry> AssetManager::Find(AssetId id) const
     {
+        // Memory mounts shadow on-disk archives: a freshly cooked blob overrides
+        // its on-disk version. The most recently mounted wins among memory mounts.
+        for (auto it = m_MemoryMounts.rbegin(); it != m_MemoryMounts.rend(); ++it)
+        {
+            if (optional<ArchiveEntry> entry = it->Reader.Find(id))
+                return entry;
+        }
+
         for (const MountedArchive& mount : m_Mounts)
         {
             if (optional<ArchiveEntry> entry = mount.Reader.Find(id))

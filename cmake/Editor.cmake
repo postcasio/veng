@@ -11,8 +11,9 @@
 # VENG_EDITOR_GAME_MODULE / VENG_EDITOR_EDITOR_MODULE are baked into the exe as the
 # module file names it dlopen's (the editor-side analogue of VENG_GAME_MODULE).
 #
-# In-tree only: it serves the example. libveng_cook is intentionally NOT linked
-# here — cook-on-demand is a later plan.
+# In-tree only: it serves the example. The editor exe links libveng_cook
+# (cook-on-demand) PRIVATE; libveng_editor does not, so the importer table stays
+# out of the framework library and never reaches libveng or libgame.
 
 function(veng_add_editor NAME)
     cmake_parse_arguments(ARG "" "GAME_MODULE;EDITOR_MODULE" "" ${ARGN})
@@ -21,8 +22,10 @@ function(veng_add_editor NAME)
         message(FATAL_ERROR "veng_add_editor(${NAME}): GAME_MODULE is required")
     endif ()
 
-    add_executable(${NAME}-editor ${VENG_EDITOR_MAIN})
-    target_link_libraries(${NAME}-editor PRIVATE veng::veng veng_editor::veng_editor)
+    add_executable(${NAME}-editor ${VENG_EDITOR_MAIN} ${VENG_EDITOR_COOK_SESSION})
+    target_link_libraries(${NAME}-editor PRIVATE
+            veng::veng veng_editor::veng_editor veng::cook)
+    target_include_directories(${NAME}-editor PRIVATE ${VENG_EDITOR_EXE_INCLUDE})
 
     target_compile_definitions(${NAME}-editor PRIVATE
             VENG_EDITOR_GAME_MODULE="$<TARGET_FILE_NAME:${ARG_GAME_MODULE}>")

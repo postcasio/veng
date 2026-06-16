@@ -243,6 +243,45 @@ namespace Veng::Cook
         return writer.Write(outArchive);
     }
 
+    Result<vector<u8>> Cooker::CookSource(const path& sourcePath, AssetId id,
+        AssetType type, const TypeRegistry* types) const
+    {
+        const auto importerIt = m_Importers.find(type);
+        if (importerIt == m_Importers.end())
+        {
+            return std::unexpected(fmt::format(
+                "cook '{}': no importer registered for the requested type", sourcePath.string()));
+        }
+
+        // The importer reads entry["source"] relative to context.PackDir, so the
+        // source directory is the pack dir and the entry names the file. A
+        // standalone source cook has no pack manifest, so cross-asset references
+        // resolve to nothing.
+        const CookContext context{
+            .PackDir = sourcePath.parent_path(),
+            .Resolve = [](AssetId) -> optional<ResolvedSource> { return std::nullopt; },
+            .Types = types,
+        };
+
+        json entry;
+        entry["source"] = sourcePath.filename().string();
+
+        const Result<vector<u8>> blob = importerIt->second->Cook(context, entry);
+        if (!blob)
+            return std::unexpected(fmt::format("cook '{}': {}", sourcePath.string(), blob.error()));
+
+        ArchiveWriter writer;
+        writer.Add(id, type, *blob, Xxh3_128(*blob));
+
+        const vector<u8> staged = writer.Build();
+        const Result<ArchiveReader> reader = ArchiveReader::FromBytes(staged);
+        if (!reader)
+            return std::unexpected(fmt::format("cook '{}': {}", sourcePath.string(), reader.error()));
+
+        writer.SetArchiveDigest(Xxh3_128(reader->TocBytes()));
+        return writer.Build();
+    }
+
     VoidResult Cooker::CookEntry(const CookContext& context, const json& entry, std::set<u64>& seenIds, ArchiveWriter& writer) const
     {
         if (!entry.is_object())

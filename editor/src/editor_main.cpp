@@ -2,6 +2,8 @@
 
 #include <Veng/Application.h>
 
+#include "CookSession.h"
+
 // The veng editor launcher: one main shipped by libveng_editor, compiled per-game
 // by veng_add_editor with the game (and optional editor) module file names baked
 // in. It resolves those modules beside the editor binary via the @loader_path /
@@ -24,6 +26,13 @@ int main(const int argc, char** argv)
                 .CaptureMouse = false,
             },
             .PipelineCachePath = Veng::ExecutableDirectory() / "editor_pipeline_cache.bin",
+        },
+        // The cook-on-demand backend: links libveng_cook (the importer table),
+        // which libveng_editor never does. CookSession is stateless, so the
+        // backend builds one per request.
+        .Cook = [](const VengEditor::CookRequest& request, Veng::TaskSystem& tasks)
+        {
+            return VengEditor::CookSession().Cook(request, tasks);
         },
     };
 

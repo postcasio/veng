@@ -551,6 +551,7 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
             tests/cooker/verify.cpp
             tests/cooker/module_reflect.cpp
             tests/cooker/prefab_cook.cpp
+            tests/cooker/cook_source.cpp
     )
     target_link_libraries(veng_cooker PRIVATE veng::cook doctest::doctest)
     add_dependencies(veng_cooker hello_triangle veng_bad_version_module)
@@ -558,6 +559,7 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
             VENG_COOKER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
             VENG_HELLO_TRIANGLE_MODULE_PATH="$<TARGET_FILE:hello_triangle>"
             VENG_BAD_VERSION_MODULE_PATH="$<TARGET_FILE:veng_bad_version_module>"
+            VENG_HT_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/hello-triangle/assets"
     )
 
     doctest_discover_tests(veng_cooker PROPERTIES LABELS cooker)

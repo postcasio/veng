@@ -200,6 +200,38 @@ namespace VengEditor
         return graph.Compile();
     }
 
+    void EditorHost::RequestCook(const CookRequest& request,
+                                 function<void(Result<MountHandle>)> onComplete)
+    {
+        if (!m_Info.Cook)
+        {
+            const string error = "editor: cook-on-demand backend not configured";
+            Log::Error("{}", error);
+            onComplete(std::unexpected(error));
+            return;
+        }
+
+        Task<vector<u8>> task = m_Info.Cook(request, GetTaskSystem());
+
+        // The continuation runs on the main thread via the task system's pump, so
+        // the shadow-mount and the callback land on the render thread, where the
+        // AssetManager lives.
+        task.Then([this, targetId = request.TargetId, source = request.SourcePath,
+                   onComplete = std::move(onComplete)](Result<vector<u8>> bytes) mutable
+        {
+            if (!bytes)
+            {
+                Log::Error("editor: cook of '{}' failed: {}", source.string(), bytes.error());
+                onComplete(std::unexpected(bytes.error()));
+                return;
+            }
+
+            MountHandle handle = GetAssetManager().MountMemory(
+                std::move(*bytes), fmt::format("cook:{}", targetId.Value));
+            onComplete(std::move(handle));
+        });
+    }
+
     void EditorHost::DrawMenuBar()
     {
         if (ImGui::BeginMainMenuBar())

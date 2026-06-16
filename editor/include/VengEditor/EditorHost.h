@@ -8,6 +8,7 @@
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/RenderGraph.h>
 
+#include <VengEditor/CookRequest.h>
 #include <VengEditor/EditorPanel.h>
 #include <VengEditor/EditorRegistry.h>
 
@@ -41,6 +42,12 @@ namespace VengEditor
         Veng::optional<Veng::path> EditorModulePath;
 
         Veng::ApplicationInfo App;
+
+        // The cook-on-demand backend, supplied by the editor exe (which links
+        // libveng_cook). nullopt disables cook-on-demand — RequestCook then
+        // reports an error to the callback. libveng_editor itself never links the
+        // importer table, so the backend is injected from the exe layer.
+        VengEditor::CookBackend Cook;
     };
 
     // The editor application: an Application subclass owning the host-side module
@@ -52,6 +59,15 @@ namespace VengEditor
     public:
         static Veng::Unique<EditorHost> Create(const EditorHostInfo& info);
         ~EditorHost() override;
+
+        // Cooks a source asset on demand through the injected cook backend (off
+        // the render thread) and, on success, shadow-mounts the resulting
+        // in-memory archive so Load<T>(request.TargetId) resolves the cooked blob.
+        // onComplete fires on the main thread with a live MountHandle (mounted,
+        // ready to Load) or an error. A cook error is also logged via Log::Error
+        // for the console panel. Calling with no cook backend reports an error.
+        void RequestCook(const VengEditor::CookRequest& request,
+                         Veng::function<void(Veng::Result<Veng::MountHandle>)> onComplete);
 
     protected:
         void OnInitialize() override;

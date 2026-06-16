@@ -31,9 +31,40 @@ namespace Veng
     {
     };
 
+    // A RAII token for an in-memory archive mounted via MountMemory. Holding it
+    // keeps the archive mounted; dropping it unmounts and frees the bytes. The
+    // editor holds one per in-flight asset, replacing it on each recook so the
+    // prior archive's bytes are freed by the old handle's drop. Moveable,
+    // non-copyable; a default-constructed (or moved-from) handle owns nothing.
+    class VE_API MountHandle
+    {
+    public:
+        MountHandle() = default;
+        ~MountHandle();
+
+        MountHandle(const MountHandle&) = delete;
+        MountHandle& operator=(const MountHandle&) = delete;
+
+        MountHandle(MountHandle&& other) noexcept;
+        MountHandle& operator=(MountHandle&& other) noexcept;
+
+        [[nodiscard]] bool IsValid() const { return m_Manager != nullptr; }
+
+    private:
+        friend class AssetManager;
+        MountHandle(AssetManager& manager, u64 token) : m_Manager(&manager), m_Token(token) {}
+
+        void Release();
+
+        AssetManager* m_Manager = nullptr;
+        u64 m_Token = 0;
+    };
+
     class VE_API AssetManager
     {
     public:
+        friend class MountHandle;
+
         AssetManager(Renderer::Context& context, TaskSystem& tasks, TypeRegistry& types,
                      const AssetManagerInfo& info = {});
         ~AssetManager();
@@ -49,6 +80,15 @@ namespace Veng
         // (a synthetic path string such as "<core>"); mounting the same identity
         // twice is a no-op.
         VoidResult MountBytes(const path& identity, std::span<const u8> bytes);
+
+        // Mounts an in-memory archive that shadows the on-disk mounts: Load<T>(id)
+        // resolves against memory mounts before any path-mounted archive, so a
+        // freshly cooked blob overrides the on-disk version of the same AssetId.
+        // The bytes are moved into the manager. Returns a MountHandle that
+        // unmounts and frees the archive on destruction. Mounting failures (a
+        // malformed archive) assert — the bytes come from an in-process cook, not
+        // untrusted input.
+        [[nodiscard]] MountHandle MountMemory(vector<u8> archiveBytes, string debugName);
 
         // Asynchronous load: returns immediately with a handle that is not yet
         // resident (IsLoaded() == false). The decode + GPU upload run on the task
@@ -155,6 +195,20 @@ namespace Veng
             ArchiveReader Reader;
         };
 
+        // An in-memory archive mounted via MountMemory, searched before the
+        // path-mounted archives so it shadows the on-disk version of any id it
+        // carries. Identified by a monotonic token a MountHandle drops.
+        struct MemoryMount
+        {
+            u64 Token;
+            string DebugName;
+            ArchiveReader Reader;
+        };
+
+        // Drops the memory mount with the given token. Invoked by MountHandle on
+        // destruction; a token with no live mount is a no-op.
+        void UnmountMemory(u64 token);
+
         // A submitted-but-not-yet-finalized async load. The cache entry exists
         // (pending: null Resource); Finalize swaps the resource in once every
         // Dependency is resident + finalized. The async upload itself need not
@@ -188,6 +242,8 @@ namespace Veng
         TypeRegistry& m_Types;
 
         vector<MountedArchive> m_Mounts;
+        vector<MemoryMount> m_MemoryMounts;
+        u64 m_NextMemoryToken = 1;
         unordered_map<AssetType, Unique<AssetLoader>> m_Loaders;
         unordered_map<AssetId, Ref<Detail::AssetCacheEntry>> m_Cache;
         vector<PendingLoad> m_Pending;
