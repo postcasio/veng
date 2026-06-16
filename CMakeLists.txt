@@ -24,9 +24,50 @@ option(VE_DEBUG "Enable veng debug features (validation layers, asserts)" OFF)
 # ---------------------------------------------------------------------------
 
 find_package(Vulkan REQUIRED)
-find_package(glfw3 3.3 REQUIRED)
-find_package(glm REQUIRED)
-find_package(ZLIB REQUIRED) # tinyexr's zip compression
+
+# glm (header-only). PUBLIC in veng's link interface (vector/matrix types in the
+# public headers), so GLM_BUILD_INSTALL is forced ON: glm must export itself for
+# install(EXPORT vengTargets) to resolve glm::glm and for find_package(veng) to
+# be self-contained. GLM_BUILD_LIBRARY OFF keeps it header-only, as veng uses it.
+set(GLM_BUILD_LIBRARY OFF CACHE BOOL "" FORCE)
+set(GLM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLM_BUILD_INSTALL ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+        glm
+        GIT_REPOSITORY https://github.com/g-truc/glm.git
+        GIT_TAG 1.0.1
+        GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(glm)
+
+# GLFW. Linked PRIVATE (hidden behind the Native idiom), so it stays out of
+# veng's interface; GLFW_INSTALL is ON only so find_dependency(glfw3) in the
+# installed veng-config resolves, mirroring nfd.
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+        glfw
+        GIT_REPOSITORY https://github.com/glfw/glfw.git
+        GIT_TAG 3.4
+        GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(glfw)
+
+# zlib (tinyexr's zip compression). Linked PRIVATE and never exported, so its
+# install is skipped; the static target carries the include dirs tinyexr needs.
+# find_package(ZLIB) synthesizes ZLIB::ZLIB; zlib's own CMake does not, so alias it.
+set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+        zlib
+        GIT_REPOSITORY https://github.com/madler/zlib.git
+        GIT_TAG v1.3.1
+        GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(zlib)
+add_library(ZLIB::ZLIB ALIAS zlibstatic)
 
 # fmtlib/fmt
 # FMT_INSTALL/VMA_ENABLE_INSTALL/NFD_INSTALL: these deps appear in veng's

@@ -16,11 +16,10 @@ It is developed primarily on **macOS** (via MoltenVK) and written to be portable
 - A **C++26**-capable compiler
 - **CMake 4.1** or newer
 - A **Vulkan SDK** (MoltenVK on macOS)
-- **GLFW**, **glm**, and **zlib**
 
-Everything else — fmt, Vulkan Memory Allocator, Dear ImGui, stb, and the cooker's
-toolchain (assimp, Slang) — is downloaded and version-pinned automatically by
-CMake during configuration. Nothing else to install.
+Everything else — GLFW, glm, zlib, fmt, Vulkan Memory Allocator, Dear ImGui, stb,
+and the cooker's toolchain (assimp, Slang) — is downloaded and version-pinned
+automatically by CMake during configuration. Nothing else to install.
 
 ---
 
