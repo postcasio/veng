@@ -74,6 +74,8 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderGraph.h>
+#include <Veng/Renderer/ScenePass.h>
+#include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Semaphore.h>
 #include <Veng/Renderer/ShaderModule.h>

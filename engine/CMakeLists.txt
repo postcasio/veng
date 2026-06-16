@@ -33,6 +33,7 @@ add_library(veng SHARED
         src/Scene/Scene.cpp
         src/Scene/Transforms.cpp
         src/Renderer/RenderGraph.cpp
+        src/Renderer/SceneRenderer.cpp
         src/Renderer/ShaderInterface.cpp
         src/Renderer/Backend/Barrier.cpp
         src/Renderer/Backend/BarrierDecision.cpp
