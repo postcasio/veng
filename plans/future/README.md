@@ -207,6 +207,24 @@ single-purpose today — a C++ `offsetof`. A GPU field's offset is a *different*
 component case and a **GPU buffer write** in the material case. Decide that representation
 up front; it is painful to retrofit onto a populated descriptor table.
 
+**Named follow-on — container/array fields in the reflection layer.** `FieldClass` is closed
+and has **no list/array class** (`Vector` is a glm math vector, not `std::vector<T>`), so a
+`vector<T>` or `T[N]` field cannot be reflected, serialized, or inspected today —
+`FieldClassOf<T>()` silently falls through to `FieldClass::Struct` for an unspecialised type.
+A later planset adds container support: a fixed-size `T[N]`/`std::array` is the easy subset
+(walkable by element offset + stride — element `TypeId` + count on the `FieldDescriptor`, no
+erased ops), while a dynamic `vector<T>` needs the `FieldDescriptor` to carry **type-erased
+container ops** (size / element-at / resize) plus the element's `TypeId`/`FieldClass`, with the
+generic walker, the name-keyed serializer, and the editor inspectors each gaining an `Array`
+arm. That erased-ops payload is exactly the complexity the closed `FieldClass` set was built to
+keep out, so it is a deliberate reflection-layer decision — it pairs with the
+`ShaderInterface`/`MaterialField` unification above (both grow `FieldDescriptor`) and is decided
+at the reflection layer, not in a consumer. The node-based material editor
+([planset-15](../planset-15/README.md)) deliberately needs none of this: its node properties
+are flat leaves, the graph's own node/link collections are serialized by a bespoke graph
+serializer (not the field-walker), and a variable-arity node is modelled as **dynamic pins on
+the node instance** (topology), never as an array-typed property.
+
 ### 11. ImGuiCompositePass
 
 Every `SceneRenderer`-based app today hand-writes an identical fullscreen composite
