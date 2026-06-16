@@ -13,20 +13,48 @@ author-provided shader's reflected `MaterialData` (decision 9) — no codegen:
 
 | Node | Inputs | Outputs | Properties |
 |---|---|---|---|
-| `MaterialOutput` | per `MaterialData` field (Albedo, Factors, …) | — | — |
+| `MaterialOutput` | one pin per **authored param field** + one per **texture field** | — | — |
 | `TextureSample` | `UV` (vec2, optional) | `Color` (vec4) | `Texture` : `AssetHandle<Texture>` |
-| `Param` (constant) | — | `Value` (typed) | `Value` : the leaf (f32/vec2/vec3/vec4) |
+| `Param` (constant) | — | `Value` (typed) | `Value` : the leaf (f32/vec2/vec3/vec4/uint) |
 
-The `MaterialOutput` node's **input pins are derived from the fragment shader's reflected
-`MaterialData`** — one pin per field, typed to the field (`texture` field → a pin a
-`TextureSample.Color` feeds; scalar/vector field → a pin a `Param.Value` feeds). The shader's
-reflected interface is already available to the editor through the cooked material / its
-`*.shader.json`; the panel passes the resolved field list in so the output node matches the
-material's actual shader (the same set `MaterialImporter` validates against).
+### Where the field schema comes from
+
+The `MaterialOutput` node's input pins are derived from the **loaded cooked `Material`'s
+reflected field table** — `Material::GetFields()` (added in plan 00). This is the concrete
+source for a material's parameter schema: it is exactly the set `MaterialImporter` validated
+and cooked, it carries each field's `Name`/`Offset`/`Size`/`Kind`, and it is reachable from
+`libveng_editor` **without** re-reflecting Slang — so `libveng_cook` stays out of the editor
+framework library. The panel loads the material (it already does, for the preview) and passes
+its field table in:
+
+```cpp
+// editor/src/material/MaterialShaderInterface.h
+struct MaterialShaderInterface
+{
+    std::span<const Veng::MaterialField> Fields;   // == Material::GetFields()
+    Veng::AssetId VertexShader;
+    Veng::AssetId FragmentShader;
+};
+```
+
+Pin derivation walks `Fields` by `Kind`:
+
+- **`Param` field** (`FieldKind::Param` — an authored scalar/vector/uint) → one `MaterialOutput`
+  input pin typed to the field, fed by a `Param.Value` (or a math node).
+- **`TextureHandle` field** (`FieldKind::TextureHandle`) → one `MaterialOutput` input pin a
+  `TextureSample.Color` feeds.
+- **`SamplerHandle` field** (`FieldKind::SamplerHandle`) → **no pin.** A sampler is paired to its
+  texture by name (`<Texture>Sampler`) and is emitted implicitly by compile when the texture
+  pin is connected; it is never authored independently.
+
+A field the shader declares but the `.vmat` does not (so it is absent from `GetFields()`) gets
+no pin in v1 — the editor edits the material's declared parameter set, matching decision 9
+(bind params to the author's shader). Exposing undeclared shader fields would need the
+reflected `MaterialParams` struct via a cook-side reflection request; that is out of scope.
 
 `TextureSample.Texture` is a **property, not a wired pin** (decision 6): an
-`AssetHandle<Texture>` field drawn by the reused asset-picker widget, compiled to a `texture`
-field of the `.vmat`.
+`AssetHandle<Texture>` field drawn by the asset picker (built in plan 05), compiled to a
+`texture` field of the `.vmat`.
 
 ## Type compatibility — the coercion predicate
 
@@ -38,40 +66,69 @@ truncate.
 
 ## Compile — graph → `.vmat` field list
 
+The compile returns a **typed field list**, not a JSON value — keeping `nlohmann::json` out of
+the Layer-3 header (the JSON is assembled in the `.cpp` and embedded by the panel):
+
 ```cpp
 // editor/src/material/MaterialCompile.h
-Veng::Result<nlohmann::json> CompileMaterialGraph(
+struct CompiledField                        // mirrors one .vmat "fields" entry
+{
+    Veng::string Name;
+    Veng::string Type;                      // "texture" | "sampler" | "float" | "vec2..4" | "uint"
+    Veng::u64 TextureId = 0;                // texture: the AssetId
+    Veng::string SamplerTexture;            // sampler: the paired texture field's name
+    Veng::vector<Veng::f32> Values;         // float/vecN: the components
+    Veng::u32 UintValue = 0;                // uint
+};
+
+Veng::Result<Veng::vector<CompiledField>> CompileMaterialGraph(
     const VengEditor::NodeGraph&, const VengEditor::NodeCatalog&,
-    const MaterialShaderInterface& shader);   // the resolved MaterialData fields + shader ids
+    const MaterialShaderInterface& shader);
 ```
 
 Walk `TopoOrder` from the `MaterialOutput` node's connected inputs:
 
-- A `MaterialData` output-pin fed by a `TextureSample` → a `{ "name", "type":"texture",
-  "id": <the property's AssetId> }` field (plus the paired `sampler` field, mirroring the
-  hand-authored `brick.vmat.json`).
-- A field fed by a `Param` → a `{ "name", "type":"vecN"/"float", "value": [...] }` field,
-  applying any recorded coercion.
-- An unconnected `MaterialData` field → omitted (the importer's schema tolerance keeps its
-  default), or emitted with the shader's default — omit for v1.
+- A **texture** output-pin fed by a `TextureSample` → a `{Type:"texture", TextureId:<property's
+  AssetId>}` field **and** an implicit paired `{Type:"sampler", SamplerTexture:<that field's
+  name>}` field — matching the `"texture":"Albedo"` back-reference the importer expects
+  (`brick.vmat.json`).
+- A **param** field fed by a `Param` → a `{Type:"float"/"vecN"/"uint", Values/UintValue:…}`
+  field, applying any recorded coercion (splat/truncate).
+- An **unconnected** field → omitted; the importer's schema tolerance keeps its default.
 
-The output is the **`fields` array** (and the `shaders` block, carried unchanged from the
-source); the panel patches it into the `.vmat.json` and recooks. The result is exactly the
-schema `MaterialImporter` already cooks — **no importer change**.
+The `.cpp` serializes `vector<CompiledField>` to the `.vmat`'s `fields` JSON array (the
+`shaders` block carried unchanged from source); the panel patches it in and recooks. The
+result is exactly the schema `MaterialImporter` cooks — **no importer change** — which a
+test asserts by cooking the emitted JSON through the real importer (see Tests).
 
 ## Inverse — flat `.vmat` → graph (decision 8)
 
-`BuildGraphFromMaterial(const json& vmatFields, const MaterialShaderInterface&) → NodeGraph`:
-for a material with no embedded `"_editor"` block, synthesize a default graph — a
-`MaterialOutput`, a `TextureSample` per `texture` field (its `Texture` property set to the
-field's id), a `Param` per value field — laid out left-to-right. So `brick.vmat.json` opens
-without manual migration; the first save embeds the graph.
+`BuildGraphFromMaterial(const MaterialShaderInterface&) → NodeGraph`: for a material with no
+embedded `"_editor"` block, synthesize a default graph from the loaded material's field table
+(`GetFields()`) — a `MaterialOutput`, a `TextureSample` per `texture` field (its `Texture`
+property set to the field's `TextureId`), a `Param` per param field (sampler fields consumed by
+their paired texture, never their own node) — laid out left-to-right. So `brick.vmat.json`
+opens without manual migration. Opening does **not** rewrite `fields`; the first **explicit
+edit + save** embeds the graph (decision 8). A round-trip identity check
+(`CompileMaterialGraph(BuildGraphFromMaterial(iface))` vs. the source `fields`) guards against
+a lossy synthesis silently rewriting a hand-authored material.
 
-## Tests (`tests/unit` / `tests/cooker`, device-free)
+## Tests (`veng_editor_unit`, device-free; one cook-through in `tests/cooker`)
 
-- `BuildGraphFromMaterial` on the brick fields → a graph with the expected nodes/links;
-  `CompileMaterialGraph` of that graph reproduces an equivalent `fields` array
-  (import→compile round-trip is stable).
+The device-free tests run in `veng_editor_unit` (set up in plan 01). They construct a
+`MaterialShaderInterface` from a hand-built `vector<MaterialField>` rather than a loaded
+`Material`, so they need no device — `BuildGraphFromMaterial` / `CompileMaterialGraph` take the
+interface, not a GPU resource.
+
+- `BuildGraphFromMaterial` on the brick field table → a graph with the expected nodes/links;
+  `CompileMaterialGraph` of that graph reproduces an equivalent field list (import→compile
+  round-trip is stable, the identity check above).
+- **Cook-through (`tests/cooker`):** serialize the compiled field list into a `.vmat` and cook
+  it through the real `MaterialImporter` — asserts the editor's emitted JSON (texture+sampler
+  pairing, `uint`, vecN) is exactly what the importer accepts, not merely "an equivalent array".
+  This test calls `CompileMaterialGraph` (editor) and the importer (cooker), so it lives in the
+  cooker suite with `veng_editor::veng_editor` additionally linked in (plan 01's test-target
+  note); the suite already runs with Slang present for the real cook.
 - Coercion: a `Param`(f32) into a `vec4` output pin connects and compiles to a splatted value.
 - Compile of a graph with an unconnected output field omits it.
 - An incompatible connection (e.g. a texture color into a scalar-only field) is rejected by
@@ -79,9 +136,10 @@ without manual migration; the first save embeds the graph.
 
 ## Acceptance
 
-The material catalog, coercion predicate, `CompileMaterialGraph`, and
-`BuildGraphFromMaterial` build under `editor/src/material/`; the round-trip and coercion unit
-tests are green device-free; the compiled output matches the `MaterialImporter` schema (no
-importer change); `include_hygiene` green; smoke PPM unchanged. Commit:
+The material catalog, coercion predicate, `CompileMaterialGraph` (returning typed
+`CompiledField`s, no `nlohmann::json` in the header), and `BuildGraphFromMaterial` build under
+`editor/src/material/`; the round-trip, coercion, and cook-through tests are green device-free;
+the compiled output cooks unchanged through `MaterialImporter` (no importer change);
+`include_hygiene` green; smoke PPM unchanged. Commit:
 `Plan 03: material node catalog + graph→.vmat compile + flat-material import`.
 </content>

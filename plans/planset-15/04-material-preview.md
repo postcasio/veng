@@ -24,29 +24,48 @@ namespace VengEditor
         void SetMaterial(Veng::AssetHandle<Veng::Material>);
 
         // Record the scene render for this frame; call before the ImGui frame.
-        void Render(Veng::Renderer::CommandBuffer& cmd, Veng::f32 delta);
+        // No delta param — like SceneViewportPanel::Render, it reads
+        // Time::GetDeltaTime() internally (and the SceneView carries Delta).
+        void Render(Veng::Renderer::CommandBuffer& cmd);
 
-        // The preview image as an ImGui texture id, for ImGui::Image in the panel.
-        [[nodiscard]] ImTextureID TextureId() const;
+        // The preview image for ImGui::Image in the panel.
+        [[nodiscard]] ImTextureID GetTextureId() const;   // off the owned Ref<ImGuiTexture>
 
         void Resize(Veng::uvec2 extent);     // debounced by the caller
     };
 }
 ```
 
+The class lives in `namespace VengEditor`; `Veng::ImGuiLayer` (from `Veng/ImGui/ImGuiLayer.h`)
+returns a `Ref<ImGuiTexture>` from `CreateTexture(const Sampler&, const ImageView&)`, so
+`MaterialPreview` **owns a `Ref<ImGuiTexture>`** and `GetTextureId()` returns its
+`GetTextureId()` — mirroring `TextureEditorPanel`.
+
 It owns:
 
-- A one-entity `Scene`: a `Primitives::Sphere` mesh (built once via `Mesh::Create`) under a
-  `Transform`, a `Camera`, and a `Light` — a small lit stage. The sphere's `MeshRenderer`
-  material is swapped by `SetMaterial`.
-- A `SceneRenderer` (`Create` at the panel's preview extent), `Execute`d each frame against
-  the scene/camera, its `GetOutput()` registered into bindless + wrapped as an `ImGuiTexture`
-  via `ImGuiLayer::CreateTexture`.
+- A `Scene`: a `Primitives::Sphere` mesh (built once via `Mesh::Create`) under a `Transform`
+  + `Camera`, and a **separate** directional-`Light` entity — a small lit stage. The sphere's
+  `MeshRenderer` material is swapped by `SetMaterial`.
+- A `SceneRenderer` (`Create` at a **small fixed preview extent — 256×256**; the deferred
+  pipeline runs per frame, so the preview is sized to bound that second pass's cost), `Execute`d
+  each frame against the scene/camera, its `GetOutput()` registered into bindless + wrapped as a
+  `Ref<ImGuiTexture>` via `ImGuiLayer::CreateTexture`.
 - The cross-graph handoff the renderer documents: `PrepareForAccess(Sample)` before the ImGui
   read; the renderer re-arms `ColorAttachment` before the next `Execute`.
 
 This is the `SceneViewportPanel` pattern, scoped to a single material on a sphere — the
 "one preview generalized" the editor design calls for.
+
+### Two live SceneRenderers
+
+The editor already runs the scene viewport's `SceneRenderer`; the preview adds a second. Both
+record into the host's single `OnRender` command buffer **in submission order on the single
+graphics queue**, and each brackets **its own** output (`Sample` ↔ `ColorAttachment`) over
+**disjoint** targets — so the documented frames-in-flight handoff composes without a semaphore
+(the contract is per-renderer, and the two renderers never touch each other's images). The
+preview's 256² extent keeps the second deferred pipeline cheap. The `validation` gate test
+(below) renders **both** renderers live so a two-renderer barrier interaction can't slip past
+an isolated-preview test.
 
 ## Material swap on hot-reload
 
@@ -66,16 +85,18 @@ it to the live graph compile.
 ## Tests
 
 - **GPU (`gpu`-labelled, skips with no ICD):** construct a `MaterialPreview`, `SetMaterial`
-  the cooked brick material, `Render` a frame, assert `TextureId()` is non-null and the
-  output image is the expected extent. A `Resize` re-fetches a fresh, valid texture id.
-- Verify no validation errors under the `validation` gate (it renders a real `SceneRenderer`
-  pass).
+  the cooked brick material, `Render` a frame, assert `GetTextureId()` is non-null and the
+  output image is the expected 256² extent. A `Resize` re-fetches a fresh, valid texture id.
+- Verify no validation errors under the `validation` gate **with a second `SceneRenderer`
+  active** (a viewport-style renderer alongside the preview), so the two-renderer handoff is
+  exercised, not just an isolated preview pass.
 - `ctest` green; smoke PPM unchanged; `include_hygiene` green.
 
 ## Acceptance
 
-`MaterialPreview` builds and renders the cooked brick material on a sphere into an ImGui
-texture; `SetMaterial` swaps cleanly; `Resize` re-fetches the output; the GPU test passes and
-skips with no ICD; validation gate clean; smoke PPM unchanged. Commit:
+`MaterialPreview` builds and renders the cooked brick material on a sphere into a
+`Ref<ImGuiTexture>`; `SetMaterial` swaps cleanly; `Resize` re-fetches the output; the GPU test
+passes and skips with no ICD; the validation gate is clean with two live renderers; smoke PPM
+unchanged. Commit:
 `Plan 04: MaterialPreview — sphere + SceneRenderer preview RT, material swap on reload`.
 </content>

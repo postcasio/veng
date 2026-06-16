@@ -83,7 +83,23 @@ ImGui, no Vulkan, no imnodes. That is what makes it unit-testable with no device
 reusable by any future editor. Mutation is funnelled through the small vocabulary above so a
 later undo/redo stack wraps it without touching call sites (decision 10).
 
-## Tests (`tests/unit`, device-free)
+## Tests (device-free)
+
+The `NodeGraph` symbols live in `libveng_editor`, which the existing `veng_unit` target does
+**not** link (it links `veng::veng` + doctest only). Add a dedicated **`veng_editor_unit`**
+test target (in the root `CMakeLists.txt`, beside `veng_unit`) that links
+`veng_editor::veng_editor` + doctest, with `editor/src/` on its include path so plan 03's tests
+can include the `editor/src/material/` headers — the material sources themselves live in
+`libveng_editor` and are *linked*, not recompiled into the test (recompiling would duplicate the
+symbols the library already exports). It runs under the same device-free band as `veng_unit`;
+plans 01/02/03's device-free tests land there.
+
+Plan 03's one **cook-through** test is the exception: it needs both `CompileMaterialGraph`
+(editor) and the real `MaterialImporter` (cooker, which reflects the shader via Slang at cook
+time). It lives in the cooker suite (`tests/cooker` / `veng_cooker`), which already links
+`libveng_cook` and runs with Slang present; for that test the suite **additionally links
+`veng_editor::veng_editor`**. (Linking both libraries into one test exe is fine — they are
+independent, no cycle.)
 
 - Add/remove nodes; generational `NodeId` invalidation after `RemoveNode`.
 - `Connect` accepts a valid output→input of compatible type; rejects wrong direction,
@@ -92,10 +108,23 @@ later undo/redo stack wraps it without touching call sites (decision 10).
 - `TopoOrder` returns a valid topological ordering on a small diamond graph; is stable.
 - Wildcard pins connect to any value pin.
 
+## `include_hygiene` wiring
+
+The new `NodeGraph.cpp` is added to the `libveng_editor` source list in `editor/CMakeLists.txt`.
+The existing `veng_include_hygiene` target links only `veng::veng`, so it cannot see the
+`VengEditor/` headers. Extend it to also link `veng_editor::veng_editor` — which propagates the
+`VengEditor/` include dir and the editor's PUBLIC deps (glm/fmt/ImGui) while keeping imnodes and
+nlohmann PRIVATE — and add `#include <VengEditor/NodeGraph/NodeGraph.h>` to
+`tests/include_hygiene.cpp` (plan 02 adds its headers there too). A leaked backend include then
+fails the hygiene build exactly as it does for libveng headers.
+
 ## Acceptance
 
-`libveng_editor` exposes `VengEditor/NodeGraph/NodeGraph.h`; the topology core builds with no
-Vulkan/ImGui/imnodes include; the unit suite covers add/remove/connect/validate/topo and is
-green with no ICD; `include_hygiene` green; smoke PPM unchanged. Commit:
+`libveng_editor` exposes `VengEditor/NodeGraph/NodeGraph.h` (the `NodeGraph.cpp` added to the
+`editor/CMakeLists.txt` source list, the header added to `tests/include_hygiene.cpp` with
+`veng_include_hygiene` now linking `veng_editor` so a leaked backend include fails the build);
+the topology core builds with no Vulkan/ImGui/imnodes include; the `veng_editor_unit` suite
+covers add/remove/connect/validate/topo and is green with no ICD; `include_hygiene` green; smoke
+PPM unchanged. Commit:
 `Plan 01: NodeGraph topology core — generic pure graph, validation, named VengEditor surface`.
 </content>
