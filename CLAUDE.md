@@ -404,7 +404,10 @@ into the host-owned `TypeRegistry`** (`host->Types`, `Register<T>()` per type).
 `Application` still owns `Context`/`AssetManager`/`TaskSystem` unchanged — the
 launcher reads the factory back, constructs the app, and calls `Run()`.
 `veng_add_game(<name> SOURCES … [ASSET_PACK …])` is the build entry: it emits
-`lib<name>` + `<name>-launcher` from one declaration.
+`lib<name>` + `<name>-launcher` from one declaration. **`veng_add_editor(<name>
+SOURCES …)`** is its editor sibling — it emits `lib<name>_editor` (SHARED, links
+`libveng_editor`) + `<name>-editor` (the editor exe, links `libveng`,
+`libveng_editor`, and `libveng_cook`); see the **Editor** section.
 
 - **Same toolchain, one STL, one flag set.** Only the *entry* is C ABI; the payload
   is rich C++ (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a
@@ -417,12 +420,52 @@ launcher reads the factory back, constructs the app, and calls `Run()`.
   `$ORIGIN`/`@loader_path` rpath, and assets resolve via `ExecutableDirectory()`
   (the public executable-relative path helper) with `veng_add_game` copying the
   cooked pack beside the launcher — so launcher + lib + pack move as one directory.
-- **`EditorRegistry*` is the reserved seam for the future editor host.** The host
-  struct carries `{ ApplicationRegistry& App; TypeRegistry& Types; EditorRegistry*
-  Editor; }`; the launcher always passes `Editor = nullptr` (the type is only
-  forward-declared in `libveng`). Only the future editor host passes non-null.
+- **`EditorRegistry*` is the editor-host seam.** The host struct carries `{
+  ApplicationRegistry& App; TypeRegistry& Types; EditorRegistry* Editor; }`; the
+  launcher always passes `Editor = nullptr` (the type is only forward-declared in
+  `libveng`). The editor host (`EditorHost`, in `libveng_editor`) passes a non-null
+  `&m_EditorRegistry`, activating a module's editor-side registrations.
 - **Game-code hot-reload is out** — restart the play session. (Distinct from *asset*
   hot-reload, the async path.)
+
+### Editor
+
+The editor is a separate executable, not part of the runtime. `libveng_editor` is the
+editor **framework** library; the `<name>-editor` exe (produced by `veng_add_editor`)
+links `libveng`, `libveng_editor`, and `libveng_cook`, and `dlopen`s the game module the
+same way the launcher does — but passing a non-null `EditorRegistry*` in
+`VengModuleHost::Editor`.
+
+- **`EditorHost`** is an `Application` subclass living in `libveng_editor`. It builds a
+  top-level single-window `DockSpace` (`ImGuiConfigFlags_DockingEnable`; multi-viewport
+  OS windows are not built — they conflict with the single-offscreen-composite model),
+  owns the panel set (open/close state, Window menu, dock layout), and loads the game
+  module with `Editor = &m_EditorRegistry`.
+- **`EditorPanel`** is the panel base class: a `Title()` / `OnImGui()` virtual interface;
+  the host drives it each frame and owns its visibility. Built-in panels: scene viewport,
+  asset browser, inspector, console/log.
+- **`EditorRegistry`** is defined in `libveng_editor` and **forward-declared** in
+  `engine/include/Veng/Module/Module.h` (so `libveng` stays clean). It holds the
+  `AssetType`→editor-factory map (double-click an asset opens its editor),
+  `RegisterPanel` for game-contributed panels, and `RegisterFieldWidget(TypeId,
+  FieldWidgetFn)` for custom inspector widgets. It is non-null in `VengModuleHost` only
+  in the editor host.
+- **Reflection-driven inspector.** Selecting an entity walks its components through the
+  host-owned `TypeRegistry` / `FieldDescriptor` layer (`Scene::ForEachComponent`), drawing
+  a built-in widget per `FieldClass`
+  (Scalar/Vector/Quaternion/String/AssetHandle/Enum/Struct/Matrix/Reference); a
+  `RegisterFieldWidget` entry overrides the built-in for a given `TypeId`.
+- **Cook-on-demand keeps the importer boundary.** `libveng_cook` is linked **only into
+  the editor exe** — never `libveng_editor`, never `libgame` — so the editor framework
+  library stays importer-free. The exe injects a `CookBackend` implementation;
+  `EditorHost::RequestCook(CookRequest, callback)` cooks a single source off the render
+  thread via `TaskSystem` (`CookSession` → `Task<vector<u8>>`), then mounts the resulting
+  in-memory archive via `AssetManager::MountMemory` and hot-reloads behind the stable
+  `AssetHandle`.
+- **The texture editor is the template.** `TextureEditorPanel` previews via a render
+  target (`CreateTexture` → `ImGui::Image`), edits `.tex.json` settings (sRGB + sampler
+  filter/wrap), recooks live (300ms-debounced), and round-trips the JSON on save —
+  patching known keys, preserving unknown ones.
 
 ### Assets: cook offline, load by `AssetId`
 
@@ -454,6 +497,12 @@ archive; the engine *mounts* archives and resolves assets against them.
   runs the whole pipeline inline and returns a resident handle or a structured
   error, `AssetResult<AssetHandle<T>>` (`std::expected<…, AssetLoadError>` —
   branch on `AssetError::Kind`, not a string).
+- **`AssetManager::MountMemory(vector<u8>, string) → MountHandle`** shadow-mounts an
+  **in-memory archive** over the on-disk mounts: a later resolve of an `AssetId` the
+  in-memory archive carries hits it first. The returned `MountHandle` is **RAII** — drop
+  it to unmount and reveal the underlying mount again. The cook-on-demand loop uses it:
+  the editor cooks a source into a scratch archive in memory, mounts it, reloads the
+  handle behind it, and replaces the `MountHandle` on the next recook.
 - **`AssetManager` is owned by `Application` and constructed with a `Context&`,
   a `TaskSystem&`, and the borrowed `TypeRegistry&`** (the registry the prefab
   loader reflects components through). The async `Load` is the obvious call and the
@@ -579,6 +628,10 @@ misuse; the single-threaded model offers no re-entrancy guard. A stale `Entity` 
 slot recycled, generation bumped) accessed through the API is a fatal `VE_ASSERT`, not
 silent UB. A **component is just a reflected type a `Scene` pools** — pools are made
 lazily on first `Add` of a type; there is no separate component-id space.
+`Scene::ForEachComponent(Entity, const function<void(TypeId, void*)>&)` iterates every
+pool that holds the entity, calling the visitor with each component's `TypeId` and an
+erased pointer — the type-agnostic enumeration the editor inspector walks (templated
+`Get`/`Has` need the type at compile time; this does not).
 
 Types register into the **`TypeRegistry`** — **host-owned, borrowed by the engine**:
 the host (launcher or cooker) constructs it, pre-registers the builtins, fills it via

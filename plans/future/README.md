@@ -102,6 +102,34 @@ cross-cutting concerns below. Spans **several plansets**; **design overview:**
   **reuse that exact seam** rather than reintroducing it.
   Also still future: **installing `veng_add_game` for downstream `find_package(veng)`
   consumers** (see [game-module.md](game-module.md)).
+- **The editor shell + framework — DONE (planset-14, sub-area B)**
+  ([editor.md](editor.md)). `libveng_editor` ships: `EditorPanel`
+  (`Title()`/`OnImGui()`), `EditorRegistry` (the `AssetType`→editor-factory map plus
+  `RegisterPanel`/`RegisterFieldWidget`), and `EditorHost` — an `Application` subclass
+  that builds a top-level single-window `DockSpace` and owns the panels. A
+  `veng_add_editor` CMake macro (parallels `veng_add_game`) emits `lib<name>_editor` +
+  `<name>-editor`. Built-in panels: scene viewport, asset browser, a reflection-driven
+  **inspector** (walks a selected entity's components through the host-owned
+  `TypeRegistry` / `FieldDescriptor` layer via `Scene::ForEachComponent`, a built-in
+  widget per `FieldClass`, custom overrides via `RegisterFieldWidget`), and console/log.
+  **Cook-on-demand** runs off-thread — `libveng_cook` linked only into the editor exe
+  (the planset-5 importer boundary holds), exposed via an injected `CookBackend` so
+  `EditorHost::RequestCook` cooks one source through `TaskSystem` and hot-reloads behind
+  the stable `AssetHandle` through `AssetManager::MountMemory` (a RAII `MountHandle`
+  shadow-mounting an in-memory archive). The **texture editor** (`TextureEditorPanel`) is
+  the first end-to-end asset editor: preview RT, `.tex.json` settings editing, 300ms
+  live recook, JSON round-trip on save. `hello_triangle-editor` launches with
+  `libhello_triangle`, shows the scene docked, and opens the brick texture in the texture
+  editor.
+- **Sub-area C — material node editor — STILL FUTURE (the next editor planset).** imnodes
+  graph → loaded `.vmat` (param-binding v1), live preview against the cook-on-demand +
+  hot-reload path. Both prerequisites met: cook-on-demand (planset-14) and the inspector
+  foundation (planset-14). A planset of its own.
+- **Sub-area D — scene editor — STILL FUTURE.** Viewport panel (reuses the delivered
+  `SceneRenderer`), hierarchy panel, gizmos (ImGuizmo or hand-rolled), save round-trip to
+  `.prefab.json`. Its scene-model and cooked-prefab gates are met (planset-10/11), and the
+  inspector + cook-on-demand foundation (planset-14) is now also in place. A planset of
+  its own.
 - **The editor is a cooker consumer** ([editor.md](editor.md)). The runtime never
   links importers; the editor — a tool — links `libveng_cook` for **cook-on-demand**,
   reading *source* assets, cooking live (off-thread), and previewing through the
@@ -302,28 +330,33 @@ That whole asset + threading + scene + cook + render chain is closed:
 8 scene renderer (deferred über-pipeline) ✅ ──► planset-12
         (taken up before the editor; minimal-deferred spine + a directional Light)
 
+6 editor: shell + framework (sub-B) ✅ ──► planset-14
+        (libveng_editor, docking EditorHost, reflection inspector,
+         cook-on-demand, the texture editor)
+
 remaining:
-  6  editor (shell → material editor → scene editor)   (PRIORITIZED NEXT; wants 2's
-        async path ✅; area-7 gate cleared ✅; scene editor's area-10 gate cleared ✅;
-        inspectors reuse 10's module reflection ✅; its scene viewport consumes the
-        delivered area-8 SceneRenderer ✅)
+  6  editor (material editor sub-C → scene editor sub-D)   sub-B delivered (planset-14);
+        sub-C is the PRIORITIZED NEXT editor planset (cook-on-demand ✅ + inspector ✅);
+        sub-D's gates all met (area-7 ✅, area-10 ✅, area-8 SceneRenderer ✅, inspector ✅)
   4  events/input — independent, gameplay-driven (any time)
 ```
 
 The remaining order:
 
-1. **Editor application (area 6) — PRIORITIZED NEXT.** The authoring environment,
-   spanning several plansets: the [game-module build model](game-module.md) (shared
-   lib + launcher, C-ABI app registration) is **done — planset-9** (in-tree); next is
-   the [editor shell + framework](editor.md) (cook-on-demand, single-window docking,
-   the texture editor), then the node-based **material editor**. Its native-type
-   **inspectors reuse area 10's module reflection** (delivered by planset-11) rather
-   than re-introducing it. It builds on area 2's async path (done) for non-stalling
-   live preview. The **scene editor** within it has **both** its gates met — the
-   area-7 runtime scene model (planset-10) and the area-10 cooked prefab asset +
-   module reflection (planset-11) — and its **scene viewport is now a consumer of the
-   delivered area-8 `SceneRenderer`** (planset-12), rendering one `Scene` through N
-   instances with no API change.
+1. **Editor application (area 6) — sub-area B delivered (planset-14).** The authoring
+   environment, spanning several plansets: the [game-module build model](game-module.md)
+   (shared lib + launcher, C-ABI app registration) is **done — planset-9** (in-tree); the
+   [editor shell + framework](editor.md) (`libveng_editor`, single-window docking,
+   cook-on-demand, the texture editor) is **done — planset-14** (sub-area B). The
+   **PRIORITIZED NEXT editor planset is the node-based material editor** (sub-area C) —
+   imnodes graph → loaded `.vmat` (param-binding v1), live preview against the
+   cook-on-demand + hot-reload path delivered in planset-14. Then the **scene editor**
+   (sub-area D), whose gates are all met — the area-7 runtime scene model (planset-10), the
+   area-10 cooked prefab asset + module reflection (planset-11), the inspector + cook-on-demand
+   foundation (planset-14) — and whose **scene viewport consumes the delivered area-8
+   `SceneRenderer`** (planset-12), rendering one `Scene` through N instances with no API
+   change. Its native-type **inspectors reuse area 10's module reflection** (planset-11)
+   rather than re-introducing it.
 
 **Event & input (area 4)** is off the critical path — independent of the
 rendering/asset/threading work and driven by gameplay needs, so slot it in whenever
@@ -336,12 +369,6 @@ to decide early than to retrofit.
 
 **Open:**
 
-- **The editor is the demanding second consumer.** hello-triangle (one pipeline,
-  one push constant) won't surface multi-material/mesh/scene friction; the
-  node-based editor will. Develop the editor and the engine API together so it
-  exercises the asset/material surface as it's built — it doubles as the richer
-  sample. Now a detailed area of its own — see [area 6](#6-editor-application)
-  ([editor.md](editor.md), [game-module.md](game-module.md)).
 - **Process discipline.** Keep planset-1's cadence — small, sample-verified,
   per-plan increments. planset-4 (de-global), planset-6 (threading), and planset-8
   (compiled graph) all followed it; the same discipline applies to the editor (6)
@@ -349,6 +376,13 @@ to decide early than to retrofit.
 
 **Resolved:**
 
+- **The editor is the demanding second consumer.** Now a real, running consumer
+  (planset-14, sub-area B). The editor and engine API co-evolved through the planset:
+  `libveng_editor` exercises the asset/material/scene surface hello-triangle never did —
+  the reflection-driven inspector against real component types, the cook-on-demand loop
+  against live source edits, and the scene viewport against the delivered
+  `SceneRenderer`. The node-based material editor (sub-area C) will push it further. See
+  [area 6](#6-editor-application) ([editor.md](editor.md), [game-module.md](game-module.md)).
 - **Design infrastructure against a real client** — planset-5 pulled a thin
   synchronous asset-loading slice (area 1) forward as a real consumer, so planset-6
   built the threading API against a delivered client, not a guess.
@@ -380,18 +414,20 @@ planset-5 + planset-6), 2 (threading, planset-6), 3 (de-global, planset-4), 5
 (testing, planset-3 + planset-4), 9 (compiled `RenderGraph`, planset-8), **area
 7's runtime half** (scene/entity model, planset-10), **area 10** (cooker-side
 module reflection + the cooked prefab asset, planset-11), and **area 8** (the
-`SceneRenderer` deferred über-pipeline, planset-12); plus area 6's first
-sub-area, the game-module build model (planset-9), and the **pipeline-caching** and
-**content-hashes** cross-cutting concerns (planset-9).
+`SceneRenderer` deferred über-pipeline, planset-12); plus area 6's first two
+sub-areas — the game-module build model (sub-area A, planset-9) and the **editor shell +
+framework** (sub-area B, planset-14: `libveng_editor`, the docking `EditorHost`, the
+reflection-driven inspector, cook-on-demand, and the texture editor) — and the
+**pipeline-caching** and **content-hashes** cross-cutting concerns (planset-9).
 
-**Next:** area 6 (the editor) is the **prioritized next planset** — its game-module
-prerequisite (planset-9), the module-reflection seam its inspectors reuse
-(planset-11), and the area-8 `SceneRenderer` its scene viewport consumes (planset-12)
-are all in place. Area 4 (events/input) is off the critical path, slotted in whenever
-wanted.
+**Next:** the **material node editor** (area 6, sub-area C) is the **prioritized next
+editor planset** — its prerequisites are met: cook-on-demand and the inspector
+foundation (planset-14), and the constructed-material path it authors into (planset-5).
+The scene editor (sub-area D) follows, all its gates met. Area 4 (events/input) is off
+the critical path, slotted in whenever wanted.
 
-**Undetailed / unscheduled:** area 4 (events/input) and the rest of area 6 (editor
-shell, material editor, scene editor — [editor.md](editor.md) /
+**Undetailed / unscheduled:** area 4 (events/input) and the rest of area 6 (the
+material node editor and scene editor — [editor.md](editor.md) /
 [game-module.md](game-module.md)); plus the named still-future increments of areas
 done in part — area 8's remaining **batteries** (shadows/SSAO/bloom/MSAA/
 transparent/post + a G2 PBR g-buffer target), **multiple/typed lights**, and

@@ -278,9 +278,8 @@ A. game-module build model      (game-module.md) — shared lib + launcher +
                                    C-ABI app registration.  ── DONE (planset-9).
 B. editor shell + framework      libveng_editor, dockspace (single-window),
                                    panel/inspector/editor registries,
-                                   cook-on-demand, the TEXTURE editor as first slice,
-                                   AND the type-reflection layer (TypeRegistry),
-                                   pulled out of A to be designed against the inspector.
+                                   cook-on-demand, the TEXTURE editor as first slice.
+                                   ── DONE (planset-14).
 C. material node editor          imnodes graph → loaded .vmat (param-binding v1),
                                    live preview against the async/hot-reload path.
 D. scene/entity model            transform hierarchy, components, scene asset type
@@ -288,13 +287,17 @@ D. scene/entity model            transform hierarchy, components, scene asset ty
 ```
 
 **Sub-area A is delivered by [planset-9](../planset-9/README.md)** (the shared lib +
-launcher + C-ABI `Application` registration, in-tree). Its **type-reflection layer
-now belongs to sub-area B** — held out of the prerequisite so it is designed against
-the real inspector rather than speculatively (the resolved open-`TypeId` direction is
-recorded in [game-module.md](game-module.md)). The [threading](threading-task-system.md)
-async work is the other real prerequisite (done); B is the first visibly-an-editor
-milestone; C (material editor) is the headline; D carries its own large prerequisite
-and lands last. C and area 7 (the scene model under D) are otherwise unchanged.
+launcher + C-ABI `Application` registration, in-tree); its type-reflection layer landed
+with the scene model (planset-10/11), so sub-area B **consumes** the `TypeRegistry`
+rather than introducing it. **Sub-area B is delivered by
+[planset-14](../planset-14/README.md)**: `libveng_editor` (`EditorPanel`,
+`EditorRegistry`, the `EditorHost` `Application` subclass), a `veng_add_editor` macro,
+single-window docking, built-in panels (scene viewport, asset browser, reflection-driven
+inspector, console/log), off-thread cook-on-demand (`libveng_cook` in the editor exe
+only, `AssetManager::MountMemory` hot-reload), and the texture editor as the first
+end-to-end slice. The [threading](threading-task-system.md) async path is the other
+prerequisite (done). **Sub-area C (the material node editor) is the next editor
+planset**; D carries its own large prerequisite (now met) and lands last.
 
 ## Open decisions
 

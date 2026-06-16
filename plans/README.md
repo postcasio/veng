@@ -182,12 +182,40 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   queue in submission order. **Supersedes planset-12 decision 6** (which deferred FIF >
   1 to a ring).
 
+- **[planset-14](planset-14/README.md)** — editor shell + framework (✅ done, 5 plans).
+  Takes up [future area 6](future/README.md#6-editor-application) **sub-area B**: the
+  first tangible authoring environment. Delivers `libveng_editor` (the editor framework
+  library — `EditorPanel` with a `Title()`/`OnImGui()` interface, `EditorRegistry`, and
+  `EditorHost`, an `Application` subclass that builds a top-level single-window
+  `DockSpace`), a `veng_add_editor` CMake macro (parallels `veng_add_game`, emitting
+  `lib<name>_editor` + `<name>-editor`), and a docking host with built-in panels (scene
+  viewport, asset browser, inspector, console/log). The **reflection-driven inspector**
+  walks a selected entity's components through the host-owned `TypeRegistry` /
+  `FieldDescriptor` layer, drawing a built-in widget per `FieldClass`
+  (Scalar/Vector/Quaternion/String/AssetHandle/Enum/Struct/Matrix/Reference) with custom
+  overrides via `EditorRegistry::RegisterFieldWidget` — reading
+  `Scene::ForEachComponent(Entity, fn)`, added this planset. **Cook-on-demand** runs
+  off-thread: `libveng_cook` is linked only into the editor exe (not `libveng_editor`,
+  not `libgame`), exposed through an injected `CookBackend` so `EditorHost::RequestCook`
+  cooks a single source via `TaskSystem` and hot-reloads the result behind the stable
+  `AssetHandle` through `AssetManager::MountMemory` (a RAII `MountHandle` shadow-mounting
+  an in-memory archive). The **texture editor** (`TextureEditorPanel`) is the first
+  end-to-end asset editor: a preview RT via `CreateTexture`/`ImGui::Image`, `.tex.json`
+  settings editing (sRGB + sampler filter/wrap), 300ms-debounced live recook, and a JSON
+  round-trip on save that preserves unknown keys. `hello_triangle-editor` launches with
+  `libhello_triangle`, shows the scene in a docked viewport, and opens the brick texture
+  in the texture editor. Held back as named future plansets: the material node editor
+  (sub-area C), the scene editor (sub-area D), an undo/redo command stack, and
+  multi-viewport OS windows.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). The remaining areas are the **editor application**
-  (the prioritized next planset — its game-module build model is **delivered by
-  planset-9** and its native-type inspectors **reuse area 10's module reflection**,
-  delivered by planset-11; the editor shell + cooker-on-demand + docking, the
-  material node editor, and the scene editor remain future —
+  (its game-module build model is **delivered by planset-9**, its **editor shell +
+  framework — sub-area B — by planset-14** (`libveng_editor`, the docking `EditorHost`,
+  the reflection-driven inspector, cook-on-demand, and the texture editor), and its
+  native-type inspectors **reuse area 10's module reflection**, delivered by planset-11;
+  the **material node editor** (sub-area C, the prioritized next editor planset) and the
+  **scene editor** (sub-area D) remain future —
   [editor.md](future/editor.md) / [game-module.md](future/game-module.md), several
   plansets) and the **event/input** systems (area 4). Each becomes its own planset
   when taken up. (Testing areas 5a/5b, de-globalizing the context (area 3), the asset
