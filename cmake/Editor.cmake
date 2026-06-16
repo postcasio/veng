@@ -1,6 +1,9 @@
 # veng_add_editor(<name>
 #     GAME_MODULE    <game target>        # libgame to dlopen at runtime
 #     [EDITOR_MODULE <editor target>]     # optional libgame_editor
+#     [ASSET_PACK    <pack target>]       # an add_asset_pack target whose source
+#                                         # manifest the editor reads to resolve an
+#                                         # AssetId to its per-asset JSON source
 # )
 #
 # Produces lib<name>_editor (SHARED, links veng_editor::veng_editor) and
@@ -16,7 +19,7 @@
 # out of the framework library and never reaches libveng or libgame.
 
 function(veng_add_editor NAME)
-    cmake_parse_arguments(ARG "" "GAME_MODULE;EDITOR_MODULE" "" ${ARGN})
+    cmake_parse_arguments(ARG "" "GAME_MODULE;EDITOR_MODULE;ASSET_PACK" "" ${ARGN})
 
     if (NOT ARG_GAME_MODULE)
         message(FATAL_ERROR "veng_add_editor(${NAME}): GAME_MODULE is required")
@@ -49,6 +52,16 @@ function(veng_add_editor NAME)
         set_target_properties(${NAME}-editor PROPERTIES
                 RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:${ARG_GAME_MODULE}-launcher>)
         add_dependencies(${NAME}-editor ${ARG_GAME_MODULE}-launcher)
+    endif ()
+
+    # The editor reads the pack's source manifest to map an AssetId to its
+    # per-asset JSON source (so the texture editor knows which .tex.json to edit
+    # and recook). The path is the in-tree source manifest, baked absolute — the
+    # editor is in-tree only, editing the live source files.
+    if (ARG_ASSET_PACK)
+        target_compile_definitions(${NAME}-editor PRIVATE
+                VENG_EDITOR_ASSET_MANIFEST="$<TARGET_PROPERTY:${ARG_ASSET_PACK},VENG_ASSET_PACK_SOURCE>")
+        add_dependencies(${NAME}-editor ${ARG_ASSET_PACK})
     endif ()
 
     if (ARG_EDITOR_MODULE)

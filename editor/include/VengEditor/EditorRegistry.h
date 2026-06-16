@@ -40,9 +40,12 @@ namespace Veng
     public:
         // Register an asset editor for a type. Double-clicking an asset of this
         // type in the asset browser opens its editor through this factory.
+        // First-write-wins: a game editor module (loaded before the host
+        // registers its built-ins) keeps its factory; the built-in fills only the
+        // types the module left unregistered.
         void RegisterAssetEditor(AssetType type, Unique<AssetEditorFactory> factory)
         {
-            m_AssetEditors[type] = std::move(factory);
+            m_AssetEditors.try_emplace(type, std::move(factory));
         }
 
         // Register a game-contributed custom panel. The host adopts it into its

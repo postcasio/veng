@@ -24,6 +24,10 @@ namespace VengEditor
         [[nodiscard]] Veng::string_view Title() const override { return "Asset Browser"; }
         void OnImGui() override;
 
+        // Panels opened by double-clicking an asset since the last call, moved out
+        // for the host to adopt into its panel set. Drained once per frame.
+        [[nodiscard]] Veng::vector<Veng::Unique<EditorPanel>> TakeOpenedPanels();
+
     private:
         struct Asset
         {
@@ -36,6 +40,7 @@ namespace VengEditor
         Veng::EditorRegistry& m_Editors;
         Veng::vector<Asset> m_Assets;
         Veng::optional<Veng::AssetId> m_Selected;
+        Veng::vector<Veng::Unique<EditorPanel>> m_Opened;
         bool m_Loaded = false;
 
         void LoadTable();

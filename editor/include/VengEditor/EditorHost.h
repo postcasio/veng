@@ -29,6 +29,7 @@ namespace VengEditor
 {
     class SceneViewportPanel;
     class InspectorPanel;
+    class AssetBrowserPanel;
 
     struct EditorHostInfo
     {
@@ -40,6 +41,12 @@ namespace VengEditor
         // The optional libgame_editor — the game's editor extensions. nullopt
         // skips it; the game module alone still loads.
         Veng::optional<Veng::path> EditorModulePath;
+
+        // The pack source manifest (the .vengpack.json the cooker reads). The
+        // editor maps an AssetId to its per-asset JSON source through it, so an
+        // asset editor knows which source file to edit and recook. nullopt
+        // disables source resolution — asset editors then have no source to open.
+        Veng::optional<Veng::path> AssetManifestPath;
 
         Veng::ApplicationInfo App;
 
@@ -115,6 +122,10 @@ namespace VengEditor
         // Non-owning: points into m_Panels' inspector slot, fed the viewport's
         // scene and the current selection each frame before the UI is built.
         InspectorPanel* m_Inspector = nullptr;
+
+        // Non-owning: the asset browser slot, drained each frame for asset-editor
+        // panels opened by a double-click so the host adopts them into its set.
+        AssetBrowserPanel* m_AssetBrowser = nullptr;
 
         // The present pipeline: a fullscreen blit of the ImGui output into the
         // swapchain, addressed through the bindless set 0.

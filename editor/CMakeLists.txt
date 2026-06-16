@@ -9,10 +9,12 @@
 
 add_library(veng_editor SHARED
         src/EditorHost.cpp
+        src/AssetSourceIndex.cpp
         src/panels/AssetBrowserPanel.cpp
         src/panels/ConsolePanel.cpp
         src/panels/InspectorPanel.cpp
         src/panels/SceneViewportPanel.cpp
+        src/panels/TextureEditorPanel.cpp
 )
 add_library(veng_editor::veng_editor ALIAS veng_editor)
 
@@ -31,6 +33,14 @@ target_link_libraries(veng_editor PUBLIC veng::veng)
 # operations return Veng::Result<T>.
 target_compile_options(veng_editor PRIVATE -fno-exceptions)
 target_compile_definitions(veng_editor PRIVATE VE_BUILD_SHARED)
+
+# nlohmann/json — the texture editor reads/writes per-asset .tex.json sources and
+# the asset source index parses the pack manifest. Used only in .cpp (never in a
+# public header), so it is a PRIVATE dependency: it does not leak into editor
+# modules or libveng. JSON_NOEXCEPTION matches the cooker's contract under
+# -fno-exceptions (JSON_THROW becomes std::abort, guarded by is_*() checks).
+target_link_libraries(veng_editor PRIVATE nlohmann_json::nlohmann_json)
+target_compile_definitions(veng_editor PRIVATE JSON_NOEXCEPTION)
 
 # The editor launcher source veng_add_editor compiles per game (mirrors
 # VENG_LAUNCHER_MAIN in Game.cmake), plus the cook-on-demand seam (CookSession).

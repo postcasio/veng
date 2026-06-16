@@ -110,7 +110,7 @@ are explicitly deferred.
 | 01 | [`libveng_editor` shell + host](01-editor-shell.md) | New library (`EditorPanel`, `EditorRegistry`, `EditorHost`), dockspace host, built-in stub panels, `veng_add_editor` macro, editor exe compiles and launches with hello-triangle. | done |
 | 02 | [Reflection-driven inspector](02-reflection-inspector.md) | Wire `TypeRegistry`/`FieldDescriptor` into the inspector panel. Widget per `FieldClass`. Selecting an ECS entity populates the inspector with its components. | done |
 | 03 | [Cook-on-demand plumbing](03-cook-on-demand.md) | Link `libveng_cook` into the editor host. Off-thread `CookRequest` via `TaskSystem`, in-memory scratch archive, hot-reload via `AssetManager` on the main thread. | done |
-| 04 | [Texture editor](04-texture-editor.md) | End-to-end texture editor panel: preview RT via `CreateTexture`/`ImGui::Image`, `.tex.json` settings editing, live recook on change, JSON round-trip on save. | proposed |
+| 04 | [Texture editor](04-texture-editor.md) | End-to-end texture editor panel: preview RT via `CreateTexture`/`ImGui::Image`, `.tex.json` settings editing, live recook on change, JSON round-trip on save. | done |
 | 05 | [Docs + roadmap re-cut](05-docs-roadmap.md) | `future/editor.md` sub-area B → delivered; `future/README.md` area 6 updated; `CLAUDE.md` editor architecture documented; `plans/README.md` planset-14 line. No code. | proposed |
 
 Plans 01 → 02 → 03 → 04 must run in sequence (each builds on the prior). Plan 05 runs last.

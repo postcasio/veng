@@ -45,4 +45,5 @@ target_link_libraries(hello_triangle_editor PRIVATE veng::veng veng_editor::veng
 
 veng_add_editor(hello_triangle
         GAME_MODULE   hello_triangle
-        EDITOR_MODULE hello_triangle_editor)
+        EDITOR_MODULE hello_triangle_editor
+        ASSET_PACK    hello_triangle_assets)

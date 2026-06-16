@@ -80,10 +80,11 @@ namespace VengEditor
 
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                     {
-                        // The opened panel is discarded this plan; the host does
-                        // not yet adopt asset-editor panels into its panel set.
+                        // The opened panel is queued for the host to adopt into its
+                        // panel set on the next frame (TakeOpenedPanels).
                         if (AssetEditorFactory* factory = m_Editors.AssetEditorFor(asset.Type))
-                            (void)factory->OpenEditor(asset.Id);
+                            if (Unique<EditorPanel> panel = factory->OpenEditor(asset.Id))
+                                m_Opened.push_back(std::move(panel));
                     }
                 }
 
@@ -96,5 +97,10 @@ namespace VengEditor
 
             ImGui::EndTable();
         }
+    }
+
+    vector<Unique<EditorPanel>> AssetBrowserPanel::TakeOpenedPanels()
+    {
+        return std::move(m_Opened);
     }
 }

@@ -17,10 +17,12 @@
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Vendor/ImGui.h>
 
+#include "AssetSourceIndex.h"
 #include "panels/AssetBrowserPanel.h"
 #include "panels/ConsolePanel.h"
 #include "panels/InspectorPanel.h"
 #include "panels/SceneViewportPanel.h"
+#include "panels/TextureEditorPanel.h"
 
 namespace VengEditor
 {
@@ -37,6 +39,40 @@ namespace VengEditor
         {
             u32 Texture;
             u32 Sampler;
+        };
+
+        // The built-in texture editor factory: resolves a texture AssetId to its
+        // .tex.json source through the manifest index, then mints a
+        // TextureEditorPanel wired to the host's engine refs and cook driver.
+        class TextureEditorFactory final : public AssetEditorFactory
+        {
+        public:
+            TextureEditorFactory(AssetSourceIndex index, Renderer::Context& context,
+                                 AssetManager& assets, ImGuiLayer& imgui, VengEditor::CookDriver cook) :
+                m_Index(std::move(index)), m_Context(context), m_Assets(assets),
+                m_ImGui(imgui), m_Cook(std::move(cook))
+            {
+            }
+
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            {
+                const AssetSourceIndex::Entry* entry = m_Index.Find(id);
+                if (!entry)
+                {
+                    Log::Error("Texture editor: no source manifest entry for asset 0x{:X}", id.Value);
+                    return nullptr;
+                }
+
+                return CreateUnique<TextureEditorPanel>(
+                    id, entry->Source, m_Context, m_Assets, m_ImGui, m_Cook);
+            }
+
+        private:
+            AssetSourceIndex m_Index;
+            Renderer::Context& m_Context;
+            AssetManager& m_Assets;
+            ImGuiLayer& m_ImGui;
+            VengEditor::CookDriver m_Cook;
         };
     }
 
@@ -158,8 +194,27 @@ namespace VengEditor
         m_Viewport = viewport.get();
         m_Panels.push_back({std::move(viewport), true});
 
-        m_Panels.push_back({CreateUnique<AssetBrowserPanel>(
-            ExecutableDirectory() / "sample.vengpack", m_Registries->Editor), true});
+        // The built-in texture editor: registered before the modules' own editor
+        // factories would be (first-write-wins), so a game module registering its
+        // own texture editor for the same type does not override the built-in. The
+        // cook driver is RequestCook bound to this host.
+        if (m_Info.AssetManifestPath)
+        {
+            VengEditor::CookDriver cook = [this](const VengEditor::CookRequest& request,
+                                                 function<void(Result<MountHandle>)> onComplete)
+            {
+                RequestCook(request, std::move(onComplete));
+            };
+            m_Registries->Editor.RegisterAssetEditor(AssetType::Texture,
+                CreateUnique<TextureEditorFactory>(
+                    AssetSourceIndex::Parse(*m_Info.AssetManifestPath),
+                    GetRenderContext(), GetAssetManager(), *GetImGuiLayer(), std::move(cook)));
+        }
+
+        auto assetBrowser = CreateUnique<AssetBrowserPanel>(
+            ExecutableDirectory() / "sample.vengpack", m_Registries->Editor);
+        m_AssetBrowser = assetBrowser.get();
+        m_Panels.push_back({std::move(assetBrowser), true});
         auto inspector = CreateUnique<InspectorPanel>(GetAssetManager(), m_Registries->Editor);
         m_Inspector = inspector.get();
         m_Panels.push_back({std::move(inspector), true});
@@ -269,6 +324,10 @@ namespace VengEditor
         // hierarchy panel yet, the viewport's prefab root is the default selection.
         m_Inspector->SetSelection(&m_Viewport->GetScene(), m_Viewport->PrimaryEntity());
 
+        // Adopt any asset-editor panels the browser opened since last frame.
+        for (Unique<EditorPanel>& opened : m_AssetBrowser->TakeOpenedPanels())
+            m_Panels.push_back({std::move(opened), true});
+
         ImGui::DockSpaceOverViewport();
         DrawMenuBar();
 
@@ -297,6 +356,7 @@ namespace VengEditor
         m_Panels.clear();
         m_Viewport = nullptr;
         m_Inspector = nullptr;
+        m_AssetBrowser = nullptr;
         m_PresentGraph.reset();
         m_BlitPipeline.reset();
         m_BlitLayout.reset();

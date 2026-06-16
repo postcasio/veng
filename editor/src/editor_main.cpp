@@ -15,6 +15,11 @@ int main(const int argc, char** argv)
 #ifdef VENG_EDITOR_EDITOR_MODULE
         .EditorModulePath = Veng::ExecutableDirectory() / VENG_EDITOR_EDITOR_MODULE,
 #endif
+#ifdef VENG_EDITOR_ASSET_MANIFEST
+        // The in-tree source manifest, baked absolute by veng_add_editor, so the
+        // editor resolves an AssetId to its per-asset JSON source for editing.
+        .AssetManifestPath = Veng::path(VENG_EDITOR_ASSET_MANIFEST),
+#endif
         .App = {
             .Name = "veng Editor",
             .InternalRenderExtent = {1280, 720},
