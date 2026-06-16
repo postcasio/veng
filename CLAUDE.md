@@ -550,7 +550,9 @@ indexes the **plansets** (numbered coherent phases) and `plans/future/` (a
 vision/holding area: asset system, threading, events/input, testing). Each
 planset/future README carries the detail, decisions, and per-plan status column.
 
-**Plan work** — one plan per session, on the user's cue. Per plan:
+**Plan work** — one planset per session, on the user's cue, dispatching its plans as
+appropriate (independent plans in parallel, dependent plans in sequence, derived from
+the plans' direction). Per plan:
 1. Implement it.
 2. Migrate `examples/hello-triangle` in the *same* pass as the breaking changes.
 3. Verify (clean build, `ctest` green, smoke binary writes a correct-sized PPM).
