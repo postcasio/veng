@@ -35,3 +35,14 @@ add_asset_pack(hello_triangle_assets
 veng_add_game(hello_triangle
         SOURCES    main.cpp
         ASSET_PACK hello_triangle_assets)
+
+# The game's editor module: the editor host dlopens it beside the game module to
+# register the game's editor-only views. It registers none yet, exercising the
+# editor-module load path. Links veng_editor for the EditorRegistry surface later
+# plans register into.
+add_library(hello_triangle_editor SHARED hello_triangle_editor.cpp)
+target_link_libraries(hello_triangle_editor PRIVATE veng::veng veng_editor::veng_editor)
+
+veng_add_editor(hello_triangle
+        GAME_MODULE   hello_triangle
+        EDITOR_MODULE hello_triangle_editor)

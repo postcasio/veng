@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+# libveng_editor — the editor framework library
+# ---------------------------------------------------------------------------
+#
+# The editor host, panels, EditorRegistry, and dockspace. Links veng::veng
+# PRIVATE (the engine runtime, behind the editor's own surface) and the ImGui
+# headers PRIVATE (the editor draws its UI directly). libveng_cook is NOT linked
+# here; cook-on-demand is a later plan.
+
+add_library(veng_editor SHARED
+        src/EditorHost.cpp
+        src/panels/AssetBrowserPanel.cpp
+        src/panels/ConsolePanel.cpp
+        src/panels/InspectorPanel.cpp
+        src/panels/SceneViewportPanel.cpp
+)
+add_library(veng_editor::veng_editor ALIAS veng_editor)
+
+target_include_directories(veng_editor PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+
+# The editor's public headers pull in ImGui (a UI library, part of the editor's
+# surface) but never Vulkan/GLFW — same boundary as libveng. veng::veng already
+# propagates the ImGui include dirs and hosts the ImGui symbols; link it PUBLIC so
+# an editor module compiling against VengEditor headers resolves <imgui.h>.
+target_link_libraries(veng_editor PUBLIC veng::veng)
+
+# Same -fno-exceptions enforcement as libveng: asserts are fatal, recoverable
+# operations return Veng::Result<T>.
+target_compile_options(veng_editor PRIVATE -fno-exceptions)
+target_compile_definitions(veng_editor PRIVATE VE_BUILD_SHARED)
+
+# The editor launcher source veng_add_editor compiles per game (mirrors
+# VENG_LAUNCHER_MAIN in Game.cmake).
+set(VENG_EDITOR_MAIN "${CMAKE_CURRENT_SOURCE_DIR}/src/editor_main.cpp"
+    CACHE INTERNAL "veng editor launcher source")

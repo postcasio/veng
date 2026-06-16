@@ -1,0 +1,150 @@
+#include "SceneViewportPanel.h"
+
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Material.h>
+#include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/Prefab.h>
+#include <Veng/Asset/Primitives.h>
+#include <Veng/Assert.h>
+#include <Veng/ImGui/ImGuiLayer.h>
+#include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/Sampler.h>
+#include <Veng/Scene/Components.h>
+#include <Veng/Time.h>
+#include <Veng/Vendor/ImGui.h>
+
+namespace VengEditor
+{
+    using namespace Veng;
+
+    namespace
+    {
+        // The hello-triangle pack's brick material and the sphere prefab. The
+        // editor renders the same content the game ships.
+        constexpr AssetId BrickMaterialId{0x3EBULL};
+        constexpr AssetId SpherePrefabId{0xA123F30FD219F2D5ULL};
+
+        const vec3 SpinAxis = glm::normalize(vec3(0.5f, 1.0f, 0.2f));
+    }
+
+    SceneViewportPanel::SceneViewportPanel(Renderer::Context& context, AssetManager& assets,
+                                           ImGuiLayer& imgui, TypeRegistry& types) :
+        m_Context(context), m_Assets(assets), m_ImGui(imgui), m_Types(types)
+    {
+        m_RenderExtent = context.GetInternalRenderExtent();
+
+        m_SceneRenderer = Renderer::SceneRenderer::Create({
+            .Context = context,
+            .Assets = assets,
+            .OutputFormat = context.GetOutputFormat(),
+            .Extent = m_RenderExtent,
+            .Settings = {},
+        });
+
+        m_Sampler = Renderer::Sampler::Create(context, {
+            .Name = "Editor Viewport Sampler",
+            .AddressModeU = Renderer::AddressMode::ClampToEdge,
+            .AddressModeV = Renderer::AddressMode::ClampToEdge,
+            .AddressModeW = Renderer::AddressMode::ClampToEdge,
+        });
+
+        BuildScene();
+        RegisterOutput();
+    }
+
+    SceneViewportPanel::~SceneViewportPanel()
+    {
+        m_Texture.reset();
+        m_Sampler.reset();
+        m_Scene.reset();
+        m_BrickMaterial = {};
+        m_SceneRenderer.reset();
+    }
+
+    void SceneViewportPanel::BuildScene()
+    {
+        const AssetResult<AssetHandle<Material>> brick = m_Assets.LoadSync<Material>(BrickMaterialId);
+        VE_ASSERT(brick.has_value(), "{}", brick.error().Detail);
+        m_BrickMaterial = *brick;
+
+        const Ref<Mesh> sphere = Mesh::Create(
+            m_Context, Primitives::Icosphere(0.8f, 4, m_BrickMaterial), "Editor Sphere");
+
+        m_Scene = Scene::Create(m_Types);
+
+        const AssetResult<AssetHandle<Prefab>> prefab = m_Assets.LoadSync<Prefab>(SpherePrefabId);
+        VE_ASSERT(prefab.has_value(), "{}", prefab.error().Detail);
+
+        const vector<Entity> roots = prefab->Get()->SpawnInto(*m_Scene, m_Assets);
+        VE_ASSERT(!roots.empty(), "prefab spawned no root entities");
+
+        m_Scene->Get<MeshRenderer>(roots[0]).Mesh = m_Assets.Adopt(sphere);
+
+        const Entity lightEntity = m_Scene->CreateEntity();
+        m_Scene->Add<Light>(lightEntity) = Light{
+            .Direction = glm::normalize(vec3(-0.4f, -0.7f, -0.5f)),
+            .Color = vec3(1.0f, 1.0f, 1.0f),
+            .Intensity = 1.5f,
+        };
+
+        const f32 aspect = static_cast<f32>(m_RenderExtent.x) / static_cast<f32>(m_RenderExtent.y);
+        m_Camera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+        m_Camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+    }
+
+    void SceneViewportPanel::RegisterOutput()
+    {
+        m_Texture = m_ImGui.CreateTexture(*m_Sampler, *m_SceneRenderer->GetOutput());
+    }
+
+    void SceneViewportPanel::Render(Renderer::CommandBuffer& cmd)
+    {
+        // A pending resize from the previous frame's content region: recreate the
+        // renderer at the new size before recording, then re-register the texture
+        // (Resize invalidates GetOutput()).
+        if (m_PendingExtent.x != 0 && m_PendingExtent.y != 0 && m_PendingExtent != m_RenderExtent)
+        {
+            m_RenderExtent = m_PendingExtent;
+            m_SceneRenderer->Resize(m_RenderExtent);
+
+            const f32 aspect = static_cast<f32>(m_RenderExtent.x) / static_cast<f32>(m_RenderExtent.y);
+            m_Camera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+            RegisterOutput();
+        }
+
+        const f32 delta = Time::GetDeltaTime();
+        m_TimeAccum += delta;
+
+        // Spin every entity carrying a Transform. The game's Spinner component is
+        // not visible to libveng_editor, so the viewport drives rotation directly
+        // off the Transform; the directional light has no Transform and stays put.
+        m_Scene->Each<Transform>([this](Entity, Transform& transform)
+        {
+            transform.Rotation = glm::angleAxis(m_TimeAccum, SpinAxis);
+        });
+
+        const Renderer::SceneView view{.World = *m_Scene, .Camera = m_Camera, .Delta = delta};
+        m_SceneRenderer->Execute(cmd, view);
+
+        // The ImGui pass samples the output outside the graph, so transition it to
+        // a sampleable layout before ImGuiLayer::Render records the read.
+        cmd.PrepareForAccess(m_SceneRenderer->GetOutput(), Renderer::AccessKind::Sample);
+    }
+
+    void SceneViewportPanel::OnImGui()
+    {
+        const ImVec2 available = ImGui::GetContentRegionAvail();
+        const uvec2 wanted{static_cast<u32>(available.x), static_cast<u32>(available.y)};
+        m_PendingExtent = wanted;
+
+        const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
+        const f32 aspect = static_cast<f32>(output->GetImage()->GetHeight()) /
+                           static_cast<f32>(output->GetImage()->GetWidth());
+
+        ImGui::Image(static_cast<ImTextureID>(m_Texture->GetTextureId()),
+                     {available.x, available.x * aspect});
+    }
+}

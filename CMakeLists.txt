@@ -16,6 +16,7 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AssetPack.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Game.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Editor.cmake)
 
 option(VE_DEBUG "Enable veng debug features (validation layers, asserts)" OFF)
 
@@ -159,6 +160,12 @@ FetchContent_MakeAvailable(imnodes)
 add_subdirectory(assetformat)
 add_subdirectory(engine)
 add_subdirectory(cooker)
+
+# The editor framework library is top-level-only (same gate as tests/examples):
+# it serves the example editor and is not part of the installed library surface.
+if (PROJECT_IS_TOP_LEVEL)
+    add_subdirectory(editor)
+endif ()
 
 # ---------------------------------------------------------------------------
 # Core pack — cook built-in vertex layouts and embed into libveng

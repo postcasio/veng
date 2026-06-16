@@ -179,6 +179,18 @@ single-purpose today — a C++ `offsetof`. A GPU field's offset is a *different*
 component case and a **GPU buffer write** in the material case. Decide that representation
 up front; it is painful to retrofit onto a populated descriptor table.
 
+### 11. ImGuiCompositePass
+
+Every `SceneRenderer`-based app today hand-writes an identical fullscreen composite
+pass (scene offscreen output → swapchain) and manually re-registers the bindless
+slot and ImGui texture whenever `Resize`/`Configure` recreates the output image.
+An engine-provided **`ImGuiCompositePass`** eliminates that boilerplate: the app
+wires it into its own `RenderGraph` (compositing stays in the app), calls
+`SetSource(imageView)` once after `Resize`/`Configure`, and the pass owns both
+registrations internally. Named deliberately — this is not a general-purpose
+compositor; it is scoped to the ImGui workflow. **Design overview:**
+[imgui-composite-pass.md](imgui-composite-pass.md).
+
 ### 8. Scene renderer / render-pipeline architecture — DONE (planset-12)
 
 > **DONE** ([planset-12](../planset-12/README.md), 5 plans). A long-lived,
