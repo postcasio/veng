@@ -32,10 +32,24 @@ namespace Veng::Renderer
     class Image;
     class Sampler;
 
+    // Which result the renderer produces, re-wiring the pass set: Final is the full
+    // deferred chain (g-buffer → lighting → tonemap), the others terminate the chain
+    // after the g-buffer with a single fullscreen debug blit of one g-buffer channel.
+    // Changing it is a genuine topology change driven through Configure → recompile.
+    enum class DebugView : u8 { Final, Albedo, Normal, Depth };
+
     // Topology/sizing knobs. A change here is a Configure → recompile: a knob that
     // turns a pass on/off or re-wires the pass set lives here, not in SceneView.
     struct SceneRendererSettings
     {
+        // Re-wires the pass set (a topology change → Configure → recompile).
+        DebugView Mode = DebugView::Final;
+
+        // The tonemap pass's exposure scale, applied before the tone curve. A
+        // recompile-safe value (it never changes topology) kept a setting so the
+        // Settings surface is exercised; a purely per-frame knob could instead ride
+        // SceneView (the per-frame-vs-recompile distinction).
+        f32 Exposure = 1.0f;
     };
 
     struct SceneRendererInfo
@@ -114,9 +128,11 @@ namespace Veng::Renderer
         // Recreate the HDR image/view at the current extent and (re-)register it
         // into the bindless registry.
         void CreateHdr();
-        // Build the engine-owned lighting + HDR-blit pipelines once at Create.
+        // Build the engine-owned fullscreen pipelines (lighting, tonemap, and the
+        // albedo/normal/depth debug blits) once at Create.
         void CreatePipelines();
-        // Rebuild the RenderGraph from the pass units and re-Compile().
+        // Rebuild the pass set from Settings.Mode and the RenderGraph from it, then
+        // re-Compile().
         void Rebuild();
 
         Context& m_Context;
@@ -138,8 +154,18 @@ namespace Veng::Renderer
         Ref<ImageView> m_DepthView;
 
         // The HDR target the deferred lighting pass writes (linear, unbounded
-        // range) and the tail pass samples. Renderer-owned and imported like the
+        // range) and the tonemap pass samples. Renderer-owned and imported like the
         // g-buffer; tonemap maps it to the output format.
+        //
+        // Single-in-flight contract: every renderer-owned image above (g-buffer,
+        // depth, HDR, output) is single-copy. One Execute resolves and completes
+        // before the next begins; within a frame, written-then-read images are
+        // correctly ordered by the graph's derived barriers, and the retire path
+        // covers destruction safety on Resize/Configure. There is no cross-frame ring
+        // buffer because the output is consumed in the frame it is written — a
+        // compositor samples GetOutput() for the same frame the renderer wrote it, so
+        // the frames-in-flight > 1 hazard (a compositor caching/sampling an output
+        // across frames-in-flight) does not arise.
         Ref<Image> m_HdrImage;
         Ref<ImageView> m_HdrView;
 
@@ -155,17 +181,24 @@ namespace Veng::Renderer
         TextureHandle m_HdrHandle;
         SamplerHandle m_SamplerHandle;
 
-        // The engine-owned deferred-lighting pipeline + layout (g-buffer + light →
-        // HDR) and the HDR-blit pipeline + layout (HDR → output). Built once from
-        // the core pack's shaders; the lighting pipeline writes the HDR format, the
-        // blit pipeline the output format.
+        // The engine-owned fullscreen pipelines + layouts, all built once at Create
+        // from the core pack's shaders. The lighting pipeline writes the HDR format;
+        // the tonemap and the three debug-blit pipelines (albedo/normal/depth) write
+        // the output format. The pass set Configure wires from Mode references the
+        // pipelines it needs; the rest stay built but unused.
         Ref<class GraphicsPipeline> m_LightingPipeline;
         Ref<class PipelineLayout> m_LightingLayout;
-        Ref<class GraphicsPipeline> m_HdrBlitPipeline;
-        Ref<class PipelineLayout> m_HdrBlitLayout;
+        Ref<class GraphicsPipeline> m_TonemapPipeline;
+        Ref<class PipelineLayout> m_TonemapLayout;
+        Ref<class GraphicsPipeline> m_AlbedoBlitPipeline;
+        Ref<class PipelineLayout> m_AlbedoBlitLayout;
+        Ref<class GraphicsPipeline> m_NormalBlitPipeline;
+        Ref<class PipelineLayout> m_NormalBlitLayout;
+        Ref<class GraphicsPipeline> m_DepthBlitPipeline;
+        Ref<class PipelineLayout> m_DepthBlitLayout;
 
-        // The renderer owns its pass units in fixed wiring order and walks them on
-        // every rebuild.
+        // The renderer owns its pass units; the set is rebuilt per Settings.Mode on
+        // every Rebuild (the geometry pass is always first; Mode selects the tail).
         vector<Unique<ScenePass>> m_Passes;
 
         // The imported ids every rebuild re-declares, bound to their concrete

@@ -420,4 +420,264 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+namespace
+{
+    // Cooks the brick g-buffer fixture pack in-process and mounts it, returning the
+    // archive path the caller removes when done. The core pack (auto-mounted)
+    // supplies the canonical layout + the renderer's fullscreen shaders.
+    path CookAndMountBrick(AssetManager& assets, const char* archiveName)
+    {
+        const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+        const path outArchive = std::filesystem::temp_directory_path() / archiveName;
+
+        Cook::Cooker cooker;
+        Cook::RegisterBuiltinImporters(cooker);
+        const VoidResult cookResult = cooker.CookPack(fixtureDir / "gbuffer_pack.json", outArchive);
+        REQUIRE(cookResult.has_value());
+
+        const VoidResult mountResult = assets.Mount(outArchive);
+        REQUIRE(mountResult.has_value());
+        return outArchive;
+    }
+
+    // Renders a renderer once over the scene/camera and downloads its RGBA16F output.
+    vector<u8> RenderOutput(Context& context, SceneRenderer& renderer, const Scene& scene, const Camera& camera)
+    {
+        context.ImmediateCommands([&](CommandBuffer& cmd)
+        {
+            renderer.Execute(cmd, Renderer::SceneView{.World = scene, .Camera = camera, .Delta = 0.0f});
+        });
+        return renderer.GetOutput()->GetImage()->Download();
+    }
+}
+
+// The design-for-N proof: two SceneRenderers, different extents and different Modes
+// (one Final, one Albedo), over ONE Scene with two cameras, Executed INTERLEAVED in
+// one command stream (A, B, A) to exercise each renderer's independent barrier
+// domain. Asserts the outputs are independent — each sized to its own extent, and
+// the same scene texel reads differently between the two modes (Albedo is the raw
+// g-buffer color; Final is the lit + tonemapped result), so the two renderers do
+// not share state.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: two renderers (different extents + Modes) interleaved over one scene are independent")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_two_renderer.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "N-Test Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    // One directional light straight at the front face, so the lit (Final) result is
+    // clearly distinct from the raw albedo.
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f, 1.0f, 1.0f),
+        .Intensity = 1.0f,
+    };
+
+    constexpr uvec2 extentA{96, 96};
+    constexpr uvec2 extentB{64, 48};
+
+    Camera cameraA;
+    cameraA.SetPerspective(glm::radians(45.0f), static_cast<f32>(extentA.x) / extentA.y, 0.1f, 100.0f);
+    cameraA.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    Camera cameraB;
+    cameraB.SetPerspective(glm::radians(45.0f), static_cast<f32>(extentB.x) / extentB.y, 0.1f, 100.0f);
+    cameraB.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> rendererA = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(), .Extent = extentA,
+        .Settings = {.Mode = DebugView::Final},
+    });
+    const Unique<SceneRenderer> rendererB = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(), .Extent = extentB,
+        .Settings = {.Mode = DebugView::Albedo},
+    });
+
+    // Each owns its target at its own extent — the crisp independence proof.
+    CHECK(rendererA->GetOutput()->GetImage()->GetWidth() == extentA.x);
+    CHECK(rendererA->GetOutput()->GetImage()->GetHeight() == extentA.y);
+    CHECK(rendererB->GetOutput()->GetImage()->GetWidth() == extentB.x);
+    CHECK(rendererB->GetOutput()->GetImage()->GetHeight() == extentB.y);
+
+    // Interleave A, B, A in one command stream so each renderer's barrier domain is
+    // exercised against the other's recording, not in isolation.
+    Context.ImmediateCommands([&](CommandBuffer& cmd)
+    {
+        rendererA->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = cameraA, .Delta = 0.0f});
+        rendererB->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = cameraB, .Delta = 0.0f});
+        rendererA->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = cameraA, .Delta = 0.0f});
+    });
+
+    const vector<u8> pixelsA = rendererA->GetOutput()->GetImage()->Download();
+    const vector<u8> pixelsB = rendererB->GetOutput()->GetImage()->Download();
+    REQUIRE(pixelsA.size() == static_cast<size_t>(extentA.x) * extentA.y * 8);
+    REQUIRE(pixelsB.size() == static_cast<size_t>(extentB.x) * extentB.y * 8);
+
+    // The cube's lit front face fills both centers. A's Final result is the lit +
+    // tonemapped color; B's Albedo result is the raw (linear) brick albedo. They are
+    // distinguishable — independent renderers producing mode-consistent content.
+    const vec3 centerA = DecodeTexel(pixelsA, extentA.x, extentA.x / 2, extentA.y / 2);
+    const vec3 centerB = DecodeTexel(pixelsB, extentB.x, extentB.x / 2, extentB.y / 2);
+
+    // Both render the cube (red-dominant brick), not the dark background.
+    CHECK(centerA.r > 0.1f);
+    CHECK(centerB.r > 0.1f);
+    // The two modes differ measurably at the same world texel.
+    const f32 redDelta = std::fabs(centerA.r - centerB.r);
+    const f32 greenDelta = std::fabs(centerA.g - centerB.g);
+    CHECK((redDelta > 0.02f || greenDelta > 0.02f));
+
+    std::filesystem::remove(outArchive);
+}
+
+// Configure/Mode recompile proof. The renderer renders the same scene under each
+// DebugView; the proof the pass set re-wired is the observable difference in the
+// output pixels — there is no pass-count introspection. Final (lit + tonemap),
+// Albedo (raw g-buffer color), Normal (decoded world normal), and Depth (greyscale)
+// each produce a distinct center texel for the same cube.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: Configure(Mode) re-wires the pass set — output pixels change per mode")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_mode_recompile.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Mode Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f), .Color = vec3(1.0f), .Intensity = 1.0f,
+    };
+
+    constexpr uvec2 extent{128, 128};
+
+    Camera camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Settings = {.Mode = DebugView::Final},
+    });
+
+    auto Center = [&]() -> vec3
+    {
+        const vector<u8> pixels = RenderOutput(Context, *renderer, *scene, camera);
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        return DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
+    };
+
+    const vec3 finalCenter = Center();
+
+    renderer->Configure({.Mode = DebugView::Albedo});
+    const vec3 albedoCenter = Center();
+
+    renderer->Configure({.Mode = DebugView::Normal});
+    const vec3 normalCenter = Center();
+
+    renderer->Configure({.Mode = DebugView::Depth});
+    const vec3 depthCenter = Center();
+
+    // The front face's world normal is +Z, decoded as (0.5, 0.5, 1.0) — blue-biased,
+    // unlike the red-biased brick albedo. Depth is a grey shade (r == g == b).
+    CHECK(normalCenter.b > normalCenter.r);
+    CHECK(depthCenter.r == doctest::Approx(depthCenter.g).epsilon(0.02f));
+    CHECK(depthCenter.g == doctest::Approx(depthCenter.b).epsilon(0.02f));
+
+    // Each mode produces a distinct center — the recompile re-wired the pass set.
+    auto Differs = [](const vec3 a, const vec3 b) -> bool
+    {
+        return std::fabs(a.r - b.r) > 0.02f || std::fabs(a.g - b.g) > 0.02f || std::fabs(a.b - b.b) > 0.02f;
+    };
+    CHECK(Differs(finalCenter, albedoCenter));
+    CHECK(Differs(finalCenter, normalCenter));
+    CHECK(Differs(albedoCenter, normalCenter));
+    CHECK(Differs(normalCenter, depthCenter));
+
+    // Configure back to Final restores the lit result.
+    renderer->Configure({.Mode = DebugView::Final});
+    const vec3 restored = Center();
+    CHECK(restored.r == doctest::Approx(finalCenter.r).epsilon(0.02f));
+
+    std::filesystem::remove(outArchive);
+}
+
+// Exposure proof: a higher exposure brightens the tonemapped Final result. The same
+// scene rendered at exposure 0.25 vs 4.0 produces a measurably darker vs brighter
+// center texel — the Exposure setting flows into the tonemap pass.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: Exposure setting changes the tonemapped result")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_exposure.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Exposure Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f), .Color = vec3(1.0f), .Intensity = 1.0f,
+    };
+
+    constexpr uvec2 extent{128, 128};
+
+    Camera camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Exposure = 0.25f},
+    });
+
+    auto CenterLuma = [&]() -> f32
+    {
+        const vector<u8> pixels = RenderOutput(Context, *renderer, *scene, camera);
+        const vec3 c = DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
+        return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
+    };
+
+    const f32 dim = CenterLuma();
+    renderer->Configure({.Mode = DebugView::Final, .Exposure = 4.0f});
+    const f32 bright = CenterLuma();
+
+    CHECK(bright > dim + 0.05f);
+
+    std::filesystem::remove(outArchive);
+}
+
 #endif // GPU_GBUFFER_FIXTURE_DIR

@@ -88,7 +88,7 @@ protected:
             .Assets = GetAssetManager(),
             .OutputFormat = context.GetOutputFormat(),
             .Extent = sceneExtent,
-            .Settings = {},
+            .Settings = m_SceneSettings,
         });
 
         m_Sampler = Renderer::Sampler::Create(context, {
@@ -132,9 +132,9 @@ protected:
                 .Image = GetImGuiLayer()->GetOutputImage(),
             });
 
+            // CreateCompositePipeline registers the scene output (bindless slot + the
+            // ImGui scene texture) via RegisterSceneOutput.
             CreateCompositePipeline();
-
-            m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_Sampler, *m_SceneRenderer->GetOutput());
 
             // A swapchain resize invalidates the composite pass's baked extent;
             // rebuild + re-Compile() the composite graph against the new size. The
@@ -307,14 +307,43 @@ private:
         // bindless registry (set 0) — composite.frag indexes them via push
         // constants.
         auto& bindless = context.GetBindlessRegistry();
-        m_SceneTextureHandle = bindless.Register(m_SceneRenderer->GetOutput());
         m_ImGuiTextureHandle = bindless.Register(m_ImGuiImageView);
         m_SamplerHandle = bindless.Register(m_Sampler);
+        RegisterSceneOutput();
     }
 
-    void RenderUserInterface() const
+    // (Re-)register the SceneRenderer's current output into the bindless slot the
+    // composite samples and the ImGui texture the Scene panel draws. Called once at
+    // setup and again after Configure (which recreates the output image, invalidating
+    // the prior slot/texture). The composite reads m_SceneTextureHandle.Index live
+    // per frame, so updating the handle takes effect on the next replay.
+    void RegisterSceneOutput()
+    {
+        auto& bindless = GetRenderContext().GetBindlessRegistry();
+        if (m_SceneTextureHandle.IsValid())
+            bindless.Release(m_SceneTextureHandle);
+        m_SceneTextureHandle = bindless.Register(m_SceneRenderer->GetOutput());
+        m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_Sampler, *m_SceneRenderer->GetOutput());
+    }
+
+    void RenderUserInterface()
     {
         ImGui::Begin("Scene");
+
+        // The DebugView combo drives SceneRenderer::Configure, re-wiring the pass set
+        // (Final / Albedo / Normal / Depth) — a live exercise of the recompile seam.
+        // Configure recreates the output image, so the cached scene texture + bindless
+        // slot must be re-built after it (the GetOutput()-invalidated-by-Configure
+        // contract).
+        const char* modeNames[] = {"Final", "Albedo", "Normal", "Depth"};
+        int mode = static_cast<int>(m_SceneSettings.Mode);
+        if (ImGui::Combo("View", &mode, modeNames, IM_ARRAYSIZE(modeNames)))
+        {
+            m_SceneSettings.Mode = static_cast<Renderer::DebugView>(mode);
+            m_SceneRenderer->Configure(m_SceneSettings);
+            RegisterSceneOutput();
+        }
+
         const ImVec2 available = ImGui::GetContentRegionAvail();
         const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
         const f32 aspect = static_cast<f32>(output->GetImage()->GetHeight()) /
@@ -408,6 +437,7 @@ private:
     }
 
     Unique<Renderer::SceneRenderer> m_SceneRenderer;
+    Renderer::SceneRendererSettings m_SceneSettings;
     Ref<Renderer::ImageView> m_ImGuiImageView;
     Ref<Renderer::Sampler> m_Sampler;
 

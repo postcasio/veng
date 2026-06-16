@@ -1,0 +1,4 @@
+{
+  "source": "tonemap.frag.slang",
+  "entry": "fsMain"
+}
