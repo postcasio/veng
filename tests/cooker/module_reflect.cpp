@@ -45,6 +45,17 @@ TEST_CASE("module reflect: LoadModuleTypes reflects builtins + the game's Spinne
     CHECK(types.IsRegistered(TypeIdOf<MeshRenderer>()));
     CHECK(types.IsRegistered(TypeIdOf<CameraComponent>()));
 
+    // The Light builtin, with its authored TypeId and field set — reflected from
+    // the loaded module with no device.
+    REQUIRE(types.IsRegistered(TypeIdOf<Light>()));
+    const TypeInfo& light = types.Info(TypeIdOf<Light>());
+    CHECK(light.Id == 0xECF6442708DF7C00ULL);
+    CHECK(light.Name == "::Veng::Light");
+    REQUIRE(light.Fields.size() == 3);
+    CHECK(light.Fields[0].Name == "Direction");
+    CHECK(light.Fields[1].Name == "Color");
+    CHECK(light.Fields[2].Name == "Intensity");
+
     // The game's component, registered by the module's VengModuleRegister.
     REQUIRE(types.IsRegistered(SpinnerTypeId));
 

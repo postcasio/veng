@@ -5,6 +5,8 @@
     { "id": 5802985661779036512, "type": "vertex_layout", "source": "layouts/screenspace.vlayout.json" },
     { "id": 9444255541371061951, "type": "vertex_layout", "source": "layouts/positiononly.vlayout.json" },
     { "id": 17612966569144354344, "type": "shader", "source": "shaders/fullscreen.vert.shader.json" },
-    { "id": 17946686809606999015, "type": "shader", "source": "shaders/albedo_blit.frag.shader.json" }
+    { "id": 17946686809606999015, "type": "shader", "source": "shaders/albedo_blit.frag.shader.json" },
+    { "id": 7307630994487561247, "type": "shader", "source": "shaders/deferred_lighting.frag.shader.json" },
+    { "id": 13742412625165098291, "type": "shader", "source": "shaders/hdr_blit.frag.shader.json" }
   ]
 }

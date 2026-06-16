@@ -47,6 +47,17 @@ namespace Veng
     {
         AssetHandle<Mesh> Mesh;
     };
+
+    // A directional light. Direction is the direction the light travels in world
+    // space; Color is linear RGB; Intensity scales it. The deferred lighting pass
+    // shades with a single directional light selected from the scene into the
+    // per-frame SceneView.
+    struct Light
+    {
+        vec3 Direction{0.0f, -1.0f, 0.0f};
+        vec3 Color{1.0f, 1.0f, 1.0f};
+        f32 Intensity{1.0f};
+    };
 }
 
 VE_REFLECT(::Veng::Name, 0xDA40E8FAC8A6DB84ULL)
@@ -65,4 +76,10 @@ VE_REFLECT_END();
 
 VE_REFLECT(::Veng::MeshRenderer, 0x3C5CB13E46E0450BULL)
     VE_FIELD(Mesh, .DisplayName = "Mesh")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::Light, 0xECF6442708DF7C00ULL)
+    VE_FIELD(Direction, .DisplayName = "Direction")
+    VE_FIELD(Color, .DisplayName = "Color")
+    VE_FIELD(Intensity, .DisplayName = "Intensity", .Min = 0.0)
 VE_REFLECT_END();

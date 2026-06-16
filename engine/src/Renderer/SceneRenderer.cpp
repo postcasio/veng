@@ -27,10 +27,18 @@ namespace Veng::Renderer
 {
     namespace
     {
-        // The engine core pack's fullscreen-blit shaders, addressed by their
-        // hardcoded core-pack ids (the AssetManager auto-mounts the core pack).
+        // The engine core pack's fullscreen shaders, addressed by their hardcoded
+        // core-pack ids (the AssetManager auto-mounts the core pack).
         constexpr AssetId FullscreenVertId{0xF46DD3C6F2AE0628ULL};
-        constexpr AssetId AlbedoBlitFragId{0xF90F709155D04BE7ULL};
+        constexpr AssetId DeferredLightingFragId{0x6569EBAC0810CC1FULL};
+        constexpr AssetId HdrBlitFragId{0xBEB6DB78DFCF1D33ULL};
+
+        // The HDR lighting target's format: a linear signed-float color target the
+        // lighting pass writes and the tail pass samples. Same format G1 already
+        // uses as a sampled color target, so a color-attachment + sampled RGBA16F
+        // is established on the platform.
+        constexpr Format HdrFormat = Format::RGBA16Sfloat;
+        constexpr ImageUsage HdrUsage = ImageUsage::ColorAttachment | ImageUsage::Sampled;
 
         // The shared push-constant block both brick stages declare: the vertex
         // stage's MVP (offset 0) and the per-draw MaterialIndex (offset 64,
@@ -54,11 +62,25 @@ namespace Veng::Renderer
 
         static_assert(sizeof(NormalMatrixPush) == 48, "NormalMatrix push must be a column-major float3x3 (48 bytes)");
 
-        // The albedo-blit fragment shader's push block: the bindless slots it
-        // samples the g-buffer albedo through.
-        struct AlbedoBlitPushConstants
+        // The deferred-lighting fragment shader's push block: the bindless slots it
+        // samples the g-buffer through, plus the directional light. Matches the
+        // shader's PushConstants byte-for-byte (the four u32 indices are packed,
+        // then two vec4s at their 16-byte alignment).
+        struct LightingPushConstants
         {
             u32 AlbedoTexture;
+            u32 NormalTexture;
+            u32 DepthTexture;
+            u32 Sampler;
+            vec4 LightDirection; // xyz: world-space travel direction
+            vec4 LightColor;     // rgb: linear color; a: intensity
+        };
+
+        // The HDR-blit fragment shader's push block: the bindless slots it samples
+        // the HDR target through.
+        struct HdrBlitPushConstants
+        {
+            u32 HdrTexture;
             u32 Sampler;
         };
 
@@ -180,14 +202,17 @@ namespace Veng::Renderer
             uvec2 m_Extent;
         };
 
-        // The fullscreen albedo-blit pass: samples the g-buffer albedo (G0)
-        // through its bindless handle and writes the renderer's imported output —
-        // an unlit albedo view. Declaring .Sample(albedo) lets the graph derive
-        // the color-attachment → shader-read transition on G0.
-        class AlbedoBlitScenePass final : public ScenePass
+        // The fullscreen deferred-lighting pass: samples the g-buffer (G0 albedo,
+        // G1 world-normal, depth) through their bindless handles, applies the
+        // scene's directional light from the per-frame SceneView, and writes the
+        // renderer's imported HDR target. Declaring .Sample on each g-buffer id
+        // lets the graph derive the attachment → shader-read transitions —
+        // including the depth attachment → shader-read transition, the only depth
+        // target read as a texture in the engine.
+        class DeferredLightingScenePass final : public ScenePass
         {
         public:
-            AlbedoBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent)
+            DeferredLightingScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent)
                 : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent)
             {
             }
@@ -197,25 +222,85 @@ namespace Veng::Renderer
             void Declare(RenderGraph& graph, const PassIO& io) override
             {
                 const TextureHandle albedoHandle = io.AlbedoHandle;
+                const TextureHandle normalHandle = io.NormalHandle;
+                const TextureHandle depthHandle = io.DepthHandle;
                 const SamplerHandle samplerHandle = io.SamplerHandle;
 
-                graph.AddPass("Albedo Blit")
+                graph.AddPass("Deferred Lighting")
+                    .Color({
+                        .Resource = io.Hdr,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                    })
+                    .Sample(io.GBufferAlbedo)
+                    .Sample(io.GBufferNormal)
+                    .Sample(io.GBufferDepth)
+                    .Execute([this, albedoHandle, normalHandle, depthHandle, samplerHandle](PassContext& inner)
+                    {
+                        const ScenePassContext ctx = Wrap(inner);
+                        CommandBuffer& cmd = ctx.Cmd();
+                        const Light& light = ctx.View().Light;
+
+                        cmd.BindPipeline(m_Pipeline);
+                        cmd.SetViewport({0, 0}, m_Extent);
+                        cmd.SetScissor({0, 0}, m_Extent);
+                        m_Context.GetBindlessRegistry().Bind(cmd);
+                        cmd.PushConstants(LightingPushConstants{
+                            .AlbedoTexture = albedoHandle.Index,
+                            .NormalTexture = normalHandle.Index,
+                            .DepthTexture = depthHandle.Index,
+                            .Sampler = samplerHandle.Index,
+                            .LightDirection = vec4(light.Direction, 0.0f),
+                            .LightColor = vec4(light.Color, light.Intensity),
+                        });
+                        cmd.DrawFullscreenTriangle();
+                    });
+            }
+
+        private:
+            Context& m_Context;
+            Ref<GraphicsPipeline> m_Pipeline;
+            uvec2 m_Extent;
+        };
+
+        // The fullscreen HDR-blit pass: samples the HDR lighting target through its
+        // bindless handle and writes the renderer's imported output (clamped). The
+        // stand-in tail of the deferred chain; a tonemap pass replaces it.
+        // Declaring .Sample(hdr) lets the graph derive the HDR's color-attachment →
+        // shader-read transition.
+        class HdrBlitScenePass final : public ScenePass
+        {
+        public:
+            HdrBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent)
+                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent)
+            {
+            }
+
+            void Resize(const uvec2 extent) override { m_Extent = extent; }
+
+            void Declare(RenderGraph& graph, const PassIO& io) override
+            {
+                const TextureHandle hdrHandle = io.HdrHandle;
+                const SamplerHandle samplerHandle = io.SamplerHandle;
+
+                graph.AddPass("HDR Blit")
                     .Color({
                         .Resource = io.Output,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
                         .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
                     })
-                    .Sample(io.GBufferAlbedo)
-                    .Execute([this, albedoHandle, samplerHandle](PassContext& inner)
+                    .Sample(io.Hdr)
+                    .Execute([this, hdrHandle, samplerHandle](PassContext& inner)
                     {
                         CommandBuffer& cmd = inner.Cmd();
                         cmd.BindPipeline(m_Pipeline);
                         cmd.SetViewport({0, 0}, m_Extent);
                         cmd.SetScissor({0, 0}, m_Extent);
                         m_Context.GetBindlessRegistry().Bind(cmd);
-                        cmd.PushConstants(AlbedoBlitPushConstants{
-                            .AlbedoTexture = albedoHandle.Index,
+                        cmd.PushConstants(HdrBlitPushConstants{
+                            .HdrTexture = hdrHandle.Index,
                             .Sampler = samplerHandle.Index,
                         });
                         cmd.DrawFullscreenTriangle();
@@ -249,13 +334,15 @@ namespace Veng::Renderer
           m_Settings(info.Settings),
           m_Internal(CreateUnique<Internal>())
     {
-        CreateBlitPipeline();
+        CreatePipelines();
 
         m_Passes.push_back(CreateUnique<GBufferScenePass>(m_Context, m_Extent));
-        m_Passes.push_back(CreateUnique<AlbedoBlitScenePass>(m_Context, m_BlitPipeline, m_Extent));
+        m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(m_Context, m_LightingPipeline, m_Extent));
+        m_Passes.push_back(CreateUnique<HdrBlitScenePass>(m_Context, m_HdrBlitPipeline, m_Extent));
 
         CreateOutput();
         CreateGBuffer();
+        CreateHdr();
         Rebuild();
     }
 
@@ -267,30 +354,52 @@ namespace Veng::Renderer
         bindless.Release(m_AlbedoHandle);
         bindless.Release(m_NormalHandle);
         bindless.Release(m_DepthHandle);
+        bindless.Release(m_HdrHandle);
         bindless.Release(m_SamplerHandle);
     }
 
-    void SceneRenderer::CreateBlitPipeline()
+    void SceneRenderer::CreatePipelines()
     {
         const AssetResult<AssetHandle<Veng::Shader>> vs = m_Assets.LoadSync<Veng::Shader>(FullscreenVertId);
         VE_ASSERT(vs.has_value(), "SceneRenderer: fullscreen vertex shader load failed: {}", vs.error().Detail);
-        const AssetResult<AssetHandle<Veng::Shader>> fs = m_Assets.LoadSync<Veng::Shader>(AlbedoBlitFragId);
-        VE_ASSERT(fs.has_value(), "SceneRenderer: albedo-blit fragment shader load failed: {}", fs.error().Detail);
+        const AssetResult<AssetHandle<Veng::Shader>> lightingFs = m_Assets.LoadSync<Veng::Shader>(DeferredLightingFragId);
+        VE_ASSERT(lightingFs.has_value(), "SceneRenderer: deferred-lighting fragment shader load failed: {}", lightingFs.error().Detail);
+        const AssetResult<AssetHandle<Veng::Shader>> hdrBlitFs = m_Assets.LoadSync<Veng::Shader>(HdrBlitFragId);
+        VE_ASSERT(hdrBlitFs.has_value(), "SceneRenderer: HDR-blit fragment shader load failed: {}", hdrBlitFs.error().Detail);
 
-        m_BlitLayout = PipelineLayout::Create(m_Context, {
-            .Name = "SceneRenderer Blit Layout",
+        // The lighting pipeline writes the HDR target (linear float); the blit
+        // pipeline writes the output format.
+        m_LightingLayout = PipelineLayout::Create(m_Context, {
+            .Name = "SceneRenderer Lighting Layout",
             .PushConstantRanges = {
-                PushConstantRange::Of<AlbedoBlitPushConstants>(ShaderStage::Fragment),
+                PushConstantRange::Of<LightingPushConstants>(ShaderStage::Fragment),
             },
         });
 
-        m_BlitPipeline = GraphicsPipeline::Create(m_Context, {
-            .Name = "SceneRenderer Albedo Blit Pipeline",
-            .ColorAttachments = {{.Format = m_OutputFormat}},
-            .PipelineLayout = m_BlitLayout,
+        m_LightingPipeline = GraphicsPipeline::Create(m_Context, {
+            .Name = "SceneRenderer Deferred Lighting Pipeline",
+            .ColorAttachments = {{.Format = HdrFormat}},
+            .PipelineLayout = m_LightingLayout,
             .ShaderStages = {
                 {.Stage = ShaderStage::Vertex, .Module = vs->Get()->Module},
-                {.Stage = ShaderStage::Fragment, .Module = fs->Get()->Module},
+                {.Stage = ShaderStage::Fragment, .Module = lightingFs->Get()->Module},
+            },
+        });
+
+        m_HdrBlitLayout = PipelineLayout::Create(m_Context, {
+            .Name = "SceneRenderer HDR Blit Layout",
+            .PushConstantRanges = {
+                PushConstantRange::Of<HdrBlitPushConstants>(ShaderStage::Fragment),
+            },
+        });
+
+        m_HdrBlitPipeline = GraphicsPipeline::Create(m_Context, {
+            .Name = "SceneRenderer HDR Blit Pipeline",
+            .ColorAttachments = {{.Format = m_OutputFormat}},
+            .PipelineLayout = m_HdrBlitLayout,
+            .ShaderStages = {
+                {.Stage = ShaderStage::Vertex, .Module = vs->Get()->Module},
+                {.Stage = ShaderStage::Fragment, .Module = hdrBlitFs->Get()->Module},
             },
         });
     }
@@ -316,9 +425,9 @@ namespace Veng::Renderer
     void SceneRenderer::CreateGBuffer()
     {
         // The g-buffer is renderer-owned (sampled downstream, so not a graph
-        // transient): the geometry pass writes it, the blit/lighting pass samples
-        // it through bindless. Dropping the old Refs retires them; releasing the
-        // old slots defers through the same per-frame window.
+        // transient): the geometry pass writes it, the lighting pass samples it
+        // through bindless. Dropping the old Refs retires them; releasing the old
+        // slots defers through the same per-frame window.
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_AlbedoHandle);
         bindless.Release(m_NormalHandle);
@@ -364,12 +473,33 @@ namespace Veng::Renderer
         m_DepthHandle = bindless.Register(m_DepthView);
     }
 
+    void SceneRenderer::CreateHdr()
+    {
+        // The HDR target is renderer-owned and imported: the lighting pass writes
+        // it, the tail pass samples it through bindless. Dropping the old Ref
+        // retires it; releasing the old slot defers through the same per-frame
+        // window.
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        bindless.Release(m_HdrHandle);
+
+        m_HdrImage = Image::Create(m_Context, {
+            .Name = "SceneRenderer HDR",
+            .Extent = {m_Extent.x, m_Extent.y, 1},
+            .Format = HdrFormat,
+            .Usage = HdrUsage,
+        });
+        m_HdrView = ImageView::Create(m_Context, {.Name = "SceneRenderer HDR View", .Image = m_HdrImage});
+
+        m_HdrHandle = bindless.Register(m_HdrView);
+    }
+
     void SceneRenderer::Rebuild()
     {
         RenderGraph graph(m_Context);
         const ResourceId albedoId = graph.Import("SceneRenderer GBuffer Albedo");
         const ResourceId normalId = graph.Import("SceneRenderer GBuffer Normal");
         const ResourceId depthId = graph.Import("SceneRenderer GBuffer Depth");
+        const ResourceId hdrId = graph.Import("SceneRenderer HDR");
         m_OutputId = graph.Import("SceneRenderer Output");
 
         const PassIO io{
@@ -379,6 +509,8 @@ namespace Veng::Renderer
             .AlbedoHandle = m_AlbedoHandle,
             .NormalHandle = m_NormalHandle,
             .DepthHandle = m_DepthHandle,
+            .Hdr = hdrId,
+            .HdrHandle = m_HdrHandle,
             .SamplerHandle = m_SamplerHandle,
             .Output = m_OutputId,
         };
@@ -386,6 +518,7 @@ namespace Veng::Renderer
         m_AlbedoId = albedoId;
         m_NormalId = normalId;
         m_DepthId = depthId;
+        m_HdrId = hdrId;
 
         for (const Unique<ScenePass>& pass : m_Passes)
         {
@@ -402,6 +535,7 @@ namespace Veng::Renderer
         m_Extent = extent;
         CreateOutput();
         CreateGBuffer();
+        CreateHdr();
         Rebuild();
     }
 
@@ -413,17 +547,33 @@ namespace Veng::Renderer
 
     void SceneRenderer::Execute(CommandBuffer& cmd, const SceneView& view)
     {
+        // Select the scene's directional light into the per-frame view by value:
+        // the first Light entity, or a zero-intensity default when the scene has
+        // none. A zero-intensity light contributes nothing to the lighting pass's
+        // N·L term, so a scene with no light renders flat-ambient — never pure
+        // black, never asserting. The caller's view.Light, if any, is overwritten:
+        // the renderer owns this selection.
+        SceneView resolvedView = view;
+        resolvedView.Light = Light{.Intensity = 0.0f};
+        for (auto [entity, light] : const_cast<Scene&>(view.World).View<Light>())
+        {
+            resolvedView.Light = light;
+            break; // the first Light entity wins
+        }
+
         const RenderGraph::ImportBinding bindings[] = {
             {m_AlbedoId, m_AlbedoView},
             {m_NormalId, m_NormalView},
             {m_DepthId, m_DepthView},
+            {m_HdrId, m_HdrView},
             {m_OutputId, m_OutputView},
         };
-        m_Internal->Graph->Execute(cmd, bindings, const_cast<SceneView*>(&view));
+        m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
     }
 
     Ref<ImageView> SceneRenderer::GetOutput() const { return m_OutputView; }
     Ref<ImageView> SceneRenderer::GetAlbedoView() const { return m_AlbedoView; }
     Ref<ImageView> SceneRenderer::GetNormalView() const { return m_NormalView; }
     Ref<ImageView> SceneRenderer::GetDepthView() const { return m_DepthView; }
+    Ref<ImageView> SceneRenderer::GetHdrView() const { return m_HdrView; }
 }

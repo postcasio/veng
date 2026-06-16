@@ -145,6 +145,10 @@ if (TARGET veng_cook_bootstrap)
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/fullscreen.vert.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/albedo_blit.frag.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/albedo_blit.frag.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/deferred_lighting.frag.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/deferred_lighting.frag.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/hdr_blit.frag.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/hdr_blit.frag.shader.json
         COMMENT "Cooking veng core pack")
 
     add_custom_command(

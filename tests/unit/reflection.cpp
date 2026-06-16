@@ -182,6 +182,7 @@ namespace
         registry.Register<Name>();
         registry.Register<Transform>();
         registry.Register<Parent>();
+        registry.Register<Light>();
         registry.Register<Inner>();
         registry.Register<Outer>();
         registry.Register<WithAsset>();
@@ -218,6 +219,26 @@ TEST_CASE("Transform + Name round-trip through the descriptor walk only")
     Name nameDst;
     ReadFields(nameBytes, &nameDst, registry.Info(registry.IdOf<Name>()), registry);
     CHECK(nameDst.Value == "hero");
+}
+
+TEST_CASE("Light round-trips through the descriptor walk only")
+{
+    TypeRegistry registry = MakeRegistry();
+
+    Light src;
+    src.Direction = vec3{0.2f, -0.8f, 0.55f};
+    src.Color = vec3{0.9f, 0.4f, 0.1f};
+    src.Intensity = 2.5f;
+
+    vector<u8> bytes;
+    WriteFields(bytes, &src, registry.Info(registry.IdOf<Light>()), registry);
+
+    Light dst; // fresh defaults
+    ReadFields(bytes, &dst, registry.Info(registry.IdOf<Light>()), registry);
+
+    CHECK(dst.Direction == src.Direction);
+    CHECK(dst.Color == src.Color);
+    CHECK(dst.Intensity == doctest::Approx(src.Intensity));
 }
 
 TEST_CASE("Editor metadata does not affect the serialized bytes")

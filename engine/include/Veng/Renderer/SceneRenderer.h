@@ -7,6 +7,7 @@
 #include <Veng/Renderer/RenderGraph.h>
 
 #include <Veng/Scene/Camera.h>
+#include <Veng/Scene/Components.h>
 
 // A long-lived, configurable render pipeline that owns an offscreen target,
 // renders a Scene from a Camera through an internal compiled RenderGraph composed
@@ -51,10 +52,15 @@ namespace Veng::Renderer
 
     // Per-frame input. Not owned by the renderer and shared across N renderers:
     // World/Camera are borrowed references. Fields are named for their role.
+    //
+    // Light is a per-frame VALUE, not a borrowed reference: the renderer selects
+    // the scene's directional light into it on every Execute (the first Light
+    // entity, or a documented zero-intensity default when the scene has none).
     struct SceneView
     {
         const Scene& World;
         const Camera& Camera;
+        Veng::Light Light;
         f32 Delta = 0.0f;
     };
 
@@ -93,6 +99,10 @@ namespace Veng::Renderer
         [[nodiscard]] Ref<ImageView> GetNormalView() const;
         [[nodiscard]] Ref<ImageView> GetDepthView() const;
 
+        // The HDR target the deferred lighting pass writes (before the tail
+        // pass maps it to the output). Exposed for tests and tooling.
+        [[nodiscard]] Ref<ImageView> GetHdrView() const;
+
     private:
         explicit SceneRenderer(const SceneRendererInfo& info);
 
@@ -101,8 +111,11 @@ namespace Veng::Renderer
         // Recreate the g-buffer images/views at the current extent and (re-)register
         // them and the shared sampler into the bindless registry.
         void CreateGBuffer();
-        // Build the engine-owned fullscreen-blit pipeline once at Create.
-        void CreateBlitPipeline();
+        // Recreate the HDR image/view at the current extent and (re-)register it
+        // into the bindless registry.
+        void CreateHdr();
+        // Build the engine-owned lighting + HDR-blit pipelines once at Create.
+        void CreatePipelines();
         // Rebuild the RenderGraph from the pass units and re-Compile().
         void Rebuild();
 
@@ -124,21 +137,32 @@ namespace Veng::Renderer
         Ref<Image> m_DepthImage;
         Ref<ImageView> m_DepthView;
 
-        // The shared sampler a fullscreen pass samples the g-buffer through.
+        // The HDR target the deferred lighting pass writes (linear, unbounded
+        // range) and the tail pass samples. Renderer-owned and imported like the
+        // g-buffer; tonemap maps it to the output format.
+        Ref<Image> m_HdrImage;
+        Ref<ImageView> m_HdrView;
+
+        // The shared sampler a fullscreen pass samples the g-buffer/HDR through.
         Ref<Sampler> m_Sampler;
 
-        // Bindless slots for the g-buffer views + the sampler, registered once at
-        // Create and re-registered on Resize (the old slots released through the
+        // Bindless slots for the g-buffer/HDR views + the sampler, registered once
+        // at Create and re-registered on Resize (the old slots released through the
         // per-frame retire window).
         TextureHandle m_AlbedoHandle;
         TextureHandle m_NormalHandle;
         TextureHandle m_DepthHandle;
+        TextureHandle m_HdrHandle;
         SamplerHandle m_SamplerHandle;
 
-        // The engine-owned fullscreen-blit pipeline + layout the AlbedoBlitScenePass
-        // records with. Built once from the core pack's blit shaders.
-        Ref<class GraphicsPipeline> m_BlitPipeline;
-        Ref<class PipelineLayout> m_BlitLayout;
+        // The engine-owned deferred-lighting pipeline + layout (g-buffer + light →
+        // HDR) and the HDR-blit pipeline + layout (HDR → output). Built once from
+        // the core pack's shaders; the lighting pipeline writes the HDR format, the
+        // blit pipeline the output format.
+        Ref<class GraphicsPipeline> m_LightingPipeline;
+        Ref<class PipelineLayout> m_LightingLayout;
+        Ref<class GraphicsPipeline> m_HdrBlitPipeline;
+        Ref<class PipelineLayout> m_HdrBlitLayout;
 
         // The renderer owns its pass units in fixed wiring order and walks them on
         // every rebuild.
@@ -149,6 +173,7 @@ namespace Veng::Renderer
         ResourceId m_AlbedoId;
         ResourceId m_NormalId;
         ResourceId m_DepthId;
+        ResourceId m_HdrId;
         ResourceId m_OutputId;
 
         // Compiled once per Create/Resize/Configure, replayed every Execute. The

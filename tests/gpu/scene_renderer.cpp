@@ -206,7 +206,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Context.ImmediateCommands([&](CommandBuffer& cmd)
     {
-        renderer->Execute(cmd, Renderer::SceneView{*scene, camera, 0.0f});
+        renderer->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
     });
 
     // It is sampleable: a fullscreen pass reads it through bindless and produces a
@@ -235,7 +235,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Context.ImmediateCommands([&](CommandBuffer& cmd)
     {
-        renderer->Execute(cmd, Renderer::SceneView{*scene, camera, 0.0f});
+        renderer->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
     });
 
     const vector<u8> resampled = SampleThroughBindless(Context, assets, renderer->GetOutput(), resizedExtent);
@@ -267,16 +267,32 @@ namespace
     }
 }
 
+// The deferred-lighting oracle. A brick cube fills the view, its front face
+// (world normal +Z) squarely toward the camera. Three lighting setups render the
+// same scene and assert the deferred lighting model at known sample points:
+//
+//  - Light traveling along -Z (toward the front face): the front face is fully
+//    lit (N·L = 1), so the center texel ≈ albedo × intensity + ambient.
+//  - Light traveling along -X (across the front face): N·L = 0 on the front face,
+//    so the center texel ≈ albedo × ambient only — the shadowed/ambient term.
+//  - No Light in the scene: the renderer's zero-intensity default, so the center
+//    texel is the same flat-ambient term, never pure black.
+//
+// The brick albedo is linear (200, 80, 40)/255, sampled through the sRGB G0
+// round-trip. The lighting pass's ambient constant is 0.03 (deferred_lighting.frag).
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "scene renderer: deferred albedo oracle — a brick cube blits its albedo, "
-                  "the background shows the g-buffer clear, mean luminance is in range")
+                  "scene renderer: deferred lighting oracle — a lit face matches N·L, "
+                  "an unlit face and the no-light default match the ambient term")
 {
+    constexpr f32 Ambient = 0.03f;
+    constexpr vec3 BrickAlbedo{200.0f / 255.0f, 80.0f / 255.0f, 40.0f / 255.0f};
+
     RegisterBuiltinTypes(Types);
 
     // Cook the g-buffer fixture pack (brick material on the core canonical layout)
     // in-process and mount it; the core pack (auto-mounted) supplies the canonical
-    // layout the brick vertex shader references and the blit shaders the renderer
-    // loads.
+    // layout the brick vertex shader references and the lighting/blit shaders the
+    // renderer loads.
     const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
     const path outArchive = std::filesystem::temp_directory_path() / "veng_gpu_gbuffer.vengpack";
 
@@ -295,7 +311,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     constexpr uvec2 extent{128, 128};
 
-    // A cube filling the view, the brick material on its single submesh.
+    // A cube filling the view, the brick material on its single submesh, its front
+    // face squarely toward the camera (world normal +Z).
     const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Oracle Cube");
 
     const Unique<Scene> scene = Scene::Create(Types);
@@ -315,47 +332,90 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {},
     });
 
-    Context.ImmediateCommands([&](CommandBuffer& cmd)
+    // Render the scene once and return the downloaded RGBA16F output.
+    auto Render = [&]() -> vector<u8>
     {
-        renderer->Execute(cmd, Renderer::SceneView{*scene, camera, 0.0f});
-    });
-
-    const Ref<Image> output = renderer->GetOutput()->GetImage();
-    const vector<u8> pixels = output->Download();
-    REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8); // RGBA16F = 8 bytes/texel
-
-    // The 1x1-color brick texture (linear (200, 80, 40)/255) sampled and written
-    // through the sRGB G0 round-trip, blit back to the linear output. The center
-    // covers a cube face; a corner is background (the G0 clear color).
-    const vec3 center = DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
-    const vec3 corner = DecodeTexel(pixels, extent.x, 2, 2);
-
-    // Center is the brick albedo: red-dominant, distinctly not the clear color.
-    CHECK(center.r > 0.5f);
-    CHECK(center.r > center.g);
-    CHECK(center.g > center.b);
-    CHECK(center.r == doctest::Approx(200.0f / 255.0f).epsilon(0.05f));
-    CHECK(center.g == doctest::Approx(80.0f / 255.0f).epsilon(0.08f));
-    CHECK(center.b == doctest::Approx(40.0f / 255.0f).epsilon(0.10f));
-
-    // Corner is the g-buffer albedo clear (0.05, 0.05, 0.08), round-tripped — dark
-    // and clearly not the brick color.
-    CHECK(corner.r < 0.2f);
-    CHECK(corner.b >= corner.r); // the clear's blue tint survives
-
-    // Whole-frame mean luminance: bounded between the dark background and the
-    // brick albedo, catching a global error (a black g-buffer, a wiped albedo, a
-    // gamma slip). The cube covers a large central fraction of the frame.
-    f64 luminanceSum = 0.0;
-    for (u32 y = 0; y < extent.y; ++y)
-        for (u32 x = 0; x < extent.x; ++x)
+        Context.ImmediateCommands([&](CommandBuffer& cmd)
         {
-            const vec3 c = DecodeTexel(pixels, extent.x, x, y);
-            luminanceSum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
-        }
-    const f64 meanLuminance = luminanceSum / (static_cast<f64>(extent.x) * extent.y);
-    CHECK(meanLuminance > 0.05);
-    CHECK(meanLuminance < 0.45);
+            renderer->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+        });
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        return pixels;
+    };
+
+    auto MeanLuminance = [&](const vector<u8>& pixels) -> f64
+    {
+        f64 sum = 0.0;
+        for (u32 y = 0; y < extent.y; ++y)
+            for (u32 x = 0; x < extent.x; ++x)
+            {
+                const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+                sum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+            }
+        return sum / (static_cast<f64>(extent.x) * extent.y);
+    };
+
+    // Case 1 — light straight at the front face (N·L = 1): the center is fully lit.
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f), // travels toward the front face
+        .Color = vec3(1.0f, 1.0f, 1.0f),
+        .Intensity = 1.0f,
+    };
+
+    {
+        const vector<u8> pixels = Render();
+        const vec3 center = DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
+        const vec3 corner = DecodeTexel(pixels, extent.x, 2, 2);
+
+        // Fully lit: albedo × (1·intensity) + albedo × ambient.
+        const vec3 expected = BrickAlbedo * (1.0f + Ambient);
+        CHECK(center.r == doctest::Approx(expected.r).epsilon(0.06f));
+        CHECK(center.g == doctest::Approx(expected.g).epsilon(0.10f));
+        CHECK(center.b == doctest::Approx(expected.b).epsilon(0.12f));
+        CHECK(center.r > center.g);
+        CHECK(center.g > center.b);
+
+        // The background (g-buffer clear, no geometry) lights from a zero normal,
+        // so only its ambient survives — dark, far below the lit cube.
+        CHECK(corner.r < 0.2f);
+
+        const f64 lit = MeanLuminance(pixels);
+        CHECK(lit > 0.05);
+        CHECK(lit < 0.6);
+    }
+
+    // Case 2 — light across the front face (N·L = 0): the center is ambient only.
+    scene->Get<Light>(lightEntity).Direction = vec3(-1.0f, 0.0f, 0.0f);
+
+    {
+        const vector<u8> pixels = Render();
+        const vec3 center = DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
+
+        const vec3 expected = BrickAlbedo * Ambient;
+        CHECK(center.r == doctest::Approx(expected.r).epsilon(0.02f));
+        CHECK(center.g == doctest::Approx(expected.g).epsilon(0.02f));
+        CHECK(center.b == doctest::Approx(expected.b).epsilon(0.02f));
+        // Distinctly darker than the lit case — the diffuse term contributed nothing.
+        CHECK(center.r < BrickAlbedo.r * 0.5f);
+    }
+
+    // Case 3 — no Light in the scene: the renderer's zero-intensity default, so the
+    // center is flat-ambient, never pure black.
+    scene->DestroyEntity(lightEntity);
+
+    {
+        const vector<u8> pixels = Render();
+        const vec3 center = DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
+
+        const vec3 expected = BrickAlbedo * Ambient;
+        CHECK(center.r == doctest::Approx(expected.r).epsilon(0.02f));
+        CHECK(center.g == doctest::Approx(expected.g).epsilon(0.02f));
+        CHECK(center.b == doctest::Approx(expected.b).epsilon(0.02f));
+        // Flat-ambient, but not pure black.
+        CHECK(center.r > 0.0f);
+    }
 
     std::filesystem::remove(outArchive);
 }

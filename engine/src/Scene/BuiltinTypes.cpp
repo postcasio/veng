@@ -17,5 +17,6 @@ namespace Veng
         registry.Register<Parent>();
         registry.Register<CameraComponent>();
         registry.Register<MeshRenderer>();
+        registry.Register<Light>();
     }
 }

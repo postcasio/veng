@@ -168,6 +168,16 @@ protected:
         // mesh in turn.
         m_Scene->Get<MeshRenderer>(roots[0]).Mesh = GetAssetManager().Adopt(sphere);
 
+        // A directional light so the deferred lighting pass shades the scene. Its
+        // direction is fixed (top-front-right toward the origin), so the smoke pose
+        // is lit reproducibly run to run.
+        const Entity lightEntity = m_Scene->CreateEntity();
+        m_Scene->Add<Light>(lightEntity) = Light{
+            .Direction = glm::normalize(vec3(-0.4f, -0.7f, -0.5f)),
+            .Color = vec3(1.0f, 1.0f, 1.0f),
+            .Intensity = 1.5f,
+        };
+
         // A Camera looking down -Z at the origin from (0,0,3).
         const f32 aspect = static_cast<f32>(sceneExtent.x) / static_cast<f32>(sceneExtent.y);
         m_Camera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
@@ -220,7 +230,7 @@ protected:
         auto& context = GetRenderContext();
         auto& cmd = context.GetCurrentCommandBuffer();
 
-        const Renderer::SceneView view{*m_Scene, m_Camera, m_LastDelta};
+        const Renderer::SceneView view{.World = *m_Scene, .Camera = m_Camera, .Delta = m_LastDelta};
         m_SceneRenderer->Execute(cmd, view);
 
         // Headless (smoke) renders only the scene; the ImGui overlay and the
