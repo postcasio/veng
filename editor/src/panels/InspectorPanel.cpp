@@ -73,8 +73,8 @@ namespace VengEditor
         ImGui::PushID(labelText);
 
         const f32 step = field.Step ? static_cast<f32>(*field.Step) : 0.01f;
-        const f32 minV = field.Min ? static_cast<f32>(*field.Min) : 0.0f;
-        const f32 maxV = field.Max ? static_cast<f32>(*field.Max) : 0.0f;
+        const f32 minV = field.Min ? static_cast<f32>(*field.Min) : -FLT_MAX;
+        const f32 maxV = field.Max ? static_cast<f32>(*field.Max) : FLT_MAX;
         const bool hasRange = field.Min.has_value() || field.Max.has_value();
         const ImGuiSliderFlags rangeFlag = hasRange ? ImGuiSliderFlags_AlwaysClamp : 0;
 
