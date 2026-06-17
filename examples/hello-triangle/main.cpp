@@ -5,20 +5,16 @@
 #include <Veng/Vendor/ImGui.h>
 
 #include <Veng/Asset/AssetManager.h>
-#include <Veng/Renderer/BindlessRegistry.h>
-#include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
-#include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/ImGuiCompositePass.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Asset/Primitives.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/SceneRenderer.h>
-#include <Veng/Renderer/Sampler.h>
-#include <Veng/Asset/Shader.h>
 #include <Veng/Asset/Texture.h>
 
 #include <Veng/Scene/Scene.h>
@@ -33,19 +29,6 @@
 #include <fstream>
 
 using namespace Veng;
-
-namespace
-{
-    // Selects the composite shader's bindless texture/sampler slots
-    // (Veng/Renderer/BindlessRegistry.h) — set 0 is bound once via
-    // BindlessRegistry::Bind, these indices pick the array elements.
-    struct CompositePushConstants
-    {
-        u32 SceneTexture;
-        u32 ImGuiTexture;
-        u32 Sampler;
-    };
-}
 
 // A game-defined component: spins its entity about a fixed axis. The engine has
 // no compile-time knowledge of this type — it is registered through the same
@@ -91,13 +74,6 @@ protected:
             .Settings = m_SceneSettings,
         });
 
-        m_Sampler = Renderer::Sampler::Create(context, {
-            .Name = "Sample Sampler",
-            .AddressModeU = Renderer::AddressMode::ClampToEdge,
-            .AddressModeV = Renderer::AddressMode::ClampToEdge,
-            .AddressModeW = Renderer::AddressMode::ClampToEdge,
-        });
-
         // Cooked at build time (see CMakeLists.txt) and copied beside the launcher
         // by veng_add_game; mount it from the executable's directory so the trio
         // (launcher + module + pack) resolves wherever it is copied. Loading the
@@ -127,17 +103,19 @@ protected:
         // downloads it — no ImGui layer, no swapchain.
         if (GetImGuiLayer())
         {
-            m_ImGuiImageView = Renderer::ImageView::Create(context, {
-                .Name = "Sample ImGui Image View",
-                .Image = GetImGuiLayer()->GetOutputImage(),
+            // The engine composite pass owns the scene→ImGui plumbing: the ImGui
+            // scene texture, the pre-Render sampleability barrier, and the fullscreen
+            // scene-behind-ImGui composite (composite mode, keyed on SwapChainFormat).
+            m_Composite = Renderer::ImGuiCompositePass::Create({
+                .Context = context,
+                .ImGui = *GetImGuiLayer(),
+                .Assets = GetAssetManager(),
+                .SceneSource = m_SceneRenderer->GetOutput(),
+                .SwapChainFormat = context.GetSwapChainFormat(),
             });
 
-            // CreateCompositePipeline registers the scene output (bindless slot + the
-            // ImGui scene texture) via RegisterSceneOutput.
-            CreateCompositePipeline();
-
             // A swapchain resize invalidates the composite pass's baked extent;
-            // rebuild + re-Compile() the composite graph against the new size. The
+            // re-Compile() the composite graph against the new size. The
             // SceneRenderer keeps a fixed internal extent, so its output view stays
             // valid and is not re-registered. The headless smoke path has a fixed
             // extent, so this never fires there.
@@ -237,12 +215,11 @@ protected:
         // composite-to-swapchain pass are windowed-only.
         if (GetImGuiLayer())
         {
-            // RenderUserInterface() draws m_SceneTexture via ImGui::Image(), and
-            // GetImGuiLayer()->Render(cmd) is what actually records that sampled
-            // read — before the composite pass's own .Sample() declaration runs.
-            // ImGui samples outside the graph, so declare the read explicitly:
-            // transition the scene output to a sampleable layout before that pass.
-            cmd.PrepareForAccess(m_SceneRenderer->GetOutput(), Renderer::AccessKind::Sample);
+            // RenderUserInterface() draws the scene texture via ImGui::Image(), and
+            // GetImGuiLayer()->Render(cmd) is what actually records that sampled read.
+            // ImGui samples outside the graph, so the composite pass issues the
+            // explicit sampleability barrier before that read.
+            m_Composite->PrepareSceneForImGui(cmd);
 
             RenderUserInterface();
             GetImGuiLayer()->Render(cmd);
@@ -253,102 +230,40 @@ protected:
     void OnDispose() override
     {
         // The SceneRenderer owns the scene output + depth transient; the composite
-        // graph owns its imports' bindings. Release them so their GPU resources
-        // retire before the context tears down.
+        // graph owns its imports' bindings; the composite pass owns the ImGui scene
+        // texture, the composite pipeline, and its bindless slots. Release them so
+        // their GPU resources retire before the context tears down.
         m_SceneRenderer.reset();
         m_CompositeGraph.reset();
+        m_Composite.reset();
         m_Scene.reset();
         m_BrickMaterial = {};
-        m_SceneTexture.reset();
-        m_CompositePipeline.reset();
-        m_CompositeLayout.reset();
-        m_CompositeVS = {};
-        m_CompositeFS = {};
-        m_Sampler.reset();
-        m_ImGuiImageView.reset();
     }
 
 private:
-    void CreateCompositePipeline()
-    {
-        auto& context = GetRenderContext();
-
-        const AssetResult<AssetHandle<Veng::Shader>> vs =
-            GetAssetManager().LoadSync<Veng::Shader>(AssetId{0x3EE});
-        VE_ASSERT(vs.has_value(), "{}", vs.error().Detail);
-        m_CompositeVS = *vs;
-
-        const AssetResult<AssetHandle<Veng::Shader>> fs =
-            GetAssetManager().LoadSync<Veng::Shader>(AssetId{0x3EF});
-        VE_ASSERT(fs.has_value(), "{}", fs.error().Detail);
-        m_CompositeFS = *fs;
-
-        m_CompositeLayout = Renderer::PipelineLayout::Create(context, {
-            .Name = "Composite Layout",
-            .PushConstantRanges = {
-                Renderer::PushConstantRange::Of<CompositePushConstants>(Renderer::ShaderStage::Fragment),
-            },
-        });
-
-        m_CompositePipeline = Renderer::GraphicsPipeline::Create(context, {
-            .Name = "Composite Pipeline",
-            // The composite pass renders into the swapchain image, which the
-            // context owns and already exposes a single format accessor — no
-            // separate Image::Create to keep in sync with here.
-            .ColorAttachments = {{.Format = context.GetSwapChainFormat()}},
-            .PipelineLayout = m_CompositeLayout,
-            .ShaderStages = {
-                {.Stage = Renderer::ShaderStage::Vertex, .Module = m_CompositeVS.Get()->Module},
-                {.Stage = Renderer::ShaderStage::Fragment, .Module = m_CompositeFS.Get()->Module},
-            },
-        });
-
-        // Register the scene/ImGui views and the shared sampler into the
-        // bindless registry (set 0) — composite.frag indexes them via push
-        // constants.
-        auto& bindless = context.GetBindlessRegistry();
-        m_ImGuiTextureHandle = bindless.Register(m_ImGuiImageView);
-        m_SamplerHandle = bindless.Register(m_Sampler);
-        RegisterSceneOutput();
-    }
-
-    // (Re-)register the SceneRenderer's current output into the bindless slot the
-    // composite samples and the ImGui texture the Scene panel draws. Called once at
-    // setup and again after Configure (which recreates the output image, invalidating
-    // the prior slot/texture). The composite reads m_SceneTextureHandle.Index live
-    // per frame, so updating the handle takes effect on the next replay.
-    void RegisterSceneOutput()
-    {
-        auto& bindless = GetRenderContext().GetBindlessRegistry();
-        if (m_SceneTextureHandle.IsValid())
-            bindless.Release(m_SceneTextureHandle);
-        m_SceneTextureHandle = bindless.Register(m_SceneRenderer->GetOutput());
-        m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_Sampler, *m_SceneRenderer->GetOutput());
-    }
-
     void RenderUserInterface()
     {
         ImGui::Begin("Scene");
 
         // The DebugView combo drives SceneRenderer::Configure, re-wiring the pass set
         // (Final / Albedo / Normal / Depth) — a live exercise of the recompile seam.
-        // Configure recreates the output image, so the cached scene texture + bindless
-        // slot must be re-built after it (the GetOutput()-invalidated-by-Configure
-        // contract).
+        // Configure recreates the output image, so the composite pass's cached scene
+        // texture + bindless slot must be re-bound after it through SetSource (the
+        // GetOutput()-invalidated-by-Configure contract).
         const char* modeNames[] = {"Final", "Albedo", "Normal", "Depth"};
         int mode = static_cast<int>(m_SceneSettings.Mode);
         if (ImGui::Combo("View", &mode, modeNames, IM_ARRAYSIZE(modeNames)))
         {
             m_SceneSettings.Mode = static_cast<Renderer::DebugView>(mode);
             m_SceneRenderer->Configure(m_SceneSettings);
-            RegisterSceneOutput();
+            m_Composite->SetSource(m_SceneRenderer->GetOutput());
         }
 
         const ImVec2 available = ImGui::GetContentRegionAvail();
         const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
         const f32 aspect = static_cast<f32>(output->GetImage()->GetHeight()) /
                            static_cast<f32>(output->GetImage()->GetWidth());
-        ImGui::Image(static_cast<ImTextureID>(m_SceneTexture->GetTextureId()),
+        ImGui::Image(static_cast<ImTextureID>(m_Composite->GetSceneTexture().GetTextureId()),
                      {available.x, available.x * aspect});
         ImGui::End();
 
@@ -382,85 +297,33 @@ private:
         Log::Info("Wrote scene capture to {}", outPath);
     }
 
-    // Build and compile the composite graph. Compiled once and replayed every
-    // frame; the callback closes over only `this` and reads the swapchain extent
-    // live (fixed for a given swapchain — a resize re-Compile()s the graph).
+    // Build and compile the composite graph through the engine composite pass: the
+    // app imports the swapchain target and hands it to Compile; the pass declares
+    // the scene/ImGui imports, wires the fullscreen pass, and Compile()s. A
+    // swapchain resize re-runs this against the new extent.
     Unique<Renderer::CompiledGraph> BuildCompositeGraph()
     {
-        auto& context = GetRenderContext();
-
-        // Sampling the scene and ImGui views declares the reads that drive their
-        // transitions to ShaderReadOnly; rendering the swapchain view declares
-        // the write that drives its transition to ColorAttachment. All three are
-        // app-/context-owned, so they are imports; the swapchain view differs each
-        // frame and is supplied per call.
-        Renderer::RenderGraph graph(context);
-        m_SwapId = graph.Import("SwapChain");
-        m_CompositeSceneId = graph.Import("Scene");
-        m_ImGuiId = graph.Import("ImGui");
-        graph.AddPass("Composite")
-            .Color({
-                .Resource = m_SwapId,
-                .Load = Renderer::LoadOp::Clear,
-                .Store = Renderer::StoreOp::Store,
-                .Clear = Renderer::ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
-            })
-            .Sample(m_CompositeSceneId)
-            .Sample(m_ImGuiId)
-            .Execute([this](Renderer::PassContext& ctx)
-            {
-                Renderer::CommandBuffer& cmd = ctx.Cmd();
-                const uvec2 extent = GetRenderContext().GetSwapChainExtent();
-                cmd.BindPipeline(m_CompositePipeline);
-                cmd.SetViewport({0, 0}, extent);
-                cmd.SetScissor({0, 0}, extent);
-                GetRenderContext().GetBindlessRegistry().Bind(cmd);
-                cmd.PushConstants(CompositePushConstants{
-                    .SceneTexture = m_SceneTextureHandle.Index,
-                    .ImGuiTexture = m_ImGuiTextureHandle.Index,
-                    .Sampler = m_SamplerHandle.Index,
-                });
-                cmd.DrawFullscreenTriangle();
-            });
-
-        return graph.Compile();
+        Renderer::RenderGraph graph(GetRenderContext());
+        const Renderer::ResourceId swapId = graph.Import("SwapChain");
+        return m_Composite->Compile(graph, swapId);
     }
 
     void CompositeToSwapChain(Renderer::CommandBuffer& cmd)
     {
-        const Renderer::RenderGraph::ImportBinding bindings[] = {
-            {m_SwapId, GetRenderContext().GetCurrentSwapChainImageView()},
-            {m_CompositeSceneId, m_SceneRenderer->GetOutput()},
-            {m_ImGuiId, m_ImGuiImageView},
-        };
-        m_CompositeGraph->Execute(cmd, bindings);
+        m_Composite->Execute(cmd, *m_CompositeGraph, GetRenderContext().GetCurrentSwapChainImageView());
     }
 
     Unique<Renderer::SceneRenderer> m_SceneRenderer;
     Renderer::SceneRendererSettings m_SceneSettings;
-    Ref<Renderer::ImageView> m_ImGuiImageView;
-    Ref<Renderer::Sampler> m_Sampler;
 
     AssetHandle<Veng::Material> m_BrickMaterial;
 
-    AssetHandle<Veng::Shader> m_CompositeVS;
-    AssetHandle<Veng::Shader> m_CompositeFS;
-    Ref<Renderer::PipelineLayout> m_CompositeLayout;
-    Ref<Renderer::GraphicsPipeline> m_CompositePipeline;
-    Renderer::TextureHandle m_SceneTextureHandle;
-    Renderer::TextureHandle m_ImGuiTextureHandle;
-    Renderer::SamplerHandle m_SamplerHandle;
-
-    Ref<ImGuiTexture> m_SceneTexture;
+    // The engine composite pass: owns the ImGui scene texture, the pre-Render
+    // barrier, and the fullscreen scene-behind-ImGui composite + its bindless slots.
+    Unique<Renderer::ImGuiCompositePass> m_Composite;
 
     // Compiled once and replayed every frame; re-Compile()d on swapchain resize.
     Unique<Renderer::CompiledGraph> m_CompositeGraph;
-
-    // Import slots bound per frame to Execute. Stable across replays; only the
-    // concrete views they bind to change.
-    Renderer::ResourceId m_SwapId;
-    Renderer::ResourceId m_CompositeSceneId;
-    Renderer::ResourceId m_ImGuiId;
 
     // The fixed rotation the smoke capture renders, in radians.
     static constexpr f32 SmokeAngle = 0.9f;

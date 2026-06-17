@@ -7,12 +7,13 @@
 #include <Veng/Asset/Primitives.h>
 #include <Veng/Assert.h>
 #include <Veng/ImGui/ImGuiLayer.h>
+#include <Veng/ImGui/ImGuiTexture.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/ImGuiCompositePass.h>
 #include <Veng/Reflection/TypeRegistry.h>
-#include <Veng/Renderer/Sampler.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Time.h>
 #include <Veng/Vendor/ImGui.h>
@@ -45,21 +46,21 @@ namespace VengEditor
             .Settings = {},
         });
 
-        m_Sampler = Renderer::Sampler::Create(context, {
-            .Name = "Editor Viewport Sampler",
-            .AddressModeU = Renderer::AddressMode::ClampToEdge,
-            .AddressModeV = Renderer::AddressMode::ClampToEdge,
-            .AddressModeW = Renderer::AddressMode::ClampToEdge,
-        });
-
         BuildScene();
-        RegisterOutput();
+
+        // Panel-only mode (no SwapChainFormat): the pass owns the ImGui scene
+        // texture and the pre-Render barrier; the scene shows inside this panel.
+        m_Composite = Renderer::ImGuiCompositePass::Create({
+            .Context = context,
+            .ImGui = imgui,
+            .Assets = assets,
+            .SceneSource = m_SceneRenderer->GetOutput(),
+        });
     }
 
     SceneViewportPanel::~SceneViewportPanel()
     {
-        m_Texture.reset();
-        m_Sampler.reset();
+        m_Composite.reset();
         m_Scene.reset();
         m_BrickMaterial = {};
         m_SceneRenderer.reset();
@@ -97,15 +98,10 @@ namespace VengEditor
         m_Camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
     }
 
-    void SceneViewportPanel::RegisterOutput()
-    {
-        m_Texture = m_ImGui.CreateTexture(*m_Sampler, *m_SceneRenderer->GetOutput());
-    }
-
     void SceneViewportPanel::Render(Renderer::CommandBuffer& cmd)
     {
         // A pending resize from the previous frame's content region: recreate the
-        // renderer at the new size before recording, then re-register the texture
+        // renderer at the new size before recording, then re-bind the source
         // (Resize invalidates GetOutput()).
         if (m_PendingExtent.x != 0 && m_PendingExtent.y != 0 && m_PendingExtent != m_RenderExtent)
         {
@@ -114,7 +110,7 @@ namespace VengEditor
 
             const f32 aspect = static_cast<f32>(m_RenderExtent.x) / static_cast<f32>(m_RenderExtent.y);
             m_Camera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
-            RegisterOutput();
+            m_Composite->SetSource(m_SceneRenderer->GetOutput());
         }
 
         const f32 delta = Time::GetDeltaTime();
@@ -149,9 +145,9 @@ namespace VengEditor
         const Renderer::SceneView view{.World = *m_Scene, .Camera = m_Camera, .Delta = delta};
         m_SceneRenderer->Execute(cmd, view);
 
-        // The ImGui pass samples the output outside the graph, so transition it to
-        // a sampleable layout before ImGuiLayer::Render records the read.
-        cmd.PrepareForAccess(m_SceneRenderer->GetOutput(), Renderer::AccessKind::Sample);
+        // ImGui samples the output outside the graph; the composite pass issues the
+        // sampleability barrier before ImGuiLayer::Render records the read.
+        m_Composite->PrepareSceneForImGui(cmd);
     }
 
     void SceneViewportPanel::OnImGui()
@@ -160,6 +156,6 @@ namespace VengEditor
         const uvec2 wanted{static_cast<u32>(available.x), static_cast<u32>(available.y)};
         m_PendingExtent = wanted;
 
-        ImGui::Image(static_cast<ImTextureID>(m_Texture->GetTextureId()), available);
+        ImGui::Image(static_cast<ImTextureID>(m_Composite->GetSceneTexture().GetTextureId()), available);
     }
 }

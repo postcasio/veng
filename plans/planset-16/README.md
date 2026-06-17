@@ -153,7 +153,7 @@ Full detail in [plan 03](03-imgui-composite-pass.md).
 | 00 | [Unify the reflection trait](00-unify-reflect-trait.md) | Collapse `ReflectLeaf<T>` into `VengReflect<T>`: uniform member set, `VE_LEAF` macro, direct-read `TypeIdOf`/`FieldClassOf`, delete `IsReflectLeaf` + `EnsureLeaf`, `Class` as member. Migrate engine builtins + cooker + tests. Behaviour-preserving. | done |
 | 01 | [Docs + roadmap re-cut](01-docs-roadmap.md) | `CLAUDE.md` reflection paragraph (single trait, `VE_LEAF` as the leaf/enum authoring surface), `plans/README.md` entry, this status table. No code. | proposed |
 | 02 | [Rename `assetformat` → `assetpack`](02-rename-assetformat.md) | Mechanical rename of the shared archive/cooked-blob library: directory, CMake target + `veng::` alias, and comments. No header path, API, or `.vengpack` format change. | done |
-| 03 | [`ImGuiCompositePass`](03-imgui-composite-pass.md) | Engine-provided scene-behind-ImGui composite helper (`Create`/`SetSource`/`Compile`/`PrepareSceneForImGui`/`GetSceneTexture`); composite shaders to the core pack; hello-triangle + editor migrated off their hand-written copies. Realizes future area 11. | proposed |
+| 03 | [`ImGuiCompositePass`](03-imgui-composite-pass.md) | Engine-provided scene-behind-ImGui composite helper (`Create`/`SetSource`/`Compile`/`PrepareSceneForImGui`/`GetSceneTexture`); composite shaders to the core pack; hello-triangle + editor migrated off their hand-written copies. Realizes future area 11. | done |
 
 ## Dependency analysis
 

@@ -11,7 +11,6 @@ namespace Veng
 {
     class AssetManager;
     class ImGuiLayer;
-    class ImGuiTexture;
     class Material;
     class Mesh;
     class Scene;
@@ -21,7 +20,7 @@ namespace Veng
     {
         class Context;
         class CommandBuffer;
-        class Sampler;
+        class ImGuiCompositePass;
         class SceneRenderer;
     }
 }
@@ -71,7 +70,6 @@ namespace VengEditor
 
     private:
         void BuildScene();
-        void RegisterOutput();
 
         Veng::Renderer::Context& m_Context;
         Veng::AssetManager& m_Assets;
@@ -92,8 +90,9 @@ namespace VengEditor
 
         Veng::AssetHandle<Veng::Material> m_Material;
 
-        Veng::Ref<Veng::Renderer::Sampler> m_Sampler;
-        Veng::Ref<Veng::ImGuiTexture> m_Texture;
+        // Owns the ImGui preview texture and the pre-Render sampleability barrier
+        // (panel-only mode).
+        Veng::Unique<Veng::Renderer::ImGuiCompositePass> m_Composite;
 
         Veng::uvec2 m_Extent{};
 

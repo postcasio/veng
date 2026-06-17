@@ -10,6 +10,7 @@
     { "id": 13742412625165098291, "type": "shader", "source": "shaders/hdr_blit.frag.shader.json" },
     { "id": 7952927765378679446, "type": "shader", "source": "shaders/tonemap.frag.shader.json" },
     { "id": 6497805523787376077, "type": "shader", "source": "shaders/normal_blit.frag.shader.json" },
-    { "id": 16167746220292282069, "type": "shader", "source": "shaders/depth_blit.frag.shader.json" }
+    { "id": 16167746220292282069, "type": "shader", "source": "shaders/depth_blit.frag.shader.json" },
+    { "id": 5462853072295605294, "type": "shader", "source": "shaders/composite.frag.shader.json" }
   ]
 }

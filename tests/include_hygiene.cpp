@@ -72,6 +72,7 @@
 #include <Veng/Renderer/Fence.h>
 #include <Veng/Renderer/GBuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
+#include <Veng/Renderer/ImGuiCompositePass.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/PipelineLayout.h>

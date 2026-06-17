@@ -12,7 +12,7 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/Sampler.h>
+#include <Veng/Renderer/ImGuiCompositePass.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
@@ -42,21 +42,21 @@ namespace VengEditor
             .Settings = {},
         });
 
-        m_Sampler = Renderer::Sampler::Create(context, {
-            .Name = "Material Preview Sampler",
-            .AddressModeU = Renderer::AddressMode::ClampToEdge,
-            .AddressModeV = Renderer::AddressMode::ClampToEdge,
-            .AddressModeW = Renderer::AddressMode::ClampToEdge,
-        });
-
         BuildScene();
-        RegisterOutput();
+
+        // Panel-only mode: the pass owns the ImGui preview texture and the
+        // pre-Render barrier; the preview shows inside an ImGui::Image.
+        m_Composite = Renderer::ImGuiCompositePass::Create({
+            .Context = context,
+            .ImGui = imgui,
+            .Assets = assets,
+            .SceneSource = m_SceneRenderer->GetOutput(),
+        });
     }
 
     MaterialPreview::~MaterialPreview()
     {
-        m_Texture.reset();
-        m_Sampler.reset();
+        m_Composite.reset();
         m_Scene.reset();
         m_Sphere.reset();
         m_Material = {};
@@ -91,11 +91,6 @@ namespace VengEditor
         m_Camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
     }
 
-    void MaterialPreview::RegisterOutput()
-    {
-        m_Texture = m_ImGui.CreateTexture(*m_Sampler, *m_SceneRenderer->GetOutput());
-    }
-
     void MaterialPreview::SetMaterial(AssetHandle<Material> material)
     {
         m_Material = std::move(material);
@@ -116,15 +111,15 @@ namespace VengEditor
         const Renderer::SceneView view{.World = *m_Scene, .Camera = m_Camera, .Delta = delta};
         m_SceneRenderer->Execute(cmd, view);
 
-        // The ImGui pass samples the output outside the graph, so transition it to a
-        // sampleable layout before ImGuiLayer::Render records the read. The renderer
-        // re-arms ColorAttachment before its next Execute.
-        cmd.PrepareForAccess(m_SceneRenderer->GetOutput(), Renderer::AccessKind::Sample);
+        // ImGui samples the output outside the graph; the composite pass issues the
+        // sampleability barrier before ImGuiLayer::Render records the read. The
+        // renderer re-arms ColorAttachment before its next Execute.
+        m_Composite->PrepareSceneForImGui(cmd);
     }
 
     ImTextureID MaterialPreview::GetTextureId() const
     {
-        return static_cast<ImTextureID>(m_Texture->GetTextureId());
+        return static_cast<ImTextureID>(m_Composite->GetSceneTexture().GetTextureId());
     }
 
     void MaterialPreview::Resize(uvec2 extent)
@@ -138,7 +133,7 @@ namespace VengEditor
         const f32 aspect = static_cast<f32>(m_Extent.x) / static_cast<f32>(m_Extent.y);
         m_Camera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
 
-        // Resize invalidates GetOutput(), so re-fetch + re-register the ImGuiTexture.
-        RegisterOutput();
+        // Resize invalidates GetOutput(), so re-bind the composite pass's source.
+        m_Composite->SetSource(m_SceneRenderer->GetOutput());
     }
 }

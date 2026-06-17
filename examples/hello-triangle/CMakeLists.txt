@@ -22,10 +22,6 @@ add_asset_pack(hello_triangle_assets
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/brick.frag.slang
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/brick.vert.shader.json
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/brick.frag.shader.json
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/composite.vert.slang
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/composite.frag.slang
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/composite.vert.shader.json
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/composite.frag.shader.json
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/materials/brick.vmat.json
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/sphere.prefab.json)
 

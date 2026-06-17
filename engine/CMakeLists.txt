@@ -32,6 +32,7 @@ add_library(veng SHARED
         src/Scene/ComponentPool.cpp
         src/Scene/Scene.cpp
         src/Scene/Transforms.cpp
+        src/Renderer/ImGuiCompositePass.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/SceneRenderer.cpp
         src/Renderer/ShaderInterface.cpp
