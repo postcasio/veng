@@ -1,5 +1,5 @@
 // Mesh cook test: cooks a fixture mesh pack through
-// libveng_cook and checks the resulting CookedMeshHeader (assetformat),
+// libveng_cook and checks the resulting CookedMeshHeader (assetpack),
 // attribute descriptor, submesh table (incl. the material override), and buffer
 // sizes against the fixture cube.obj + cube.mesh.json.
 

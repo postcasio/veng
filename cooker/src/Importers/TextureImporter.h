@@ -5,7 +5,7 @@
 namespace Veng::Cook
 {
     // Cooks a texture's JSON source (e.g. "textures/brick.tex.json", referenced
-    // from the pack by "source") into a CookedTextureHeader (assetformat) plus
+    // from the pack by "source") into a CookedTextureHeader (assetpack) plus
     // raw RGBA8 pixel bytes. The source JSON's "image" path is relative to the
     // source JSON's own directory; "sampler" settings are packed into the
     // header's reserved fields. v1: stb-decoded RGBA8,

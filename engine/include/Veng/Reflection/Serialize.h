@@ -13,7 +13,7 @@ namespace Veng
     // save/load any reflected value (a component or any other struct). The cooker
     // produces the cooked prefab blob by reusing WriteFields; the runtime prefab
     // loader reconstructs with ReadFields — one encoder/decoder, shared. There is
-    // no on-disk container format here, no assetformat dependency.
+    // no on-disk container format here, no assetpack dependency.
     //
     // Within a value, fields are written name-keyed ({ name, value }) and length-
     // prefixed, so ReadFields tolerates schema drift: a record absent from the

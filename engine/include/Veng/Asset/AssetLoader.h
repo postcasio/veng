@@ -59,7 +59,7 @@ namespace Veng
 
         [[nodiscard]] virtual AssetType Type() const = 0;
 
-        // Cooked blob (assetformat layout) -> a LoadJob: the created, unregistered
+        // Cooked blob (assetpack layout) -> a LoadJob: the created, unregistered
         // engine resource plus its main-thread Finalize and dependency set. When
         // async is true the loader records GPU uploads through the task system
         // (no device wait) and resolves dependencies via manager.Load; when

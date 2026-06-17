@@ -5,7 +5,7 @@
 namespace Veng::Cook
 {
     // Cooks a shader into a CookedShaderHeader + reflected
-    // ShaderInterface + SPIR-V (assetformat's CookedBlobs.h). The pack entry's
+    // ShaderInterface + SPIR-V (assetpack's CookedBlobs.h). The pack entry's
     // "source" points at a *.shader.json holding { "source": "<.slang>",
     // "entry": "...", "vertex_layout": <AssetId, optional> }; the .slang path is
     // resolved relative to that json's own directory. The named entry point is

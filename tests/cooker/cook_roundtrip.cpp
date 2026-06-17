@@ -1,6 +1,6 @@
 // Cooker round-trip test: cooks a fixture pack of `raw`
 // entries end-to-end through libveng_cook, then reads the resulting archive
-// back with assetformat's ArchiveReader and checks ids/types/bytes match.
+// back with assetpack's ArchiveReader and checks ids/types/bytes match.
 // Round-trips the whole tool's pack -> CookPack -> ArchiveWriter -> archive
 // -> ArchiveReader chain.
 

@@ -15,7 +15,7 @@ namespace Veng::Cook
     {
         // The Parse* helpers below mirror Veng::Renderer::Filter / MipmapMode /
         // AddressMode ordinals (Renderer/Types.h) — kept in sync by hand per the
-        // cycle-avoidance rule documented in assetformat's CookedBlobs.h.
+        // cycle-avoidance rule documented in assetpack's CookedBlobs.h.
 
         optional<u32> ParseFilter(const string& name)
         {

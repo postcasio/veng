@@ -1,5 +1,5 @@
 // Texture cook test: cooks a fixture texture pack through
-// libveng_cook and checks the resulting CookedTextureHeader (assetformat) and
+// libveng_cook and checks the resulting CookedTextureHeader (assetpack) and
 // pixel bytes match the fixture's source PNG + .tex.json.
 
 #include <cstring>

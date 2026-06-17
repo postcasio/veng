@@ -34,7 +34,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
 - **[planset-5](planset-5/README.md)** — the synchronous asset system (✅ complete,
   2026-06). Takes up future area 1's **synchronous slice**: a per-lib project
   reorg, a standalone in-repo **cooker** (`vengc`) that turns hand-written JSON
-  **asset packs** into binary **archives**, a shared `assetformat` lib, and an
+  **asset packs** into binary **archives**, a shared `assetpack` lib, and an
   engine-side `AssetManager` that loads by opaque `u64` `AssetId` via `LoadSync`.
   Delivers the **bindless** descriptor subsystem (set 0 bound once per frame) then
   texture (stb), mesh (assimp), shader (**Slang** + offline reflection), and a thin
@@ -108,7 +108,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   disk persistence via `ApplicationInfo::PipelineCachePath`. **(C) Archive content
   hashes** — `.vengpack` format v2 carries a content hash per cooked blob + a
   table-of-contents digest, cooker-written (xxh3-128) and `vengc verify`-checked;
-  the loader never verifies and `assetformat`/`libveng` gain no hash dependency. B
+  the loader never verifies and `assetpack`/`libveng` gain no hash dependency. B
   and C each resolve a **cross-cutting concern** (pipeline caching; content hashes)
   from [future/README.md](future/README.md).
 

@@ -10,7 +10,7 @@
 // The shader interface: the descriptor bindings and
 // push-constant blocks reflected from a shader at cook time (Slang's reflection
 // API for the .slang path; supplied directly for the inline-SPIR-V path) and
-// serialized into the cooked blob (assetformat's CookedShaderHeader). Never
+// serialized into the cooked blob (assetpack's CookedShaderHeader). Never
 // re-derived at runtime — the engine only bridges the cooked,
 // underlying-integer enums to Veng::Renderer enums (ShaderLoader) and builds
 // layouts from the result (below).

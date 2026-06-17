@@ -5,7 +5,7 @@
 namespace Veng::Cook
 {
     // Cooks a material into a CookedMaterialHeader + CookedMaterialField table +
-    // an engine block + an authored block (assetformat's CookedBlobs.h). The pack
+    // an engine block + an authored block (assetpack's CookedBlobs.h). The pack
     // entry's "source" points at a *.vmat.json that declares:
     //   - "shaders": the vertex + fragment Shader pack entries by AssetId.
     //   - "fields": an ordered, explicitly-typed list. Each field carries a

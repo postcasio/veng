@@ -2,7 +2,7 @@
 #
 # Offline importer/cooker: parses a JSON asset pack, dispatches each entry to
 # a registered AssetImporter, and writes a .vengpack archive via
-# assetformat's ArchiveWriter. All of its dependencies (nlohmann/json, stb,
+# assetpack's ArchiveWriter. All of its dependencies (nlohmann/json, stb,
 # assimp, Slang, xxHash) are cooker-only — the engine never links any of them,
 # nor libveng_cook itself.
 
@@ -169,7 +169,7 @@ add_library(libveng_cook STATIC
         src/ModuleTypes.cpp
         src/Importers/PrefabImporter.cpp)
 add_library(veng::cook ALIAS libveng_cook)
-target_link_libraries(libveng_cook PUBLIC veng_cook_objs veng::veng veng::assetformat)
+target_link_libraries(libveng_cook PUBLIC veng_cook_objs veng::veng veng::assetpack)
 target_link_libraries(libveng_cook PRIVATE fmt::fmt assimp::assimp slang::slang)
 target_compile_options(libveng_cook PRIVATE -fno-exceptions)
 
@@ -182,6 +182,6 @@ target_link_libraries(vengc PRIVATE veng::cook fmt::fmt)
 # vengc links veng, but this one does not, so veng can depend on it.
 add_executable(veng_cook_bootstrap tool/bootstrap_main.cpp)
 target_link_libraries(veng_cook_bootstrap PRIVATE
-        veng_cook_objs veng::assetformat fmt::fmt assimp::assimp slang::slang)
+        veng_cook_objs veng::assetpack fmt::fmt assimp::assimp slang::slang)
 target_compile_options(veng_cook_bootstrap PRIVATE -fno-exceptions)
 target_compile_options(vengc PRIVATE -fno-exceptions)

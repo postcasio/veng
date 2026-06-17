@@ -1,4 +1,4 @@
-// assetformat round-trip tests: pure, no GPU. Proves the .vengpack
+// assetpack round-trip tests: pure, no GPU. Proves the .vengpack
 // container's writer/reader contract.
 
 #include <doctest/doctest.h>

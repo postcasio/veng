@@ -18,7 +18,7 @@ system are illegal.
 Each library lives in its own root subdirectory; the top-level `CMakeLists.txt`
 is thin (shared deps + `add_subdirectory` per lib).
 
-- `engine/` — `libveng`, the runtime. Links only `assetformat` (loader, no
+- `engine/` — `libveng`, the runtime. Links only `assetpack` (loader, no
   importer deps).
   - `engine/include/Veng/` — public headers. `Veng.h` is the foundational
     header every other header builds on (std/glm includes + house-style
@@ -32,7 +32,7 @@ is thin (shared deps + `add_subdirectory` per lib).
     renderer classes. (The public class lives in
     `engine/include/Veng/Renderer/X.h`; its impl lives in
     `engine/src/Renderer/Backend/X.cpp` — note the path asymmetry.)
-- `assetformat/` — `libveng_assetformat`, the shared archive + cooked-blob
+- `assetpack/` — `libveng_assetpack`, the shared archive + cooked-blob
   format (`Veng/Asset/`: `AssetId`, `AssetType`, `Archive`, `CookedBlobs`).
   Vulkan-free, importer-free; linked PUBLIC by `engine` and by `cooker`.
 - `cooker/` — `libveng_cook` + the `vengc` CLI (stb, assimp, Slang, JSON).
@@ -510,7 +510,7 @@ archive; the engine *mounts* archives and resolves assets against them.
   TOC bytes), cooker-written via xxh3-128 and checkable with **`vengc verify`** (it
   re-hashes the blobs + digest and exits nonzero on any mismatch). **The loader
   never verifies** — hashing is tooling, not the hot path; the runtime trusts its
-  packs. The hash function lives **only** in the cooker/verify tool, so `assetformat`
+  packs. The hash function lives **only** in the cooker/verify tool, so `assetpack`
   (which stores the raw 16 bytes and computes nothing) and `libveng` gain no hash
   dependency.
 - **An asset pack is a pure `{ id, type, source }` manifest.** It carries no

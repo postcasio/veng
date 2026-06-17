@@ -19,7 +19,7 @@ namespace Veng::Cook
         // veng's fixed canonical vertex layout v1: position/normal/tangent/uv,
         // interleaved, all 32-bit float. The Format ordinals mirror
         // Veng::Renderer::Format (Renderer/Types.h) — kept in sync by hand per
-        // the cycle-avoidance rule documented in assetformat's CookedBlobs.h.
+        // the cycle-avoidance rule documented in assetpack's CookedBlobs.h.
         // The engine loader validates a cooked mesh's attribute descriptor
         // against this same layout (MeshLoader).
         constexpr u32 FormatRGBA32Sfloat = 10;

@@ -24,7 +24,7 @@ namespace Veng::Cook
 
         // The underlying-integer ordinals below mirror Veng::Renderer::ShaderStage /
         // DescriptorType / Format (Renderer/Types.h) — kept in sync by hand per the
-        // cycle-avoidance rule documented in assetformat's CookedBlobs.h.
+        // cycle-avoidance rule documented in assetpack's CookedBlobs.h.
         constexpr u32 ShaderStageVertex = 1u << 0;
         constexpr u32 ShaderStageFragment = 1u << 1;
         constexpr u32 ShaderStageCompute = 1u << 2;

@@ -34,7 +34,7 @@ namespace Veng
     // VersionMismatch error (see AssetError.h), not a crash.
     inline constexpr u32 ArchiveFormatVersion = 2;
 
-    // A 128-bit content hash, stored raw. assetformat carries these bytes; the
+    // A 128-bit content hash, stored raw. assetpack carries these bytes; the
     // cooker and the verify tool compute them (xxh3-128). Zero means "unhashed".
     struct ContentHash
     {
@@ -71,14 +71,14 @@ namespace Veng
         ArchiveWriter() = default;
 
         // hash is the caller-computed xxh3-128 of blob (cooker-side);
-        // assetformat stores it raw and computes nothing. Defaulted so the
+        // assetpack stores it raw and computes nothing. Defaulted so the
         // non-cooker callers (unit-test fixtures) compile unchanged — a zero
         // hash is "unhashed", which the format defines. Only the cooker passes
         // a real hash.
         void Add(AssetId id, AssetType type, std::span<const u8> blob, ContentHash hash = {});
 
         // The table-of-contents digest the caller computed over the serialized
-        // TOC bytes. assetformat stores it in the header without computing one.
+        // TOC bytes. assetpack stores it in the header without computing one.
         void SetArchiveDigest(ContentHash digest);
 
         [[nodiscard]] vector<u8> Build() const;
@@ -110,7 +110,7 @@ namespace Veng
         [[nodiscard]] optional<ArchiveEntry> Find(AssetId id) const;
         [[nodiscard]] const vector<ArchiveTocEntry>& Entries() const { return m_Entries; }
 
-        // The header's table-of-contents digest, as stored — assetformat does
+        // The header's table-of-contents digest, as stored — assetpack does
         // not recompute or verify it.
         [[nodiscard]] ContentHash ArchiveDigest() const { return m_ArchiveDigest; }
 

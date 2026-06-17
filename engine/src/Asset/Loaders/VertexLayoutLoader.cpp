@@ -12,7 +12,7 @@ namespace Veng
     {
         // The Bridge* helpers below map the cooked blob's underlying-integer
         // enum fields to their Veng::Renderer enums — the engine side of the
-        // cycle-avoidance rule documented in assetformat's CookedBlobs.h. An
+        // cycle-avoidance rule documented in assetpack's CookedBlobs.h. An
         // unrecognized value means a stale/corrupt cooked archive, hence
         // AssetError::Corrupt (recoverable) rather than VE_ASSERT.
 

@@ -9,7 +9,7 @@
 // Veng/Renderer/Native.h is deliberately excluded: it is the one sanctioned
 // escape hatch that exposes raw handles and is expected to need Vulkan headers.
 //
-// The Veng/Asset/* headers come from libveng_assetformat,
+// The Veng/Asset/* headers come from libveng_assetpack,
 // linked PUBLIC by veng — this sweep also proves that boundary stays
 // Vulkan-free.
 

@@ -1,7 +1,7 @@
 #pragma once
 
 // Minimal additional vocabulary for the cooker, layered on
-// top of assetformat's vendored aliases (Veng::u8/u32/u64/usize, vector, path,
+// top of assetpack's vendored aliases (Veng::u8/u32/u64/usize, vector, path,
 // string, optional, Result, VoidResult — all visible here via enclosing-
 // namespace lookup, since Veng::Cook nests inside Veng). Adds the owning-
 // pointer alias and the JSON type used throughout the cooker's importer

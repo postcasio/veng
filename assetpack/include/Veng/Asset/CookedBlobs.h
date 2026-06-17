@@ -7,10 +7,10 @@
 //
 // The cycle-avoidance rule (load-bearing): enum-typed fields below (pixel
 // Format, index Type, shader stages, ...) are stored as their *underlying
-// integer type* — assetformat deliberately does not include the engine's
+// integer type* — assetpack deliberately does not include the engine's
 // renderer vocabulary header. The engine loader casts to the corresponding
 // Veng::Renderer enum guarded by a static_assert/VE_ASSERT (loud one-line fix
-// on drift, per house style). This keeps assetformat standalone and the
+// on drift, per house style). This keeps assetpack standalone and the
 // cooker buildable without the engine.
 //
 // These headers are the shared contract between the cooker (production) and the
@@ -209,7 +209,7 @@ namespace Veng
 
     // Prefab: a tree of entities, each carrying components keyed by their stable
     // TypeId, each component's field values stored as the reflection serializer's
-    // name-keyed record. assetformat treats the records as opaque bytes — the
+    // name-keyed record. assetpack treats the records as opaque bytes — the
     // engine's PrefabLoader interprets them through the TypeRegistry, so this file
     // gains no reflection/engine dependency (cycle-avoidance rule at the top). The
     // blob is, in order:

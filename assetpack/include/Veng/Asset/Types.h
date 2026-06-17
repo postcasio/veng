@@ -1,8 +1,8 @@
 #pragma once
 
-// Minimal vendored vocabulary for assetformat.
+// Minimal vendored vocabulary for assetpack.
 //
-// assetformat is Vulkan-free, importer-free, and engine-independent: it must
+// assetpack is Vulkan-free, importer-free, and engine-independent: it must
 // not pull in engine/include/Veng/Veng.h, because that would put engine/include
 // on the cooker's include path too (the cooker never links the engine). These
 // aliases are a small subset of Veng.h's, defined identically (same underlying
