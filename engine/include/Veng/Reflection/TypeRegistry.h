@@ -62,10 +62,12 @@ namespace Veng
             return RegisterImpl<T>(id, std::move(name), cls, std::move(fields));
         }
 
-        // Trait-driven — reads the VE_REFLECT block written next to T (its Name,
-        // Class, and Fields). Idempotent: re-registering the same id is a no-op
-        // (returns the id), so auto-registration of a referenced type can be
-        // called freely.
+        // Trait-driven — reads VengReflect<T> (its Name, Class, and Fields). The
+        // single registration path for every reflected type: a leaf's Fields()
+        // is {} (so nothing extra is recorded) and its RegisterDependencies is a
+        // no-op; a struct's replay its describe-block. Idempotent: re-registering
+        // the same id is a no-op (returns the id), so auto-registration of a
+        // referenced type can be called freely.
         template <class T>
         TypeId Register()
         {
@@ -77,32 +79,16 @@ namespace Veng
                 return id;
 
             const TypeId registered = RegisterImpl<T>(
-                id, VengReflect<T>::Name(), VengReflect<T>::Class(), VengReflect<T>::Fields());
+                id, VengReflect<T>::Name(), VengReflect<T>::Class, VengReflect<T>::Fields());
 
-            // Auto-register each Struct-class field's type from its own trait,
-            // recursively and idempotently, so referencing a nested struct
-            // carries no registration-ordering burden. Registered after T itself
-            // so a self-referential type's id is already present (the contains()
-            // guard above then short-circuits the recursion).
+            // Auto-register each field's type from its own trait, recursively and
+            // idempotently, so referencing a nested type carries no
+            // registration-ordering burden. A leaf field's Fields() is empty so
+            // it bottoms out the recursion. Registered after T itself so a
+            // self-referential type's id is already present (the contains() guard
+            // above then short-circuits the recursion).
             VengReflect<T>::RegisterDependencies(*this);
             return registered;
-        }
-
-        // Registers a leaf field type (lifecycle + size + class) under its
-        // ReflectLeaf id, idempotently. A struct field uses Register<T>()
-        // instead; this is the leaf branch of dependency auto-registration, so a
-        // generic walk can read every field type's Size off its TypeInfo.
-        template <class T>
-        TypeId EnsureLeaf()
-        {
-            constexpr TypeId id = ReflectLeaf<T>::Id;
-            static_assert(id != InvalidTypeId,
-                          "ReflectLeaf<T>::Id must be a non-zero authored id");
-
-            if (m_Types.contains(id))
-                return id;
-
-            return RegisterImpl<T>(id, string{}, ReflectLeaf<T>::Class, {});
         }
 
         // The authored TypeId of T, read straight off its trait — a compile-time
@@ -164,13 +150,20 @@ namespace Veng
     };
 }
 
-// Declares a type's stable TypeId by specialising VengReflect<T> with only the
-// Id. Use it for a game leaf that needs an id but no fields; a struct with
-// fields uses VE_REFLECT instead. The id is an authored 0x…ULL literal (engine
-// builtins) or a `vengc generate-id` value (game types).
+// Declares a fieldless struct/component's identity by specialising
+// VengReflect<T>: the given TypeId, Class = Struct, a Name() that yields the
+// type spelling, an empty Fields(), and a no-op RegisterDependencies — so it
+// flows through the same uniform Register<T>() as everything else. Use it for a
+// poolable type that needs an id but carries no fields; a fielded struct uses
+// VE_REFLECT and a non-struct leaf/enum uses VE_LEAF. The id is an authored
+// 0x…ULL literal (engine builtins) or a `vengc generate-id` value (game types).
 #define VE_TYPE(Type, TypeIdLiteral)                                            \
     template <>                                                                 \
-    struct ::Veng::VengReflect<Type>                                            \
-    {                                                                           \
-        static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                   \
+    struct ::Veng::VengReflect<Type>                                           \
+    {                                                                          \
+        static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                  \
+        static constexpr ::Veng::FieldClass Class = ::Veng::FieldClass::Struct;\
+        static ::Veng::string Name() { return #Type; }                         \
+        static ::Veng::vector<::Veng::FieldDescriptor> Fields() { return {}; } \
+        static void RegisterDependencies(::Veng::TypeRegistry&) {}             \
     }

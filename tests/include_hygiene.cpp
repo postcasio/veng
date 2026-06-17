@@ -51,6 +51,7 @@
 
 #include <Veng/Reflection/FieldDescriptor.h>
 #include <Veng/Reflection/Reflect.h>
+#include <Veng/Reflection/ReflectionTypes.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>

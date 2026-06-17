@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Reflection/FieldDescriptor.h>
+#include <Veng/Scene/Entity.h>
 
 #include <VengEditor/EditorPanel.h>
 

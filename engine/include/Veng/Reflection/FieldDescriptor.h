@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
-#include <Veng/Reflection/TypeId.h>
+#include <Veng/Reflection/ReflectionTypes.h>
 
 namespace Veng
 {

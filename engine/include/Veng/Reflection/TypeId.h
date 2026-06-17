@@ -5,143 +5,107 @@
 
 #include <Veng/Asset/AssetHandle.h>
 
-#include <type_traits>
+#include <Veng/Reflection/ReflectionTypes.h>
+#include <Veng/Reflection/FieldDescriptor.h>
 
 namespace Veng
 {
     class Texture;
     class Mesh;
     class Material;
+    class TypeRegistry;
 
-    // A stable, authored type identifier — the AssetId discipline applied to
-    // C++ types. Engine builtins carry a hardcoded 0x…ULL literal checked into
-    // the source; game types mint their own with `vengc generate-id`. Because
-    // the id is a literal, not a compiler type-hash, it is a compile-time
-    // constant and byte-identical across the eventual dlopen boundary.
-    using TypeId = u64;
-
-    // 0 is reserved as the invalid id; every minted id is non-zero.
-    inline constexpr TypeId InvalidTypeId = 0;
-
-    // The closed meta-kind a generic walker switches on. Unlike the open TypeId
-    // space (any game type adds a new id with no engine change), this set is
-    // fixed: the serializer and the future editor inspector share exactly these
-    // cases. Reference is an intra-scene Entity reference the future loader
-    // remaps; Struct recurses into the field type's own Fields.
-    enum class FieldClass : u8
-    {
-        Scalar,
-        Vector,
-        Quaternion,
-        Matrix,
-        String,
-        AssetHandle,
-        Reference,
-        Struct,
-        Enum,
-    };
-
-    // A type declares its stable TypeId (and, via VE_REFLECT, its fields) by
-    // specialising this trait. VE_TYPE writes an id-only specialisation;
-    // VE_REFLECT writes a fielded one carrying Id + Name() + Class() + Fields().
-    // TypeRegistry::Register reads it; the reflection layer enriches the same
-    // trait. Leaf field types carry their identity on ReflectLeaf<T> instead.
+    // Every reflected type — a builtin scalar, a glm vector, an enum, an
+    // AssetHandle, an Entity reference, a fieldless component, or a fielded
+    // struct — names its stable identity by specialising this single trait with
+    // a uniform member set:
+    //
+    //   static constexpr TypeId Id;                  // authored 0x…ULL
+    //   static constexpr FieldClass Class;           // the type's meta-kind
+    //   static string Name();                        // logs/editor display
+    //   static vector<FieldDescriptor> Fields();     // {} for a leaf / id-only
+    //   static void RegisterDependencies(TypeRegistry&); // no-op for those
+    //
+    // Three authoring macros emit that set: VE_LEAF (a non-struct leaf — its
+    // Class, empty Fields, no-op dependencies), VE_TYPE (a fieldless
+    // struct/component — Class = Struct, empty Fields), and VE_REFLECT (a
+    // fielded struct — Class = Struct, Fields/RegisterDependencies replay the
+    // describe-block). TypeRegistry::Register reads the trait; with the member
+    // set uniform, the two compile-time dispatchers below are direct reads.
     template <class T>
     struct VengReflect;
 
-    // A leaf C++ type names its stable TypeId + FieldClass through this trait.
-    // The engine pre-specialises it for the builtin leaves below; a game adds a
-    // new leaf by specialising it for its own type with a `vengc generate-id`
-    // value — no engine change. Structs (FieldClass::Struct) carry their identity
-    // on VengReflect<T> instead, written by VE_REFLECT.
-    template <class T>
-    struct ReflectLeaf;
-
-    namespace Detail
-    {
-        // True when T has a leaf trait (a Scalar/Vector/.../AssetHandle/Reference
-        // leaf), false when T is a reflected struct carrying VengReflect<T>.
-        template <class T, class = void>
-        inline constexpr bool IsReflectLeaf = false;
-
-        template <class T>
-        inline constexpr bool IsReflectLeaf<T, std::void_t<decltype(ReflectLeaf<T>::Id)>> = true;
-    }
-
-    // The stable TypeId of any reflected type, resolved at compile time: a leaf
-    // reads ReflectLeaf<T>::Id, a struct reads VengReflect<T>::Id. There is no
-    // registration-ordering burden — the id is a constant, independent of the
-    // registry.
+    // The stable TypeId of any reflected type, a compile-time constant read
+    // straight off its trait — no registration-ordering burden, independent of
+    // the registry.
     template <class T>
     constexpr TypeId TypeIdOf()
     {
-        if constexpr (Detail::IsReflectLeaf<T>)
-            return ReflectLeaf<T>::Id;
-        else
-            return VengReflect<T>::Id;
+        return VengReflect<T>::Id;
     }
 
-    // The FieldClass of any reflected type, resolved at compile time. A struct is
-    // always FieldClass::Struct.
+    // The FieldClass of any reflected type, read straight off its trait.
     template <class T>
     constexpr FieldClass FieldClassOf()
     {
-        if constexpr (Detail::IsReflectLeaf<T>)
-            return ReflectLeaf<T>::Class;
-        else
-            return FieldClass::Struct;
+        return VengReflect<T>::Class;
+    }
+}
+
+// Declares a non-struct leaf type's identity by specialising VengReflect<T>:
+// the given TypeId + FieldClass, a Name() that yields the type spelling, an
+// empty Fields(), and a no-op RegisterDependencies. The engine pre-authors the
+// builtin leaf vocabulary below through it; a game adds a leaf or enum the same
+// way — VE_LEAF(MyEnum, 0x…ULL, FieldClass::Enum) — with no engine change. The
+// id is an authored 0x…ULL literal (engine builtins) or a `vengc generate-id`
+// value (game types).
+#define VE_LEAF(Type, TypeIdLiteral, FieldClassValue)                          \
+    template <>                                                                 \
+    struct ::Veng::VengReflect<Type>                                           \
+    {                                                                          \
+        static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                  \
+        static constexpr ::Veng::FieldClass Class = (FieldClassValue);         \
+        static ::Veng::string Name() { return #Type; }                         \
+        static ::Veng::vector<::Veng::FieldDescriptor> Fields() { return {}; } \
+        static void RegisterDependencies(::Veng::TypeRegistry&) {}             \
     }
 
-    // ----- Builtin leaf traits -------------------------------------------------
-    // Each carries a hardcoded TypeId literal checked into the engine, exactly
-    // like the core pack's built-in asset ids, plus its meta-kind. Distinct
-    // C++ types that share a representation (bool vs u8, etc.) still get distinct
-    // ids — identity is per C++ type, not per byte layout.
+// ----- Builtin leaf vocabulary ---------------------------------------------
+// Each carries a hardcoded TypeId literal checked into the engine, exactly like
+// the core pack's built-in asset ids, plus its meta-kind. Distinct C++ types
+// that share a representation (bool vs u8, etc.) still get distinct ids —
+// identity is per C++ type, not per byte layout. Authored inside namespace Veng
+// so the unqualified type spelling is both the template argument and the
+// stringised TypeInfo.Name; the macro's own ::Veng:: qualifier on the trait it
+// specialises is then redundant here, hence the local diagnostic suppression.
 
-    template <> struct ReflectLeaf<bool>
-    { static constexpr TypeId Id = 0x283EDB5B266A27EDULL; static constexpr FieldClass Class = FieldClass::Scalar; };
+#if defined(__clang__) || defined(__GNUC__)
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wextra-qualification"
+#endif
 
-    template <> struct ReflectLeaf<f32>
-    { static constexpr TypeId Id = 0x4AF0D89664A476FBULL; static constexpr FieldClass Class = FieldClass::Scalar; };
-
-    template <> struct ReflectLeaf<i32>
-    { static constexpr TypeId Id = 0xE4A543818EB46182ULL; static constexpr FieldClass Class = FieldClass::Scalar; };
-
-    template <> struct ReflectLeaf<u32>
-    { static constexpr TypeId Id = 0x6AD25BC2BE1A5D65ULL; static constexpr FieldClass Class = FieldClass::Scalar; };
-
-    template <> struct ReflectLeaf<u64>
-    { static constexpr TypeId Id = 0x94AB42FEF4E32D87ULL; static constexpr FieldClass Class = FieldClass::Scalar; };
-
-    template <> struct ReflectLeaf<vec2>
-    { static constexpr TypeId Id = 0xB9A6A5F871901160ULL; static constexpr FieldClass Class = FieldClass::Vector; };
-
-    template <> struct ReflectLeaf<vec3>
-    { static constexpr TypeId Id = 0xA9A78263CAA293E7ULL; static constexpr FieldClass Class = FieldClass::Vector; };
-
-    template <> struct ReflectLeaf<vec4>
-    { static constexpr TypeId Id = 0xA936BFC80085F684ULL; static constexpr FieldClass Class = FieldClass::Vector; };
-
-    template <> struct ReflectLeaf<quat>
-    { static constexpr TypeId Id = 0xFD92495C91720213ULL; static constexpr FieldClass Class = FieldClass::Quaternion; };
-
-    template <> struct ReflectLeaf<mat4>
-    { static constexpr TypeId Id = 0x8ABB4818B9CC633EULL; static constexpr FieldClass Class = FieldClass::Matrix; };
-
-    template <> struct ReflectLeaf<string>
-    { static constexpr TypeId Id = 0x2E46B7DE1FFC7DFCULL; static constexpr FieldClass Class = FieldClass::String; };
-
-    template <> struct ReflectLeaf<AssetHandle<Texture>>
-    { static constexpr TypeId Id = 0x612EE7E69BE7B848ULL; static constexpr FieldClass Class = FieldClass::AssetHandle; };
-
-    template <> struct ReflectLeaf<AssetHandle<Mesh>>
-    { static constexpr TypeId Id = 0x1CD2C85C50AFC9E0ULL; static constexpr FieldClass Class = FieldClass::AssetHandle; };
-
-    template <> struct ReflectLeaf<AssetHandle<Material>>
-    { static constexpr TypeId Id = 0x3992D11EB4362B4CULL; static constexpr FieldClass Class = FieldClass::AssetHandle; };
+namespace Veng
+{
+    VE_LEAF(bool, 0x283EDB5B266A27EDULL, FieldClass::Scalar);
+    VE_LEAF(f32, 0x4AF0D89664A476FBULL, FieldClass::Scalar);
+    VE_LEAF(i32, 0xE4A543818EB46182ULL, FieldClass::Scalar);
+    VE_LEAF(u32, 0x6AD25BC2BE1A5D65ULL, FieldClass::Scalar);
+    VE_LEAF(u64, 0x94AB42FEF4E32D87ULL, FieldClass::Scalar);
+    VE_LEAF(vec2, 0xB9A6A5F871901160ULL, FieldClass::Vector);
+    VE_LEAF(vec3, 0xA9A78263CAA293E7ULL, FieldClass::Vector);
+    VE_LEAF(vec4, 0xA936BFC80085F684ULL, FieldClass::Vector);
+    VE_LEAF(quat, 0xFD92495C91720213ULL, FieldClass::Quaternion);
+    VE_LEAF(mat4, 0x8ABB4818B9CC633EULL, FieldClass::Matrix);
+    VE_LEAF(string, 0x2E46B7DE1FFC7DFCULL, FieldClass::String);
+    VE_LEAF(AssetHandle<Texture>, 0x612EE7E69BE7B848ULL, FieldClass::AssetHandle);
+    VE_LEAF(AssetHandle<Mesh>, 0x1CD2C85C50AFC9E0ULL, FieldClass::AssetHandle);
+    VE_LEAF(AssetHandle<Material>, 0x3992D11EB4362B4CULL, FieldClass::AssetHandle);
 
     // Entity is an intra-scene reference, not a value leaf — the future loader
     // recognises FieldClass::Reference to remap it into a fresh Scene.
-    template <> struct ReflectLeaf<Entity>
-    { static constexpr TypeId Id = 0x448BDF481E27075EULL; static constexpr FieldClass Class = FieldClass::Reference; };
+    VE_LEAF(Entity, 0x448BDF481E27075EULL, FieldClass::Reference);
 }
+
+#if defined(__clang__) || defined(__GNUC__)
+#    pragma GCC diagnostic pop
+#endif

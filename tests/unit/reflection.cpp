@@ -99,8 +99,7 @@ namespace
 }
 
 // Team is a game-defined enum leaf: a fake leaf TypeId, no engine change.
-template <> struct Veng::ReflectLeaf<Team>
-{ static constexpr TypeId Id = 0x11AA22BB33CC44DDULL; static constexpr FieldClass Class = FieldClass::Enum; };
+VE_LEAF(Team, 0x11AA22BB33CC44DDULL, Veng::FieldClass::Enum);
 
 VE_REFLECT(Inner, 0x7700110022003300ULL)
     VE_FIELD(A, .DisplayName = "Amplitude")
@@ -148,7 +147,7 @@ TEST_CASE("VE_REFLECT records names, offsets, metadata, and the authored id")
     CHECK(fields[2].Min == doctest::Approx(0.001));
 
     CHECK(VengReflect<Transform>::Id == 0x0AB8E30B2F638555ULL);
-    CHECK(VengReflect<Transform>::Class() == FieldClass::Struct);
+    CHECK(VengReflect<Transform>::Class == FieldClass::Struct);
 }
 
 TEST_CASE("DisplayName defaults to Name when omitted")
@@ -384,8 +383,9 @@ TEST_CASE("Generic over non-components: a plain struct round-trips")
 TEST_CASE("Open extension: a game-defined leaf + struct round-trips with no engine change")
 {
     // Team (a game leaf) is used inside WithEnum, registered and round-tripped
-    // above — its id and class come entirely from the game's ReflectLeaf<Team>
-    // specialisation. Re-confirm the leaf is recognised generically.
+    // above — its id and class come entirely from the game's VE_LEAF-authored
+    // VengReflect<Team> specialisation. Re-confirm the leaf is recognised
+    // generically.
     static_assert(TypeIdOf<Team>() == 0x11AA22BB33CC44DDULL);
     static_assert(FieldClassOf<Team>() == FieldClass::Enum);
 
@@ -394,4 +394,9 @@ TEST_CASE("Open extension: a game-defined leaf + struct round-trips with no engi
     CHECK(registry.IsRegistered(registry.IdOf<WithEnum>()));
     // The leaf's size was recorded by dependency auto-registration.
     CHECK(registry.Info(TypeIdOf<Team>()).Size == sizeof(Team));
+    // A builtin leaf now carries a real TypeInfo.Name through the uniform
+    // Register<T>() — registered here as a dependency of WithEnum's f32-less
+    // schema, so register a fielded type that pulls f32 in.
+    registry.Register<Inner>();
+    CHECK(registry.Info(TypeIdOf<f32>()).Name == "f32");
 }

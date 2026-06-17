@@ -22,7 +22,7 @@ namespace Veng::Cook
     namespace
     {
         // The AssetType an AssetHandle<T> field expects, keyed by the field's leaf
-        // TypeId (the stable ids on ReflectLeaf<AssetHandle<T>>). A field whose
+        // TypeId (the stable ids on VengReflect<AssetHandle<T>>). A field whose
         // type is none of these is an AssetHandle of an unknown asset type.
         optional<AssetType> AssetTypeForHandleField(TypeId fieldType)
         {

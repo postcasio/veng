@@ -49,9 +49,10 @@ namespace Veng::Detail
     };
 
     // Sink that the same describe-block drives to auto-register each field's
-    // type: a struct-class field recurses through Register<T>() (carrying its own
-    // fields); a leaf field is recorded through EnsureLeaf<T>() so a generic walk
-    // can read its Size off its TypeInfo. Both are idempotent.
+    // type through the uniform Register<T>(): a struct-class field recurses
+    // (carrying its own fields); a leaf field records itself with an empty field
+    // list (so a generic walk can read its Size off its TypeInfo) and bottoms
+    // out the recursion. Idempotent.
     struct DependencyRegistrar
     {
         TypeRegistry& Registry;
@@ -59,10 +60,7 @@ namespace Veng::Detail
         template <class Owner, class Field>
         void Field_(const FieldDescriptor&)
         {
-            if constexpr (FieldClassOf<Field>() == FieldClass::Struct)
-                Registry.Register<Field>();
-            else
-                Registry.EnsureLeaf<Field>();
+            Registry.Register<Field>();
         }
     };
 }
@@ -82,10 +80,7 @@ namespace Veng::Detail
         using Owner = Type;                                                     \
         static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                   \
         static ::Veng::string Name() { return #Type; }                          \
-        static constexpr ::Veng::FieldClass Class()                             \
-        {                                                                       \
-            return ::Veng::FieldClass::Struct;                                  \
-        }                                                                       \
+        static constexpr ::Veng::FieldClass Class = ::Veng::FieldClass::Struct; \
         template <class Sink>                                                   \
         static void Describe([[maybe_unused]] Sink& sink)                       \
         {
