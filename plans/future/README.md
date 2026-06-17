@@ -121,15 +121,21 @@ cross-cutting concerns below. Spans **several plansets**; **design overview:**
   live recook, JSON round-trip on save. `hello_triangle-editor` launches with
   `libhello_triangle`, shows the scene docked, and opens the brick texture in the texture
   editor.
-- **Sub-area C — material node editor — STILL FUTURE (the next editor planset).** imnodes
-  graph → loaded `.vmat` (param-binding v1), live preview against the cook-on-demand +
-  hot-reload path. Both prerequisites met: cook-on-demand (planset-14) and the inspector
-  foundation (planset-14). A planset of its own.
-- **Sub-area D — scene editor — STILL FUTURE.** Viewport panel (reuses the delivered
-  `SceneRenderer`), hierarchy panel, gizmos (ImGuizmo or hand-rolled), save round-trip to
-  `.prefab.json`. Its scene-model and cooked-prefab gates are met (planset-10/11), and the
-  inspector + cook-on-demand foundation (planset-14) is now also in place. A planset of
-  its own.
+- **Sub-area C — material node editor — DONE (planset-15).** imnodes graph → loaded `.vmat`
+  (param-binding v1), live preview against the cook-on-demand + hot-reload path. A generic,
+  device-free **`VengEditor/NodeGraph/`** surface (topology core + data-driven `NodeType`/
+  `NodeCatalog` + graph serialization) carries a material specialization in editor src
+  (`TextureSample`/`Param`/`MaterialOutput`, coercion-aware connection, `CompileMaterialGraph`
+  → a `.vmat` field list + flat-`.vmat`→graph import), the `MaterialEditorPanel`, and a
+  reusable `MaterialPreview` sphere; a precursor splits material parameters into a fixed
+  engine-supplied `MaterialData` block + a variable-size authored `MaterialParams` block so a
+  graph can author parameters at all. The `VengEditor/NodeGraph/` surface is reusable by
+  sub-area D and by game editor modules.
+- **Sub-area D — scene editor — STILL FUTURE (the only remaining editor sub-area).** Viewport
+  panel (reuses the delivered `SceneRenderer`), hierarchy panel, gizmos (ImGuizmo or
+  hand-rolled), save round-trip to `.prefab.json`. All its gates are met: the scene-model and
+  cooked-prefab gates (planset-10/11), the inspector + cook-on-demand foundation (planset-14),
+  and the reusable `VengEditor/NodeGraph/` surface (planset-15). A planset of its own.
 - **The editor is a cooker consumer** ([editor.md](editor.md)). The runtime never
   links importers; the editor — a tool — links `libveng_cook` for **cook-on-demand**,
   reading *source* assets, cooking live (off-thread), and previewing through the
@@ -143,12 +149,13 @@ cross-cutting concerns below. Spans **several plansets**; **design overview:**
 - **A `libveng_editor` framework** (panels, an `AssetType`→editor registry,
   reflection-driven inspectors) that games extend from `libgame_editor` to add
   **custom views/tools** for their own asset types.
-- **Concrete editors:** texture viewer/settings (the first slice), the node-based
-  **material editor** (imnodes is already vendored; v1 binds params to an
-  author-provided Slang shader — the *loaded* `.vmat` path planset-5 left open),
-  and a **scene editor** whose **both gates are now met**: the area-7 runtime scene
-  model (planset-10) and the area-10 cooked prefab asset + module reflection
-  (planset-11).
+- **Concrete editors:** texture viewer/settings (the first slice, planset-14), the
+  node-based **material editor — DONE (planset-15)** (an imnodes graph binding params to an
+  author-provided Slang shader, v1 — the *loaded* `.vmat` path planset-5 left open — over the
+  generic `VengEditor/NodeGraph/` surface), and a **scene editor** whose **gates are now
+  met**: the area-7 runtime scene model (planset-10), the area-10 cooked prefab asset + module
+  reflection (planset-11), the inspector + cook-on-demand foundation (planset-14), and the
+  reusable node-graph surface (planset-15).
 - **Depends on** the [threading/async-load path](threading-task-system.md) (area 2)
   for non-stalling live preview / hot-reload, [game-module.md](game-module.md), and
   area 7 (scene model — runtime done) for the scene editor. Its native-type
@@ -351,27 +358,32 @@ That whole asset + threading + scene + cook + render chain is closed:
 6 editor: shell + framework (sub-B) ✅ ──► planset-14
         (libveng_editor, docking EditorHost, reflection inspector,
          cook-on-demand, the texture editor)
+6 editor: material node editor (sub-C) ✅ ──► planset-15
+        (VengEditor/NodeGraph/ surface, material catalog/compile,
+         live MaterialPreview, engine/authored material-param split)
 
 remaining:
-  6  editor (material editor sub-C → scene editor sub-D)   sub-B delivered (planset-14);
-        sub-C is the PRIORITIZED NEXT editor planset (cook-on-demand ✅ + inspector ✅);
-        sub-D's gates all met (area-7 ✅, area-10 ✅, area-8 SceneRenderer ✅, inspector ✅)
+  6  editor (scene editor sub-D)   sub-B delivered (planset-14), sub-C delivered (planset-15);
+        sub-D is the NEXT editor planset, its gates all met
+        (area-7 ✅, area-10 ✅, area-8 SceneRenderer ✅, inspector ✅, node-graph surface ✅)
   4  events/input — independent, gameplay-driven (any time)
 ```
 
 The remaining order:
 
-1. **Editor application (area 6) — sub-area B delivered (planset-14).** The authoring
-   environment, spanning several plansets: the [game-module build model](game-module.md)
-   (shared lib + launcher, C-ABI app registration) is **done — planset-9** (in-tree); the
-   [editor shell + framework](editor.md) (`libveng_editor`, single-window docking,
-   cook-on-demand, the texture editor) is **done — planset-14** (sub-area B). The
-   **PRIORITIZED NEXT editor planset is the node-based material editor** (sub-area C) —
-   imnodes graph → loaded `.vmat` (param-binding v1), live preview against the
-   cook-on-demand + hot-reload path delivered in planset-14. Then the **scene editor**
-   (sub-area D), whose gates are all met — the area-7 runtime scene model (planset-10), the
-   area-10 cooked prefab asset + module reflection (planset-11), the inspector + cook-on-demand
-   foundation (planset-14) — and whose **scene viewport consumes the delivered area-8
+1. **Editor application (area 6) — sub-areas B and C delivered (planset-14, planset-15).**
+   The authoring environment, spanning several plansets: the
+   [game-module build model](game-module.md) (shared lib + launcher, C-ABI app registration)
+   is **done — planset-9** (in-tree); the [editor shell + framework](editor.md)
+   (`libveng_editor`, single-window docking, cook-on-demand, the texture editor) is **done —
+   planset-14** (sub-area B); the **node-based material editor** is **done — planset-15**
+   (sub-area C): the generic `VengEditor/NodeGraph/` surface, the material catalog/compile, the
+   live `MaterialPreview`, and the engine/authored material-param split — an imnodes graph →
+   loaded `.vmat` (param-binding v1) over the cook-on-demand + hot-reload path. The **NEXT
+   editor planset is the scene editor** (sub-area D), whose gates are all met — the area-7
+   runtime scene model (planset-10), the area-10 cooked prefab asset + module reflection
+   (planset-11), the inspector + cook-on-demand foundation (planset-14), and the reusable
+   node-graph surface (planset-15) — and whose **scene viewport consumes the delivered area-8
    `SceneRenderer`** (planset-12), rendering one `Scene` through N instances with no API
    change. Its native-type **inspectors reuse area 10's module reflection** (planset-11)
    rather than re-introducing it.
@@ -399,7 +411,8 @@ to decide early than to retrofit.
   `libveng_editor` exercises the asset/material/scene surface hello-triangle never did —
   the reflection-driven inspector against real component types, the cook-on-demand loop
   against live source edits, and the scene viewport against the delivered
-  `SceneRenderer`. The node-based material editor (sub-area C) will push it further. See
+  `SceneRenderer`. The node-based material editor (sub-area C, planset-15) pushed it further —
+  the live compile→cook→hot-reload→preview loop and the asset-picker inspector. See
   [area 6](#6-editor-application) ([editor.md](editor.md), [game-module.md](game-module.md)).
 - **Design infrastructure against a real client** — planset-5 pulled a thin
   synchronous asset-loading slice (area 1) forward as a real consumer, so planset-6
@@ -432,20 +445,22 @@ planset-5 + planset-6), 2 (threading, planset-6), 3 (de-global, planset-4), 5
 (testing, planset-3 + planset-4), 9 (compiled `RenderGraph`, planset-8), **area
 7's runtime half** (scene/entity model, planset-10), **area 10** (cooker-side
 module reflection + the cooked prefab asset, planset-11), and **area 8** (the
-`SceneRenderer` deferred über-pipeline, planset-12); plus area 6's first two
-sub-areas — the game-module build model (sub-area A, planset-9) and the **editor shell +
+`SceneRenderer` deferred über-pipeline, planset-12); plus area 6's first three
+sub-areas — the game-module build model (sub-area A, planset-9), the **editor shell +
 framework** (sub-area B, planset-14: `libveng_editor`, the docking `EditorHost`, the
-reflection-driven inspector, cook-on-demand, and the texture editor) — and the
-**pipeline-caching** and **content-hashes** cross-cutting concerns (planset-9).
+reflection-driven inspector, cook-on-demand, and the texture editor), and the **node-based
+material editor** (sub-area C, planset-15: the `VengEditor/NodeGraph/` surface, the material
+catalog/compile, the live `MaterialPreview`, and the engine/authored material-param split) —
+and the **pipeline-caching** and **content-hashes** cross-cutting concerns (planset-9).
 
-**Next:** the **material node editor** (area 6, sub-area C) is the **prioritized next
-editor planset** — its prerequisites are met: cook-on-demand and the inspector
-foundation (planset-14), and the constructed-material path it authors into (planset-5).
-The scene editor (sub-area D) follows, all its gates met. Area 4 (events/input) is off
-the critical path, slotted in whenever wanted.
+**Next:** the **scene editor** (area 6, sub-area D) is the **next editor planset** — all its
+gates met: the area-7 runtime scene model (planset-10), the area-10 cooked prefab + module
+reflection (planset-11), the area-8 `SceneRenderer` (planset-12), the inspector +
+cook-on-demand foundation (planset-14), and the reusable `VengEditor/NodeGraph/` surface
+(planset-15). Area 4 (events/input) is off the critical path, slotted in whenever wanted.
 
 **Undetailed / unscheduled:** area 4 (events/input) and the rest of area 6 (the
-material node editor and scene editor — [editor.md](editor.md) /
+scene editor — [editor.md](editor.md) /
 [game-module.md](game-module.md)); plus the named still-future increments of areas
 done in part — area 8's remaining **batteries** (shadows/SSAO/bloom/MSAA/
 transparent/post + a G2 PBR g-buffer target), **multiple/typed lights**, and

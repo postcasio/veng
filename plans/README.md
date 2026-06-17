@@ -208,14 +208,41 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   (sub-area C), the scene editor (sub-area D), an undo/redo command stack, and
   multi-viewport OS windows.
 
+- **[planset-15](planset-15/README.md)** — node-based material editor (✅ done, 7 plans).
+  Delivers [future area 6](future/README.md#6-editor-application) sub-area C, the **loaded
+  `.vmat` path**: a node-graph material editor on a new **named `libveng_editor` surface**
+  (`VengEditor/NodeGraph/`), over a precursor that splits material parameters into a fixed
+  **engine-supplied** block and a variable-size **authored** block (so a graph can author
+  uniforms beyond the one `vec4 Factors`). Four node-graph layers with hard dependency
+  ceilings — a pure, device-free, unit-tested **topology core** (`NodeGraph`, generational
+  `NodeId`, `PinType`, the mutation vocabulary, direction/arity/acyclicity validation, a
+  domain-supplied `CanConnect` hook); a generic **data-driven catalog** (`NodeType` = pins +
+  a reflected property struct, node instances stored as bytes walked by the existing
+  reflection serializer/inspector widgets, graph (de)serialization to/from JSON); the
+  **material specialization** (the `TextureSample`/`Param`/`MaterialOutput` catalog,
+  coercion-aware connection, `CompileMaterialGraph` → a `.vmat` field list, and a
+  flat-`.vmat`→graph import); and the **`MaterialEditorPanel`** (imnodes canvas,
+  node-property inspector reusing the per-`FieldClass` widgets, live
+  compile→cook→hot-reload→preview against a reusable `MaterialPreview` sphere). Textures are
+  node **properties** of `FieldClass::AssetHandle`, not wired pins (the topology core stays
+  asset-agnostic); the graph is embedded under an `"_editor"` key in the `.vmat.json` and
+  compile regenerates the `fields` array, reusing planset-14's preserve-unknown-keys
+  round-trip. v1 binds parameters to an author-provided shader (no node→Slang codegen).
+  hello-triangle's `brick.vmat` opens, edits, previews live, and saves through the editor.
+  imnodes is used only by the editor (linked PRIVATE into `libveng_editor`, src-only — never
+  a `VengEditor/` public header; its symbols are vendored in `libveng`'s ImGui aggregation
+  TU). Held back: shader-graph codegen, wired asset pins, undo/redo, and the scene editor
+  (sub-area D).
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). The remaining areas are the **editor application**
   (its game-module build model is **delivered by planset-9**, its **editor shell +
   framework — sub-area B — by planset-14** (`libveng_editor`, the docking `EditorHost`,
-  the reflection-driven inspector, cook-on-demand, and the texture editor), and its
-  native-type inspectors **reuse area 10's module reflection**, delivered by planset-11;
-  the **material node editor** (sub-area C, the prioritized next editor planset) and the
-  **scene editor** (sub-area D) remain future —
+  the reflection-driven inspector, cook-on-demand, and the texture editor), its
+  **node-based material editor — sub-area C — by planset-15** (`VengEditor/NodeGraph/`, the
+  material catalog/compile, the live `MaterialPreview`, and the variable engine/authored
+  material-param split), and its native-type inspectors **reuse area 10's module
+  reflection**, delivered by planset-11; the **scene editor** (sub-area D) remains future —
   [editor.md](future/editor.md) / [game-module.md](future/game-module.md), several
   plansets) and the **event/input** systems (area 4). Each becomes its own planset
   when taken up. (Testing areas 5a/5b, de-globalizing the context (area 3), the asset

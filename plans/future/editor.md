@@ -282,6 +282,7 @@ B. editor shell + framework      libveng_editor, dockspace (single-window),
                                    ── DONE (planset-14).
 C. material node editor          imnodes graph → loaded .vmat (param-binding v1),
                                    live preview against the async/hot-reload path.
+                                   ── DONE (planset-15).
 D. scene/entity model            transform hierarchy, components, scene asset type
                                    (its own area) — THEN the scene editor on top.
 ```
@@ -296,8 +297,18 @@ single-window docking, built-in panels (scene viewport, asset browser, reflectio
 inspector, console/log), off-thread cook-on-demand (`libveng_cook` in the editor exe
 only, `AssetManager::MountMemory` hot-reload), and the texture editor as the first
 end-to-end slice. The [threading](threading-task-system.md) async path is the other
-prerequisite (done). **Sub-area C (the material node editor) is the next editor
-planset**; D carries its own large prerequisite (now met) and lands last.
+prerequisite (done). **Sub-area C is delivered by
+[planset-15](../planset-15/README.md)** (the node-based material editor): a generic,
+device-free `VengEditor/NodeGraph/` surface (topology core + data-driven `NodeType`/
+`NodeCatalog` + graph serialization), a material specialization in editor src
+(`TextureSample`/`Param`/`MaterialOutput`, coercion-aware connection, `CompileMaterialGraph`
+→ a `.vmat` field list + flat-`.vmat`→graph import), the `MaterialEditorPanel` (imnodes
+canvas, node-property inspector reusing the per-`FieldClass` widgets, live
+compile→cook→hot-reload→preview), a reusable `MaterialPreview` sphere, and the precursor
+engine/authored material-param split that lets a graph author parameters at all. **Sub-area
+D (the scene editor) is the remaining editor work** — its scene-model, cooked-prefab, and
+`SceneRenderer` gates are all met, and the generic `VengEditor/NodeGraph/` surface is
+reusable by it and by game editor modules; it lands last.
 
 ## Open decisions
 

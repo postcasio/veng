@@ -454,7 +454,12 @@ same way the launcher does — but passing a non-null `EditorRegistry*` in
   host-owned `TypeRegistry` / `FieldDescriptor` layer (`Scene::ForEachComponent`), drawing
   a built-in widget per `FieldClass`
   (Scalar/Vector/Quaternion/String/AssetHandle/Enum/Struct/Matrix/Reference); a
-  `RegisterFieldWidget` entry overrides the built-in for a given `TypeId`.
+  `RegisterFieldWidget` entry overrides the built-in for a given `TypeId`. The per-field draw
+  is the shared `DrawFieldWidget` helper (`editor/src/FieldWidget.{h,cpp}`, taking a
+  `FieldWidgetContext { AssetManager&, const AssetSourceIndex&, const EditorRegistry& }`) —
+  the entity inspector and the node-property inspector both call it, so the two share
+  identical widget behavior. The `AssetHandle` widget is an asset **picker** (a combo over
+  the `AssetSourceIndex` entries of the field's `AssetType`), not a read-only label.
 - **Cook-on-demand keeps the importer boundary.** `libveng_cook` is linked **only into
   the editor exe** — never `libveng_editor`, never `libgame` — so the editor framework
   library stays importer-free. The exe injects a `CookBackend` implementation;
@@ -466,6 +471,31 @@ same way the launcher does — but passing a non-null `EditorRegistry*` in
   target (`CreateTexture` → `ImGui::Image`), edits `.tex.json` settings (sRGB + sampler
   filter/wrap), recooks live (300ms-debounced), and round-trips the JSON on save —
   patching known keys, preserving unknown ones.
+- **`VengEditor/NodeGraph/` is a named, reusable node-graph surface.** A generic,
+  imnodes-free, device-free **topology core** (`NodeGraph` — generational `NodeId`, `PinType`,
+  the mutation vocabulary, direction/arity/acyclicity validation, a construction-time
+  `CanConnectFn`/`PinShapeFn`/`PropertySizeFn` hook set) + a data-driven `NodeType`/
+  `NodeCatalog` + graph (de)serialization to/from a JSON document string (the public surface
+  stays free of the JSON library type). It is reusable by any editor. The material editor
+  (and future editors — the scene editor) consume it from editor src. imnodes is used **only
+  by the editor** (linked PRIVATE into `libveng_editor`, src-only — its header never appears
+  in a `VengEditor/` public header; its symbols are vendored in `libveng`'s ImGui aggregation
+  TU and imported across the PUBLIC `veng::veng` link).
+- **Node types are data, not subclasses.** A `NodeType` is pins (typed in/out) + a reflected
+  property struct; a node instance stores property bytes the reflection serializer and
+  inspector widgets walk, exactly like an ECS component. `NodeTypeId` is editor-local
+  (defined in `NodeGraph.h`), distinct from the runtime `TypeId` space; pin data types reuse
+  builtin leaf `TypeId`s.
+- **The material editor authors a graph compiled to a `.vmat` field list** (v1 binds params
+  to an author-provided shader — no node→Slang codegen). The graph (nodes, positions,
+  property values, links) is embedded under an `"_editor"` key in the `.vmat.json`, and
+  `fields` is regenerated on compile (reusing the texture editor's preserve-unknown-keys JSON
+  round-trip). `MaterialEditorPanel` drives an imnodes canvas over the graph and a
+  node-property inspector reusing the per-`FieldClass` widgets. Textures are node properties
+  (`FieldClass::AssetHandle`), not wired pins, so the topology core stays asset-agnostic.
+- **`MaterialPreview` renders one material on a sphere via `SceneRenderer`** into an ImGui
+  texture; the edit loop recooks off-thread and hot-reloads behind the stable `AssetHandle`,
+  re-fetching the texture after the recompile/resize invalidates `GetOutput()`.
 
 ### Assets: cook offline, load by `AssetId`
 
@@ -610,10 +640,19 @@ loads plain **SPIR-V** and gains no Slang dependency. (There is no `glslc` /
 
 A material (`*.vmat.json`) references its vertex/fragment shaders by `AssetId` and
 declares an **ordered, explicitly-typed** field list; the cook validates those
-fields against the fragment shader's reflected `MaterialData` block. At runtime a
-`Material` is thin — shader handle + texture **handles** + a `MaterialData` SSBO
-entry, bound through set 0 — and `Material::Bind` pushes its per-draw material
-index.
+fields against the fragment shader's reflected parameters. At runtime a `Material` is
+thin — shader handle + texture **handles** + two SSBO entries, bound through set 0 — and
+`Material::Bind` pushes its per-draw material index.
+
+A material's GPU parameters are **two parallel SSBO entries** indexed by the material slot:
+the fixed **engine-supplied `MaterialData`** block (the bindless handle slots the loader
+patches; `static_assert`-pinned at 16 bytes; `libveng` knows its layout without reflection)
+and a variable-size **authored `MaterialParams`** block (the shader's declared scalar/vector
+uniforms, reflected per-shader, byte-addressed at `MaterialParamStride` in set 0 binding 4).
+The seam between them is `CookedMaterialField::Kind` (handle vs. param), and the cooker
+reflects both. `Material::GetFields()` exposes the reflected `MaterialField` table — the
+editor's parameter-schema source, so the node editor reads a material's authorable parameters
+with no Slang in `libveng_editor`.
 
 ### Scene & ECS
 
