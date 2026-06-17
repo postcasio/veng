@@ -397,6 +397,8 @@ if (VENG_BUILD_TESTS)
             tests/editor/node_graph.cpp
             tests/editor/node_catalog_serialize.cpp
             tests/editor/material_catalog_compile.cpp
+            tests/editor/field_widget.cpp
+            tests/editor/asset_source_index.cpp
     )
     # The serialization cases drive the JSON object directly, so the test target
     # links nlohmann/json (PRIVATE in libveng_editor — never exposed in a header).

@@ -15,6 +15,8 @@ namespace Veng
 
 namespace VengEditor
 {
+    class AssetSourceIndex;
+
     // The property inspector. Walks the selected entity's components through the
     // TypeRegistry, drawing a widget per FieldClass for every reflected field. The
     // host sets the scene and selection each frame; a custom widget registered in
@@ -22,7 +24,8 @@ namespace VengEditor
     class InspectorPanel final : public EditorPanel
     {
     public:
-        InspectorPanel(Veng::AssetManager& assets, Veng::EditorRegistry& editors);
+        InspectorPanel(Veng::AssetManager& assets, Veng::EditorRegistry& editors,
+                       const AssetSourceIndex& sources);
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return "Inspector"; }
         void OnImGui() override;
@@ -37,10 +40,10 @@ namespace VengEditor
 
     private:
         void DrawFields(void* base, const Veng::TypeInfo& type);
-        void DrawField(void* fieldPtr, const Veng::FieldDescriptor& field);
 
         Veng::AssetManager& m_Assets;
         Veng::EditorRegistry& m_Editors;
+        const AssetSourceIndex& m_Sources;
 
         Veng::Scene* m_Scene = nullptr;
         Veng::optional<Veng::Entity> m_Selected;

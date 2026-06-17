@@ -177,6 +177,11 @@ namespace Veng
             return AssetHandle<T>(id, it->second);
         }
 
+        // The borrowed type registry the prefab loader reflects components
+        // through. An editor inspector reads it to recurse into a struct field's
+        // own reflected fields.
+        [[nodiscard]] TypeRegistry& GetTypeRegistry() const { return m_Types; }
+
         // Run any pending async finalizes whose upload completed and whose
         // dependencies are resident. Called from the frame loop after the task
         // system's continuation pump, on the main thread.

@@ -30,6 +30,11 @@ namespace VengEditor
         // The source entry for an id, or nullptr if the id is not in the manifest.
         [[nodiscard]] const Entry* Find(Veng::AssetId id) const;
 
+        // Every manifest id of a given asset type, in unspecified order — the
+        // candidate set the inspector's AssetHandle picker offers. Returned by
+        // value so a caller can sort/filter without holding the index's storage.
+        [[nodiscard]] Veng::vector<Veng::AssetId> EntriesOfType(Veng::AssetType type) const;
+
     private:
         Veng::unordered_map<Veng::u64, Entry> m_Entries;
     };

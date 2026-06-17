@@ -16,8 +16,10 @@ add_library(veng_editor SHARED
         src/panels/AssetBrowserPanel.cpp
         src/panels/ConsolePanel.cpp
         src/panels/InspectorPanel.cpp
+        src/panels/MaterialEditorPanel.cpp
         src/panels/SceneViewportPanel.cpp
         src/panels/TextureEditorPanel.cpp
+        src/FieldWidget.cpp
         src/material/MaterialPreview.cpp
         src/material/MaterialCatalog.cpp
         src/material/MaterialCompile.cpp
@@ -52,6 +54,14 @@ target_compile_definitions(veng_editor PRIVATE VE_BUILD_SHARED)
 # -fno-exceptions (JSON_THROW becomes std::abort, guarded by is_*() checks).
 target_link_libraries(veng_editor PRIVATE nlohmann_json::nlohmann_json)
 target_compile_definitions(veng_editor PRIVATE JSON_NOEXCEPTION)
+
+# imnodes — the material editor's node canvas, included only in .cpp (imnodes.h
+# never appears in a VengEditor/ public header). The imnodes symbols are hosted
+# in veng::veng (its Vendor/ImGui.cpp aggregation TU compiles imnodes.cpp beside
+# ImGui), so libveng_editor imports them across the PUBLIC veng::veng link; this
+# PRIVATE link of imnodes' own target binds the symbols even if that aggregation
+# changes, without adding a second imnodes.cpp build.
+target_link_libraries(veng_editor PRIVATE imnodes)
 
 # The editor launcher source veng_add_editor compiles per game (mirrors
 # VENG_LAUNCHER_MAIN in Game.cmake), plus the cook-on-demand seam (CookSession).

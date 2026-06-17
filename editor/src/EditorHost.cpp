@@ -21,6 +21,7 @@
 #include "panels/AssetBrowserPanel.h"
 #include "panels/ConsolePanel.h"
 #include "panels/InspectorPanel.h"
+#include "panels/MaterialEditorPanel.h"
 #include "panels/SceneViewportPanel.h"
 #include "panels/TextureEditorPanel.h"
 
@@ -42,14 +43,14 @@ namespace VengEditor
         };
 
         // The built-in texture editor factory: resolves a texture AssetId to its
-        // .tex.json source through the manifest index, then mints a
+        // .tex.json source through the shared manifest index, then mints a
         // TextureEditorPanel wired to the host's engine refs and cook driver.
         class TextureEditorFactory final : public AssetEditorFactory
         {
         public:
-            TextureEditorFactory(AssetSourceIndex index, Renderer::Context& context,
+            TextureEditorFactory(const AssetSourceIndex& index, Renderer::Context& context,
                                  AssetManager& assets, ImGuiLayer& imgui, VengEditor::CookDriver cook) :
-                m_Index(std::move(index)), m_Context(context), m_Assets(assets),
+                m_Index(index), m_Context(context), m_Assets(assets),
                 m_ImGui(imgui), m_Cook(std::move(cook))
             {
             }
@@ -68,10 +69,47 @@ namespace VengEditor
             }
 
         private:
-            AssetSourceIndex m_Index;
+            const AssetSourceIndex& m_Index;
             Renderer::Context& m_Context;
             AssetManager& m_Assets;
             ImGuiLayer& m_ImGui;
+            VengEditor::CookDriver m_Cook;
+        };
+
+        // The built-in material editor factory: resolves a material AssetId to its
+        // .vmat.json source through the shared manifest index, then mints a
+        // MaterialEditorPanel wired to the host's engine refs, the source index
+        // (the asset picker's candidate enumeration), and the cook driver.
+        class MaterialEditorFactory final : public AssetEditorFactory
+        {
+        public:
+            MaterialEditorFactory(const AssetSourceIndex& index, Renderer::Context& context,
+                                  AssetManager& assets, ImGuiLayer& imgui, EditorRegistry& editors,
+                                  VengEditor::CookDriver cook) :
+                m_Index(index), m_Context(context), m_Assets(assets),
+                m_ImGui(imgui), m_Editors(editors), m_Cook(std::move(cook))
+            {
+            }
+
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            {
+                const AssetSourceIndex::Entry* entry = m_Index.Find(id);
+                if (!entry)
+                {
+                    Log::Error("Material editor: no source manifest entry for asset 0x{:X}", id.Value);
+                    return nullptr;
+                }
+
+                return CreateUnique<MaterialEditorPanel>(
+                    id, entry->Source, m_Index, m_Context, m_Assets, m_ImGui, m_Editors, m_Cook);
+            }
+
+        private:
+            const AssetSourceIndex& m_Index;
+            Renderer::Context& m_Context;
+            AssetManager& m_Assets;
+            ImGuiLayer& m_ImGui;
+            EditorRegistry& m_Editors;
             VengEditor::CookDriver m_Cook;
         };
     }
@@ -194,28 +232,43 @@ namespace VengEditor
         m_Viewport = viewport.get();
         m_Panels.push_back({std::move(viewport), true});
 
-        // The built-in texture editor: registered before the modules' own editor
+        // The shared source index (AssetId -> per-asset JSON source), parsed once
+        // and referenced by the asset-editor factories and the inspector's asset
+        // picker. An empty index when no manifest is configured keeps the picker
+        // candidate-free rather than absent.
+        m_Sources = CreateUnique<AssetSourceIndex>(
+            m_Info.AssetManifestPath ? AssetSourceIndex::Parse(*m_Info.AssetManifestPath)
+                                     : AssetSourceIndex{});
+
+        // The built-in asset editors: registered before the modules' own editor
         // factories would be (first-write-wins), so a game module registering its
-        // own texture editor for the same type does not override the built-in. The
-        // cook driver is RequestCook bound to this host.
+        // own editor for the same type does not override the built-in. The cook
+        // driver is RequestCook bound to this host.
         if (m_Info.AssetManifestPath)
         {
-            VengEditor::CookDriver cook = [this](const VengEditor::CookRequest& request,
-                                                 function<void(Result<MountHandle>)> onComplete)
-            {
-                RequestCook(request, std::move(onComplete));
+            auto cookFor = [this] {
+                return VengEditor::CookDriver([this](const VengEditor::CookRequest& request,
+                                                     function<void(Result<MountHandle>)> onComplete)
+                {
+                    RequestCook(request, std::move(onComplete));
+                });
             };
+
             m_Registries->Editor.RegisterAssetEditor(AssetType::Texture,
                 CreateUnique<TextureEditorFactory>(
-                    AssetSourceIndex::Parse(*m_Info.AssetManifestPath),
-                    GetRenderContext(), GetAssetManager(), *GetImGuiLayer(), std::move(cook)));
+                    *m_Sources, GetRenderContext(), GetAssetManager(), *GetImGuiLayer(), cookFor()));
+
+            m_Registries->Editor.RegisterAssetEditor(AssetType::Material,
+                CreateUnique<MaterialEditorFactory>(
+                    *m_Sources, GetRenderContext(), GetAssetManager(), *GetImGuiLayer(),
+                    m_Registries->Editor, cookFor()));
         }
 
         auto assetBrowser = CreateUnique<AssetBrowserPanel>(
             ExecutableDirectory() / "sample.vengpack", m_Registries->Editor);
         m_AssetBrowser = assetBrowser.get();
         m_Panels.push_back({std::move(assetBrowser), true});
-        auto inspector = CreateUnique<InspectorPanel>(GetAssetManager(), m_Registries->Editor);
+        auto inspector = CreateUnique<InspectorPanel>(GetAssetManager(), m_Registries->Editor, *m_Sources);
         m_Inspector = inspector.get();
         m_Panels.push_back({std::move(inspector), true});
         m_Panels.push_back({CreateUnique<ConsolePanel>(), true});
@@ -328,6 +381,13 @@ namespace VengEditor
         for (Unique<EditorPanel>& opened : m_AssetBrowser->TakeOpenedPanels())
             m_Panels.push_back({std::move(opened), true});
 
+        // Drive each open panel's offscreen render (a material editor's preview)
+        // before the ImGui frame is built, so its output is sampleable. The
+        // viewport is driven explicitly above; its OnRender is a no-op.
+        for (PanelSlot& slot : m_Panels)
+            if (slot.Open)
+                slot.Panel->OnRender(cmd);
+
         ImGui::DockSpaceOverViewport();
         DrawMenuBar();
 
@@ -364,6 +424,7 @@ namespace VengEditor
         m_Viewport = nullptr;
         m_Inspector = nullptr;
         m_AssetBrowser = nullptr;
+        m_Sources.reset();
         m_PresentGraph.reset();
         m_BlitPipeline.reset();
         m_BlitLayout.reset();

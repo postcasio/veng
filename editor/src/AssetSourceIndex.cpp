@@ -75,4 +75,13 @@ namespace VengEditor
         const auto it = m_Entries.find(id.Value);
         return it == m_Entries.end() ? nullptr : &it->second;
     }
+
+    vector<AssetId> AssetSourceIndex::EntriesOfType(AssetType type) const
+    {
+        vector<AssetId> ids;
+        for (const auto& [id, entry] : m_Entries)
+            if (entry.Type == type)
+                ids.push_back(AssetId{id});
+        return ids;
+    }
 }

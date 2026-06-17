@@ -30,6 +30,7 @@ namespace VengEditor
     class SceneViewportPanel;
     class InspectorPanel;
     class AssetBrowserPanel;
+    class AssetSourceIndex;
 
     struct EditorHostInfo
     {
@@ -108,6 +109,11 @@ namespace VengEditor
         // Declared after the modules so it is destroyed first; its ApplicationRegistry
         // holds a function<> whose closure code lives in the game module.
         Veng::Unique<Registries> m_Registries;
+
+        // The shared AssetId -> source manifest index, parsed once and referenced
+        // by the inspector's asset picker and the asset-editor factories. nullopt
+        // when no manifest path is configured.
+        Veng::Unique<AssetSourceIndex> m_Sources;
 
         // The host-owned panel set: built-ins plus any game-contributed panels,
         // each with an open/close flag the Window menu toggles.

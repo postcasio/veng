@@ -175,7 +175,7 @@ Layer P  Material preview        P for *preview*: a reusable surface outside the
 | 02 | [Node catalog + serialization](02-node-catalog-serialize.md) | Layer 2: data-driven `NodeType` (pins + reflected property struct), node-instance byte storage, graph (de)serialization to/from a JSON object via a per-`FieldClass` JSON walker. Generic. | done |
 | 03 | [Material catalog + compile](03-material-catalog-compile.md) | Layer 3: material node types, the coercion `CanConnect`, `CompileMaterialGraph` → `.vmat` fields, flat-`.vmat`→graph import. Material-specific, in editor src. | done |
 | 04 | [Material preview surface](04-material-preview.md) | Layer P (**parallel**): a reusable one-sphere `Scene` + `SceneRenderer` → preview RT → `Ref<ImGuiTexture>`, `SetMaterial` per edit, re-fetch on hot-reload. Depends only on the engine. | done |
-| 05 | [MaterialEditorPanel + integration](05-material-editor-panel.md) | Layer 4: imnodes canvas over the graph, property inspector (the new asset picker), wire compile→cook→hot-reload→preview, register for `AssetType::Material`, link the imnodes target into `libveng_editor`, hello-triangle migration. | proposed |
+| 05 | [MaterialEditorPanel + integration](05-material-editor-panel.md) | Layer 4: imnodes canvas over the graph, property inspector (the new asset picker), wire compile→cook→hot-reload→preview, register for `AssetType::Material`, link the imnodes target into `libveng_editor`, hello-triangle migration. | done |
 | 06 | [Docs + roadmap re-cut](06-docs-roadmap.md) | `future/editor.md` sub-area C → delivered; `future/README.md` + `plans/README.md` + `CLAUDE.md`. No code. | proposed |
 
 ## Dependency analysis & parallel dispatch

@@ -3,6 +3,11 @@
 #include <Veng/Veng.h>
 #include <imgui.h>
 
+namespace Veng::Renderer
+{
+    class CommandBuffer;
+}
+
 namespace VengEditor
 {
     // A dockable editor window. The host owns the open/close toggle, the dock id,
@@ -16,5 +21,11 @@ namespace VengEditor
         [[nodiscard]] virtual Veng::string_view GetTitle() const = 0;
         [[nodiscard]] virtual ImGuiWindowFlags GetWindowFlags() const { return 0; }
         virtual void OnImGui() = 0;
+
+        // Record this frame's offscreen render (a panel that owns a SceneRenderer
+        // or a preview target). The host calls it on every open panel before the
+        // ImGui frame is built, so the output is sampleable when OnImGui draws it.
+        // The default is a no-op; only render-owning panels override it.
+        virtual void OnRender(Veng::Renderer::CommandBuffer& cmd) {}
     };
 }
