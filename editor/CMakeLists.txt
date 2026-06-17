@@ -19,6 +19,8 @@ add_library(veng_editor SHARED
         src/panels/SceneViewportPanel.cpp
         src/panels/TextureEditorPanel.cpp
         src/material/MaterialPreview.cpp
+        src/material/MaterialCatalog.cpp
+        src/material/MaterialCompile.cpp
 )
 add_library(veng_editor::veng_editor ALIAS veng_editor)
 
@@ -26,6 +28,11 @@ target_include_directories(veng_editor PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
+
+# src-private headers (the material specialization) address each other by their
+# editor/src-relative path (material/MaterialCompile.h); the test targets put the
+# same dir on their include path so cases reach these headers.
+target_include_directories(veng_editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # The editor's public headers pull in ImGui (a UI library, part of the editor's
 # surface) but never Vulkan/GLFW — same boundary as libveng. veng::veng already

@@ -396,6 +396,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/main.cpp
             tests/editor/node_graph.cpp
             tests/editor/node_catalog_serialize.cpp
+            tests/editor/material_catalog_compile.cpp
     )
     # The serialization cases drive the JSON object directly, so the test target
     # links nlohmann/json (PRIVATE in libveng_editor — never exposed in a header).
@@ -598,8 +599,14 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
             tests/cooker/module_reflect.cpp
             tests/cooker/prefab_cook.cpp
             tests/cooker/cook_source.cpp
+            tests/cooker/material_compile_cook.cpp
     )
-    target_link_libraries(veng_cooker PRIVATE veng::cook doctest::doctest)
+    # The cook-through test calls CompileMaterialGraph (editor) and cooks its
+    # emitted .vmat through the real importer, so the suite links libveng_editor
+    # in addition to libveng_cook (no cycle: the cooker is never linked by the
+    # editor framework). editor/src is on the include path for the Layer-3 headers.
+    target_link_libraries(veng_cooker PRIVATE veng::cook veng_editor::veng_editor doctest::doctest)
+    target_include_directories(veng_cooker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
     add_dependencies(veng_cooker hello_triangle veng_bad_version_module)
     target_compile_definitions(veng_cooker PRIVATE
             VENG_COOKER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
