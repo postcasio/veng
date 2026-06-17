@@ -16,11 +16,12 @@ struct VSOutput
 GBufferOutput fsMain(VSOutput input)
 {
     MaterialData m = g_Materials[g_PC.MaterialIndex];
+    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
     float4 albedo = g_Textures[NonUniformResourceIndex(m.Albedo)].Sample(
         g_Samplers[NonUniformResourceIndex(m.AlbedoSampler)], input.v_UV);
 
     GBufferOutput output;
-    output.Albedo = albedo * m.Factors;
+    output.Albedo = albedo * p.Factors;
     output.Normal = float4(normalize(input.v_WorldNormal), 0.0);
     return output;
 }

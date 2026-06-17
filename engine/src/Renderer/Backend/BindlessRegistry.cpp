@@ -63,6 +63,9 @@ namespace Veng::Renderer
                 // lives *inside* it, indexed by materialIndex), not an arrayed
                 // binding — written once below, so no Bindless flag.
                 {.Binding = MaterialBinding, .Type = DescriptorType::StorageBuffer, .Count = 1, .Stages = ShaderStage::All},
+                // The authored-param buffer: a single ByteAddressBuffer on the
+                // shader side, byte-addressed at materialIndex * MaterialParamStride.
+                {.Binding = MaterialParamBinding, .Type = DescriptorType::StorageBuffer, .Count = 1, .Stages = ShaderStage::All},
             },
         });
 
@@ -77,6 +80,13 @@ namespace Veng::Renderer
             .Usage = BufferUsage::Storage | BufferUsage::TransferDst,
         });
         m_Set->Write(MaterialBinding, m_MaterialBuffer);
+
+        m_MaterialParamBuffer = Buffer::Create(context, {
+            .Name = "Bindless MaterialParams",
+            .Size = static_cast<u64>(MaxMaterials) * MaterialParamStride,
+            .Usage = BufferUsage::Storage | BufferUsage::TransferDst,
+        });
+        m_Set->Write(MaterialParamBinding, m_MaterialParamBuffer);
 
         const u32 framesInFlight = context.GetMaxFramesInFlight();
         m_Textures.Init(MaxTextures, framesInFlight);
@@ -164,26 +174,37 @@ namespace Veng::Renderer
         return StorageImageHandle{index};
     }
 
-    MaterialHandle BindlessRegistry::RegisterMaterial(std::span<const std::byte> data)
+    MaterialHandle BindlessRegistry::RegisterMaterial(
+        std::span<const std::byte> engine, std::span<const std::byte> authored)
     {
-        VE_ASSERT(data.size() == sizeof(MaterialData),
-                  "BindlessRegistry::RegisterMaterial: data is {} bytes, expected {}",
-                  data.size(), sizeof(MaterialData));
-
         const u32 index = m_Materials.Allocate(Ref<void>{}, "material");
-        UpdateMaterial(MaterialHandle{index}, data);
+        UpdateMaterial(MaterialHandle{index}, engine, authored);
         return MaterialHandle{index};
     }
 
-    void BindlessRegistry::UpdateMaterial(MaterialHandle handle, std::span<const std::byte> data) const
+    void BindlessRegistry::UpdateMaterial(MaterialHandle handle,
+        std::span<const std::byte> engine, std::span<const std::byte> authored) const
     {
         VE_ASSERT(handle.IsValid(), "BindlessRegistry::UpdateMaterial: invalid handle");
-        VE_ASSERT(data.size() == sizeof(MaterialData),
-                  "BindlessRegistry::UpdateMaterial: data is {} bytes, expected {}",
-                  data.size(), sizeof(MaterialData));
+        VE_ASSERT(engine.size() == sizeof(MaterialData),
+                  "BindlessRegistry::UpdateMaterial: engine block is {} bytes, expected {}",
+                  engine.size(), sizeof(MaterialData));
+        VE_ASSERT(authored.size() <= MaterialParamStride,
+                  "BindlessRegistry::UpdateMaterial: authored block is {} bytes, exceeds stride {}",
+                  authored.size(), MaterialParamStride);
 
-        const std::span<const u8> bytes(reinterpret_cast<const u8*>(data.data()), data.size());
-        m_MaterialBuffer->UploadSync(bytes, static_cast<u64>(handle.Index) * sizeof(MaterialData));
+        const std::span<const u8> engineBytes(
+            reinterpret_cast<const u8*>(engine.data()), engine.size());
+        m_MaterialBuffer->UploadSync(
+            engineBytes, static_cast<u64>(handle.Index) * sizeof(MaterialData));
+
+        if (!authored.empty())
+        {
+            const std::span<const u8> authoredBytes(
+                reinterpret_cast<const u8*>(authored.data()), authored.size());
+            m_MaterialParamBuffer->UploadSync(
+                authoredBytes, static_cast<u64>(handle.Index) * MaterialParamStride);
+        }
     }
 
     void BindlessRegistry::Release(TextureHandle handle)

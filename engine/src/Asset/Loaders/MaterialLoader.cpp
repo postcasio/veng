@@ -169,15 +169,23 @@ namespace Veng
         usize cursor = sizeof(CookedMaterialHeader);
 
         // Loud cross-language drift guard: sizeof(MaterialData) must equal
-        // ParamBytes in the blob. Any drift means the shader and engine
-        // disagree on the material layout — a Corrupt error, not a VE_ASSERT,
+        // EngineBytes in the blob. Any drift means the shader and engine
+        // disagree on the engine-block layout — a Corrupt error, not a VE_ASSERT,
         // so the user gets a clear load failure rather than a crash.
-        if (header.ParamBytes != sizeof(Renderer::MaterialData))
+        if (header.EngineBytes != sizeof(Renderer::MaterialData))
         {
             return std::unexpected(Corrupt(id, fmt::format(
-                "material: ParamBytes {} does not match sizeof(MaterialData) {} — "
+                "material: EngineBytes {} does not match sizeof(MaterialData) {} — "
                 "shader/engine MaterialData layout has drifted",
-                header.ParamBytes, sizeof(Renderer::MaterialData))));
+                header.EngineBytes, sizeof(Renderer::MaterialData))));
+        }
+
+        // The authored block must fit the registry's per-material param stride.
+        if (header.ParamBytes > Renderer::BindlessRegistry::MaterialParamStride)
+        {
+            return std::unexpected(Corrupt(id, fmt::format(
+                "material: ParamBytes {} exceeds MaterialParamStride {}",
+                header.ParamBytes, Renderer::BindlessRegistry::MaterialParamStride)));
         }
 
         // ── 2. CookedMaterialField table ─────────────────────────────────────
@@ -194,12 +202,20 @@ namespace Veng
         }
         cursor += fieldBytes;
 
-        // ── 3. Packed param block ─────────────────────────────────────────────
-        if (cooked.size() < cursor + header.ParamBytes)
-            return std::unexpected(Corrupt(id, "material: cooked blob smaller than param block"));
+        // ── 3. Engine block, then authored block ─────────────────────────────
+        if (cooked.size() < cursor + header.EngineBytes)
+            return std::unexpected(Corrupt(id, "material: cooked blob smaller than engine block"));
 
         Renderer::MaterialData params{};
-        std::memcpy(&params, cooked.data() + cursor, header.ParamBytes);
+        std::memcpy(&params, cooked.data() + cursor, header.EngineBytes);
+        cursor += header.EngineBytes;
+
+        if (cooked.size() < cursor + header.ParamBytes)
+            return std::unexpected(Corrupt(id, "material: cooked blob smaller than authored block"));
+
+        vector<std::byte> authoredParams(header.ParamBytes);
+        if (header.ParamBytes > 0)
+            std::memcpy(authoredParams.data(), cooked.data() + cursor, header.ParamBytes);
         cursor += header.ParamBytes;
 
         // ── 4. Fan out shader sub-loads ──────────────────────────────────────
@@ -337,6 +353,7 @@ namespace Veng
             .FragmentShader = fsHandle,
             .Textures       = std::move(textures),
             .Params         = params,
+            .AuthoredParams = std::move(authoredParams),
             .Fields         = std::move(fields),
             .SelectorOffset = MaterialSelectorPushOffset,
         };

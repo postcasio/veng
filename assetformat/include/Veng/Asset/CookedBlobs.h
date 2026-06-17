@@ -163,39 +163,45 @@ namespace Veng
     };
 
     // Material: a thin bindless material — a vertex + fragment shader
-    // (each an ordinary Shader asset, referenced by AssetId), and a packed
-    // MaterialData parameter block described field-by-field. The blob is, in
+    // (each an ordinary Shader asset, referenced by AssetId), and two parameter
+    // blocks: the engine-supplied block (bindless handle slots) and the variable-
+    // size authored block (the shader's scalar/vector uniforms). The blob is, in
     // order:
     //   CookedMaterialHeader
-    //   CookedMaterialField[FieldCount]   — the reflected MaterialData layout
-    //   packed param block (ParamBytes)   — the full MaterialData std140/std430
-    //     image with scalar/vector params written and texture/sampler handle
-    //     slots left zero (the loader patches them with runtime handles).
+    //   CookedMaterialField[FieldCount]   — one entry per declared field
+    //   engine block (EngineBytes)        — the handle slots; slots left zero, the
+    //                                       loader patches them with runtime handles
+    //   authored block (ParamBytes)       — the scalar/vector params written at
+    //                                       their reflected offsets (0 bytes for a
+    //                                       handles-only material)
     // The two shader ids reference independent Shader pack entries (a forward
     // material needs one vertex- and one fragment-stage cooked shader; the
     // cooked-shader contract is one module / one entry point / one stage).
     //
-    // The field table is reflected from the shader's MaterialData struct at cook
-    // time, so it is self-describing: the loader patches handle fields by offset,
-    // and name-based Material::SetTexture/SetParam resolve a field by Name. The
-    // engine asserts ParamBytes == sizeof(its MaterialData mirror) on load — a
-    // loud guard against shader/engine drift (cycle-avoidance house style).
+    // The field table is reflected from the shader at cook time, so it is self-
+    // describing: a field's block is implied by its Kind — handle fields (Kind 1/2)
+    // belong to the engine block, param fields (Kind 0) to the authored block. The
+    // loader patches handle fields by offset, and name-based
+    // Material::SetTexture/SetParam resolve a field by Name. The engine asserts
+    // EngineBytes == sizeof(its MaterialData mirror) on load — a loud guard against
+    // shader/engine drift — and ParamBytes <= the authored-param stride.
     struct CookedMaterialHeader
     {
         u64 VertexShaderId = 0;   // AssetId of the vertex-stage Shader asset
         u64 FragmentShaderId = 0; // AssetId of the fragment-stage Shader asset
         u32 FieldCount = 0;
-        u32 ParamBytes = 0;
+        u32 EngineBytes = 0;      // == sizeof(engine MaterialData mirror); the drift guard
+        u32 ParamBytes = 0;       // authored block bytes (0 for a handles-only material)
     };
 
-    // One reflected MaterialData field. Param fields (Kind 0) carry their value
-    // pre-packed in the param block at Offset; handle fields (Kind 1/2) carry an
-    // AssetId in TextureId that the loader resolves to a bindless handle and
-    // writes as a u32 at Offset.
+    // One reflected material field. Param fields (Kind 0) carry their value pre-
+    // packed in the authored block at Offset; handle fields (Kind 1/2) carry an
+    // AssetId in TextureId that the loader resolves to a bindless handle and writes
+    // as a u32 at Offset in the engine block. Offset is within the field's own block.
     struct CookedMaterialField
     {
         char Name[ShaderNameCapacity] = {};
-        u32 Offset = 0; // byte offset within the MaterialData block
+        u32 Offset = 0; // byte offset within the field's block (engine or authored)
         u32 Size = 0;   // byte size of the field
         u32 Kind = 0;   // 0 = param value, 1 = sampled-image handle, 2 = sampler handle
         u64 TextureId = 0; // AssetId for Kinds 1/2; 0 for params

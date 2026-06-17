@@ -1,17 +1,21 @@
 // Material cook test: cooks fixture material_pack.json
 // through libveng_cook and checks the resulting CookedMaterialHeader +
-// CookedMaterialField table + packed parameter block.
+// CookedMaterialField table + engine block + authored block.
 //
-// MaterialData (material_data.slang):
-//   struct MaterialData {
+// material_data.slang:
+//   struct MaterialData {              // the engine block (handle slots)
 //     uint  Albedo;        // offset  0, size 4, Kind 1 (texture handle)
 //     uint  AlbedoSampler; // offset  4, size 4, Kind 2 (sampler handle)
-//     uint  Pad0;          // offset  8, size 4, Kind 0 (ignored pad)
-//     uint  Pad1;          // offset 12, size 4, Kind 0 (ignored pad)
-//     float4 Factors;      // offset 16, size 16, Kind 0 (param)
-//   };                     // total 32 bytes
+//     uint  Pad0;          // offset  8 — undeclared, not emitted as a field
+//     uint  Pad1;          // offset 12 — undeclared, not emitted as a field
+//   };                     // total 16 bytes (EngineBytes)
+//   struct MaterialParams {            // the authored block
+//     float4 Factors;      // offset  0, size 16, Kind 0 (param)
+//   };                     // total 16 bytes (ParamBytes)
 //
-// Blob layout: CookedMaterialHeader → CookedMaterialField[5] → param block (32 bytes).
+// Blob layout: CookedMaterialHeader → CookedMaterialField[3] → engine block
+// (16 bytes) → authored block (16 bytes). The pads are zeroed in the engine
+// block but carry no field-table entry.
 
 #include <cstring>
 #include <filesystem>
@@ -65,75 +69,63 @@ TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
 
     CHECK(header.VertexShaderId == 4101ULL);
     CHECK(header.FragmentShaderId == 4102ULL);
-    CHECK(header.FieldCount == 5);
-    CHECK(header.ParamBytes == 32);
+    CHECK(header.FieldCount == 3);
+    CHECK(header.EngineBytes == 16);
+    CHECK(header.ParamBytes == 16);
 
-    // Blob must be large enough for header + 5 fields + 32-byte param block.
+    // Blob: header + 3 fields + 16-byte engine block + 16-byte authored block.
     const usize expectedSize = sizeof(CookedMaterialHeader)
-        + 5 * sizeof(CookedMaterialField)
-        + 32;
+        + 3 * sizeof(CookedMaterialField)
+        + 16
+        + 16;
     REQUIRE(entry->Blob.size() == expectedSize);
 
-    // --- Field table ---
+    // --- Field table: only the 3 declared fields, pads omitted ---
 
     const CookedMaterialField* fieldTable = reinterpret_cast<const CookedMaterialField*>(
         entry->Blob.data() + sizeof(CookedMaterialHeader));
 
-    // Field 0: Albedo — Kind 1 (texture handle), Offset 0, Size 4, TextureId 2001
+    // Field 0: Albedo — Kind 1 (texture handle), engine offset 0, Size 4, TextureId 2001
     CHECK(std::string_view(fieldTable[0].Name) == "Albedo");
     CHECK(fieldTable[0].Kind == 1u);
     CHECK(fieldTable[0].Offset == 0u);
     CHECK(fieldTable[0].Size == 4u);
     CHECK(fieldTable[0].TextureId == 2001ULL);
 
-    // Field 1: AlbedoSampler — Kind 2 (sampler handle), Offset 4, Size 4, TextureId 2001
+    // Field 1: AlbedoSampler — Kind 2 (sampler handle), engine offset 4, Size 4, TextureId 2001
     CHECK(std::string_view(fieldTable[1].Name) == "AlbedoSampler");
     CHECK(fieldTable[1].Kind == 2u);
     CHECK(fieldTable[1].Offset == 4u);
     CHECK(fieldTable[1].Size == 4u);
     CHECK(fieldTable[1].TextureId == 2001ULL);
 
-    // Field 2: Pad0 — Kind 0 (ignored pad), Offset 8, Size 4
-    CHECK(std::string_view(fieldTable[2].Name) == "Pad0");
+    // Field 2: Factors — Kind 0 (float param), authored offset 0, Size 16
+    CHECK(std::string_view(fieldTable[2].Name) == "Factors");
     CHECK(fieldTable[2].Kind == 0u);
-    CHECK(fieldTable[2].Offset == 8u);
-    CHECK(fieldTable[2].Size == 4u);
+    CHECK(fieldTable[2].Offset == 0u);
+    CHECK(fieldTable[2].Size == 16u);
     CHECK(fieldTable[2].TextureId == 0ULL);
 
-    // Field 3: Pad1 — Kind 0, Offset 12, Size 4
-    CHECK(std::string_view(fieldTable[3].Name) == "Pad1");
-    CHECK(fieldTable[3].Kind == 0u);
-    CHECK(fieldTable[3].Offset == 12u);
-    CHECK(fieldTable[3].Size == 4u);
-    CHECK(fieldTable[3].TextureId == 0ULL);
+    // --- Engine block: handle slots zeroed (the loader patches them) ---
 
-    // Field 4: Factors — Kind 0 (float param), Offset 16, Size 16
-    CHECK(std::string_view(fieldTable[4].Name) == "Factors");
-    CHECK(fieldTable[4].Kind == 0u);
-    CHECK(fieldTable[4].Offset == 16u);
-    CHECK(fieldTable[4].Size == 16u);
-    CHECK(fieldTable[4].TextureId == 0ULL);
-
-    // --- Param block: four f32s at offset 16 within the block ---
-
-    const u8* paramBlock = entry->Blob.data()
+    const u8* engineBlock = entry->Blob.data()
         + sizeof(CookedMaterialHeader)
-        + 5 * sizeof(CookedMaterialField);
+        + 3 * sizeof(CookedMaterialField);
+
+    for (usize i = 0; i < 16; ++i)
+        CHECK(engineBlock[i] == 0u);
+
+    // --- Authored block: four f32s of Factors at offset 0 ---
+
+    const u8* authoredBlock = engineBlock + 16;
 
     f32 factors[4];
-    std::memcpy(factors, paramBlock + 16, sizeof(factors));
+    std::memcpy(factors, authoredBlock, sizeof(factors));
 
     CHECK(factors[0] == doctest::Approx(1.0f));
     CHECK(factors[1] == doctest::Approx(0.9f));
     CHECK(factors[2] == doctest::Approx(0.8f));
     CHECK(factors[3] == doctest::Approx(1.0f));
-
-    // Pad slots should be zero in the param block.
-    u32 pad0Val = 0, pad1Val = 0;
-    std::memcpy(&pad0Val, paramBlock + 8,  sizeof(u32));
-    std::memcpy(&pad1Val, paramBlock + 12, sizeof(u32));
-    CHECK(pad0Val == 0u);
-    CHECK(pad1Val == 0u);
 
     // --- Referenced shader and texture entries are also present ---
 
@@ -175,6 +167,99 @@ TEST_CASE("Cooker: material cook fails when a textures key has no matching Mater
     CHECK(!result.has_value());
     REQUIRE(!result.has_value());
     CHECK(result.error().find("Missing") != string::npos);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: an authored param beyond Factors cooks into the authored block")
+{
+    // MaterialParams { float4 Factors; float Roughness; } — std430: Factors at
+    // offset 0, Roughness at 16; struct size 32 (the trailing pad to 16-byte
+    // alignment of the array stride is not a member offset).
+    const path packJson = FixtureDir / "material_ext_pack.json";
+    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_ext.vengpack";
+
+    const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
+    REQUIRE(reader.has_value());
+
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{3101});
+    REQUIRE(entry.has_value());
+
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+
+    CHECK(header.FieldCount == 4);
+    CHECK(header.EngineBytes == 16);
+    CHECK(header.ParamBytes >= 20); // Factors (16) + Roughness (4)
+
+    const CookedMaterialField* fieldTable = reinterpret_cast<const CookedMaterialField*>(
+        entry->Blob.data() + sizeof(CookedMaterialHeader));
+
+    // Find the Roughness field: a Kind 0 authored param.
+    const CookedMaterialField* roughness = nullptr;
+    const CookedMaterialField* factors = nullptr;
+    for (u32 i = 0; i < header.FieldCount; ++i)
+    {
+        if (std::string_view(fieldTable[i].Name) == "Roughness") roughness = &fieldTable[i];
+        if (std::string_view(fieldTable[i].Name) == "Factors")   factors   = &fieldTable[i];
+    }
+    REQUIRE(roughness != nullptr);
+    REQUIRE(factors != nullptr);
+    CHECK(roughness->Kind == 0u);
+    CHECK(roughness->Size == 4u);
+    CHECK(factors->Offset == 0u);
+    CHECK(roughness->Offset == 16u);
+
+    const u8* authoredBlock = entry->Blob.data()
+        + sizeof(CookedMaterialHeader)
+        + header.FieldCount * sizeof(CookedMaterialField)
+        + header.EngineBytes;
+
+    f32 roughnessVal = 0.0f;
+    std::memcpy(&roughnessVal, authoredBlock + roughness->Offset, sizeof(f32));
+    CHECK(roughnessVal == doctest::Approx(0.25f));
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: a handles-only material cooks with a zero-size authored block")
+{
+    const path packJson = FixtureDir / "material_handles_only_pack.json";
+    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_handles_only.vengpack";
+
+    const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
+    REQUIRE(reader.has_value());
+
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{3102});
+    REQUIRE(entry.has_value());
+
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+
+    CHECK(header.FieldCount == 2);   // Albedo + AlbedoSampler, no params
+    CHECK(header.EngineBytes == 16);
+    CHECK(header.ParamBytes == 0);
+
+    const CookedMaterialField* fieldTable = reinterpret_cast<const CookedMaterialField*>(
+        entry->Blob.data() + sizeof(CookedMaterialHeader));
+    for (u32 i = 0; i < header.FieldCount; ++i)
+        CHECK(fieldTable[i].Kind != 0u); // every field is a handle field
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: an authored block exceeding the param stride is a located cook error")
+{
+    const path packJson = FixtureDir / "material_oversize_pack.json";
+    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_oversize.vengpack";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    const VoidResult result = cooker.CookPack(packJson, outArchive);
+
+    REQUIRE(!result.has_value());
+    CHECK(result.error().find("exceeds stride") != string::npos);
 
     std::filesystem::remove(outArchive);
 }

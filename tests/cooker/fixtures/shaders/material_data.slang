@@ -1,9 +1,11 @@
 // Shared bindless material declarations for the deferred opaque material shader.
-// MaterialData mirrors the engine's Renderer::MaterialData
-// (BindlessRegistry.h) byte-for-byte; the set-0 bindings mirror the
-// BindlessRegistry layout (sampled images = 0, samplers = 1, MaterialData
-// array = 3). The cooker reflects MaterialData here to validate a material's
-// textures/params and pack their values at the reflected offsets.
+// MaterialData mirrors the engine's Renderer::MaterialData (BindlessRegistry.h)
+// byte-for-byte — the engine-supplied handle slots. MaterialParams is the
+// author's own variable-size block of scalar/vector uniforms (here, a single
+// Factors tint). The set-0 bindings mirror the BindlessRegistry layout (sampled
+// images = 0, samplers = 1, MaterialData array = 3, authored params = 4). The
+// cooker reflects both structs to validate a material's fields and pack their
+// values at the reflected offsets.
 
 struct MaterialData
 {
@@ -11,12 +13,28 @@ struct MaterialData
     uint AlbedoSampler; // bindless sampler index
     uint Pad0;
     uint Pad1;
+};
+
+struct MaterialParams
+{
     float4 Factors;
 };
+
+// The authored-block byte stride. Mirrors
+// BindlessRegistry::MaterialParamStride; one stride is shared across every
+// material so a single ByteAddressBuffer holds a different MaterialParams layout
+// per shader, read at index * MaterialParamStride.
+static const uint MaterialParamStride = 256;
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 [[vk::binding(3, 0)]] StructuredBuffer<MaterialData> g_Materials;
+[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
+
+MaterialParams LoadMaterialParams(uint index)
+{
+    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+}
 
 // The deferred opaque g-buffer outputs the material fragment stage writes. The
 // v1 minimum channel set, funnelled through one struct so a future G2

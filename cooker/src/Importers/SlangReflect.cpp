@@ -60,7 +60,7 @@ namespace Veng::Cook
     }
 
     Result<ReflectedStruct> ReflectStructLayout(
-        const path& slangSource, std::string_view structName)
+        const path& slangSource, std::string_view structName, bool optional)
     {
         ComPtr<slang::IGlobalSession> globalSession;
         if (SLANG_FAILED(slang::createGlobalSession(globalSession.writeRef())))
@@ -124,6 +124,8 @@ namespace Veng::Cook
         slang::TypeReflection* type = layout->findTypeByName(structNameStr.c_str());
         if (!type)
         {
+            if (optional)
+                return ReflectedStruct{};
             return std::unexpected(fmt::format(
                 "material importer: '{}': struct '{}' not found (is it declared and used in the shader?)",
                 slangSource.string(), structName));

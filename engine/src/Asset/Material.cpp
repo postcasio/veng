@@ -21,6 +21,7 @@ namespace Veng
         m_FragmentShader(info.FragmentShader),
         m_Textures(info.Textures),
         m_Params(info.Params),
+        m_AuthoredParams(info.AuthoredParams),
         m_Fields(info.Fields),
         m_SelectorOffset(info.SelectorOffset)
     {
@@ -70,9 +71,11 @@ namespace Veng
             std::memcpy(reinterpret_cast<std::byte*>(&m_Params) + field.Offset, &index, sizeof(u32));
         }
 
-        // Allocate a slot in the registry and upload the patched MaterialData.
+        // Allocate a slot in the registry and upload both blocks: the patched
+        // engine block and the cook-packed authored block.
         m_Handle = m_Context.GetBindlessRegistry().RegisterMaterial(
-            std::as_bytes(std::span(&m_Params, 1)));
+            std::as_bytes(std::span(&m_Params, 1)),
+            std::span<const std::byte>(m_AuthoredParams));
         m_Registered = true;
     }
 
@@ -95,7 +98,9 @@ namespace Veng
     void Material::UploadParams() const
     {
         m_Context.GetBindlessRegistry().UpdateMaterial(
-            m_Handle, std::as_bytes(std::span(&m_Params, 1)));
+            m_Handle,
+            std::as_bytes(std::span(&m_Params, 1)),
+            std::span<const std::byte>(m_AuthoredParams));
     }
 
     void Material::SetTexture(std::string_view name, AssetHandle<Texture> texture)
@@ -162,12 +167,11 @@ namespace Veng
                   name, m_Name, static_cast<u32>(field->Kind));
 
         const u32 writeBytes = std::min(field->Size, static_cast<u32>(sizeof(vec4)));
-        VE_ASSERT(field->Offset + writeBytes <= sizeof(MaterialData),
-                  "Material::SetParam: field '{}' offset {} + {} exceeds MaterialData size",
-                  name, field->Offset, writeBytes);
+        VE_ASSERT(field->Offset + writeBytes <= m_AuthoredParams.size(),
+                  "Material::SetParam: field '{}' offset {} + {} exceeds authored params size {}",
+                  name, field->Offset, writeBytes, m_AuthoredParams.size());
 
-        std::memcpy(reinterpret_cast<std::byte*>(&m_Params) + field->Offset,
-                    &value, writeBytes);
+        std::memcpy(m_AuthoredParams.data() + field->Offset, &value, writeBytes);
 
         UploadParams();
     }

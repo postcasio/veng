@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": [
+    { "id": 7001, "type": "vertex_layout", "source": "layouts/canonical.vlayout.json" },
+    { "id": 4101, "type": "shader", "source": "shaders/brick.vert.shader.json" },
+    { "id": 4201, "type": "shader", "source": "shaders/material_ext.frag.shader.json" },
+    { "id": 2001, "type": "texture", "source": "textures/texture.tex.json" },
+    { "id": 3101, "type": "material", "source": "materials/brick_ext.vmat.json" }
+  ]
+}

@@ -28,9 +28,7 @@ namespace Veng::Cook
         bool IsFloat = true;
     };
 
-    // A reflected struct: its total byte size (the param-block size the cooker
-    // writes as CookedMaterialHeader::ParamBytes, which the engine asserts
-    // equals sizeof(its MaterialData mirror)) and its fields in declaration order.
+    // A reflected struct: its total byte size and its fields in declaration order.
     struct ReflectedStruct
     {
         u32 Size = 0;
@@ -39,7 +37,9 @@ namespace Veng::Cook
 
     // Compiles `slangSource` and reflects struct `structName`. Located error
     // ("material importer: ...") on a compile failure, a missing struct, or an
-    // unsupported field type.
+    // unsupported field type. When `optional` is true a missing struct is not an
+    // error — it returns an empty ReflectedStruct (Size 0, no fields) — so an
+    // author may omit a struct (e.g. a handles-only material has no MaterialParams).
     [[nodiscard]] Result<ReflectedStruct> ReflectStructLayout(
-        const path& slangSource, std::string_view structName);
+        const path& slangSource, std::string_view structName, bool optional = false);
 }

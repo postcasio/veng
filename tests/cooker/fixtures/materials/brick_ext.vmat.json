@@ -1,0 +1,9 @@
+{
+  "shaders": { "vertex": 4101, "fragment": 4201 },
+  "fields": [
+    { "name": "Albedo",        "type": "texture", "id": 2001 },
+    { "name": "AlbedoSampler", "type": "sampler", "texture": "Albedo" },
+    { "name": "Factors",       "type": "vec4",    "value": [1.0, 0.9, 0.8, 1.0] },
+    { "name": "Roughness",     "type": "float",   "value": 0.25 }
+  ]
+}
