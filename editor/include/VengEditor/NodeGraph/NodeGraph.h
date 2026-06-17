@@ -2,7 +2,9 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Reflection/TypeId.h>
+#include <Veng/Reflection/FieldDescriptor.h>
 
+#include <cstddef>
 #include <span>
 
 namespace VengEditor
@@ -79,6 +81,11 @@ namespace VengEditor
     // construction so it stays self-contained; the catalog supplies the real one.
     using PinShapeFn = Veng::function<NodePinShape(NodeTypeId type)>;
 
+    // Node type -> the byte size of its property struct. The graph allocates a
+    // node's opaque property buffer to this size on AddNode; the catalog supplies
+    // it from the type's PropertySize.
+    using PropertySizeFn = Veng::function<Veng::usize(NodeTypeId type)>;
+
     // A pure, generic node-graph topology: data, the mutation vocabulary, and
     // generic validation (direction/arity/acyclicity). It knows nothing of ImGui,
     // Vulkan, or "material"; the only domain knowledge enters through the two
@@ -86,7 +93,8 @@ namespace VengEditor
     class NodeGraph
     {
     public:
-        NodeGraph(CanConnectFn canConnect, PinShapeFn pinShape);
+        NodeGraph(CanConnectFn canConnect, PinShapeFn pinShape,
+                  PropertySizeFn propertySize);
 
         // --- the mutation vocabulary (the only way the model changes) ---
 
@@ -96,6 +104,13 @@ namespace VengEditor
         void Disconnect(const Link& link);
         void MoveNode(NodeId node, Veng::vec2 canvasPos);
 
+        // Writes one property's bytes into the node's property buffer at the
+        // descriptor's offset. The writable path the future undo stack wraps; a
+        // no-op on a stale node. The byte count must match the field type's size
+        // (asserted) and lie within the node's buffer.
+        void SetProperty(NodeId node, const Veng::FieldDescriptor& field,
+                         std::span<const std::byte> bytes);
+
         // --- queries ---
 
         [[nodiscard]] bool IsValid(NodeId node) const;
@@ -103,6 +118,11 @@ namespace VengEditor
         [[nodiscard]] std::span<const NodeId> Nodes() const;
         [[nodiscard]] std::span<const Link> Links() const;
         [[nodiscard]] Veng::vec2 PositionOf(NodeId node) const;
+
+        // The node's opaque property buffer, read-only — the span the serializer
+        // and the inspector's draw walk read fields out of. Empty when the type
+        // has no properties.
+        [[nodiscard]] std::span<const std::byte> PropertyBytes(NodeId node) const;
 
         // A topological ordering over the DAG, for a compiler to walk. Stable:
         // ties resolve by node-creation order.
@@ -115,6 +135,9 @@ namespace VengEditor
             Veng::u32 Generation = 0;
             bool Alive = false;
             Veng::vec2 Position{0.0f, 0.0f};
+            // Sized to the type's PropertySize, zero-initialised on AddNode; the
+            // reflection layer addresses fields into it by FieldDescriptor.Offset.
+            Veng::vector<std::byte> Properties;
         };
 
         [[nodiscard]] const Node* Lookup(NodeId node) const;
@@ -126,6 +149,7 @@ namespace VengEditor
 
         CanConnectFn m_CanConnect;
         PinShapeFn m_PinShape;
+        PropertySizeFn m_PropertySize;
 
         Veng::vector<Node> m_Nodes;
         Veng::vector<Veng::u32> m_FreeList; // recycled slot indices

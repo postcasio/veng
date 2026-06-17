@@ -53,9 +53,13 @@ namespace
         };
     }
 
+    // These topology-core cases carry no node properties; the size hook is a
+    // constant zero.
+    Veng::usize NoProperties(NodeTypeId) { return 0; }
+
     NodeGraph MakeGraph()
     {
-        return NodeGraph(ExactMatch(), ShapeFor);
+        return NodeGraph(ExactMatch(), ShapeFor, NoProperties);
     }
 
     bool HasLink(const NodeGraph& graph, NodeId from, NodeId to)
@@ -233,7 +237,7 @@ TEST_CASE("NodeGraph: TopoOrder is a valid, stable ordering on a diamond")
         case 102: return NodePinShape{{v, v}, {}};    // bottom: 2 in, 0 out
         default:  return NodePinShape{};
         }
-    });
+    }, NoProperties);
 
     const NodeId top = graph.AddNode(NodeTypeId{100});
     const NodeId left = graph.AddNode(NodeTypeId{101});

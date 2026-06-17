@@ -1,17 +1,22 @@
 #include <VengEditor/NodeGraph/NodeGraph.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Reflection/TypeId.h>
 
 #include <algorithm>
+#include <cstring>
 
 namespace VengEditor
 {
-    NodeGraph::NodeGraph(CanConnectFn canConnect, PinShapeFn pinShape)
+    NodeGraph::NodeGraph(CanConnectFn canConnect, PinShapeFn pinShape,
+                         PropertySizeFn propertySize)
         : m_CanConnect(std::move(canConnect))
         , m_PinShape(std::move(pinShape))
+        , m_PropertySize(std::move(propertySize))
     {
         VE_ASSERT(static_cast<bool>(m_CanConnect), "NodeGraph requires a CanConnect predicate");
         VE_ASSERT(static_cast<bool>(m_PinShape), "NodeGraph requires a PinShape callback");
+        VE_ASSERT(static_cast<bool>(m_PropertySize), "NodeGraph requires a PropertySize callback");
     }
 
     NodeId NodeGraph::AddNode(NodeTypeId type)
@@ -32,6 +37,7 @@ namespace VengEditor
         node.Type = type;
         node.Alive = true;
         node.Position = Veng::vec2{0.0f, 0.0f};
+        node.Properties.assign(m_PropertySize(type), std::byte{0});
 
         NodeId id{index, node.Generation};
         m_Live.push_back(id);
@@ -107,6 +113,18 @@ namespace VengEditor
         m_Nodes[node.Index].Position = canvasPos;
     }
 
+    void NodeGraph::SetProperty(NodeId node, const Veng::FieldDescriptor& field,
+                                std::span<const std::byte> bytes)
+    {
+        if (!IsValid(node))
+            return;
+
+        Veng::vector<std::byte>& buffer = m_Nodes[node.Index].Properties;
+        VE_ASSERT(field.Offset + bytes.size() <= buffer.size(),
+                  "SetProperty: field '{}' writes past the node's property buffer", field.Name);
+        std::memcpy(buffer.data() + field.Offset, bytes.data(), bytes.size());
+    }
+
     bool NodeGraph::IsValid(NodeId node) const
     {
         return Lookup(node) != nullptr;
@@ -134,6 +152,13 @@ namespace VengEditor
         const Node* found = Lookup(node);
         VE_ASSERT(found != nullptr, "PositionOf: stale or non-existent node");
         return found->Position;
+    }
+
+    std::span<const std::byte> NodeGraph::PropertyBytes(NodeId node) const
+    {
+        const Node* found = Lookup(node);
+        VE_ASSERT(found != nullptr, "PropertyBytes: stale or non-existent node");
+        return std::span<const std::byte>(found->Properties);
     }
 
     Veng::vector<NodeId> NodeGraph::TopoOrder() const

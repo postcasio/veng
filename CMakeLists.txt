@@ -395,8 +395,13 @@ if (VENG_BUILD_TESTS)
     add_executable(veng_editor_unit
             tests/unit/main.cpp
             tests/editor/node_graph.cpp
+            tests/editor/node_catalog_serialize.cpp
     )
-    target_link_libraries(veng_editor_unit PRIVATE veng_editor::veng_editor doctest::doctest)
+    # The serialization cases drive the JSON object directly, so the test target
+    # links nlohmann/json (PRIVATE in libveng_editor — never exposed in a header).
+    target_link_libraries(veng_editor_unit PRIVATE veng_editor::veng_editor doctest::doctest
+            nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_editor_unit PRIVATE JSON_NOEXCEPTION)
     target_include_directories(veng_editor_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
 
     doctest_discover_tests(veng_editor_unit PROPERTIES LABELS unit)

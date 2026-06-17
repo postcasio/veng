@@ -85,6 +85,8 @@
 #include <Veng/Renderer/VertexBufferLayout.h>
 
 #include <VengEditor/NodeGraph/NodeGraph.h>
+#include <VengEditor/NodeGraph/NodeType.h>
+#include <VengEditor/NodeGraph/NodeGraphSerialize.h>
 
 int main()
 {
