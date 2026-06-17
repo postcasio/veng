@@ -533,6 +533,28 @@ if (VENG_BUILD_TESTS)
 
     add_test(NAME veng_gpu COMMAND veng_gpu)
     set_tests_properties(veng_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+
+    # ---- MaterialPreview surface (editor src) ------------------------------
+    # The one GPU target that links libveng_editor: it constructs a
+    # VengEditor::MaterialPreview (which owns a SceneRenderer + a Ref<ImGuiTexture>),
+    # so it needs a windowed Context and the ImGui Vulkan backend. It cooks the brick
+    # g-buffer fixture in-process (veng::cook), so it is gated on VENG_BUILD_TOOLS and
+    # the editor library. A second viewport-style SceneRenderer is recorded alongside
+    # the preview, so the two-renderer cross-graph handoff runs under the validation
+    # gate. Skips (SKIP_RETURN_CODE 77) with no Vulkan ICD.
+    if (VENG_BUILD_TOOLS AND TARGET veng_editor)
+        add_executable(veng_material_preview tests/material_preview.cpp)
+        target_link_libraries(veng_material_preview PRIVATE
+                veng::veng veng_editor veng::cook veng_test_support)
+        # The test includes the editor's src-private MaterialPreview.h.
+        target_include_directories(veng_material_preview PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
+        target_compile_definitions(veng_material_preview PRIVATE
+                GPU_GBUFFER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets")
+
+        add_test(NAME veng_material_preview COMMAND veng_material_preview)
+        set_tests_properties(veng_material_preview PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+    endif ()
 endif ()
 
 # ---------------------------------------------------------------------------
@@ -615,12 +637,22 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_golden_c
     # runs under the gate too. Registered after the examples subdirectory so the
     # launcher target exists. Under the default (non-VE_DEBUG) build no validation
     # layers are enabled, so this is trivially green.
+    # The MaterialPreview gate binary exists only under VENG_BUILD_TOOLS + editor;
+    # pass its path through only when the target was built so the gate runs the
+    # two-renderer handoff there too.
+    set(VENG_GATE_MATERIAL_PREVIEW_ARG)
+    if (TARGET veng_material_preview)
+        set(VENG_GATE_MATERIAL_PREVIEW_ARG
+            -D VENG_GATE_BIN_MATERIAL_PREVIEW=$<TARGET_FILE:veng_material_preview>)
+    endif ()
+
     add_test(NAME validation_gate
         COMMAND ${CMAKE_COMMAND}
             -D VENG_GATE_BIN_HEADLESS_SMOKE=$<TARGET_FILE:veng_headless_smoke>
             -D VENG_GATE_BIN_COMPUTE_DISPATCH=$<TARGET_FILE:veng_compute_dispatch>
             -D VENG_GATE_BIN_GPU=$<TARGET_FILE:veng_gpu>
             -D VENG_GATE_BIN_LAUNCHER=$<TARGET_FILE:hello_triangle-launcher>
+            ${VENG_GATE_MATERIAL_PREVIEW_ARG}
             -D VENG_GATE_LAUNCHER_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/validation_gate_launcher.ppm
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidationGate.cmake
     )

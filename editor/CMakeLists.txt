@@ -16,6 +16,7 @@ add_library(veng_editor SHARED
         src/panels/InspectorPanel.cpp
         src/panels/SceneViewportPanel.cpp
         src/panels/TextureEditorPanel.cpp
+        src/material/MaterialPreview.cpp
 )
 add_library(veng_editor::veng_editor ALIAS veng_editor)
 

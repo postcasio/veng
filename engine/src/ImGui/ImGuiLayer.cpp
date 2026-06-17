@@ -78,10 +78,16 @@ namespace Veng
             .pColorAttachmentFormats = &colorAttachmentFormat,
         };
 
+        // The ImGui Vulkan backend creates its own command pool on this family; it
+        // must be the device's graphics family (not the default 0, which need not be
+        // a created queue family on every device, e.g. MoltenVK).
+        const u32 graphicsFamily = context.GetQueueFamilies().GraphicsFamily.value();
+
         ImGui_ImplVulkan_InitInfo initInfo = {
             .Instance = GetVkInstance(context),
             .PhysicalDevice = GetVkPhysicalDevice(context),
             .Device = GetVkDevice(context),
+            .QueueFamily = graphicsFamily,
             .Queue = GetVkGraphicsQueue(context),
             .DescriptorPool = m_DescriptorPool->GetVkDescriptorPool(),
             .MinImageCount = context.GetSwapChainImageCount(),
