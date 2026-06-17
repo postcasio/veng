@@ -235,27 +235,10 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   (sub-area D).
 
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
-  holding area; not a planset). The remaining areas are the **editor application**
-  (its game-module build model is **delivered by planset-9**, its **editor shell +
-  framework — sub-area B — by planset-14** (`libveng_editor`, the docking `EditorHost`,
-  the reflection-driven inspector, cook-on-demand, and the texture editor), its
-  **node-based material editor — sub-area C — by planset-15** (`VengEditor/NodeGraph/`, the
-  material catalog/compile, the live `MaterialPreview`, and the variable engine/authored
-  material-param split), and its native-type inspectors **reuse area 10's module
-  reflection**, delivered by planset-11; the **scene editor** (sub-area D) remains future —
-  [editor.md](future/editor.md) / [game-module.md](future/game-module.md), several
-  plansets) and the **event/input** systems (area 4). Each becomes its own planset
-  when taken up. (Testing areas 5a/5b, de-globalizing the context (area 3), the asset
-  system's synchronous slice + bindless (area 1), and the threading/task system (area
-  2 — which also turned area 1's `LoadSync` into the async `Load` default) are done —
-  planset-3, planset-4, planset-5, and planset-6 respectively; area 6's **game-module
-  prerequisite** and the **pipeline-caching** and **content-hashes** cross-cutting
-  concerns are resolved by planset-9; **area 7's runtime half is delivered by
-  planset-10**; **area 10 — cooker-side module reflection + the cooked prefab asset —
-  is delivered by planset-11**, realizing the `VengModuleHost` `TypeRegistry&` seam;
-  and **area 8 — the `SceneRenderer` deferred über-pipeline — is delivered by
-  planset-12** (its minimal-deferred spine + a directional `Light`, the remaining
-  batteries named future), with its **frames-in-flight > 1** correctness delivered in
-  **planset-13** by a cross-graph reuse barrier (ring-buffered output reserved for a
-  future temporal/async consumer). Hot-reload remains future: its re-cook half conflicts with
-  offline-only cooking and needs a dev-only watcher design.)
+  holding area; not a planset). The remaining work is the **editor's scene editor**
+  (area 6, sub-area D — its gates met by planset-10/11/12/14/15), the **event/input**
+  systems (area 4), an **`ImGuiCompositePass`** (area 11), and the named still-future
+  increments of the areas done in part (hot-reload; the task graph; the systems
+  framework + `ShaderInterface`/`MaterialField` unification; the über-pipeline
+  batteries + typed lights; render-graph culling/multi-queue; cross-compiled cooking).
+  Each becomes its own planset when taken up. The future README carries the detail.
