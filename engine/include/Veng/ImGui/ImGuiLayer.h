@@ -59,6 +59,10 @@ namespace Veng
         void CreateResources();
         void DisposeResources();
 
+        // A texture's descriptor set freed while command buffers that reference it
+        // are still in flight; the free is deferred until the retire window elapses.
+        struct PendingTextureRemoval;
+
         Renderer::Context& m_Context;
 
         // ImGui descriptor pool — forward-declared and held by pointer so this
@@ -68,6 +72,8 @@ namespace Veng
 
         Ref<Renderer::Image> m_Image;
         Ref<Renderer::ImageView> m_ImageView;
+
+        vector<PendingTextureRemoval> m_PendingTextureRemovals;
 
         // When the app builds no UI for a frame, BeginFrame ends the stale frame
         // so ImGui's internal state stays consistent.

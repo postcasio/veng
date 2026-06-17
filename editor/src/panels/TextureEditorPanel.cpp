@@ -55,14 +55,7 @@ namespace VengEditor
         TriggerCook();
     }
 
-    TextureEditorPanel::~TextureEditorPanel()
-    {
-        if (m_Preview)
-        {
-            m_ImGui.DestroyTexture(*m_Preview);
-            m_Preview.reset();
-        }
-    }
+    TextureEditorPanel::~TextureEditorPanel() = default;
 
     void TextureEditorPanel::LoadSettings()
     {
@@ -191,12 +184,10 @@ namespace VengEditor
             }
         }
 
-        // Rebuild the preview once the freshly loaded handle is resident: drop the
-        // old ImGuiTexture and create one from the new view.
+        // Rebuild the preview once the freshly loaded handle is resident: dropping
+        // the old ImGuiTexture queues its descriptor set for deferred removal.
         if (m_PreviewDirty && m_Handle.IsLoaded())
         {
-            if (m_Preview)
-                m_ImGui.DestroyTexture(*m_Preview);
             m_Preview = m_ImGui.CreateTexture(*m_Sampler, *m_Handle->GetView());
             m_PreviewDirty = false;
         }

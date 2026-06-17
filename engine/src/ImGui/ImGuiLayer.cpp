@@ -24,6 +24,12 @@ namespace Veng
 {
     using Renderer::Context;
 
+    struct ImGuiLayer::PendingTextureRemoval
+    {
+        vk::DescriptorSet Set;
+        u32 FramesRemaining;
+    };
+
     Unique<ImGuiLayer> ImGuiLayer::Create(const ImGuiLayerInfo& info, Context& context, Window& window)
     {
         return Unique<ImGuiLayer>(new ImGuiLayer(info, context, window));
@@ -229,6 +235,13 @@ namespace Veng
 
     ImGuiLayer::~ImGuiLayer()
     {
+        // The device is idle by teardown (Application waits before dropping the
+        // layer), so any sets still in the retire queue free immediately. Must run
+        // before the backend shuts down, while the sets are still valid.
+        for (const PendingTextureRemoval& removal : m_PendingTextureRemovals)
+            ImGui_ImplVulkan_RemoveTexture(removal.Set);
+        m_PendingTextureRemovals.clear();
+
         ImGui_ImplVulkan_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImNodes::DestroyContext();
@@ -268,6 +281,25 @@ namespace Veng
 
     void ImGuiLayer::BeginFrame()
     {
+        // Free descriptor sets whose retire window has elapsed: a set queued at
+        // DestroyTexture is freed only after every frame in flight that could have
+        // referenced it has completed. The free runs outside the erase_if predicate
+        // because a hardened STL may evaluate the predicate more than once per
+        // element, which would free the set twice.
+        vector<vk::DescriptorSet> setsToFree;
+        std::erase_if(m_PendingTextureRemovals, [&setsToFree](PendingTextureRemoval& removal)
+        {
+            if (removal.FramesRemaining == 0)
+            {
+                setsToFree.push_back(removal.Set);
+                return true;
+            }
+            --removal.FramesRemaining;
+            return false;
+        });
+        for (vk::DescriptorSet set : setsToFree)
+            ImGui_ImplVulkan_RemoveTexture(set);
+
         if (!m_RenderedThisFrame)
         {
             ImGui::EndFrame();
@@ -327,6 +359,12 @@ namespace Veng
 
     void ImGuiLayer::DestroyTexture(const ImGuiTexture& texture)
     {
-        ImGui_ImplVulkan_RemoveTexture(texture.GetNative().Set);
+        // The descriptor set may still be read by command buffers in flight; defer
+        // its free until those frames complete, or the GPU faults on a set whose
+        // pool slot has been reused. The drain runs in BeginFrame, before
+        // Context::BeginFrame waits this frame's fence, so the count must cover the
+        // frame in flight at the time of queueing plus the MaxFramesInFlight cycles
+        // that follow — hence MaxFramesInFlight + 1.
+        m_PendingTextureRemovals.push_back({texture.GetNative().Set, m_Context.GetMaxFramesInFlight() + 1});
     }
 }
