@@ -234,6 +234,18 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   TU). Held back: shader-graph codegen, wired asset pins, undo/redo, and the scene editor
   (sub-area D).
 
+- **[planset-16](planset-16/README.md)** — grab bag: reflection trait, asset-library
+  rename, ImGui composite (✅ done, 4 plans). A small cleanup planset (not a
+  future-area chain) bundling three independent wins. Win 1 collapses the reflection
+  layer's two type-identity traits (`ReflectLeaf<T>` for leaves/enums, `VengReflect<T>`
+  for structs) into a single `VengReflect<T>` every reflected type specialises
+  uniformly, deletes the `IsReflectLeaf` SFINAE and the parallel
+  `TypeRegistry::EnsureLeaf<T>()` path, and adds a `VE_LEAF` authoring macro beside
+  `VE_TYPE`/`VE_REFLECT` — behaviour-preserving (no `TypeId`, `FieldClass`, or on-disk
+  format change). Win 2 renames the shared archive library to `assetpack` (its
+  CMake target and `veng::` alias), retiring the old name.
+  Win 3 adds an engine-provided `ImGuiCompositePass` for the scene-behind-ImGui composite.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). The remaining work is the **editor's scene editor**
   (area 6, sub-area D — its gates met by planset-10/11/12/14/15), the **event/input**

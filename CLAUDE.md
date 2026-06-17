@@ -688,10 +688,16 @@ types claiming one id is a **fatal collision assert**. The `TypeInfo.Name` strin
 logs/editor display only. A game registers its own types through the same path as the
 builtins — a **`VE_REFLECT`** describe-block next to the struct, read back by the
 zero-arg `Register<T>()` (a referenced type's schema auto-registers from its trait on
-first reference, so there is no registration-ordering burden).
+first reference, so there is no registration-ordering burden). A **leaf or enum** type
+is authored with **`VE_LEAF(Type, 0x…ULL, FieldClass::Kind)`** and a **fieldless
+component** with **`VE_TYPE`** — all three macros specialise the **single
+`VengReflect<T>`** identity trait with a uniform member set, so `TypeIdOf<T>()` /
+`FieldClassOf<T>()` read it directly and the registry has one `Register<T>()` path (no
+separate leaf registration).
 
 The reflection layer (`Veng/Reflection/`): an **open** `TypeId` space (a game adds a
-leaf/struct/component with no engine change) and a **closed** `FieldClass`
+leaf/struct/component with no engine change — a leaf or enum through the `VE_LEAF` seam)
+and a **closed** `FieldClass`
 (`Scalar`/`Vector`/`Quaternion`/`Matrix`/`String`/`AssetHandle`/`Reference`/`Struct`/
 `Enum`) a generic walker switches on. `FieldDescriptor`s — authored via
 `VE_REFLECT`/`VE_FIELD`, each deriving its `Offset` (`offsetof`) and its field type's
