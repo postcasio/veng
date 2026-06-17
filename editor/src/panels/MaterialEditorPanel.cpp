@@ -68,10 +68,11 @@ namespace VengEditor
         m_TempPath = m_SourcePath.parent_path() /
                      fmt::format(".{}.editor-tmp.vmat.json", m_SourcePath.stem().string());
 
-        ImNodes::CreateContext();
-        // imnodes lives in a different shared library from the ImGui symbols
-        // (hosted in libveng), so its GImGui must be set explicitly.
-        ImNodes::SetImGuiContext(ImGui::GetCurrentContext());
+        // The library-singleton imnodes context is owned by libveng's ImGuiLayer.
+        // A panel owns only its own canvas state, so multiple material editors get
+        // isolated panning/node positions and tearing one down never touches the
+        // shared singleton.
+        m_NodeEditorContext = ImNodes::EditorContextCreate();
 
         m_Preview = CreateUnique<MaterialPreview>(m_Context, m_Assets, m_ImGui, PreviewExtent);
 
@@ -85,7 +86,7 @@ namespace VengEditor
     MaterialEditorPanel::~MaterialEditorPanel()
     {
         m_Preview.reset();
-        ImNodes::DestroyContext();
+        ImNodes::EditorContextFree(m_NodeEditorContext);
 
         std::error_code ec;
         std::filesystem::remove(m_TempPath, ec);
@@ -303,6 +304,8 @@ namespace VengEditor
     bool MaterialEditorPanel::DrawCanvas()
     {
         bool mutated = false;
+
+        ImNodes::EditorContextSet(m_NodeEditorContext);
 
         // The add-node context menu: lists every catalog type.
         if (ImGui::BeginPopup("AddNodeMenu"))

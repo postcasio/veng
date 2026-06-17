@@ -18,6 +18,8 @@
 
 #include "panels/TextureEditorPanel.h" // CookDriver alias
 
+struct ImNodesEditorContext;
+
 namespace Veng
 {
     class AssetManager;
@@ -119,6 +121,10 @@ namespace VengEditor
         NodeCatalog m_Catalog;
         MaterialNodeTypes m_Types;
         Veng::Unique<NodeGraph> m_Graph;
+
+        // This panel's own imnodes canvas state (panning, node positions). The
+        // library-singleton imnodes context is owned by libveng's ImGuiLayer.
+        ImNodesEditorContext* m_NodeEditorContext = nullptr;
 
         Veng::Unique<MaterialPreview> m_Preview;
         bool m_PreviewReady = false;
