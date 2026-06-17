@@ -171,7 +171,7 @@ Layer P  Material preview        P for *preview*: a reusable surface outside the
 | # | Plan | Summary | Status |
 |---|---|---|---|
 | 00 | [Variable-size material params](00-material-params.md) | Layer 0 (**parallel**): split material parameters into a fixed engine-supplied `MaterialData` block + a variable-size authored `MaterialParams` block (second SSBO, byte-addressed); reflect both; `Material::GetFields()`. Engine + cooker + shaders. | proposed |
-| 01 | [NodeGraph topology core](01-nodegraph-core.md) | Layer 1 (**parallel**): `NodeGraph`, `NodeId`/`Link`/`PinType`, mutation vocabulary, validation (direction/arity/acyclicity), the `CanConnect` hook. Named public surface. Pure, device-free, unit-tested. | proposed |
+| 01 | [NodeGraph topology core](01-nodegraph-core.md) | Layer 1 (**parallel**): `NodeGraph`, `NodeId`/`Link`/`PinType`, mutation vocabulary, validation (direction/arity/acyclicity), the `CanConnect` hook. Named public surface. Pure, device-free, unit-tested. | done |
 | 02 | [Node catalog + serialization](02-node-catalog-serialize.md) | Layer 2: data-driven `NodeType` (pins + reflected property struct), node-instance byte storage, graph (de)serialization to/from a JSON object via a per-`FieldClass` JSON walker. Generic. | proposed |
 | 03 | [Material catalog + compile](03-material-catalog-compile.md) | Layer 3: material node types, the coercion `CanConnect`, `CompileMaterialGraph` → `.vmat` fields, flat-`.vmat`→graph import. Material-specific, in editor src. | proposed |
 | 04 | [Material preview surface](04-material-preview.md) | Layer P (**parallel**): a reusable one-sphere `Scene` + `SceneRenderer` → preview RT → `Ref<ImGuiTexture>`, `SetMaterial` per edit, re-fetch on hot-reload. Depends only on the engine. | proposed |

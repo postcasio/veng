@@ -10,6 +10,7 @@
 add_library(veng_editor SHARED
         src/EditorHost.cpp
         src/AssetSourceIndex.cpp
+        src/NodeGraph/NodeGraph.cpp
         src/panels/AssetBrowserPanel.cpp
         src/panels/ConsolePanel.cpp
         src/panels/InspectorPanel.cpp

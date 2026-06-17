@@ -377,10 +377,29 @@ if (VENG_BUILD_TESTS)
     # Include-hygiene guard: compiles every public header while linking only the
     # PUBLIC deps of veng (glm, fmt, ImGui). Because Vulkan/GLFW/VMA/nfd link
     # PRIVATE, this fails to build if a public header leaks a backend header.
+    # Also links veng_editor::veng_editor so the sweep covers the VengEditor/
+    # public headers: it propagates their include dir and the editor's PUBLIC deps
+    # (glm/fmt/ImGui via veng) while keeping imnodes and nlohmann PRIVATE, so a
+    # leaked backend include in an editor public header fails this build too.
     add_executable(veng_include_hygiene tests/include_hygiene.cpp)
-    target_link_libraries(veng_include_hygiene PRIVATE veng::veng)
+    target_link_libraries(veng_include_hygiene PRIVATE veng::veng veng_editor::veng_editor)
 
     add_test(NAME include_hygiene COMMAND veng_include_hygiene)
+
+    # ---- Editor unit band (device-free) -------------------------------------
+    # The NodeGraph topology core and the rest of libveng_editor's pure logic.
+    # veng_unit links only veng::veng, so the editor symbols need their own
+    # device-free target: it links veng_editor::veng_editor (which links veng::veng
+    # PUBLIC) + doctest, with editor/src on the include path so cases can reach the
+    # editor's src-private headers. Runs under the same no-ICD band as veng_unit.
+    add_executable(veng_editor_unit
+            tests/unit/main.cpp
+            tests/editor/node_graph.cpp
+    )
+    target_link_libraries(veng_editor_unit PRIVATE veng_editor::veng_editor doctest::doctest)
+    target_include_directories(veng_editor_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
+
+    doctest_discover_tests(veng_editor_unit PROPERTIES LABELS unit)
 
     # ---- Module ABI + loader (plan 01, driver-free) -------------------------
     # A real game module and a wrong-version variant, each a SHARED library

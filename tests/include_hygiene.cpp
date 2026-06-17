@@ -84,6 +84,8 @@
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>
 
+#include <VengEditor/NodeGraph/NodeGraph.h>
+
 int main()
 {
     return 0;
