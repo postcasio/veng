@@ -319,7 +319,14 @@ namespace VengEditor
             return;
         }
 
-        Task<vector<u8>> task = m_Info.Cook(request, GetTaskSystem());
+        // Inject the project's pack manifest so the cook resolves the source's
+        // cross-asset references (a material's shaders and textures) by AssetId.
+        // The host owns the manifest path; panels build a manifest-agnostic request.
+        CookRequest resolved = request;
+        if (m_Info.AssetManifestPath)
+            resolved.ReferenceManifest = *m_Info.AssetManifestPath;
+
+        Task<vector<u8>> task = m_Info.Cook(resolved, GetTaskSystem());
 
         // The continuation runs on the main thread via the task system's pump, so
         // the shadow-mount and the callback land on the render thread, where the

@@ -244,7 +244,7 @@ namespace Veng::Cook
     }
 
     Result<vector<u8>> Cooker::CookSource(const path& sourcePath, AssetId id,
-        AssetType type, const TypeRegistry* types) const
+        AssetType type, std::span<const path> referencePacks, const TypeRegistry* types) const
     {
         const auto importerIt = m_Importers.find(type);
         if (importerIt == m_Importers.end())
@@ -253,13 +253,42 @@ namespace Veng::Cook
                 "cook '{}': no importer registered for the requested type", sourcePath.string()));
         }
 
+        // Parse the reference packs so cross-asset references (a material's
+        // shaders and textures) resolve by AssetId to their source paths, exactly
+        // as a full pack cook resolves them. A standalone cook with no reference
+        // packs resolves cross-asset references to nothing.
+        vector<AssetPack> refPacks;
+        refPacks.reserve(referencePacks.size());
+        for (const path& refPath : referencePacks)
+        {
+            Result<AssetPack> refPackResult = ParseAssetPack(refPath);
+            if (!refPackResult)
+            {
+                return std::unexpected(fmt::format(
+                    "cook '{}': reference pack error: {}", sourcePath.string(), refPackResult.error()));
+            }
+            refPacks.push_back(std::move(*refPackResult));
+        }
+
+        auto resolve = [&refPacks](AssetId resolveId) -> optional<ResolvedSource>
+        {
+            for (const AssetPack& ref : refPacks)
+            {
+                if (const AssetPackEntry* e = ref.FindById(resolveId))
+                {
+                    if (e->Source.empty())
+                        return std::nullopt;
+                    return ResolvedSource{.AbsolutePath = ref.Dir / e->Source, .Type = e->Type};
+                }
+            }
+            return std::nullopt;
+        };
+
         // The importer reads entry["source"] relative to context.PackDir, so the
-        // source directory is the pack dir and the entry names the file. A
-        // standalone source cook has no pack manifest, so cross-asset references
-        // resolve to nothing.
+        // source directory is the pack dir and the entry names the file.
         const CookContext context{
             .PackDir = sourcePath.parent_path(),
-            .Resolve = [](AssetId) -> optional<ResolvedSource> { return std::nullopt; },
+            .Resolve = resolve,
             .Types = types,
         };
 

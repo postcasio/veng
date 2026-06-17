@@ -22,6 +22,12 @@ namespace VengEditor
         Veng::path SourcePath;
         Veng::AssetId TargetId;
         Veng::AssetType Type{};
+
+        // The project's source pack manifest, used to resolve cross-asset
+        // references by AssetId during the cook (a material's shaders and
+        // textures). Empty for a source with no cross-asset references. The host
+        // fills it from its configured manifest path; a panel leaves it empty.
+        Veng::path ReferenceManifest;
     };
 
     // The cook backend the editor exe injects into the host. It runs the cook off

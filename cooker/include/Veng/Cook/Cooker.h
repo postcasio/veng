@@ -45,12 +45,15 @@ namespace Veng::Cook
         // Cooks one source asset through its registered importer and returns a
         // complete single-entry .vengpack as in-memory bytes (no files written).
         // sourcePath is the per-asset JSON source file; the importer reads it and
-        // any files it references relative to sourcePath's directory. This is the
-        // cook-on-demand path the editor drives off the render thread — it never
-        // touches a pack manifest or the filesystem output. Errors are located:
-        // "cook '<source>': <reason>".
+        // any files it references relative to sourcePath's directory. referencePacks
+        // lists uncooked pack JSON files whose assets resolve by AssetId during the
+        // cook, so a cooked-on-demand material resolves its shaders and textures
+        // against the project's pack manifest. This is the cook-on-demand path the
+        // editor drives off the render thread — it writes no filesystem output.
+        // Errors are located: "cook '<source>': <reason>".
         [[nodiscard]] Result<vector<u8>> CookSource(const path& sourcePath, AssetId id,
-            AssetType type, const TypeRegistry* types = nullptr) const;
+            AssetType type, std::span<const path> referencePacks = {},
+            const TypeRegistry* types = nullptr) const;
 
     private:
         [[nodiscard]] VoidResult CookEntry(const CookContext& context, const json& entry,

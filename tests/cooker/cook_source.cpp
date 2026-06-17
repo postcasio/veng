@@ -46,3 +46,38 @@ TEST_CASE("Cooker: CookSource on a missing source reports a located error")
     const Result<vector<u8>> bytes = cooker.CookSource(missing, AssetId{0x1}, AssetType::Texture);
     CHECK_FALSE(bytes.has_value());
 }
+
+TEST_CASE("Cooker: CookSource resolves a material's shaders and textures against a reference pack")
+{
+    // The material's shaders and textures are named by AssetId, not inline, so the
+    // cook needs the pack manifest to resolve them — the editor's cook-on-demand path.
+    const path source = path(VENG_HT_ASSETS_DIR) / "materials" / "brick.vmat.json";
+    const path manifest = path(VENG_HT_ASSETS_DIR) / "sample.vengpack.json";
+    const AssetId targetId{0xC00C0DE000000002ULL};
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    SUBCASE("with the manifest the cross-asset references resolve")
+    {
+        const path refs[] = {manifest};
+        const Result<vector<u8>> bytes =
+            cooker.CookSource(source, targetId, AssetType::Material, refs);
+        REQUIRE(bytes.has_value());
+
+        const Result<ArchiveReader> reader = ArchiveReader::FromBytes(*bytes);
+        REQUIRE(reader.has_value());
+
+        const optional<ArchiveEntry> entry = reader->Find(targetId);
+        REQUIRE(entry.has_value());
+        CHECK(entry->Type == AssetType::Material);
+        CHECK_FALSE(entry->Blob.empty());
+    }
+
+    SUBCASE("without it the unresolved shader is a located error")
+    {
+        const Result<vector<u8>> bytes =
+            cooker.CookSource(source, targetId, AssetType::Material);
+        CHECK_FALSE(bytes.has_value());
+    }
+}
