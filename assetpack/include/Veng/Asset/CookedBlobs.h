@@ -185,15 +185,21 @@ namespace Veng
     // Version == CookedMaterialVersion (a stale blob is a loud reject) and
     // BlockBytes <= the per-material param stride.
 
+    // Domain is the underlying integer of Veng::MaterialDomain (cycle-avoidance
+    // rule above): 0 = Surface (the default — a material with no "domain" key
+    // cooks as Surface), 1 = PostProcess. The loader casts it to the engine enum
+    // guarded by a VE_ASSERT on an out-of-range value.
+
     // The current material-format version; bumped on any layout change, never a
     // silent reinterpretation. The loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 1u;
+    inline constexpr u32 CookedMaterialVersion = 2u;
 
     struct CookedMaterialHeader
     {
         u64 VertexShaderId = 0;   // AssetId of the vertex-stage Shader asset
         u64 FragmentShaderId = 0; // AssetId of the fragment-stage Shader asset
         u32 Version = 0;          // == CookedMaterialVersion at cook
+        u32 Domain = 0;           // underlying MaterialDomain (0 = Surface)
         u32 FieldCount = 0;
         u32 BlockBytes = 0;       // the single param block size, <= the param stride
     };

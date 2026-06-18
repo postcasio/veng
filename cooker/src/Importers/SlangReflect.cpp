@@ -1,5 +1,8 @@
 #include "SlangReflect.h"
 
+#include <algorithm>
+#include <cctype>
+
 #include <fmt/format.h>
 
 #include <slang/slang.h>
@@ -56,6 +59,118 @@ namespace Veng::Cook
             result.ComponentCount = componentCount;
             result.IsFloat = isFloat;
             return result;
+        }
+
+        // Reflects one varying-output variable's scalar/vector type into a
+        // ReflectedFragmentOutput. The SV_Target index comes from the semantic the
+        // caller already read off the variable layout.
+        Result<ReflectedFragmentOutput> ReflectOutputType(slang::TypeReflection* type,
+            u32 targetIndex, std::string_view entry)
+        {
+            const slang::TypeReflection::ScalarType scalar = type->getScalarType();
+            const bool isFloat = scalar == slang::TypeReflection::ScalarType::Float32;
+            const bool isUint = scalar == slang::TypeReflection::ScalarType::UInt32;
+            if (!isFloat && !isUint)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: entry point '{}': SV_Target{} has an unsupported scalar type "
+                    "(only float/floatN and uint/uintN are supported)",
+                    entry, targetIndex));
+            }
+
+            u32 componentCount = 1;
+            const slang::TypeReflection::Kind kind = type->getKind();
+            if (kind == slang::TypeReflection::Kind::Vector)
+                componentCount = static_cast<u32>(type->getColumnCount());
+            else if (kind != slang::TypeReflection::Kind::Scalar)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: entry point '{}': SV_Target{} is not a scalar or vector",
+                    entry, targetIndex));
+            }
+
+            ReflectedFragmentOutput output;
+            output.TargetIndex = targetIndex;
+            output.ComponentCount = componentCount;
+            output.IsFloat = isFloat;
+            return output;
+        }
+
+        // Collects the SV_TargetN render targets carried by an entry point's
+        // result variable layout. The result is either a single varying (a bare
+        // SV_TargetN return) or a struct of varyings (a GBufferOutput-style MRT
+        // return) — both are walked here. A varying carrying no SV_Target semantic
+        // is a located error (a fragment output must name a render target).
+        // Slang normalizes a render-target semantic to "SV_TARGET" with the index
+        // carried separately in getSemanticIndex(), so the prefix match is
+        // case-insensitive and the N comes from the index, not the name.
+        bool IsTargetSemantic(const char* semantic)
+        {
+            if (!semantic)
+                return false;
+            static constexpr std::string_view Prefix = "SV_TARGET";
+            std::string_view s(semantic);
+            if (s.size() < Prefix.size())
+                return false;
+            for (usize i = 0; i < Prefix.size(); ++i)
+            {
+                if (std::toupper(static_cast<unsigned char>(s[i])) != Prefix[i])
+                    return false;
+            }
+            return true;
+        }
+
+        Result<vector<ReflectedFragmentOutput>> CollectOutputs(
+            slang::VariableLayoutReflection* result, std::string_view entry)
+        {
+            vector<ReflectedFragmentOutput> outputs;
+            if (!result)
+                return outputs;
+
+            slang::TypeLayoutReflection* typeLayout = result->getTypeLayout();
+            if (typeLayout && typeLayout->getKind() == slang::TypeReflection::Kind::Struct)
+            {
+                for (unsigned i = 0; i < typeLayout->getFieldCount(); ++i)
+                {
+                    slang::VariableLayoutReflection* field = typeLayout->getFieldByIndex(i);
+                    if (!IsTargetSemantic(field->getSemanticName()))
+                    {
+                        return std::unexpected(fmt::format(
+                            "material importer: entry point '{}': output '{}' carries no SV_Target semantic",
+                            entry, field->getName() ? field->getName() : "?"));
+                    }
+
+                    // The varying's declared type comes through the type layout —
+                    // a struct field's own getType() is empty for an entry result.
+                    const Result<ReflectedFragmentOutput> output =
+                        ReflectOutputType(field->getTypeLayout()->getType(),
+                            static_cast<u32>(field->getSemanticIndex()), entry);
+                    if (!output)
+                        return std::unexpected(output.error());
+                    outputs.push_back(*output);
+                }
+            }
+            else
+            {
+                if (!IsTargetSemantic(result->getSemanticName()))
+                {
+                    return std::unexpected(fmt::format(
+                        "material importer: entry point '{}': fragment output carries no SV_Target semantic",
+                        entry));
+                }
+
+                const Result<ReflectedFragmentOutput> output =
+                    ReflectOutputType(typeLayout->getType(),
+                        static_cast<u32>(result->getSemanticIndex()), entry);
+                if (!output)
+                    return std::unexpected(output.error());
+                outputs.push_back(*output);
+            }
+
+            std::ranges::sort(outputs,
+                [](const ReflectedFragmentOutput& a, const ReflectedFragmentOutput& b)
+                { return a.TargetIndex < b.TargetIndex; });
+            return outputs;
         }
     }
 
@@ -150,5 +265,84 @@ namespace Veng::Cook
         }
 
         return result;
+    }
+
+    Result<vector<ReflectedFragmentOutput>> ReflectFragmentOutputs(
+        const path& slangSource, std::string_view entry)
+    {
+        ComPtr<slang::IGlobalSession> globalSession;
+        if (SLANG_FAILED(slang::createGlobalSession(globalSession.writeRef())))
+            return std::unexpected("material importer: failed to create Slang global session");
+
+        slang::TargetDesc targetDesc{};
+        targetDesc.format = SLANG_SPIRV;
+        targetDesc.profile = globalSession->findProfile("spirv_1_5");
+
+        const string searchPath = slangSource.parent_path().string();
+        const char* searchPaths[] = {searchPath.c_str()};
+
+        slang::SessionDesc sessionDesc{};
+        sessionDesc.targets = &targetDesc;
+        sessionDesc.targetCount = 1;
+        sessionDesc.searchPaths = searchPaths;
+        sessionDesc.searchPathCount = 1;
+        sessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
+
+        ComPtr<slang::ISession> session;
+        if (SLANG_FAILED(globalSession->createSession(sessionDesc, session.writeRef())))
+            return std::unexpected("material importer: failed to create Slang session");
+
+        const string moduleName = slangSource.stem().string();
+        const string entryStr(entry);
+
+        ComPtr<slang::IBlob> diagnostics;
+        slang::IModule* module = session->loadModule(moduleName.c_str(), diagnostics.writeRef());
+        if (!module)
+        {
+            return std::unexpected(fmt::format("material importer: '{}': failed to compile: {}",
+                slangSource.string(), DiagnosticsText(diagnostics)));
+        }
+
+        // Composing with the entry point is what exposes its result var layout —
+        // the per-entry render targets the domain contract validates.
+        ComPtr<slang::IEntryPoint> entryPoint;
+        if (SLANG_FAILED(module->findEntryPointByName(entryStr.c_str(), entryPoint.writeRef())))
+        {
+            return std::unexpected(fmt::format(
+                "material importer: '{}': entry point '{}' not found", slangSource.string(), entry));
+        }
+
+        slang::IComponentType* components[] = {module, entryPoint};
+        ComPtr<slang::IComponentType> program;
+        diagnostics = nullptr;
+        if (SLANG_FAILED(session->createCompositeComponentType(components, 2, program.writeRef(), diagnostics.writeRef())))
+        {
+            return std::unexpected(fmt::format("material importer: '{}': failed to compose: {}",
+                slangSource.string(), DiagnosticsText(diagnostics)));
+        }
+
+        ComPtr<slang::IComponentType> linkedProgram;
+        diagnostics = nullptr;
+        if (SLANG_FAILED(program->link(linkedProgram.writeRef(), diagnostics.writeRef())))
+        {
+            return std::unexpected(fmt::format("material importer: '{}': failed to link: {}",
+                slangSource.string(), DiagnosticsText(diagnostics)));
+        }
+
+        slang::ProgramLayout* layout = linkedProgram->getLayout();
+        if (!layout || layout->getEntryPointCount() != 1)
+        {
+            return std::unexpected(fmt::format("material importer: '{}': entry point '{}': unexpected reflection layout",
+                slangSource.string(), entry));
+        }
+
+        slang::EntryPointReflection* entryLayout = layout->getEntryPointByIndex(0);
+        if (entryLayout->getStage() != SLANG_STAGE_FRAGMENT)
+        {
+            return std::unexpected(fmt::format(
+                "material importer: '{}': entry point '{}' is not a fragment stage", slangSource.string(), entry));
+        }
+
+        return CollectOutputs(entryLayout->getResultVarLayout(), entry);
     }
 }

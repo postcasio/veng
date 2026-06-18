@@ -16,6 +16,7 @@ namespace Veng
     Material::Material(const MaterialInfo& info) :
         m_Context(*info.Context),
         m_Name(info.Name),
+        m_Domain(info.Domain),
         m_Pipeline(info.Pipeline),
         m_VertexShader(info.VertexShader),
         m_FragmentShader(info.FragmentShader),

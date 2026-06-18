@@ -26,6 +26,19 @@ namespace Veng::Renderer
 
 namespace Veng
 {
+    // A material's domain selects its output contract, pipeline shape, standard
+    // vertex shader, and invocation site. Surface writes the g-buffer and is drawn
+    // per submesh by the geometry pass; PostProcess writes a single final color and
+    // is invoked fullscreen by the post chain. The rest of the material system —
+    // parameter schema, bindless handles, authoring, inspector — is shared across
+    // domains. Surface is 0 so a zero-initialised header reads as the existing
+    // behavior.
+    enum class MaterialDomain : u32
+    {
+        Surface = 0,
+        PostProcess = 1,
+    };
+
     // One reflected material field, kept at runtime so name-based
     // SetTexture/SetParam can resolve a field by Name (mirrors the cooked
     // CookedMaterialField table).
@@ -47,6 +60,8 @@ namespace Veng
     {
         string Name;
         Renderer::Context* Context = nullptr;
+
+        MaterialDomain Domain = MaterialDomain::Surface;
 
         Ref<Renderer::GraphicsPipeline> Pipeline;
 
@@ -99,6 +114,7 @@ namespace Veng
         [[nodiscard]] u32 GetIndex() const { return m_Handle.Index; }
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
+        [[nodiscard]] MaterialDomain GetDomain() const { return m_Domain; }
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const { return m_Pipeline; }
 
         // The material's resolved texture dependencies. Sampled bindlessly (set
@@ -122,6 +138,7 @@ namespace Veng
 
         Renderer::Context& m_Context;
         string m_Name;
+        MaterialDomain m_Domain = MaterialDomain::Surface;
         Ref<Renderer::GraphicsPipeline> m_Pipeline;
 
         AssetHandle<Shader> m_VertexShader;

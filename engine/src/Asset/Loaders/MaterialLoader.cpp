@@ -5,6 +5,7 @@
 
 #include <fmt/format.h>
 
+#include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Renderer/BindlessRegistry.h>
@@ -179,6 +180,14 @@ namespace Veng
                 header.Version, CookedMaterialVersion)));
         }
 
+        // The domain is stored as the underlying integer; cast guarded by a loud
+        // assert on an out-of-range value (the one-line-fix-on-drift pattern the
+        // other underlying-int enum fields use). The cook validates the fragment
+        // outputs against the domain's contract, so the runtime trusts it.
+        VE_ASSERT(header.Domain <= static_cast<u32>(MaterialDomain::PostProcess),
+            "material: header Domain {} is out of range for MaterialDomain", header.Domain);
+        const MaterialDomain domain = static_cast<MaterialDomain>(header.Domain);
+
         // The single block must fit the registry's per-material param stride.
         if (header.BlockBytes > Renderer::BindlessRegistry::MaterialParamStride)
         {
@@ -340,6 +349,7 @@ namespace Veng
         const Veng::MaterialInfo info{
             .Name           = fmt::format("Material {}", id.Value),
             .Context        = &context,
+            .Domain         = domain,
             .Pipeline       = nullptr,
             .VertexShader   = vsHandle,
             .FragmentShader = fsHandle,

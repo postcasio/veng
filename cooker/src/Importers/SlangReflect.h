@@ -41,4 +41,23 @@ namespace Veng::Cook
     // author may omit a struct (e.g. a handles-only material has no MaterialParams).
     [[nodiscard]] Result<ReflectedStruct> ReflectStructLayout(
         const path& slangSource, std::string_view structName, bool optional = false);
+
+    // One fragment render target reflected from an entry point's result: the
+    // SV_TargetN index its semantic names and its scalar/vector component count
+    // (1 = scalar, 4 = float4). A material's domain↔output contract compares the
+    // collected set against the domain's expected targets.
+    struct ReflectedFragmentOutput
+    {
+        u32 TargetIndex = 0;    // N in SV_TargetN
+        u32 ComponentCount = 1; // 1 = scalar, 2/3/4 = vector
+        bool IsFloat = true;
+    };
+
+    // Compiles `slangSource` and reflects the render-target outputs of fragment
+    // entry point `entry` — each SV_TargetN semantic on its result, collected with
+    // its scalar/vector type. Located error ("material importer: ...") on a compile
+    // failure, a missing or non-fragment entry point, or an output carrying no
+    // SV_Target semantic. The targets come back sorted by TargetIndex.
+    [[nodiscard]] Result<vector<ReflectedFragmentOutput>> ReflectFragmentOutputs(
+        const path& slangSource, std::string_view entry);
 }

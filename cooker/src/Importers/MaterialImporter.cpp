@@ -83,6 +83,33 @@ namespace Veng::Cook
                 fmt::format("material importer: '{}': invalid JSON", vmatPath.string()));
         }
 
+        // --- 1b. Parse the optional domain (default surface) ---
+
+        // Stored in the header as the underlying MaterialDomain integer. Absent →
+        // Surface, so every existing material cooks unchanged; an unknown value is
+        // a located cook error.
+        u32 domain = 0; // MaterialDomain::Surface
+        if (vmat.contains("domain"))
+        {
+            if (!vmat["domain"].is_string())
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'domain' must be a string (\"surface\" or \"postprocess\")",
+                    vmatPath.string()));
+            }
+            const string domainStr = vmat["domain"].get<string>();
+            if (domainStr == "surface")
+                domain = 0;
+            else if (domainStr == "postprocess")
+                domain = 1;
+            else
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': unknown domain '{}' (expected \"surface\" or \"postprocess\")",
+                    vmatPath.string(), domainStr));
+            }
+        }
+
         // --- 2. Validate and resolve shader references ---
 
         if (!vmat.contains("shaders") || !vmat["shaders"].is_object())
@@ -170,6 +197,50 @@ namespace Veng::Cook
 
         const path fragSlangPath =
             shaderJsonPath.parent_path() / shaderJson["source"].get<string>();
+
+        if (!shaderJson.contains("entry") || !shaderJson["entry"].is_string())
+        {
+            return std::unexpected(fmt::format(
+                "material importer: '{}': missing or invalid 'entry'", shaderJsonPath.string()));
+        }
+        const string fragEntry = shaderJson["entry"].get<string>();
+
+        // --- 3b. Validate the fragment outputs against the domain's contract ---
+
+        // The domain selects the fragment output contract: Surface writes the
+        // g-buffer MRT (float4 SV_Target0 albedo + float4 SV_Target1 normal),
+        // PostProcess writes a single float4 SV_Target0. A mismatch is a located
+        // cook error — the loader trusts the pack and never re-reflects.
+        const Result<vector<ReflectedFragmentOutput>> outputs =
+            ReflectFragmentOutputs(fragSlangPath, fragEntry);
+        if (!outputs)
+            return std::unexpected(outputs.error());
+
+        if (domain == 0) // Surface
+        {
+            const bool ok = outputs->size() == 2
+                && (*outputs)[0].TargetIndex == 0 && (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4
+                && (*outputs)[1].TargetIndex == 1 && (*outputs)[1].IsFloat && (*outputs)[1].ComponentCount == 4;
+            if (!ok)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': surface material must write the g-buffer "
+                    "(float4 SV_Target0 + float4 SV_Target1); its fragment shader does not",
+                    vmatPath.string()));
+            }
+        }
+        else // PostProcess
+        {
+            const bool ok = outputs->size() == 1
+                && (*outputs)[0].TargetIndex == 0 && (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4;
+            if (!ok)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': postprocess material must write a single "
+                    "float4 SV_Target0 and no further targets; its fragment shader does not",
+                    vmatPath.string()));
+            }
+        }
 
         // The single combined param block: handle slots (uint members) and the
         // shader's authored scalar/vector uniforms, laid out in one MaterialParams
@@ -493,6 +564,7 @@ namespace Veng::Cook
         header.VertexShaderId = vertexShaderId;
         header.FragmentShaderId = fragmentShaderId;
         header.Version = CookedMaterialVersion;
+        header.Domain = domain;
         header.FieldCount = static_cast<u32>(fields.size());
         header.BlockBytes = blockReflected->Size;
 

@@ -320,6 +320,102 @@ TEST_CASE("Cooker: every cooked material carries the current format version")
     std::filesystem::remove(outArchive);
 }
 
+TEST_CASE("Cooker: a material with no domain key cooks as Surface (domain 0)")
+{
+    // The default domain is surface, so an existing material with no "domain" key
+    // cooks with Domain == 0.
+    const path packJson = FixtureDir / "material_pack.json";
+    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_domain_default.vengpack";
+
+    const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
+    REQUIRE(reader.has_value());
+
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xBB9});
+    REQUIRE(entry.has_value());
+
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    CHECK(header.Version == CookedMaterialVersion);
+    CHECK(header.Domain == 0u); // Surface
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: a postprocess material cooks with domain 1")
+{
+    // A postprocess material declares "domain": "postprocess" and its fragment
+    // shader writes a single float4 SV_Target0 — the postprocess output contract.
+    const path packJson = FixtureDir / "material_postprocess_pack.json";
+    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_postprocess.vengpack";
+
+    const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
+    REQUIRE(reader.has_value());
+
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{3201});
+    REQUIRE(entry.has_value());
+
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    CHECK(header.Version == CookedMaterialVersion);
+    CHECK(header.Domain == 1u); // PostProcess
+    CHECK(header.FieldCount == 3); // Hdr + HdrSampler + Exposure
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: an unknown domain is a located cook error")
+{
+    const path packJson = FixtureDir / "material_bad_domain_pack.json";
+    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_bad_domain.vengpack";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    const VoidResult result = cooker.CookPack(packJson, outArchive);
+
+    REQUIRE(!result.has_value());
+    CHECK(result.error().find("unknown domain") != string::npos);
+    CHECK(result.error().find("translucent") != string::npos);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: a surface material whose fragment shader writes one target is a located cook error")
+{
+    // A surface material must write the g-buffer MRT (SV_Target0 + SV_Target1).
+    // Pointing it at a shader that writes a single target is a contract mismatch.
+    const path packJson = FixtureDir / "material_surface_wrong_output_pack.json";
+    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_surface_wrong.vengpack";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    const VoidResult result = cooker.CookPack(packJson, outArchive);
+
+    REQUIRE(!result.has_value());
+    CHECK(result.error().find("surface material must write the g-buffer") != string::npos);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: a postprocess material whose fragment shader writes the MRT is a located cook error")
+{
+    // A postprocess material must write a single float4 SV_Target0. Pointing it at
+    // a g-buffer (MRT) fragment shader is a contract mismatch.
+    const path packJson = FixtureDir / "material_postprocess_wrong_output_pack.json";
+    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_postprocess_wrong.vengpack";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    const VoidResult result = cooker.CookPack(packJson, outArchive);
+
+    REQUIRE(!result.has_value());
+    CHECK(result.error().find("postprocess material must write a single") != string::npos);
+
+    std::filesystem::remove(outArchive);
+}
+
 TEST_CASE("Cooker: an authored block exceeding the param stride is a located cook error")
 {
     const path packJson = FixtureDir / "material_oversize_pack.json";
