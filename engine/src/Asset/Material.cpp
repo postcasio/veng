@@ -82,7 +82,12 @@ namespace Veng
     void Material::Bind(CommandBuffer& cmd) const
     {
         cmd.BindPipeline(m_Pipeline);
-        cmd.PushConstants(m_Handle.Index, m_SelectorOffset);
+        // Fold the current frame's region base into the pushed selector so the
+        // shader's index * MaterialParamStride load lands in this frame's copy of
+        // the ring-buffered material buffer.
+        const u32 selector =
+            m_Context.GetBindlessRegistry().GetCurrentFrameBase() + m_Handle.Index;
+        cmd.PushConstants(selector, m_SelectorOffset);
     }
 
     const MaterialField* Material::FindField(std::string_view name) const

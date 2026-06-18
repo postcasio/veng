@@ -42,6 +42,9 @@ namespace Veng::Renderer
     {
         vk::Buffer Buffer;
         VmaAllocation Allocation{};
+        // The persistent mapping for a HostMapped buffer (VMA maps it at
+        // creation via VMA_ALLOCATION_CREATE_MAPPED_BIT); null otherwise.
+        void* MappedData = nullptr;
     };
 
     struct Image::Native

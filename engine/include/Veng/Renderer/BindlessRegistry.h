@@ -18,7 +18,9 @@ namespace Veng::Renderer
 
     // Index into the registry's per-material block buffer (set 0, binding
     // BindlessRegistry::MaterialParamBinding), byte-addressed at index *
-    // MaterialParamStride. Pushed per draw as materialIndex.
+    // MaterialParamStride. A draw pushes GetCurrentFrameBase() + Index as the
+    // selector so the load lands in the current frame-in-flight's region of the
+    // ring-buffered buffer.
     struct MaterialHandle
     {
         static constexpr u32 Invalid = ~0u;
@@ -85,15 +87,17 @@ namespace Veng::Renderer
         [[nodiscard]] SamplerHandle Register(const Ref<Sampler>& sampler);
         [[nodiscard]] StorageImageHandle RegisterStorage(const Ref<ImageView>& storage);
 
-        // Allocates a material slot and uploads its single parameter block into the
-        // per-material buffer (binding MaterialParamBinding) at index *
-        // MaterialParamStride. The block holds the material's whole entry — bindless
-        // handle slots and authored params alike, laid out by reflection; `block`
-        // must be <= MaterialParamStride. UpdateMaterial rewrites a live slot in
-        // place (e.g. after Material::SetTexture/SetParam). The byte form keeps the
-        // registry agnostic of how the material packed its entry.
+        // Allocates a material slot and stores its single parameter block. The
+        // block holds the material's whole entry — bindless handle slots and
+        // authored params alike, laid out by reflection; `block` must be <=
+        // MaterialParamStride. UpdateMaterial rewrites a live slot (e.g. after
+        // Material::SetTexture/SetParam). Both cache the block CPU-side, mark the
+        // slot dirty for framesInFlight frames, and write the current frame's
+        // region directly into the host-mapped, ring-buffered buffer — no staging,
+        // no WaitIdle. A per-frame UpdateMaterial is cheap and frame-safe. The byte
+        // form keeps the registry agnostic of how the material packed its entry.
         [[nodiscard]] MaterialHandle RegisterMaterial(std::span<const std::byte> block);
-        void UpdateMaterial(MaterialHandle handle, std::span<const std::byte> block) const;
+        void UpdateMaterial(MaterialHandle handle, std::span<const std::byte> block);
 
         // Deferred release: a default-constructed (invalid) handle is a no-op.
         void Release(TextureHandle handle);
@@ -104,6 +108,17 @@ namespace Veng::Renderer
         // Binds the registry's set 0 at the given bind point. Call once per
         // pipeline bind, not per draw.
         void Bind(CommandBuffer& cmd, PipelineBindPoint bindPoint = PipelineBindPoint::Graphics) const;
+
+        // The base material index of the current frame-in-flight's region in the
+        // ring-buffered material buffer: currentFrameInFlight * MaxMaterials. A
+        // draw pushes this plus the material slot so the shader's
+        // index * MaterialParamStride load lands in the current frame's region.
+        //
+        // MoltenVK realizes set 0 as a Metal argument buffer; a dynamic storage
+        // descriptor inside it mistranslates, so the per-frame region is selected
+        // by folding the frame base into the pushed material index rather than by a
+        // dynamic descriptor offset. The shader's indexing is unchanged.
+        [[nodiscard]] u32 GetCurrentFrameBase() const;
 
         [[nodiscard]] const Ref<DescriptorSetLayout>& GetSet0Layout() const { return m_Layout; }
 
@@ -160,12 +175,43 @@ namespace Veng::Renderer
         SlotArray m_Samplers;
         SlotArray m_StorageImages;
 
-        // The per-material block buffer (binding MaterialParamBinding): a single
-        // storage buffer of MaxMaterials * MaterialParamStride, written into set 0
-        // once at construction. m_Materials allocates slots into it (deferred
-        // release, like the arrays above); a material's whole block — handle slots
-        // and authored params — uploads at index * MaterialParamStride.
+        // The per-material block buffer (binding MaterialParamBinding): a
+        // host-visible, persistently-mapped storage buffer holding framesInFlight
+        // copies of the MaxMaterials * MaterialParamStride material table, bound at
+        // its full range. Each frame-in-flight f owns the region
+        // [f * MaxMaterials * MaterialParamStride, ...); a draw folds f's base
+        // (GetCurrentFrameBase()) into the pushed material index so the shader's
+        // index * MaterialParamStride load reads the current frame's copy of the
+        // block. The binding is a plain (non-dynamic) storage buffer: MoltenVK
+        // realizes set 0 as a Metal argument buffer, where a dynamic storage
+        // descriptor mistranslates, so the frame region is selected by the folded
+        // index, not a dynamic offset.
+        //
+        // A write only ever touches the *current* frame's region (that frame is
+        // not yet submitted, so writing it is safe with no fence). To propagate a
+        // value to every region, Register/UpdateMaterial cache the block CPU-side,
+        // set the material's dirty counter to framesInFlight, and write the current
+        // region; OnFrameAcquired memcpys each still-dirty material's block into the
+        // region it just made current and decrements. A cooked (write-once) material
+        // reaches all regions over framesInFlight frames; a per-frame-rewritten
+        // material stays dirty and lands in each region as it comes current. No
+        // staging, no WaitIdle, no frames-in-flight hazard.
         Ref<Buffer> m_MaterialParamBuffer;
         SlotArray m_Materials;
+        u32 m_FramesInFlight = 0;
+
+        // CPU-side cache of each material slot's block and its remaining flush
+        // count (writes still owed to the in-flight regions). Indexed by material
+        // slot. A zero DirtyFrames means the slot is clean across every region.
+        struct MaterialEntry
+        {
+            vector<u8> Block;
+            u32 DirtyFrames = 0;
+        };
+        vector<MaterialEntry> m_MaterialEntries;
+
+        // memcpy a material slot's cached block into the given frame-in-flight's
+        // region of the mapped buffer.
+        void WriteMaterialRegion(u32 materialIndex, u32 frameInFlight) const;
     };
 }

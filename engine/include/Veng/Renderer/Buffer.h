@@ -24,6 +24,13 @@ namespace Veng::Renderer
         string Name;
         u64 Size;
         BufferUsage Usage;
+        // Persistently host-mapped: the allocation is pinned in HOST_VISIBLE |
+        // HOST_COHERENT memory and mapped once at creation, so GetMappedData()
+        // returns a stable pointer to write into directly with no per-write
+        // map/unmap and no flush. Used by data rewritten every frame (the
+        // ring-buffered material param store); the default path lets VMA place
+        // the buffer in device-local memory and stage transfers as needed.
+        bool HostMapped = false;
     };
 
     // enable_shared_from_this so the async Upload can capture an owning Ref<Buffer>
@@ -54,6 +61,12 @@ namespace Veng::Renderer
         [[nodiscard]] Task<void> Upload(TaskSystem& tasks, std::span<const u8> data, u64 offset = 0);
 
         [[nodiscard]] vector<u8> Download() const;
+
+        // The persistent host mapping of a buffer created with
+        // BufferInfo::HostMapped. Writes through this pointer are visible to the
+        // device without a flush (HOST_COHERENT). Asserts the buffer was created
+        // host-mapped.
+        [[nodiscard]] void* GetMappedData() const;
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] u64 GetSize() const { return m_Size; }

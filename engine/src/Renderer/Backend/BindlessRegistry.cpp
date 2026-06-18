@@ -60,7 +60,9 @@ namespace Veng::Renderer
                 {.Binding = SamplerBinding, .Type = DescriptorType::Sampler, .Count = MaxSamplers, .Stages = ShaderStage::All, .Bindless = true},
                 {.Binding = StorageImageBinding, .Type = DescriptorType::StorageImage, .Count = MaxStorageImages, .Stages = ShaderStage::All, .Bindless = true},
                 // The per-material block buffer: a single ByteAddressBuffer on the
-                // shader side, byte-addressed at materialIndex * MaterialParamStride.
+                // shader side, byte-addressed at index * MaterialParamStride. A draw
+                // folds the current frame's region base into that index, so the load
+                // lands in this frame's copy of the ring-buffered buffer.
                 {.Binding = MaterialParamBinding, .Type = DescriptorType::StorageBuffer, .Count = 1, .Stages = ShaderStage::All},
             },
         });
@@ -70,18 +72,26 @@ namespace Veng::Renderer
             .Layout = m_Layout,
         });
 
+        m_FramesInFlight = context.GetMaxFramesInFlight();
+
+        // framesInFlight copies of the material table, host-mapped: each frame owns
+        // one MaxMaterials * MaterialParamStride region, written directly while it
+        // is the current (not-yet-submitted) frame.
         m_MaterialParamBuffer = Buffer::Create(context, {
             .Name = "Bindless MaterialParams",
-            .Size = static_cast<u64>(MaxMaterials) * MaterialParamStride,
-            .Usage = BufferUsage::Storage | BufferUsage::TransferDst,
+            .Size = static_cast<u64>(m_FramesInFlight) * MaxMaterials * MaterialParamStride,
+            .Usage = BufferUsage::Storage,
+            .HostMapped = true,
         });
+        // Bound at its full range; a draw selects the current frame's region by
+        // folding the frame base into the pushed material index.
         m_Set->Write(MaterialParamBinding, m_MaterialParamBuffer);
 
-        const u32 framesInFlight = context.GetMaxFramesInFlight();
-        m_Textures.Init(MaxTextures, framesInFlight);
-        m_Samplers.Init(MaxSamplers, framesInFlight);
-        m_StorageImages.Init(MaxStorageImages, framesInFlight);
-        m_Materials.Init(MaxMaterials, framesInFlight);
+        m_Textures.Init(MaxTextures, m_FramesInFlight);
+        m_Samplers.Init(MaxSamplers, m_FramesInFlight);
+        m_StorageImages.Init(MaxStorageImages, m_FramesInFlight);
+        m_Materials.Init(MaxMaterials, m_FramesInFlight);
+        m_MaterialEntries.resize(MaxMaterials);
     }
 
     BindlessRegistry::~BindlessRegistry() = default;
@@ -171,20 +181,42 @@ namespace Veng::Renderer
     }
 
     void BindlessRegistry::UpdateMaterial(MaterialHandle handle,
-        std::span<const std::byte> block) const
+        std::span<const std::byte> block)
     {
         VE_ASSERT(handle.IsValid(), "BindlessRegistry::UpdateMaterial: invalid handle");
         VE_ASSERT(block.size() <= MaterialParamStride,
                   "BindlessRegistry::UpdateMaterial: block is {} bytes, exceeds stride {}",
                   block.size(), MaterialParamStride);
+        VE_ASSERT(handle.Index < MaxMaterials,
+                  "BindlessRegistry::UpdateMaterial: slot {} out of range", handle.Index);
 
-        if (!block.empty())
-        {
-            const std::span<const u8> blockBytes(
-                reinterpret_cast<const u8*>(block.data()), block.size());
-            m_MaterialParamBuffer->UploadSync(
-                blockBytes, static_cast<u64>(handle.Index) * MaterialParamStride);
-        }
+        // Cache the block CPU-side and owe a write to every in-flight region: the
+        // next framesInFlight OnFrameAcquired calls cycle through every region and
+        // flush it there.
+        MaterialEntry& entry = m_MaterialEntries[handle.Index];
+        const std::span<const u8> blockBytes(
+            reinterpret_cast<const u8*>(block.data()), block.size());
+        entry.Block.assign(blockBytes.begin(), blockBytes.end());
+        entry.DirtyFrames = m_FramesInFlight;
+
+        // Also write the current frame's region now, so an update made mid-frame
+        // (after this frame's OnFrameAcquired already ran) is visible to this
+        // frame's draw. Writing the current region is always safe — that frame is
+        // not yet submitted. This does not consume a dirty count; the flush still
+        // owes framesInFlight writes that cover every region.
+        WriteMaterialRegion(handle.Index, m_Context.GetCurrentFrameInFlight());
+    }
+
+    void BindlessRegistry::WriteMaterialRegion(u32 materialIndex, u32 frameInFlight) const
+    {
+        const MaterialEntry& entry = m_MaterialEntries[materialIndex];
+        if (entry.Block.empty())
+            return;
+
+        const u64 regionBase = static_cast<u64>(frameInFlight) * MaxMaterials * MaterialParamStride;
+        const u64 offset = regionBase + static_cast<u64>(materialIndex) * MaterialParamStride;
+        auto* base = static_cast<u8*>(m_MaterialParamBuffer->GetMappedData());
+        std::memcpy(base + offset, entry.Block.data(), entry.Block.size());
     }
 
     void BindlessRegistry::Release(TextureHandle handle)
@@ -220,11 +252,28 @@ namespace Veng::Renderer
         });
     }
 
+    u32 BindlessRegistry::GetCurrentFrameBase() const
+    {
+        return m_Context.GetCurrentFrameInFlight() * MaxMaterials;
+    }
+
     void BindlessRegistry::OnFrameAcquired(u32 frameInFlight)
     {
         m_Textures.OnFrameAcquired(frameInFlight);
         m_Samplers.OnFrameAcquired(frameInFlight);
         m_StorageImages.OnFrameAcquired(frameInFlight);
         m_Materials.OnFrameAcquired(frameInFlight);
+
+        // Flush any still-dirty material into the region just made current (this
+        // frame's prior GPU use has completed — the fence was waited before this
+        // call), then decrement the owed-writes counter.
+        for (u32 i = 0; i < MaxMaterials; i++)
+        {
+            MaterialEntry& entry = m_MaterialEntries[i];
+            if (entry.DirtyFrames == 0)
+                continue;
+            WriteMaterialRegion(i, frameInFlight);
+            entry.DirtyFrames--;
+        }
     }
 }

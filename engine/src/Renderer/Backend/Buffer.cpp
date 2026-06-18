@@ -22,19 +22,34 @@ namespace Veng::Renderer
 
         VkBuffer buffer;
 
+        // A host-mapped buffer is pinned in host-visible memory and mapped once
+        // at creation, so its mapping is a stable pointer for per-frame writes.
+        // Allowing a transfer-instead placement would let VMA put it in
+        // device-local memory and defeat the persistent map, so that flag is
+        // dropped on this path.
+        const VmaAllocationCreateFlags allocationFlags = info.HostMapped
+            ? VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+              VMA_ALLOCATION_CREATE_MAPPED_BIT
+            : VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+              VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT;
+
         const VmaAllocationCreateInfo allocationCreateInfo = {
-            .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT,
+            .flags = allocationFlags,
             .usage = VMA_MEMORY_USAGE_AUTO,
             .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             .pool = VK_NULL_HANDLE
         };
 
+        VmaAllocationInfo allocationInfo{};
         VK_RAW_ASSERT(
             vmaCreateBuffer(GetVmaAllocator(m_Context), &bufferCreateInfo, &allocationCreateInfo, &buffer, &
-                m_Native->Allocation, nullptr), "failed to create buffer!");
+                m_Native->Allocation, &allocationInfo), "failed to create buffer!");
 
         m_Native->Buffer = buffer;
+        if (info.HostMapped)
+        {
+            m_Native->MappedData = allocationInfo.pMappedData;
+        }
 
         vmaSetAllocationName(GetVmaAllocator(m_Context), m_Native->Allocation, info.Name.c_str());
 
@@ -79,6 +94,13 @@ namespace Veng::Renderer
         {
             self->UploadSync(bytes, offset);
         });
+    }
+
+    void* Buffer::GetMappedData() const
+    {
+        VE_ASSERT(m_Native->MappedData != nullptr,
+                  "Buffer '{}': GetMappedData on a buffer not created with HostMapped", m_Name);
+        return m_Native->MappedData;
     }
 
     vector<u8> Buffer::Download() const
