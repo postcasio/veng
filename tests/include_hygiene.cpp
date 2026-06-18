@@ -45,6 +45,12 @@
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/ImGui/ImGuiTexture.h>
 
+#include <Veng/UI/UI.h>
+#include <Veng/UI/Types.h>
+#include <Veng/UI/Widgets.h>
+#include <Veng/UI/Layout.h>
+#include <Veng/UI/Query.h>
+
 #include <Veng/Module/ApplicationRegistry.h>
 #include <Veng/Module/Module.h>
 #include <Veng/Module/ModuleLoader.h>
