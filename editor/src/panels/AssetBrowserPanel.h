@@ -5,28 +5,20 @@
 
 #include <VengEditor/EditorPanel.h>
 
-namespace Veng
-{
-    class AssetManager;
-    class EditorRegistry;
-}
-
 namespace VengEditor
 {
+    class PanelHost;
+
     // Lists the asset table of a mounted .vengpack, read-only. Selecting an asset
-    // records the selection (consumed by the inspector); double-clicking opens the
-    // type's registered editor (no-op for an unregistered type).
+    // records the selection (consumed by the inspector); double-clicking asks the
+    // host to open the type's registered editor (no-op for an unregistered type).
     class AssetBrowserPanel final : public EditorPanel
     {
     public:
-        AssetBrowserPanel(Veng::path packPath, Veng::EditorRegistry& editors);
+        AssetBrowserPanel(Veng::path packPath, PanelHost& host);
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return "Asset Browser"; }
         void OnImGui() override;
-
-        // Panels opened by double-clicking an asset since the last call, moved out
-        // for the host to adopt into its panel set. Drained once per frame.
-        [[nodiscard]] Veng::vector<Veng::Unique<EditorPanel>> TakeOpenedPanels();
 
     private:
         struct Asset
@@ -37,10 +29,9 @@ namespace VengEditor
         };
 
         Veng::path m_PackPath;
-        Veng::EditorRegistry& m_Editors;
+        PanelHost& m_Host;
         Veng::vector<Asset> m_Assets;
         Veng::optional<Veng::AssetId> m_Selected;
-        Veng::vector<Veng::Unique<EditorPanel>> m_Opened;
         bool m_Loaded = false;
 
         void LoadTable();

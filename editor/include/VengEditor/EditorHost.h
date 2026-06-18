@@ -11,6 +11,7 @@
 #include <VengEditor/CookRequest.h>
 #include <VengEditor/EditorPanel.h>
 #include <VengEditor/EditorRegistry.h>
+#include <VengEditor/PanelHost.h>
 
 namespace Veng
 {
@@ -29,7 +30,6 @@ namespace VengEditor
 {
     class SceneViewportPanel;
     class InspectorPanel;
-    class AssetBrowserPanel;
     class AssetSourceIndex;
 
     struct EditorHostInfo
@@ -62,11 +62,15 @@ namespace VengEditor
     // registries (the same pattern as the launcher), the EditorRegistry the
     // module registers into, a panel set drawn into a top-level ImGui dockspace,
     // and the scene viewport's SceneRenderer.
-    class EditorHost : public Veng::Application
+    class EditorHost : public Veng::Application, public PanelHost
     {
     public:
         static Veng::Unique<EditorHost> Create(const EditorHostInfo& info);
         ~EditorHost() override;
+
+        // PanelHost: resolve the asset's editor through the registry and queue it
+        // for adoption into the panel set at the next safe point in the frame.
+        void OpenAssetEditor(Veng::AssetType type, Veng::AssetId id) override;
 
         // Cooks a source asset on demand through the injected cook backend (off
         // the render thread) and, on success, shadow-mounts the resulting
@@ -132,9 +136,10 @@ namespace VengEditor
         // scene and the current selection each frame before the UI is built.
         InspectorPanel* m_Inspector = nullptr;
 
-        // Non-owning: the asset browser slot, drained each frame for asset-editor
-        // panels opened by a double-click so the host adopts them into its set.
-        AssetBrowserPanel* m_AssetBrowser = nullptr;
+        // Panels opened via OpenAssetEditor since the last frame, adopted into
+        // m_Panels at a point outside the panel-iteration so opening from inside a
+        // panel's OnImGui is safe.
+        Veng::vector<Veng::Unique<EditorPanel>> m_PendingPanels;
 
         // The present pipeline: a fullscreen blit of the ImGui output into the
         // swapchain, addressed through the bindless set 0.

@@ -170,6 +170,12 @@ namespace VengEditor
 
     EditorHost::~EditorHost() = default;
 
+    void EditorHost::OpenAssetEditor(AssetType type, AssetId id)
+    {
+        if (Unique<EditorPanel> panel = m_Registries->Editor.CreateEditorFor(type, id))
+            m_PendingPanels.push_back(std::move(panel));
+    }
+
     void EditorHost::OnInitialize()
     {
         VE_ASSERT(GetImGuiLayer() != nullptr, "editor host requires the ImGui layer");
@@ -265,10 +271,8 @@ namespace VengEditor
                     m_Registries->Editor, cookFor()));
         }
 
-        auto assetBrowser = CreateUnique<AssetBrowserPanel>(
-            ExecutableDirectory() / "sample.vengpack", m_Registries->Editor);
-        m_AssetBrowser = assetBrowser.get();
-        m_Panels.push_back({std::move(assetBrowser), true});
+        m_Panels.push_back({CreateUnique<AssetBrowserPanel>(
+            ExecutableDirectory() / "sample.vengpack", *this), true});
         auto inspector = CreateUnique<InspectorPanel>(GetAssetManager(), m_Registries->Editor, *m_Sources);
         m_Inspector = inspector.get();
         m_Panels.push_back({std::move(inspector), true});
@@ -378,9 +382,10 @@ namespace VengEditor
         // hierarchy panel yet, the viewport's prefab root is the default selection.
         m_Inspector->SetSelection(&m_Viewport->GetScene(), m_Viewport->PrimaryEntity());
 
-        // Adopt any asset-editor panels the browser opened since last frame.
-        for (Unique<EditorPanel>& opened : m_AssetBrowser->TakeOpenedPanels())
+        // Adopt any panels opened via OpenAssetEditor since last frame.
+        for (Unique<EditorPanel>& opened : m_PendingPanels)
             m_Panels.push_back({std::move(opened), true});
+        m_PendingPanels.clear();
 
         // Drive each open panel's offscreen render (a material editor's preview)
         // before the ImGui frame is built, so its output is sampleable. The
@@ -424,9 +429,9 @@ namespace VengEditor
     void EditorHost::OnDispose()
     {
         m_Panels.clear();
+        m_PendingPanels.clear();
         m_Viewport = nullptr;
         m_Inspector = nullptr;
-        m_AssetBrowser = nullptr;
         m_Sources.reset();
         m_PresentGraph.reset();
         m_BlitPipeline.reset();

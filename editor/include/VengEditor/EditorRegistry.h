@@ -69,6 +69,15 @@ namespace Veng
             return it == m_AssetEditors.end() ? nullptr : it->second.get();
         }
 
+        // Construct the editor panel for an asset, or nullptr when its type has no
+        // registered factory. The factory map is the registry's, so factory ->
+        // panel resolution lives here.
+        [[nodiscard]] Unique<VengEditor::EditorPanel> CreateEditorFor(AssetType type, AssetId id) const
+        {
+            AssetEditorFactory* factory = AssetEditorFor(type);
+            return factory == nullptr ? nullptr : factory->OpenEditor(id);
+        }
+
         // The custom widget for a type, or nullptr when none is registered.
         [[nodiscard]] const FieldWidgetFn* FieldWidgetFor(TypeId type) const
         {

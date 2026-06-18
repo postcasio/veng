@@ -3,7 +3,7 @@
 #include <Veng/Asset/Archive.h>
 #include <Veng/Log.h>
 #include <Veng/UI/UI.h>
-#include <VengEditor/EditorRegistry.h>
+#include <VengEditor/PanelHost.h>
 
 namespace VengEditor
 {
@@ -27,8 +27,8 @@ namespace VengEditor
         }
     }
 
-    AssetBrowserPanel::AssetBrowserPanel(path packPath, EditorRegistry& editors) :
-        m_PackPath(std::move(packPath)), m_Editors(editors)
+    AssetBrowserPanel::AssetBrowserPanel(path packPath, PanelHost& host) :
+        m_PackPath(std::move(packPath)), m_Host(host)
     {
     }
 
@@ -68,20 +68,9 @@ namespace VengEditor
                     m_Selected = asset.Id;
 
                     if (UI::IsMouseDoubleClicked(UI::MouseButton::Left))
-                    {
-                        // The opened panel is queued for the host to adopt into its
-                        // panel set on the next frame (TakeOpenedPanels).
-                        if (AssetEditorFactory* factory = m_Editors.AssetEditorFor(asset.Type))
-                            if (Unique<EditorPanel> panel = factory->OpenEditor(asset.Id))
-                                m_Opened.push_back(std::move(panel));
-                    }
+                        m_Host.OpenAssetEditor(asset.Type, asset.Id);
                 }
             }
         }
-    }
-
-    vector<Unique<EditorPanel>> AssetBrowserPanel::TakeOpenedPanels()
-    {
-        return std::move(m_Opened);
     }
 }
