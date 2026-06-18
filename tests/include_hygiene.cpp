@@ -79,7 +79,6 @@
 #include <Veng/Renderer/Fence.h>
 #include <Veng/Renderer/GBuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
-#include <Veng/Renderer/ImGuiCompositePass.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/PipelineLayout.h>
@@ -89,6 +88,7 @@
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Semaphore.h>
 #include <Veng/Renderer/ShaderModule.h>
+#include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/Renderer/TypedBuffers.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>

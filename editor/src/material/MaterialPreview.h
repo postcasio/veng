@@ -19,7 +19,7 @@ namespace Veng
     {
         class Context;
         class CommandBuffer;
-        class ImGuiCompositePass;
+        class Sampler;
         class SceneRenderer;
     }
 }
@@ -89,9 +89,10 @@ namespace VengEditor
 
         Veng::AssetHandle<Veng::Material> m_Material;
 
-        // Owns the ImGui preview texture and the pre-Render sampleability barrier
-        // (panel-only mode).
-        Veng::Unique<Veng::Renderer::ImGuiCompositePass> m_Composite;
+        // The preview output surfaced to ImGui: a sampler and an ImGui texture over
+        // SceneRenderer::GetOutput(), recreated when Resize invalidates the output.
+        Veng::Ref<Veng::Renderer::Sampler> m_SceneSampler;
+        Veng::Ref<Veng::ImGuiTexture> m_SceneTexture;
 
         Veng::uvec2 m_Extent{};
 

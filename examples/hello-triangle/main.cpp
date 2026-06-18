@@ -7,7 +7,9 @@
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/ImGuiCompositePass.h>
+#include <Veng/Renderer/Sampler.h>
+#include <Veng/Renderer/SwapChainCompositePass.h>
+#include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Prefab.h>
@@ -104,10 +106,20 @@ protected:
         // downloads it — no ImGui layer, no swapchain.
         if (GetImGuiLayer())
         {
-            // The engine composite pass owns the scene→ImGui plumbing: the ImGui
-            // scene texture, the pre-Render sampleability barrier, and the fullscreen
-            // scene-behind-ImGui composite (composite mode, keyed on SwapChainFormat).
-            m_Composite = Renderer::ImGuiCompositePass::Create({
+            // The scene shows inside a "Scene" ImGui window via UI::Image: an ImGui
+            // texture over the renderer output, edge-clamped so the window never
+            // samples past the image.
+            m_SceneSampler = Renderer::Sampler::Create(context, {
+                .Name = "Scene Composite Sampler",
+                .AddressModeU = Renderer::AddressMode::ClampToEdge,
+                .AddressModeV = Renderer::AddressMode::ClampToEdge,
+                .AddressModeW = Renderer::AddressMode::ClampToEdge,
+            });
+            m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
+
+            // The fullscreen pass that blends the rendered ImGui overlay (which holds
+            // that "Scene" window) over the scene into the swapchain.
+            m_Composite = Renderer::SwapChainCompositePass::Create({
                 .Context = context,
                 .ImGui = *GetImGuiLayer(),
                 .Assets = GetAssetManager(),
@@ -218,9 +230,9 @@ protected:
         {
             // RenderUserInterface() draws the scene texture via UI::Image(), and
             // GetImGuiLayer()->Render(cmd) is what actually records that sampled read.
-            // ImGui samples outside the graph, so the composite pass issues the
-            // explicit sampleability barrier before that read.
-            m_Composite->PrepareSceneForImGui(cmd);
+            // ImGui samples outside the graph, so transition the output to a
+            // sampleable layout before that read.
+            cmd.PrepareForAccess(m_SceneRenderer->GetOutput(), Renderer::AccessKind::Sample);
 
             RenderUserInterface();
             GetImGuiLayer()->Render(cmd);
@@ -231,12 +243,15 @@ protected:
     void OnDispose() override
     {
         // The SceneRenderer owns the scene output + depth transient; the composite
-        // graph owns its imports' bindings; the composite pass owns the ImGui scene
-        // texture, the composite pipeline, and its bindless slots. Release them so
-        // their GPU resources retire before the context tears down.
+        // graph owns its imports' bindings; the composite pass owns the composite
+        // pipeline and its bindless slots; the ImGui texture + sampler surface the
+        // scene in a window. Release them so their GPU resources retire before the
+        // context tears down.
         m_SceneRenderer.reset();
         m_CompositeGraph.reset();
         m_Composite.reset();
+        m_SceneTexture.reset();
+        m_SceneSampler.reset();
         m_Scene.reset();
         m_BrickMaterial = {};
     }
@@ -248,23 +263,24 @@ private:
         {
             // The DebugView combo drives SceneRenderer::Configure, re-wiring the pass
             // set (Final / Albedo / Normal / Depth) — a live exercise of the recompile
-            // seam. Configure recreates the output image, so the composite pass's cached
-            // scene texture + bindless slot must be re-bound after it through SetSource
-            // (the GetOutput()-invalidated-by-Configure contract).
+            // seam. Configure recreates the output image, so the ImGui texture and the
+            // composite pass's scene bindless slot must both be re-bound after it (the
+            // GetOutput()-invalidated-by-Configure contract).
             static constexpr std::array<string_view, 4> modeNames{"Final", "Albedo", "Normal", "Depth"};
             i32 mode = static_cast<i32>(m_SceneSettings.Mode);
             if (UI::Combo("View", mode, modeNames))
             {
                 m_SceneSettings.Mode = static_cast<Renderer::DebugView>(mode);
                 m_SceneRenderer->Configure(m_SceneSettings);
-                m_Composite->SetSource(m_SceneRenderer->GetOutput());
+                m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
+                m_Composite->SetSceneSource(m_SceneRenderer->GetOutput());
             }
 
             const vec2 available = UI::ContentRegionAvail();
             const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
             const f32 aspect = static_cast<f32>(output->GetImage()->GetHeight()) /
                                static_cast<f32>(output->GetImage()->GetWidth());
-            UI::Image(m_Composite->GetSceneTexture(), {available.x, available.x * aspect});
+            UI::Image(m_SceneTexture, {available.x, available.x * aspect});
         }
 
         if (auto statsWindow = UI::Window("Stats"))
@@ -319,9 +335,14 @@ private:
 
     AssetHandle<Veng::Material> m_BrickMaterial;
 
-    // The engine composite pass: owns the ImGui scene texture, the pre-Render
-    // barrier, and the fullscreen scene-behind-ImGui composite + its bindless slots.
-    Unique<Renderer::ImGuiCompositePass> m_Composite;
+    // The scene output surfaced in the "Scene" window via UI::Image: an ImGui
+    // texture over the renderer output, recreated when Configure invalidates it.
+    Ref<Renderer::Sampler> m_SceneSampler;
+    Ref<ImGuiTexture> m_SceneTexture;
+
+    // The fullscreen scene-behind-ImGui composite into the swapchain + its bindless
+    // slots and pipeline.
+    Unique<Renderer::SwapChainCompositePass> m_Composite;
 
     // Compiled once and replayed every frame; re-Compile()d on swapchain resize.
     Unique<Renderer::CompiledGraph> m_CompositeGraph;
