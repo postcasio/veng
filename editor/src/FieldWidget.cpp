@@ -9,7 +9,7 @@
 #include <Veng/Asset/Texture.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Entity.h>
-#include <Veng/Vendor/ImGui.h>
+#include <Veng/UI/UI.h>
 #include <VengEditor/EditorRegistry.h>
 
 #include <cstring>
@@ -38,7 +38,7 @@ namespace VengEditor
         // asset type, writing the chosen id back through the leading u64 of the
         // handle (offset 0 is pinned by AssetHandle's layout guard, so the id is
         // writable without naming the asset's concrete type). "(none)" clears it.
-        void DrawAssetPicker(void* fieldPtr, const FieldDescriptor& field, const char* labelText,
+        void DrawAssetPicker(void* fieldPtr, const FieldDescriptor& field, string_view label,
                              const FieldWidgetContext& ctx)
         {
             u64 currentId = 0;
@@ -49,34 +49,41 @@ namespace VengEditor
             {
                 // No enumeration for this handle type — fall back to the id label.
                 if (currentId == 0)
-                    ImGui::LabelText(labelText, "(none)");
+                    UI::Label(label, "(none)");
                 else
-                    ImGui::LabelText(labelText, "0x%llX", static_cast<unsigned long long>(currentId));
+                    UI::Label(label, fmt::format("0x{:X}", currentId));
                 return;
             }
 
-            char preview[32];
-            if (currentId == 0)
-                std::snprintf(preview, sizeof(preview), "(none)");
-            else
-                std::snprintf(preview, sizeof(preview), "0x%llX",
-                              static_cast<unsigned long long>(currentId));
+            // The combo entries are "(none)" first, then one per candidate id; the
+            // selected index addresses this same list, so index 0 clears the handle
+            // and index N picks the candidate at N-1.
+            const vector<AssetId> candidates = ctx.Sources.EntriesOfType(*assetType);
 
-            if (ImGui::BeginCombo(labelText, preview))
+            vector<string> labels;
+            labels.reserve(candidates.size() + 1);
+            labels.emplace_back("(none)");
+            for (const AssetId candidate : candidates)
+                labels.push_back(fmt::format("0x{:X}", candidate.Value));
+
+            vector<string_view> items(labels.begin(), labels.end());
+
+            i32 index = 0;
+            for (usize i = 0; i < candidates.size(); ++i)
             {
-                if (ImGui::Selectable("(none)", currentId == 0))
-                    ApplyAssetPick(fieldPtr, AssetId{});
-
-                for (const AssetId candidate : ctx.Sources.EntriesOfType(*assetType))
+                if (candidates[i].Value == currentId)
                 {
-                    char label[32];
-                    std::snprintf(label, sizeof(label), "0x%llX",
-                                  static_cast<unsigned long long>(candidate.Value));
-                    if (ImGui::Selectable(label, candidate.Value == currentId))
-                        ApplyAssetPick(fieldPtr, candidate);
+                    index = static_cast<i32>(i) + 1;
+                    break;
                 }
+            }
 
-                ImGui::EndCombo();
+            if (UI::Combo(label, index, items))
+            {
+                if (index == 0)
+                    ApplyAssetPick(fieldPtr, AssetId{});
+                else
+                    ApplyAssetPick(fieldPtr, candidates[static_cast<usize>(index) - 1]);
             }
         }
     }
@@ -95,15 +102,16 @@ namespace VengEditor
         }
 
         const string& label = field.DisplayName.empty() ? field.Name : field.DisplayName;
-        const char* labelText = label.c_str();
 
-        ImGui::PushID(labelText);
+        auto id = UI::PushId(label);
 
-        const f32 step = field.Step ? static_cast<f32>(*field.Step) : 0.01f;
-        const f32 minV = field.Min ? static_cast<f32>(*field.Min) : -FLT_MAX;
-        const f32 maxV = field.Max ? static_cast<f32>(*field.Max) : FLT_MAX;
-        const bool hasRange = field.Min.has_value() || field.Max.has_value();
-        const ImGuiSliderFlags rangeFlag = hasRange ? ImGuiSliderFlags_AlwaysClamp : 0;
+        // The field's optional editor metadata is the single source of drag speed
+        // and clamp range; absent metadata leaves the DragOptions defaults
+        // (0.01f speed, unclamped).
+        UI::DragOptions drag;
+        if (field.Step) drag.Speed = static_cast<f32>(*field.Step);
+        if (field.Min) drag.Min = static_cast<f32>(*field.Min);
+        if (field.Max) drag.Max = static_cast<f32>(*field.Max);
 
         switch (field.Class)
         {
@@ -111,36 +119,38 @@ namespace VengEditor
         {
             if (field.Type == TypeIdOf<f32>())
             {
-                ImGui::DragFloat(labelText, static_cast<f32*>(fieldPtr), step, minV, maxV, "%.3f", rangeFlag);
+                UI::Drag(label, *static_cast<f32*>(fieldPtr), drag);
             }
             else if (field.Type == TypeIdOf<i32>())
             {
-                ImGui::DragInt(labelText, static_cast<i32*>(fieldPtr));
+                UI::Drag(label, *static_cast<i32*>(fieldPtr));
             }
             else if (field.Type == TypeIdOf<u32>())
             {
+                // u32 has no Drag overload; edit through a signed view clamped at 0
+                // so the unsigned field never receives a negative value.
                 i32 value = static_cast<i32>(*static_cast<u32*>(fieldPtr));
-                if (ImGui::DragInt(labelText, &value, 1.0f, 0))
+                if (UI::Drag(label, value, UI::DragOptions{ .Min = 0.0f }))
                     *static_cast<u32*>(fieldPtr) = static_cast<u32>(value < 0 ? 0 : value);
             }
             else if (field.Type == TypeIdOf<bool>())
             {
-                ImGui::Checkbox(labelText, static_cast<bool*>(fieldPtr));
+                UI::Checkbox(label, *static_cast<bool*>(fieldPtr));
             }
             else
             {
-                ImGui::LabelText(labelText, "(scalar)");
+                UI::Label(label, "(scalar)");
             }
             break;
         }
         case FieldClass::Vector:
         {
             if (field.Type == TypeIdOf<vec2>())
-                ImGui::DragFloat2(labelText, glm::value_ptr(*static_cast<vec2*>(fieldPtr)), step);
+                UI::Drag(label, *static_cast<vec2*>(fieldPtr), drag);
             else if (field.Type == TypeIdOf<vec3>())
-                ImGui::DragFloat3(labelText, glm::value_ptr(*static_cast<vec3*>(fieldPtr)), step);
+                UI::Drag(label, *static_cast<vec3*>(fieldPtr), drag);
             else if (field.Type == TypeIdOf<vec4>())
-                ImGui::DragFloat4(labelText, glm::value_ptr(*static_cast<vec4*>(fieldPtr)), step);
+                UI::Drag(label, *static_cast<vec4*>(fieldPtr), drag);
             break;
         }
         case FieldClass::Quaternion:
@@ -148,50 +158,40 @@ namespace VengEditor
             quat& q = *static_cast<quat*>(fieldPtr);
             vec3 euler = glm::degrees(glm::eulerAngles(q));
             const string eulerLabel = label + " (Euler °)";
-            if (ImGui::DragFloat3(eulerLabel.c_str(), glm::value_ptr(euler), 0.5f))
+            if (UI::Drag(eulerLabel, euler, UI::DragOptions{ .Speed = 0.5f }))
                 q = quat(glm::radians(euler));
             break;
         }
         case FieldClass::String:
         {
+            // UI::InputText owns the commit-on-deactivate semantics and writes the
+            // value back internally; it returns true only on a fresh commit.
             string& value = *static_cast<string*>(fieldPtr);
-            char buffer[256];
-            std::strncpy(buffer, value.c_str(), sizeof(buffer) - 1);
-            buffer[sizeof(buffer) - 1] = '\0';
-            if (ImGui::InputText(labelText, buffer, sizeof(buffer),
-                                 ImGuiInputTextFlags_EnterReturnsTrue))
-            {
-                value = buffer;
-            }
-            else if (ImGui::IsItemDeactivatedAfterEdit())
-            {
-                value = buffer;
-            }
+            UI::InputText(label, value);
             break;
         }
         case FieldClass::AssetHandle:
         {
-            DrawAssetPicker(fieldPtr, field, labelText, ctx);
+            DrawAssetPicker(fieldPtr, field, label, ctx);
             break;
         }
         case FieldClass::Reference:
         {
             const Entity& ref = *static_cast<const Entity*>(fieldPtr);
             if (ref.IsNull())
-                ImGui::LabelText(labelText, "(null)");
+                UI::Label(label, "(null)");
             else
-                ImGui::LabelText(labelText, "Entity %u:%u", ref.Index, ref.Generation);
+                UI::Label(label, fmt::format("Entity {}:{}", ref.Index, ref.Generation));
             break;
         }
         case FieldClass::Matrix:
         {
             const mat4& m = *static_cast<const mat4*>(fieldPtr);
-            if (ImGui::TreeNodeEx(labelText, ImGuiTreeNodeFlags_SpanAvailWidth))
+            if (auto t = UI::TreeNode(label, UI::TreeFlags::SpanAvailWidth))
             {
                 for (int row = 0; row < 4; ++row)
-                    ImGui::Text("% .3f  % .3f  % .3f  % .3f",
-                                m[0][row], m[1][row], m[2][row], m[3][row]);
-                ImGui::TreePop();
+                    UI::Text(fmt::format("{: .3f}  {: .3f}  {: .3f}  {: .3f}",
+                                         m[0][row], m[1][row], m[2][row], m[3][row]));
             }
             break;
         }
@@ -200,13 +200,13 @@ namespace VengEditor
             // No enum-value table is recorded in the reflection layer; show the
             // backing integer read-only until a value table exists.
             const i32 value = *static_cast<const i32*>(fieldPtr);
-            ImGui::LabelText(labelText, "%d", value);
+            UI::Label(label, fmt::format("{}", value));
             break;
         }
         case FieldClass::Struct:
         {
             const TypeInfo& nested = ctx.Assets.GetTypeRegistry().Info(field.Type);
-            if (ImGui::TreeNodeEx(labelText, ImGuiTreeNodeFlags_SpanAvailWidth))
+            if (auto t = UI::TreeNode(label, UI::TreeFlags::SpanAvailWidth))
             {
                 for (const FieldDescriptor& nestedField : nested.Fields)
                 {
@@ -215,15 +215,12 @@ namespace VengEditor
                     void* nestedPtr = static_cast<u8*>(fieldPtr) + nestedField.Offset;
                     DrawFieldWidget(nestedPtr, nestedField, ctx);
                 }
-                ImGui::TreePop();
             }
             break;
         }
         }
 
-        if (!field.Tooltip.empty() && ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s", field.Tooltip.c_str());
-
-        ImGui::PopID();
+        if (!field.Tooltip.empty())
+            UI::Tooltip(field.Tooltip);
     }
 }
