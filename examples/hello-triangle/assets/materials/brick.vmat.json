@@ -1,5 +1,6 @@
 {
-  "shaders": { "vertex": 1004, "fragment": 1005 },
+  "domain": "surface",
+  "shaders": { "vertex": 7619531439638779021, "fragment": 1005 },
   "fields": [
     { "name": "Albedo",        "type": "texture", "id": 1001 },
     { "name": "AlbedoSampler", "type": "sampler", "texture": "Albedo" },

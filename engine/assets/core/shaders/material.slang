@@ -1,4 +1,4 @@
-// Byte-identical to engine/assets/core/shaders/material.slang;
+// Byte-identical to examples/hello-triangle/assets/shaders/material_data.slang;
 // the two must stay in sync until the example's fragment include resolves this
 // core header directly (a cross-pack Slang include path). No test guards the
 // drift, so a change here must be mirrored there and vice versa.

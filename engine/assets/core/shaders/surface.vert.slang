@@ -1,8 +1,8 @@
-#include "material_data.slang"
+#include "material.slang"
 
-// Deferred material vertex stage. VSInput matches veng's canonical vertex layout
+// Deferred surface vertex stage. VSInput matches veng's canonical vertex layout
 // (Mesh::CanonicalLayout / the core pack's canonical layout):
-// position/normal/tangent[float4]/uv — the layout the cooked cube mesh is
+// position/normal/tangent[float4]/uv — the layout cooked surface meshes are
 // uploaded in. The normal is carried to world space by the push-constant
 // NormalMatrix for the g-buffer write.
 struct VSInput

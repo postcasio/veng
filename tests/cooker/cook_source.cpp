@@ -50,9 +50,12 @@ TEST_CASE("Cooker: CookSource on a missing source reports a located error")
 TEST_CASE("Cooker: CookSource resolves a material's shaders and textures against a reference pack")
 {
     // The material's shaders and textures are named by AssetId, not inline, so the
-    // cook needs the pack manifest to resolve them — the editor's cook-on-demand path.
+    // cook needs the pack manifests to resolve them — the editor's cook-on-demand
+    // path. The fragment shader and albedo texture live in the sample pack; the
+    // standard surface vertex shader lives in the engine core pack.
     const path source = path(VENG_HT_ASSETS_DIR) / "materials" / "brick.vmat.json";
     const path manifest = path(VENG_HT_ASSETS_DIR) / "sample.vengpack.json";
+    const path corePack = path(VENG_CORE_PACK_JSON);
     const AssetId targetId{0xC00C0DE000000002ULL};
 
     Cooker cooker;
@@ -60,7 +63,7 @@ TEST_CASE("Cooker: CookSource resolves a material's shaders and textures against
 
     SUBCASE("with the manifest the cross-asset references resolve")
     {
-        const path refs[] = {manifest};
+        const path refs[] = {manifest, corePack};
         const Result<vector<u8>> bytes =
             cooker.CookSource(source, targetId, AssetType::Material, refs);
         REQUIRE(bytes.has_value());

@@ -191,6 +191,9 @@ if (TARGET veng_cook_bootstrap)
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/layouts/positiononly.vlayout.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/fullscreen.vert.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/fullscreen.vert.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/surface.vert.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/surface.vert.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/material.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/albedo_blit.frag.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/albedo_blit.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/deferred_lighting.frag.slang
@@ -618,6 +621,7 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
             VENG_HELLO_TRIANGLE_MODULE_PATH="$<TARGET_FILE:hello_triangle>"
             VENG_BAD_VERSION_MODULE_PATH="$<TARGET_FILE:veng_bad_version_module>"
             VENG_HT_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/hello-triangle/assets"
+            VENG_CORE_PACK_JSON="${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/core.vengpack.json"
     )
 
     doctest_discover_tests(veng_cooker PROPERTIES LABELS cooker)
