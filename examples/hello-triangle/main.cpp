@@ -264,7 +264,7 @@ private:
             const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
             const f32 aspect = static_cast<f32>(output->GetImage()->GetHeight()) /
                                static_cast<f32>(output->GetImage()->GetWidth());
-            UI::Image(m_Composite->GetSceneTextureRef(), {available.x, available.x * aspect});
+            UI::Image(m_Composite->GetSceneTexture(), {available.x, available.x * aspect});
         }
 
         if (auto statsWindow = UI::Window("Stats"))

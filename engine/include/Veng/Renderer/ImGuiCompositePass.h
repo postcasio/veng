@@ -82,14 +82,10 @@ namespace Veng::Renderer
         // no .Sample() declaration covers it. Both modes.
         void PrepareSceneForImGui(CommandBuffer& cmd) const;
 
-        // The stable ImGui texture handle for the scene output — what a viewport
-        // panel passes to ImGui::Image. The scene output, not the composited result
-        // or the ImGui layer's own output. Both modes.
-        [[nodiscard]] ImGuiTexture& GetSceneTexture() const;
-
-        // The same scene texture as a shared reference — what a viewport panel
-        // passes to UI::Image, which owns the id→ImTextureID cast. Both modes.
-        [[nodiscard]] const Ref<ImGuiTexture>& GetSceneTextureRef() const;
+        // The stable ImGui texture for the scene output — what a viewport panel
+        // passes to UI::Image, which owns the id→ImTextureID cast. The scene output,
+        // not the composited result or the ImGui layer's own output. Both modes.
+        [[nodiscard]] const Ref<ImGuiTexture>& GetSceneTexture() const;
 
         // Replay the compiled composite graph: bind the per-frame swapchain view plus
         // the pass-owned scene and ImGui-layer views, then execute. The single

@@ -45,7 +45,7 @@ namespace VengEditor
         BuildScene();
 
         // Panel-only mode: the pass owns the ImGui preview texture and the
-        // pre-Render barrier; the preview shows inside an ImGui::Image.
+        // pre-Render barrier; the preview shows inside a UI::Image.
         m_Composite = Renderer::ImGuiCompositePass::Create({
             .Context = context,
             .ImGui = imgui,
@@ -117,9 +117,9 @@ namespace VengEditor
         m_Composite->PrepareSceneForImGui(cmd);
     }
 
-    ImTextureID MaterialPreview::GetTextureId() const
+    const Ref<ImGuiTexture>& MaterialPreview::GetTexture() const
     {
-        return static_cast<ImTextureID>(m_Composite->GetSceneTexture().GetTextureId());
+        return m_Composite->GetSceneTexture();
     }
 
     void MaterialPreview::Resize(uvec2 extent)

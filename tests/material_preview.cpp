@@ -23,6 +23,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/ImGui/ImGuiLayer.h>
+#include <Veng/ImGui/ImGuiTexture.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
@@ -173,10 +174,10 @@ int main()
         // The preview is sized to the requested 256² extent and exposes a non-null
         // ImGuiTexture.
         Check(preview.GetExtent() == previewExtent, "preview extent is 256²");
-        Check(preview.GetTextureId() != ImTextureID{}, "preview texture id is non-null");
+        Check(preview.GetTexture()->GetTextureId() != 0, "preview texture id is non-null");
 
         // Resize re-fetches a fresh, valid texture id at the new extent.
-        const ImTextureID before = preview.GetTextureId();
+        const u64 before = preview.GetTexture()->GetTextureId();
         constexpr uvec2 resized{192, 192};
         preview.Resize(resized);
 
@@ -186,8 +187,8 @@ int main()
         });
 
         Check(preview.GetExtent() == resized, "preview extent updated on Resize");
-        Check(preview.GetTextureId() != ImTextureID{}, "preview texture id valid after Resize");
-        Check(preview.GetTextureId() != before, "preview texture id is fresh after Resize");
+        Check(preview.GetTexture()->GetTextureId() != 0, "preview texture id valid after Resize");
+        Check(preview.GetTexture()->GetTextureId() != before, "preview texture id is fresh after Resize");
 
         std::filesystem::remove(outArchive);
     }

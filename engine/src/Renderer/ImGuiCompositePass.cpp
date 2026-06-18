@@ -222,13 +222,7 @@ namespace Veng::Renderer
         cmd.PrepareForAccess(m_Impl->SceneSource, AccessKind::Sample);
     }
 
-    ImGuiTexture& ImGuiCompositePass::GetSceneTexture() const
-    {
-        VE_ASSERT(m_Impl->SceneTexture, "ImGuiCompositePass has no scene texture");
-        return *m_Impl->SceneTexture;
-    }
-
-    const Ref<ImGuiTexture>& ImGuiCompositePass::GetSceneTextureRef() const
+    const Ref<ImGuiTexture>& ImGuiCompositePass::GetSceneTexture() const
     {
         VE_ASSERT(m_Impl->SceneTexture, "ImGuiCompositePass has no scene texture");
         return m_Impl->SceneTexture;

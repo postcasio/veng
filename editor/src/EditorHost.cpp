@@ -350,26 +350,19 @@ namespace VengEditor
 
     void EditorHost::DrawMenuBar()
     {
-        if (ImGui::BeginMainMenuBar())
+        if (auto bar = UI::MainMenuBar())
         {
-            if (ImGui::BeginMenu("File"))
+            if (auto file = UI::Menu("File"))
             {
-                if (ImGui::MenuItem("Exit"))
+                if (UI::MenuItem("Exit"))
                     RequestExit();
-                ImGui::EndMenu();
             }
 
-            if (ImGui::BeginMenu("Window"))
+            if (auto window = UI::Menu("Window"))
             {
                 for (PanelSlot& slot : m_Panels)
-                {
-                    const string title(slot.Panel->GetTitle());
-                    ImGui::MenuItem(title.c_str(), nullptr, &slot.Open);
-                }
-                ImGui::EndMenu();
+                    UI::MenuItem(slot.Panel->GetTitle(), &slot.Open);
             }
-
-            ImGui::EndMainMenuBar();
         }
     }
 

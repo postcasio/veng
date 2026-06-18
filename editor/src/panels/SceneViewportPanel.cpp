@@ -16,7 +16,7 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Time.h>
-#include <Veng/Vendor/ImGui.h>
+#include <Veng/UI/UI.h>
 
 namespace VengEditor
 {
@@ -152,10 +152,10 @@ namespace VengEditor
 
     void SceneViewportPanel::OnImGui()
     {
-        const ImVec2 available = ImGui::GetContentRegionAvail();
+        const vec2 available = UI::ContentRegionAvail();
         const uvec2 wanted{static_cast<u32>(available.x), static_cast<u32>(available.y)};
         m_PendingExtent = wanted;
 
-        ImGui::Image(static_cast<ImTextureID>(m_Composite->GetSceneTexture().GetTextureId()), available);
+        UI::Image(m_Composite->GetSceneTexture(), available);
     }
 }

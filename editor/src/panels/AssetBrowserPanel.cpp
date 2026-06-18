@@ -2,8 +2,11 @@
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Log.h>
-#include <Veng/Vendor/ImGui.h>
+#include <Veng/UI/UI.h>
 #include <VengEditor/EditorRegistry.h>
+
+// Raw mouse query; key/mouse input converges on the event/input system.
+#include <imgui.h>
 
 namespace VengEditor
 {
@@ -52,32 +55,22 @@ namespace VengEditor
         if (!m_Loaded)
             LoadTable();
 
-        ImGui::TextUnformatted(m_PackPath.filename().string().c_str());
-        ImGui::Separator();
+        UI::Text(m_PackPath.filename().string());
+        UI::Separator();
 
-        if (ImGui::BeginTable("Assets", 3,
-                              ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY))
+        if (auto list = UI::Child("Assets"))
         {
-            ImGui::TableSetupColumn("Id");
-            ImGui::TableSetupColumn("Type");
-            ImGui::TableSetupColumn("Size");
-            ImGui::TableHeadersRow();
-
             for (const Asset& asset : m_Assets)
             {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-
                 const bool selected = m_Selected && m_Selected->Value == asset.Id.Value;
-                char label[32];
-                std::snprintf(label, sizeof(label), "0x%llX",
-                              static_cast<unsigned long long>(asset.Id.Value));
+                const string label = fmt::format("0x{:X}  {}  {}",
+                                                 asset.Id.Value, TypeName(asset.Type), asset.Size);
 
-                if (ImGui::Selectable(label, selected,
-                                      ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick))
+                if (UI::Selectable(label, selected))
                 {
                     m_Selected = asset.Id;
 
+                    // Raw mouse query; key/mouse input converges on the event/input system.
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                     {
                         // The opened panel is queued for the host to adopt into its
@@ -87,15 +80,7 @@ namespace VengEditor
                                 m_Opened.push_back(std::move(panel));
                     }
                 }
-
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(TypeName(asset.Type));
-
-                ImGui::TableSetColumnIndex(2);
-                ImGui::Text("%llu", static_cast<unsigned long long>(asset.Size));
             }
-
-            ImGui::EndTable();
         }
     }
 

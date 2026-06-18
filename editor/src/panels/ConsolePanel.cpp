@@ -1,6 +1,6 @@
 #include "ConsolePanel.h"
 
-#include <Veng/Vendor/ImGui.h>
+#include <Veng/UI/UI.h>
 
 namespace VengEditor
 {
@@ -25,17 +25,16 @@ namespace VengEditor
 
     void ConsolePanel::OnImGui()
     {
-        if (ImGui::Button("Clear"))
+        if (UI::Button("Clear"))
             m_Entries.clear();
 
-        ImGui::Separator();
+        UI::Separator();
 
-        if (ImGui::BeginChild("ConsoleScroll", {0, 0}, ImGuiChildFlags_None,
-                              ImGuiWindowFlags_HorizontalScrollbar))
+        if (auto log = UI::Child("ConsoleScroll", {}, UI::WindowFlags::HorizontalScrollbar))
         {
             for (const Entry& entry : m_Entries)
             {
-                ImVec4 color{0.8f, 0.8f, 0.8f, 1.0f};
+                vec4 color{0.8f, 0.8f, 0.8f, 1.0f};
                 switch (entry.Level)
                 {
                 case Log::Level::Warn: color = {1.0f, 0.8f, 0.2f, 1.0f}; break;
@@ -43,17 +42,14 @@ namespace VengEditor
                 case Log::Level::Info: break;
                 }
 
-                ImGui::PushStyleColor(ImGuiCol_Text, color);
-                ImGui::TextUnformatted(entry.Message.c_str());
-                ImGui::PopStyleColor();
+                UI::TextColored(color, entry.Message);
             }
 
             if (m_ScrollToBottom)
             {
-                ImGui::SetScrollHereY(1.0f);
+                UI::ScrollToHere();
                 m_ScrollToBottom = false;
             }
         }
-        ImGui::EndChild();
     }
 }

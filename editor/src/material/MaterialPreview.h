@@ -5,12 +5,11 @@
 #include <Veng/Scene/Entity.h>
 #include <Veng/Veng.h>
 
-#include <imgui.h>
-
 namespace Veng
 {
     class AssetManager;
     class ImGuiLayer;
+    class ImGuiTexture;
     class Material;
     class Mesh;
     class Scene;
@@ -28,7 +27,7 @@ namespace Veng
 namespace VengEditor
 {
     // A reusable preview surface: one material on a sphere, rendered into a small
-    // fixed-extent SceneRenderer target and shown via ImGui::Image. It owns a
+    // fixed-extent SceneRenderer target and shown via UI::Image. It owns a
     // one-sphere Scene (a lit stage — the sphere under a Transform + Camera, plus a
     // separate directional-Light entity), the SceneRenderer, and the Ref<ImGuiTexture>
     // the panel draws. SetMaterial swaps the previewed material after a recook hands
@@ -54,12 +53,12 @@ namespace VengEditor
         void SetMaterial(Veng::AssetHandle<Veng::Material> material);
 
         // Record this frame's scene render. Called before the ImGui frame is built so
-        // the output is ready for the ImGui::Image sample. Reads Time::GetDeltaTime()
+        // the output is ready for the UI::Image sample. Reads Time::GetDeltaTime()
         // internally — no delta parameter.
         void Render(Veng::Renderer::CommandBuffer& cmd);
 
-        // The preview image for ImGui::Image, off the owned Ref<ImGuiTexture>.
-        [[nodiscard]] ImTextureID GetTextureId() const;
+        // The preview image for UI::Image — the owned Ref<ImGuiTexture>.
+        [[nodiscard]] const Veng::Ref<Veng::ImGuiTexture>& GetTexture() const;
 
         // The fixed preview extent the SceneRenderer is sized to.
         [[nodiscard]] Veng::uvec2 GetExtent() const { return m_Extent; }

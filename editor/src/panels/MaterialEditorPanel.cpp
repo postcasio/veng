@@ -10,11 +10,15 @@
 #include <Veng/Log.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Time.h>
+#include <Veng/UI/UI.h>
+
+// imnodes drives the node canvas; the surviving raw ImGui:: sites are key/mouse
+// queries that converge on the event/input system.
 #include <Veng/Vendor/ImGui.h>
 
 #include <VengEditor/NodeGraph/NodeGraphSerialize.h>
 
-#include <imnodes.h>
 #include <nlohmann/json.hpp>
 
 #include <cstring>
@@ -308,19 +312,19 @@ namespace VengEditor
         ImNodes::EditorContextSet(m_NodeEditorContext);
 
         // The add-node context menu: lists every catalog type.
-        if (ImGui::BeginPopup("AddNodeMenu"))
+        if (auto menu = UI::Popup("AddNodeMenu"))
         {
+            // Raw mouse query; key/mouse input converges on the event/input system.
             const ImVec2 mouse = ImGui::GetMousePosOnOpeningCurrentPopup();
             for (const NodeType& type : m_Catalog.Types())
             {
-                if (ImGui::MenuItem(type.Name.c_str()))
+                if (UI::MenuItem(type.Name))
                 {
                     const NodeId node = m_Graph->AddNode(type.Id);
                     ImNodes::SetNodeScreenSpacePos(NodeImId(node), mouse);
                     mutated = true;
                 }
             }
-            ImGui::EndPopup();
         }
 
         ImNodes::BeginNodeEditor();
@@ -334,19 +338,19 @@ namespace VengEditor
             ImNodes::BeginNode(NodeImId(node));
 
             ImNodes::BeginNodeTitleBar();
-            ImGui::TextUnformatted(type->Name.c_str());
+            UI::Text(type->Name);
             ImNodes::EndNodeTitleBar();
 
             for (usize i = 0; i < type->Inputs.size(); ++i)
             {
                 ImNodes::BeginInputAttribute(AttrId(node, static_cast<u16>(i), false));
-                ImGui::TextUnformatted(type->Inputs[i].Name.c_str());
+                UI::Text(type->Inputs[i].Name);
                 ImNodes::EndInputAttribute();
             }
             for (usize i = 0; i < type->Outputs.size(); ++i)
             {
                 ImNodes::BeginOutputAttribute(AttrId(node, static_cast<u16>(i), true));
-                ImGui::TextUnformatted(type->Outputs[i].Name.c_str());
+                UI::Text(type->Outputs[i].Name);
                 ImNodes::EndOutputAttribute();
             }
 
@@ -365,9 +369,10 @@ namespace VengEditor
 
         ImNodes::EndNodeEditor();
 
-        // Right-click the canvas → add-node menu.
+        // Right-click the canvas → add-node menu. Raw mouse query; key/mouse input
+        // converges on the event/input system.
         if (ImNodes::IsEditorHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
-            ImGui::OpenPopup("AddNodeMenu");
+            UI::OpenPopup("AddNodeMenu");
 
         // Decode a NodeId from a node imnodes id by scanning the live set (the
         // index is unique among live nodes).
@@ -416,7 +421,8 @@ namespace VengEditor
                 }
             }
 
-            // Delete key removes the selected nodes.
+            // Delete key removes the selected nodes. Raw key query; key/mouse input
+            // converges on the event/input system.
             if (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace))
             {
                 const int count = ImNodes::NumSelectedNodes();
@@ -453,7 +459,7 @@ namespace VengEditor
         const int count = ImNodes::NumSelectedNodes();
         if (count <= 0)
         {
-            ImGui::TextDisabled("Select a node");
+            UI::TextDisabled("Select a node");
             return false;
         }
 
@@ -467,19 +473,19 @@ namespace VengEditor
                 node = n;
         if (!m_Graph->IsValid(node))
         {
-            ImGui::TextDisabled("Select a node");
+            UI::TextDisabled("Select a node");
             return false;
         }
 
         const NodeType* type = m_Catalog.Find(m_Graph->GetTypeOf(node));
         if (type == nullptr || type->Properties.empty())
         {
-            ImGui::TextDisabled("(no properties)");
+            UI::TextDisabled("(no properties)");
             return false;
         }
 
-        ImGui::TextUnformatted(type->Name.c_str());
-        ImGui::Separator();
+        UI::Text(type->Name);
+        UI::Separator();
 
         // Copy the property bytes into a scratch buffer, draw the widgets over it,
         // then route any change back through the mutation vocabulary so the model
@@ -490,14 +496,15 @@ namespace VengEditor
 
         const FieldWidgetContext ctx{.Assets = m_Assets, .Sources = m_Sources, .Editors = m_Editors};
 
-        ImGui::BeginDisabled(m_ReadOnly);
-        for (const FieldDescriptor& field : type->Properties)
         {
-            if (field.Hidden)
-                continue;
-            DrawFieldWidget(scratch.data() + field.Offset, field, ctx);
+            auto disabled = UI::Disabled(m_ReadOnly);
+            for (const FieldDescriptor& field : type->Properties)
+            {
+                if (field.Hidden)
+                    continue;
+                DrawFieldWidget(scratch.data() + field.Offset, field, ctx);
+            }
         }
-        ImGui::EndDisabled();
 
         if (m_ReadOnly || scratch.size() != bytes.size() ||
             std::memcmp(scratch.data(), bytes.data(), bytes.size()) == 0)
@@ -521,7 +528,7 @@ namespace VengEditor
         // Advance the debounce so a slider drag fires one settled cook.
         if (m_CookPending)
         {
-            m_DebounceRemaining -= ImGui::GetIO().DeltaTime;
+            m_DebounceRemaining -= Time::GetDeltaTime();
             if (m_DebounceRemaining <= 0.0f)
             {
                 m_CookPending = false;
@@ -530,7 +537,7 @@ namespace VengEditor
         }
 
         if (m_ToastRemaining > 0.0f)
-            m_ToastRemaining -= ImGui::GetIO().DeltaTime;
+            m_ToastRemaining -= Time::GetDeltaTime();
 
         // Swap the freshly loaded material into the preview once resident.
         if (m_MaterialDirty && m_Handle.IsLoaded())
@@ -542,19 +549,20 @@ namespace VengEditor
 
         if (m_Graph == nullptr)
         {
-            ImGui::TextColored({0.9f, 0.3f, 0.3f, 1.0f}, "Material failed to load");
+            UI::TextColored({0.9f, 0.3f, 0.3f, 1.0f}, "Material failed to load");
             if (m_CookError)
-                ImGui::TextColored({0.9f, 0.3f, 0.3f, 1.0f}, "%s", m_CookError->c_str());
+                UI::TextColored({0.9f, 0.3f, 0.3f, 1.0f}, *m_CookError);
             return;
         }
 
         // Toolbar.
-        ImGui::BeginDisabled(m_ReadOnly);
-        if (ImGui::Button("Save"))
-            WriteVmat(m_SourcePath);
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("Revert"))
+        {
+            auto disabled = UI::Disabled(m_ReadOnly);
+            if (UI::Button("Save"))
+                WriteVmat(m_SourcePath);
+        }
+        UI::SameLine();
+        if (UI::Button("Revert"))
         {
             m_Catalog = NodeCatalog{};
             m_ReadOnly = false;
@@ -563,41 +571,40 @@ namespace VengEditor
         }
         if (m_ReadOnly)
         {
-            ImGui::SameLine();
-            ImGui::TextColored({0.9f, 0.8f, 0.3f, 1.0f}, "(read-only: newer graph version)");
+            UI::SameLine();
+            UI::TextColored({0.9f, 0.8f, 0.3f, 1.0f}, "(read-only: newer graph version)");
         }
         if (m_Cooking)
         {
-            ImGui::SameLine();
-            ImGui::TextUnformatted("Cooking...");
+            UI::SameLine();
+            UI::Text("Cooking...");
         }
         if (m_CookError)
-            ImGui::TextColored({0.9f, 0.3f, 0.3f, 1.0f}, "Cook error: %s", m_CookError->c_str());
+            UI::TextColored({0.9f, 0.3f, 0.3f, 1.0f}, fmt::format("Cook error: {}", *m_CookError));
         if (m_Toast && m_ToastRemaining > 0.0f)
-            ImGui::TextColored({0.9f, 0.6f, 0.3f, 1.0f}, "Rejected: %s", m_Toast->c_str());
+            UI::TextColored({0.9f, 0.6f, 0.3f, 1.0f}, fmt::format("Rejected: {}", *m_Toast));
 
-        ImGui::Separator();
+        UI::Separator();
 
         // Layout: a preview + node inspector column on the left, the canvas on the
         // right.
         const f32 sideWidth = 280.0f;
-        ImGui::BeginChild("MatSide", ImVec2(sideWidth, 0), ImGuiChildFlags_None);
+        if (auto side = UI::Child("MatSide", vec2(sideWidth, 0)))
         {
-            const f32 side = PreviewExtent.x;
+            const f32 previewSide = PreviewExtent.x;
             if (m_PreviewReady)
-                ImGui::Image(m_Preview->GetTextureId(), ImVec2(side, side));
+                UI::Image(m_Preview->GetTexture(), vec2(previewSide, previewSide));
             else
-                ImGui::TextUnformatted("Preview loading...");
-            ImGui::Separator();
+                UI::Text("Preview loading...");
+            UI::Separator();
             DrawNodeInspector();
         }
-        ImGui::EndChild();
 
-        ImGui::SameLine();
+        UI::SameLine();
 
-        ImGui::BeginChild("MatCanvas", ImVec2(0, 0), ImGuiChildFlags_None);
-        const bool mutated = DrawCanvas();
-        ImGui::EndChild();
+        bool mutated = false;
+        if (auto canvas = UI::Child("MatCanvas"))
+            mutated = DrawCanvas();
 
         if (mutated)
             MarkDirty();

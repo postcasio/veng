@@ -7,8 +7,10 @@
 #include <Veng/Log.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
-#include <Veng/Vendor/ImGui.h>
+#include <Veng/Time.h>
+#include <Veng/UI/UI.h>
 
+#include <array>
 #include <fstream>
 #include <sstream>
 
@@ -176,7 +178,7 @@ namespace VengEditor
         // does not issue a cook per frame.
         if (m_CookPending)
         {
-            m_DebounceRemaining -= ImGui::GetIO().DeltaTime;
+            m_DebounceRemaining -= Time::GetDeltaTime();
             if (m_DebounceRemaining <= 0.0f)
             {
                 m_CookPending = false;
@@ -192,42 +194,41 @@ namespace VengEditor
             m_PreviewDirty = false;
         }
 
-        const ImVec2 available = ImGui::GetContentRegionAvail();
+        const vec2 available = UI::ContentRegionAvail();
         const f32 previewSide = available.x > 16.0f ? available.x : 16.0f;
         if (m_Preview && m_Handle.IsLoaded())
-        {
-            ImGui::Image(static_cast<ImTextureID>(m_Preview->GetTextureId()),
-                         {previewSide, previewSide});
-        }
+            UI::Image(m_Preview, {previewSide, previewSide});
         else
-        {
-            ImGui::TextUnformatted(m_Cooking ? "Cooking..." : "Loading...");
-        }
+            UI::Text(m_Cooking ? "Cooking..." : "Loading...");
 
         if (m_Cooking)
-            ImGui::TextUnformatted("Cooking...");
+            UI::Text("Cooking...");
 
         if (m_CookError)
-            ImGui::TextColored({0.9f, 0.3f, 0.3f, 1.0f}, "Cook error: %s", m_CookError->c_str());
+            UI::TextColored({0.9f, 0.3f, 0.3f, 1.0f}, fmt::format("Cook error: {}", *m_CookError));
 
-        ImGui::Separator();
+        UI::Separator();
+
+        static constexpr std::array<string_view, 2> FilterItems{"Nearest", "Linear"};
+        static constexpr std::array<string_view, 4> WrapItems{
+            "Repeat", "Mirrored Repeat", "Clamp To Edge", "Clamp To Border"};
 
         bool changed = false;
-        changed |= ImGui::Checkbox("sRGB", &m_Settings.Srgb);
+        changed |= UI::Checkbox("sRGB", m_Settings.Srgb);
 
-        auto filterCombo = [&](const char* label, Filter& value)
+        auto filterCombo = [&](string_view label, Filter& value)
         {
-            int current = static_cast<int>(value);
-            if (ImGui::Combo(label, &current, "Nearest\0Linear\0"))
+            i32 current = static_cast<i32>(value);
+            if (UI::Combo(label, current, FilterItems))
             {
                 value = static_cast<Filter>(current);
                 changed = true;
             }
         };
-        auto wrapCombo = [&](const char* label, Wrap& value)
+        auto wrapCombo = [&](string_view label, Wrap& value)
         {
-            int current = static_cast<int>(value);
-            if (ImGui::Combo(label, &current, "Repeat\0Mirrored Repeat\0Clamp To Edge\0Clamp To Border\0"))
+            i32 current = static_cast<i32>(value);
+            if (UI::Combo(label, current, WrapItems))
             {
                 value = static_cast<Wrap>(current);
                 changed = true;
@@ -249,12 +250,12 @@ namespace VengEditor
             m_DebounceRemaining = DebounceSeconds;
         }
 
-        ImGui::Separator();
+        UI::Separator();
 
-        if (ImGui::Button("Save"))
+        if (UI::Button("Save"))
             SaveSettings();
-        ImGui::SameLine();
-        if (ImGui::Button("Revert"))
+        UI::SameLine();
+        if (UI::Button("Revert"))
         {
             LoadSettings();
             SaveSettings();

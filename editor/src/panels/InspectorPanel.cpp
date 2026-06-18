@@ -6,7 +6,7 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Scene.h>
-#include <Veng/Vendor/ImGui.h>
+#include <Veng/UI/UI.h>
 #include <VengEditor/EditorRegistry.h>
 
 namespace VengEditor
@@ -23,7 +23,7 @@ namespace VengEditor
     {
         if (m_Scene == nullptr || !m_Selected || !m_Scene->IsAlive(*m_Selected))
         {
-            ImGui::TextDisabled("Nothing selected");
+            UI::TextDisabled("Nothing selected");
             return;
         }
 
@@ -36,10 +36,9 @@ namespace VengEditor
 
             // A stable per-type id keeps headers from collapsing into one another
             // when two components share a display name.
-            ImGui::PushID(static_cast<int>(id));
-            if (ImGui::CollapsingHeader(info.Name.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+            auto scope = UI::PushId(fmt::format("{}", id));
+            if (UI::CollapsingHeader(info.Name, UI::TreeFlags::DefaultOpen))
                 DrawFields(component, info);
-            ImGui::PopID();
         });
     }
 

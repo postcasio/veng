@@ -25,7 +25,7 @@ namespace Veng
 namespace VengEditor
 {
     // The scene viewport: owns a SceneRenderer driving the hello-triangle prefab
-    // scene, renders it each frame, and shows GetOutput() in an ImGui::Image. The
+    // scene, renders it each frame, and shows GetOutput() in a UI::Image. The
     // image resizes to the panel's content region (debounced — the SceneRenderer
     // is recreated only when the size settles to a new non-zero value).
     //
@@ -45,7 +45,7 @@ namespace VengEditor
         }
 
         // Record this frame's scene render. Called by the host before OnImGui so
-        // the output is ready for the ImGui::Image sample.
+        // the output is ready for the UI::Image sample.
         void Render(Veng::Renderer::CommandBuffer& cmd);
 
         // The scene the viewport renders, read by the inspector as a const Scene*.
@@ -72,7 +72,7 @@ namespace VengEditor
         Veng::AssetHandle<Veng::Material> m_BrickMaterial;
 
         // Owns the ImGui scene texture and the pre-Render sampleability barrier
-        // (panel-only mode — the scene goes inside this panel via ImGui::Image).
+        // (panel-only mode — the scene goes inside this panel via UI::Image).
         Veng::Unique<Veng::Renderer::ImGuiCompositePass> m_Composite;
 
         Veng::optional<Veng::Entity> m_PrimaryEntity;
