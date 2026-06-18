@@ -1,27 +1,22 @@
-// Material fragment fixture with an authored block beyond the brick's single
-// Factors: MaterialParams { float4 Factors; float Roughness; }. Used by the
-// material-cook test to assert the cooked authored block carries Roughness at
-// its reflected offset and ParamBytes spans the larger struct.
-
-struct MaterialData
-{
-    uint Albedo;
-    uint AlbedoSampler;
-    uint Pad0;
-    uint Pad1;
-};
+// Material fragment fixture with authored params beyond the brick's single
+// Factors: handles plus MaterialParams { ... float4 Factors; float Roughness; }.
+// Used by the material-cook test to assert the cooked block carries Roughness at
+// its reflected offset and BlockBytes spans the whole struct.
 
 struct MaterialParams
 {
+    uint   Albedo;
+    uint   AlbedoSampler;
+    uint   Pad0;
+    uint   Pad1;
     float4 Factors;
-    float Roughness;
+    float  Roughness;
 };
 
 static const uint MaterialParamStride = 256;
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(3, 0)]] StructuredBuffer<MaterialData> g_Materials;
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
 MaterialParams LoadMaterialParams(uint index)
@@ -57,10 +52,9 @@ struct VSOutput
 [shader("fragment")]
 GBufferOutput fsMain(VSOutput input)
 {
-    MaterialData m = g_Materials[g_PC.MaterialIndex];
     MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
-    float4 albedo = g_Textures[NonUniformResourceIndex(m.Albedo)].Sample(
-        g_Samplers[NonUniformResourceIndex(m.AlbedoSampler)], input.v_UV);
+    float4 albedo = g_Textures[NonUniformResourceIndex(p.Albedo)].Sample(
+        g_Samplers[NonUniformResourceIndex(p.AlbedoSampler)], input.v_UV);
 
     GBufferOutput output;
     output.Albedo = albedo * p.Factors * p.Roughness;

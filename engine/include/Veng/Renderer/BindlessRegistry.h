@@ -16,27 +16,9 @@ namespace Veng::Renderer
     class ImageView;
     class Sampler;
 
-    // The engine-supplied per-material block in the registry's MaterialData SSBO
-    // array (set 0, binding BindlessRegistry::MaterialBinding) — the bindless
-    // texture/sampler handle slots the loader patches. A draw selects its entry
-    // with a push-constant materialIndex and the shader reads
-    // g_Materials[pc.materialIndex]. This block holds only handle slots; an
-    // author's scalar/vector uniforms live in the separate variable-size authored
-    // block (set 0, binding MaterialParamBinding). libveng knows this block's
-    // layout without reflection — the loader asserts
-    // CookedMaterialHeader::EngineBytes == sizeof(MaterialData).
-    struct MaterialData
-    {
-        u32 Albedo = 0;        // bindless sampled-image index
-        u32 AlbedoSampler = 0; // bindless sampler index
-        u32 Pad0 = 0;
-        u32 Pad1 = 0;
-    };
-    static_assert(sizeof(MaterialData) == 16,
-        "MaterialData is the engine-supplied block — handle slots; std430 16-byte stride");
-
-    // Index into the registry's MaterialData SSBO array (set 0, binding
-    // BindlessRegistry::MaterialBinding). Pushed per draw as materialIndex.
+    // Index into the registry's per-material block buffer (set 0, binding
+    // BindlessRegistry::MaterialParamBinding), byte-addressed at index *
+    // MaterialParamStride. Pushed per draw as materialIndex.
     struct MaterialHandle
     {
         static constexpr u32 Invalid = ~0u;
@@ -103,17 +85,15 @@ namespace Veng::Renderer
         [[nodiscard]] SamplerHandle Register(const Ref<Sampler>& sampler);
         [[nodiscard]] StorageImageHandle RegisterStorage(const Ref<ImageView>& storage);
 
-        // Allocates a material slot and uploads its two parameter blocks into it:
-        // the engine block (`engine`, == sizeof(MaterialData), into binding
-        // MaterialBinding at index * sizeof(MaterialData)) and the authored block
-        // (`authored`, <= MaterialParamStride, into binding MaterialParamBinding at
-        // index * MaterialParamStride). UpdateMaterial rewrites a live slot in
+        // Allocates a material slot and uploads its single parameter block into the
+        // per-material buffer (binding MaterialParamBinding) at index *
+        // MaterialParamStride. The block holds the material's whole entry — bindless
+        // handle slots and authored params alike, laid out by reflection; `block`
+        // must be <= MaterialParamStride. UpdateMaterial rewrites a live slot in
         // place (e.g. after Material::SetTexture/SetParam). The byte form keeps the
         // registry agnostic of how the material packed its entry.
-        [[nodiscard]] MaterialHandle RegisterMaterial(
-            std::span<const std::byte> engine, std::span<const std::byte> authored);
-        void UpdateMaterial(MaterialHandle handle,
-            std::span<const std::byte> engine, std::span<const std::byte> authored) const;
+        [[nodiscard]] MaterialHandle RegisterMaterial(std::span<const std::byte> block);
+        void UpdateMaterial(MaterialHandle handle, std::span<const std::byte> block) const;
 
         // Deferred release: a default-constructed (invalid) handle is a no-op.
         void Release(TextureHandle handle);
@@ -134,7 +114,6 @@ namespace Veng::Renderer
         static constexpr u32 TextureBinding = 0;
         static constexpr u32 SamplerBinding = 1;
         static constexpr u32 StorageImageBinding = 2;
-        static constexpr u32 MaterialBinding = 3;
         static constexpr u32 MaterialParamBinding = 4;
 
         static constexpr u32 MaxTextures = 1024;
@@ -142,12 +121,12 @@ namespace Veng::Renderer
         static constexpr u32 MaxStorageImages = 512;
         static constexpr u32 MaxMaterials = 256;
 
-        // The fixed byte stride of one material's authored-param block in the
+        // The fixed byte stride of one material's parameter block in the
         // binding-MaterialParamBinding ByteAddressBuffer. 16-byte aligned for
         // vector loads; one stride is shared across every material so a single
-        // ByteAddressBuffer can hold a different MaterialParams layout per shader,
-        // read at index * MaterialParamStride. An authored block exceeding this is
-        // a cook-time error.
+        // ByteAddressBuffer can hold a different per-material block layout per
+        // shader, read at index * MaterialParamStride. A block exceeding this is a
+        // cook-time error.
         static constexpr u32 MaterialParamStride = 256;
 
     private:
@@ -181,19 +160,12 @@ namespace Veng::Renderer
         SlotArray m_Samplers;
         SlotArray m_StorageImages;
 
-        // The engine-block SSBO (binding MaterialBinding): a single storage buffer
-        // of MaxMaterials * sizeof(MaterialData), written into set 0 once at
-        // construction. m_Materials allocates slots into it (deferred release, like
-        // the arrays above); per-slot data is uploaded at index *
-        // sizeof(MaterialData).
-        Ref<Buffer> m_MaterialBuffer;
-        SlotArray m_Materials;
-
-        // The authored-block buffer (binding MaterialParamBinding): a single
+        // The per-material block buffer (binding MaterialParamBinding): a single
         // storage buffer of MaxMaterials * MaterialParamStride, written into set 0
-        // once at construction, shared with m_Materials' slot allocation (one slot
-        // index addresses both buffers). A material's authored params upload at
-        // index * MaterialParamStride.
+        // once at construction. m_Materials allocates slots into it (deferred
+        // release, like the arrays above); a material's whole block — handle slots
+        // and authored params — uploads at index * MaterialParamStride.
         Ref<Buffer> m_MaterialParamBuffer;
+        SlotArray m_Materials;
     };
 }

@@ -155,13 +155,12 @@ TEST_CASE("Cooker: a compiled material graph cooks through the real MaterialImpo
     CHECK(sampler->TextureId == 2001ULL);
     CHECK(params->Kind == 0u);  // authored param
 
-    // The authored block carries the four f32s the graph compiled.
-    const u8* authoredBlock = entry->Blob.data()
+    // The param block carries the four f32s the graph compiled, at Factors' offset.
+    const u8* block = entry->Blob.data()
         + sizeof(CookedMaterialHeader)
-        + header.FieldCount * sizeof(CookedMaterialField)
-        + header.EngineBytes;
+        + header.FieldCount * sizeof(CookedMaterialField);
     f32 cookedFactors[4];
-    std::memcpy(cookedFactors, authoredBlock + params->Offset, sizeof(cookedFactors));
+    std::memcpy(cookedFactors, block + params->Offset, sizeof(cookedFactors));
     CHECK(cookedFactors[0] == doctest::Approx(1.0f));
     CHECK(cookedFactors[1] == doctest::Approx(0.9f));
     CHECK(cookedFactors[2] == doctest::Approx(0.8f));

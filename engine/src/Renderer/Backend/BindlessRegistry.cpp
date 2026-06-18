@@ -59,11 +59,7 @@ namespace Veng::Renderer
                 {.Binding = TextureBinding, .Type = DescriptorType::SampledImage, .Count = MaxTextures, .Stages = ShaderStage::All, .Bindless = true},
                 {.Binding = SamplerBinding, .Type = DescriptorType::Sampler, .Count = MaxSamplers, .Stages = ShaderStage::All, .Bindless = true},
                 {.Binding = StorageImageBinding, .Type = DescriptorType::StorageImage, .Count = MaxStorageImages, .Stages = ShaderStage::All, .Bindless = true},
-                // The MaterialData array is a single storage buffer (the array
-                // lives *inside* it, indexed by materialIndex), not an arrayed
-                // binding — written once below, so no Bindless flag.
-                {.Binding = MaterialBinding, .Type = DescriptorType::StorageBuffer, .Count = 1, .Stages = ShaderStage::All},
-                // The authored-param buffer: a single ByteAddressBuffer on the
+                // The per-material block buffer: a single ByteAddressBuffer on the
                 // shader side, byte-addressed at materialIndex * MaterialParamStride.
                 {.Binding = MaterialParamBinding, .Type = DescriptorType::StorageBuffer, .Count = 1, .Stages = ShaderStage::All},
             },
@@ -73,13 +69,6 @@ namespace Veng::Renderer
             .Name = "Bindless Set 0",
             .Layout = m_Layout,
         });
-
-        m_MaterialBuffer = Buffer::Create(context, {
-            .Name = "Bindless MaterialData",
-            .Size = static_cast<u64>(MaxMaterials) * sizeof(MaterialData),
-            .Usage = BufferUsage::Storage | BufferUsage::TransferDst,
-        });
-        m_Set->Write(MaterialBinding, m_MaterialBuffer);
 
         m_MaterialParamBuffer = Buffer::Create(context, {
             .Name = "Bindless MaterialParams",
@@ -174,36 +163,27 @@ namespace Veng::Renderer
         return StorageImageHandle{index};
     }
 
-    MaterialHandle BindlessRegistry::RegisterMaterial(
-        std::span<const std::byte> engine, std::span<const std::byte> authored)
+    MaterialHandle BindlessRegistry::RegisterMaterial(std::span<const std::byte> block)
     {
         const u32 index = m_Materials.Allocate(Ref<void>{}, "material");
-        UpdateMaterial(MaterialHandle{index}, engine, authored);
+        UpdateMaterial(MaterialHandle{index}, block);
         return MaterialHandle{index};
     }
 
     void BindlessRegistry::UpdateMaterial(MaterialHandle handle,
-        std::span<const std::byte> engine, std::span<const std::byte> authored) const
+        std::span<const std::byte> block) const
     {
         VE_ASSERT(handle.IsValid(), "BindlessRegistry::UpdateMaterial: invalid handle");
-        VE_ASSERT(engine.size() == sizeof(MaterialData),
-                  "BindlessRegistry::UpdateMaterial: engine block is {} bytes, expected {}",
-                  engine.size(), sizeof(MaterialData));
-        VE_ASSERT(authored.size() <= MaterialParamStride,
-                  "BindlessRegistry::UpdateMaterial: authored block is {} bytes, exceeds stride {}",
-                  authored.size(), MaterialParamStride);
+        VE_ASSERT(block.size() <= MaterialParamStride,
+                  "BindlessRegistry::UpdateMaterial: block is {} bytes, exceeds stride {}",
+                  block.size(), MaterialParamStride);
 
-        const std::span<const u8> engineBytes(
-            reinterpret_cast<const u8*>(engine.data()), engine.size());
-        m_MaterialBuffer->UploadSync(
-            engineBytes, static_cast<u64>(handle.Index) * sizeof(MaterialData));
-
-        if (!authored.empty())
+        if (!block.empty())
         {
-            const std::span<const u8> authoredBytes(
-                reinterpret_cast<const u8*>(authored.data()), authored.size());
+            const std::span<const u8> blockBytes(
+                reinterpret_cast<const u8*>(block.data()), block.size());
             m_MaterialParamBuffer->UploadSync(
-                authoredBytes, static_cast<u64>(handle.Index) * MaterialParamStride);
+                blockBytes, static_cast<u64>(handle.Index) * MaterialParamStride);
         }
     }
 

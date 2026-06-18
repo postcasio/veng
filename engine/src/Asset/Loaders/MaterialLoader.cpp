@@ -168,24 +168,23 @@ namespace Veng
 
         usize cursor = sizeof(CookedMaterialHeader);
 
-        // Loud cross-language drift guard: sizeof(MaterialData) must equal
-        // EngineBytes in the blob. Any drift means the shader and engine
-        // disagree on the engine-block layout — a Corrupt error, not a VE_ASSERT,
-        // so the user gets a clear load failure rather than a crash.
-        if (header.EngineBytes != sizeof(Renderer::MaterialData))
+        // The format guard: a stale blob is a loud reject, not a silent
+        // reinterpretation. A Corrupt error (not a VE_ASSERT) gives the user a
+        // clear load failure rather than a crash.
+        if (header.Version != CookedMaterialVersion)
         {
             return std::unexpected(Corrupt(id, fmt::format(
-                "material: EngineBytes {} does not match sizeof(MaterialData) {} — "
-                "shader/engine MaterialData layout has drifted",
-                header.EngineBytes, sizeof(Renderer::MaterialData))));
+                "material: blob version {} does not match CookedMaterialVersion {} — "
+                "the material format has changed; re-cook the pack",
+                header.Version, CookedMaterialVersion)));
         }
 
-        // The authored block must fit the registry's per-material param stride.
-        if (header.ParamBytes > Renderer::BindlessRegistry::MaterialParamStride)
+        // The single block must fit the registry's per-material param stride.
+        if (header.BlockBytes > Renderer::BindlessRegistry::MaterialParamStride)
         {
             return std::unexpected(Corrupt(id, fmt::format(
-                "material: ParamBytes {} exceeds MaterialParamStride {}",
-                header.ParamBytes, Renderer::BindlessRegistry::MaterialParamStride)));
+                "material: BlockBytes {} exceeds MaterialParamStride {}",
+                header.BlockBytes, Renderer::BindlessRegistry::MaterialParamStride)));
         }
 
         // ── 2. CookedMaterialField table ─────────────────────────────────────
@@ -202,21 +201,14 @@ namespace Veng
         }
         cursor += fieldBytes;
 
-        // ── 3. Engine block, then authored block ─────────────────────────────
-        if (cooked.size() < cursor + header.EngineBytes)
-            return std::unexpected(Corrupt(id, "material: cooked blob smaller than engine block"));
+        // ── 3. The single param block ────────────────────────────────────────
+        if (cooked.size() < cursor + header.BlockBytes)
+            return std::unexpected(Corrupt(id, "material: cooked blob smaller than param block"));
 
-        Renderer::MaterialData params{};
-        std::memcpy(&params, cooked.data() + cursor, header.EngineBytes);
-        cursor += header.EngineBytes;
-
-        if (cooked.size() < cursor + header.ParamBytes)
-            return std::unexpected(Corrupt(id, "material: cooked blob smaller than authored block"));
-
-        vector<std::byte> authoredParams(header.ParamBytes);
-        if (header.ParamBytes > 0)
-            std::memcpy(authoredParams.data(), cooked.data() + cursor, header.ParamBytes);
-        cursor += header.ParamBytes;
+        vector<std::byte> block(header.BlockBytes);
+        if (header.BlockBytes > 0)
+            std::memcpy(block.data(), cooked.data() + cursor, header.BlockBytes);
+        cursor += header.BlockBytes;
 
         // ── 4. Fan out shader sub-loads ──────────────────────────────────────
         // Async fans these out as concurrent async loads; sync blocks on each.
@@ -290,11 +282,11 @@ namespace Veng
                         i, BridgeName(cf.Name))));
                 }
 
-                if (cf.Offset + sizeof(u32) > sizeof(Renderer::MaterialData))
+                if (cf.Offset + sizeof(u32) > header.BlockBytes)
                 {
                     return std::unexpected(Corrupt(id, fmt::format(
-                        "material: field {} '{}' offset {} + 4 exceeds MaterialData size {}",
-                        i, BridgeName(cf.Name), cf.Offset, sizeof(Renderer::MaterialData))));
+                        "material: field {} '{}' offset {} + 4 exceeds block size {}",
+                        i, BridgeName(cf.Name), cf.Offset, header.BlockBytes)));
                 }
 
                 // Load (or reuse) the texture asset. The resolved bindless index
@@ -352,8 +344,7 @@ namespace Veng
             .VertexShader   = vsHandle,
             .FragmentShader = fsHandle,
             .Textures       = std::move(textures),
-            .Params         = params,
-            .AuthoredParams = std::move(authoredParams),
+            .Block          = std::move(block),
             .Fields         = std::move(fields),
             .SelectorOffset = MaterialSelectorPushOffset,
         };

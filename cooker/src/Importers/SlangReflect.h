@@ -8,11 +8,10 @@
 // Cooker-internal Slang reflection helper. The
 // MaterialImporter does not compile shaders — they are cooked independently as
 // their own Shader pack entries — but it must know the layout of
-// the shared MaterialData struct to validate a material's textures/params and
+// the shared MaterialParams struct to validate a material's textures/params and
 // pack their values at the right offsets. This compiles a .slang source and
-// reflects one named struct's fields with their byte offsets (the std430/std140
-// image agree for the padded v1 MaterialData), keeping Slang out of
-// MaterialImporter.cpp.
+// reflects one named struct's fields with their byte offsets, keeping Slang out
+// of MaterialImporter.cpp.
 
 namespace Veng::Cook
 {

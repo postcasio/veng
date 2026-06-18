@@ -81,8 +81,8 @@ protected:
         // by veng_add_game; mount it from the executable's directory so the trio
         // (launcher + module + pack) resolves wherever it is copied. Loading the
         // brick material pulls in its vertex/fragment shaders and the brick texture
-        // as eager dependencies, builds its bindless pipeline, and writes a
-        // MaterialData entry into the registry's per-material SSBO.
+        // as eager dependencies, builds its bindless pipeline, and writes its
+        // parameter block into the registry's per-material buffer.
         const VoidResult mountResult = GetAssetManager().Mount(ExecutableDirectory() / "sample.vengpack");
         VE_ASSERT(mountResult, "{}", mountResult.error());
 

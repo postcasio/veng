@@ -20,14 +20,13 @@ namespace Veng
         m_VertexShader(info.VertexShader),
         m_FragmentShader(info.FragmentShader),
         m_Textures(info.Textures),
-        m_Params(info.Params),
-        m_AuthoredParams(info.AuthoredParams),
+        m_Block(info.Block),
         m_Fields(info.Fields),
         m_SelectorOffset(info.SelectorOffset)
     {
-        // Construction is unregistered: the texture indices in m_Params are not
-        // yet resolved (the textures register on the main thread) and the SSBO
-        // slot is allocated in Finalize().
+        // Construction is unregistered: the handle indices in m_Block are not yet
+        // resolved (the textures register on the main thread) and the SSBO slot is
+        // allocated in Finalize().
     }
 
     Material::~Material()
@@ -44,8 +43,8 @@ namespace Veng
         m_Pipeline = std::move(pipeline);
 
         // The textures are Finalize()d by now, so their bindless handles are
-        // valid: patch each TextureHandle/SamplerHandle field in the param block
-        // with the resolved index of the texture it references.
+        // valid: patch each TextureHandle/SamplerHandle field in the block with the
+        // resolved index of the texture it references.
         for (const MaterialField& field : m_Fields)
         {
             if (field.Kind != MaterialField::FieldKind::TextureHandle
@@ -65,17 +64,18 @@ namespace Veng
                       "Material::Finalize: '{}' field '{}' references texture {} not in its dependency set",
                       m_Name, field.Name, field.TextureId);
 
+            VE_ASSERT(field.Offset + sizeof(u32) <= m_Block.size(),
+                      "Material::Finalize: '{}' field '{}' offset {} + 4 exceeds block size {}",
+                      m_Name, field.Name, field.Offset, m_Block.size());
             const u32 index = field.Kind == MaterialField::FieldKind::TextureHandle
                 ? tex->GetHandle().Index
                 : tex->GetSamplerHandle().Index;
-            std::memcpy(reinterpret_cast<std::byte*>(&m_Params) + field.Offset, &index, sizeof(u32));
+            std::memcpy(m_Block.data() + field.Offset, &index, sizeof(u32));
         }
 
-        // Allocate a slot in the registry and upload both blocks: the patched
-        // engine block and the cook-packed authored block.
+        // Allocate a slot in the registry and upload the single parameter block.
         m_Handle = m_Context.GetBindlessRegistry().RegisterMaterial(
-            std::as_bytes(std::span(&m_Params, 1)),
-            std::span<const std::byte>(m_AuthoredParams));
+            std::span<const std::byte>(m_Block));
         m_Registered = true;
     }
 
@@ -98,9 +98,7 @@ namespace Veng
     void Material::UploadParams() const
     {
         m_Context.GetBindlessRegistry().UpdateMaterial(
-            m_Handle,
-            std::as_bytes(std::span(&m_Params, 1)),
-            std::span<const std::byte>(m_AuthoredParams));
+            m_Handle, std::span<const std::byte>(m_Block));
     }
 
     void Material::SetTexture(std::string_view name, AssetHandle<Texture> texture)
@@ -115,13 +113,12 @@ namespace Veng
 
         const Texture& tex = *texture.Get();
 
-        // Write the sampled-image handle index into m_Params at the field's offset.
-        VE_ASSERT(field->Offset + sizeof(u32) <= sizeof(MaterialData),
-                  "Material::SetTexture: field '{}' offset {} + 4 exceeds MaterialData size",
-                  name, field->Offset);
+        // Write the sampled-image handle index into m_Block at the field's offset.
+        VE_ASSERT(field->Offset + sizeof(u32) <= m_Block.size(),
+                  "Material::SetTexture: field '{}' offset {} + 4 exceeds block size {}",
+                  name, field->Offset, m_Block.size());
         const u32 textureIndex = tex.GetHandle().Index;
-        std::memcpy(reinterpret_cast<std::byte*>(&m_Params) + field->Offset,
-                    &textureIndex, sizeof(u32));
+        std::memcpy(m_Block.data() + field->Offset, &textureIndex, sizeof(u32));
 
         // Also patch the paired <name>Sampler field if it exists.
         const string samplerFieldName = string(name) + "Sampler";
@@ -129,12 +126,11 @@ namespace Veng
         if (samplerField != nullptr
          && samplerField->Kind == MaterialField::FieldKind::SamplerHandle)
         {
-            VE_ASSERT(samplerField->Offset + sizeof(u32) <= sizeof(MaterialData),
-                      "Material::SetTexture: sampler field '{}' offset {} + 4 exceeds MaterialData size",
-                      samplerFieldName, samplerField->Offset);
+            VE_ASSERT(samplerField->Offset + sizeof(u32) <= m_Block.size(),
+                      "Material::SetTexture: sampler field '{}' offset {} + 4 exceeds block size {}",
+                      samplerFieldName, samplerField->Offset, m_Block.size());
             const u32 samplerIndex = tex.GetSamplerHandle().Index;
-            std::memcpy(reinterpret_cast<std::byte*>(&m_Params) + samplerField->Offset,
-                        &samplerIndex, sizeof(u32));
+            std::memcpy(m_Block.data() + samplerField->Offset, &samplerIndex, sizeof(u32));
         }
 
         // Keep the texture asset resident (replace by AssetId if already present,
@@ -167,11 +163,11 @@ namespace Veng
                   name, m_Name, static_cast<u32>(field->Kind));
 
         const u32 writeBytes = std::min(field->Size, static_cast<u32>(sizeof(vec4)));
-        VE_ASSERT(field->Offset + writeBytes <= m_AuthoredParams.size(),
-                  "Material::SetParam: field '{}' offset {} + {} exceeds authored params size {}",
-                  name, field->Offset, writeBytes, m_AuthoredParams.size());
+        VE_ASSERT(field->Offset + writeBytes <= m_Block.size(),
+                  "Material::SetParam: field '{}' offset {} + {} exceeds block size {}",
+                  name, field->Offset, writeBytes, m_Block.size());
 
-        std::memcpy(m_AuthoredParams.data() + field->Offset, &value, writeBytes);
+        std::memcpy(m_Block.data() + field->Offset, &value, writeBytes);
 
         UploadParams();
     }

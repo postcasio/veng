@@ -13,8 +13,8 @@
 
 // Material: the thin, bindless end-state material. A loaded material owns its
 // forward graphics pipeline (built from the vertex+fragment shaders' reflected
-// layout — set 0 is the BindlessRegistry, sets >= 1 from reflection), a
-// MaterialData entry in the registry's per-material SSBO array, and keeps its
+// layout — set 0 is the BindlessRegistry, sets >= 1 from reflection), one
+// parameter-block entry in the registry's per-material buffer, and keeps its
 // shader + texture dependencies resident. Bind() binds the pipeline and pushes
 // the material's index as the per-draw selector; it does NOT swap descriptor
 // sets per draw — set 0 is bound once per frame by the registry.
@@ -26,7 +26,7 @@ namespace Veng::Renderer
 
 namespace Veng
 {
-    // One reflected MaterialData field, kept at runtime so name-based
+    // One reflected material field, kept at runtime so name-based
     // SetTexture/SetParam can resolve a field by Name (mirrors the cooked
     // CookedMaterialField table).
     struct MaterialField
@@ -55,13 +55,12 @@ namespace Veng
         AssetHandle<Shader> FragmentShader;
         vector<AssetHandle<Texture>> Textures;
 
-        // The engine block (handle slots patched at Finalize with the resolved
-        // bindless handles), the authored block (the shader's scalar/vector
-        // uniforms, packed at cook; empty for a handles-only material), the
-        // reflected field table, and the push-constant offset of the per-draw
-        // material selector.
-        Renderer::MaterialData Params{};
-        vector<std::byte> AuthoredParams;
+        // The single parameter block — bindless handle slots (patched at Finalize
+        // with the resolved indices) and authored scalar/vector params (packed at
+        // cook), laid out by reflection at each field's offset — the reflected
+        // field table, and the push-constant offset of the per-draw material
+        // selector.
+        vector<std::byte> Block;
         vector<MaterialField> Fields;
         u32 SelectorOffset = 0;
     };
@@ -110,8 +109,8 @@ namespace Veng
         [[nodiscard]] std::span<const AssetHandle<Texture>> GetTextures() const { return m_Textures; }
 
         // The material's reflected field table — its parameter schema. A field's
-        // Kind tells a consumer whether it is a texture/sampler handle slot (the
-        // engine block) or an authored scalar/vector param (the authored block).
+        // Kind tells a consumer whether it is a texture/sampler handle slot or an
+        // authored scalar/vector param; both live in the one parameter block.
         // An editor reads this rather than re-reflecting the shader.
         [[nodiscard]] std::span<const MaterialField> GetFields() const { return m_Fields; }
 
@@ -129,8 +128,7 @@ namespace Veng
         AssetHandle<Shader> m_FragmentShader;
         vector<AssetHandle<Texture>> m_Textures;
 
-        Renderer::MaterialData m_Params{};
-        vector<std::byte> m_AuthoredParams;
+        vector<std::byte> m_Block;
         vector<MaterialField> m_Fields;
         u32 m_SelectorOffset = 0;
         Renderer::MaterialHandle m_Handle;

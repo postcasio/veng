@@ -16,7 +16,7 @@ namespace Veng::Cook
 {
     namespace
     {
-        // The authored-param buffer stride. Mirrors
+        // The per-material block buffer stride. Mirrors
         // Renderer::BindlessRegistry::MaterialParamStride; restated here so the
         // cooker gains no renderer-header dependency.
         constexpr u32 MaterialParamStride = 256;
@@ -33,16 +33,13 @@ namespace Veng::Cook
         // Assembles the final cooked material blob:
         //   CookedMaterialHeader
         //   CookedMaterialField[FieldCount]
-        //   engine block (EngineBytes)
-        //   authored block (ParamBytes)
+        //   param block (BlockBytes)
         vector<u8> BuildBlob(const CookedMaterialHeader& header,
             const vector<CookedMaterialField>& fields,
-            const vector<u8>& engineBlock,
-            const vector<u8>& authoredBlock)
+            const vector<u8>& block)
         {
             const usize fieldBytes = fields.size() * sizeof(CookedMaterialField);
-            vector<u8> blob(sizeof(CookedMaterialHeader) + fieldBytes
-                + engineBlock.size() + authoredBlock.size());
+            vector<u8> blob(sizeof(CookedMaterialHeader) + fieldBytes + block.size());
 
             usize cursor = 0;
             std::memcpy(blob.data() + cursor, &header, sizeof(header));
@@ -52,14 +49,9 @@ namespace Veng::Cook
                 std::memcpy(blob.data() + cursor, fields.data(), fieldBytes);
                 cursor += fieldBytes;
             }
-            if (!engineBlock.empty())
+            if (!block.empty())
             {
-                std::memcpy(blob.data() + cursor, engineBlock.data(), engineBlock.size());
-                cursor += engineBlock.size();
-            }
-            if (!authoredBlock.empty())
-            {
-                std::memcpy(blob.data() + cursor, authoredBlock.data(), authoredBlock.size());
+                std::memcpy(blob.data() + cursor, block.data(), block.size());
             }
 
             return blob;
@@ -138,7 +130,7 @@ namespace Veng::Cook
                 fragmentShaderId, static_cast<u32>(fragmentResolved->Type)));
         }
 
-        // The fragment shader supplies the MaterialData layout, so it must resolve
+        // The fragment shader supplies the param-block layout, so it must resolve
         // to a source path the cook can reflect.
         if (fragmentResolved->AbsolutePath.empty())
         {
@@ -147,7 +139,7 @@ namespace Veng::Cook
                 fragmentShaderId));
         }
 
-        // --- 3. Reflect MaterialData from the fragment shader's Slang source ---
+        // --- 3. Reflect the param block from the fragment shader's Slang source ---
 
         // The fragment shader's AbsolutePath points at its *.shader.json, not a .slang.
         // Read that JSON to locate the actual .slang source relative to its directory.
@@ -179,24 +171,20 @@ namespace Veng::Cook
         const path fragSlangPath =
             shaderJsonPath.parent_path() / shaderJson["source"].get<string>();
 
-        // Engine block: the handle slots, required. Authored block: the shader's
-        // scalar/vector uniforms, optional — a handles-only material declares no
-        // MaterialParams struct, which reflects as an empty layout.
-        const Result<ReflectedStruct> engineReflected =
-            ReflectStructLayout(fragSlangPath, "MaterialData");
-        if (!engineReflected)
-            return std::unexpected(engineReflected.error());
-
-        const Result<ReflectedStruct> authoredReflected =
+        // The single combined param block: handle slots (uint members) and the
+        // shader's authored scalar/vector uniforms, laid out in one MaterialParams
+        // struct. Optional — a material with no fields declares no struct, which
+        // reflects as an empty layout.
+        const Result<ReflectedStruct> blockReflected =
             ReflectStructLayout(fragSlangPath, "MaterialParams", /*optional=*/true);
-        if (!authoredReflected)
-            return std::unexpected(authoredReflected.error());
+        if (!blockReflected)
+            return std::unexpected(blockReflected.error());
 
-        if (authoredReflected->Size > MaterialParamStride)
+        if (blockReflected->Size > MaterialParamStride)
         {
             return std::unexpected(fmt::format(
-                "material importer: authored params block {} bytes exceeds stride {}",
-                authoredReflected->Size, MaterialParamStride));
+                "material importer: param block {} bytes exceeds stride {}",
+                blockReflected->Size, MaterialParamStride));
         }
 
         // --- 4. Parse vmat["fields"] into an ordered declared-field list ---
@@ -330,26 +318,21 @@ namespace Veng::Cook
             declaredByName[declaredFields[idx].Name] = idx;
         }
 
-        // --- 5. Build the two zero-initialized block images and reflected lookups ---
+        // --- 5. Build the zero-initialized block image and reflected lookup ---
 
-        vector<u8> engineBlock(engineReflected->Size, 0);
-        vector<u8> authoredBlock(authoredReflected->Size, 0);
+        vector<u8> block(blockReflected->Size, 0);
 
-        // name → reflected field, per block. Handle/uint fields validate against
-        // the engine block; float/vec params against the authored block.
-        std::map<string, const ReflectedStructField*> engineByName;
-        for (const ReflectedStructField& f : engineReflected->Fields)
-            engineByName[f.Name] = &f;
+        // name → reflected field, in the one block. Every declared field (handle
+        // or param) validates against the single combined struct.
+        std::map<string, const ReflectedStructField*> blockByName;
+        for (const ReflectedStructField& f : blockReflected->Fields)
+            blockByName[f.Name] = &f;
 
-        std::map<string, const ReflectedStructField*> authoredByName;
-        for (const ReflectedStructField& f : authoredReflected->Fields)
-            authoredByName[f.Name] = &f;
-
-        // --- 6. Walk declared fields, routing each by type into its block ---
+        // --- 6. Walk declared fields, routing each by type ---
         //
-        // One CookedMaterialField per declared field — undeclared engine-block
-        // members (the pads) are validated/zeroed in the block image but not
-        // emitted, so a Kind 0 entry always means an authored param.
+        // One CookedMaterialField per declared field — undeclared block members
+        // (any pads) are validated/zeroed in the block image but not emitted, so a
+        // Kind 0 entry always means an authored param.
 
         vector<CookedMaterialField> fields;
         fields.reserve(declaredFields.size());
@@ -361,12 +344,12 @@ namespace Veng::Cook
 
             if (decl.Type == "texture" || decl.Type == "sampler")
             {
-                // Handle fields belong to the engine block.
-                auto it = engineByName.find(decl.Name);
-                if (it == engineByName.end())
+                // Handle fields are uint members of the one block.
+                auto it = blockByName.find(decl.Name);
+                if (it == blockByName.end())
                 {
                     return std::unexpected(fmt::format(
-                        "material importer: field '{}' does not match any field in MaterialData",
+                        "material importer: field '{}' does not match any field in MaterialParams",
                         decl.Name));
                 }
                 const ReflectedStructField& reflField = *it->second;
@@ -424,9 +407,9 @@ namespace Veng::Cook
             }
             else
             {
-                // Param fields (uint / float / vecN) belong to the authored block.
-                auto it = authoredByName.find(decl.Name);
-                if (it == authoredByName.end())
+                // Param fields (uint / float / vecN) are members of the one block.
+                auto it = blockByName.find(decl.Name);
+                if (it == blockByName.end())
                 {
                     return std::unexpected(fmt::format(
                         "material importer: field '{}' does not match any field in MaterialParams",
@@ -452,15 +435,15 @@ namespace Veng::Cook
                     }
 
                     const usize writeEnd = static_cast<usize>(reflField.Offset) + sizeof(u32);
-                    if (writeEnd > authoredBlock.size())
+                    if (writeEnd > block.size())
                     {
                         return std::unexpected(fmt::format(
                             "material importer: uint field '{}' at offset {} + 4 bytes "
-                            "exceeds authored block size {}",
-                            decl.Name, reflField.Offset, authoredBlock.size()));
+                            "exceeds block size {}",
+                            decl.Name, reflField.Offset, block.size()));
                     }
 
-                    std::memcpy(authoredBlock.data() + reflField.Offset, &decl.UintValue, sizeof(u32));
+                    std::memcpy(block.data() + reflField.Offset, &decl.UintValue, sizeof(u32));
                 }
                 else
                 {
@@ -483,19 +466,19 @@ namespace Veng::Cook
 
                     const usize writeEnd = static_cast<usize>(reflField.Offset) +
                         decl.FloatValues.size() * sizeof(f32);
-                    if (writeEnd > authoredBlock.size())
+                    if (writeEnd > block.size())
                     {
                         return std::unexpected(fmt::format(
                             "material importer: {} field '{}' at offset {} + {} bytes "
-                            "exceeds authored block size {}",
+                            "exceeds block size {}",
                             decl.Type, decl.Name,
                             reflField.Offset,
                             decl.FloatValues.size() * sizeof(f32),
-                            authoredBlock.size()));
+                            block.size()));
                     }
 
                     // Write as little-endian f32 (host order == LE on macOS/x86).
-                    std::memcpy(authoredBlock.data() + reflField.Offset,
+                    std::memcpy(block.data() + reflField.Offset,
                         decl.FloatValues.data(),
                         decl.FloatValues.size() * sizeof(f32));
                 }
@@ -509,10 +492,10 @@ namespace Veng::Cook
         CookedMaterialHeader header{};
         header.VertexShaderId = vertexShaderId;
         header.FragmentShaderId = fragmentShaderId;
+        header.Version = CookedMaterialVersion;
         header.FieldCount = static_cast<u32>(fields.size());
-        header.EngineBytes = engineReflected->Size;
-        header.ParamBytes = authoredReflected->Size;
+        header.BlockBytes = blockReflected->Size;
 
-        return BuildBlob(header, fields, engineBlock, authoredBlock);
+        return BuildBlob(header, fields, block);
     }
 }

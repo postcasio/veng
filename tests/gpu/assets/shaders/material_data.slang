@@ -1,26 +1,22 @@
 // Shared bindless material declarations for the deferred opaque material shader.
-// MaterialData mirrors the engine's Renderer::MaterialData (BindlessRegistry.h)
-// byte-for-byte — the engine-supplied handle slots. MaterialParams is the
-// author's own variable-size block of scalar/vector uniforms (here, a single
-// Factors tint). The set-0 bindings mirror the BindlessRegistry layout (sampled
-// images = 0, samplers = 1, MaterialData array = 3, authored params = 4). The
-// cooker reflects both structs to validate a material's fields and pack their
-// values at the reflected offsets.
-
-struct MaterialData
-{
-    uint Albedo;        // bindless sampled-image index
-    uint AlbedoSampler; // bindless sampler index
-    uint Pad0;
-    uint Pad1;
-};
+// MaterialParams is the material's whole parameter block — the bindless handle
+// slots (uint members the loader patches with a resolved index) beside the
+// author's scalar/vector uniforms (here, a single Factors tint), laid out by
+// reflection. The set-0 bindings mirror the BindlessRegistry layout (sampled
+// images = 0, samplers = 1, per-material block = 4). The cooker reflects this
+// struct to validate a material's fields and pack their values at the reflected
+// offsets.
 
 struct MaterialParams
 {
-    float4 Factors;
+    uint   Albedo;        // bindless sampled-image index (texture handle)
+    uint   AlbedoSampler; // bindless sampler index (sampler handle)
+    uint   Pad0;
+    uint   Pad1;
+    float4 Factors;       // authored param
 };
 
-// The authored-block byte stride. Mirrors
+// The per-material block byte stride. Mirrors
 // BindlessRegistry::MaterialParamStride; one stride is shared across every
 // material so a single ByteAddressBuffer holds a different MaterialParams layout
 // per shader, read at index * MaterialParamStride.
@@ -28,7 +24,6 @@ static const uint MaterialParamStride = 256;
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(3, 0)]] StructuredBuffer<MaterialData> g_Materials;
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
 MaterialParams LoadMaterialParams(uint index)
