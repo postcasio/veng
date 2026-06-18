@@ -139,7 +139,7 @@ namespace Veng::UI
     ScopedChild Child(string_view id, vec2 size, WindowFlags flags)
     {
         const string label = AsCStr(id);
-        return ScopedChild(ImGui::BeginChild(label.c_str(), ImVec2(size.x, size.y),
+        return ScopedChild(ImGui::BeginChild(label.c_str(), size,
                                              ImGuiChildFlags_None, ToImGui(flags)));
     }
 
@@ -239,13 +239,13 @@ namespace Veng::UI
 
     StyleColorScope StyleColor(StyleColorId id, vec4 color)
     {
-        ImGui::PushStyleColor(ToImGui(id), ImVec4(color.r, color.g, color.b, color.a));
+        ImGui::PushStyleColor(ToImGui(id), color);
         return StyleColorScope{};
     }
 
     StyleVarScope StyleVar(StyleVarId id, vec2 value)
     {
-        ImGui::PushStyleVar(ToImGui(id), ImVec2(value.x, value.y));
+        ImGui::PushStyleVar(ToImGui(id), value);
         return StyleVarScope{};
     }
 

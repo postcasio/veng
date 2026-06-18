@@ -5,9 +5,6 @@
 #include <Veng/UI/UI.h>
 #include <VengEditor/EditorRegistry.h>
 
-// Raw mouse query; key/mouse input converges on the event/input system.
-#include <imgui.h>
-
 namespace VengEditor
 {
     using namespace Veng;
@@ -70,8 +67,7 @@ namespace VengEditor
                 {
                     m_Selected = asset.Id;
 
-                    // Raw mouse query; key/mouse input converges on the event/input system.
-                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                    if (UI::IsMouseDoubleClicked(UI::MouseButton::Left))
                     {
                         // The opened panel is queued for the host to adopt into its
                         // panel set on the next frame (TakeOpenedPanels).

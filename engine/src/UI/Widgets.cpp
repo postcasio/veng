@@ -198,7 +198,7 @@ namespace Veng::UI
 
     void TextColored(vec4 color, string_view text)
     {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(color.r, color.g, color.b, color.a));
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
         ImGui::TextUnformatted(text.data(), text.data() + text.size());
         ImGui::PopStyleColor();
     }
@@ -213,7 +213,6 @@ namespace Veng::UI
 
     void Image(const Ref<ImGuiTexture>& tex, vec2 size)
     {
-        ImGui::Image(static_cast<ImTextureID>(tex->GetTextureId()),
-                     ImVec2(size.x, size.y));
+        ImGui::Image(static_cast<ImTextureID>(tex->GetTextureId()), size);
     }
 }

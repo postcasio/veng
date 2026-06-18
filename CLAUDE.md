@@ -171,6 +171,13 @@ The sole exception is **the Vulkan API itself**: vulkan.hpp struct fields and
 callback parameters (`pNext`, `pWaitSemaphores`, `pUserData`, …) carry upstream
 Hungarian we don't control. Never rename those — match the API as given.
 
+**Accessors carry a verb prefix.** A getter is `GetFoo()`, a setter `SetFoo()` —
+never a bare `Foo()`. This holds for both public APIs and virtual interfaces (e.g.
+`GetTitle()` / `GetWindowFlags()`). A **boolean predicate query keeps an `Is`
+prefix** — `IsMouseDoubleClicked()`, `IsKeyPressed()`, not bare
+`MouseDoubleClicked()`/`KeyPressed()`. A value getter that is not a predicate takes
+no prefix beyond `Get` and reads as a plain noun where natural (`PopupMousePosition()`).
+
 ### Comments — factual reasons, not planning history
 
 A code comment states a fact about the code as it is *now*. It does not narrate
@@ -459,12 +466,23 @@ surface; it does not link the editor framework for a debug slider.)
   tight surface, not hiding ImGui. Driving ImGui fully private (no `<imgui.h>` reachable
   through any public header, imgui linked PRIVATE) is a possible later planset `Veng::UI`
   unblocks.
+- **`ImVec2`/`ImVec4` convert implicitly to/from glm's `vec2`/`vec4`.** `Veng/Vendor/ImGuiConfig.h`
+  injects the conversions through ImGui's `IM_VEC2_CLASS_EXTRA`/`IM_VEC4_CLASS_EXTRA` hooks, wired
+  as the `IMGUI_USER_CONFIG` compile definition (PUBLIC on `veng`, so imgui's own aggregation TU
+  and every consumer compile one identical `ImVec2`/`ImVec4` — the macros add member functions
+  only, no data members, so layout is unchanged). So a raw imgui/imnodes call takes a `vec2`
+  directly and its return reads straight into a `vec2`; no `ImVec2(v.x, v.y)` glue at the
+  boundary. ImGui-native literals (theme colors/padding in `ImGuiLayer`) stay authored as
+  `ImVec2`/`ImVec4` — the conversion is for the glm seam, not a reason to rewrite native values.
 - **The boundary.** `Veng::UI` replaces `ImGui::` only at widget-authoring sites. ImGui's
   frame lifecycle (`CreateContext`/`NewFrame`/`Render`/`GetDrawData`/`GetIO`/…) and the
   host/dock/present plumbing (`DockSpaceOverViewport`/`UpdatePlatformWindows`/…) are the
-  integration layer and stay raw in `ImGuiLayer`/`EditorHost`. Keyboard/mouse queries stay
-  thin and converge with the event/input area rather than growing a parallel key-enum, so a
-  few raw key/mouse-button sites remain in the editor panels.
+  integration layer and stay raw in `ImGuiLayer`/`EditorHost`. Immediate-mode input queries
+  for UI logic (double-click, right-click menu, delete-key shortcut) are wrapped in
+  `Veng/UI/Query.h` over closed `UI::MouseButton`/`UI::Key` enums — distinct from the
+  event/input system, which feeds gameplay; the `Key` enum is populated to the keys the call
+  sites use. The only ImGui types remaining in panel src are those crossing into imnodes
+  (`ImVec2` for node positioning), which is itself an editor-private dependency.
 
 ### Editor
 

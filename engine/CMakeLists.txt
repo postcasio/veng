@@ -84,6 +84,11 @@ target_include_directories(veng PUBLIC
         $<BUILD_INTERFACE:${imnodes_SOURCE_DIR}>
 )
 
+# Inject glm<->ImVec2/ImVec4 conversions into ImGui's own vector types. PUBLIC so
+# imgui's aggregation TU and every consumer compile one identical ImVec2/ImVec4.
+target_compile_definitions(veng PUBLIC
+        IMGUI_USER_CONFIG="Veng/Vendor/ImGuiConfig.h")
+
 # tinyexr/stb headers are implementation details of the vendor TUs.
 target_include_directories(veng PRIVATE
         ${tinyexr_SOURCE_DIR}

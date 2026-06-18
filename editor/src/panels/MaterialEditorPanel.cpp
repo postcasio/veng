@@ -13,8 +13,8 @@
 #include <Veng/Time.h>
 #include <Veng/UI/UI.h>
 
-// imnodes drives the node canvas; the surviving raw ImGui:: sites are key/mouse
-// queries that converge on the event/input system.
+// imnodes drives the node canvas (vec2 crosses into its positioning calls via the
+// glm<->ImVec2 conversion).
 #include <Veng/Vendor/ImGui.h>
 
 #include <VengEditor/NodeGraph/NodeGraphSerialize.h>
@@ -314,8 +314,7 @@ namespace VengEditor
         // The add-node context menu: lists every catalog type.
         if (auto menu = UI::Popup("AddNodeMenu"))
         {
-            // Raw mouse query; key/mouse input converges on the event/input system.
-            const ImVec2 mouse = ImGui::GetMousePosOnOpeningCurrentPopup();
+            const vec2 mouse = UI::PopupMousePosition();
             for (const NodeType& type : m_Catalog.Types())
             {
                 if (UI::MenuItem(type.Name))
@@ -369,9 +368,8 @@ namespace VengEditor
 
         ImNodes::EndNodeEditor();
 
-        // Right-click the canvas → add-node menu. Raw mouse query; key/mouse input
-        // converges on the event/input system.
-        if (ImNodes::IsEditorHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+        // Right-click the canvas → add-node menu.
+        if (ImNodes::IsEditorHovered() && UI::IsMouseClicked(UI::MouseButton::Right))
             UI::OpenPopup("AddNodeMenu");
 
         // Decode a NodeId from a node imnodes id by scanning the live set (the
@@ -421,9 +419,8 @@ namespace VengEditor
                 }
             }
 
-            // Delete key removes the selected nodes. Raw key query; key/mouse input
-            // converges on the event/input system.
-            if (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace))
+            // Delete key removes the selected nodes.
+            if (UI::IsKeyPressed(UI::Key::Delete) || UI::IsKeyPressed(UI::Key::Backspace))
             {
                 const int count = ImNodes::NumSelectedNodes();
                 if (count > 0)
@@ -445,10 +442,9 @@ namespace VengEditor
         // Persist node drags back into the model so a recook/save records them.
         for (NodeId node : m_Graph->Nodes())
         {
-            const ImVec2 pos = ImNodes::GetNodeGridSpacePos(NodeImId(node));
-            const vec2 current = m_Graph->PositionOf(node);
-            if (pos.x != current.x || pos.y != current.y)
-                m_Graph->MoveNode(node, vec2{pos.x, pos.y});
+            const vec2 pos = ImNodes::GetNodeGridSpacePos(NodeImId(node));
+            if (pos != m_Graph->PositionOf(node))
+                m_Graph->MoveNode(node, pos);
         }
 
         return mutated;

@@ -228,7 +228,7 @@ namespace Veng
             CreateResources();
 #ifdef VE_VIEWPORTS
             const uvec2 extent = m_Context.GetRenderExtent();
-            ImGui::GetMainViewport()->Size = ImVec2(static_cast<f32>(extent.x), static_cast<f32>(extent.y));
+            ImGui::GetMainViewport()->Size = vec2(extent);
 #endif
         });
     }

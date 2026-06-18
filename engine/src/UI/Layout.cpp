@@ -21,8 +21,7 @@ namespace Veng::UI
 
     vec2 ContentRegionAvail()
     {
-        const ImVec2 avail = ImGui::GetContentRegionAvail();
-        return vec2(avail.x, avail.y);
+        return ImGui::GetContentRegionAvail();
     }
 
     void ScrollToHere()
