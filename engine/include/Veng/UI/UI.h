@@ -6,4 +6,5 @@
 #include <Veng/UI/Types.h>
 #include <Veng/UI/Widgets.h>
 #include <Veng/UI/Layout.h>
+#include <Veng/UI/Scopes.h>
 #include <Veng/UI/Query.h>

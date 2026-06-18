@@ -29,6 +29,7 @@ add_library(veng SHARED
         src/ImGui/ImGuiTexture.cpp
         src/UI/Widgets.cpp
         src/UI/Layout.cpp
+        src/UI/Scopes.cpp
         src/UI/Query.cpp
         src/Reflection/Serialize.cpp
         src/Scene/BuiltinTypes.cpp

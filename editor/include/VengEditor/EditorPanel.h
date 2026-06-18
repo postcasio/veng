@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
-#include <imgui.h>
+#include <Veng/UI/Types.h>
 
 namespace Veng::Renderer
 {
@@ -19,7 +19,10 @@ namespace VengEditor
         virtual ~EditorPanel() = default;
 
         [[nodiscard]] virtual Veng::string_view GetTitle() const = 0;
-        [[nodiscard]] virtual ImGuiWindowFlags GetWindowFlags() const { return 0; }
+        [[nodiscard]] virtual Veng::UI::WindowFlags GetWindowFlags() const
+        {
+            return Veng::UI::WindowFlags::None;
+        }
         virtual void OnImGui() = 0;
 
         // Record this frame's offscreen render (a panel that owns a SceneRenderer

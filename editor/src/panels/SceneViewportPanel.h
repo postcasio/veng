@@ -39,9 +39,9 @@ namespace VengEditor
         ~SceneViewportPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return "Scene Viewport"; }
-        [[nodiscard]] ImGuiWindowFlags GetWindowFlags() const override
+        [[nodiscard]] Veng::UI::WindowFlags GetWindowFlags() const override
         {
-            return ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+            return Veng::UI::WindowFlags::NoScrollbar | Veng::UI::WindowFlags::NoScrollWithMouse;
         }
 
         // Record this frame's scene render. Called by the host before OnImGui so

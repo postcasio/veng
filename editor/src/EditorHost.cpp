@@ -15,6 +15,7 @@
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Scene/BuiltinTypes.h>
+#include <Veng/UI/UI.h>
 #include <Veng/Vendor/ImGui.h>
 
 #include "AssetSourceIndex.h"
@@ -403,17 +404,19 @@ namespace VengEditor
             if (!slot.Open)
                 continue;
 
-            const string title(slot.Panel->GetTitle());
-            const ImGuiWindowFlags flags = slot.Panel->GetWindowFlags();
-            const bool noPadding = (flags & ImGuiWindowFlags_NoScrollbar) != 0;
+            const UI::WindowFlags flags = slot.Panel->GetWindowFlags();
+
+            // A no-scrollbar panel (the scene viewport) is drawn edge-to-edge, so
+            // its window padding is pushed to zero. WindowPadding is read at Begin,
+            // so the guard outliving Begin into the body is equivalent to popping
+            // it immediately after — it is constructed only in the no-padding case.
+            const bool noPadding = (flags & UI::WindowFlags::NoScrollbar) != UI::WindowFlags::None;
+            optional<UI::StyleVarScope> padding;
             if (noPadding)
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-            const bool open = ImGui::Begin(title.c_str(), &slot.Open, flags);
-            if (noPadding)
-                ImGui::PopStyleVar();
-            if (open)
+                padding.emplace(UI::StyleVar(UI::StyleVarId::WindowPadding, vec2(0, 0)));
+
+            if (auto window = UI::Window(slot.Panel->GetTitle(), &slot.Open, flags))
                 slot.Panel->OnImGui();
-            ImGui::End();
         }
 
         GetImGuiLayer()->Render(cmd);
