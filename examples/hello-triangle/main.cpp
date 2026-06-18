@@ -2,7 +2,6 @@
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
 #include <Veng/Module/Module.h>
-#include <Veng/Vendor/ImGui.h>
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -16,6 +15,7 @@
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Asset/Texture.h>
+#include <Veng/UI/UI.h>
 
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Camera.h>
@@ -25,6 +25,7 @@
 #include <glm/gtc/packing.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <array>
 #include <cstdlib>
 #include <fstream>
 
@@ -215,7 +216,7 @@ protected:
         // composite-to-swapchain pass are windowed-only.
         if (GetImGuiLayer())
         {
-            // RenderUserInterface() draws the scene texture via ImGui::Image(), and
+            // RenderUserInterface() draws the scene texture via UI::Image(), and
             // GetImGuiLayer()->Render(cmd) is what actually records that sampled read.
             // ImGui samples outside the graph, so the composite pass issues the
             // explicit sampleability barrier before that read.
@@ -243,33 +244,33 @@ protected:
 private:
     void RenderUserInterface()
     {
-        ImGui::Begin("Scene");
-
-        // The DebugView combo drives SceneRenderer::Configure, re-wiring the pass set
-        // (Final / Albedo / Normal / Depth) — a live exercise of the recompile seam.
-        // Configure recreates the output image, so the composite pass's cached scene
-        // texture + bindless slot must be re-bound after it through SetSource (the
-        // GetOutput()-invalidated-by-Configure contract).
-        const char* modeNames[] = {"Final", "Albedo", "Normal", "Depth"};
-        int mode = static_cast<int>(m_SceneSettings.Mode);
-        if (ImGui::Combo("View", &mode, modeNames, IM_ARRAYSIZE(modeNames)))
+        if (auto sceneWindow = UI::Window("Scene"))
         {
-            m_SceneSettings.Mode = static_cast<Renderer::DebugView>(mode);
-            m_SceneRenderer->Configure(m_SceneSettings);
-            m_Composite->SetSource(m_SceneRenderer->GetOutput());
+            // The DebugView combo drives SceneRenderer::Configure, re-wiring the pass
+            // set (Final / Albedo / Normal / Depth) — a live exercise of the recompile
+            // seam. Configure recreates the output image, so the composite pass's cached
+            // scene texture + bindless slot must be re-bound after it through SetSource
+            // (the GetOutput()-invalidated-by-Configure contract).
+            static constexpr std::array<string_view, 4> modeNames{"Final", "Albedo", "Normal", "Depth"};
+            i32 mode = static_cast<i32>(m_SceneSettings.Mode);
+            if (UI::Combo("View", mode, modeNames))
+            {
+                m_SceneSettings.Mode = static_cast<Renderer::DebugView>(mode);
+                m_SceneRenderer->Configure(m_SceneSettings);
+                m_Composite->SetSource(m_SceneRenderer->GetOutput());
+            }
+
+            const vec2 available = UI::ContentRegionAvail();
+            const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
+            const f32 aspect = static_cast<f32>(output->GetImage()->GetHeight()) /
+                               static_cast<f32>(output->GetImage()->GetWidth());
+            UI::Image(m_Composite->GetSceneTextureRef(), {available.x, available.x * aspect});
         }
 
-        const ImVec2 available = ImGui::GetContentRegionAvail();
-        const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
-        const f32 aspect = static_cast<f32>(output->GetImage()->GetHeight()) /
-                           static_cast<f32>(output->GetImage()->GetWidth());
-        ImGui::Image(static_cast<ImTextureID>(m_Composite->GetSceneTexture().GetTextureId()),
-                     {available.x, available.x * aspect});
-        ImGui::End();
-
-        ImGui::Begin("Stats");
-        ImGui::Text("%.1f fps (%.2f ms)", ImGui::GetIO().Framerate, 1000.0f / ImGui::GetIO().Framerate);
-        ImGui::End();
+        if (auto statsWindow = UI::Window("Stats"))
+        {
+            UI::Text(fmt::format("{:.1f} fps ({:.2f} ms)", UI::FrameRate(), 1000.0f / UI::FrameRate()));
+        }
     }
 
     void WriteSceneCapture(const char* outPath) const

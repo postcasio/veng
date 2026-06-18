@@ -87,6 +87,10 @@ namespace Veng::Renderer
         // or the ImGui layer's own output. Both modes.
         [[nodiscard]] ImGuiTexture& GetSceneTexture() const;
 
+        // The same scene texture as a shared reference — what a viewport panel
+        // passes to UI::Image, which owns the id→ImTextureID cast. Both modes.
+        [[nodiscard]] const Ref<ImGuiTexture>& GetSceneTextureRef() const;
+
         // Replay the compiled composite graph: bind the per-frame swapchain view plus
         // the pass-owned scene and ImGui-layer views, then execute. The single
         // per-frame call a composite-mode consumer makes after ImGuiLayer::Render.

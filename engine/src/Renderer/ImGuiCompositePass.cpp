@@ -228,4 +228,10 @@ namespace Veng::Renderer
         return *m_Impl->SceneTexture;
     }
 
+    const Ref<ImGuiTexture>& ImGuiCompositePass::GetSceneTextureRef() const
+    {
+        VE_ASSERT(m_Impl->SceneTexture, "ImGuiCompositePass has no scene texture");
+        return m_Impl->SceneTexture;
+    }
+
 }
