@@ -3,7 +3,7 @@
 **Goal:** add an engine-provided **`ImGuiCompositePass`** that owns the scene-output → ImGui
 plumbing every `SceneRenderer` app hand-writes today — the ImGui scene texture, the pre-ImGui
 sampleability barrier, and (for the full-screen case) the scene-behind-ImGui composite — and
-migrate its three consumers onto it. Realizes [future area 11](../future/README.md#11-imguicompositepass)
+migrate its three consumers onto it. Realizes [future area 11](../future/README.md#11-imgui-composite-pass--done-planset-16)
 ([imgui-composite-pass.md](../future/imgui-composite-pass.md)).
 
 ## Why

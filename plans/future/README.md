@@ -12,9 +12,9 @@ Numbered for stable cross-references. **Delivered** areas are documented in thei
 plansets (see [plans/README.md](../README.md)) and are *not* re-narrated here —
 only their **still-future remainder** is kept, plus any delivered capability a
 pending area builds on directly. The substance of this document is the
-**remaining** work: the editor's scene editor (area 6, sub-area D), event/input
-(area 4), `ImGuiCompositePass` (area 11), and the named still-future increments of
-the areas done in part (areas 1, 2, 7, 8, 9, 10, 12).
+**remaining** work: **material domains + shader-graph codegen (area 13)**, the
+editor's scene editor (area 6, sub-area D), event/input (area 4), and the named
+still-future increments of the areas done in part (areas 1, 2, 7, 8, 9, 10, 12).
 
 ### 1. Asset system — remaining: hot-reload
 
@@ -167,17 +167,18 @@ inspectors (area 6, sub-D) reuse this same module-reflection seam.** **Still fut
 cooking a cross-compiled target lib on the build host is a latent constraint for the
 anticipated Windows port — recorded, not solved.
 
-### 11. ImGuiCompositePass
+### 11. ImGui composite pass — DONE (planset-16)
 
-Every `SceneRenderer`-based app today hand-writes an identical fullscreen composite
-pass (scene offscreen output → swapchain) and manually re-registers the bindless
-slot and ImGui texture whenever `Resize`/`Configure` recreates the output image.
-An engine-provided **`ImGuiCompositePass`** eliminates that boilerplate: the app
-wires it into its own `RenderGraph` (compositing stays in the app), calls
-`SetSource(imageView)` once after `Resize`/`Configure`, and the pass owns both
-registrations internally. Named deliberately — this is not a general-purpose
-compositor; it is scoped to the ImGui workflow. **Design overview:**
-[imgui-composite-pass.md](imgui-composite-pass.md).
+Delivered by planset-16 as an engine-provided `ImGuiCompositePass` — the
+scene-offscreen-output → swapchain composite, owning the bindless-slot + ImGui-texture
+re-registration across `Resize`/`Configure` so an app no longer hand-writes it. Since
+**consolidated** into **`SwapChainCompositePass`**, scoped to its single real job: the
+fixed scene-behind-ImGui swapchain composite. Surfacing a scene output *inside* an
+ImGui panel — an ImGui texture over the output plus the out-of-graph sampleability
+barrier that read needs — turned out to be a separate, smaller job each consumer does
+inline against `ImGuiLayer`/`CommandBuffer` (the established `TextureEditorPanel`
+idiom), not part of the composite pass. Nothing pending builds on it. The original
+direction note ([imgui-composite-pass.md](imgui-composite-pass.md)) predates delivery.
 
 ### 12. UI toolkit — `Veng::UI` — remaining: drive imgui private, stateful widget classes
 
@@ -201,17 +202,61 @@ the editor panels + menu bar) migrated onto it, wrapper-only (ImGui stays PUBLIC
 
 **Design overview:** [ui-toolkit.md](ui-toolkit.md).
 
+### 13. Material domains + shader-graph codegen — PRIORITIZED
+
+veng's material system is **temporarily** a parameter-binding system: a `.vmat` binds
+a typed field list to a **hand-authored** Slang shader, and the node editor
+(planset-15, area 6 sub-C) authors that binding. The committed end-state is
+**shader-graph codegen** — the node graph **generates** the Slang source. Two pieces,
+landing in order:
+
+- **Material domains (prioritized) — at least Surface and PostProcess.** A `Material`
+  is hardwired today to one implicit domain (opaque surface → g-buffer). A first-class
+  **domain** selects the output contract (g-buffer channels vs a single final color),
+  the inputs, the pipeline shape, and the invocation site — the standard cross-engine
+  factoring (Unreal `MaterialDomain`, Unity targets, Godot `shader_type`), with the
+  parameter schema / bindless / authoring / inspector shared across domains. The
+  PostProcess domain needs a **fullscreen material pipeline path** in `SceneRenderer`
+  (a `ScenePass` building a pipeline from a postprocess material against one color
+  target) — the authorable **exposure / tonemap-curve / color-grading / bloom** stack
+  named under [area 8](#8-scene-renderer--render-pipeline-architecture--remaining-the-über-pipeline-batteries),
+  expressed as materials. Fixed *plumbing* composites (`SwapChainCompositePass`) stay
+  hardcoded engine passes — a postprocess material is for *tunable effects*, not
+  plumbing.
+- **Node→Slang codegen (the follow-on).** The graph emits the fragment source instead
+  of binding to a pre-authored one. The node catalog is **reshaped toward it**:
+  `MaterialOutput` becomes a **domain-driven sink** (its pins are the domain's output
+  contract, not a reflection of a hand-authored shader's `GetFields()`); every node
+  becomes an **expression emitter** (`TextureSample` → `tex.Sample(…)`, math nodes →
+  real code — the "basic math" nodes are inert in a pure binding model, the tell that
+  the catalog was already half-built for codegen); a `Param` gains a **const-vs-exposed**
+  distinction (folded inline vs a generated `MaterialParams` uniform); and compile's
+  target changes from a `.vmat` field list to **generated Slang** the cooker compiles
+  like any shader (Slang → SPIR-V + reflection; no new runtime path). planset-15's
+  topology core (typed pins over the `TypeId` space, coercion-on-link, reflected node
+  properties, the JSON round-trip) is already codegen-ready; the reshaping is in the
+  material catalog + compile target + the new domain concept.
+
+**Supersedes planset-15 decision 9** — codegen is now committed direction, not a
+possibility the node model merely tolerates. **Design overview:**
+[material-codegen.md](material-codegen.md).
+
 ## Ordering & dependencies
 
 The order to *take the remaining areas up* (each becomes its own planset), not a
 schedule:
 
-1. **Editor — scene editor (area 6, sub-area D)** is the **next editor planset**;
+1. **Material domains + codegen foundation (area 13)** is **prioritized**: add the
+   material **domain** concept (Surface + PostProcess), stand up the PostProcess
+   fullscreen-material path, and **reshape the node model toward codegen** (the
+   foundation), with full node→Slang codegen as its named follow-on. Builds on the
+   delivered node graph (area 6 sub-C) and `SceneRenderer` (area 8).
+2. **Editor — scene editor (area 6, sub-area D)** is the **next editor planset**;
    all its gates are met (area 7, area 10, area 8's `SceneRenderer`, and editor
    sub-areas B/C).
-2. **Event & input (area 4)**, **`ImGuiCompositePass` (area 11)**, and the named
-   still-future increments of the areas done in part (1, 2, 7, 8, 9, 10, 12) are each
-   independent and off the critical path — slot in whenever wanted.
+3. **Event & input (area 4)** and the named still-future increments of the areas done
+   in part (1, 2, 7, 8, 9, 10, 12) are each independent and off the critical path —
+   slot in whenever wanted.
 
 ## Cross-cutting concerns
 
@@ -227,11 +272,16 @@ retrofit.
 Vision only beyond what is delivered in the plansets
 ([plans/README.md](../README.md)).
 
-**Next:** the **scene editor** (area 6, sub-area D) — all its gates met (areas 7,
-10, 8, and editor sub-areas B/C).
+**Prioritized:** **material domains + codegen foundation** (area 13) — the material
+**domain** concept (Surface + PostProcess), the PostProcess fullscreen-material path,
+and the node-model reshape toward codegen, with full node→Slang codegen as the named
+follow-on.
 
-**Undetailed / unscheduled:** area 4 (events/input), area 11 (`ImGuiCompositePass`),
-and the named still-future increments of the
+**Next editor planset:** the **scene editor** (area 6, sub-area D) — all its gates met
+(areas 7, 10, 8, and editor sub-areas B/C).
+
+**Undetailed / unscheduled:** area 4 (events/input) and the named still-future
+increments of the
 areas done in part — area 1's
 **hot-reload**, area 2's task graph / staging pool / cancellation, area 7's
 **systems framework** + perf follow-ons + the `ShaderInterface`/`MaterialField`

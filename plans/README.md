@@ -269,10 +269,15 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   widget that holds persistent state needs extracting; and driving ImGui fully private.
 
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
-  holding area; not a planset). The remaining work is the **editor's scene editor**
-  (area 6, sub-area D — its gates met by planset-10/11/12/14/15), the **event/input**
-  systems (area 4), an **`ImGuiCompositePass`** (area 11), and the named still-future
-  increments of the areas done in part (hot-reload; the task graph; the systems
-  framework + `ShaderInterface`/`MaterialField` unification; the über-pipeline
-  batteries + typed lights; render-graph culling/multi-queue; cross-compiled cooking).
-  Each becomes its own planset when taken up. The future README carries the detail.
+  holding area; not a planset). The **prioritized** next area is **material domains +
+  shader-graph codegen** (area 13): a first-class material **domain** (Surface +
+  PostProcess), the PostProcess fullscreen-material path, and the node-model reshape
+  toward codegen — committed direction, with full node→Slang codegen its named
+  follow-on (builds on planset-15's node graph + planset-12's `SceneRenderer`). The
+  rest of the remaining work is the **editor's scene editor** (area 6, sub-area D — its
+  gates met by planset-10/11/12/14/15), the **event/input** systems (area 4), and the
+  named still-future increments of the areas
+  done in part (hot-reload; the task graph; the systems framework +
+  `ShaderInterface`/`MaterialField` unification; the über-pipeline batteries + typed
+  lights; render-graph culling/multi-queue; cross-compiled cooking). Each becomes its
+  own planset when taken up. The future README carries the detail.

@@ -20,7 +20,7 @@ The wins:
 3. **`ImGuiCompositePass`.** An engine-provided helper owning the scene-output → ImGui plumbing
    every `SceneRenderer` app hand-writes today (the ImGui scene texture + the pre-ImGui barrier,
    plus the scene-behind-ImGui composite in composite mode); hello-triangle and the editor's scene
-   panels migrate onto it. Realizes [future area 11](../future/README.md#11-imguicompositepass) (plan 03).
+   panels migrate onto it. Realizes [future area 11](../future/README.md#11-imgui-composite-pass--done-planset-16) (plan 03).
 
 None of these is part of a [future-area](../future/README.md) chain that needs a planset to
 itself; bundling them keeps the per-planset cadence without three near-empty plansets.
@@ -143,7 +143,7 @@ composite pass and its three bindless registrations (composite mode) — behind 
 moves into the engine core pack under an engine-owned `AssetId` (the VS reuses the existing
 `fullscreen.vert`); the three consumers migrate onto it and delete their hand-written copies. The
 editor's `EditorHost::BuildPresentGraph()` (a plain ImGui-only swapchain blit) is a different
-pattern and is **not** in scope. Realizes [future area 11](../future/README.md#11-imguicompositepass).
+pattern and is **not** in scope. Realizes [future area 11](../future/README.md#11-imgui-composite-pass--done-planset-16).
 Full detail in [plan 03](03-imgui-composite-pass.md).
 
 ## Plans
