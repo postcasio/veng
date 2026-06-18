@@ -116,8 +116,13 @@ namespace VengEditor
         Veng::AssetId m_VertexShader;
         Veng::AssetId m_FragmentShader;
 
-        // Built per loaded material (MaterialOutput pins derive from the field
-        // table). The catalog must outlive the graph.
+        // The loaded material's domain. It selects the MaterialOutput sink contract
+        // (Albedo/Normal for Surface, Color for PostProcess) and is re-emitted into
+        // the regenerated .vmat so a node-authored domain survives the cook.
+        Veng::MaterialDomain m_Domain = Veng::MaterialDomain::Surface;
+
+        // Built per loaded material (MaterialOutput pins are the domain output
+        // contract). The catalog must outlive the graph.
         NodeCatalog m_Catalog;
         MaterialNodeTypes m_Types;
         Veng::Unique<NodeGraph> m_Graph;

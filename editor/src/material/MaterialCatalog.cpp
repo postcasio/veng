@@ -1,5 +1,6 @@
 #include "material/MaterialCatalog.h"
 
+#include <Veng/Assert.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Asset/AssetHandle.h>
@@ -27,24 +28,29 @@ namespace VengEditor
         };
 
         PinType ValuePin(Veng::TypeId id) { return PinType{PinType::Kind::Value, id}; }
+    }
 
-        // A param field's pin leaf type, derived from its byte Size. A uint param
-        // also has Size 4, so it shares the f32 pin; the compiler reads the feeding
-        // Param node's own value to emit float vs uint.
-        Veng::TypeId ParamPinType(Veng::u32 size)
+    Veng::vector<DomainOutputPin> DomainOutputContract(Veng::MaterialDomain domain)
+    {
+        switch (domain)
         {
-            switch (size)
-            {
-                case 8: return TypeIdOf<Veng::vec2>();
-                case 12: return TypeIdOf<Veng::vec3>();
-                case 16: return TypeIdOf<Veng::vec4>();
-                default: return TypeIdOf<Veng::f32>();
-            }
+            case Veng::MaterialDomain::PostProcess:
+                return {
+                    DomainOutputPin{OutputColorPin, ValuePin(TypeIdOf<Veng::vec4>())},
+                };
+            case Veng::MaterialDomain::Surface:
+                return {
+                    DomainOutputPin{OutputAlbedoPin, ValuePin(TypeIdOf<Veng::vec4>())},
+                    DomainOutputPin{OutputNormalPin, ValuePin(TypeIdOf<Veng::vec3>())},
+                };
         }
+        VE_ASSERT(false, "DomainOutputContract: unhandled MaterialDomain {}",
+                  static_cast<Veng::u32>(domain));
     }
 
     MaterialNodeTypes RegisterMaterialNodeTypes(NodeCatalog& catalog,
-                                                const MaterialShaderInterface& shader)
+                                                const MaterialShaderInterface& shader,
+                                                Veng::MaterialDomain domain)
     {
         MaterialNodeTypes types;
 
@@ -89,26 +95,15 @@ namespace VengEditor
             types.Param = catalog.Register(std::move(type));
         }
 
-        // --- MaterialOutput: one input pin per authored param/texture field ---
-        // A sampler-handle field gets no pin; it is paired to its texture by name
-        // and emitted implicitly by compile.
+        // --- MaterialOutput: one input pin per domain output-contract sink ---
+        // Surface's sinks are the g-buffer channels (Albedo + Normal); PostProcess's
+        // is the single final Color. The sinks express the domain's fixed output
+        // contract, not the loaded shader's fields.
         {
             NodeType type;
             type.Name = MaterialOutputTypeName;
-            for (const Veng::MaterialField& field : shader.Fields)
-            {
-                switch (field.Kind)
-                {
-                    case Veng::MaterialField::FieldKind::Param:
-                        type.Inputs.push_back(PinDesc{field.Name, ValuePin(ParamPinType(field.Size))});
-                        break;
-                    case Veng::MaterialField::FieldKind::TextureHandle:
-                        type.Inputs.push_back(PinDesc{field.Name, ValuePin(TypeIdOf<Veng::vec4>())});
-                        break;
-                    case Veng::MaterialField::FieldKind::SamplerHandle:
-                        break;
-                }
-            }
+            for (const DomainOutputPin& sink : DomainOutputContract(domain))
+                type.Inputs.push_back(PinDesc{sink.Name, sink.Type});
             type.PropertySize = 0;
             types.MaterialOutput = catalog.Register(std::move(type));
         }

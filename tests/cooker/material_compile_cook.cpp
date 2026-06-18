@@ -58,7 +58,8 @@ TEST_CASE("Cooker: a compiled material graph cooks through the real MaterialImpo
     };
 
     NodeCatalog catalog;
-    const MaterialNodeTypes types = RegisterMaterialNodeTypes(catalog, iface);
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, iface, MaterialDomain::Surface);
 
     NodeGraph graph = BuildGraphFromMaterial(iface, catalog, types);
 
@@ -77,10 +78,10 @@ TEST_CASE("Cooker: a compiled material graph cooks through the real MaterialImpo
                       std::span<const std::byte>(factorBytes, sizeof(factors)));
 
     const Result<Veng::vector<CompiledField>> compiled =
-        CompileMaterialGraph(graph, catalog, iface);
+        CompileMaterialGraph(graph, catalog, iface, MaterialDomain::Surface);
     REQUIRE(compiled.has_value());
 
-    const string vmatJson = WriteMaterialVmat(*compiled, iface);
+    const string vmatJson = WriteMaterialVmat(*compiled, iface, MaterialDomain::Surface);
 
     // --- 2. Write the emitted .vmat + a temp pack into the fixture tree ---
 

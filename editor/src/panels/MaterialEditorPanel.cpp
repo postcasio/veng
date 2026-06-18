@@ -108,6 +108,7 @@ namespace VengEditor
 
         const Material& material = *loaded->Get();
         m_Fields.assign(material.GetFields().begin(), material.GetFields().end());
+        m_Domain = material.GetDomain();
 
         // The cooked Material does not surface its shader ids; read them from the
         // source document. They round-trip through the regenerated "shaders" block.
@@ -143,7 +144,7 @@ namespace VengEditor
     void MaterialEditorPanel::BuildGraph()
     {
         const MaterialShaderInterface iface = Interface();
-        m_Types = RegisterMaterialNodeTypes(m_Catalog, iface);
+        m_Types = RegisterMaterialNodeTypes(m_Catalog, iface, m_Domain);
 
         // Read the "_editor" block if present; a newer version → read-only, no graph
         // regeneration. Absent → synthesize a default graph from the field table.
@@ -208,7 +209,7 @@ namespace VengEditor
         const MaterialShaderInterface iface = Interface();
 
         const Result<vector<CompiledField>> compiled =
-            CompileMaterialGraph(*m_Graph, m_Catalog, iface);
+            CompileMaterialGraph(*m_Graph, m_Catalog, iface, m_Domain);
         if (!compiled)
             return std::nullopt;
 
@@ -229,9 +230,11 @@ namespace VengEditor
 
         // The compiled .vmat document carries the regenerated "shaders" + "fields";
         // merge those over the preserved base.
-        const Json regenerated = Json::parse(WriteMaterialVmat(*compiled, iface), nullptr, false);
+        const Json regenerated =
+            Json::parse(WriteMaterialVmat(*compiled, iface, m_Domain), nullptr, false);
         if (!regenerated.is_discarded() && regenerated.is_object())
         {
+            doc["domain"] = regenerated["domain"];
             doc["shaders"] = regenerated["shaders"];
             doc["fields"] = regenerated["fields"];
         }

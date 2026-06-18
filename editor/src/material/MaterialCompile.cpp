@@ -38,13 +38,17 @@ namespace VengEditor
             }
         }
 
-        // The link feeding an input pin, or nullptr when the pin is unconnected.
-        const Link* IncomingLink(const NodeGraph& graph, NodeId node, Veng::u16 pin)
+        // A param field's leaf type, derived from its byte Size. A uint param also
+        // has Size 4, so it shares the f32 leaf; the emitted JSON arity is the same.
+        Veng::TypeId ParamFieldType(Veng::u32 size)
         {
-            for (const Link& link : graph.Links())
-                if (link.To.Node == node && link.To.Pin == pin)
-                    return &link;
-            return nullptr;
+            switch (size)
+            {
+                case 8: return TypeIdOf<Veng::vec2>();
+                case 12: return TypeIdOf<Veng::vec3>();
+                case 16: return TypeIdOf<Veng::vec4>();
+                default: return TypeIdOf<Veng::f32>();
+            }
         }
 
         // Reads a Param node's authored value (its vec4 property) into a 4-element
@@ -69,117 +73,127 @@ namespace VengEditor
             return id;
         }
 
-        // The output pin type of a feeding node, by catalog lookup.
-        PinType OutputPinType(const NodeGraph& graph, const NodeCatalog& catalog,
-                              const Link& link)
+        Veng::string DomainKey(Veng::MaterialDomain domain)
         {
-            const NodeType* type = catalog.Find(graph.GetTypeOf(link.From.Node));
-            VE_ASSERT(type != nullptr && link.From.Pin < type->Outputs.size(),
-                      "CompileMaterialGraph: a link names an out-of-range output pin");
-            return type->Outputs[link.From.Pin].Type;
+            switch (domain)
+            {
+                case Veng::MaterialDomain::Surface: return "surface";
+                case Veng::MaterialDomain::PostProcess: return "postprocess";
+            }
+            VE_ASSERT(false, "WriteMaterialVmat: unhandled MaterialDomain {}",
+                      static_cast<Veng::u32>(domain));
         }
     }
 
     Veng::Result<Veng::vector<CompiledField>> CompileMaterialGraph(
         const NodeGraph& graph, const NodeCatalog& catalog,
-        const MaterialShaderInterface& shader)
+        const MaterialShaderInterface& shader, Veng::MaterialDomain domain)
     {
+        (void)domain; // the domain shapes the output node's sinks, not the bound field set
+
         const NodeType* textureSample = catalog.Find(TextureSampleTypeName);
         const NodeType* param = catalog.Find(ParamTypeName);
         const NodeType* outputType = catalog.Find(MaterialOutputTypeName);
         if (textureSample == nullptr || param == nullptr || outputType == nullptr)
             return std::unexpected("CompileMaterialGraph: the catalog lacks the material node types");
 
-        // Find the single MaterialOutput node. TopoOrder ends with the output;
-        // searching the live set is simpler and order-independent.
-        NodeId outputNode{};
-        bool found = false;
+        bool outputCount = false;
         for (NodeId node : graph.Nodes())
         {
             if (graph.GetTypeOf(node) == outputType->Id)
             {
-                if (found)
+                if (outputCount)
                     return std::unexpected("CompileMaterialGraph: more than one MaterialOutput node");
-                outputNode = node;
-                found = true;
+                outputCount = true;
             }
         }
-        if (!found)
+        if (!outputCount)
             return std::unexpected("CompileMaterialGraph: no MaterialOutput node in the graph");
 
-        Veng::vector<CompiledField> fields;
-
-        // Each MaterialOutput input pin maps to one declared param/texture field.
-        for (Veng::usize pin = 0; pin < outputType->Inputs.size(); ++pin)
+        // The binding model emits one .vmat field per the loaded material's reflected
+        // field — the cooked target compile binds the authored values to. The values
+        // come from the graph's upstream feeders (a TextureSample per texture handle,
+        // a Param per scalar/vector param), consumed in node-creation order so the
+        // synthesized graph round-trips its source field list. The domain output node
+        // is the contract endpoint; it does not name the bound fields.
+        Veng::vector<NodeId> textureFeeders;
+        Veng::vector<NodeId> paramFeeders;
+        for (NodeId node : graph.Nodes())
         {
-            const PinDesc& input = outputType->Inputs[pin];
-            const Link* link = IncomingLink(graph, outputNode, static_cast<Veng::u16>(pin));
-            if (link == nullptr)
-                continue; // unconnected → omitted, importer keeps the default
+            const NodeTypeId nodeType = graph.GetTypeOf(node);
+            if (nodeType == textureSample->Id)
+                textureFeeders.push_back(node);
+            else if (nodeType == param->Id)
+                paramFeeders.push_back(node);
+        }
 
-            const NodeTypeId fromType = graph.GetTypeOf(link->From.Node);
+        Veng::vector<CompiledField> fields;
+        Veng::usize textureCursor = 0;
+        Veng::usize paramCursor = 0;
 
-            if (fromType == textureSample->Id)
+        for (const Veng::MaterialField& shaderField : shader.Fields)
+        {
+            switch (shaderField.Kind)
             {
-                CompiledField texture;
-                texture.Name = input.Name;
-                texture.Type = "texture";
-                texture.TextureId = ReadTextureId(graph, link->From.Node);
-                fields.push_back(std::move(texture));
+                case Veng::MaterialField::FieldKind::TextureHandle:
+                {
+                    CompiledField texture;
+                    texture.Name = shaderField.Name;
+                    texture.Type = "texture";
+                    if (textureCursor < textureFeeders.size())
+                        texture.TextureId = ReadTextureId(graph, textureFeeders[textureCursor++]);
+                    fields.push_back(std::move(texture));
+                    break;
+                }
+                case Veng::MaterialField::FieldKind::SamplerHandle:
+                {
+                    // A sampler binds the texture it samples; the cooked field carries
+                    // no pairing, so reconstruct it by the <Texture>Sampler convention.
+                    CompiledField sampler;
+                    sampler.Name = shaderField.Name;
+                    sampler.Type = "sampler";
+                    const Veng::string suffix = "Sampler";
+                    if (shaderField.Name.size() > suffix.size() &&
+                        shaderField.Name.compare(shaderField.Name.size() - suffix.size(),
+                                                 suffix.size(), suffix) == 0)
+                        sampler.SamplerTexture =
+                            shaderField.Name.substr(0, shaderField.Name.size() - suffix.size());
+                    fields.push_back(std::move(sampler));
+                    break;
+                }
+                case Veng::MaterialField::FieldKind::Param:
+                {
+                    const Veng::u32 targetArity = ArityOf(ParamFieldType(shaderField.Size));
+                    if (targetArity == 0)
+                        return std::unexpected(
+                            "CompileMaterialGraph: param field '" + shaderField.Name +
+                            "' has an unsupported size");
 
-                // The paired sampler, emitted implicitly by convention <Name>Sampler.
-                CompiledField sampler;
-                sampler.Name = input.Name + "Sampler";
-                sampler.Type = "sampler";
-                sampler.SamplerTexture = input.Name;
-                fields.push_back(std::move(sampler));
-                continue;
+                    Veng::f32 value[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+                    if (paramCursor < paramFeeders.size())
+                        ReadParamValue(graph, paramFeeders[paramCursor++], value);
+
+                    CompiledField field;
+                    field.Name = shaderField.Name;
+                    field.Type = VecTypeName(targetArity);
+                    for (Veng::u32 i = 0; i < targetArity; ++i)
+                        field.Values.push_back(value[i]);
+                    fields.push_back(std::move(field));
+                    break;
+                }
             }
-
-            // A numeric value source (a Param, or any node whose output pin is a
-            // scalar/vector leaf) feeds a param field. The emitted arity is the
-            // target field's; coercion is read from the source output pin's type.
-            const Veng::u32 targetArity = ArityOf(input.Type.Type);
-            const PinType sourceType = OutputPinType(graph, catalog, *link);
-            const Veng::u32 sourceArity = ArityOf(sourceType.Type);
-
-            if (targetArity == 0 || sourceArity == 0)
-            {
-                return std::unexpected(
-                    "CompileMaterialGraph: output pin '" + input.Name + "' is fed by an unsupported node");
-            }
-
-            Veng::f32 value[4];
-            ReadParamValue(graph, link->From.Node, value);
-
-            CompiledField field;
-            field.Name = input.Name;
-            field.Type = VecTypeName(targetArity);
-
-            // Coercion: a scalar source splats across the target's components; a
-            // wider source truncates to the target arity. An equal-arity source
-            // copies straight through.
-            if (sourceArity == 1 && targetArity > 1)
-            {
-                for (Veng::u32 i = 0; i < targetArity; ++i)
-                    field.Values.push_back(value[0]);
-            }
-            else
-            {
-                for (Veng::u32 i = 0; i < targetArity; ++i)
-                    field.Values.push_back(value[i]);
-            }
-
-            fields.push_back(std::move(field));
         }
 
         return fields;
     }
 
     Veng::string WriteMaterialVmat(const Veng::vector<CompiledField>& fields,
-                                   const MaterialShaderInterface& shader)
+                                   const MaterialShaderInterface& shader,
+                                   Veng::MaterialDomain domain)
     {
         Json out = Json::object();
+
+        out["domain"] = DomainKey(domain);
 
         Json shaders = Json::object();
         shaders["vertex"] = shader.VertexShader.Value;
@@ -242,28 +256,34 @@ namespace VengEditor
         const NodeId outputNode = graph.AddNode(types.MaterialOutput);
         graph.MoveNode(outputNode, Veng::vec2{600.0f, 0.0f});
 
-        // One feeder node per MaterialOutput input pin, laid out in a left column.
+        // One feeder node per non-sampler material field, laid out in a left column.
+        // A feeder wires into the next free domain output sink it can connect to;
+        // sinks are the domain contract (Albedo/Normal or Color), so a feeder list
+        // longer than the sink set leaves the surplus feeders unconnected — they
+        // still carry their authored value into compile, which binds by field order.
         Veng::f32 row = 0.0f;
         constexpr Veng::f32 RowStride = 160.0f;
+        Veng::usize nextSink = 0;
 
-        for (Veng::usize pin = 0; pin < outputType->Inputs.size(); ++pin)
-        {
-            const PinDesc& input = outputType->Inputs[pin];
-
-            // The matching field by name carries the Kind and (for textures) the id.
-            const Veng::MaterialField* field = nullptr;
-            for (const Veng::MaterialField& f : shader.Fields)
+        const auto wireToSink = [&](NodeId feeder, const PinType& outPin) {
+            while (nextSink < outputType->Inputs.size())
             {
-                if (f.Name == input.Name)
-                {
-                    field = &f;
-                    break;
-                }
+                const Veng::u16 sink = static_cast<Veng::u16>(nextSink++);
+                if (!MaterialCanConnect(outPin, outputType->Inputs[sink].Type))
+                    continue;
+                const Veng::VoidResult result =
+                    graph.Connect(PinRef{feeder, 0}, PinRef{outputNode, sink});
+                if (result)
+                    return;
             }
-            VE_ASSERT(field != nullptr,
-                      "BuildGraphFromMaterial: an output pin has no matching field");
+        };
 
-            if (field->Kind == Veng::MaterialField::FieldKind::TextureHandle)
+        for (const Veng::MaterialField& field : shader.Fields)
+        {
+            if (field.Kind == Veng::MaterialField::FieldKind::SamplerHandle)
+                continue; // a sampler is paired to its texture, never its own node
+
+            if (field.Kind == Veng::MaterialField::FieldKind::TextureHandle)
             {
                 const NodeId sample = graph.AddNode(types.TextureSample);
                 graph.MoveNode(sample, Veng::vec2{0.0f, row});
@@ -271,27 +291,22 @@ namespace VengEditor
                 const NodeType* sampleType = catalog.Find(types.TextureSample);
                 VE_ASSERT(sampleType != nullptr && !sampleType->Properties.empty(),
                           "BuildGraphFromMaterial: TextureSample lacks its Texture property");
-                const Veng::u64 id = field->TextureId;
+                const Veng::u64 id = field.TextureId;
                 const std::byte* idBytes = reinterpret_cast<const std::byte*>(&id);
                 graph.SetProperty(sample, sampleType->Properties[0],
                                   std::span<const std::byte>(idBytes, sizeof(id)));
 
-                const PinRef from{sample, 0}; // Color
-                const PinRef to{outputNode, static_cast<Veng::u16>(pin)};
-                const Veng::VoidResult result = graph.Connect(from, to);
-                VE_ASSERT(static_cast<bool>(result),
-                          "BuildGraphFromMaterial: failed to wire a texture pin");
+                wireToSink(sample, sampleType->Outputs[0].Type);
             }
             else // Param
             {
                 const NodeId paramNode = graph.AddNode(types.Param);
                 graph.MoveNode(paramNode, Veng::vec2{0.0f, row});
 
-                const PinRef from{paramNode, 0}; // Value
-                const PinRef to{outputNode, static_cast<Veng::u16>(pin)};
-                const Veng::VoidResult result = graph.Connect(from, to);
-                VE_ASSERT(static_cast<bool>(result),
-                          "BuildGraphFromMaterial: failed to wire a param pin");
+                const NodeType* paramType = catalog.Find(types.Param);
+                VE_ASSERT(paramType != nullptr && !paramType->Outputs.empty(),
+                          "BuildGraphFromMaterial: Param lacks its Value output");
+                wireToSink(paramNode, paramType->Outputs[0].Type);
             }
 
             row += RowStride;
