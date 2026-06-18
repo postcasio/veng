@@ -146,7 +146,7 @@ first leak `Veng::UI` removes even under the wrapper-only scope.
 | 02 | [hello-triangle game-tier proof](02-migrate-hello-triangle.md) | Migrate `examples/hello-triangle/main.cpp`'s debug panel fully off raw `ImGui::` (Window/Stats panels, `Combo`, `Image`, `Text`, `ContentRegionAvail`, `FrameRate`). Proof: a game module authors UI with **zero** `ImGui::` at widget sites. | done |
 | 03 | [Reflection inspector on `Veng::UI`](03-fieldwidget-rewrite.md) | Rewrite `editor/src/FieldWidget.cpp` (`DrawFieldWidget` + `DrawAssetPicker`) on `Veng::UI` overloads — the showcase: the `FieldClass::Vector` three-way switch collapses into one `Drag`, and the per-`FieldClass` widgets all route through the engine surface. Shared by the entity inspector and the node-property inspector. | done |
 | 04 | [Editor panels on `Veng::UI`](04-migrate-editor-panels.md) | Migrate the remaining editor widget-authoring sites: `AssetBrowserPanel`, `ConsolePanel`, `InspectorPanel`, `MaterialEditorPanel`, `SceneViewportPanel`, `TextureEditorPanel`, `MaterialPreview`, and `EditorHost`'s menu bar + per-panel `Begin`/`End`. Frame-lifecycle/dock/present plumbing stays raw. | done |
-| 05 | [Docs + roadmap re-cut](05-docs-roadmap.md) | `CLAUDE.md` `Veng::UI` paragraph, `plans/README.md` entry, `plans/future/README.md` area-12 status → done, this status table. No code. | proposed |
+| 05 | [Docs + roadmap re-cut](05-docs-roadmap.md) | `CLAUDE.md` `Veng::UI` paragraph, `plans/README.md` entry, `plans/future/README.md` area-12 status → done, this status table. No code. | done |
 
 ## Dependency analysis
 

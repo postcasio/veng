@@ -428,6 +428,44 @@ SOURCES …)`** is its editor sibling — it emits `lib<name>_editor` (SHARED, l
 - **Game-code hot-reload is out** — restart the play session. (Distinct from *asset*
   hot-reload, the async path.)
 
+### Veng::UI: the engine-tier immediate-mode vocabulary
+
+`Veng::UI` (`engine/include/Veng/UI/`, in `libveng`) is the engine-tier immediate-mode
+vocabulary fronting ImGui. UI is authored against it, not raw `ImGui::`, at every widget
+site — game modules and the editor both. (`Veng::UI` is the only reason a game links a UI
+surface; it does not link the editor framework for a debug slider.)
+
+- **One `Drag`, overloaded on the value type** — `f32`/`vec2`/`vec3`/`vec4`/`i32`. Options
+  are designated-initializer structs (`DragOptions`, `SliderOptions` — `.Speed`/`.Min`/
+  `.Max`/`.Format`), never an `ImGui*Flags` value. Configurability is deliberately reduced
+  for call-site consistency: only the knobs the engine wants UI authors to vary are exposed.
+  The closed `FieldClass` set maps onto this closed overload set, so the reflection
+  inspector's `Vector` dispatch is a single `Drag` call.
+- **Every editable widget returns `[[nodiscard]] bool`** ("changed"), keeping immediate-mode
+  semantics.
+- **Text is preformatted `string_view`, not printf varargs** — a caller writes
+  `UI::Text(fmt::format("{}: {}", a, b))`. fmt is veng's one formatting idiom.
+- **RAII scope guards** (`UI::Window`/`Child`/`TreeNode`/`CollapsingHeader`/`Table`/`Menu`/
+  `Popup`/`Disabled`/`PushId`/`StyleColor`/`StyleVar`/…) replace every begin/end and
+  push/pop pair, closing on scope exit so the close survives every early-out. Flags are
+  engine vocab enums (`WindowFlags`, `TreeFlags`, `StyleColorId`, `StyleVarId`), not
+  `ImGui*Flags`. `EditorPanel::GetWindowFlags()` returns `UI::WindowFlags`.
+- **The `Veng/UI/` headers are imgui-free in their signatures and members.** `<imgui.h>`
+  appears only under `engine/src/UI/` (the scope-guard dtors are defined out-of-line there).
+  The one ImGui-adjacent type a signature names is the engine's own `ImGuiTexture`
+  (`UI::Image(const Ref<ImGuiTexture>&, vec2)`), already an engine wrapper. This keeps the
+  surface within `include_hygiene`'s existing guarantee.
+- **ImGui stays a PUBLIC dependency** (wrapper-only) — the aim is call-site consistency and a
+  tight surface, not hiding ImGui. Driving ImGui fully private (no `<imgui.h>` reachable
+  through any public header, imgui linked PRIVATE) is a possible later planset `Veng::UI`
+  unblocks.
+- **The boundary.** `Veng::UI` replaces `ImGui::` only at widget-authoring sites. ImGui's
+  frame lifecycle (`CreateContext`/`NewFrame`/`Render`/`GetDrawData`/`GetIO`/…) and the
+  host/dock/present plumbing (`DockSpaceOverViewport`/`UpdatePlatformWindows`/…) are the
+  integration layer and stay raw in `ImGuiLayer`/`EditorHost`. Keyboard/mouse queries stay
+  thin and converge with the event/input area rather than growing a parallel key-enum, so a
+  few raw key/mouse-button sites remain in the editor panels.
+
 ### Editor
 
 The editor is a separate executable, not part of the runtime. `libveng_editor` is the

@@ -246,6 +246,28 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   CMake target and `veng::` alias), retiring the old name.
   Win 3 adds an engine-provided `ImGuiCompositePass` for the scene-behind-ImGui composite.
 
+- **[planset-17](planset-17/README.md)** — the `Veng::UI` toolkit (✅ done, 6 plans).
+  Takes up [future area 12](future/README.md#12-ui-toolkit--vengui): fronts ImGui with a
+  thin, opinionated, engine-tier **`Veng::UI`** vocabulary (in `libveng`,
+  `engine/include/Veng/UI/`) so UI is authored against an engine surface rather than raw
+  `ImGui::` at the call site — for game modules *and* the editor both. The base vocab is one
+  `Drag` overloaded on `f32`/`vec2`/`vec3`/`vec4`/`i32`, designated-initializer options
+  structs (`DragOptions`/`SliderOptions`) instead of `ImGui*Flags`, `fmt`-preformatted
+  `string_view` text, edit widgets returning `[[nodiscard]] bool`, and RAII scope guards
+  (`Window`/`TreeNode`/`Table`/`Menu`/`PushId`/`StyleVar`/…) for every begin/end and push/pop
+  pair — with **imgui-free public-header signatures** (`<imgui.h>` only under
+  `engine/src/UI/`, kept within `include_hygiene`). Then the **complete migration** of every
+  widget-authoring `ImGui::` site: hello-triangle's game-module debug panel to **zero** raw
+  `ImGui::` (the game-tier proof), the reflection inspector's per-`FieldClass` dispatch routed
+  through one overloaded `Drag` (the `Vector` three-way switch gone), and the editor's panels
+  + menu bar onto the engine surface. **Wrapper-only:** ImGui stays a PUBLIC dependency this
+  round; the imgui-free headers already meet the contract a future "drive imgui private"
+  planset needs. ImGui's frame lifecycle and host/dock/present plumbing stay raw in
+  `ImGuiLayer`/`EditorHost` (the integration-layer boundary), and the thin key/mouse-button
+  query sites stay raw, flagged to converge with the event/input area. Held back: the stateful
+  editor-widget-class pattern (a `FileBrowser`-style `Draw()`-returns-event), taken up when a
+  widget that holds persistent state needs extracting; and driving ImGui fully private.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). The remaining work is the **editor's scene editor**
   (area 6, sub-area D — its gates met by planset-10/11/12/14/15), the **event/input**
