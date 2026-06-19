@@ -184,9 +184,10 @@ namespace Veng::Renderer
         // The fixed byte stride of one frame-in-flight's view-constants region in
         // the binding-ViewConstantsBinding ByteAddressBuffer. One stride per
         // frame-in-flight; a pass reads at index * ViewConstantsStride. The
-        // ViewConstants block (an InvViewProj mat4 + three vec4) is 112 bytes, well
-        // within the stride.
-        static constexpr u32 ViewConstantsStride = 256;
+        // ViewConstants block (InvViewProj + CameraPosition + the directional
+        // light-space matrix + shadow params + the SSAO view/projection matrices)
+        // is 288 bytes, within the stride.
+        static constexpr u32 ViewConstantsStride = 512;
 
         // The fixed byte stride of one GpuLight entry in the binding-LightBinding
         // ByteAddressBuffer. The GpuLight struct (four vec4) is 64 bytes; the pass

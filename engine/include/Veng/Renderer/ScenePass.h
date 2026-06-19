@@ -89,6 +89,13 @@ namespace Veng::Renderer
         ResourceId Hdr;
         TextureHandle HdrHandle;
 
+        // The screen-space AO target the SsaoScenePass produces and the lighting
+        // pass samples — valid only when the AO pass is wired (Settings.AO). The id
+        // is the SsaoScenePass's own Imported target; the handle is its bindless
+        // slot. An invalid handle means no AO pass this build.
+        ResourceId Ssao;
+        TextureHandle SsaoHandle;
+
         // The shared sampler bindless slot a fullscreen pass samples through.
         SamplerHandle SamplerHandle;
 

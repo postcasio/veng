@@ -306,6 +306,15 @@ private:
                 m_Composite->SetSceneSource(m_SceneRenderer->GetOutput());
             }
 
+            // The SSAO toggle is a topology change (Configure → recompile), the same
+            // GetOutput()-invalidated re-bind as the Mode combo.
+            if (UI::Checkbox("SSAO", m_SceneSettings.AO))
+            {
+                m_SceneRenderer->Configure(m_SceneSettings);
+                m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
+                m_Composite->SetSceneSource(m_SceneRenderer->GetOutput());
+            }
+
             const vec2 available = UI::ContentRegionAvail();
             const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
             const f32 aspect = static_cast<f32>(output->GetImage()->GetHeight()) /

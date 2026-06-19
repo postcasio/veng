@@ -2,6 +2,7 @@
 #include <Veng/Renderer/ScenePass.h>
 
 #include "ShadowScenePass.h"
+#include "SsaoScenePass.h"
 
 #include <array>
 #include <cmath>
@@ -41,6 +42,8 @@ namespace Veng::Renderer
         // core-pack ids (the AssetManager auto-mounts the core pack).
         constexpr AssetId FullscreenVertId{0xF46DD3C6F2AE0628ULL};
         constexpr AssetId DeferredLightingFragId{0x6569EBAC0810CC1FULL};
+        constexpr AssetId DeferredLightingSsaoFragId{0x6EEF5D26BAF2849FULL};
+        constexpr AssetId SsaoFragId{0xCCBA63DB760A4E8EULL};
         constexpr AssetId TonemapMaterialId{0xBC968C8771B00434ULL};
         constexpr AssetId AlbedoBlitFragId{0xF90F709155D04BE7ULL};
         constexpr AssetId NormalBlitFragId{0x5A2CD7B270EAE5CDULL};
@@ -58,6 +61,11 @@ namespace Veng::Renderer
         // is established on the platform.
         constexpr Format HdrFormat = Format::RGBA16Sfloat;
         constexpr ImageUsage HdrUsage = ImageUsage::ColorAttachment | ImageUsage::Sampled;
+
+        // The SSAO target's color format: a single-channel unorm occlusion factor.
+        // The SsaoScenePass owns the image; the renderer builds the SSAO pass
+        // pipeline against this format.
+        constexpr Format SsaoFormat = Format::R8Unorm;
 
         // The shared push-constant block both brick stages declare: the vertex
         // stage's MVP (offset 0) and the per-draw MaterialIndex (offset 64,
@@ -100,6 +108,26 @@ namespace Veng::Renderer
             u32 LightCount;
         };
 
+        // The SSAO-enabled lighting variant's push block: the base lighting fields
+        // plus the screen-space AO bindless slot the AO fold samples. Matches the
+        // deferred_lighting_ssao.frag PushConstants byte-for-byte (twelve packed
+        // u32s — three pads carry the cursor to a 16-byte boundary).
+        struct SsaoLightingPushConstants
+        {
+            u32 AlbedoTexture;
+            u32 NormalTexture;
+            u32 OrmTexture;
+            u32 DepthTexture;
+            u32 Sampler;
+            u32 ViewConstantsIndex;
+            u32 LightBase;
+            u32 LightCount;
+            u32 SsaoTexture;
+            u32 Pad0;
+            u32 Pad1;
+            u32 Pad2;
+        };
+
         // One light packed for the ring-buffered light buffer (set-0 binding 6),
         // std430-friendly, matching the shader's GpuLight byte-for-byte. Position is
         // the entity's world transform; Type is a LightType cast to float.
@@ -122,6 +150,8 @@ namespace Veng::Renderer
             vec4 CameraPosition; // xyz; w unused
             mat4 LightViewProj;  // directional light's world → light-clip transform
             vec4 ShadowParams;   // x shadow-map handle, y sampler handle, z 1/resolution, w enabled (0/1)
+            mat4 View;           // world → view (the SSAO pass reconstructs view space)
+            mat4 Proj;           // view → clip
         };
 
         static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,
@@ -306,8 +336,11 @@ namespace Veng::Renderer
         class DeferredLightingScenePass final : public ScenePass
         {
         public:
-            DeferredLightingScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent)
-                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent)
+            // useSsao selects the SSAO-enabled pipeline + push block: the pass then
+            // also samples the AO target (io.Ssao) and pushes the SSAO bindless slot.
+            // The renderer hands it the matching pipeline; the two stay paired.
+            DeferredLightingScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent, bool useSsao)
+                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent), m_UseSsao(useSsao)
             {
             }
 
@@ -319,7 +352,9 @@ namespace Veng::Renderer
                 const TextureHandle normalHandle = io.NormalHandle;
                 const TextureHandle ormHandle = io.OrmHandle;
                 const TextureHandle depthHandle = io.DepthHandle;
+                const TextureHandle ssaoHandle = io.SsaoHandle;
                 const SamplerHandle samplerHandle = io.SamplerHandle;
+                const bool useSsao = m_UseSsao;
 
                 RenderGraph::PassBuilder builder = graph.AddPass("Deferred Lighting");
                 builder.Color({
@@ -340,7 +375,10 @@ namespace Veng::Renderer
                 if (io.ShadowMap.IsValid())
                     builder.Sample(io.ShadowMap);
 
-                builder.Execute([this, albedoHandle, normalHandle, ormHandle, depthHandle, samplerHandle](PassContext& inner)
+                if (useSsao)
+                    builder.Sample(io.Ssao);
+
+                builder.Execute([this, albedoHandle, normalHandle, ormHandle, depthHandle, ssaoHandle, samplerHandle, useSsao](PassContext& inner)
                     {
                         const ScenePassContext ctx = Wrap(inner);
                         CommandBuffer& cmd = ctx.Cmd();
@@ -350,16 +388,33 @@ namespace Veng::Renderer
                         cmd.SetViewport({0, 0}, m_Extent);
                         cmd.SetScissor({0, 0}, m_Extent);
                         registry.Bind(cmd);
-                        cmd.PushConstants(LightingPushConstants{
-                            .AlbedoTexture = albedoHandle.Index,
-                            .NormalTexture = normalHandle.Index,
-                            .OrmTexture = ormHandle.Index,
-                            .DepthTexture = depthHandle.Index,
-                            .Sampler = samplerHandle.Index,
-                            .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
-                            .LightBase = registry.GetCurrentLightBase(),
-                            .LightCount = ctx.View().LightCount,
-                        });
+                        if (useSsao)
+                        {
+                            cmd.PushConstants(SsaoLightingPushConstants{
+                                .AlbedoTexture = albedoHandle.Index,
+                                .NormalTexture = normalHandle.Index,
+                                .OrmTexture = ormHandle.Index,
+                                .DepthTexture = depthHandle.Index,
+                                .Sampler = samplerHandle.Index,
+                                .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
+                                .LightBase = registry.GetCurrentLightBase(),
+                                .LightCount = ctx.View().LightCount,
+                                .SsaoTexture = ssaoHandle.Index,
+                            });
+                        }
+                        else
+                        {
+                            cmd.PushConstants(LightingPushConstants{
+                                .AlbedoTexture = albedoHandle.Index,
+                                .NormalTexture = normalHandle.Index,
+                                .OrmTexture = ormHandle.Index,
+                                .DepthTexture = depthHandle.Index,
+                                .Sampler = samplerHandle.Index,
+                                .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
+                                .LightBase = registry.GetCurrentLightBase(),
+                                .LightCount = ctx.View().LightCount,
+                            });
+                        }
                         cmd.DrawFullscreenTriangle();
                     });
             }
@@ -368,6 +423,7 @@ namespace Veng::Renderer
             Context& m_Context;
             Ref<GraphicsPipeline> m_Pipeline;
             uvec2 m_Extent;
+            bool m_UseSsao = false;
         };
 
         // A reusable fullscreen blit pass: samples one g-buffer channel (selected by
@@ -595,6 +651,8 @@ namespace Veng::Renderer
 
         const AssetHandle<Veng::Shader> vs = LoadShader(FullscreenVertId, "fullscreen vertex");
         const AssetHandle<Veng::Shader> lightingFs = LoadShader(DeferredLightingFragId, "deferred-lighting fragment");
+        const AssetHandle<Veng::Shader> ssaoLightingFs = LoadShader(DeferredLightingSsaoFragId, "deferred-lighting SSAO fragment");
+        const AssetHandle<Veng::Shader> ssaoFs = LoadShader(SsaoFragId, "SSAO fragment");
         const AssetHandle<Veng::Shader> albedoBlitFs = LoadShader(AlbedoBlitFragId, "albedo-blit fragment");
         const AssetHandle<Veng::Shader> normalBlitFs = LoadShader(NormalBlitFragId, "normal-blit fragment");
         const AssetHandle<Veng::Shader> depthBlitFs = LoadShader(DepthBlitFragId, "depth-blit fragment");
@@ -622,6 +680,24 @@ namespace Veng::Renderer
             .PushConstantRanges = {PushConstantRange::Of<LightingPushConstants>(ShaderStage::Fragment)},
         });
         m_LightingPipeline = MakePipeline("SceneRenderer Deferred Lighting Pipeline", m_LightingLayout, lightingFs, HdrFormat);
+
+        // The SSAO-enabled lighting variant: a wider push block (the AO bindless
+        // slot) and the AO-fold fragment shader. Selected over m_LightingPipeline
+        // when Settings.AO is on.
+        m_SsaoLightingLayout = PipelineLayout::Create(m_Context, {
+            .Name = "SceneRenderer SSAO Lighting Layout",
+            .PushConstantRanges = {PushConstantRange::Of<SsaoLightingPushConstants>(ShaderStage::Fragment)},
+        });
+        m_SsaoLightingPipeline = MakePipeline("SceneRenderer Deferred Lighting SSAO Pipeline", m_SsaoLightingLayout, ssaoLightingFs, HdrFormat);
+
+        // The SSAO pass's fullscreen pipeline: samples the g-buffer normal/depth and
+        // writes the single-channel R8 AO target. Its push block is the SSAO pass's
+        // own (g-buffer slots + extent), an eight-u32 fragment range.
+        m_SsaoLayout = PipelineLayout::Create(m_Context, {
+            .Name = "SceneRenderer SSAO Layout",
+            .PushConstantRanges = {PushConstantRange{.Offset = 0, .Size = 32, .Stages = ShaderStage::Fragment}},
+        });
+        m_SsaoPipeline = MakePipeline("SceneRenderer SSAO Pipeline", m_SsaoLayout, ssaoFs, SsaoFormat);
 
         // The Final chain's tail is the core tonemap PostProcess material driven by
         // a PostProcessScenePass (rather than a hardcoded pipeline): it samples the
@@ -832,6 +908,14 @@ namespace Veng::Renderer
         m_ShadowActive = shadowActive;
         m_ShadowPass = nullptr;
 
+        // The SSAO pass runs only in the Final mode (the debug views terminate after
+        // the g-buffer); when active it inserts the fullscreen AO pass before lighting
+        // and selects the AO-fold lighting variant, so its import is declared and bound
+        // only then.
+        const bool ssaoActive = m_Settings.Mode == DebugView::Final && m_Settings.AO;
+        m_SsaoActive = ssaoActive;
+        m_SsaoPass = nullptr;
+
         RenderGraph graph(m_Context);
         const ResourceId albedoId = graph.Import("SceneRenderer GBuffer Albedo");
         const ResourceId normalId = graph.Import("SceneRenderer GBuffer Normal");
@@ -859,6 +943,10 @@ namespace Veng::Renderer
             m_BloomResultId = graph.Import("SceneRenderer Bloom Result");
         }
 
+        TextureHandle ssaoHandle{};
+        if (ssaoActive)
+            m_SsaoId = graph.Import("SceneRenderer SSAO");
+
         m_Passes.clear();
 
         // The shadow pass is first when active — it writes the shadow map the
@@ -879,7 +967,21 @@ namespace Veng::Renderer
         {
             case DebugView::Final:
             {
-                m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(m_Context, m_LightingPipeline, m_Extent));
+                // The SSAO pass writes its AO target before lighting samples it; it
+                // owns the target (recreated through the deferred Release() path on
+                // Resize/Configure) and produces the handle the lighting variant folds
+                // into its ambient term.
+                if (ssaoActive)
+                {
+                    auto ssaoPass = CreateUnique<SsaoScenePass>(
+                        m_Context, m_SsaoPipeline, m_SamplerHandle, m_Extent);
+                    m_SsaoPass = ssaoPass.get();
+                    ssaoHandle = ssaoPass->GetAoHandle();
+                    m_Passes.push_back(std::move(ssaoPass));
+                }
+
+                m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
+                    m_Context, ssaoActive ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent, ssaoActive));
 
                 // The tonemap stage's input: the bloom composite result when bloom is
                 // on, the raw HDR target otherwise. The four bloom stages sit between
@@ -986,6 +1088,8 @@ namespace Veng::Renderer
             .DepthHandle = m_DepthHandle,
             .Hdr = hdrId,
             .HdrHandle = m_HdrHandle,
+            .Ssao = m_SsaoId,
+            .SsaoHandle = ssaoHandle,
             .SamplerHandle = m_SamplerHandle,
             .ShadowMap = shadowId,
             .ShadowHandle = shadowHandle,
@@ -1117,6 +1221,8 @@ namespace Veng::Renderer
             .CameraPosition = vec4(view.Camera.GetPosition(), 0.0f),
             .LightViewProj = lightViewProj,
             .ShadowParams = shadowParams,
+            .View = view.Camera.View(),
+            .Proj = view.Camera.Projection(),
         };
         registry.WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
 
@@ -1139,6 +1245,10 @@ namespace Veng::Renderer
             bindings.push_back({m_BloomBlurVId, m_BloomBlurVView});
             bindings.push_back({m_BloomResultId, m_BloomResultView});
         }
+        // The SSAO import binds the pass-owned AO target's current view; the pass is
+        // the renderer-owned SsaoScenePass in m_Passes.
+        if (m_SsaoActive && m_SsaoPass != nullptr)
+            bindings.push_back({m_SsaoId, m_SsaoPass->GetAoView()});
         m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
     }
 

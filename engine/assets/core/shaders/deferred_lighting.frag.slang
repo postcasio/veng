@@ -4,6 +4,11 @@
 // from depth, and evaluates a Cook-Torrance BRDF over a list of typed lights read
 // from the per-frame light buffer. Writes linear HDR.
 //
+// VE_USE_SSAO selects a compile-time variant: when defined (by the
+// deferred_lighting_ssao.frag wrapper), the screen-space AO target is sampled and
+// folded into the ambient/occlusion term. SSAO is a compile variant, not a
+// per-frame branch — the renderer selects the lighting pipeline by its AO setting.
+//
 // Color space: G0 is an sRGB target, so the sample decodes albedo to linear; the
 // HDR output is a linear float target, so the lit color stays linear (the tail
 // tonemap/composite handles display encoding). World-space normals are sampled
@@ -15,7 +20,7 @@
 [[vk::binding(5, 0)]] ByteAddressBuffer g_ViewConstants;
 [[vk::binding(6, 0)]] ByteAddressBuffer g_Lights;
 
-static const uint ViewConstantsStride = 256;
+static const uint ViewConstantsStride = 512;
 static const uint LightStride = 64;
 
 // LightType, matching the Light builtin's enum (Directional/Point/Spot).
@@ -29,6 +34,8 @@ struct ViewConstants
     float4   CameraPosition;
     float4x4 LightViewProj;  // directional light's world → light-clip transform
     float4   ShadowParams;   // x shadow-map handle, y sampler handle, z 1/resolution, w enabled (0/1)
+    float4x4 View;           // world → view (the SSAO variant reconstructs view space)
+    float4x4 Proj;           // view → clip
 };
 
 // One light, packed by the renderer into the ring-buffered light buffer. Position
@@ -51,6 +58,12 @@ struct PushConstants
     uint ViewConstantsIndex;  // current frame-in-flight's view-constants region
     uint LightBase;           // current frame's base index into the light buffer
     uint LightCount;          // live light count this frame
+#if VE_USE_SSAO
+    uint SsaoTexture;         // screen-space AO bindless index (the SSAO variant only)
+    uint Pad0;
+    uint Pad1;
+    uint Pad2;
+#endif
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -260,9 +273,20 @@ float4 fsMain(VSOutput input) : SV_Target
         direct += EvaluateLight(N, V, L, radiance * attenuation, albedo, roughness, metallic, f0) * visibility;
     }
 
-    // Ambient gated by the baked occlusion (× OcclusionStrength, already folded
-    // into ORM.r by the geometry pass's material) so the occlusion channel reads.
-    float3 ambient = AmbientColor * albedo * occlusion;
+    // The ambient occlusion factor. The SSAO variant samples the screen-space AO
+    // target and combines it with the baked ORM.r occlusion by min — SSAO modulates
+    // the ambient/indirect term only, never the direct Cook-Torrance light. The
+    // non-SSAO variant uses the baked occlusion (× OcclusionStrength, already folded
+    // into ORM.r by the geometry pass's material) alone.
+#if VE_USE_SSAO
+    float ssao = g_Textures[NonUniformResourceIndex(g_PC.SsaoTexture)].Sample(samp, input.v_UV).r;
+    float ambientOcclusion = min(occlusion, ssao);
+#else
+    float ambientOcclusion = occlusion;
+#endif
+
+    // Ambient gated by the combined occlusion so the occlusion channel reads.
+    float3 ambient = AmbientColor * albedo * ambientOcclusion;
 
     // Scalar emissive: the surface's own albedo scaled by the emissive strength.
     float3 emission = albedo * emissive;
