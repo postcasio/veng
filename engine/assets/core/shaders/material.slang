@@ -40,6 +40,8 @@ struct ViewConstants
 {
     float4x4 InvViewProj;       // world-position reconstruction from depth
     float4   CameraPosition;    // xyz; w unused
+    float4x4 LightViewProj;     // directional light's world → light-clip transform
+    float4   ShadowParams;      // x shadow-map handle, y sampler handle, z 1/resolution, w enabled (0/1)
 };
 
 static const uint ViewConstantsStride = 256;
