@@ -13,8 +13,8 @@
 // HDR output is a linear float target, so the lit color stays linear (the tail
 // tonemap/composite handles display encoding). World-space normals are sampled
 // straight from G1 (a signed float target). World position is reconstructed from
-// the depth attachment via ViewConstants.InvViewProj — the only depth target read
-// as a texture in the engine — rather than stored in a fat position target.
+// the depth attachment via ViewConstants.InvViewProj — one of the two depth targets
+// read as textures in the engine — rather than stored in a fat position target.
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 [[vk::binding(5, 0)]] ByteAddressBuffer g_ViewConstants;

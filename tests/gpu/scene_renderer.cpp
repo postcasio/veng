@@ -628,8 +628,37 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(Differs(albedoCenter, normalCenter));
     CHECK(Differs(normalCenter, depthCenter));
 
+    // The packed-ORM channel arms (Roughness/Metallic/Occlusion) each blit one G2
+    // channel as greyscale — a valid recompile to a single-channel debug view.
+    renderer->Configure({.Mode = DebugView::Roughness});
+    const vec3 roughnessCenter = Center();
+    CHECK(roughnessCenter.r == doctest::Approx(roughnessCenter.g).epsilon(0.02f));
+    CHECK(roughnessCenter.g == doctest::Approx(roughnessCenter.b).epsilon(0.02f));
+
+    renderer->Configure({.Mode = DebugView::Metallic});
+    const vec3 metallicCenter = Center();
+    CHECK(metallicCenter.r == doctest::Approx(metallicCenter.g).epsilon(0.02f));
+
+    renderer->Configure({.Mode = DebugView::Occlusion});
+    const vec3 occlusionCenter = Center();
+    CHECK(occlusionCenter.r == doctest::Approx(occlusionCenter.g).epsilon(0.02f));
+
+    // The AO and Shadows arms force-wire their producing battery pass (regardless of
+    // the AO/Shadows settings, both off here) and blit its target as greyscale —
+    // exercising the graceful-degradation path. They recompile and render without
+    // error to a valid grey debug view.
+    renderer->Configure({.Mode = DebugView::AO, .Bloom = false, .Shadows = false, .AO = false});
+    const vec3 aoCenter = Center();
+    CHECK(aoCenter.r == doctest::Approx(aoCenter.g).epsilon(0.02f));
+    CHECK(aoCenter.g == doctest::Approx(aoCenter.b).epsilon(0.02f));
+
+    renderer->Configure({.Mode = DebugView::Shadows, .Bloom = false, .Shadows = false, .AO = false});
+    const vec3 shadowCenter = Center();
+    CHECK(shadowCenter.r == doctest::Approx(shadowCenter.g).epsilon(0.02f));
+    CHECK(shadowCenter.g == doctest::Approx(shadowCenter.b).epsilon(0.02f));
+
     // Configure back to Final restores the lit result.
-    renderer->Configure({.Mode = DebugView::Final});
+    renderer->Configure({.Mode = DebugView::Final, .Bloom = false});
     const vec3 restored = Center();
     CHECK(restored.r == doctest::Approx(finalCenter.r).epsilon(0.02f));
 

@@ -37,9 +37,22 @@ namespace Veng::Renderer
 
     // Which result the renderer produces, re-wiring the pass set: Final is the full
     // deferred chain (g-buffer → lighting → tonemap), the others terminate the chain
-    // after the g-buffer with a single fullscreen debug blit of one g-buffer channel.
-    // Changing it is a genuine topology change driven through Configure → recompile.
-    enum class DebugView : u8 { Final, Albedo, Normal, Depth };
+    // after the g-buffer (and, for AO/Shadows, the producing battery pass) with a
+    // single fullscreen debug blit of one channel/target. Changing it is a genuine
+    // topology change driven through Configure → recompile.
+    //
+    // Roughness/Metallic/Occlusion read the packed G2 ORM channels (R=occlusion,
+    // G=roughness, B=metallic). AO reads the SSAO target and Shadows the directional
+    // shadow map; the producing pass is force-wired in those modes so the channel is
+    // always present regardless of the Settings.AO / Settings.Shadows toggle.
+    enum class DebugView : u8
+    {
+        Final,
+        Albedo, Normal, Depth,
+        Roughness, Metallic, Occlusion,
+        AO,
+        Shadows,
+    };
 
     // Topology/sizing knobs. A change here is a Configure → recompile: a knob that
     // turns a pass on/off or re-wires the pass set lives here, not in SceneView.
@@ -298,6 +311,16 @@ namespace Veng::Renderer
         Ref<class PipelineLayout> m_NormalBlitLayout;
         Ref<class GraphicsPipeline> m_DepthBlitPipeline;
         Ref<class PipelineLayout> m_DepthBlitLayout;
+        // The ORM-channel blit (one pipeline shared by the Roughness/Metallic/
+        // Occlusion arms — the channel select is a push value, not a separate
+        // pipeline), the AO target blit, and the directional-shadow-map blit. All
+        // write the output format.
+        Ref<class GraphicsPipeline> m_OrmBlitPipeline;
+        Ref<class PipelineLayout> m_OrmBlitLayout;
+        Ref<class GraphicsPipeline> m_AoBlitPipeline;
+        Ref<class PipelineLayout> m_AoBlitLayout;
+        Ref<class GraphicsPipeline> m_ShadowBlitPipeline;
+        Ref<class PipelineLayout> m_ShadowBlitLayout;
 
         // The core tonemap PostProcess material, loaded once at Create. The Final
         // chain's terminal PostProcessScenePass drives it (HDR target as the

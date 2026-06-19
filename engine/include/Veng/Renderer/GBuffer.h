@@ -26,6 +26,8 @@ namespace Veng::Renderer
     namespace GBuffer
     {
         // G0 — base color. rgb is the sRGB-encoded albedo; a is unused (reserved).
+        // Only G2.a carries data (emissive strength), so this is the one free g-buffer
+        // channel before independent colored emissive needs a fourth target.
         inline constexpr Format AlbedoFormat = Format::RGBA8Srgb;
 
         // G1 — world-space normal in xyz.
@@ -37,9 +39,10 @@ namespace Veng::Renderer
         inline constexpr Format ORMFormat = Format::RGBA8Unorm;
 
         // The depth attachment is also the lighting pass's depth source, so it is
-        // sampled as a texture downstream — the only depth target read as a
-        // texture in the engine. The lighting pass reconstructs world position
-        // from it via the camera's inverse view-projection.
+        // sampled as a texture downstream. The lighting pass reconstructs world
+        // position from it via the camera's inverse view-projection. This and the
+        // directional shadow map are the two depth targets read as textures in the
+        // engine.
         inline constexpr Format DepthFormat = Format::D32Sfloat;
 
         // The color attachments are written by the geometry pass and sampled by a

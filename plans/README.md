@@ -297,6 +297,29 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   (`MaterialOutput`'s pins follow the domain's output contract). **Node→Slang codegen** — every
   node an expression emitter generating the fragment source — stays the named follow-on planset.
 
+- **[planset-19](planset-19/README.md)** — PBR `SceneRenderer` + über-pipeline batteries
+  (✅ done, 7 plans). Takes up
+  [future area 8](future/README.md#8-scene-renderer--render-pipeline-architecture--remaining-the-über-pipeline-batteries)'s
+  named **batteries** increment, folding in the **G2 PBR g-buffer target** the area reserved.
+  Turns the minimal deferred spine into a **physically-based deferred renderer**: the g-buffer
+  grows a packed **ORM** target (`float4 ORM : SV_Target2` — occlusion/roughness/metallic +
+  scalar emissive), `MaterialParams` becomes metallic-roughness, and the Lambert pass is
+  replaced by **Cook-Torrance** GGX reconstructing world position from depth, behind a
+  ring-buffered **view-constants buffer** (set-0, 512-byte stride — per-view data rides the
+  buffer, never push constants). On that spine: **tangent-space normal mapping**, **multiple
+  typed lights** (directional/point/spot, a ring-buffered light list the pass loops over), a
+  **directional shadow map** (depth-only `ShadowScenePass` + manual PCF, a fixed-size ortho box
+  since no scene-bounds facility exists yet), **SSAO** (a fullscreen pass folded into the
+  occlusion term), and **bloom authored as a PostProcess material** (the first multi-stage
+  authorable post chain: bright-pass → separable blur → composite ahead of tonemap). Each
+  battery is a `SceneRendererSettings` toggle driving the `Configure` recompile, and a
+  **`DebugView` arm** visualizes every new channel (the packed-ORM `Roughness`/`Metallic`/
+  `Occlusion`, the `AO` target, the directional `Shadows` map). **Scene/mesh AABB + bounds** is
+  named the next prerequisite (the gate on a tight shadow fit and CSM), and **on-tile/
+  subpass-fused deferred** is recorded as a measure-first `RenderGraph`-core change, not a
+  battery. The remaining renderer increments — a transparent/forward pass, shadowed punctual
+  lights, colored emissive, CSM, and clustered light culling — stay future.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the

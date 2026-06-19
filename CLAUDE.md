@@ -312,8 +312,28 @@ Its surface is a **lifetime split** keyed on how often each piece of state chang
   consumer caching a bindless `TextureHandle` or ImGui texture from it must re-fetch
   and re-register after those calls.
 
-The renderer's pipeline images (g-buffer albedo + world-normal, depth, HDR, output)
-are **renderer-owned `Image`/`ImageView`s `Import`ed** into the internal graph — not
+`SceneRenderer` is a **physically-based deferred renderer**: a metallic-roughness
+three-target g-buffer (albedo G0, world-normal G1, packed occlusion/roughness/metallic
++ emissive G2, plus a sampled depth attachment) with **tangent-space normal mapping**,
+a fullscreen **Cook-Torrance** lighting pass evaluating GGX specular + Lambert diffuse
+over **multiple typed lights** (directional / point / spot) and reconstructing world
+position from depth, then tonemap to the output. The batteries hang off the g-buffer: a
+**directional shadow map** (manual PCF, the lighting pass samples it), **SSAO** folded
+into the ambient/occlusion term, and **bloom authored as a PostProcess material** ahead
+of tonemap. Each battery is a `SceneRendererSettings` toggle driving the `Configure`
+recompile.
+
+Per-view data rides a **ring-buffered view-constants buffer**, not push constants: the
+`InvViewProj`/`CameraPosition` (for world-position reconstruction), the directional
+light's light-space matrix, the shadow params, and the SSAO view/projection live in a
+per-frame set-0 buffer ringed for frames-in-flight and selected by an index fold (a
+dynamic-offset descriptor mistranslates in set 0 on MoltenVK). Its stride is **512
+bytes**, holding the combined block. Push constants in the deferred path carry only
+small per-invocation bindless handle indices and the live light count; the typed lights
+ride a separate ring-buffered light buffer the lighting pass loops over.
+
+The renderer's pipeline images (g-buffer albedo / world-normal / ORM, depth, HDR, bloom
+intermediates, output) are **renderer-owned `Image`/`ImageView`s `Import`ed** into the internal graph — not
 graph transients — because a fullscreen pass samples an upstream target through the
 bindless set-0 array, which needs a `Ref<ImageView>` to `Register` (a transient
 exposes only a per-frame `ImageView&`). They are registered into bindless once at
@@ -336,9 +356,14 @@ reads/writes, recording). It knows only how to record, never what feeds it.
 
 The über-pipeline is **batteries-included, not extensible**: a bespoke pass graph
 still means dropping to `RenderGraph` directly (the composite path the sample
-retains). `SceneRendererSettings { DebugView Mode; f32 Exposure; }` carries the
-topology/sizing knobs — `Mode` (Final / Albedo / Normal / Depth) re-wires the pass
-set through `Configure`, the recompile seam; a per-frame value rides `SceneView`.
+retains). `SceneRendererSettings` carries the topology/sizing knobs — `DebugView Mode`
+(Final, plus the `Albedo` / `Normal` / `Depth` g-buffer arms, the `Roughness` /
+`Metallic` / `Occlusion` packed-ORM-channel arms, and the `AO` / `Shadows` battery-target
+arms) re-wires the pass set through `Configure`, the recompile seam; `Exposure`, the
+`Bloom` / `Shadows` / `AO` battery toggles, and `ShadowResolution` are the other recompile
+knobs. A debug arm terminates the chain after the g-buffer (and, for `AO` / `Shadows`, the
+force-wired producing battery pass) with a single fullscreen debug blit; per-frame values
+(bloom threshold/intensity, the camera, the lights) ride `SceneView`.
 
 The renderer-owned images are **single-copy**: one `Execute` resolves and completes
 before the next begins, written-then-read images within a frame are ordered by the
@@ -358,19 +383,23 @@ graph. Ringing the output — or a cross-queue semaphore — is reserved for a f
 async/temporal consumer (TAA/history-buffer reads of an older frame) or a handoff side
 moving off the single graphics queue.
 
-**The deferred opaque material g-buffer contract.** Going deferred changes what an
-opaque material's **fragment shader outputs** — from final swapchain color to
-**g-buffer channels**, written through a single engine-provided `GBufferOutput`
-struct (`float4 Albedo : SV_Target0; float4 Normal : SV_Target1;`). Albedo is
-sRGB-encoded (sampled back as linear); the normal is world-space in a signed float
-format. Depth is the depth attachment, also sampled by the lighting pass — the only
-depth target read as a texture in the engine. The g-buffer layout (channels,
+**The deferred opaque material g-buffer contract.** An opaque (Surface-domain)
+material's **fragment shader outputs** are **g-buffer channels**, not final swapchain
+color, written through a single engine-provided `GBufferOutput` struct
+(`float4 Albedo : SV_Target0; float4 Normal : SV_Target1; float4 ORM : SV_Target2;`).
+Albedo (G0) is sRGB-encoded (sampled back as linear); the normal (G1) is the
+tangent-space-perturbed world normal in a signed float format; ORM (G2) packs occlusion
+(R), roughness (G), metallic (B), and emissive strength (A) — the metallic-roughness
+PBR channel set. Depth is the depth attachment, also sampled by the lighting pass for
+world-position reconstruction (one of the two depth targets read as textures in the
+engine — the directional shadow map is the other). The g-buffer layout (channels,
 formats, usage) is fixed in `Renderer/GBuffer.h`, agreed on by the geometry pass's
-`RenderingInfo` and every material pipeline. This is the **v1 minimum** channel set
-(a G2 PBR target extends the one `GBufferOutput` struct) and the **opaque** contract
-(a transparent/forward material outputs final color through a separate fragment
-entry, not a change to this one). Set-0 bindless, the material parameter block, and
-texture handles are unchanged — only the fragment shader's outputs move to the g-buffer.
+`RenderingInfo` and every material pipeline. It is the **opaque** contract — a
+transparent/forward material outputs final color through a separate fragment entry, not
+a change to this one — and **colored** emissive (an emissive color distinct from albedo)
+is the one free channel away from needing a fourth target (only G0.a is unused). Set-0
+bindless, the material parameter block, and texture handles are unchanged — only the
+fragment shader's outputs move to the g-buffer.
 
 **The PostProcess fullscreen-material path.** A `PostProcessScenePass` runs a PostProcess
 material as a fullscreen effect: it builds a `GraphicsPipeline` from the material's
@@ -381,10 +410,15 @@ and drives the material's authored params. The loader builds the pipeline *layou
 domains but the `GraphicsPipeline` only for Surface — a PostProcess material's pipeline is
 built by the pass, which alone knows the color format. **Tonemap is the first PostProcess
 material** (core `tonemap.vmat`): the HDR target is runtime-bound each frame and `Exposure`
-is an exposed param written per frame through the ring-buffered block. The fixed plumbing
-composites stay hardcoded engine passes — `SwapChainCompositePass` (scene behind, ImGui
-over) and the `DebugView` albedo/normal/depth/HDR blits have no authorable surface; a
-PostProcess material is for *tunable effects with exposed parameters*, not plumbing.
+is an exposed param written per frame through the ring-buffered block. **Bloom is the
+first multi-stage PostProcess chain** (core bloom materials): a bright-pass → separable
+blur (H, V) → composite runs as four chained `PostProcessScenePass` stages over
+renderer-owned intermediates ahead of tonemap, with `Threshold`/`Intensity` exposed
+params. The fixed plumbing composites stay hardcoded engine passes —
+`SwapChainCompositePass` (scene behind, ImGui over) and the `DebugView` blits
+(albedo/normal/depth, the packed-ORM channels, the SSAO target, the shadow map) have no
+authorable surface; a PostProcess material is for *tunable effects with exposed
+parameters*, not plumbing.
 
 ### Pipeline cache
 

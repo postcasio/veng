@@ -141,21 +141,37 @@ tonemap) delivered by planset-12; frames-in-flight > 1 correctness by planset-13
 **The editor's scene viewport (area 6, sub-D) consumes this delivered
 `SceneRenderer`.** **Design overview:** [scene-renderer.md](scene-renderer.md).
 
-The **authorable post stack now has its mechanism** — PostProcess materials (area 13,
+The **authorable post stack has its mechanism** — PostProcess materials (area 13,
 planset-18): a tunable effect (grade, bloom-threshold, curve) is authored as a
 PostProcess-domain material run by a `PostProcessScenePass`, not a bespoke C++ pass.
-Tonemap is the first; the remaining batteries (grade/bloom/SSAO/shadows) stay future.
+Tonemap is the first; bloom (planset-19) is the first multi-stage authorable chain.
 
-**Still future:** the rest of the über-pipeline **batteries** — shadows, SSAO,
-bloom, MSAA, a transparent/forward pass (a second material contract), the further post
-stack, and a **G2 PBR g-buffer target** that extends the `GBufferOutput` struct — each its
-own increment behind the same `ScenePass` + `Configure`-recompile mechanism (a tunable one
-as a PostProcess material, plumbing as a C++ pass);
-**multiple & typed lights** (point/spot, light culling); **history-buffer ringing**
-for temporal effects (TAA/motion-blur reading an older frame); **cross-queue
-synchronization** (an explicit semaphore once a handoff side moves off the single
-graphics queue); and **parallel pass recording** into secondary command buffers
-(area 2's seam — the user-pointer channel is shaped for it, not built).
+**Delivered — planset-19 (the batteries + the G2 PBR target):** the renderer went
+physically-based — a **metallic-roughness three-target g-buffer** (the G2 ORM target this
+area reserved, extending the one `GBufferOutput` struct), tangent-space normal mapping,
+Cook-Torrance over **multiple typed lights** (directional/point/spot) behind a ring-buffered
+view-constants buffer, a **directional shadow map** (manual PCF), **SSAO**, scalar emissive,
+**bloom as a PostProcess material**, and a `DebugView` arm per new channel. Each landed behind
+the same `ScenePass` + `Configure`-recompile mechanism (a tunable effect as a PostProcess
+material, plumbing as a C++ pass).
+
+**Still future:** a **transparent/forward pass** (a second material contract whose fragment
+outputs final color), **MSAA**, **shadowed punctual lights** (point/spot shadow cubemaps/atlas
+— directional is the only shadowed light), **colored emissive** (a fourth g-buffer target),
+**CSM**, and **clustered/tiled light culling**. A **scene/mesh AABB + bounds** facility is the
+named next prerequisite — directional shadows ship with a fixed-size ortho box, and a tight
+shadow fit and CSM both need real bounds first. Also future: **history-buffer ringing** for
+temporal effects (TAA/motion-blur reading an older frame); **cross-queue synchronization** (an
+explicit semaphore once a handoff side moves off the single graphics queue); and **parallel
+pass recording** into secondary command buffers (area 2's seam — the user-pointer channel is
+shaped for it, not built).
+
+**On-tile / subpass-fused deferred is a measure-first maybe, not a named next increment.**
+The richer g-buffer raises its bandwidth payoff on Apple Silicon, but it is **not** a
+`ScenePass`-level battery: it is a `RenderGraph`-**core** change (local-read / pass fusion plus
+an input-attachment g-buffer binding path), gated on a MoltenVK `dynamic_rendering_local_read`
+capability check **and** on the g-buffer store-then-sample round-trip being a *measured*
+bottleneck. It is its own future planset behind those two gates, not a battery here.
 
 ### 9. Compiled RenderGraph — remaining: culling, multi-queue, parallel recording
 

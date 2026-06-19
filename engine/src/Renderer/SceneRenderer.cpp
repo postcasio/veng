@@ -48,6 +48,9 @@ namespace Veng::Renderer
         constexpr AssetId AlbedoBlitFragId{0xF90F709155D04BE7ULL};
         constexpr AssetId NormalBlitFragId{0x5A2CD7B270EAE5CDULL};
         constexpr AssetId DepthBlitFragId{0xE05F5F86E72F96D5ULL};
+        constexpr AssetId OrmBlitFragId{0x7992B54A844CB1E1ULL};
+        constexpr AssetId AoBlitFragId{0x97974B40192934E4ULL};
+        constexpr AssetId ShadowBlitFragId{0x0B61D5D42DAEF190ULL};
 
         // The core bloom PostProcess materials.
         constexpr AssetId BloomBrightMaterialId{0xB1C79EF4EAC3F697ULL};
@@ -191,12 +194,23 @@ namespace Veng::Renderer
         }
 
         // The shared debug-blit fragment push block: the bindless slots a fullscreen
-        // blit samples one g-buffer channel through. The albedo, normal, and depth
-        // visualizers all declare exactly these two fields.
+        // blit samples one channel/target through. The albedo, normal, depth, AO, and
+        // shadow-map visualizers all declare exactly these two fields.
         struct BlitPushConstants
         {
             u32 Texture;
             u32 Sampler;
+        };
+
+        // The ORM-channel blit push block: the packed-ORM bindless slots plus the
+        // channel selector (0 occlusion / 1 roughness / 2 metallic). The Roughness,
+        // Metallic, and Occlusion debug arms share one pipeline differing only in this
+        // pushed channel.
+        struct OrmBlitPushConstants
+        {
+            u32 Texture;
+            u32 Sampler;
+            u32 Channel;
         };
 
         // The deferred g-buffer geometry pass: draws every (Transform, MeshRenderer)
@@ -426,18 +440,20 @@ namespace Veng::Renderer
             bool m_UseSsao = false;
         };
 
-        // A reusable fullscreen blit pass: samples one g-buffer channel (selected by
+        // A reusable fullscreen blit pass: samples one channel/target (selected by
         // the PassIO handle the constructor names) through bindless and writes the
         // renderer's imported output. It is the shared shape behind the Albedo,
-        // Normal, and Depth debug views — each constructs one with the matching
-        // pipeline (the channel-specific fragment shader does the decode) and selects
-        // its source via a small accessor. The source id it declares .Sample on lets
-        // the graph derive the channel's attachment → shader-read transition.
+        // Normal, Depth, AO, and Shadows debug views — each constructs one with the
+        // matching pipeline (the source-specific fragment shader does the decode) and
+        // selects its source via a small accessor. The source id it declares .Sample
+        // on lets the graph derive the channel's attachment → shader-read transition.
         class FullscreenBlitScenePass final : public ScenePass
         {
         public:
-            // Selects which g-buffer channel this blit reads from the PassIO.
-            enum class Source { Albedo, Normal, Depth };
+            // Selects which target this blit reads from the PassIO. Ao reads the
+            // SsaoScenePass's AO target, Shadow the ShadowScenePass's depth map; both
+            // are force-wired by the renderer in their debug mode.
+            enum class Source { Albedo, Normal, Depth, Ao, Shadow };
 
             FullscreenBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent, Source source)
                 : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent), m_Source(source)
@@ -483,6 +499,8 @@ namespace Veng::Renderer
                     case Source::Albedo: return io.GBufferAlbedo;
                     case Source::Normal: return io.GBufferNormal;
                     case Source::Depth:  return io.GBufferDepth;
+                    case Source::Ao:     return io.Ssao;
+                    case Source::Shadow: return io.ShadowMap;
                 }
                 VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
             }
@@ -494,6 +512,8 @@ namespace Veng::Renderer
                     case Source::Albedo: return io.AlbedoHandle;
                     case Source::Normal: return io.NormalHandle;
                     case Source::Depth:  return io.DepthHandle;
+                    case Source::Ao:     return io.SsaoHandle;
+                    case Source::Shadow: return io.ShadowHandle;
                 }
                 VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
             }
@@ -502,6 +522,58 @@ namespace Veng::Renderer
             Ref<GraphicsPipeline> m_Pipeline;
             uvec2 m_Extent;
             Source m_Source;
+        };
+
+        // A fullscreen blit of one packed-ORM channel (G2): samples the ORM target
+        // through bindless and writes the selected channel (0 occlusion / 1 roughness
+        // / 2 metallic) as greyscale to the output. The Roughness, Metallic, and
+        // Occlusion debug arms each construct one differing only in the channel.
+        class OrmBlitScenePass final : public ScenePass
+        {
+        public:
+            OrmBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent, u32 channel)
+                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent), m_Channel(channel)
+            {
+            }
+
+            void Resize(const uvec2 extent) override { m_Extent = extent; }
+
+            void Declare(RenderGraph& graph, const PassIO& io) override
+            {
+                const ResourceId ormId = io.GBufferOrm;
+                const TextureHandle ormHandle = io.OrmHandle;
+                const SamplerHandle samplerHandle = io.SamplerHandle;
+                const u32 channel = m_Channel;
+
+                graph.AddPass("ORM Debug Blit")
+                    .Color({
+                        .Resource = io.Output,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                    })
+                    .Sample(ormId)
+                    .Execute([this, ormHandle, samplerHandle, channel](PassContext& inner)
+                    {
+                        CommandBuffer& cmd = inner.Cmd();
+                        cmd.BindPipeline(m_Pipeline);
+                        cmd.SetViewport({0, 0}, m_Extent);
+                        cmd.SetScissor({0, 0}, m_Extent);
+                        m_Context.GetBindlessRegistry().Bind(cmd);
+                        cmd.PushConstants(OrmBlitPushConstants{
+                            .Texture = ormHandle.Index,
+                            .Sampler = samplerHandle.Index,
+                            .Channel = channel,
+                        });
+                        cmd.DrawFullscreenTriangle();
+                    });
+            }
+
+        private:
+            Context& m_Context;
+            Ref<GraphicsPipeline> m_Pipeline;
+            uvec2 m_Extent;
+            u32 m_Channel;
         };
     }
 
@@ -656,6 +728,9 @@ namespace Veng::Renderer
         const AssetHandle<Veng::Shader> albedoBlitFs = LoadShader(AlbedoBlitFragId, "albedo-blit fragment");
         const AssetHandle<Veng::Shader> normalBlitFs = LoadShader(NormalBlitFragId, "normal-blit fragment");
         const AssetHandle<Veng::Shader> depthBlitFs = LoadShader(DepthBlitFragId, "depth-blit fragment");
+        const AssetHandle<Veng::Shader> ormBlitFs = LoadShader(OrmBlitFragId, "ORM-blit fragment");
+        const AssetHandle<Veng::Shader> aoBlitFs = LoadShader(AoBlitFragId, "AO-blit fragment");
+        const AssetHandle<Veng::Shader> shadowBlitFs = LoadShader(ShadowBlitFragId, "shadow-blit fragment");
 
         // Builds a fullscreen pipeline (shared vertex stage) over a layout, naming the
         // color-target format the pass writes.
@@ -743,6 +818,26 @@ namespace Veng::Renderer
             .PushConstantRanges = {blitRange},
         });
         m_DepthBlitPipeline = MakePipeline("SceneRenderer Depth Blit Pipeline", m_DepthBlitLayout, depthBlitFs, m_OutputFormat);
+
+        // The AO and shadow-map blits share the same texture + sampler push shape as
+        // the g-buffer blits; the ORM blit adds a channel selector.
+        m_AoBlitLayout = PipelineLayout::Create(m_Context, {
+            .Name = "SceneRenderer AO Blit Layout",
+            .PushConstantRanges = {blitRange},
+        });
+        m_AoBlitPipeline = MakePipeline("SceneRenderer AO Blit Pipeline", m_AoBlitLayout, aoBlitFs, m_OutputFormat);
+
+        m_ShadowBlitLayout = PipelineLayout::Create(m_Context, {
+            .Name = "SceneRenderer Shadow Blit Layout",
+            .PushConstantRanges = {blitRange},
+        });
+        m_ShadowBlitPipeline = MakePipeline("SceneRenderer Shadow Blit Pipeline", m_ShadowBlitLayout, shadowBlitFs, m_OutputFormat);
+
+        m_OrmBlitLayout = PipelineLayout::Create(m_Context, {
+            .Name = "SceneRenderer ORM Blit Layout",
+            .PushConstantRanges = {PushConstantRange::Of<OrmBlitPushConstants>(ShaderStage::Fragment)},
+        });
+        m_OrmBlitPipeline = MakePipeline("SceneRenderer ORM Blit Pipeline", m_OrmBlitLayout, ormBlitFs, m_OutputFormat);
     }
 
     void SceneRenderer::CreateOutput()
@@ -901,18 +996,26 @@ namespace Veng::Renderer
         const bool bloomActive = m_Settings.Mode == DebugView::Final && m_Settings.Bloom;
         m_BloomActive = bloomActive;
 
-        // The shadow pass runs only in the Final mode (the debug views terminate
-        // after the g-buffer); when active it contributes a depth-only pass ahead of
-        // the lighting pass and its import is declared and bound only then.
-        const bool shadowActive = m_Settings.Mode == DebugView::Final && m_Settings.Shadows;
+        // The Shadows / AO debug arms force-wire their producing battery pass so the
+        // visualized target exists regardless of the Settings.Shadows / Settings.AO
+        // toggle — the debug view's whole purpose is to inspect that channel. The
+        // blit then samples the produced target.
+        const bool debugShadow = m_Settings.Mode == DebugView::Shadows;
+        const bool debugAo = m_Settings.Mode == DebugView::AO;
+
+        // The shadow pass runs in the Final mode (with Settings.Shadows) and is
+        // force-wired by the Shadows debug arm. When active it contributes a depth-only
+        // pass ahead of the lighting pass and its import is declared and bound only then.
+        const bool shadowActive = (m_Settings.Mode == DebugView::Final && m_Settings.Shadows) || debugShadow;
         m_ShadowActive = shadowActive;
         m_ShadowPass = nullptr;
 
-        // The SSAO pass runs only in the Final mode (the debug views terminate after
-        // the g-buffer); when active it inserts the fullscreen AO pass before lighting
-        // and selects the AO-fold lighting variant, so its import is declared and bound
-        // only then.
-        const bool ssaoActive = m_Settings.Mode == DebugView::Final && m_Settings.AO;
+        // The SSAO pass runs in the Final mode (with Settings.AO) and is force-wired by
+        // the AO debug arm. In the Final mode it inserts the fullscreen AO pass before
+        // lighting and selects the AO-fold lighting variant; in the AO debug mode it
+        // runs only to feed the blit. Its import is declared and bound only when wired.
+        const bool ssaoFold = m_Settings.Mode == DebugView::Final && m_Settings.AO;
+        const bool ssaoActive = ssaoFold || debugAo;
         m_SsaoActive = ssaoActive;
         m_SsaoPass = nullptr;
 
@@ -963,25 +1066,26 @@ namespace Veng::Renderer
         }
 
         m_Passes.push_back(CreateUnique<GBufferScenePass>(m_Context, m_Extent));
+
+        // The SSAO pass writes its AO target before any later pass samples it; it owns
+        // the target (recreated through the deferred Release() path on Resize/Configure)
+        // and produces the handle the lighting variant folds in (Final mode) or the AO
+        // debug blit reads. Created before the tail switch so both consumers see it.
+        if (ssaoActive)
+        {
+            auto ssaoPass = CreateUnique<SsaoScenePass>(
+                m_Context, m_SsaoPipeline, m_SamplerHandle, m_Extent);
+            m_SsaoPass = ssaoPass.get();
+            ssaoHandle = ssaoPass->GetAoHandle();
+            m_Passes.push_back(std::move(ssaoPass));
+        }
+
         switch (m_Settings.Mode)
         {
             case DebugView::Final:
             {
-                // The SSAO pass writes its AO target before lighting samples it; it
-                // owns the target (recreated through the deferred Release() path on
-                // Resize/Configure) and produces the handle the lighting variant folds
-                // into its ambient term.
-                if (ssaoActive)
-                {
-                    auto ssaoPass = CreateUnique<SsaoScenePass>(
-                        m_Context, m_SsaoPipeline, m_SamplerHandle, m_Extent);
-                    m_SsaoPass = ssaoPass.get();
-                    ssaoHandle = ssaoPass->GetAoHandle();
-                    m_Passes.push_back(std::move(ssaoPass));
-                }
-
                 m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
-                    m_Context, ssaoActive ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent, ssaoActive));
+                    m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent, ssaoFold));
 
                 // The tonemap stage's input: the bloom composite result when bloom is
                 // on, the raw HDR target otherwise. The four bloom stages sit between
@@ -1074,6 +1178,28 @@ namespace Veng::Renderer
             case DebugView::Depth:
                 m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                     m_Context, m_DepthBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Depth));
+                break;
+            case DebugView::Occlusion:
+                m_Passes.push_back(CreateUnique<OrmBlitScenePass>(
+                    m_Context, m_OrmBlitPipeline, m_Extent, /*channel=*/0));
+                break;
+            case DebugView::Roughness:
+                m_Passes.push_back(CreateUnique<OrmBlitScenePass>(
+                    m_Context, m_OrmBlitPipeline, m_Extent, /*channel=*/1));
+                break;
+            case DebugView::Metallic:
+                m_Passes.push_back(CreateUnique<OrmBlitScenePass>(
+                    m_Context, m_OrmBlitPipeline, m_Extent, /*channel=*/2));
+                break;
+            case DebugView::AO:
+                // The SSAO pass was force-wired above; the blit reads its produced AO target.
+                m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
+                    m_Context, m_AoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Ao));
+                break;
+            case DebugView::Shadows:
+                // The shadow pass was force-wired above; the blit reads its produced shadow map.
+                m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
+                    m_Context, m_ShadowBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Shadow));
                 break;
         }
 

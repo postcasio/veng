@@ -1,10 +1,14 @@
 # Scene renderer — design overview
 
-> **Mostly delivered — [planset-12](../planset-12/README.md).** The shell + the
-> minimal-deferred spine are shipped; the remaining über-pipeline batteries, multiple
-> & typed lights, frames-in-flight > 1, and parallel pass recording are the named
-> next increments behind the same mechanism. This document records **what shipped**
-> against **what is still future**, so the direction stays legible. It builds on the
+> **Delivered — [planset-12](../planset-12/README.md) (spine) + [planset-19](../planset-19/README.md)
+> (PBR + batteries).** The shell + the minimal-deferred spine shipped in planset-12;
+> planset-19 turned it into a **physically-based deferred renderer** — a metallic-roughness
+> three-target g-buffer, tangent-space normal mapping, Cook-Torrance over typed lights,
+> directional shadows, SSAO, and bloom-as-a-PostProcess-material. What remains future is a
+> transparent/forward pass, shadowed punctual lights, colored emissive, CSM, clustered light
+> culling, parallel pass recording, and on-tile deferred — each behind the same mechanism, and
+> a **scene/mesh AABB + bounds** facility gating the tight shadow fit and CSM. This document
+> records **what shipped** against **what is still future**, so the direction stays legible. It builds on the
 > shipped renderer / bindless / material foundation (planset-5), the **compiled
 > [`RenderGraph`](compiled-rendergraph.md)** (area 9, planset-8), and the runtime
 > [scene/entity model](README.md#7-scene--entity-model) (area 7, planset-10); the
@@ -50,8 +54,12 @@ constantly).
 
 ```cpp
 struct SceneRendererSettings {
-    DebugView Mode     = DebugView::Final;  // re-wires the pass set (Final/Albedo/Normal/Depth)
+    DebugView Mode     = DebugView::Final;  // re-wires the pass set (Final + g-buffer/ORM/battery debug arms)
     f32       Exposure = 1.0f;              // the tonemap pass's exposure scale
+    bool      Bloom    = true;              // the bloom post chain on/off (a topology toggle)
+    bool      Shadows  = true;              // the directional shadow pass on/off
+    u32       ShadowResolution = 2048;      // the shadow map's edge length in texels
+    bool      AO       = true;              // the SSAO pass on/off
 };
 
 struct SceneRendererInfo {
@@ -75,17 +83,22 @@ Ref<ImageView> GetOutput() const;
 
 ```cpp
 struct SceneView {
-    const Scene&  World;     // borrowed; shared across N renderers in the editor
-    const Camera& Camera;    // borrowed
-    Light         Light;     // a per-frame VALUE the renderer selects from the scene
+    const Scene&  World;          // borrowed; shared across N renderers in the editor
+    const Camera& Camera;         // borrowed
     f32           Delta;
+    u32           LightCount;     // set by the renderer each Execute (it packs the scene's lights)
+    f32           BloomThreshold; // per-frame bloom knee + mix — never recompiles
+    f32           BloomIntensity;
+    mat4          LightViewProj;  // the directional light's world → light-clip transform this frame
 };
 ```
 
-The `Settings` block as shipped is the **minimal** one — `Mode` (the `DebugView`
-selector, the live settings-drive-recompile proof) + `Exposure`. The batteries the
-design sketch shows (`Shadows`, `AO`, `ShadowRes`, …) are still-future fields that
-land with their passes.
+The `Settings` block carries every recompile knob — `Mode` (the `DebugView` selector,
+including the g-buffer/ORM/battery debug arms), `Exposure`, and the `Bloom`/`Shadows`/`AO`
+battery toggles + `ShadowResolution`. The renderer reads the scene's lights itself (it walks
+`View<Transform, Light>` each `Execute` and packs them into the ring-buffered light buffer),
+so the per-frame light selection rides the renderer, not a `SceneView` field; bloom
+threshold/intensity are per-frame `SceneView` values that tune without a recompile.
 
 ### Output & target ownership — DELIVERED
 
@@ -307,22 +320,50 @@ Apple-friendly form) is a future optimization behind the same `ScenePass` mechan
     dedicated present/UI queue) — the barrier's submission-order reach holds only on one
     queue.
 
+## Delivered batteries — planset-19
+
+planset-19 cashed in most of the named batteries on the planset-12 spine, each behind the
+same `ScenePass` + `Configure`-recompile mechanism:
+
+- **The G2 PBR g-buffer target.** `GBufferOutput` grew a third target, `float4 ORM :
+  SV_Target2` (occlusion R, roughness G, metallic B, emissive strength A); the geometry pass
+  binds three color attachments and `MaterialParams` carries the metallic-roughness handle/factor
+  set. Only G0.a is unused.
+- **Cook-Torrance lighting + the view-constants buffer.** The lighting pass evaluates GGX
+  specular + Lambert diffuse, reconstructing world position from depth via a ring-buffered
+  **view-constants buffer** (set-0, 512-byte stride) carrying `InvViewProj`/`CameraPosition`/the
+  light-space matrix/the SSAO view+proj — per-view data rides the buffer, never push constants.
+- **Tangent-space normal mapping** (the surface vertex emits the world tangent; the fragment
+  perturbs the world normal into G1), **multiple typed lights** (directional/point/spot, a
+  ring-buffered light list the pass loops over), a **directional shadow map** (manual PCF), and
+  **SSAO** folded into the ambient/occlusion term.
+- **Bloom authored as a PostProcess material** — the first multi-stage authorable post chain
+  (bright-pass → separable blur → composite ahead of tonemap).
+- **`DebugView` arms** for each new channel: the packed-ORM `Roughness`/`Metallic`/`Occlusion`,
+  the `AO` target, and the directional `Shadows` map.
+
 ## Still future — the named next increments
 
 Each is its own later increment behind the **same** `ScenePass` + `Configure`-recompile
-mechanism this delivers:
+mechanism:
 
-- **The rest of the über-pipeline's batteries:** shadows, SSAO, bloom, MSAA, a
-  transparent/forward pass (a second material contract), a post stack, and the **G2
-  PBR g-buffer target** that extends the `GBufferOutput` struct.
-- **Multiple & typed lights:** point/spot/area lights, multiple lights, and
-  clustered/tiled light culling. v1's lighting pass reads **one** directional light
-  from the `SceneView`.
+- **A transparent/forward pass** (a second material contract whose fragment shader outputs
+  *final color*, not g-buffer channels), **MSAA**, and a deeper post stack.
+- **Shadowed punctual lights** (point/spot shadow cubemaps/atlas — directional is the only
+  shadowed light today) and **clustered/tiled light culling** (the lighting pass loops a
+  bounded list with no spatial culling).
+- **Colored emissive** — an emissive color distinct from albedo needs the separate-emissive
+  layout (a fourth g-buffer target); only scalar emissive strength rides G2.a today.
+- **Scene/mesh AABB + bounds — the named next prerequisite.** Directional shadows ship with a
+  fixed-size orthographic box because no bounds facility exists; a **tight shadow fit** and
+  **cascaded shadow maps (CSM)** both need a real scene/mesh AABB facility first. This is the
+  gate the shadow-quality follow-ons sit behind.
 - **Parallel pass recording** into secondary command buffers (area 2's seam): the
-  `SceneView`-rides-the-record-context choice is made *for* it, but no parallel
-  recording is built.
-- **On-tile / subpass-fused deferred** (the MoltenVK-friendly form) as a bandwidth
-  optimization behind the same wiring.
+  `SceneView`-rides-the-record-context choice is made *for* it, but no parallel recording is
+  built.
+- **On-tile / subpass-fused deferred** (the MoltenVK-friendly form) — a measure-first
+  `RenderGraph`-core change, not a `ScenePass`-level battery; see [future/README.md](README.md)
+  area 8.
 
 ## Dependencies
 
@@ -342,7 +383,16 @@ reusable-unit framework, the self-contained-graph-per-renderer resolution, the
 minimal deferred **g-buffer → directional-light → tonemap** chain, and the directional
 `Light`, and the **frames-in-flight correctness** — a cross-graph reuse barrier
 (`PrepareForAccess(ColorAttachment)` before each `Execute`) that serializes the
-single-copy output across frames-in-flight with zero added memory. **Still future:**
-the remaining batteries, multiple & typed lights, history-buffer ringing for temporal
-effects, cross-queue synchronization, and parallel pass recording — each named above as
-a next increment behind the same mechanism.
+single-copy output across frames-in-flight with zero added memory.
+
+**Delivered — [planset-19](../planset-19/README.md):** the renderer is now physically-based —
+a metallic-roughness three-target g-buffer, tangent-space normal mapping, Cook-Torrance over
+multiple typed lights (directional/point/spot) behind the ring-buffered view-constants buffer,
+a directional shadow map (manual PCF), SSAO, scalar emissive, bloom as a PostProcess material,
+and a `DebugView` arm per new channel.
+
+**Still future:** a transparent/forward pass, shadowed punctual lights, colored emissive,
+**scene/mesh AABB + bounds** (the gate on a tight shadow fit and CSM), clustered light culling,
+history-buffer ringing for temporal effects, cross-queue synchronization, parallel pass
+recording, and on-tile/subpass-fused deferred (a measure-first `RenderGraph`-core change) —
+each named above as a next increment behind the same mechanism.

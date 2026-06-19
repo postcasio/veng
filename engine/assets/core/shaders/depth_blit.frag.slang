@@ -3,8 +3,8 @@
 // use, so near is 0 and far is 1; the raw [0, 1] device depth crowds almost
 // everything near 1 for a perspective projection, so this inverts it (1 - depth)
 // so nearer geometry reads brighter — the conventional depth-buffer debug view.
-// A debug view of the deferred g-buffer's depth attachment, the only depth
-// target read as a texture in the engine.
+// A debug view of the deferred g-buffer's depth attachment, one of the two depth
+// targets read as textures in the engine (the other is the directional shadow map).
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 
