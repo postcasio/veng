@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Asset/AssetHandle.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/ImageView.h>
@@ -22,6 +23,7 @@ namespace Veng
 {
     class Scene;
     class AssetManager;
+    class Material;
 }
 
 namespace Veng::Renderer
@@ -128,8 +130,9 @@ namespace Veng::Renderer
         // Recreate the HDR image/view at the current extent and (re-)register it
         // into the bindless registry.
         void CreateHdr();
-        // Build the engine-owned fullscreen pipelines (lighting, tonemap, and the
-        // albedo/normal/depth debug blits) once at Create.
+        // Build the engine-owned fullscreen pipelines (lighting and the
+        // albedo/normal/depth debug blits) and load the core tonemap PostProcess
+        // material once at Create.
         void CreatePipelines();
         // Rebuild the pass set from Settings.Mode and the RenderGraph from it, then
         // re-Compile().
@@ -183,19 +186,22 @@ namespace Veng::Renderer
 
         // The engine-owned fullscreen pipelines + layouts, all built once at Create
         // from the core pack's shaders. The lighting pipeline writes the HDR format;
-        // the tonemap and the three debug-blit pipelines (albedo/normal/depth) write
-        // the output format. The pass set Configure wires from Mode references the
-        // pipelines it needs; the rest stay built but unused.
+        // the three debug-blit pipelines (albedo/normal/depth) write the output
+        // format. The pass set Configure wires from Mode references the pipelines it
+        // needs; the rest stay built but unused.
         Ref<class GraphicsPipeline> m_LightingPipeline;
         Ref<class PipelineLayout> m_LightingLayout;
-        Ref<class GraphicsPipeline> m_TonemapPipeline;
-        Ref<class PipelineLayout> m_TonemapLayout;
         Ref<class GraphicsPipeline> m_AlbedoBlitPipeline;
         Ref<class PipelineLayout> m_AlbedoBlitLayout;
         Ref<class GraphicsPipeline> m_NormalBlitPipeline;
         Ref<class PipelineLayout> m_NormalBlitLayout;
         Ref<class GraphicsPipeline> m_DepthBlitPipeline;
         Ref<class PipelineLayout> m_DepthBlitLayout;
+
+        // The core tonemap PostProcess material, loaded once at Create. The Final
+        // chain's terminal PostProcessScenePass drives it (HDR target as the
+        // runtime-bound input, exposure written per Execute into its param block).
+        AssetHandle<Material> m_TonemapMaterial;
 
         // The renderer owns its pass units; the set is rebuilt per Settings.Mode on
         // every Rebuild (the geometry pass is always first; Mode selects the tail).

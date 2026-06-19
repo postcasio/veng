@@ -202,6 +202,9 @@ if (TARGET veng_cook_bootstrap)
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/hdr_blit.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/composite.frag.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/composite.frag.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/tonemap.frag.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/tonemap.frag.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/materials/tonemap.vmat.json
         COMMENT "Cooking veng core pack")
 
     add_custom_command(

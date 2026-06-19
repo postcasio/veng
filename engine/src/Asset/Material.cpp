@@ -194,6 +194,28 @@ namespace Veng
         UploadParams();
     }
 
+    void Material::SetParam(std::string_view name, f32 value)
+    {
+        const MaterialField* field = FindField(name);
+        VE_ASSERT(field != nullptr,
+                  "Material::SetParam: field '{}' not found in material '{}'",
+                  name, m_Name);
+        VE_ASSERT(field->Kind == MaterialField::FieldKind::Param,
+                  "Material::SetParam: field '{}' in material '{}' is not a Param (Kind={})",
+                  name, m_Name, static_cast<u32>(field->Kind));
+
+        // Write only the field's reflected size — for a scalar param that is 4
+        // bytes, never spilling into the following bytes of the block.
+        const u32 writeBytes = std::min(field->Size, static_cast<u32>(sizeof(f32)));
+        VE_ASSERT(field->Offset + writeBytes <= m_Block.size(),
+                  "Material::SetParam: field '{}' offset {} + {} exceeds block size {}",
+                  name, field->Offset, writeBytes, m_Block.size());
+
+        std::memcpy(m_Block.data() + field->Offset, &value, writeBytes);
+
+        UploadParams();
+    }
+
     void Material::SetTextureHandle(std::string_view name, Renderer::TextureHandle handle)
     {
         const MaterialField* field = FindField(name);

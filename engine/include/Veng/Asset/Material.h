@@ -116,6 +116,9 @@ namespace Veng
         // rewrite the material's SSBO entry in place.
         void SetTexture(std::string_view name, AssetHandle<Texture> texture);
         void SetParam(std::string_view name, const vec4& value);
+        // Scalar overload — writes only the field's reflected Size bytes (a float
+        // param), never smearing a vec4 over the following bytes.
+        void SetParam(std::string_view name, f32 value);
 
         // Write a raw bindless index into a handle field by name — the path a
         // runtime-bound input takes (a renderer-owned ImageView/Sampler the

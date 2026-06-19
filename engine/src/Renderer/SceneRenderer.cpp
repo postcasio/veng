@@ -32,7 +32,7 @@ namespace Veng::Renderer
         // core-pack ids (the AssetManager auto-mounts the core pack).
         constexpr AssetId FullscreenVertId{0xF46DD3C6F2AE0628ULL};
         constexpr AssetId DeferredLightingFragId{0x6569EBAC0810CC1FULL};
-        constexpr AssetId TonemapFragId{0x6E5E79AA8BBCC296ULL};
+        constexpr AssetId TonemapMaterialId{0xBC968C8771B00434ULL};
         constexpr AssetId AlbedoBlitFragId{0xF90F709155D04BE7ULL};
         constexpr AssetId NormalBlitFragId{0x5A2CD7B270EAE5CDULL};
         constexpr AssetId DepthBlitFragId{0xE05F5F86E72F96D5ULL};
@@ -87,15 +87,6 @@ namespace Veng::Renderer
         {
             u32 Texture;
             u32 Sampler;
-        };
-
-        // The tonemap fragment shader's push block: the HDR target's bindless slots
-        // plus the exposure scale, matching the shader byte-for-byte.
-        struct TonemapPushConstants
-        {
-            u32 HdrTexture;
-            u32 Sampler;
-            f32 Exposure;
         };
 
         // The deferred g-buffer geometry pass: draws every (Transform, MeshRenderer)
@@ -276,62 +267,6 @@ namespace Veng::Renderer
             Context& m_Context;
             Ref<GraphicsPipeline> m_Pipeline;
             uvec2 m_Extent;
-        };
-
-        // The fullscreen tonemap pass: samples the HDR lighting target through its
-        // bindless handle, applies the exposure scale and an ACES-approx tone curve
-        // (in the shader), and writes the renderer's imported output. The terminal
-        // stage of the Final deferred chain — it maps the linear HDR range to the
-        // output format with a curve that rolls off highlights instead of clipping.
-        // Declaring .Sample(hdr) lets the graph derive the HDR's color-attachment →
-        // shader-read transition. Exposure is a Configure-set setting (recompile-safe),
-        // captured into the record callback at Declare.
-        class TonemapScenePass final : public ScenePass
-        {
-        public:
-            TonemapScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent, f32 exposure)
-                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent), m_Exposure(exposure)
-            {
-            }
-
-            void Resize(const uvec2 extent) override { m_Extent = extent; }
-            void Configure(const SceneRendererSettings& settings) override { m_Exposure = settings.Exposure; }
-
-            void Declare(RenderGraph& graph, const PassIO& io) override
-            {
-                const TextureHandle hdrHandle = io.HdrHandle;
-                const SamplerHandle samplerHandle = io.SamplerHandle;
-                const f32 exposure = m_Exposure;
-
-                graph.AddPass("Tonemap")
-                    .Color({
-                        .Resource = io.Output,
-                        .Load = LoadOp::Clear,
-                        .Store = StoreOp::Store,
-                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
-                    })
-                    .Sample(io.Hdr)
-                    .Execute([this, hdrHandle, samplerHandle, exposure](PassContext& inner)
-                    {
-                        CommandBuffer& cmd = inner.Cmd();
-                        cmd.BindPipeline(m_Pipeline);
-                        cmd.SetViewport({0, 0}, m_Extent);
-                        cmd.SetScissor({0, 0}, m_Extent);
-                        m_Context.GetBindlessRegistry().Bind(cmd);
-                        cmd.PushConstants(TonemapPushConstants{
-                            .HdrTexture = hdrHandle.Index,
-                            .Sampler = samplerHandle.Index,
-                            .Exposure = exposure,
-                        });
-                        cmd.DrawFullscreenTriangle();
-                    });
-            }
-
-        private:
-            Context& m_Context;
-            Ref<GraphicsPipeline> m_Pipeline;
-            uvec2 m_Extent;
-            f32 m_Exposure;
         };
 
         // A reusable fullscreen blit pass: samples one g-buffer channel (selected by
@@ -539,7 +474,6 @@ namespace Veng::Renderer
 
         const AssetHandle<Veng::Shader> vs = LoadShader(FullscreenVertId, "fullscreen vertex");
         const AssetHandle<Veng::Shader> lightingFs = LoadShader(DeferredLightingFragId, "deferred-lighting fragment");
-        const AssetHandle<Veng::Shader> tonemapFs = LoadShader(TonemapFragId, "tonemap fragment");
         const AssetHandle<Veng::Shader> albedoBlitFs = LoadShader(AlbedoBlitFragId, "albedo-blit fragment");
         const AssetHandle<Veng::Shader> normalBlitFs = LoadShader(NormalBlitFragId, "normal-blit fragment");
         const AssetHandle<Veng::Shader> depthBlitFs = LoadShader(DepthBlitFragId, "depth-blit fragment");
@@ -568,11 +502,14 @@ namespace Veng::Renderer
         });
         m_LightingPipeline = MakePipeline("SceneRenderer Deferred Lighting Pipeline", m_LightingLayout, lightingFs, HdrFormat);
 
-        m_TonemapLayout = PipelineLayout::Create(m_Context, {
-            .Name = "SceneRenderer Tonemap Layout",
-            .PushConstantRanges = {PushConstantRange::Of<TonemapPushConstants>(ShaderStage::Fragment)},
-        });
-        m_TonemapPipeline = MakePipeline("SceneRenderer Tonemap Pipeline", m_TonemapLayout, tonemapFs, m_OutputFormat);
+        // The Final chain's tail is the core tonemap PostProcess material driven by
+        // a PostProcessScenePass (rather than a hardcoded pipeline): it samples the
+        // HDR target through a runtime-bound handle field and exposes Exposure as an
+        // authored param. Loaded resident here so the pass can build its fullscreen
+        // pipeline from the material's shaders against the output format.
+        const AssetResult<AssetHandle<Material>> tonemap = m_Assets.LoadSync<Material>(TonemapMaterialId);
+        VE_ASSERT(tonemap.has_value(), "SceneRenderer: tonemap material load failed: {}", tonemap.error().Detail);
+        m_TonemapMaterial = *tonemap;
 
         // The three debug blits share the BlitPushConstants layout (a texture + a
         // sampler index); only the fragment shader's decode differs.
@@ -698,13 +635,37 @@ namespace Veng::Renderer
         // selects the tail. Final is the full deferred chain (lighting → tonemap); the
         // debug views terminate after the g-buffer with one fullscreen blit of a single
         // channel — a real topology change driven through Configure → recompile.
+        // Declare the imported ids first: the PostProcessScenePass binds the HDR
+        // source and output ids at construction, so they must be resolved before
+        // the pass set is built.
+        RenderGraph graph(m_Context);
+        const ResourceId albedoId = graph.Import("SceneRenderer GBuffer Albedo");
+        const ResourceId normalId = graph.Import("SceneRenderer GBuffer Normal");
+        const ResourceId depthId = graph.Import("SceneRenderer GBuffer Depth");
+        const ResourceId hdrId = graph.Import("SceneRenderer HDR");
+        m_OutputId = graph.Import("SceneRenderer Output");
+
+        m_AlbedoId = albedoId;
+        m_NormalId = normalId;
+        m_DepthId = depthId;
+        m_HdrId = hdrId;
+
         m_Passes.clear();
         m_Passes.push_back(CreateUnique<GBufferScenePass>(m_Context, m_Extent));
         switch (m_Settings.Mode)
         {
             case DebugView::Final:
                 m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(m_Context, m_LightingPipeline, m_Extent));
-                m_Passes.push_back(CreateUnique<TonemapScenePass>(m_Context, m_TonemapPipeline, m_Extent, m_Settings.Exposure));
+                m_Passes.push_back(CreateUnique<PostProcessScenePass>(
+                    m_Context, m_TonemapMaterial,
+                    PostProcessInput{
+                        .Source = m_HdrId,
+                        .SourceTexture = m_HdrHandle,
+                        .Sampler = m_SamplerHandle,
+                        .TextureField = "Hdr",
+                        .SamplerField = "HdrSampler",
+                    },
+                    m_OutputId, m_OutputFormat, m_Extent));
                 break;
             case DebugView::Albedo:
                 m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
@@ -720,13 +681,6 @@ namespace Veng::Renderer
                 break;
         }
 
-        RenderGraph graph(m_Context);
-        const ResourceId albedoId = graph.Import("SceneRenderer GBuffer Albedo");
-        const ResourceId normalId = graph.Import("SceneRenderer GBuffer Normal");
-        const ResourceId depthId = graph.Import("SceneRenderer GBuffer Depth");
-        const ResourceId hdrId = graph.Import("SceneRenderer HDR");
-        m_OutputId = graph.Import("SceneRenderer Output");
-
         const PassIO io{
             .GBufferAlbedo = albedoId,
             .GBufferNormal = normalId,
@@ -739,11 +693,6 @@ namespace Veng::Renderer
             .SamplerHandle = m_SamplerHandle,
             .Output = m_OutputId,
         };
-
-        m_AlbedoId = albedoId;
-        m_NormalId = normalId;
-        m_DepthId = depthId;
-        m_HdrId = hdrId;
 
         for (const Unique<ScenePass>& pass : m_Passes)
         {
@@ -772,6 +721,13 @@ namespace Veng::Renderer
 
     void SceneRenderer::Execute(CommandBuffer& cmd, const SceneView& view)
     {
+        // Write the current exposure into the tonemap material's Exposure param.
+        // The material block is ring-buffered, so a per-frame write lands in this
+        // frame's region with no stall and no frames-in-flight hazard; the tonemap
+        // PostProcessScenePass reads it back through the unified material block.
+        if (m_TonemapMaterial.IsLoaded())
+            const_cast<Material&>(*m_TonemapMaterial.Get()).SetParam("Exposure", m_Settings.Exposure);
+
         // Select the scene's directional light into the per-frame view by value:
         // the first Light entity, or a zero-intensity default when the scene has
         // none. A zero-intensity light contributes nothing to the lighting pass's
