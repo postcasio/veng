@@ -59,6 +59,14 @@ namespace Veng::Renderer
         // Intensity are per-frame values on SceneView, not settings — they tune the
         // effect without a recompile, the split the plumbing-vs-effect line draws.
         bool Bloom = true;
+
+        // Whether the screen-space ambient occlusion pass runs. A topology change:
+        // it inserts/removes the fullscreen SsaoScenePass and selects the lighting
+        // pipeline variant that folds the AO target into its ambient term (vs the
+        // baked-occlusion-only variant), so it drives a Configure → recompile. SSAO
+        // modulates the ambient/indirect term only; the radius/intensity/bias are
+        // fixed kernel constants in the SSAO shader.
+        bool AO = true;
     };
 
     struct SceneRendererInfo
@@ -255,6 +263,16 @@ namespace Veng::Renderer
         // needs; the rest stay built but unused.
         Ref<class GraphicsPipeline> m_LightingPipeline;
         Ref<class PipelineLayout> m_LightingLayout;
+        // The SSAO-enabled lighting variant: a separate fragment shader compiled
+        // with the AO fold, its own layout (the push block carries the AO bindless
+        // slot). Selected over m_LightingPipeline when Settings.AO is on — SSAO is a
+        // compile-time variant, not a per-frame branch.
+        Ref<class GraphicsPipeline> m_SsaoLightingPipeline;
+        Ref<class PipelineLayout> m_SsaoLightingLayout;
+        // The SSAO pass's fullscreen pipeline (writes the R8 AO target) + its layout.
+        // Built once at Create; the SsaoScenePass records through it.
+        Ref<class GraphicsPipeline> m_SsaoPipeline;
+        Ref<class PipelineLayout> m_SsaoLayout;
         Ref<class GraphicsPipeline> m_AlbedoBlitPipeline;
         Ref<class PipelineLayout> m_AlbedoBlitLayout;
         Ref<class GraphicsPipeline> m_NormalBlitPipeline;
@@ -293,11 +311,19 @@ namespace Veng::Renderer
         ResourceId m_BloomBlurHId;
         ResourceId m_BloomBlurVId;
         ResourceId m_BloomResultId;
+        ResourceId m_SsaoId;
         ResourceId m_OutputId;
 
         // Whether the last Rebuild wired the bloom chain (Final mode + Settings.Bloom).
         // Execute binds the bloom imports and writes the bloom params only then.
         bool m_BloomActive = false;
+
+        // Whether the last Rebuild wired the SSAO pass (Final mode + Settings.AO).
+        // Execute binds the AO import only then. m_SsaoPass is a non-owning pointer
+        // into m_Passes (the renderer owns the SsaoScenePass via Unique there); the
+        // renderer queries its produced view to bind the AO import per Execute.
+        bool m_SsaoActive = false;
+        class SsaoScenePass* m_SsaoPass = nullptr;
 
         // Compiled once per Create/Resize/Configure, replayed every Execute. The
         // concrete type is RenderGraph's CompiledGraph; held by an opaque pointer so

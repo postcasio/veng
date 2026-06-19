@@ -1,0 +1,4 @@
+{
+  "source": "deferred_lighting_ssao.frag.slang",
+  "entry": "fsMain"
+}

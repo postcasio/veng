@@ -954,6 +954,107 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// The SSAO property assertion (this plan's dedicated property pin beyond the
+// re-blessed golden). A sphere resting on a receiver plane forms a concave contact
+// crease where the plane meets the sphere; screen-space ambient occlusion darkens
+// that crease by attenuating the hemispheric ambient term there. With AO ON the
+// contact region's ambient is lower than with AO OFF — the two renders differ only
+// in the AO topology toggle (Configure recompiles the pass set + the lighting
+// variant). A grazing light keeps direct lighting low in the crease so the ambient
+// (and thus the AO) delta dominates the measurement.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: SSAO darkens a sphere-on-plane contact region, and "
+                  "Configure(AO=false) recompiles")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_ssao.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    // A flat dielectric so the ambient term (which SSAO modulates) is a meaningful
+    // fraction of the shading at the contact crease.
+    Material& mat = const_cast<Material&>(*material->Get());
+    mat.SetParam("RoughnessFactor", 1.0f);
+    mat.SetParam("MetallicFactor", 0.0f);
+
+    // A sphere resting on a plane: the plane's +Y face is the receiver, the sphere
+    // sits just above the origin so its lower hemisphere creases into the plane.
+    const Ref<Mesh> plane = Mesh::Create(Context, Primitives::Plane(vec2(6.0f), uvec2(1), *material), "SSAO Plane");
+    const Ref<Mesh> sphere = Mesh::Create(Context, Primitives::Sphere(0.7f, 24, 32, *material), "SSAO Sphere");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity planeEntity = scene->CreateEntity();
+    scene->Add<Transform>(planeEntity);
+    scene->Add<MeshRenderer>(planeEntity).Mesh = assets.Adopt(plane);
+
+    const Entity sphereEntity = scene->CreateEntity();
+    scene->Add<Transform>(sphereEntity).Position = vec3(0.0f, 0.7f, 0.0f);
+    scene->Add<MeshRenderer>(sphereEntity).Mesh = assets.Adopt(sphere);
+
+    // A light high overhead pointing down so the plane and sphere are lit but the
+    // contact crease (occluded from the ambient hemisphere) is where AO acts.
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.2f, -1.0f, 0.2f), .Color = vec3(1.0f), .Intensity = 1.0f,
+    };
+
+    constexpr uvec2 extent{160, 160};
+
+    // Look down at the contact from a shallow angle so the crease around the
+    // sphere's base fills a band of the frame.
+    Camera camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 1.6f, 3.2f), vec3(0.0f, 0.4f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .AO = true},
+    });
+
+    // The mean luminance over the lower-center band, where the sphere meets the
+    // plane — the region the contact occlusion darkens.
+    auto ContactLuma = [&](const vector<u8>& pixels) -> f64
+    {
+        const u32 x0 = extent.x / 2 - 40;
+        const u32 x1 = extent.x / 2 + 40;
+        const u32 y0 = extent.y / 2 + 8;
+        const u32 y1 = extent.y / 2 + 48;
+        f64 sum = 0.0;
+        u32 count = 0;
+        for (u32 y = y0; y < y1; ++y)
+            for (u32 x = x0; x < x1; ++x)
+            {
+                const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+                sum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+                ++count;
+            }
+        return sum / count;
+    };
+
+    // AO ON: the contact crease is darkened by the screen-space occlusion.
+    const f64 contactAoOn = ContactLuma(RenderOutput(Context, *renderer, *scene, camera));
+
+    // AO OFF (Configure recompiles the topology — the SSAO pass is removed and the
+    // baked-occlusion-only lighting variant is selected). The same contact region is
+    // brighter without the screen-space occlusion attenuating its ambient.
+    renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .AO = false});
+    const f64 contactAoOff = ContactLuma(RenderOutput(Context, *renderer, *scene, camera));
+
+    CHECK(contactAoOff > contactAoOn + 0.002);
+
+    // Configure back to AO on recompiles again and restores the darker contact.
+    renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .AO = true});
+    const f64 contactRestored = ContactLuma(RenderOutput(Context, *renderer, *scene, camera));
+    CHECK(contactRestored == doctest::Approx(contactAoOn).epsilon(0.05));
+
+    std::filesystem::remove(outArchive);
+}
+
 #ifdef GPU_POSTPROCESS_FIXTURE_DIR
 
 // The PostProcess fullscreen-material proof. An identity PostProcess material —

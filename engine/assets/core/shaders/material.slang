@@ -40,6 +40,8 @@ struct ViewConstants
 {
     float4x4 InvViewProj;       // world-position reconstruction from depth
     float4   CameraPosition;    // xyz; w unused
+    float4x4 View;              // world → view (SSAO reconstructs view space)
+    float4x4 Proj;              // view → clip
 };
 
 static const uint ViewConstantsStride = 256;
