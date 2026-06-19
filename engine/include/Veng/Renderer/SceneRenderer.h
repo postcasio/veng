@@ -31,6 +31,7 @@ namespace Veng::Renderer
     class Context;
     class CommandBuffer;
     class ScenePass;
+    class ShadowScenePass;
     class Image;
     class Sampler;
 
@@ -59,6 +60,17 @@ namespace Veng::Renderer
         // Intensity are per-frame values on SceneView, not settings — they tune the
         // effect without a recompile, the split the plumbing-vs-effect line draws.
         bool Bloom = true;
+
+        // Whether the directional light casts a shadow. A topology change: it
+        // inserts/removes the depth-only ShadowScenePass and the lighting pass's
+        // shadow sample, so it drives a Configure → recompile. With it off the
+        // lighting pass reads full visibility for the directional term.
+        bool Shadows = true;
+
+        // The square shadow-map edge length in texels. Sizing: changing it recreates
+        // the shadow target (through the deferred retire path) and recompiles. A
+        // higher value sharpens the shadow at a memory/fill cost.
+        u32 ShadowResolution = 2048;
     };
 
     struct SceneRendererInfo
@@ -103,6 +115,13 @@ namespace Veng::Renderer
         // bloom chain is inactive.
         f32 BloomThreshold = 1.0f;
         f32 BloomIntensity = 1.0f;
+
+        // The directional light's world → light-clip transform this frame, computed
+        // by the renderer on every Execute from the first directional light (or
+        // identity when there is none). The shadow pass reads it back as the
+        // light-space MVP and the lighting pass projects fragments into shadow
+        // space with it. A caller's value is overwritten — the renderer owns it.
+        mat4 LightViewProj = mat4(1.0f);
     };
 
     class SceneRenderer
@@ -293,11 +312,22 @@ namespace Veng::Renderer
         ResourceId m_BloomBlurHId;
         ResourceId m_BloomBlurVId;
         ResourceId m_BloomResultId;
+        ResourceId m_ShadowId;
         ResourceId m_OutputId;
 
         // Whether the last Rebuild wired the bloom chain (Final mode + Settings.Bloom).
         // Execute binds the bloom imports and writes the bloom params only then.
         bool m_BloomActive = false;
+
+        // Whether the last Rebuild wired the shadow pass (Final mode + Settings.Shadows).
+        // Execute binds the shadow import + writes the light-space matrix only then.
+        bool m_ShadowActive = false;
+
+        // The wired shadow pass (owned through m_Passes), or null when shadows are
+        // compiled out. The renderer reads its produced handle/view to thread into
+        // PassIO and to bind the shadow import per Execute. The pass outlives the
+        // raw pointer (m_Passes is cleared and rebuilt together).
+        ShadowScenePass* m_ShadowPass = nullptr;
 
         // Compiled once per Create/Resize/Configure, replayed every Execute. The
         // concrete type is RenderGraph's CompiledGraph; held by an opaque pointer so

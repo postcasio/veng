@@ -39,6 +39,7 @@ add_library(veng SHARED
         src/Renderer/SwapChainCompositePass.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/SceneRenderer.cpp
+        src/Renderer/ShadowScenePass.cpp
         src/Renderer/ShaderInterface.cpp
         src/Renderer/Backend/Barrier.cpp
         src/Renderer/Backend/BarrierDecision.cpp

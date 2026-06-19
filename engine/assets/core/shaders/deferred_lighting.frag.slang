@@ -27,6 +27,8 @@ struct ViewConstants
 {
     float4x4 InvViewProj;
     float4   CameraPosition;
+    float4x4 LightViewProj;  // directional light's world → light-clip transform
+    float4   ShadowParams;   // x shadow-map handle, y sampler handle, z 1/resolution, w enabled (0/1)
 };
 
 // One light, packed by the renderer into the ring-buffered light buffer. Position
@@ -91,6 +93,56 @@ float GeometrySmith(float nDotV, float nDotL, float roughness)
 float3 FresnelSchlick(float cosTheta, float3 f0)
 {
     return f0 + (1.0 - f0) * pow(saturate(1.0 - cosTheta), 5.0);
+}
+
+// Manual PCF visibility for the directional light. The shadow map stores the
+// scene's depth from the light's orthographic view; a fragment is lit where its
+// own light-space depth is no greater than the stored caster depth. The raw depth
+// is sampled through an ordinary bindless sampler (not a hardware comparison
+// sampler — a comparison sampler in set 0's shared bindless array mistranslates
+// inside the Metal argument buffer on MoltenVK) and compared in-shader. A 3x3
+// kernel of texel-offset samples is averaged to soften the edge, and a
+// slope-scaled bias (larger as N·L falls toward grazing) curbs self-shadow acne.
+float DirectionalShadowVisibility(float3 worldPos, float3 N, float3 L, ViewConstants vc)
+{
+    // ShadowParams.w gates the whole path: 0 when the shadow pass is compiled out,
+    // so the term is fully lit and the stale slot is never sampled.
+    if (vc.ShadowParams.w < 0.5)
+        return 1.0;
+
+    float4 lightClip = mul(vc.LightViewProj, float4(worldPos, 1.0));
+    float3 lightNdc = lightClip.xyz / lightClip.w;
+
+    // Outside the light's frustum (xy in NDC, depth in [0,1]) there is no shadow
+    // data; treat it as lit rather than darkening unshadowed geometry.
+    float2 shadowUV = lightNdc.xy * 0.5 + 0.5;
+    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || shadowUV.y < 0.0 || shadowUV.y > 1.0
+        || lightNdc.z < 0.0 || lightNdc.z > 1.0)
+        return 1.0;
+
+    uint shadowIndex = uint(vc.ShadowParams.x);
+    uint samplerIndex = uint(vc.ShadowParams.y);
+    float texel = vc.ShadowParams.z;
+
+    Texture2D shadowMap = g_Textures[NonUniformResourceIndex(shadowIndex)];
+    SamplerState shadowSamp = g_Samplers[NonUniformResourceIndex(samplerIndex)];
+
+    // Slope-scaled bias: small head-on, growing as the surface turns away from the
+    // light so a near-grazing texel does not shadow itself.
+    float nDotL = saturate(dot(N, L));
+    float bias = clamp(0.0015 * tan(acos(nDotL)), 0.0005, 0.005);
+    float fragDepth = lightNdc.z - bias;
+
+    float visibility = 0.0;
+    for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx)
+        {
+            float2 offsetUV = shadowUV + float2(float(dx), float(dy)) * texel;
+            float casterDepth = shadowMap.Sample(shadowSamp, offsetUV).r;
+            visibility += fragDepth <= casterDepth ? 1.0 : 0.0;
+        }
+
+    return visibility / 9.0;
 }
 
 // The Cook-Torrance contribution of one light: the surface's specular + diffuse
@@ -165,7 +217,8 @@ float4 fsMain(VSOutput input) : SV_Target
 
         float3 L;
         float attenuation = 1.0;
-        if (type == LightTypeDirectional)
+        bool isDirectional = type == LightTypeDirectional;
+        if (isDirectional)
         {
             // The light direction is the direction the light travels; the surface
             // faces the light along -direction.
@@ -200,9 +253,9 @@ float4 fsMain(VSOutput input) : SV_Target
             }
         }
 
-        // The directional-light shadow term: visibility is 1.0 everywhere (no
-        // shadowing). A directional shadow map fills this in a later increment.
-        float visibility = 1.0;
+        // The directional light is shadowed by the shadow map (manual PCF); point
+        // and spot lights are unshadowed (visibility 1.0).
+        float visibility = isDirectional ? DirectionalShadowVisibility(worldPos, N, L, vc) : 1.0;
 
         direct += EvaluateLight(N, V, L, radiance * attenuation, albedo, roughness, metallic, f0) * visibility;
     }

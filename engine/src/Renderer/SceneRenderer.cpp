@@ -1,6 +1,8 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/ScenePass.h>
 
+#include "ShadowScenePass.h"
+
 #include <array>
 #include <cmath>
 #include <span>
@@ -9,6 +11,7 @@
 
 #include <fmt/format.h>
 #include <glm/gtc/matrix_inverse.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <Veng/Assert.h>
 #include <Veng/Renderer/BindlessRegistry.h>
@@ -117,7 +120,45 @@ namespace Veng::Renderer
         {
             mat4 InvViewProj;
             vec4 CameraPosition; // xyz; w unused
+            mat4 LightViewProj;  // directional light's world → light-clip transform
+            vec4 ShadowParams;   // x shadow-map handle, y sampler handle, z 1/resolution, w enabled (0/1)
         };
+
+        static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,
+                      "ViewConstantsBlock must fit one ring-buffered view-constants region");
+
+        // The directional shadow camera's fixed orthographic box, centered on the
+        // world origin. No scene-bounds/AABB fit exists yet, so the box is sized
+        // generously to cover the sample scene's casters and receivers; a tight fit
+        // (and cascades) is the quality follow-on this machinery extends.
+        constexpr f32 ShadowOrthoHalfExtent = 6.0f;
+        constexpr f32 ShadowOrthoDepth = 20.0f;
+
+        // The directional light's world → light-clip transform: an orthographic
+        // projection looking along the light's travel direction toward the origin
+        // from a point pulled back along -direction. Y is flipped for Vulkan clip
+        // space, matching Camera's projection convention, and the depth range is
+        // mapped to [0, 1] (GLM's _ZO ortho) so the sampled depth compares directly
+        // against the shadow map's stored depth.
+        mat4 DirectionalLightViewProj(vec3 travelDirection)
+        {
+            const vec3 dir = glm::normalize(travelDirection);
+
+            // A stable up vector: the world up unless the light points (nearly)
+            // straight up or down, in which case fall back to +Z.
+            const vec3 worldUp = std::abs(dir.y) > 0.99f ? vec3(0.0f, 0.0f, 1.0f) : vec3(0.0f, 1.0f, 0.0f);
+
+            const vec3 eye = -dir * (ShadowOrthoDepth * 0.5f);
+            const mat4 lightView = glm::lookAt(eye, vec3(0.0f), worldUp);
+
+            mat4 lightProj = glm::orthoZO(
+                -ShadowOrthoHalfExtent, ShadowOrthoHalfExtent,
+                -ShadowOrthoHalfExtent, ShadowOrthoHalfExtent,
+                0.0f, ShadowOrthoDepth);
+            lightProj[1][1] *= -1.0f; // Vulkan clip space has Y pointing down.
+
+            return lightProj * lightView;
+        }
 
         // The shared debug-blit fragment push block: the bindless slots a fullscreen
         // blit samples one g-buffer channel through. The albedo, normal, and depth
@@ -280,8 +321,8 @@ namespace Veng::Renderer
                 const TextureHandle depthHandle = io.DepthHandle;
                 const SamplerHandle samplerHandle = io.SamplerHandle;
 
-                graph.AddPass("Deferred Lighting")
-                    .Color({
+                RenderGraph::PassBuilder builder = graph.AddPass("Deferred Lighting");
+                builder.Color({
                         .Resource = io.Hdr,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
@@ -290,8 +331,16 @@ namespace Veng::Renderer
                     .Sample(io.GBufferAlbedo)
                     .Sample(io.GBufferNormal)
                     .Sample(io.GBufferOrm)
-                    .Sample(io.GBufferDepth)
-                    .Execute([this, albedoHandle, normalHandle, ormHandle, depthHandle, samplerHandle](PassContext& inner)
+                    .Sample(io.GBufferDepth);
+
+                // Declaring the shadow map sampled (when the shadow pass is wired)
+                // lets the graph derive its depth-attachment → shader-read barrier.
+                // The lighting shader reads the shadow handle from the view-constants
+                // buffer (ShadowParams), so no push field is needed.
+                if (io.ShadowMap.IsValid())
+                    builder.Sample(io.ShadowMap);
+
+                builder.Execute([this, albedoHandle, normalHandle, ormHandle, depthHandle, samplerHandle](PassContext& inner)
                     {
                         const ScenePassContext ctx = Wrap(inner);
                         CommandBuffer& cmd = ctx.Cmd();
@@ -776,6 +825,13 @@ namespace Veng::Renderer
         const bool bloomActive = m_Settings.Mode == DebugView::Final && m_Settings.Bloom;
         m_BloomActive = bloomActive;
 
+        // The shadow pass runs only in the Final mode (the debug views terminate
+        // after the g-buffer); when active it contributes a depth-only pass ahead of
+        // the lighting pass and its import is declared and bound only then.
+        const bool shadowActive = m_Settings.Mode == DebugView::Final && m_Settings.Shadows;
+        m_ShadowActive = shadowActive;
+        m_ShadowPass = nullptr;
+
         RenderGraph graph(m_Context);
         const ResourceId albedoId = graph.Import("SceneRenderer GBuffer Albedo");
         const ResourceId normalId = graph.Import("SceneRenderer GBuffer Normal");
@@ -790,6 +846,11 @@ namespace Veng::Renderer
         m_DepthId = depthId;
         m_HdrId = hdrId;
 
+        ResourceId shadowId{};
+        if (shadowActive)
+            shadowId = graph.Import("SceneRenderer ShadowMap");
+        m_ShadowId = shadowId;
+
         if (bloomActive)
         {
             m_BloomBrightId = graph.Import("SceneRenderer Bloom Bright");
@@ -799,6 +860,20 @@ namespace Veng::Renderer
         }
 
         m_Passes.clear();
+
+        // The shadow pass is first when active — it writes the shadow map the
+        // lighting pass samples, so the graph orders the depth write before the
+        // lighting read. It survives across rebuilds at the current resolution
+        // (recreated only when ShadowResolution changes), so it is rebuilt here too.
+        TextureHandle shadowHandle{};
+        if (shadowActive)
+        {
+            auto shadowPass = CreateUnique<ShadowScenePass>(m_Context, m_Assets, m_Settings.ShadowResolution);
+            m_ShadowPass = shadowPass.get();
+            shadowHandle = shadowPass->GetShadowHandle();
+            m_Passes.push_back(std::move(shadowPass));
+        }
+
         m_Passes.push_back(CreateUnique<GBufferScenePass>(m_Context, m_Extent));
         switch (m_Settings.Mode)
         {
@@ -912,6 +987,8 @@ namespace Veng::Renderer
             .Hdr = hdrId,
             .HdrHandle = m_HdrHandle,
             .SamplerHandle = m_SamplerHandle,
+            .ShadowMap = shadowId,
+            .ShadowHandle = shadowHandle,
             .Output = m_OutputId,
         };
 
@@ -969,10 +1046,21 @@ namespace Veng::Renderer
         // view.LightCount, if any, is overwritten: the renderer owns this selection.
         std::array<GpuLight, SceneView::MaxLights> packedLights{};
         u32 lightCount = 0;
+        bool haveDirectional = false;
+        vec3 directionalTravel{0.0f, -1.0f, 0.0f};
         for (auto [entity, light] : const_cast<Scene&>(view.World).View<Light>())
         {
             if (lightCount >= SceneView::MaxLights)
                 break;
+
+            // The shadow map shadows the first directional light; its travel
+            // direction drives the light-space matrix the shadow and lighting passes
+            // both use.
+            if (!haveDirectional && light.Type == LightType::Directional)
+            {
+                haveDirectional = true;
+                directionalTravel = light.Direction;
+            }
 
             const mat4 world = WorldMatrix(view.World, entity);
             const vec3 worldPos = vec3(world[3]);
@@ -991,20 +1079,44 @@ namespace Veng::Renderer
             ++lightCount;
         }
 
+        // The directional light's light-space matrix, recomputed each frame from the
+        // first directional light. The shadow pass reads it back as the light-space
+        // MVP and the lighting pass projects fragments into shadow space with it.
+        const mat4 lightViewProj = DirectionalLightViewProj(directionalTravel);
+
         SceneView resolvedView = view;
         resolvedView.LightCount = lightCount;
+        resolvedView.LightViewProj = lightViewProj;
 
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
         registry.WriteLights(std::as_bytes(std::span(packedLights.data(), lightCount)));
 
+        // ShadowParams gate the lighting pass's shadow path: the shadow-map and
+        // sampler bindless indices, the texel size (1/resolution) for the PCF kernel,
+        // and an enabled flag. Enabled only when the shadow pass is wired AND a
+        // directional light exists this frame — otherwise the lighting pass reads
+        // full visibility and never samples the (possibly stale) slot.
+        vec4 shadowParams{0.0f, 0.0f, 0.0f, 0.0f};
+        if (m_ShadowActive && m_ShadowPass && haveDirectional)
+        {
+            shadowParams = vec4(
+                static_cast<f32>(m_ShadowPass->GetShadowHandle().Index),
+                static_cast<f32>(m_SamplerHandle.Index),
+                1.0f / static_cast<f32>(m_ShadowPass->GetResolution()),
+                1.0f);
+        }
+
         // Pack the per-frame view constants — the inverse view-projection (for
-        // world-position reconstruction) and the camera position — and write them
-        // into the current frame's ring-buffered region. The lighting pass reads
-        // them back through set-0 binding 5.
+        // world-position reconstruction), the camera position, the directional
+        // light's light-space matrix, and the shadow params — and write them into
+        // the current frame's ring-buffered region. The lighting pass reads them
+        // back through set-0 binding 5.
         const mat4 viewProj = view.Camera.ViewProjection();
         const ViewConstantsBlock viewConstants{
             .InvViewProj = glm::inverse(viewProj),
             .CameraPosition = vec4(view.Camera.GetPosition(), 0.0f),
+            .LightViewProj = lightViewProj,
+            .ShadowParams = shadowParams,
         };
         registry.WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
 
@@ -1018,6 +1130,8 @@ namespace Veng::Renderer
             {m_HdrId, m_HdrView},
             {m_OutputId, m_OutputView},
         };
+        if (m_ShadowActive && m_ShadowPass)
+            bindings.push_back({m_ShadowId, m_ShadowPass->GetShadowView()});
         if (m_BloomActive)
         {
             bindings.push_back({m_BloomBrightId, m_BloomBrightView});

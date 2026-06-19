@@ -954,6 +954,109 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// The directional-shadow property assertion (this plan's property pin beyond the
+// re-blessed golden). A caster cube floats above a large receiver plane, lit by a
+// directional light traveling straight down. With Shadows ON the plane texel
+// directly beneath the caster is occluded — distinctly darker than the same texel
+// with Shadows OFF, where the light reaches the plane unobstructed. The two renders
+// differ only in the Shadows topology toggle, so the recompile inserting/removing
+// the shadow pass is the discriminating change. A final Configure({Shadows=false})
+// then renders again to prove the stale shadow slot is not sampled after the
+// recompile (the validation gate, run under VE_DEBUG, fails on any error this would
+// raise).
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a directional shadow caster darkens a receiver plane, "
+                  "and toggling Shadows off recompiles cleanly")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_shadow.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    // A large receiver plane in the XZ plane (world normal +Y) at the origin, and a
+    // caster cube floating above its center. Both share the brick material.
+    const Ref<Mesh> plane = Mesh::Create(Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Shadow Plane");
+    const Ref<Mesh> caster = Mesh::Create(Context, Primitives::Cube(1.2f, *material), "Shadow Caster");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity planeEntity = scene->CreateEntity();
+    scene->Add<Transform>(planeEntity);
+    scene->Add<MeshRenderer>(planeEntity).Mesh = assets.Adopt(plane);
+
+    const Entity casterEntity = scene->CreateEntity();
+    scene->Add<Transform>(casterEntity).Position = vec3(0.0f, 1.6f, 0.0f);
+    scene->Add<MeshRenderer>(casterEntity).Mesh = assets.Adopt(caster);
+
+    // A directional light traveling straight down: the caster occludes the plane
+    // texel directly below it.
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Type = LightType::Directional,
+        .Direction = vec3(0.0f, -1.0f, 0.0f),
+        .Color = vec3(1.0f), .Intensity = 3.0f,
+    };
+
+    constexpr uvec2 extent{128, 128};
+
+    // Look down at the plane from above-front, so the plane fills the frame and the
+    // shadow falls near the image center.
+    Camera camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 5.0f, 5.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = true},
+    });
+
+    auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
+    {
+        const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+        return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
+    };
+
+    const vector<u8> shadowedPixels = RenderOutput(Context, *renderer, *scene, camera);
+
+    // The cast shadow falls on the plane directly beneath the caster (the light
+    // travels straight down). Locate it: scan the center column across the lower
+    // half of the frame — below the cube's silhouette, on the plane — for the
+    // darkest receiver texel. That is the shadow.
+    const u32 column = extent.x / 2;
+    u32 shadowRow = extent.y * 5 / 8;
+    f32 shadowedLuma = Luma(shadowedPixels, column, shadowRow);
+    for (u32 y = extent.y / 2 + 4; y < extent.y - 4; ++y)
+    {
+        const f32 l = Luma(shadowedPixels, column, y);
+        if (l < shadowedLuma)
+        {
+            shadowedLuma = l;
+            shadowRow = y;
+        }
+    }
+
+    // Shadows off recompiles the topology (removing the shadow pass); the same plane
+    // texel now receives the light unobstructed.
+    renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .Shadows = false});
+    const f32 unshadowedLuma = Luma(RenderOutput(Context, *renderer, *scene, camera), column, shadowRow);
+
+    // The shadow darkens the receiver: the same texel is measurably dimmer with the
+    // caster's shadow than without it.
+    CHECK(unshadowedLuma > shadowedLuma + 0.03f);
+
+    // Render once more with Shadows off to confirm no stale shadow-slot sample after
+    // the recompile (the validation gate catches any error this would raise).
+    const vector<u8> afterToggle = RenderOutput(Context, *renderer, *scene, camera);
+    REQUIRE(afterToggle.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+
+    std::filesystem::remove(outArchive);
+}
+
 #ifdef GPU_POSTPROCESS_FIXTURE_DIR
 
 // The PostProcess fullscreen-material proof. An identity PostProcess material —

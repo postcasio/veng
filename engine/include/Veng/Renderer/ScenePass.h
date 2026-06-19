@@ -92,6 +92,14 @@ namespace Veng::Renderer
         // The shared sampler bindless slot a fullscreen pass samples through.
         SamplerHandle SamplerHandle;
 
+        // The directional shadow map the ShadowScenePass writes (depth) and the
+        // lighting pass samples. The id is invalid and the handle unbound when the
+        // shadow pass is compiled out (Settings.Shadows == false); the lighting pass
+        // declares its .Sample only when the id is valid and reads full visibility
+        // when the handle is unbound.
+        ResourceId ShadowMap;
+        TextureHandle ShadowHandle;
+
         // The imported output id the terminal pass writes.
         ResourceId Output;
     };
