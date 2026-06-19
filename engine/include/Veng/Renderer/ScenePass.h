@@ -1,10 +1,19 @@
 #pragma once
 
+#include <string>
+
 #include <Veng/Veng.h>
 #include <Veng/Assert.h>
+#include <Veng/Asset/AssetHandle.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Renderer/Types.h>
+
+namespace Veng
+{
+    class Material;
+}
 
 // The reusable-pass-unit layer SceneRenderer composes its pipeline from. A
 // ScenePass is a self-contained pipeline stage: it knows how to size its own
@@ -16,6 +25,8 @@
 namespace Veng::Renderer
 {
     class CommandBuffer;
+    class Context;
+    class GraphicsPipeline;
 
     // The record-time context a ScenePass callback receives: the RenderGraph
     // record-time channel plus this frame's SceneView, typed back from the graph's
@@ -103,5 +114,58 @@ namespace Veng::Renderer
         {
             return ScenePassContext(inner);
         }
+    };
+
+    // A reusable fullscreen post-process pass driven by a PostProcess-domain
+    // material. It builds a fullscreen GraphicsPipeline from the material's
+    // reflected shaders + pipeline layout against a single color target whose
+    // format the renderer supplies (a PostProcess material's loader cannot know
+    // it), binds set-0 bindless, samples one upstream Imported target through a
+    // runtime-bound material handle field (its bindless index written each frame
+    // via Material::SetTextureHandle/SetSamplerHandle), pushes the material's
+    // per-draw selector at the PostProcess domain's offset (0), and draws the
+    // fullscreen triangle.
+    //
+    // The renderer owns the wiring: the constructor names which Imported source
+    // the pass samples, the bindless slots for that source, the material field
+    // names to write them into, and the output id/format. One PostProcessScenePass
+    // type drives any PostProcess material; a chain of them is the post-stack the
+    // renderer lists.
+    struct PostProcessInput
+    {
+        // The Imported upstream target this pass samples (declared .Sample so the
+        // graph derives its attachment → shader-read barrier).
+        ResourceId Source;
+        // The bindless slots the renderer registered for the source view + the
+        // shared sampler, written into the material's input handle fields each
+        // frame.
+        TextureHandle SourceTexture;
+        SamplerHandle Sampler;
+        // The material's runtime-bound input field names (the texture handle field
+        // and its paired sampler handle field).
+        string TextureField;
+        string SamplerField;
+    };
+
+    class PostProcessScenePass final : public ScenePass
+    {
+    public:
+        PostProcessScenePass(Context& context, AssetHandle<Material> material,
+                             PostProcessInput input, ResourceId output,
+                             Format outputFormat, uvec2 extent);
+
+        void Resize(uvec2 extent) override { m_Extent = extent; }
+        void Declare(RenderGraph& graph, const PassIO& io) override;
+
+    private:
+        void BuildPipeline();
+
+        Context& m_Context;
+        AssetHandle<Material> m_Material;
+        PostProcessInput m_Input;
+        ResourceId m_Output;
+        Format m_OutputFormat;
+        uvec2 m_Extent;
+        Ref<GraphicsPipeline> m_Pipeline;
     };
 }

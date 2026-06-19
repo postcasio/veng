@@ -309,13 +309,20 @@ namespace Veng::Cook
 
             if (decl.Type == "texture")
             {
-                if (!fieldJson.contains("id") || !fieldJson["id"].is_number_unsigned())
+                // A texture field with no 'id' is runtime-bound: the renderer
+                // writes its bindless index per frame (the PostProcess input
+                // handle). TextureAssetId stays 0, so the cook emits a handle
+                // field with no resolved id and the loader patches no asset.
+                if (fieldJson.contains("id"))
                 {
-                    return std::unexpected(fmt::format(
-                        "material importer: texture field '{}' must have an unsigned integer 'id'",
-                        decl.Name));
+                    if (!fieldJson["id"].is_number_unsigned())
+                    {
+                        return std::unexpected(fmt::format(
+                            "material importer: texture field '{}' 'id' must be an unsigned integer",
+                            decl.Name));
+                    }
+                    decl.TextureAssetId = fieldJson["id"].get<u64>();
                 }
-                decl.TextureAssetId = fieldJson["id"].get<u64>();
             }
             else if (decl.Type == "sampler")
             {
@@ -440,20 +447,26 @@ namespace Veng::Cook
 
                 if (decl.Type == "texture")
                 {
-                    const optional<ResolvedSource> texResolved =
-                        context.Resolve(AssetId{.Value = decl.TextureAssetId});
-                    if (!texResolved)
+                    // A runtime-bound texture field (no 'id') resolves no asset —
+                    // it carries TextureId 0, and the renderer writes its bindless
+                    // index per frame.
+                    if (decl.TextureAssetId != 0)
                     {
-                        return std::unexpected(fmt::format(
-                            "material importer: texture {} for field '{}' not found in pack or reference packs",
-                            decl.TextureAssetId, decl.Name));
-                    }
-                    if (texResolved->Type != AssetType::Texture)
-                    {
-                        return std::unexpected(fmt::format(
-                            "material importer: asset {} referenced as texture for field '{}' but has type {}",
-                            decl.TextureAssetId, decl.Name,
-                            static_cast<u32>(texResolved->Type)));
+                        const optional<ResolvedSource> texResolved =
+                            context.Resolve(AssetId{.Value = decl.TextureAssetId});
+                        if (!texResolved)
+                        {
+                            return std::unexpected(fmt::format(
+                                "material importer: texture {} for field '{}' not found in pack or reference packs",
+                                decl.TextureAssetId, decl.Name));
+                        }
+                        if (texResolved->Type != AssetType::Texture)
+                        {
+                            return std::unexpected(fmt::format(
+                                "material importer: asset {} referenced as texture for field '{}' but has type {}",
+                                decl.TextureAssetId, decl.Name,
+                                static_cast<u32>(texResolved->Type)));
+                        }
                     }
 
                     cookedField.Kind = 1;

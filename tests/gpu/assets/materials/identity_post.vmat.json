@@ -1,0 +1,8 @@
+{
+  "domain": "postprocess",
+  "shaders": { "vertex": 9501, "fragment": 9502 },
+  "fields": [
+    { "name": "Source",        "type": "texture" },
+    { "name": "SourceSampler", "type": "sampler", "texture": "Source" }
+  ]
+}

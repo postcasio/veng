@@ -36,20 +36,31 @@ namespace Veng
             m_Context.GetBindlessRegistry().Release(m_Handle);
     }
 
-    void Material::Finalize(Ref<Renderer::GraphicsPipeline> pipeline)
+    void Material::Finalize(Ref<Renderer::PipelineLayout> layout, Ref<Renderer::GraphicsPipeline> pipeline)
     {
         VE_ASSERT(!m_Registered, "Material::Finalize: '{}' already registered", m_Name);
-        VE_ASSERT(pipeline != nullptr, "Material::Finalize: '{}' given a null pipeline", m_Name);
+        VE_ASSERT(layout != nullptr, "Material::Finalize: '{}' given a null pipeline layout", m_Name);
+        // A Surface material binds its own pipeline; a PostProcess material is
+        // finalized with a null pipeline (the PostProcessScenePass builds the
+        // GraphicsPipeline against its color format and binds it).
+        VE_ASSERT(pipeline != nullptr || m_Domain == MaterialDomain::PostProcess,
+                  "Material::Finalize: '{}' given a null pipeline", m_Name);
 
+        m_PipelineLayout = std::move(layout);
         m_Pipeline = std::move(pipeline);
 
         // The textures are Finalize()d by now, so their bindless handles are
         // valid: patch each TextureHandle/SamplerHandle field in the block with the
-        // resolved index of the texture it references.
+        // resolved index of the texture it references. A handle field with no
+        // cooked asset (TextureId == 0) is runtime-bound — its slot stays zero
+        // here and is written each frame via SetTextureHandle/SetSamplerHandle.
         for (const MaterialField& field : m_Fields)
         {
             if (field.Kind != MaterialField::FieldKind::TextureHandle
              && field.Kind != MaterialField::FieldKind::SamplerHandle)
+                continue;
+
+            if (field.TextureId == 0)
                 continue;
 
             const Texture* tex = nullptr;
@@ -82,7 +93,12 @@ namespace Veng
 
     void Material::Bind(CommandBuffer& cmd) const
     {
-        cmd.BindPipeline(m_Pipeline);
+        // A PostProcess material owns no pipeline — the PostProcessScenePass
+        // binds the fullscreen pipeline it built from this material's shaders, so
+        // Bind only pushes the selector. A Surface material binds its own.
+        if (m_Pipeline != nullptr)
+            cmd.BindPipeline(m_Pipeline);
+
         // Fold the current frame's region base into the pushed selector so the
         // shader's index * MaterialParamStride load lands in this frame's copy of
         // the ring-buffered material buffer.
@@ -174,6 +190,44 @@ namespace Veng
                   name, field->Offset, writeBytes, m_Block.size());
 
         std::memcpy(m_Block.data() + field->Offset, &value, writeBytes);
+
+        UploadParams();
+    }
+
+    void Material::SetTextureHandle(std::string_view name, Renderer::TextureHandle handle)
+    {
+        const MaterialField* field = FindField(name);
+        VE_ASSERT(field != nullptr,
+                  "Material::SetTextureHandle: field '{}' not found in material '{}'",
+                  name, m_Name);
+        VE_ASSERT(field->Kind == MaterialField::FieldKind::TextureHandle,
+                  "Material::SetTextureHandle: field '{}' in material '{}' is not a TextureHandle (Kind={})",
+                  name, m_Name, static_cast<u32>(field->Kind));
+        VE_ASSERT(field->Offset + sizeof(u32) <= m_Block.size(),
+                  "Material::SetTextureHandle: field '{}' offset {} + 4 exceeds block size {}",
+                  name, field->Offset, m_Block.size());
+
+        const u32 index = handle.Index;
+        std::memcpy(m_Block.data() + field->Offset, &index, sizeof(u32));
+
+        UploadParams();
+    }
+
+    void Material::SetSamplerHandle(std::string_view name, Renderer::SamplerHandle handle)
+    {
+        const MaterialField* field = FindField(name);
+        VE_ASSERT(field != nullptr,
+                  "Material::SetSamplerHandle: field '{}' not found in material '{}'",
+                  name, m_Name);
+        VE_ASSERT(field->Kind == MaterialField::FieldKind::SamplerHandle,
+                  "Material::SetSamplerHandle: field '{}' in material '{}' is not a SamplerHandle (Kind={})",
+                  name, m_Name, static_cast<u32>(field->Kind));
+        VE_ASSERT(field->Offset + sizeof(u32) <= m_Block.size(),
+                  "Material::SetSamplerHandle: field '{}' offset {} + 4 exceeds block size {}",
+                  name, field->Offset, m_Block.size());
+
+        const u32 index = handle.Index;
+        std::memcpy(m_Block.data() + field->Offset, &index, sizeof(u32));
 
         UploadParams();
     }

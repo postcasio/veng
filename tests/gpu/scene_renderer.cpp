@@ -30,6 +30,7 @@
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Renderer/ScenePass.h>
 #include <Veng/Asset/Shader.h>
 #include <Veng/Renderer/Types.h>
 
@@ -679,5 +680,131 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     std::filesystem::remove(outArchive);
 }
+
+#ifdef GPU_POSTPROCESS_FIXTURE_DIR
+
+// The PostProcess fullscreen-material proof. An identity PostProcess material —
+// its fragment samples one runtime-bound input and writes it unchanged — is cooked
+// and driven by a PostProcessScenePass against an RGBA8 output. A source target is
+// cleared to a known color in the same command stream, registered into bindless,
+// and the pass writes the live source bindless index into the material's
+// runtime-bound input handle field each frame, samples it, and writes it through.
+// The downloaded output must match the source color: build-from-material (layout at
+// load, pipeline built by the pass against its format), set-0 bind, upstream sample
+// (the derived barrier transitions the cleared source for the read), the
+// domain-keyed selector push at offset 0, and the fullscreen draw all work.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a PostProcess material samples an upstream target and writes it unchanged")
+{
+    const path fixtureDir = path(GPU_POSTPROCESS_FIXTURE_DIR);
+    const path outArchive = std::filesystem::temp_directory_path() / "veng_gpu_postprocess.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(fixtureDir / "postprocess_pack.json", outArchive).has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    // The identity PostProcess material loads: its layout is built at load, but its
+    // GraphicsPipeline is NOT (the pass builds it against its color format), and its
+    // domain is PostProcess.
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{9503});
+    REQUIRE(material.has_value());
+    REQUIRE(material->IsLoaded());
+
+    const Material& mat = *material->Get();
+    CHECK(mat.GetDomain() == MaterialDomain::PostProcess);
+    CHECK(mat.GetIndex() != MaterialHandle::Invalid);
+    CHECK(mat.GetPipeline() == nullptr);            // built by the pass, not the loader
+    CHECK(mat.GetPipelineLayout() != nullptr);      // built by the loader for both domains
+
+    constexpr uvec2 extent{64, 48};
+    constexpr ClearColor sourceColor{0.25f, 0.55f, 0.80f, 1.0f};
+
+    // The upstream source the pass samples — cleared to a known color, sampled
+    // (so the graph derives its attachment → shader-read barrier).
+    const Ref<Image> sourceImage = Image::Create(Context, {
+        .Name = "PostProcess Source",
+        .Extent = {extent.x, extent.y, 1},
+        .Format = Format::RGBA8Unorm,
+        .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled,
+    });
+    const Ref<ImageView> sourceView = ImageView::Create(Context, {.Name = "PostProcess Source View", .Image = sourceImage});
+
+    const Ref<Image> outputImage = Image::Create(Context, {
+        .Name = "PostProcess Output",
+        .Extent = {extent.x, extent.y, 1},
+        .Format = Format::RGBA8Unorm,
+        .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+    });
+    const Ref<ImageView> outputView = ImageView::Create(Context, {.Name = "PostProcess Output View", .Image = outputImage});
+
+    const Ref<Sampler> sampler = Sampler::Create(Context, {
+        .Name = "PostProcess Sampler",
+        .AddressModeU = AddressMode::ClampToEdge,
+        .AddressModeV = AddressMode::ClampToEdge,
+        .AddressModeW = AddressMode::ClampToEdge,
+    });
+
+    BindlessRegistry& bindless = Context.GetBindlessRegistry();
+    const TextureHandle sourceHandle = bindless.Register(sourceView);
+    const SamplerHandle samplerHandle = bindless.Register(sampler);
+
+    // Drive one graph: clear the source to the known color, then the postprocess
+    // pass samples it and writes the output. The pass declares .Sample(source), so
+    // the clear-write → sample-read barrier is derived by the graph.
+    Context.ImmediateCommands([&](CommandBuffer& cmd)
+    {
+        RenderGraph graph(Context);
+        const ResourceId sourceId = graph.Import("PostProcess Source");
+        const ResourceId outputId = graph.Import("PostProcess Output");
+
+        graph.AddPass("Clear Source")
+            .Color({
+                .Resource = sourceId,
+                .Load = LoadOp::Clear,
+                .Store = StoreOp::Store,
+                .Clear = sourceColor,
+            })
+            .Execute([](PassContext&) {});
+
+        PostProcessScenePass pass(Context, *material,
+            PostProcessInput{
+                .Source = sourceId,
+                .SourceTexture = sourceHandle,
+                .Sampler = samplerHandle,
+                .TextureField = "Source",
+                .SamplerField = "SourceSampler",
+            },
+            outputId, Format::RGBA8Unorm, extent);
+        pass.Declare(graph, PassIO{});
+
+        const RenderGraph::ImportBinding bindings[] = {
+            {sourceId, sourceView},
+            {outputId, outputView},
+        };
+        graph.Compile()->Execute(cmd, bindings);
+    });
+
+    const vector<u8> pixels = outputImage->Download();
+    REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 4);
+
+    // The center texel reads the source color unchanged (within 8-bit quantization).
+    const usize center = (static_cast<usize>(extent.y / 2) * extent.x + extent.x / 2) * 4;
+    auto Approx8 = [](u8 actual, f32 expected) {
+        return std::fabs(static_cast<f32>(actual) / 255.0f - expected) < 0.02f;
+    };
+    CHECK(Approx8(pixels[center + 0], sourceColor.R));
+    CHECK(Approx8(pixels[center + 1], sourceColor.G));
+    CHECK(Approx8(pixels[center + 2], sourceColor.B));
+    CHECK(pixels[center + 3] == 255);
+
+    bindless.Release(sourceHandle);
+    bindless.Release(samplerHandle);
+    std::filesystem::remove(outArchive);
+}
+
+#endif // GPU_POSTPROCESS_FIXTURE_DIR
 
 #endif // GPU_GBUFFER_FIXTURE_DIR

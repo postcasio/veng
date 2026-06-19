@@ -96,13 +96,20 @@ namespace Veng
         // Patch the resolved texture/sampler bindless indices into the param
         // block (the textures must already be Finalize()d), allocate the
         // per-material SSBO slot, and upload. Runs on the main thread; the
-        // pipeline is supplied here because its GPU build is also main-thread
-        // work the async loader defers to the continuation.
-        void Finalize(Ref<Renderer::GraphicsPipeline> pipeline);
+        // layout + pipeline are supplied here because their GPU build is also
+        // main-thread work the async loader defers to the continuation. A
+        // PostProcess material is finalized with a null pipeline — its
+        // GraphicsPipeline is built later by the PostProcessScenePass against the
+        // renderer's color format, which the loader cannot know — so it keeps the
+        // layout + shader modules and binds nothing on Material::Bind beyond
+        // pushing the selector.
+        void Finalize(Ref<Renderer::PipelineLayout> layout, Ref<Renderer::GraphicsPipeline> pipeline);
 
         // Binds the material's pipeline and pushes its index as the per-draw
         // selector. Set 0 (the bindless registry) must already be bound for the
-        // frame. Issue the mesh draws after this.
+        // frame. Issue the mesh draws after this. A PostProcess material has no
+        // owned pipeline (the pass binds its own); Bind only pushes the selector,
+        // at the domain's selector offset.
         void Bind(Renderer::CommandBuffer& cmd) const;
 
         // Name-based edits (resolved through the reflected field table); both
@@ -110,12 +117,35 @@ namespace Veng
         void SetTexture(std::string_view name, AssetHandle<Texture> texture);
         void SetParam(std::string_view name, const vec4& value);
 
+        // Write a raw bindless index into a handle field by name — the path a
+        // runtime-bound input takes (a renderer-owned ImageView/Sampler the
+        // material does not own as a cooked Texture asset). SetTextureHandle
+        // targets a TextureHandle field, SetSamplerHandle a SamplerHandle field;
+        // neither keeps an asset resident. The write lands in the ring-buffered
+        // block's current frame region, so it is cheap and frame-safe per frame.
+        void SetTextureHandle(std::string_view name, Renderer::TextureHandle handle);
+        void SetSamplerHandle(std::string_view name, Renderer::SamplerHandle handle);
+
         // The material's slot in the registry's per-material SSBO array.
         [[nodiscard]] u32 GetIndex() const { return m_Handle.Index; }
 
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] MaterialDomain GetDomain() const { return m_Domain; }
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const { return m_Pipeline; }
+
+        // The reflected pipeline layout (built by the loader for both domains: set
+        // 0 reserved for the bindless registry, the selector push range at the
+        // domain's offset). A PostProcess pass builds its GraphicsPipeline against
+        // this layout and the material's shader modules. The shader modules supply
+        // that pass's fullscreen vertex + fragment stages.
+        [[nodiscard]] const Ref<Renderer::PipelineLayout>& GetPipelineLayout() const { return m_PipelineLayout; }
+        [[nodiscard]] const Ref<Renderer::ShaderModule>& GetVertexModule() const { return m_VertexShader.Get()->Module; }
+        [[nodiscard]] const Ref<Renderer::ShaderModule>& GetFragmentModule() const { return m_FragmentShader.Get()->Module; }
+
+        // The push-constant offset of the per-draw material selector (Surface →
+        // 64, after the MVP; PostProcess → 0, no geometry block). A pass building
+        // its own pipeline reads this to size its push range.
+        [[nodiscard]] u32 GetSelectorOffset() const { return m_SelectorOffset; }
 
         // The material's resolved texture dependencies. Sampled bindlessly (set
         // 0), so they are invisible to the render graph: a caller drawing with
@@ -140,6 +170,7 @@ namespace Veng
         string m_Name;
         MaterialDomain m_Domain = MaterialDomain::Surface;
         Ref<Renderer::GraphicsPipeline> m_Pipeline;
+        Ref<Renderer::PipelineLayout> m_PipelineLayout;
 
         AssetHandle<Shader> m_VertexShader;
         AssetHandle<Shader> m_FragmentShader;

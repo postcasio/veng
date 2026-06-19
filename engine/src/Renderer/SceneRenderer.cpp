@@ -1,6 +1,7 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/ScenePass.h>
 
+#include <fmt/format.h>
 #include <glm/gtc/matrix_inverse.hpp>
 
 #include <Veng/Assert.h>
@@ -410,6 +411,81 @@ namespace Veng::Renderer
             uvec2 m_Extent;
             Source m_Source;
         };
+    }
+
+    PostProcessScenePass::PostProcessScenePass(
+        Context& context, AssetHandle<Material> material, PostProcessInput input,
+        ResourceId output, Format outputFormat, uvec2 extent)
+        : m_Context(context), m_Material(std::move(material)), m_Input(std::move(input)),
+          m_Output(output), m_OutputFormat(outputFormat), m_Extent(extent)
+    {
+    }
+
+    void PostProcessScenePass::BuildPipeline()
+    {
+        VE_ASSERT(m_Material.IsLoaded(),
+                  "PostProcessScenePass: the PostProcess material is not resident");
+
+        const Material& material = *m_Material.Get();
+        VE_ASSERT(material.GetDomain() == MaterialDomain::PostProcess,
+                  "PostProcessScenePass: material '{}' is not a PostProcess material", material.GetName());
+
+        // The fullscreen shape: the material's screenspace vertex stage, its
+        // fragment stage, no vertex inputs, no depth, one color target the renderer
+        // supplies the format for. The layout (set 0 reserved, the selector push
+        // range) comes from the loader; only this color-format-dependent
+        // GraphicsPipeline::Create is the pass's to make.
+        m_Pipeline = GraphicsPipeline::Create(m_Context, {
+            .Name = fmt::format("PostProcess Pipeline ({})", material.GetName()),
+            .ColorAttachments = {{.Format = m_OutputFormat}},
+            .PipelineLayout = material.GetPipelineLayout(),
+            .ShaderStages = {
+                {.Stage = ShaderStage::Vertex,   .Module = material.GetVertexModule()},
+                {.Stage = ShaderStage::Fragment, .Module = material.GetFragmentModule()},
+            },
+        });
+    }
+
+    void PostProcessScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
+    {
+        if (!m_Pipeline)
+            BuildPipeline();
+
+        const PostProcessInput input = m_Input;
+
+        graph.AddPass("PostProcess")
+            .Color({
+                .Resource = m_Output,
+                .Load = LoadOp::Clear,
+                .Store = StoreOp::Store,
+                .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+            })
+            .Sample(input.Source)
+            .Execute([this, input](PassContext& inner)
+            {
+                CommandBuffer& cmd = inner.Cmd();
+                // The per-frame handle write mutates the material's parameter
+                // block; AssetHandle::Get is const, so cast away const to write.
+                Material& material = const_cast<Material&>(*m_Material.Get());
+
+                // Bind the live upstream bindless slots into the material's
+                // runtime-bound input handle fields. The write lands in the
+                // ring-buffered block's current frame region (no stall, no hazard);
+                // it must precede Material::Bind so the pushed selector reads this
+                // frame's region.
+                material.SetTextureHandle(input.TextureField, input.SourceTexture);
+                material.SetSamplerHandle(input.SamplerField, input.Sampler);
+
+                // Bind the pass's pipeline first (the bindless registry binds set 0
+                // into the currently-bound layout), then set 0, then push the
+                // material selector at the PostProcess domain's offset.
+                cmd.BindPipeline(m_Pipeline);
+                cmd.SetViewport({0, 0}, m_Extent);
+                cmd.SetScissor({0, 0}, m_Extent);
+                m_Context.GetBindlessRegistry().Bind(cmd);
+                material.Bind(cmd);
+                cmd.DrawFullscreenTriangle();
+            });
     }
 
     // Holds the compiled graph + the stable import bindings rebound per Execute.

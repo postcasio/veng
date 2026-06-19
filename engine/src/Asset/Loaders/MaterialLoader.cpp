@@ -22,10 +22,23 @@ namespace Veng
 {
     namespace
     {
-        // Fixed push-constant offset where the per-draw materialIndex selector
-        // lives within the forward push-constant block (right after the float4x4
-        // MVP at offset 0, size 64).
-        static constexpr u32 MaterialSelectorPushOffset = 64;
+        // The push-constant offset of the per-draw materialIndex selector, keyed
+        // on domain. A Surface push block is MVP (offset 0, 64 bytes) then the
+        // selector, so the selector sits at 64. A PostProcess shader has no
+        // geometry block, so its selector sits at 0 — a 4-byte push range, no dead
+        // MVP padding. The pipeline-layout guard checks the domain's offset.
+        constexpr u32 SurfaceSelectorPushOffset = 64;
+        constexpr u32 PostProcessSelectorPushOffset = 0;
+
+        u32 SelectorPushOffsetFor(MaterialDomain domain)
+        {
+            switch (domain)
+            {
+                case MaterialDomain::Surface:     return SurfaceSelectorPushOffset;
+                case MaterialDomain::PostProcess: return PostProcessSelectorPushOffset;
+            }
+            VE_ASSERT(false, "MaterialLoader: unmapped MaterialDomain {}", static_cast<u32>(domain));
+        }
 
         // Cooked names are fixed-size, nul-terminated char arrays (CookedBlobs.h).
         template <usize N>
@@ -42,13 +55,17 @@ namespace Veng
 
     namespace
     {
-        // Build the material's forward graphics pipeline from the (now-resident)
-        // vertex/fragment shader interfaces. Runs on the main thread at finalize:
-        // the shaders are guaranteed resident, so their Interface is readable, and
-        // the GPU pipeline build is main-thread-only work. A drifted shader (no
-        // selector push-constant range) is a recoverable Corrupt failure.
-        Result<Ref<Renderer::GraphicsPipeline>> BuildPipeline(
-            AssetManager& manager, Renderer::Context& context, AssetId id,
+        // Build the material's pipeline layout from the (now-resident)
+        // vertex/fragment shader interfaces — set 0 reserved for the bindless
+        // registry, author-declared sets shifted to 1+, the merged push-constant
+        // ranges. Built for both domains: a Surface material's GraphicsPipeline is
+        // built from this layout below against the fixed g-buffer formats; a
+        // PostProcess material's GraphicsPipeline is built by the
+        // PostProcessScenePass against its color format, from this same layout. A
+        // drifted shader (no selector push-constant range at the domain's offset)
+        // is a recoverable Corrupt failure.
+        Result<Ref<Renderer::PipelineLayout>> BuildPipelineLayout(
+            Renderer::Context& context, AssetId id, MaterialDomain domain,
             const Veng::Shader& vsAsset, const Veng::Shader& fsAsset)
         {
             const Renderer::ShaderInterface& vsInterface = vsAsset.Interface;
@@ -69,11 +86,10 @@ namespace Veng
             }
 
             // Push-constant ranges: merge ranges with identical (Offset, Size) by
-            // OR-ing Stages. The forward push-constant block (MVP + materialIndex)
-            // is declared in both vertex and fragment stages; without merging, two
-            // ranges cover the same bytes and CommandBuffer::PushConstants<T>
-            // asserts ambiguity. After the merge there is exactly one range with
-            // Stages = Vertex|Fragment.
+            // OR-ing Stages. A Surface push block (MVP + materialIndex) is declared
+            // in both stages; without merging, two ranges cover the same bytes and
+            // CommandBuffer::PushConstants<T> asserts ambiguity. After the merge
+            // there is one range per (offset, size).
             vector<Renderer::PushConstantRange> mergedRanges;
             auto mergeRange = [&](const Renderer::PushConstantRange& incoming)
             {
@@ -93,11 +109,14 @@ namespace Veng
             for (const auto& r : fsInterface.BuildPushConstantRanges())
                 mergeRange(r);
 
+            // The selector must be covered by a declared push range, at the
+            // domain's offset (Surface → 64, PostProcess → 0).
+            const u32 selectorOffset = SelectorPushOffsetFor(domain);
             bool selectorCovered = false;
             for (const auto& r : mergedRanges)
             {
-                if (r.Offset <= MaterialSelectorPushOffset
-                 && r.Offset + r.Size >= MaterialSelectorPushOffset + sizeof(u32))
+                if (r.Offset <= selectorOffset
+                 && r.Offset + r.Size >= selectorOffset + sizeof(u32))
                 {
                     selectorCovered = true;
                     break;
@@ -107,15 +126,27 @@ namespace Veng
             {
                 return std::unexpected(fmt::format(
                     "material: no merged push-constant range covers [{}+4) — "
-                    "the shader does not declare the expected forward materialIndex selector",
-                    MaterialSelectorPushOffset));
+                    "the shader does not declare the expected materialIndex selector",
+                    selectorOffset));
             }
 
-            const Ref<Renderer::PipelineLayout> pipelineLayout = Renderer::PipelineLayout::Create(context, {
+            return Renderer::PipelineLayout::Create(context, {
                 .Name                = fmt::format("Material {} Layout", id.Value),
                 .DescriptorSetLayouts = descLayouts,
                 .PushConstantRanges  = mergedRanges,
             });
+        }
+
+        // Build a Surface material's graphics pipeline from its layout + shaders,
+        // against the fixed deferred g-buffer formats. Runs on the main thread at
+        // finalize: the shaders are guaranteed resident, so their Interface is
+        // readable, and the GPU pipeline build is main-thread-only work.
+        Result<Ref<Renderer::GraphicsPipeline>> BuildSurfacePipeline(
+            AssetManager& manager, Renderer::Context& context, AssetId id,
+            const Ref<Renderer::PipelineLayout>& layout,
+            const Veng::Shader& vsAsset, const Veng::Shader& fsAsset)
+        {
+            const Renderer::ShaderInterface& vsInterface = vsAsset.Interface;
 
             // Vertex layout: resolve from the vertex shader's declared
             // VertexLayoutId. CPU-only and instant, so a synchronous load here is
@@ -144,7 +175,7 @@ namespace Veng
                 },
                 .DepthAttachmentFormat = Renderer::GBuffer::DepthFormat,
                 .VertexBufferLayout = vertexBufferLayout,
-                .PipelineLayout = pipelineLayout,
+                .PipelineLayout = layout,
                 .ShaderStages = {
                     {.Stage = Renderer::ShaderStage::Vertex,   .Module = vsAsset.Module},
                     {.Stage = Renderer::ShaderStage::Fragment, .Module = fsAsset.Module},
@@ -284,18 +315,27 @@ namespace Veng
 
             if (isHandle)
             {
-                if (cf.TextureId == 0)
-                {
-                    return std::unexpected(Corrupt(id, fmt::format(
-                        "material: field {} '{}' is a handle field but TextureId is 0",
-                        i, BridgeName(cf.Name))));
-                }
-
                 if (cf.Offset + sizeof(u32) > header.BlockBytes)
                 {
                     return std::unexpected(Corrupt(id, fmt::format(
                         "material: field {} '{}' offset {} + 4 exceeds block size {}",
                         i, BridgeName(cf.Name), cf.Offset, header.BlockBytes)));
+                }
+
+                // A handle field with no cooked asset (TextureId == 0) is
+                // runtime-bound — the renderer writes its bindless index per frame
+                // via Material::SetTextureHandle/SetSamplerHandle. It loads no
+                // texture dependency and its slot stays zero until then.
+                if (cf.TextureId == 0)
+                {
+                    fields.push_back(Veng::MaterialField{
+                        .Name      = BridgeName(cf.Name),
+                        .Offset    = cf.Offset,
+                        .Size      = cf.Size,
+                        .Kind      = kind,
+                        .TextureId = 0,
+                    });
+                    continue;
                 }
 
                 // Load (or reuse) the texture asset. The resolved bindless index
@@ -356,26 +396,37 @@ namespace Veng
             .Textures       = std::move(textures),
             .Block          = std::move(block),
             .Fields         = std::move(fields),
-            .SelectorOffset = MaterialSelectorPushOffset,
+            .SelectorOffset = SelectorPushOffsetFor(domain),
         };
 
         const Ref<Veng::Material> material = Veng::Material::Create(info);
 
         // ── 7. The main-thread finalize ──────────────────────────────────────
         // Runs only once every dependency (shaders + textures) is resident: build
-        // the pipeline from their interfaces, then register + patch texture
-        // indices via Material::Finalize.
+        // the pipeline layout (both domains), the GraphicsPipeline for Surface
+        // (the PostProcessScenePass builds the PostProcess one against its color
+        // format), then register + patch texture indices via Material::Finalize.
         return Detail::LoadJob{
             .Resource = Detail::RefAny(material),
             .Dependencies = std::move(dependencies),
-            .Finalize = [&manager, &context, id, vsHandle, fsHandle, material]() -> VoidResult
+            .Finalize = [&manager, &context, id, domain, vsHandle, fsHandle, material]() -> VoidResult
             {
-                Result<Ref<Renderer::GraphicsPipeline>> pipeline =
-                    BuildPipeline(manager, context, id, *vsHandle.Get(), *fsHandle.Get());
-                if (!pipeline)
-                    return std::unexpected(pipeline.error());
+                Result<Ref<Renderer::PipelineLayout>> layout =
+                    BuildPipelineLayout(context, id, domain, *vsHandle.Get(), *fsHandle.Get());
+                if (!layout)
+                    return std::unexpected(layout.error());
 
-                material->Finalize(std::move(*pipeline));
+                Ref<Renderer::GraphicsPipeline> pipeline;
+                if (domain == MaterialDomain::Surface)
+                {
+                    Result<Ref<Renderer::GraphicsPipeline>> built =
+                        BuildSurfacePipeline(manager, context, id, *layout, *vsHandle.Get(), *fsHandle.Get());
+                    if (!built)
+                        return std::unexpected(built.error());
+                    pipeline = std::move(*built);
+                }
+
+                material->Finalize(std::move(*layout), std::move(pipeline));
                 return {};
             },
         };

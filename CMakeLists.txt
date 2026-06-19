@@ -542,6 +542,11 @@ if (VENG_BUILD_TESTS)
                 # in-process: a brick material on the core canonical layout, drawn
                 # through the SceneRenderer to assert the albedo blit.
                 GPU_GBUFFER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
+                # The PostProcess fullscreen-material proof (scene_renderer.cpp)
+                # cooks an identity PostProcess material and drives it through a
+                # PostProcessScenePass to assert it samples an upstream target and
+                # writes it through unchanged.
+                GPU_POSTPROCESS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
         )
     endif ()
 
