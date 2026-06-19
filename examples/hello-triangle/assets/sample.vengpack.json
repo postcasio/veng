@@ -1,7 +1,7 @@
 {
   "version": 1,
   "assets": [
-    { "id": 1001, "type": "texture",  "source": "textures/brick16b.tex.json" },
+    { "id": 1001, "type": "texture",  "source": "textures/brick_basecolor.tex.json" },
     { "id": 1006, "type": "texture",  "source": "textures/brick_orm.tex.json" },
     { "id": 1007, "type": "texture",  "source": "textures/brick_normal.tex.json" },
     { "id": 1002, "type": "mesh",     "source": "meshes/cube.mesh.json" },

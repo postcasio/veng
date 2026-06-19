@@ -1,5 +1,5 @@
 // Cook-on-demand plumbing test: cooks a single texture source asset
-// (brick.tex.json) into an in-memory single-entry .vengpack via
+// (brick_basecolor.tex.json) into an in-memory single-entry .vengpack via
 // Cooker::CookSource — the path the editor's CookSession drives off the render
 // thread — and checks the bytes parse as a valid archive carrying the target id.
 // CPU-only: the texture importer never links into libveng.
@@ -17,7 +17,7 @@ using namespace Veng::Cook;
 
 TEST_CASE("Cooker: CookSource produces a mountable in-memory archive for a texture")
 {
-    const path source = path(VENG_HT_ASSETS_DIR) / "textures" / "brick.tex.json";
+    const path source = path(VENG_HT_ASSETS_DIR) / "textures" / "brick_basecolor.tex.json";
     const AssetId targetId{0xC00C0DE000000001ULL};
 
     Cooker cooker;

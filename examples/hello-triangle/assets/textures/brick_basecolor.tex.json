@@ -1,5 +1,5 @@
 {
-  "image": "brick.png",
+  "image": "brick_basecolor.jpg",
   "srgb": true,
   "sampler": {
     "min": "linear",
