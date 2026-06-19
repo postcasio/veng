@@ -134,6 +134,22 @@ namespace Veng::Renderer
         // index * ViewConstantsStride load reads this frame's region.
         [[nodiscard]] u32 GetCurrentViewConstantsIndex() const;
 
+        // Write the per-frame light list into the current frame-in-flight's region
+        // of the ring-buffered light buffer. `lights` must hold at most MaxLights
+        // entries, each LightStride bytes. Writing the current region is always
+        // safe — that frame is not yet submitted — and the whole region is rewritten
+        // every frame (light count and contents are per-frame data, not topology).
+        // A pass selects this frame's region by folding GetCurrentLightBase() into
+        // its per-light index, exactly as the material block avoids a dynamic
+        // descriptor offset inside set 0's Metal argument buffer.
+        void WriteLights(std::span<const std::byte> lights);
+
+        // The base light index of the current frame-in-flight's region in the
+        // ring-buffered light buffer: currentFrameInFlight * MaxLights. A pass folds
+        // this into its per-light index so the shader's index * LightStride load
+        // lands in this frame's region.
+        [[nodiscard]] u32 GetCurrentLightBase() const;
+
         [[nodiscard]] const Ref<DescriptorSetLayout>& GetSet0Layout() const { return m_Layout; }
 
         // Called by Context::AcquireNextFrame() — reclaims slots released
@@ -145,11 +161,17 @@ namespace Veng::Renderer
         static constexpr u32 StorageImageBinding = 2;
         static constexpr u32 MaterialParamBinding = 4;
         static constexpr u32 ViewConstantsBinding = 5;
+        static constexpr u32 LightBinding = 6;
 
         static constexpr u32 MaxTextures = 1024;
         static constexpr u32 MaxSamplers = 128;
         static constexpr u32 MaxStorageImages = 512;
         static constexpr u32 MaxMaterials = 256;
+
+        // The fixed cap on lights the deferred lighting pass loops per pixel. The
+        // light SSBO holds framesInFlight copies of MaxLights entries; the pass
+        // evaluates the full Cook-Torrance BRDF per light up to the live count.
+        static constexpr u32 MaxLights = 16;
 
         // The fixed byte stride of one material's parameter block in the
         // binding-MaterialParamBinding ByteAddressBuffer. 16-byte aligned for
@@ -165,6 +187,11 @@ namespace Veng::Renderer
         // ViewConstants block (an InvViewProj mat4 + three vec4) is 112 bytes, well
         // within the stride.
         static constexpr u32 ViewConstantsStride = 256;
+
+        // The fixed byte stride of one GpuLight entry in the binding-LightBinding
+        // ByteAddressBuffer. The GpuLight struct (four vec4) is 64 bytes; the pass
+        // reads the i-th light at (base + i) * LightStride.
+        static constexpr u32 LightStride = 64;
 
     private:
         // A free-list slot allocator with deferred release, one per arrayed
@@ -248,5 +275,17 @@ namespace Veng::Renderer
         // every Execute, so only the current (not-yet-submitted) region is touched —
         // no fence, no staging.
         Ref<Buffer> m_ViewConstantsBuffer;
+
+        // The per-frame light buffer (binding LightBinding): a host-visible,
+        // persistently-mapped storage buffer holding framesInFlight copies of the
+        // MaxLights * LightStride light table, bound at its full range. Each
+        // frame-in-flight f owns the region [f * MaxLights * LightStride, ...); a
+        // pass folds f's base (GetCurrentLightBase()) into its per-light index so
+        // the shader's index * LightStride load reads the current frame's region.
+        // Selected by the folded index, not a dynamic offset (which mistranslates
+        // inside set 0's Metal argument buffer on MoltenVK). The whole region is
+        // rewritten every Execute, so only the current (not-yet-submitted) region is
+        // touched.
+        Ref<Buffer> m_LightBuffer;
     };
 }

@@ -1,8 +1,8 @@
 // Deferred lighting fragment stage: samples the g-buffer (G0 albedo, G1
 // world-space normal, G2 packed occlusion/roughness/metallic/emissive, and the
 // depth attachment) through the bindless set-0 array, reconstructs world position
-// from depth, and evaluates a Cook-Torrance BRDF over a single directional light
-// read from the per-frame view-constants buffer. Writes linear HDR.
+// from depth, and evaluates a Cook-Torrance BRDF over a list of typed lights read
+// from the per-frame light buffer. Writes linear HDR.
 //
 // Color space: G0 is an sRGB target, so the sample decodes albedo to linear; the
 // HDR output is a linear float target, so the lit color stays linear (the tail
@@ -13,15 +13,30 @@
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 [[vk::binding(5, 0)]] ByteAddressBuffer g_ViewConstants;
+[[vk::binding(6, 0)]] ByteAddressBuffer g_Lights;
 
 static const uint ViewConstantsStride = 256;
+static const uint LightStride = 64;
+
+// LightType, matching the Light builtin's enum (Directional/Point/Spot).
+static const float LightTypeDirectional = 0.0;
+static const float LightTypePoint = 1.0;
+static const float LightTypeSpot = 2.0;
 
 struct ViewConstants
 {
     float4x4 InvViewProj;
     float4   CameraPosition;
-    float4   LightDirection;
-    float4   LightColor;
+};
+
+// One light, packed by the renderer into the ring-buffered light buffer. Position
+// is the entity's world transform; the type rides DirectionType.w.
+struct GpuLight
+{
+    float4 PositionRange;   // xyz world position, w range
+    float4 DirectionType;   // xyz travel direction, w LightType
+    float4 ColorIntensity;  // rgb linear color, a intensity
+    float4 Cone;            // x cos(inner), y cos(outer), zw pad
 };
 
 struct PushConstants
@@ -32,8 +47,8 @@ struct PushConstants
     uint DepthTexture;        // depth bindless index
     uint Sampler;             // shared sampler index
     uint ViewConstantsIndex;  // current frame-in-flight's view-constants region
-    uint Pad0;
-    uint Pad1;
+    uint LightBase;           // current frame's base index into the light buffer
+    uint LightCount;          // live light count this frame
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -78,6 +93,32 @@ float3 FresnelSchlick(float cosTheta, float3 f0)
     return f0 + (1.0 - f0) * pow(saturate(1.0 - cosTheta), 5.0);
 }
 
+// The Cook-Torrance contribution of one light: the surface's specular + diffuse
+// response to the incoming radiance from direction L, scaled by N·L. The caller
+// supplies the per-light radiance (already distance/cone-attenuated). f0 is the
+// surface's base reflectance, already metal-tinted.
+float3 EvaluateLight(float3 N, float3 V, float3 L, float3 radiance,
+                     float3 albedo, float roughness, float metallic, float3 f0)
+{
+    float3 H = normalize(V + L);
+
+    float nDotL = max(dot(N, L), 0.0);
+    float nDotV = max(dot(N, V), 1e-4);
+    float nDotH = max(dot(N, H), 0.0);
+    float vDotH = max(dot(V, H), 0.0);
+
+    float ndf = DistributionGGX(nDotH, roughness);
+    float g = GeometrySmith(nDotV, nDotL, roughness);
+    float3 fresnel = FresnelSchlick(vDotH, f0);
+
+    float3 specular = (ndf * g * fresnel) / max(4.0 * nDotV * nDotL, 1e-4);
+
+    float3 kd = (1.0 - fresnel) * (1.0 - metallic);
+    float3 diffuse = kd * albedo / Pi;
+
+    return (diffuse + specular) * radiance * nDotL;
+}
+
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
@@ -107,32 +148,64 @@ float4 fsMain(VSOutput input) : SV_Target
 
     float3 V = normalize(vc.CameraPosition.xyz - worldPos);
 
-    // The light direction is the direction the light travels; the surface faces
-    // the light along -direction.
-    float3 L = normalize(-vc.LightDirection.xyz);
-    float3 H = normalize(V + L);
-    float intensity = vc.LightColor.a;
-    float3 radiance = vc.LightColor.rgb * intensity;
-
-    float nDotL = max(dot(N, L), 0.0);
-    float nDotV = max(dot(N, V), 1e-4);
-    float nDotH = max(dot(N, H), 0.0);
-    float vDotH = max(dot(V, H), 0.0);
-
     // Metallic workflow: dielectrics reflect a flat 0.04, metals tint specular by
     // albedo; diffuse vanishes for metals.
     float3 f0 = lerp(float3(0.04), albedo, metallic);
 
-    float ndf = DistributionGGX(nDotH, roughness);
-    float g = GeometrySmith(nDotV, nDotL, roughness);
-    float3 fresnel = FresnelSchlick(vDotH, f0);
+    // Accumulate the Cook-Torrance response over every live light. Directional
+    // lights have no attenuation; point/spot fall off with distance, and spot adds
+    // a cone factor.
+    float3 direct = float3(0.0);
+    for (uint i = 0; i < g_PC.LightCount; ++i)
+    {
+        GpuLight light = g_Lights.Load<GpuLight>((g_PC.LightBase + i) * LightStride);
 
-    float3 specular = (ndf * g * fresnel) / max(4.0 * nDotV * nDotL, 1e-4);
+        float type = light.DirectionType.w;
+        float3 radiance = light.ColorIntensity.rgb * light.ColorIntensity.a;
 
-    float3 kd = (1.0 - fresnel) * (1.0 - metallic);
-    float3 diffuse = kd * albedo / Pi;
+        float3 L;
+        float attenuation = 1.0;
+        if (type == LightTypeDirectional)
+        {
+            // The light direction is the direction the light travels; the surface
+            // faces the light along -direction.
+            L = normalize(-light.DirectionType.xyz);
+        }
+        else
+        {
+            // Point and spot are placed at PositionRange.xyz; L points from the
+            // surface toward the light.
+            float3 toLight = light.PositionRange.xyz - worldPos;
+            float dist = length(toLight);
+            L = dist > 1e-4 ? toLight / dist : float3(0.0, 0.0, 1.0);
 
-    float3 direct = (diffuse + specular) * radiance * nDotL;
+            // Inverse-square falloff with a smooth cutoff at Range: physically
+            // correct near the light, faded to zero by the range radius so the loop
+            // bound stays meaningful.
+            float range = max(light.PositionRange.w, 1e-4);
+            float distanceFactor = 1.0 / max(dist * dist, 1e-4);
+            float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
+            rangeFactor *= rangeFactor;
+            attenuation = distanceFactor * rangeFactor;
+
+            if (type == LightTypeSpot)
+            {
+                // Smoothstep the cone between cos(inner) (full) and cos(outer)
+                // (zero); the surface-to-light direction is compared against the
+                // light's travel direction.
+                float cosAngle = dot(normalize(-light.DirectionType.xyz), L);
+                float cosInner = light.Cone.x;
+                float cosOuter = light.Cone.y;
+                attenuation *= smoothstep(cosOuter, cosInner, cosAngle);
+            }
+        }
+
+        // The directional-light shadow term: visibility is 1.0 everywhere (no
+        // shadowing). A directional shadow map fills this in a later increment.
+        float visibility = 1.0;
+
+        direct += EvaluateLight(N, V, L, radiance * attenuation, albedo, roughness, metallic, f0) * visibility;
+    }
 
     // Ambient gated by the baked occlusion (× OcclusionStrength, already folded
     // into ORM.r by the geometry pass's material) so the occlusion channel reads.

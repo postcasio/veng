@@ -171,9 +171,22 @@ protected:
         // is lit reproducibly run to run.
         const Entity lightEntity = m_Scene->CreateEntity();
         m_Scene->Add<Light>(lightEntity) = Light{
+            .Type = LightType::Directional,
             .Direction = glm::normalize(vec3(-0.4f, -0.7f, -0.5f)),
             .Color = vec3(1.0f, 1.0f, 1.0f),
             .Intensity = 1.5f,
+        };
+
+        // A warm point light off to the right, placed by its Transform, exercising
+        // the lighting pass's distance-attenuated accumulation loop alongside the
+        // directional light.
+        const Entity pointEntity = m_Scene->CreateEntity();
+        m_Scene->Add<Transform>(pointEntity).Position = vec3(1.5f, 0.5f, 1.5f);
+        m_Scene->Add<Light>(pointEntity) = Light{
+            .Type = LightType::Point,
+            .Color = vec3(1.0f, 0.6f, 0.3f),
+            .Intensity = 6.0f,
+            .Range = 6.0f,
         };
 
         // A Camera looking down -Z at the origin from (0,0,3).

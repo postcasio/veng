@@ -757,6 +757,90 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// Multiple-light accumulation. The lighting pass loops over the scene's lights and
+// sums their contributions. A face-on brick cube is rendered three times through
+// one renderer: lit by one directional light, then by a second point light alone,
+// then by both. The both-lights center is brighter than either single light — the
+// loop accumulates rather than overwriting — and the point light's position (read
+// from its Transform) reaches the lighting pass, since a point light with no
+// Transform-derived position would not illuminate the front face.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: multiple lights accumulate in the lighting loop")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_multi_light.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Multi-Light Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    constexpr uvec2 extent{128, 128};
+
+    Camera camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Settings = {.Mode = DebugView::Final},
+    });
+
+    auto CenterLuma = [&]() -> f32
+    {
+        const vector<u8> pixels = RenderOutput(Context, *renderer, *scene, camera);
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        const vec3 c = DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
+        return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
+    };
+
+    // A directional light straight at the front face (N·L = 1).
+    const Entity dirEntity = scene->CreateEntity();
+    scene->Add<Light>(dirEntity) = Light{
+        .Type = LightType::Directional,
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f), .Intensity = 1.0f,
+    };
+    const f32 directionalOnly = CenterLuma();
+    CHECK(directionalOnly > 0.0f);
+
+    // Swap to a single point light in front of the cube (placed by its Transform),
+    // illuminating the same front face through the distance-attenuated path.
+    scene->DestroyEntity(dirEntity);
+    const Entity pointEntity = scene->CreateEntity();
+    scene->Add<Transform>(pointEntity).Position = vec3(0.0f, 0.0f, 2.0f);
+    scene->Add<Light>(pointEntity) = Light{
+        .Type = LightType::Point,
+        .Color = vec3(1.0f), .Intensity = 8.0f, .Range = 8.0f,
+    };
+    const f32 pointOnly = CenterLuma();
+    // The point light reaches the front face via its Transform-derived position.
+    CHECK(pointOnly > 0.0f);
+
+    // Both lights together: the loop sums their contributions, so the center is
+    // brighter than either alone.
+    const Entity dir2Entity = scene->CreateEntity();
+    scene->Add<Light>(dir2Entity) = Light{
+        .Type = LightType::Directional,
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f), .Intensity = 1.0f,
+    };
+    const f32 bothLights = CenterLuma();
+
+    CHECK(bothLights > pointOnly + 0.02f);
+    CHECK(bothLights > directionalOnly + 0.02f);
+
+    std::filesystem::remove(outArchive);
+}
+
 #ifdef GPU_POSTPROCESS_FIXTURE_DIR
 
 // The PostProcess fullscreen-material proof. An identity PostProcess material —
