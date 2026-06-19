@@ -30,15 +30,14 @@ struct MaterialParams
 static const uint MaterialParamStride = 256;
 
 // The per-frame view-constants block: per-view data the deferred lighting pass
-// reads (world-position reconstruction + the directional light). Ring-buffered
+// reads (world-position reconstruction + the camera position). Ring-buffered
 // across frames-in-flight at binding 5, byte-addressed at
 // index * ViewConstantsStride; mirrors BindlessRegistry::ViewConstantsStride.
+// Lights ride a separate ring-buffered light buffer at binding 6.
 struct ViewConstants
 {
     float4x4 InvViewProj;       // world-position reconstruction from depth
     float4   CameraPosition;    // xyz; w unused
-    float4   LightDirection;    // xyz world-space travel direction; w unused
-    float4   LightColor;        // rgb linear color; a intensity
 };
 
 static const uint ViewConstantsStride = 256;

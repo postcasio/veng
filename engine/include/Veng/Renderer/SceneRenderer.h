@@ -69,15 +69,25 @@ namespace Veng::Renderer
     // Per-frame input. Not owned by the renderer and shared across N renderers:
     // World/Camera are borrowed references. Fields are named for their role.
     //
-    // Light is a per-frame VALUE, not a borrowed reference: the renderer selects
-    // the scene's directional light into it on every Execute (the first Light
-    // entity, or a documented zero-intensity default when the scene has none).
+    // The renderer reads the scene's lights itself: on every Execute it walks
+    // View<Transform, Light> up to MaxLights, packs each into the ring-buffered
+    // light buffer, and the lighting pass loops over the live count. A scene with
+    // no Light renders flat-ambient (the loop runs zero times).
     struct SceneView
     {
         const Scene& World;
         const Camera& Camera;
-        Veng::Light Light;
         f32 Delta = 0.0f;
+
+        // The live light count this frame, set by the renderer on every Execute
+        // (the number of (Transform, Light) entities it packed, capped at
+        // MaxLights). The lighting pass loops [0, LightCount). A caller's value is
+        // overwritten — the renderer owns this selection.
+        u32 LightCount = 0;
+
+        // The fixed cap on lights the renderer packs per frame; the lighting pass
+        // evaluates the full BRDF per light up to this count.
+        static constexpr u32 MaxLights = BindlessRegistry::MaxLights;
     };
 
     class SceneRenderer

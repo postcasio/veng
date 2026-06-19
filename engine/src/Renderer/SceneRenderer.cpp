@@ -1,6 +1,8 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/ScenePass.h>
 
+#include <array>
+#include <cmath>
 #include <span>
 
 #include <fmt/format.h>
@@ -69,11 +71,12 @@ namespace Veng::Renderer
         static_assert(sizeof(NormalMatrixPush) == 48, "NormalMatrix push must be a column-major float3x3 (48 bytes)");
 
         // The deferred-lighting fragment shader's push block: the bindless slots it
-        // samples the g-buffer through plus the current frame's view-constants
-        // region index. Per-view data (InvViewProj, camera position, the light)
-        // rides the ring-buffered view-constants buffer, not push constants —
-        // push constants carry only per-invocation bindless indices. Matches the
-        // shader's PushConstants byte-for-byte (eight packed u32s).
+        // samples the g-buffer through, the current frame's view-constants region
+        // index, and the light list's frame base + live count. Per-view data
+        // (InvViewProj, camera position) rides the ring-buffered view-constants
+        // buffer; the lights ride the ring-buffered light buffer. Push constants
+        // carry only per-invocation bindless indices and the light count. Matches
+        // the shader's PushConstants byte-for-byte (eight packed u32s).
         struct LightingPushConstants
         {
             u32 AlbedoTexture;
@@ -82,9 +85,23 @@ namespace Veng::Renderer
             u32 DepthTexture;
             u32 Sampler;
             u32 ViewConstantsIndex;
-            u32 Pad0;
-            u32 Pad1;
+            u32 LightBase;
+            u32 LightCount;
         };
+
+        // One light packed for the ring-buffered light buffer (set-0 binding 6),
+        // std430-friendly, matching the shader's GpuLight byte-for-byte. Position is
+        // the entity's world transform; Type is a LightType cast to float.
+        struct GpuLight
+        {
+            vec4 PositionRange;   // xyz world position, w range
+            vec4 DirectionType;   // xyz travel direction, w LightType
+            vec4 ColorIntensity;  // rgb linear color, a intensity
+            vec4 Cone;            // x cos(inner), y cos(outer), zw pad
+        };
+
+        static_assert(sizeof(GpuLight) == BindlessRegistry::LightStride,
+                      "GpuLight must match the bindless light buffer stride");
 
         // The per-frame view-constants block the lighting pass reads from set-0
         // binding 5. Mirrors the core material.slang ViewConstants byte-for-byte.
@@ -92,8 +109,6 @@ namespace Veng::Renderer
         {
             mat4 InvViewProj;
             vec4 CameraPosition; // xyz; w unused
-            vec4 LightDirection; // xyz: world-space travel direction; w unused
-            vec4 LightColor;     // rgb: linear color; a: intensity
         };
 
         // The shared debug-blit fragment push block: the bindless slots a fullscreen
@@ -272,18 +287,21 @@ namespace Veng::Renderer
                     {
                         const ScenePassContext ctx = Wrap(inner);
                         CommandBuffer& cmd = ctx.Cmd();
+                        const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
                         cmd.BindPipeline(m_Pipeline);
                         cmd.SetViewport({0, 0}, m_Extent);
                         cmd.SetScissor({0, 0}, m_Extent);
-                        m_Context.GetBindlessRegistry().Bind(cmd);
+                        registry.Bind(cmd);
                         cmd.PushConstants(LightingPushConstants{
                             .AlbedoTexture = albedoHandle.Index,
                             .NormalTexture = normalHandle.Index,
                             .OrmTexture = ormHandle.Index,
                             .DepthTexture = depthHandle.Index,
                             .Sampler = samplerHandle.Index,
-                            .ViewConstantsIndex = m_Context.GetBindlessRegistry().GetCurrentViewConstantsIndex(),
+                            .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
+                            .LightBase = registry.GetCurrentLightBase(),
+                            .LightCount = ctx.View().LightCount,
                         });
                         cmd.DrawFullscreenTriangle();
                     });
@@ -769,32 +787,52 @@ namespace Veng::Renderer
         if (m_TonemapMaterial.IsLoaded())
             const_cast<Material&>(*m_TonemapMaterial.Get()).SetParam("Exposure", m_Settings.Exposure);
 
-        // Select the scene's directional light into the per-frame view by value:
-        // the first Light entity, or a zero-intensity default when the scene has
-        // none. A zero-intensity light contributes nothing to the lighting pass's
-        // N·L term, so a scene with no light renders flat-ambient — never pure
-        // black, never asserting. The caller's view.Light, if any, is overwritten:
-        // the renderer owns this selection.
-        SceneView resolvedView = view;
-        resolvedView.Light = Light{.Intensity = 0.0f};
+        // Walk the scene's (Transform, Light) entities, capped at MaxLights, packing
+        // each into a GpuLight: its world position from the entity transform, its
+        // type/direction/color/intensity, and the spot cone cosines. A scene with no
+        // Light packs zero lights, so the lighting pass loops zero times and the
+        // result is flat-ambient — never pure black, never asserting. The caller's
+        // view.LightCount, if any, is overwritten: the renderer owns this selection.
+        std::array<GpuLight, SceneView::MaxLights> packedLights{};
+        u32 lightCount = 0;
         for (auto [entity, light] : const_cast<Scene&>(view.World).View<Light>())
         {
-            resolvedView.Light = light;
-            break; // the first Light entity wins
+            if (lightCount >= SceneView::MaxLights)
+                break;
+
+            const mat4 world = WorldMatrix(view.World, entity);
+            const vec3 worldPos = vec3(world[3]);
+            // The cone bounds are stored as cosines so the shader compares against
+            // dot products directly; cos is monotonically decreasing in angle, so
+            // cos(inner) >= cos(outer).
+            const f32 cosInner = std::cos(light.InnerCone);
+            const f32 cosOuter = std::cos(light.OuterCone);
+
+            packedLights[lightCount] = GpuLight{
+                .PositionRange = vec4(worldPos, light.Range),
+                .DirectionType = vec4(light.Direction, static_cast<f32>(light.Type)),
+                .ColorIntensity = vec4(light.Color, light.Intensity),
+                .Cone = vec4(cosInner, cosOuter, 0.0f, 0.0f),
+            };
+            ++lightCount;
         }
 
+        SceneView resolvedView = view;
+        resolvedView.LightCount = lightCount;
+
+        BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+        registry.WriteLights(std::as_bytes(std::span(packedLights.data(), lightCount)));
+
         // Pack the per-frame view constants — the inverse view-projection (for
-        // world-position reconstruction), the camera position, and the resolved
-        // directional light — and write them into the current frame's ring-buffered
-        // region. The lighting pass reads them back through set-0 binding 5.
+        // world-position reconstruction) and the camera position — and write them
+        // into the current frame's ring-buffered region. The lighting pass reads
+        // them back through set-0 binding 5.
         const mat4 viewProj = view.Camera.ViewProjection();
         const ViewConstantsBlock viewConstants{
             .InvViewProj = glm::inverse(viewProj),
             .CameraPosition = vec4(view.Camera.GetPosition(), 0.0f),
-            .LightDirection = vec4(resolvedView.Light.Direction, 0.0f),
-            .LightColor = vec4(resolvedView.Light.Color, resolvedView.Light.Intensity),
         };
-        m_Context.GetBindlessRegistry().WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
+        registry.WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
 
         const RenderGraph::ImportBinding bindings[] = {
             {m_AlbedoId, m_AlbedoView},

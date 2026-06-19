@@ -225,9 +225,13 @@ TEST_CASE("Light round-trips through the descriptor walk only")
     TypeRegistry registry = MakeRegistry();
 
     Light src;
+    src.Type = LightType::Spot;
     src.Direction = vec3{0.2f, -0.8f, 0.55f};
     src.Color = vec3{0.9f, 0.4f, 0.1f};
     src.Intensity = 2.5f;
+    src.Range = 12.0f;
+    src.InnerCone = 0.3f;
+    src.OuterCone = 0.7f;
 
     vector<u8> bytes;
     WriteFields(bytes, &src, registry.Info(registry.IdOf<Light>()), registry);
@@ -235,9 +239,57 @@ TEST_CASE("Light round-trips through the descriptor walk only")
     Light dst; // fresh defaults
     ReadFields(bytes, &dst, registry.Info(registry.IdOf<Light>()), registry);
 
+    CHECK(dst.Type == src.Type);
     CHECK(dst.Direction == src.Direction);
     CHECK(dst.Color == src.Color);
     CHECK(dst.Intensity == doctest::Approx(src.Intensity));
+    CHECK(dst.Range == doctest::Approx(src.Range));
+    CHECK(dst.InnerCone == doctest::Approx(src.InnerCone));
+    CHECK(dst.OuterCone == doctest::Approx(src.OuterCone));
+}
+
+// Schema tolerance: a Light record written before the typed-light fields existed
+// (Direction/Color/Intensity only) reads back with the new fields defaulted —
+// proving a field addition is forward-compatible (an old prefab still loads).
+TEST_CASE("Light reads an old record with the new typed-light fields defaulted")
+{
+    TypeRegistry registry = MakeRegistry();
+
+    // Author a record carrying only the three original fields, by name.
+    Light legacy;
+    legacy.Direction = vec3{0.0f, -1.0f, 0.0f};
+    legacy.Color = vec3{0.5f, 0.6f, 0.7f};
+    legacy.Intensity = 3.0f;
+
+    const TypeInfo& info = registry.Info(registry.IdOf<Light>());
+    vector<u8> bytes;
+    {
+        // Build a partial record holding only the legacy field names: the
+        // serializer is name-keyed, so the fields absent from the write read back
+        // at their read-side defaults.
+        TypeInfo partial = info;
+        partial.Fields.clear();
+        for (const FieldDescriptor& field : info.Fields)
+            if (field.Name == "Direction" || field.Name == "Color" || field.Name == "Intensity")
+                partial.Fields.push_back(field);
+        WriteFields(bytes, &legacy, partial, registry);
+    }
+
+    Light dst;
+    dst.Type = LightType::Point; // a non-default the read must not touch
+    dst.Range = 99.0f;
+    dst.InnerCone = 1.0f;
+    dst.OuterCone = 2.0f;
+    ReadFields(bytes, &dst, info, registry);
+
+    // The three present fields are read; the absent fields keep dst's values.
+    CHECK(dst.Direction == legacy.Direction);
+    CHECK(dst.Color == legacy.Color);
+    CHECK(dst.Intensity == doctest::Approx(legacy.Intensity));
+    CHECK(dst.Type == LightType::Point);
+    CHECK(dst.Range == doctest::Approx(99.0f));
+    CHECK(dst.InnerCone == doctest::Approx(1.0f));
+    CHECK(dst.OuterCone == doctest::Approx(2.0f));
 }
 
 TEST_CASE("Editor metadata does not affect the serialized bytes")

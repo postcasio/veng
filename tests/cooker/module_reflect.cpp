@@ -51,10 +51,14 @@ TEST_CASE("module reflect: LoadModuleTypes reflects builtins + the game's Spinne
     const TypeInfo& light = types.Info(TypeIdOf<Light>());
     CHECK(light.Id == 0xECF6442708DF7C00ULL);
     CHECK(light.Name == "::Veng::Light");
-    REQUIRE(light.Fields.size() == 3);
-    CHECK(light.Fields[0].Name == "Direction");
-    CHECK(light.Fields[1].Name == "Color");
-    CHECK(light.Fields[2].Name == "Intensity");
+    REQUIRE(light.Fields.size() == 7);
+    CHECK(light.Fields[0].Name == "Type");
+    CHECK(light.Fields[1].Name == "Direction");
+    CHECK(light.Fields[2].Name == "Color");
+    CHECK(light.Fields[3].Name == "Intensity");
+    CHECK(light.Fields[4].Name == "Range");
+    CHECK(light.Fields[5].Name == "InnerCone");
+    CHECK(light.Fields[6].Name == "OuterCone");
 
     // The game's component, registered by the module's VengModuleRegister.
     REQUIRE(types.IsRegistered(SpinnerTypeId));

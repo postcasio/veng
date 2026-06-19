@@ -48,17 +48,39 @@ namespace Veng
         AssetHandle<Mesh> Mesh;
     };
 
-    // A directional light. Direction is the direction the light travels in world
-    // space; Color is linear RGB; Intensity scales it. The deferred lighting pass
-    // shades with a single directional light selected from the scene into the
-    // per-frame SceneView.
+    // The shape of a punctual light, selecting how the deferred lighting pass
+    // attenuates it. Directional has no position or falloff; Point and Spot are
+    // placed by the entity's Transform and fall off with distance (Spot adds a
+    // cone). The integer values are stable: they are packed into the light SSBO
+    // and persisted in prefabs.
+    enum class LightType : u32
+    {
+        Directional = 0,
+        Point = 1,
+        Spot = 2,
+    };
+
+    // A light shaded by the deferred lighting pass. Type selects directional,
+    // point, or spot. Direction is the world-space travel direction (directional
+    // and spot); Color is linear RGB; Intensity scales it. Range is the point/spot
+    // falloff radius. InnerCone/OuterCone are the spot's half-angles in radians:
+    // full intensity within InnerCone, zero beyond OuterCone, smooth between.
+    //
+    // The light's world position is the entity's Transform — never stored here —
+    // so a parented or animated light moves with its entity.
     struct Light
     {
+        LightType Type{LightType::Directional};
         vec3 Direction{0.0f, -1.0f, 0.0f};
         vec3 Color{1.0f, 1.0f, 1.0f};
         f32 Intensity{1.0f};
+        f32 Range{10.0f};
+        f32 InnerCone{0.0f};
+        f32 OuterCone{0.5f};
     };
 }
+
+VE_LEAF(::Veng::LightType, 0x6B1D62EF4B5A16ULL, FieldClass::Enum);
 
 VE_REFLECT(::Veng::Name, 0xDA40E8FAC8A6DB84ULL)
     VE_FIELD(Value, .DisplayName = "Name")
@@ -79,7 +101,11 @@ VE_REFLECT(::Veng::MeshRenderer, 0x3C5CB13E46E0450BULL)
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Light, 0xECF6442708DF7C00ULL)
+    VE_FIELD(Type, .DisplayName = "Type")
     VE_FIELD(Direction, .DisplayName = "Direction")
     VE_FIELD(Color, .DisplayName = "Color")
     VE_FIELD(Intensity, .DisplayName = "Intensity", .Min = 0.0)
+    VE_FIELD(Range, .DisplayName = "Range", .Min = 0.0, .Step = 0.1)
+    VE_FIELD(InnerCone, .DisplayName = "Inner Cone", .Min = 0.0, .Max = 3.14159265, .Step = 0.01)
+    VE_FIELD(OuterCone, .DisplayName = "Outer Cone", .Min = 0.0, .Max = 3.14159265, .Step = 0.01)
 VE_REFLECT_END();

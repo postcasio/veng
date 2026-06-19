@@ -68,6 +68,10 @@ namespace Veng::Renderer
                 // byte-addressed at index * ViewConstantsStride. A pass pushes the
                 // current frame-in-flight index so the load reads this frame's region.
                 {.Binding = ViewConstantsBinding, .Type = DescriptorType::StorageBuffer, .Count = 1, .Stages = ShaderStage::All},
+                // The per-frame light buffer: a single ByteAddressBuffer byte-addressed
+                // at index * LightStride. A pass folds the current frame's region base
+                // into its per-light index so the load reads this frame's region.
+                {.Binding = LightBinding, .Type = DescriptorType::StorageBuffer, .Count = 1, .Stages = ShaderStage::All},
             },
         });
 
@@ -101,6 +105,17 @@ namespace Veng::Renderer
             .HostMapped = true,
         });
         m_Set->Write(ViewConstantsBinding, m_ViewConstantsBuffer);
+
+        // framesInFlight copies of the MaxLights light table, host-mapped: each
+        // frame owns one MaxLights * LightStride region, rewritten directly while it
+        // is the current (not-yet-submitted) frame.
+        m_LightBuffer = Buffer::Create(context, {
+            .Name = "Bindless Lights",
+            .Size = static_cast<u64>(m_FramesInFlight) * MaxLights * LightStride,
+            .Usage = BufferUsage::Storage,
+            .HostMapped = true,
+        });
+        m_Set->Write(LightBinding, m_LightBuffer);
 
         m_Textures.Init(MaxTextures, m_FramesInFlight);
         m_Samplers.Init(MaxSamplers, m_FramesInFlight);
@@ -288,6 +303,24 @@ namespace Veng::Renderer
     u32 BindlessRegistry::GetCurrentViewConstantsIndex() const
     {
         return m_Context.GetCurrentFrameInFlight();
+    }
+
+    void BindlessRegistry::WriteLights(std::span<const std::byte> lights)
+    {
+        VE_ASSERT(lights.size() <= static_cast<usize>(MaxLights) * LightStride,
+                  "BindlessRegistry::WriteLights: {} bytes exceeds the {}-light region ({} bytes)",
+                  lights.size(), MaxLights, static_cast<usize>(MaxLights) * LightStride);
+
+        // Write only the current (not-yet-submitted) frame's region; the whole
+        // region is rewritten every Execute, so there is nothing to flush onward.
+        const u64 offset = static_cast<u64>(m_Context.GetCurrentFrameInFlight()) * MaxLights * LightStride;
+        auto* base = static_cast<u8*>(m_LightBuffer->GetMappedData());
+        std::memcpy(base + offset, lights.data(), lights.size());
+    }
+
+    u32 BindlessRegistry::GetCurrentLightBase() const
+    {
+        return m_Context.GetCurrentFrameInFlight() * MaxLights;
     }
 
     void BindlessRegistry::OnFrameAcquired(u32 frameInFlight)
