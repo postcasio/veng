@@ -19,13 +19,14 @@ int main(int argc, char** argv)
     if (args.size() < 2 || args[0] != "cook")
     {
         fmt::print(stderr,
-            "usage: veng_cook_bootstrap cook <pack.json> [-o <out.vengpack>] [--reference <pack.json>]...\n");
+            "usage: veng_cook_bootstrap cook <pack.json> [-o <out.vengpack>] [--reference <pack.json>]... [--depfile <out.d>]\n");
         return 1;
     }
 
     optional<path> packPath;
     optional<path> outPath;
     vector<path> referencePacks;
+    optional<path> depfilePath;
 
     for (usize i = 1; i < args.size(); ++i)
     {
@@ -37,6 +38,15 @@ int main(int argc, char** argv)
                 return 1;
             }
             outPath = path(args[++i]);
+        }
+        else if (args[i] == "--depfile")
+        {
+            if (i + 1 >= args.size())
+            {
+                fmt::print(stderr, "veng_cook_bootstrap: --depfile requires an argument\n");
+                return 1;
+            }
+            depfilePath = path(args[++i]);
         }
         else if (args[i] == "--reference")
         {
@@ -73,11 +83,23 @@ int main(int argc, char** argv)
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const VoidResult result = cooker.CookPack(*packPath, *outPath, referencePacks);
+    vector<path> dependencies;
+    const VoidResult result = cooker.CookPack(*packPath, *outPath, referencePacks, nullptr,
+        depfilePath ? &dependencies : nullptr);
     if (!result)
     {
         fmt::print(stderr, "veng_cook_bootstrap: {}\n", result.error());
         return 1;
+    }
+
+    if (depfilePath)
+    {
+        const VoidResult depResult = WriteDepfile(*depfilePath, *outPath, dependencies);
+        if (!depResult)
+        {
+            fmt::print(stderr, "veng_cook_bootstrap: {}\n", depResult.error());
+            return 1;
+        }
     }
 
     return 0;

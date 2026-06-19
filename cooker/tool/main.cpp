@@ -19,7 +19,7 @@ namespace
     {
         fmt::print(stderr,
             "usage:\n"
-            "  vengc cook <pack.json> [-o <out.vengpack>] [--reference <pack.json>]... [--module <lib>]\n"
+            "  vengc cook <pack.json> [-o <out.vengpack>] [--reference <pack.json>]... [--module <lib>] [--depfile <out.d>]\n"
             "  vengc generate-id [--reference <pack.json>]...\n"
             "  vengc generate-type-id [--module <lib>]\n"
             "  vengc verify <archive.vengpack>\n");
@@ -67,6 +67,7 @@ int main(int argc, char** argv)
         optional<path> outPath;
         vector<path> referencePacks;
         optional<path> modulePath;
+        optional<path> depfilePath;
 
         for (usize i = 1; i < args.size(); ++i)
         {
@@ -78,6 +79,15 @@ int main(int argc, char** argv)
                     return 1;
                 }
                 outPath = path(args[++i]);
+            }
+            else if (args[i] == "--depfile")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --depfile requires an argument\n");
+                    return 1;
+                }
+                depfilePath = path(args[++i]);
             }
             else if (args[i] == "--reference")
             {
@@ -142,11 +152,23 @@ int main(int argc, char** argv)
         RegisterBuiltinImporters(cooker);
         RegisterPrefabImporter(cooker);
 
-        const VoidResult result = cooker.CookPack(*packPath, *outPath, referencePacks, types);
+        vector<path> dependencies;
+        const VoidResult result = cooker.CookPack(*packPath, *outPath, referencePacks, types,
+            depfilePath ? &dependencies : nullptr);
         if (!result)
         {
             fmt::print(stderr, "vengc: {}\n", result.error());
             return 1;
+        }
+
+        if (depfilePath)
+        {
+            const VoidResult depResult = WriteDepfile(*depfilePath, *outPath, dependencies);
+            if (!depResult)
+            {
+                fmt::print(stderr, "vengc: {}\n", depResult.error());
+                return 1;
+            }
         }
 
         return 0;

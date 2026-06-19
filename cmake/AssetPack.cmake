@@ -1,14 +1,18 @@
 # add_asset_pack(<target>
 #     PACK      <pack.json>                # relative to CMAKE_CURRENT_SOURCE_DIR
 #     OUTPUT    <out.vengpack>             # absolute path in the build tree
-#     [DEPENDS   <source files...>]        # re-cook triggers (per-asset sources + binaries)
+#     [DEPENDS   <source files...>]        # optional extra re-cook triggers
 #     [REFERENCE <reference pack.json...>] # packs whose ids the cook may resolve
 #     [MODULE    <lib target>]             # game module to dlopen for prefab reflection
 # )
 #
 # Cooks a JSON asset pack with vengc into OUTPUT and wraps it in a custom target:
-# a build-time tool invocation producing an artifact in the build tree. Re-cooks
-# when PACK, vengc, or any DEPENDS source changes.
+# a build-time tool invocation producing an artifact in the build tree. vengc
+# emits a depfile of every source it actually read (the manifest, references,
+# per-asset JSONs, and their binary payloads — images, models, shader sources
+# and includes), wired via DEPFILE, so a re-cook triggers when any of them
+# changes without restating them. DEPENDS is an optional manual supplement for
+# inputs outside the cook's view; it is not needed for the pack's own sources.
 # REFERENCE entries become `--reference` flags so a shader's vertex-layout id (or
 # any cross-pack id) resolves against an already-authored pack (e.g. the engine
 # core pack).
@@ -49,11 +53,17 @@ function(add_asset_pack TARGET_NAME)
         set(MODULE_DEP ${ARG_MODULE})
     endif ()
 
+    # vengc writes a depfile naming every source it read (the manifest, each
+    # reference pack, the per-asset JSONs, and their binary payloads — images,
+    # models, shader sources and their includes). DEPFILE feeds it to the build
+    # so a re-cook triggers when any of them changes, with no hand-maintained
+    # DEPENDS list to drift. (ARG_DEPENDS remains an optional manual supplement.)
     add_custom_command(
             OUTPUT ${ARG_OUTPUT}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTPUT_DIR}
-            COMMAND $<TARGET_FILE:vengc> cook ${PACK_ABS} -o ${ARG_OUTPUT} ${REFERENCE_ARGS} ${MODULE_ARGS}
+            COMMAND $<TARGET_FILE:vengc> cook ${PACK_ABS} -o ${ARG_OUTPUT} ${REFERENCE_ARGS} ${MODULE_ARGS} --depfile ${ARG_OUTPUT}.d
             DEPENDS vengc ${PACK_ABS} ${ARG_DEPENDS} ${MODULE_DEP}
+            DEPFILE ${ARG_OUTPUT}.d
             COMMENT "Cooking asset pack ${TARGET_NAME}")
 
     add_custom_target(${TARGET_NAME} DEPENDS ${ARG_OUTPUT})

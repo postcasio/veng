@@ -1,5 +1,6 @@
 #include <Veng/Cook/Cooker.h>
 
+#include <filesystem>
 #include <fstream>
 #include <span>
 #include <sstream>
@@ -11,6 +12,19 @@ namespace Veng::Cook
 {
     namespace
     {
+        // Normalizes a recorded dependency to a stable absolute form so the same
+        // file reached two ways (a relative source vs. a resolved reference)
+        // de-duplicates to one depfile entry. weakly_canonical tolerates a path
+        // that does not exist; on failure it falls back to lexical normalization.
+        path NormalizeDependency(const path& p)
+        {
+            std::error_code ec;
+            const path canonical = std::filesystem::weakly_canonical(p, ec);
+            if (ec || canonical.empty())
+                return p.lexically_normal();
+            return canonical;
+        }
+
         // xxh3-128 of a byte range, packed into the format's ContentHash.
         ContentHash Xxh3_128(std::span<const u8> bytes)
         {
@@ -127,6 +141,42 @@ namespace Veng::Cook
         return result;
     }
 
+    VoidResult WriteDepfile(const path& depfilePath, const path& target,
+        std::span<const path> dependencies)
+    {
+        std::ofstream out(depfilePath, std::ios::binary | std::ios::trunc);
+        if (!out)
+            return std::unexpected(fmt::format("depfile '{}': failed to open for writing", depfilePath.string()));
+
+        // GCC/Make escaping: a space or '#' in a filename is backslash-escaped,
+        // a '$' is doubled. Path separators (incl. Windows '\\') pass through.
+        auto escape = [](const path& p) -> string
+        {
+            const string raw = p.string();
+            string escaped;
+            escaped.reserve(raw.size());
+            for (const char c : raw)
+            {
+                if (c == ' ' || c == '#')
+                    escaped.push_back('\\');
+                else if (c == '$')
+                    escaped.push_back('$');
+                escaped.push_back(c);
+            }
+            return escaped;
+        };
+
+        out << escape(target) << ':';
+        for (const path& dep : dependencies)
+            out << " \\\n  " << escape(dep);
+        out << '\n';
+
+        if (!out)
+            return std::unexpected(fmt::format("depfile '{}': write failed", depfilePath.string()));
+
+        return {};
+    }
+
     void Cooker::Register(Unique<AssetImporter> importer)
     {
         const AssetType type = importer->Type();
@@ -134,7 +184,8 @@ namespace Veng::Cook
     }
 
     VoidResult Cooker::CookPack(const path& packJson, const path& outArchive,
-        std::span<const path> referencePacks, const TypeRegistry* types) const
+        std::span<const path> referencePacks, const TypeRegistry* types,
+        vector<path>* outDependencies) const
     {
         const Result<json> packResult = ReadAndValidatePack(packJson);
         if (!packResult)
@@ -180,17 +231,31 @@ namespace Veng::Cook
             refPacks.push_back(std::move(*refPackResult));
         }
 
+        // Every source file the cook reads, recorded for the build's depfile.
+        // std::set keeps it sorted and de-duplicated. The manifest and each
+        // reference pack are inputs; per-asset JSONs and binary payloads land
+        // here through CookContext::RecordDependency during cooking.
+        std::set<path> dependencies;
+        auto record = [&dependencies](const path& p) { dependencies.insert(NormalizeDependency(p)); };
+
+        record(packJson);
+        for (const path& refPath : referencePacks)
+            record(refPath);
+
         // Build the Resolve closure: search the main pack first, then references.
-        // Returns the absolute path (pack.Dir / entry.Source) and type.
+        // Returns the absolute path (pack.Dir / entry.Source) and type, recording
+        // the resolved source as a dependency.
         const AssetPack& mainPack = *mainPackResult;
-        auto resolve = [&mainPack, &refPacks](AssetId id) -> optional<ResolvedSource>
+        auto resolve = [&mainPack, &refPacks, &record](AssetId id) -> optional<ResolvedSource>
         {
             // Search main pack first.
             if (const AssetPackEntry* e = mainPack.FindById(id))
             {
                 if (e->Source.empty())
                     return std::nullopt;
-                return ResolvedSource{.AbsolutePath = mainPack.Dir / e->Source, .Type = e->Type};
+                const path absolute = mainPack.Dir / e->Source;
+                record(absolute);
+                return ResolvedSource{.AbsolutePath = absolute, .Type = e->Type};
             }
             // Then reference packs in order.
             for (const AssetPack& ref : refPacks)
@@ -199,7 +264,9 @@ namespace Veng::Cook
                 {
                     if (e->Source.empty())
                         return std::nullopt;
-                    return ResolvedSource{.AbsolutePath = ref.Dir / e->Source, .Type = e->Type};
+                    const path absolute = ref.Dir / e->Source;
+                    record(absolute);
+                    return ResolvedSource{.AbsolutePath = absolute, .Type = e->Type};
                 }
             }
             return std::nullopt;
@@ -209,6 +276,7 @@ namespace Veng::Cook
             .PackDir = packJson.parent_path(),
             .Resolve = resolve,
             .Types = types,
+            .RecordDependency = record,
         };
 
         ArchiveWriter writer;
@@ -239,6 +307,9 @@ namespace Veng::Cook
             return std::unexpected(fmt::format("pack '{}': {}", packJson.string(), reader.error()));
 
         writer.SetArchiveDigest(Xxh3_128(reader->TocBytes()));
+
+        if (outDependencies)
+            outDependencies->assign(dependencies.begin(), dependencies.end());
 
         return writer.Write(outArchive);
     }
@@ -285,11 +356,14 @@ namespace Veng::Cook
         };
 
         // The importer reads entry["source"] relative to context.PackDir, so the
-        // source directory is the pack dir and the entry names the file.
+        // source directory is the pack dir and the entry names the file. The
+        // cook-on-demand path writes no filesystem output, so it tracks no build
+        // dependencies — RecordDependency is a no-op.
         const CookContext context{
             .PackDir = sourcePath.parent_path(),
             .Resolve = resolve,
             .Types = types,
+            .RecordDependency = [](const path&) {},
         };
 
         json entry;
@@ -337,6 +411,12 @@ namespace Veng::Cook
         const auto importerIt = m_Importers.find(*type);
         if (importerIt == m_Importers.end())
             return std::unexpected(fmt::format("no importer registered for type '{}'", typeStr));
+
+        // The per-asset JSON source is a dependency of every entry; the importer
+        // reads it relative to PackDir. Binary payloads it references are
+        // recorded by the importer itself.
+        if (entry.contains("source") && entry["source"].is_string())
+            context.RecordDependency(context.PackDir / entry["source"].get<string>());
 
         const Result<vector<u8>> blob = importerIt->second->Cook(context, entry);
         if (!blob)

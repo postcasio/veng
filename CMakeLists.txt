@@ -182,31 +182,15 @@ if (TARGET veng_cook_bootstrap)
     set(VENG_CORE_PACK_BIN  ${CMAKE_CURRENT_BINARY_DIR}/core.vengpack)
     set(VENG_CORE_PACK_CPP  ${CMAKE_CURRENT_BINARY_DIR}/generated/CoreLayoutPack.cpp)
 
+    # veng_cook_bootstrap writes a depfile of every source the cook read (the
+    # manifest, the vertex-layout JSONs, and each shader's .slang and its
+    # includes via Slang's dependency list); DEPFILE drives the re-cook so the
+    # sources need not be restated here.
     add_custom_command(
         OUTPUT ${VENG_CORE_PACK_BIN}
-        COMMAND $<TARGET_FILE:veng_cook_bootstrap> cook ${VENG_CORE_PACK_JSON} -o ${VENG_CORE_PACK_BIN}
+        COMMAND $<TARGET_FILE:veng_cook_bootstrap> cook ${VENG_CORE_PACK_JSON} -o ${VENG_CORE_PACK_BIN} --depfile ${VENG_CORE_PACK_BIN}.d
         DEPENDS veng_cook_bootstrap ${VENG_CORE_PACK_JSON}
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/layouts/canonical.vlayout.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/layouts/screenspace.vlayout.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/layouts/positiononly.vlayout.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/fullscreen.vert.slang
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/fullscreen.vert.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/surface.vert.slang
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/surface.vert.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/shadow_depth.vert.slang
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/shadow_depth.vert.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/material.slang
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/albedo_blit.frag.slang
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/albedo_blit.frag.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/deferred_lighting.frag.slang
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/deferred_lighting.frag.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/hdr_blit.frag.slang
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/hdr_blit.frag.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/composite.frag.slang
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/composite.frag.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/tonemap.frag.slang
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders/tonemap.frag.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/materials/tonemap.vmat.json
+        DEPFILE ${VENG_CORE_PACK_BIN}.d
         COMMENT "Cooking veng core pack")
 
     add_custom_command(

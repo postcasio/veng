@@ -27,6 +27,14 @@ namespace Veng::Cook
     // Errors are located: "pack '<path>': <reason>".
     [[nodiscard]] Result<AssetPack> ParseAssetPack(const path& packJson);
 
+    // Writes a GCC-style depfile declaring `target` as depending on every path
+    // in `dependencies`. Wired into a build's add_custom_command(DEPFILE ...) so
+    // the cook re-runs when any recorded source changes — the dependency set a
+    // hand-maintained DEPENDS list would otherwise have to restate. Paths with
+    // spaces are escaped. Errors are located: "depfile '<path>': <reason>".
+    [[nodiscard]] VoidResult WriteDepfile(const path& depfilePath, const path& target,
+        std::span<const path> dependencies);
+
     class Cooker
     {
     public:
@@ -39,8 +47,14 @@ namespace Veng::Cook
         // module's reflected descriptors (non-null only on a --module cook),
         // handed to importers through the CookContext. Errors are located:
         // "pack '<path>': asset[<n>]: <reason>".
+        //
+        // When outDependencies is non-null it receives every source file the
+        // cook read — the manifest, each reference pack, the per-asset JSONs,
+        // and the binary payloads (images, models, shader sources + includes) —
+        // sorted and de-duplicated, the input for a build depfile.
         [[nodiscard]] VoidResult CookPack(const path& packJson, const path& outArchive,
-            std::span<const path> referencePacks = {}, const TypeRegistry* types = nullptr) const;
+            std::span<const path> referencePacks = {}, const TypeRegistry* types = nullptr,
+            vector<path>* outDependencies = nullptr) const;
 
         // Cooks one source asset through its registered importer and returns a
         // complete single-entry .vengpack as in-memory bytes (no files written).

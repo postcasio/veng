@@ -83,6 +83,7 @@ namespace Veng::Cook
         const bool srgb = texJson.contains("srgb") && texJson["srgb"].is_boolean() && texJson["srgb"].get<bool>();
 
         const path imagePath = sourcePath.parent_path() / texJson["image"].get<string>();
+        context.RecordDependency(imagePath);
 
         int width = 0;
         int height = 0;

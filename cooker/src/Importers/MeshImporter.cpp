@@ -73,6 +73,7 @@ namespace Veng::Cook
         }
 
         const path modelPath = sourcePath.parent_path() / meshJson["model"].get<string>();
+        context.RecordDependency(modelPath);
 
         // Import settings -> assimp post-process flags. Defaults: generate normals +
         // tangents, join identical verts.

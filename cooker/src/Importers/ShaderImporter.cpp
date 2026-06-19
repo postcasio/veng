@@ -237,6 +237,13 @@ namespace Veng::Cook
                     sourcePath.string(), DiagnosticsText(diagnostics)));
             }
 
+            // Slang reports every file the module pulled in — the .slang source
+            // plus each file it imports/includes (e.g. material.slang). Recording
+            // them re-cooks the shader when any included source changes, which a
+            // manifest naming only the entry .slang cannot capture.
+            for (SlangInt32 i = 0; i < module->getDependencyFileCount(); ++i)
+                context.RecordDependency(path(module->getDependencyFilePath(i)));
+
             ComPtr<slang::IEntryPoint> entryPoint;
             if (SLANG_FAILED(module->findEntryPointByName(entryName.c_str(), entryPoint.writeRef())))
             {

@@ -35,6 +35,13 @@ namespace Veng::Cook
         // cook. An importer that needs to validate against component schemas
         // (the prefab importer) reads it; the others ignore it.
         const TypeRegistry* Types = nullptr;
+        // Records a source file the cook read, so the build's dependency
+        // tracking re-cooks when it changes. The cooker records the per-asset
+        // JSON and every resolved cross-asset reference centrally; an importer
+        // calls this for the binary payloads the manifest does not name —
+        // a texture's image, a mesh's model file, a shader's compiled sources
+        // (its .slang and every file it includes). Always set by the cooker.
+        function<void(const path&)> RecordDependency;
     };
 
     class AssetImporter
