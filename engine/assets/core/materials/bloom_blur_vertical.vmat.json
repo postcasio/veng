@@ -1,0 +1,9 @@
+{
+  "domain": "postprocess",
+  "shaders": { "vertex": 17612966569144354344, "fragment": 17076675692748364383 },
+  "fields": [
+    { "name": "Source",        "type": "texture" },
+    { "name": "SourceSampler", "type": "sampler", "texture": "Source" },
+    { "name": "Horizontal",    "type": "uint", "value": 0 }
+  ]
+}

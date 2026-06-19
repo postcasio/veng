@@ -52,6 +52,13 @@ namespace Veng::Renderer
         // Settings surface is exercised; a purely per-frame knob could instead ride
         // SceneView (the per-frame-vs-recompile distinction).
         f32 Exposure = 1.0f;
+
+        // Whether the bloom post chain runs ahead of tonemap. A topology change: it
+        // inserts/removes the four bloom stages (bright-pass → blur H → blur V →
+        // composite), so it drives a Configure → recompile. The bloom Threshold and
+        // Intensity are per-frame values on SceneView, not settings — they tune the
+        // effect without a recompile, the split the plumbing-vs-effect line draws.
+        bool Bloom = true;
     };
 
     struct SceneRendererInfo
@@ -78,6 +85,14 @@ namespace Veng::Renderer
         const Camera& Camera;
         Veng::Light Light;
         f32 Delta = 0.0f;
+
+        // The bloom bright-pass luminance knee and the composite mix — per-frame
+        // values written into the bloom materials' ring-buffered param blocks each
+        // Execute (the same stall-free path Exposure uses). Tuning them never
+        // recompiles; only the Bloom on/off topology toggle does. Ignored when the
+        // bloom chain is inactive.
+        f32 BloomThreshold = 1.0f;
+        f32 BloomIntensity = 1.0f;
     };
 
     class SceneRenderer
@@ -120,6 +135,11 @@ namespace Veng::Renderer
         // pass maps it to the output). Exposed for tests and tooling.
         [[nodiscard]] Ref<ImageView> GetHdrView() const;
 
+        // The bloom composite result the tonemap stage reads when Bloom is on (the
+        // HDR target plus the blurred bright residual). Null when Bloom is off — the
+        // tonemap stage then reads the raw HDR target. Exposed for tests.
+        [[nodiscard]] Ref<ImageView> GetBloomResultView() const;
+
     private:
         explicit SceneRenderer(const SceneRendererInfo& info);
 
@@ -131,6 +151,14 @@ namespace Veng::Renderer
         // Recreate the HDR image/view at the current extent and (re-)register it
         // into the bindless registry.
         void CreateHdr();
+        // Recreate the four bloom intermediate images/views at the current extent
+        // and (re-)register them into the bindless registry. The bright residual,
+        // the two separable-blur ping-pong targets, and the composite result are
+        // renderer-owned and imported (a later stage samples the prior stage's output
+        // through bindless, which needs a Ref<ImageView> — a transient cannot be
+        // registered). Recreated through the deferred Release() path on
+        // Resize/Configure like the g-buffer/HDR targets.
+        void CreateBloom();
         // Build the engine-owned fullscreen pipelines (lighting and the
         // albedo/normal/depth debug blits) and load the core tonemap PostProcess
         // material once at Create.
@@ -175,6 +203,21 @@ namespace Veng::Renderer
         Ref<Image> m_HdrImage;
         Ref<ImageView> m_HdrView;
 
+        // The bloom chain's renderer-owned intermediates (linear HDR-format, same
+        // single-copy contract as the g-buffer/HDR targets): the bright-pass residual,
+        // the two separable-blur ping-pong targets, and the composite result the
+        // tonemap stage reads. Imported into the internal graph; a later stage samples
+        // the prior stage's output through its bindless handle, so each needs a
+        // Ref<ImageView> (a graph transient cannot be registered into bindless).
+        Ref<Image> m_BloomBrightImage;
+        Ref<ImageView> m_BloomBrightView;
+        Ref<Image> m_BloomBlurHImage;
+        Ref<ImageView> m_BloomBlurHView;
+        Ref<Image> m_BloomBlurVImage;
+        Ref<ImageView> m_BloomBlurVView;
+        Ref<Image> m_BloomResultImage;
+        Ref<ImageView> m_BloomResultView;
+
         // The shared sampler a fullscreen pass samples the g-buffer/HDR through.
         Ref<Sampler> m_Sampler;
 
@@ -187,6 +230,13 @@ namespace Veng::Renderer
         TextureHandle m_DepthHandle;
         TextureHandle m_HdrHandle;
         SamplerHandle m_SamplerHandle;
+
+        // Bindless slots for the bloom intermediates, registered with them in
+        // CreateBloom and released through the per-frame retire window on recreate.
+        TextureHandle m_BloomBrightHandle;
+        TextureHandle m_BloomBlurHHandle;
+        TextureHandle m_BloomBlurVHandle;
+        TextureHandle m_BloomResultHandle;
 
         // The engine-owned fullscreen pipelines + layouts, all built once at Create
         // from the core pack's shaders. The lighting pipeline writes the HDR format;
@@ -207,6 +257,17 @@ namespace Veng::Renderer
         // runtime-bound input, exposure written per Execute into its param block).
         AssetHandle<Material> m_TonemapMaterial;
 
+        // The core bloom PostProcess materials, loaded once at Create. The bloom
+        // chain (when Settings.Bloom) drives four PostProcessScenePass stages over
+        // them ahead of tonemap: bright-pass → blur H → blur V → composite. The two
+        // blur stages reuse one shader through two materials differing only in the
+        // cooked Horizontal axis param. Threshold (bright-pass) and Intensity
+        // (composite) are written per Execute into their ring-buffered blocks.
+        AssetHandle<Material> m_BloomBrightMaterial;
+        AssetHandle<Material> m_BloomBlurHMaterial;
+        AssetHandle<Material> m_BloomBlurVMaterial;
+        AssetHandle<Material> m_BloomCompositeMaterial;
+
         // The renderer owns its pass units; the set is rebuilt per Settings.Mode on
         // every Rebuild (the geometry pass is always first; Mode selects the tail).
         vector<Unique<ScenePass>> m_Passes;
@@ -218,7 +279,15 @@ namespace Veng::Renderer
         ResourceId m_OrmId;
         ResourceId m_DepthId;
         ResourceId m_HdrId;
+        ResourceId m_BloomBrightId;
+        ResourceId m_BloomBlurHId;
+        ResourceId m_BloomBlurVId;
+        ResourceId m_BloomResultId;
         ResourceId m_OutputId;
+
+        // Whether the last Rebuild wired the bloom chain (Final mode + Settings.Bloom).
+        // Execute binds the bloom imports and writes the bloom params only then.
+        bool m_BloomActive = false;
 
         // Compiled once per Create/Resize/Configure, replayed every Execute. The
         // concrete type is RenderGraph's CompiledGraph; held by an opaque pointer so
