@@ -20,25 +20,33 @@ namespace Veng::Renderer
         u32 BaseColorSampler;   // bindless sampler index
         u32 ORM;                // bindless sampled-image index (occlusion-roughness-metallic)
         u32 ORMSampler;         // bindless sampler index
+        u32 Normal;             // bindless sampled-image index (tangent-space normal map; 0 = unbound)
+        u32 NormalSampler;      // bindless sampler index
+        u32 Pad0;
+        u32 Pad1;
         vec4 BaseColorFactor;   // tint applied to the sampled base color
         vec4 EmissiveFactor;    // rgb reserved; a = emissive strength
         f32 MetallicFactor;
         f32 RoughnessFactor;
         f32 OcclusionStrength;
-        f32 Pad0;
+        f32 Pad2;
     };
 
     // The std430 layout the Slang `MaterialParams` block reflects to. A drift here
     // is a build error.
-    static_assert(sizeof(MaterialParams) == 64, "MaterialParams must be 64 bytes");
+    static_assert(sizeof(MaterialParams) == 80, "MaterialParams must be 80 bytes");
     static_assert(offsetof(MaterialParams, BaseColor) == 0);
     static_assert(offsetof(MaterialParams, BaseColorSampler) == 4);
     static_assert(offsetof(MaterialParams, ORM) == 8);
     static_assert(offsetof(MaterialParams, ORMSampler) == 12);
-    static_assert(offsetof(MaterialParams, BaseColorFactor) == 16);
-    static_assert(offsetof(MaterialParams, EmissiveFactor) == 32);
-    static_assert(offsetof(MaterialParams, MetallicFactor) == 48);
-    static_assert(offsetof(MaterialParams, RoughnessFactor) == 52);
-    static_assert(offsetof(MaterialParams, OcclusionStrength) == 56);
-    static_assert(offsetof(MaterialParams, Pad0) == 60);
+    static_assert(offsetof(MaterialParams, Normal) == 16);
+    static_assert(offsetof(MaterialParams, NormalSampler) == 20);
+    static_assert(offsetof(MaterialParams, Pad0) == 24);
+    static_assert(offsetof(MaterialParams, Pad1) == 28);
+    static_assert(offsetof(MaterialParams, BaseColorFactor) == 32);
+    static_assert(offsetof(MaterialParams, EmissiveFactor) == 48);
+    static_assert(offsetof(MaterialParams, MetallicFactor) == 64);
+    static_assert(offsetof(MaterialParams, RoughnessFactor) == 68);
+    static_assert(offsetof(MaterialParams, OcclusionStrength) == 72);
+    static_assert(offsetof(MaterialParams, Pad2) == 76);
 }

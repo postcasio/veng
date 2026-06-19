@@ -16,10 +16,12 @@ struct MaterialParams
 {
     uint   BaseColor;        uint BaseColorSampler;   // base-color texture handle + sampler
     uint   ORM;              uint ORMSampler;         // occlusion-roughness-metallic texture handle + sampler
+    uint   Normal;           uint NormalSampler;      // tangent-space normal-map handle + sampler (0 = unbound)
+    uint   Pad0;             uint Pad1;
     float4 BaseColorFactor;  // tint applied to the sampled base color
     float4 EmissiveFactor;   // rgb reserved (colored emissive is a follow-on); a = strength
     float  MetallicFactor;   float RoughnessFactor;
-    float  OcclusionStrength; float Pad0;
+    float  OcclusionStrength; float Pad2;
 };
 
 // The per-material block byte stride. Mirrors

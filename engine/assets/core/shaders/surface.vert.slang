@@ -18,6 +18,7 @@ struct VSOutput
     float4 sv_position : SV_Position;
     float2 v_UV : TEXCOORD0;
     float3 v_WorldNormal : NORMAL;
+    float4 v_WorldTangent : TANGENT;  // xyz world tangent; w handedness sign for the bitangent
 };
 
 [shader("vertex")]
@@ -27,5 +28,8 @@ VSOutput vsMain(VSInput input)
     output.sv_position = mul(g_PC.MVP, float4(input.a_Position, 1.0));
     output.v_UV = input.a_UV;
     output.v_WorldNormal = mul(g_PC.NormalMatrix, input.a_Normal);
+    // NormalMatrix carries the tangent to world space alongside the normal; the
+    // canonical tangent's w is the bitangent handedness sign, passed through.
+    output.v_WorldTangent = float4(mul(g_PC.NormalMatrix, input.a_Tangent.xyz), input.a_Tangent.w);
     return output;
 }

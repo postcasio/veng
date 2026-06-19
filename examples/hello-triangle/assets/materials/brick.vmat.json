@@ -6,6 +6,8 @@
     { "name": "BaseColorSampler",  "type": "sampler", "texture": "BaseColor" },
     { "name": "ORM",               "type": "texture", "id": 1006 },
     { "name": "ORMSampler",        "type": "sampler", "texture": "ORM" },
+    { "name": "Normal",            "type": "texture", "id": 1007 },
+    { "name": "NormalSampler",     "type": "sampler", "texture": "Normal" },
     { "name": "BaseColorFactor",   "type": "vec4",    "value": [1.0, 1.0, 1.0, 1.0] },
     { "name": "EmissiveFactor",    "type": "vec4",    "value": [0.0, 0.0, 0.0, 0.0] },
     { "name": "MetallicFactor",    "type": "float",   "value": 1.0 },

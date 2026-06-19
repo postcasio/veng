@@ -16,16 +16,20 @@ using namespace Veng::Renderer;
 
 TEST_CASE("MaterialParams: the metallic-roughness block matches the documented layout")
 {
-    CHECK(sizeof(MaterialParams) == 64);
+    CHECK(sizeof(MaterialParams) == 80);
 
     CHECK(offsetof(MaterialParams, BaseColor) == 0);
     CHECK(offsetof(MaterialParams, BaseColorSampler) == 4);
     CHECK(offsetof(MaterialParams, ORM) == 8);
     CHECK(offsetof(MaterialParams, ORMSampler) == 12);
-    CHECK(offsetof(MaterialParams, BaseColorFactor) == 16);
-    CHECK(offsetof(MaterialParams, EmissiveFactor) == 32);
-    CHECK(offsetof(MaterialParams, MetallicFactor) == 48);
-    CHECK(offsetof(MaterialParams, RoughnessFactor) == 52);
-    CHECK(offsetof(MaterialParams, OcclusionStrength) == 56);
-    CHECK(offsetof(MaterialParams, Pad0) == 60);
+    CHECK(offsetof(MaterialParams, Normal) == 16);
+    CHECK(offsetof(MaterialParams, NormalSampler) == 20);
+    CHECK(offsetof(MaterialParams, Pad0) == 24);
+    CHECK(offsetof(MaterialParams, Pad1) == 28);
+    CHECK(offsetof(MaterialParams, BaseColorFactor) == 32);
+    CHECK(offsetof(MaterialParams, EmissiveFactor) == 48);
+    CHECK(offsetof(MaterialParams, MetallicFactor) == 64);
+    CHECK(offsetof(MaterialParams, RoughnessFactor) == 68);
+    CHECK(offsetof(MaterialParams, OcclusionStrength) == 72);
+    CHECK(offsetof(MaterialParams, Pad2) == 76);
 }
