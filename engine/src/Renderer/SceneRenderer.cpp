@@ -4,6 +4,8 @@
 #include <array>
 #include <cmath>
 #include <span>
+#include <tuple>
+#include <utility>
 
 #include <fmt/format.h>
 #include <glm/gtc/matrix_inverse.hpp>
@@ -40,6 +42,12 @@ namespace Veng::Renderer
         constexpr AssetId AlbedoBlitFragId{0xF90F709155D04BE7ULL};
         constexpr AssetId NormalBlitFragId{0x5A2CD7B270EAE5CDULL};
         constexpr AssetId DepthBlitFragId{0xE05F5F86E72F96D5ULL};
+
+        // The core bloom PostProcess materials.
+        constexpr AssetId BloomBrightMaterialId{0xB1C79EF4EAC3F697ULL};
+        constexpr AssetId BloomBlurHMaterialId{0x7061083E93A8D7FFULL};
+        constexpr AssetId BloomBlurVMaterialId{0x00CC2DEC566FFF58ULL};
+        constexpr AssetId BloomCompositeMaterialId{0x19FC4F575D6CFE6CULL};
 
         // The HDR lighting target's format: a linear signed-float color target the
         // lighting pass writes and the tail pass samples. Same format G1 already
@@ -431,16 +439,25 @@ namespace Veng::Renderer
             BuildPipeline();
 
         const PostProcessInput input = m_Input;
+        const PostProcessExtraInput extra = m_Extra;
+        const bool hasExtra = extra.Texture.IsValid();
 
-        graph.AddPass("PostProcess")
-            .Color({
+        // A pass with a second runtime-bound source declares .Sample on both ids so
+        // the graph derives each one's attachment → shader-read barrier; the
+        // single-source common case (tonemap, bright-pass, the blur stages) samples
+        // only the primary input.
+        RenderGraph::PassBuilder builder = graph.AddPass("PostProcess");
+        builder.Color({
                 .Resource = m_Output,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
                 .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
             })
-            .Sample(input.Source)
-            .Execute([this, input](PassContext& inner)
+            .Sample(input.Source);
+        if (hasExtra)
+            builder.Sample(extra.Source);
+
+        builder.Execute([this, input, extra, hasExtra](PassContext& inner)
             {
                 CommandBuffer& cmd = inner.Cmd();
                 // The per-frame handle write mutates the material's parameter
@@ -454,6 +471,11 @@ namespace Veng::Renderer
                 // frame's region.
                 material.SetTextureHandle(input.TextureField, input.SourceTexture);
                 material.SetSamplerHandle(input.SamplerField, input.Sampler);
+                if (hasExtra)
+                {
+                    material.SetTextureHandle(extra.TextureField, extra.Texture);
+                    material.SetSamplerHandle(extra.SamplerField, extra.Sampler);
+                }
 
                 // Bind the pass's pipeline first (the bindless registry binds set 0
                 // into the currently-bound layout), then set 0, then push the
@@ -492,6 +514,7 @@ namespace Veng::Renderer
         CreateOutput();
         CreateGBuffer();
         CreateHdr();
+        CreateBloom();
         Rebuild();
     }
 
@@ -505,6 +528,10 @@ namespace Veng::Renderer
         bindless.Release(m_OrmHandle);
         bindless.Release(m_DepthHandle);
         bindless.Release(m_HdrHandle);
+        bindless.Release(m_BloomBrightHandle);
+        bindless.Release(m_BloomBlurHHandle);
+        bindless.Release(m_BloomBlurVHandle);
+        bindless.Release(m_BloomResultHandle);
         bindless.Release(m_SamplerHandle);
     }
 
@@ -555,6 +582,20 @@ namespace Veng::Renderer
         const AssetResult<AssetHandle<Material>> tonemap = m_Assets.LoadSync<Material>(TonemapMaterialId);
         VE_ASSERT(tonemap.has_value(), "SceneRenderer: tonemap material load failed: {}", tonemap.error().Detail);
         m_TonemapMaterial = *tonemap;
+
+        // The bloom chain's four PostProcess materials (bright-pass, two-axis blur,
+        // composite), loaded resident so each stage's PostProcessScenePass builds its
+        // fullscreen pipeline against the HDR format.
+        auto LoadMaterial = [this](const AssetId id, const char* what) -> AssetHandle<Material>
+        {
+            const AssetResult<AssetHandle<Material>> result = m_Assets.LoadSync<Material>(id);
+            VE_ASSERT(result.has_value(), "SceneRenderer: {} material load failed: {}", what, result.error().Detail);
+            return *result;
+        };
+        m_BloomBrightMaterial = LoadMaterial(BloomBrightMaterialId, "bloom bright-pass");
+        m_BloomBlurHMaterial = LoadMaterial(BloomBlurHMaterialId, "bloom blur horizontal");
+        m_BloomBlurVMaterial = LoadMaterial(BloomBlurVMaterialId, "bloom blur vertical");
+        m_BloomCompositeMaterial = LoadMaterial(BloomCompositeMaterialId, "bloom composite");
 
         // The three debug blits share the BlitPushConstants layout (a texture + a
         // sampler index); only the fragment shader's decode differs.
@@ -684,6 +725,42 @@ namespace Veng::Renderer
         m_HdrHandle = bindless.Register(m_HdrView);
     }
 
+    void SceneRenderer::CreateBloom()
+    {
+        // The bloom intermediates are renderer-owned and imported: each bloom stage
+        // writes one and the next stage samples it through bindless. Same HDR format
+        // (linear, unbounded) since bloom operates in linear HDR before tonemap, and
+        // the same single-copy contract. Dropping the old Refs retires them; releasing
+        // the old slots defers through the per-frame window.
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        bindless.Release(m_BloomBrightHandle);
+        bindless.Release(m_BloomBlurHHandle);
+        bindless.Release(m_BloomBlurVHandle);
+        bindless.Release(m_BloomResultHandle);
+
+        auto MakeTarget = [this](const char* name) -> std::pair<Ref<Image>, Ref<ImageView>>
+        {
+            Ref<Image> image = Image::Create(m_Context, {
+                .Name = name,
+                .Extent = {m_Extent.x, m_Extent.y, 1},
+                .Format = HdrFormat,
+                .Usage = HdrUsage,
+            });
+            Ref<ImageView> view = ImageView::Create(m_Context, {.Name = name, .Image = image});
+            return {std::move(image), std::move(view)};
+        };
+
+        std::tie(m_BloomBrightImage, m_BloomBrightView) = MakeTarget("SceneRenderer Bloom Bright");
+        std::tie(m_BloomBlurHImage, m_BloomBlurHView) = MakeTarget("SceneRenderer Bloom Blur H");
+        std::tie(m_BloomBlurVImage, m_BloomBlurVView) = MakeTarget("SceneRenderer Bloom Blur V");
+        std::tie(m_BloomResultImage, m_BloomResultView) = MakeTarget("SceneRenderer Bloom Result");
+
+        m_BloomBrightHandle = bindless.Register(m_BloomBrightView);
+        m_BloomBlurHHandle = bindless.Register(m_BloomBlurHView);
+        m_BloomBlurVHandle = bindless.Register(m_BloomBlurVView);
+        m_BloomResultHandle = bindless.Register(m_BloomResultView);
+    }
+
     void SceneRenderer::Rebuild()
     {
         // The geometry pass always runs first (it fills the g-buffer); Settings.Mode
@@ -693,6 +770,12 @@ namespace Veng::Renderer
         // Declare the imported ids first: the PostProcessScenePass binds the HDR
         // source and output ids at construction, so they must be resolved before
         // the pass set is built.
+        // The bloom chain runs only in the Final mode (the debug views terminate
+        // after the g-buffer); when active it inserts four PostProcess stages between
+        // lighting and tonemap, so its imports are declared and bound only then.
+        const bool bloomActive = m_Settings.Mode == DebugView::Final && m_Settings.Bloom;
+        m_BloomActive = bloomActive;
+
         RenderGraph graph(m_Context);
         const ResourceId albedoId = graph.Import("SceneRenderer GBuffer Albedo");
         const ResourceId normalId = graph.Import("SceneRenderer GBuffer Normal");
@@ -707,23 +790,102 @@ namespace Veng::Renderer
         m_DepthId = depthId;
         m_HdrId = hdrId;
 
+        if (bloomActive)
+        {
+            m_BloomBrightId = graph.Import("SceneRenderer Bloom Bright");
+            m_BloomBlurHId = graph.Import("SceneRenderer Bloom Blur H");
+            m_BloomBlurVId = graph.Import("SceneRenderer Bloom Blur V");
+            m_BloomResultId = graph.Import("SceneRenderer Bloom Result");
+        }
+
         m_Passes.clear();
         m_Passes.push_back(CreateUnique<GBufferScenePass>(m_Context, m_Extent));
         switch (m_Settings.Mode)
         {
             case DebugView::Final:
+            {
                 m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(m_Context, m_LightingPipeline, m_Extent));
+
+                // The tonemap stage's input: the bloom composite result when bloom is
+                // on, the raw HDR target otherwise. The four bloom stages sit between
+                // lighting and tonemap, each sampling the prior stage's output.
+                ResourceId tonemapSourceId = m_HdrId;
+                TextureHandle tonemapSourceHandle = m_HdrHandle;
+
+                if (bloomActive)
+                {
+                    // Bright-pass: HDR → Bright (luminance above Threshold).
+                    m_Passes.push_back(CreateUnique<PostProcessScenePass>(
+                        m_Context, m_BloomBrightMaterial,
+                        PostProcessInput{
+                            .Source = m_HdrId,
+                            .SourceTexture = m_HdrHandle,
+                            .Sampler = m_SamplerHandle,
+                            .TextureField = "Hdr",
+                            .SamplerField = "HdrSampler",
+                        },
+                        m_BloomBrightId, HdrFormat, m_Extent));
+
+                    // Blur horizontal: Bright → BlurH.
+                    m_Passes.push_back(CreateUnique<PostProcessScenePass>(
+                        m_Context, m_BloomBlurHMaterial,
+                        PostProcessInput{
+                            .Source = m_BloomBrightId,
+                            .SourceTexture = m_BloomBrightHandle,
+                            .Sampler = m_SamplerHandle,
+                            .TextureField = "Source",
+                            .SamplerField = "SourceSampler",
+                        },
+                        m_BloomBlurHId, HdrFormat, m_Extent));
+
+                    // Blur vertical: BlurH → BlurV (the finished single-level blur).
+                    m_Passes.push_back(CreateUnique<PostProcessScenePass>(
+                        m_Context, m_BloomBlurVMaterial,
+                        PostProcessInput{
+                            .Source = m_BloomBlurHId,
+                            .SourceTexture = m_BloomBlurHHandle,
+                            .Sampler = m_SamplerHandle,
+                            .TextureField = "Source",
+                            .SamplerField = "SourceSampler",
+                        },
+                        m_BloomBlurVId, HdrFormat, m_Extent));
+
+                    // Composite: HDR + BlurV*Intensity → Result, sampling two inputs.
+                    auto composite = CreateUnique<PostProcessScenePass>(
+                        m_Context, m_BloomCompositeMaterial,
+                        PostProcessInput{
+                            .Source = m_HdrId,
+                            .SourceTexture = m_HdrHandle,
+                            .Sampler = m_SamplerHandle,
+                            .TextureField = "Hdr",
+                            .SamplerField = "HdrSampler",
+                        },
+                        m_BloomResultId, HdrFormat, m_Extent);
+                    composite->SetExtraInput(PostProcessExtraInput{
+                        .Source = m_BloomBlurVId,
+                        .Texture = m_BloomBlurVHandle,
+                        .Sampler = m_SamplerHandle,
+                        .TextureField = "Bloom",
+                        .SamplerField = "BloomSampler",
+                    });
+                    m_Passes.push_back(std::move(composite));
+
+                    tonemapSourceId = m_BloomResultId;
+                    tonemapSourceHandle = m_BloomResultHandle;
+                }
+
                 m_Passes.push_back(CreateUnique<PostProcessScenePass>(
                     m_Context, m_TonemapMaterial,
                     PostProcessInput{
-                        .Source = m_HdrId,
-                        .SourceTexture = m_HdrHandle,
+                        .Source = tonemapSourceId,
+                        .SourceTexture = tonemapSourceHandle,
                         .Sampler = m_SamplerHandle,
                         .TextureField = "Hdr",
                         .SamplerField = "HdrSampler",
                     },
                     m_OutputId, m_OutputFormat, m_Extent));
                 break;
+            }
             case DebugView::Albedo:
                 m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                     m_Context, m_AlbedoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Albedo));
@@ -769,6 +931,7 @@ namespace Veng::Renderer
         CreateOutput();
         CreateGBuffer();
         CreateHdr();
+        CreateBloom();
         Rebuild();
     }
 
@@ -786,6 +949,17 @@ namespace Veng::Renderer
         // PostProcessScenePass reads it back through the unified material block.
         if (m_TonemapMaterial.IsLoaded())
             const_cast<Material&>(*m_TonemapMaterial.Get()).SetParam("Exposure", m_Settings.Exposure);
+
+        // The bloom Threshold/Intensity are per-frame view values (the same
+        // ring-buffered, stall-free write path as Exposure) — tuning them never
+        // recompiles. Written only when the chain is active.
+        if (m_BloomActive)
+        {
+            if (m_BloomBrightMaterial.IsLoaded())
+                const_cast<Material&>(*m_BloomBrightMaterial.Get()).SetParam("Threshold", view.BloomThreshold);
+            if (m_BloomCompositeMaterial.IsLoaded())
+                const_cast<Material&>(*m_BloomCompositeMaterial.Get()).SetParam("Intensity", view.BloomIntensity);
+        }
 
         // Walk the scene's (Transform, Light) entities, capped at MaxLights, packing
         // each into a GpuLight: its world position from the entity transform, its
@@ -834,7 +1008,9 @@ namespace Veng::Renderer
         };
         registry.WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
 
-        const RenderGraph::ImportBinding bindings[] = {
+        // Every declared import must be bound; the bloom imports are declared only
+        // when the chain is active, so they are appended only then.
+        vector<RenderGraph::ImportBinding> bindings = {
             {m_AlbedoId, m_AlbedoView},
             {m_NormalId, m_NormalView},
             {m_OrmId, m_OrmView},
@@ -842,6 +1018,13 @@ namespace Veng::Renderer
             {m_HdrId, m_HdrView},
             {m_OutputId, m_OutputView},
         };
+        if (m_BloomActive)
+        {
+            bindings.push_back({m_BloomBrightId, m_BloomBrightView});
+            bindings.push_back({m_BloomBlurHId, m_BloomBlurHView});
+            bindings.push_back({m_BloomBlurVId, m_BloomBlurVView});
+            bindings.push_back({m_BloomResultId, m_BloomResultView});
+        }
         m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
     }
 
@@ -851,4 +1034,5 @@ namespace Veng::Renderer
     Ref<ImageView> SceneRenderer::GetOrmView() const { return m_OrmView; }
     Ref<ImageView> SceneRenderer::GetDepthView() const { return m_DepthView; }
     Ref<ImageView> SceneRenderer::GetHdrView() const { return m_HdrView; }
+    Ref<ImageView> SceneRenderer::GetBloomResultView() const { return m_BloomResultView; }
 }

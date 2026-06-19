@@ -1,0 +1,11 @@
+{
+  "domain": "postprocess",
+  "shaders": { "vertex": 17612966569144354344, "fragment": 2003080298304761885 },
+  "fields": [
+    { "name": "Hdr",          "type": "texture" },
+    { "name": "HdrSampler",   "type": "sampler", "texture": "Hdr" },
+    { "name": "Bloom",        "type": "texture" },
+    { "name": "BloomSampler", "type": "sampler", "texture": "Bloom" },
+    { "name": "Intensity",    "type": "float", "value": 1.0 }
+  ]
+}

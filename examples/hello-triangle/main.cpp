@@ -168,13 +168,14 @@ protected:
 
         // A directional light so the deferred lighting pass shades the scene. Its
         // direction is fixed (top-front-right toward the origin), so the smoke pose
-        // is lit reproducibly run to run.
+        // is lit reproducibly run to run. The intensity drives the lit facets past
+        // 1.0 in linear HDR, so the bloom chain has a bright region to act on.
         const Entity lightEntity = m_Scene->CreateEntity();
         m_Scene->Add<Light>(lightEntity) = Light{
             .Type = LightType::Directional,
             .Direction = glm::normalize(vec3(-0.4f, -0.7f, -0.5f)),
             .Color = vec3(1.0f, 1.0f, 1.0f),
-            .Intensity = 1.5f,
+            .Intensity = 4.0f,
         };
 
         // A warm point light off to the right, placed by its Transform, exercising
@@ -241,7 +242,16 @@ protected:
         auto& context = GetRenderContext();
         auto& cmd = context.GetCurrentCommandBuffer();
 
-        const Renderer::SceneView view{.World = *m_Scene, .Camera = m_Camera, .Delta = m_LastDelta};
+        // BloomThreshold/BloomIntensity are per-frame SceneView values (no recompile):
+        // a knee just below the lit brick's brightest facets, with a modest mix, so
+        // the bright highlights bloom visibly without washing out the scene.
+        const Renderer::SceneView view{
+            .World = *m_Scene,
+            .Camera = m_Camera,
+            .Delta = m_LastDelta,
+            .BloomThreshold = 0.5f,
+            .BloomIntensity = 1.5f,
+        };
         m_SceneRenderer->Execute(cmd, view);
 
         // Headless (smoke) renders only the scene; the ImGui overlay and the

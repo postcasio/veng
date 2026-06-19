@@ -504,7 +504,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Unique<SceneRenderer> rendererA = SceneRenderer::Create({
         .Context = Context, .Assets = assets,
         .OutputFormat = Context.GetOutputFormat(), .Extent = extentA,
-        .Settings = {.Mode = DebugView::Final},
+        .Settings = {.Mode = DebugView::Final, .Bloom = false},
     });
     const Unique<SceneRenderer> rendererB = SceneRenderer::Create({
         .Context = Context, .Assets = assets,
@@ -586,7 +586,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
         .Context = Context, .Assets = assets,
         .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
-        .Settings = {.Mode = DebugView::Final},
+        .Settings = {.Mode = DebugView::Final, .Bloom = false},
     });
 
     auto Center = [&]() -> vec3
@@ -727,7 +727,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
         .Context = Context, .Assets = assets,
         .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
-        .Settings = {.Mode = DebugView::Final},
+        .Settings = {.Mode = DebugView::Final, .Bloom = false},
     });
 
     auto CenterLuma = [&]() -> f32
@@ -837,6 +837,119 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     CHECK(bothLights > pointOnly + 0.02f);
     CHECK(bothLights > directionalOnly + 0.02f);
+
+    std::filesystem::remove(outArchive);
+}
+
+// The bloom property assertion (this plan's dedicated property pin beyond the
+// re-blessed golden). A smooth, metallic brick cube under a strong white light
+// produces a tight, saturating specular highlight (HDR well above 1.0) at the
+// face-on center. Bloom's bright-pass + separable blur spreads that energy into the
+// surrounding texels, so with Bloom ON a ring of texels around the highlight reads
+// brighter than with Bloom OFF, where the highlight stays sharp. The two renders
+// differ only in the Bloom topology toggle. A third pair then changes the per-frame
+// BloomThreshold/BloomIntensity on the SceneView (no Configure) and asserts the
+// result moves — proving the params tune without a recompile.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: bloom spreads a bright highlight, and its params tune "
+                  "without a recompile")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_bloom.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    // A smooth metal: a tight, strong specular peak at the aligned N=L=V geometry,
+    // driving the center HDR luminance well past the bloom threshold.
+    Material& mat = const_cast<Material&>(*material->Get());
+    mat.SetParam("RoughnessFactor", 0.08f);
+    mat.SetParam("MetallicFactor", 1.0f);
+
+    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Bloom Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    // A strong white light straight at the front face: N, L, V align and the
+    // specular lobe peaks far above 1.0 in HDR — the bright region bloom acts on.
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f), .Color = vec3(1.0f), .Intensity = 8.0f,
+    };
+
+    constexpr uvec2 extent{128, 128};
+
+    Camera camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false},
+    });
+
+    // Mean luminance over a window centered on, but excluding, the brightest texel —
+    // the "halo" region bloom lifts. The highlight sits at the cube's face-on center.
+    auto HaloLuma = [&](const vector<u8>& pixels) -> f64
+    {
+        const u32 cx = extent.x / 2;
+        const u32 cy = extent.y / 2;
+        f64 sum = 0.0;
+        u32 count = 0;
+        for (i32 dy = -24; dy <= 24; ++dy)
+            for (i32 dx = -24; dx <= 24; ++dx)
+            {
+                if (std::abs(dx) < 8 && std::abs(dy) < 8)
+                    continue; // skip the saturated core; measure the surrounding halo
+                const vec3 c = DecodeTexel(pixels, extent.x,
+                    static_cast<u32>(static_cast<i32>(cx) + dx),
+                    static_cast<u32>(static_cast<i32>(cy) + dy));
+                sum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+                ++count;
+            }
+        return sum / count;
+    };
+
+    auto Render = [&](f32 threshold, f32 intensity) -> vector<u8>
+    {
+        Context.ImmediateCommands([&](CommandBuffer& cmd)
+        {
+            renderer->Execute(cmd, Renderer::SceneView{
+                .World = *scene, .Camera = camera, .Delta = 0.0f,
+                .BloomThreshold = threshold, .BloomIntensity = intensity});
+        });
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        return pixels;
+    };
+
+    // Bloom OFF: the halo stays at the surface's own (dim) shading.
+    const f64 haloNoBloom = HaloLuma(Render(1.0f, 1.0f));
+
+    // Bloom ON (Configure recompiles the topology to insert the chain). The same
+    // halo region lifts as the blurred bright residual bleeds outward.
+    renderer->Configure({.Mode = DebugView::Final, .Bloom = true});
+    const f64 haloBloom = HaloLuma(Render(1.0f, 1.0f));
+
+    CHECK(haloBloom > haloNoBloom + 0.01);
+
+    // Per-frame param tuning without a recompile: a far higher threshold rejects
+    // most of the highlight, so the halo falls back toward the no-bloom level — and
+    // NO Configure is called between these two renders. The change is purely the
+    // ring-buffered material write the bloom stages read this frame.
+    const f64 haloLowMix = HaloLuma(Render(1.0f, 0.0f));   // intensity 0: bloom adds nothing
+    const f64 haloHighMix = HaloLuma(Render(1.0f, 2.0f));  // intensity 2: bloom adds more
+
+    // Intensity scales the added bloom; 0 → no lift over the surface, 2 → more than 1.
+    CHECK(haloHighMix > haloLowMix + 0.01);
+    // Intensity 0 collapses the halo back to (about) the no-bloom level.
+    CHECK(haloLowMix == doctest::Approx(haloNoBloom).epsilon(0.2));
 
     std::filesystem::remove(outArchive);
 }

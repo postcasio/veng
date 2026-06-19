@@ -149,12 +149,32 @@ namespace Veng::Renderer
         string SamplerField;
     };
 
+    // A second runtime-bound input some PostProcess materials sample alongside the
+    // primary one (the bloom composite samples the HDR target and the blurred bloom
+    // residual together). When Texture is valid the pass declares .Sample on Source
+    // and writes the handle pair into the named fields each frame; an
+    // invalid-handle entry is skipped.
+    struct PostProcessExtraInput
+    {
+        ResourceId Source;
+        TextureHandle Texture;
+        SamplerHandle Sampler;
+        string TextureField;
+        string SamplerField;
+    };
+
     class PostProcessScenePass final : public ScenePass
     {
     public:
         PostProcessScenePass(Context& context, AssetHandle<Material> material,
                              PostProcessInput input, ResourceId output,
                              Format outputFormat, uvec2 extent);
+
+        // A pass sampling a second runtime-bound source (the bloom composite reads
+        // the HDR target and the blurred bloom together). The graph derives the
+        // second source's attachment → shader-read barrier from its declared
+        // .Sample, exactly as for the primary input.
+        void SetExtraInput(PostProcessExtraInput extra) { m_Extra = std::move(extra); }
 
         void Resize(uvec2 extent) override { m_Extent = extent; }
         void Declare(RenderGraph& graph, const PassIO& io) override;
@@ -165,6 +185,7 @@ namespace Veng::Renderer
         Context& m_Context;
         AssetHandle<Material> m_Material;
         PostProcessInput m_Input;
+        PostProcessExtraInput m_Extra;
         ResourceId m_Output;
         Format m_OutputFormat;
         uvec2 m_Extent;
