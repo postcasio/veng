@@ -369,8 +369,22 @@ formats, usage) is fixed in `Renderer/GBuffer.h`, agreed on by the geometry pass
 `RenderingInfo` and every material pipeline. This is the **v1 minimum** channel set
 (a G2 PBR target extends the one `GBufferOutput` struct) and the **opaque** contract
 (a transparent/forward material outputs final color through a separate fragment
-entry, not a change to this one). Set-0 bindless, `MaterialData`, and texture
-handles are unchanged — only the fragment shader's outputs move to the g-buffer.
+entry, not a change to this one). Set-0 bindless, the material parameter block, and
+texture handles are unchanged — only the fragment shader's outputs move to the g-buffer.
+
+**The PostProcess fullscreen-material path.** A `PostProcessScenePass` runs a PostProcess
+material as a fullscreen effect: it builds a `GraphicsPipeline` from the material's
+fragment shader against a renderer-supplied color format (fullscreen triangle, one color
+target, no vertex inputs), binds set-0 bindless, runtime-binds an upstream target as a
+material handle field (`Material::SetTextureHandle`/`SetSamplerHandle`, no resident asset),
+and drives the material's authored params. The loader builds the pipeline *layout* for both
+domains but the `GraphicsPipeline` only for Surface — a PostProcess material's pipeline is
+built by the pass, which alone knows the color format. **Tonemap is the first PostProcess
+material** (core `tonemap.vmat`): the HDR target is runtime-bound each frame and `Exposure`
+is an exposed param written per frame through the ring-buffered block. The fixed plumbing
+composites stay hardcoded engine passes — `SwapChainCompositePass` (scene behind, ImGui
+over) and the `DebugView` albedo/normal/depth/HDR blits have no authorable surface; a
+PostProcess material is for *tunable effects with exposed parameters*, not plumbing.
 
 ### Pipeline cache
 
@@ -548,7 +562,12 @@ same way the launcher does — but passing a non-null `EditorRegistry*` in
   `fields` is regenerated on compile (reusing the texture editor's preserve-unknown-keys JSON
   round-trip). `MaterialEditorPanel` drives an imnodes canvas over the graph and a
   node-property inspector reusing the per-`FieldClass` widgets. Textures are node properties
-  (`FieldClass::AssetHandle`), not wired pins, so the topology core stays asset-agnostic.
+  (`FieldClass::AssetHandle`), not wired pins, so the topology core stays asset-agnostic. The
+  node catalog is **domain-aware** (`RegisterMaterialNodeTypes` takes the domain): the
+  `MaterialOutput` node's pins follow the domain's output contract (`Color` for PostProcess)
+  rather than only mirroring the loaded shader's `GetFields()`, and compile writes the
+  `"domain"` key. Node→Slang codegen — every node an expression emitter generating the
+  fragment source — remains the named follow-on.
 - **`MaterialPreview` renders one material on a sphere via `SceneRenderer`** into an ImGui
   texture; the edit loop recooks off-thread and hot-reloads behind the stable `AssetHandle`,
   re-fetching the texture after the recompile/resize invalidates `GetOutput()`.
@@ -600,7 +619,7 @@ archive; the engine *mounts* archives and resolves assets against them.
   `PrefabImporter` validates a prefab's components against the **real** reflected
   descriptors — an unknown component, a wrong field type, or a malformed value is a
   located cook-time error, the way the material importer validates `*.vmat.json`
-  against a shader's reflected `MaterialData`. A field absent from the source keeps
+  against a shader's reflected parameters. A field absent from the source keeps
   its default-constructed value (schema tolerance), so omission is allowed,
   type-mismatch is not. `vengc generate-type-id` mints a collision-free `TypeId`
   (the `TypeId` analogue of `generate-id`) and `vengc` can emit a type manifest.
@@ -677,7 +696,7 @@ smoke render use.
 The engine provides a global `BindlessRegistry` (owned by `Context`, reachable via
 `Context::GetBindlessRegistry()`): a few large arrayed, `partiallyBound` +
 `updateAfterBind` bindings (sampled images, samplers, storage images, and the
-per-material `MaterialData` SSBO) living in **set 0**. `Register(...)` allocates a
+per-material parameter-block SSBO) living in **set 0**. `Register(...)` allocates a
 free-list slot and returns a typed `u32` handle (`TextureHandle`, `SamplerHandle`,
 `StorageImageHandle`, `MaterialHandle`); `Release` defers the slot reclaim through
 the same per-frame retire window. **`PipelineLayout` reserves set 0 in every
@@ -697,18 +716,51 @@ loads plain **SPIR-V** and gains no Slang dependency. (There is no `glslc` /
 A material (`*.vmat.json`) references its vertex/fragment shaders by `AssetId` and
 declares an **ordered, explicitly-typed** field list; the cook validates those
 fields against the fragment shader's reflected parameters. At runtime a `Material` is
-thin — shader handle + texture **handles** + two SSBO entries, bound through set 0 — and
-`Material::Bind` pushes its per-draw material index.
+thin — shader handle + texture **handles** + one parameter-block entry, bound through
+set 0 — and `Material::Bind` pushes its per-draw material selector.
 
-A material's GPU parameters are **two parallel SSBO entries** indexed by the material slot:
-the fixed **engine-supplied `MaterialData`** block (the bindless handle slots the loader
-patches; `static_assert`-pinned at 16 bytes; `libveng` knows its layout without reflection)
-and a variable-size **authored `MaterialParams`** block (the shader's declared scalar/vector
-uniforms, reflected per-shader, byte-addressed at `MaterialParamStride` in set 0 binding 4).
-The seam between them is `CookedMaterialField::Kind` (handle vs. param), and the cooker
-reflects both. `Material::GetFields()` exposes the reflected `MaterialField` table — the
+A material's GPU parameters are **one reflection-sized block** per material (set 0
+binding 4, byte-addressed at `index * MaterialParamStride`): its bindless handle slots
+(`uint` members the loader patches with the resolved index) and its authored
+scalar/vector params share that single block, laid out by reflection at each field's
+offset. There is no fixed engine struct and no second SSBO — a material declares an
+arbitrary, shader-defined handle set (zero, one, or several), and `CookedMaterialField::Kind`
+(handle vs. param) is the seam the loader patches by offset. `CookedMaterialHeader` carries
+`Version` (`CookedMaterialVersion`, currently `2`), `Domain`, and `BlockBytes`; a stale blob
+rejects loudly. `Material::GetFields()` exposes the reflected `MaterialField` table — the
 editor's parameter-schema source, so the node editor reads a material's authorable parameters
 with no Slang in `libveng_editor`.
+
+The block buffer is **N-buffered for frames-in-flight, host-visible + persistently
+mapped**: it holds `framesInFlight` copies of the `MaxMaterials * MaterialParamStride`
+table, and each frame-in-flight owns one region. `Register/UpdateMaterial` mark a
+material dirty for `framesInFlight` frames and write only the *current* frame's region
+(safe because that frame is not yet submitted); `OnFrameAcquired` flushes each
+still-dirty material into the region it just made current. A per-frame `SetParam` /
+`SetTexture` is therefore a direct, stall-free write — no staging, no `WaitIdle`, no
+hazard. **The current frame's region is selected by folding the frame base
+(`currentFrame * MaxMaterials`, via `BindlessRegistry::GetCurrentFrameBase()`) into the
+pushed material selector index in `Material::Bind`** — not by a dynamic descriptor
+offset: a `STORAGE_BUFFER_DYNAMIC` descriptor mistranslates inside set 0's bindless Metal
+argument buffer on MoltenVK. The buffer stays a plain storage buffer bound at full range,
+and the shader's `index * MaterialParamStride` load is unchanged.
+
+A `Material` carries a first-class **`MaterialDomain`** (`Surface` / `PostProcess`,
+`Veng/Asset/Material.h`) selecting its output contract, pipeline shape, standard vertex
+shader, and invocation site — the parameter schema, bindless handles, `.vmat` authoring,
+and editor inspector are shared across domains. `Surface` is the existing opaque path made
+explicit (canonical-layout vertex stage, g-buffer MRT output, drawn per-submesh by the
+geometry pass); `PostProcess` is the fullscreen path (screenspace vertex stage, a single
+`SV_Target0` color, invoked by the post chain). The lowercase `"domain"` `.vmat.json` key
+selects it (default `surface`), and the cook validates the fragment shader's outputs against
+the domain's contract (Surface → g-buffer MRT `SV_Target0`+`SV_Target1`; PostProcess → a
+single `SV_Target0`). The per-draw selector push offset is domain-keyed — Surface 64 (after
+the MVP block), PostProcess 0.
+
+The engine ships the **standard vertex shader per domain in the core pack**: `surface.vert`
+(canonical layout) and `fullscreen.vert` (screenspace); `material.slang` holds the shared
+bindless/material/push-block declarations. A game references the core `surface.vert` rather
+than shipping its own surface vertex stage.
 
 ### Scene & ECS
 

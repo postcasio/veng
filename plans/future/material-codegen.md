@@ -3,6 +3,17 @@
 Direction overview for [future/README.md](README.md) **area 13**. Direction, not a
 plan — each piece below becomes its own planset when taken up.
 
+> **Status (planset-18).** Section 1 (**material domains**) is **delivered**: the unified
+> ring-buffered parameter block (the fixed engine `MaterialData` struct deleted), the
+> `Surface`/`PostProcess` domain, the PostProcess fullscreen-material path, the standard
+> per-domain vertex shaders, tonemap-as-material, and the domain-aware output node.
+> Section 2 (**node→Slang codegen + the node reshape**) **remains the direction** and is
+> now the prioritized follow-on. The **output-node inversion has begun** —
+> `MaterialOutput` is domain-driven (its pins follow the domain's output contract, not a
+> loaded shader's `GetFields()`) — so the codegen follow-on inherits a domain-correct sink
+> and reshapes the **input** side: emitter nodes, const-vs-exposed params, and the
+> generated-Slang compile target.
+
 ## Where this is going
 
 veng's material system is **temporarily** a parameter-binding system. A `.vmat`

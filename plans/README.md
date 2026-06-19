@@ -268,16 +268,46 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   editor-widget-class pattern (a `FileBrowser`-style `Draw()`-returns-event), taken up when a
   widget that holds persistent state needs extracting; and driving ImGui fully private.
 
+- **[planset-18](planset-18/README.md)** — material parameter storage, domains, and the
+  PostProcess fullscreen-material path (✅ done, 8 plans). Takes up
+  [future area 13](future/README.md#13-material-domains--shader-graph-codegen--prioritized)'s
+  **prioritized first slice**. First **reworks material parameter storage**: the fixed engine
+  `MaterialData` block and its separate set-0 SSBO are deleted, and a material's bindless
+  handle slots + authored params share **one reflection-sized block** per material (set 0
+  binding 4), patched by reflected offset + `CookedMaterialField::Kind`, so a material carries
+  an arbitrary, shader-defined handle set. `CookedMaterialHeader` gains `Version`
+  (`CookedMaterialVersion`, now `2`) + `Domain` + `BlockBytes`; a stale blob rejects loudly.
+  The block buffer is **N-buffered (frames-in-flight), host-visible + persistently mapped, and
+  ring-written via a dirty-flush**, so a per-frame `SetParam`/`SetTexture` is a direct,
+  stall-free write — the current frame's region selected by **folding the frame base into the
+  pushed material selector index** (`BindlessRegistry::GetCurrentFrameBase()`), not a dynamic
+  descriptor offset (which mistranslates inside set 0's bindless Metal argument buffer on
+  MoltenVK). On that foundation a `Material` gains a first-class **`MaterialDomain`**
+  (`Surface`/`PostProcess`) — the lowercase `"domain"` `.vmat.json` key (default `surface`) —
+  with a cook-time domain↔fragment-output contract check (Surface → g-buffer MRT; PostProcess
+  → single `SV_Target0`), and the engine ships the **standard vertex shader per domain** in the
+  core pack (`surface.vert`, `fullscreen.vert`; `material.slang` holds the shared declarations),
+  the example referencing the core `surface.vert` instead of its own. A **`PostProcessScenePass`**
+  stands up the fullscreen-material path in `SceneRenderer` — builds a `GraphicsPipeline` from a
+  PostProcess material's fragment shader against a renderer-supplied color format, binds set-0
+  bindless, runtime-binds an upstream target as a material handle field, and drives authored
+  params — and **tonemap becomes the first PostProcess material** (core `tonemap.vmat`, HDR
+  runtime-bound, `Exposure` an exposed per-frame param); the swapchain composite and `DebugView`
+  blits stay hardcoded engine passes. The material **node catalog is domain-aware**
+  (`MaterialOutput`'s pins follow the domain's output contract). **Node→Slang codegen** — every
+  node an expression emitter generating the fragment source — stays the named follow-on planset.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
-  holding area; not a planset). The **prioritized** next area is **material domains +
-  shader-graph codegen** (area 13): a first-class material **domain** (Surface +
-  PostProcess), the PostProcess fullscreen-material path, and the node-model reshape
-  toward codegen — committed direction, with full node→Slang codegen its named
-  follow-on (builds on planset-15's node graph + planset-12's `SceneRenderer`). The
-  rest of the remaining work is the **editor's scene editor** (area 6, sub-area D — its
-  gates met by planset-10/11/12/14/15), the **event/input** systems (area 4), and the
-  named still-future increments of the areas
+  holding area; not a planset). Area 13's **prioritized first slice** — material
+  **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
+  PostProcess fullscreen-material path, and the domain-aware node catalog — landed in
+  planset-18; its named follow-on, **node→Slang codegen** (every node an expression
+  emitter generating the fragment source), and the **editor's scene editor** (area 6,
+  sub-area D — its gates met by planset-10/11/12/14/15) are the **prioritized** next
+  areas, whichever the next planset takes up. The rest of the remaining work is the
+  **event/input** systems (area 4) and the named still-future increments of the areas
   done in part (hot-reload; the task graph; the systems framework +
-  `ShaderInterface`/`MaterialField` unification; the über-pipeline batteries + typed
-  lights; render-graph culling/multi-queue; cross-compiled cooking). Each becomes its
-  own planset when taken up. The future README carries the detail.
+  `ShaderInterface`/`MaterialField` unification; the über-pipeline batteries — now with
+  PostProcess materials as the authorable-effect mechanism — + typed lights; render-graph
+  culling/multi-queue; cross-compiled cooking). Each becomes its own planset when taken
+  up. The future README carries the detail.

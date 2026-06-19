@@ -141,10 +141,16 @@ tonemap) delivered by planset-12; frames-in-flight > 1 correctness by planset-13
 **The editor's scene viewport (area 6, sub-D) consumes this delivered
 `SceneRenderer`.** **Design overview:** [scene-renderer.md](scene-renderer.md).
 
+The **authorable post stack now has its mechanism** — PostProcess materials (area 13,
+planset-18): a tunable effect (grade, bloom-threshold, curve) is authored as a
+PostProcess-domain material run by a `PostProcessScenePass`, not a bespoke C++ pass.
+Tonemap is the first; the remaining batteries (grade/bloom/SSAO/shadows) stay future.
+
 **Still future:** the rest of the über-pipeline **batteries** — shadows, SSAO,
-bloom, MSAA, a transparent/forward pass (a second material contract), a post stack,
-and a **G2 PBR g-buffer target** that extends the `GBufferOutput` struct — each its
-own increment behind the same `ScenePass` + `Configure`-recompile mechanism;
+bloom, MSAA, a transparent/forward pass (a second material contract), the further post
+stack, and a **G2 PBR g-buffer target** that extends the `GBufferOutput` struct — each its
+own increment behind the same `ScenePass` + `Configure`-recompile mechanism (a tunable one
+as a PostProcess material, plumbing as a C++ pass);
 **multiple & typed lights** (point/spot, light culling); **history-buffer ringing**
 for temporal effects (TAA/motion-blur reading an older frame); **cross-queue
 synchronization** (an explicit semaphore once a handoff side moves off the single
@@ -202,28 +208,36 @@ the editor panels + menu bar) migrated onto it, wrapper-only (ImGui stays PUBLIC
 
 **Design overview:** [ui-toolkit.md](ui-toolkit.md).
 
-### 13. Material domains + shader-graph codegen — PRIORITIZED
+### 13. Material domains + shader-graph codegen — domains slice DONE (planset-18); codegen PRIORITIZED
 
-veng's material system is **temporarily** a parameter-binding system: a `.vmat` binds
-a typed field list to a **hand-authored** Slang shader, and the node editor
-(planset-15, area 6 sub-C) authors that binding. The committed end-state is
-**shader-graph codegen** — the node graph **generates** the Slang source. Two pieces,
-landing in order:
+The **material-domains slice is delivered (planset-18)** — the prioritized first half of
+this area. A material's parameters are now **one reflection-sized, ring-buffered block** (the
+fixed engine `MaterialData` struct deleted; an arbitrary shader-defined handle set), and a
+`Material` carries a first-class **`MaterialDomain`** (Surface + PostProcess). The PostProcess
+**fullscreen-material path** (`PostProcessScenePass`) stands up in `SceneRenderer`, the engine
+ships the **standard vertex shader per domain** (`surface.vert`, `fullscreen.vert`), **tonemap
+is the first PostProcess material** (authorable exposure), and the node catalog is
+**domain-aware** (`MaterialOutput`'s pins follow the domain's output contract). Fixed plumbing
+composites (`SwapChainCompositePass`, the debug blits) stay hardcoded engine passes.
 
-- **Material domains (prioritized) — at least Surface and PostProcess.** A `Material`
-  is hardwired today to one implicit domain (opaque surface → g-buffer). A first-class
+The committed end-state is **shader-graph codegen** — the node graph **generates** the Slang
+source — which **remains the still-future follow-on**: every node an expression emitter, a
+`Param` gaining const-vs-exposed, compile's target becoming generated Slang. The domains slice
+lands the foundational inversion it needs (a domain-correct output sink). What was delivered:
+
+- **Material domains (delivered, planset-18) — Surface and PostProcess.** A first-class
   **domain** selects the output contract (g-buffer channels vs a single final color),
   the inputs, the pipeline shape, and the invocation site — the standard cross-engine
   factoring (Unreal `MaterialDomain`, Unity targets, Godot `shader_type`), with the
   parameter schema / bindless / authoring / inspector shared across domains. The
-  PostProcess domain needs a **fullscreen material pipeline path** in `SceneRenderer`
+  PostProcess domain's **fullscreen material pipeline path** in `SceneRenderer`
   (a `ScenePass` building a pipeline from a postprocess material against one color
-  target) — the authorable **exposure / tonemap-curve / color-grading / bloom** stack
+  target) is the authorable **exposure / tonemap-curve / color-grading / bloom** stack
   named under [area 8](#8-scene-renderer--render-pipeline-architecture--remaining-the-über-pipeline-batteries),
   expressed as materials. Fixed *plumbing* composites (`SwapChainCompositePass`) stay
   hardcoded engine passes — a postprocess material is for *tunable effects*, not
   plumbing.
-- **Node→Slang codegen (the follow-on).** The graph emits the fragment source instead
+- **Node→Slang codegen (the still-future follow-on).** The graph emits the fragment source instead
   of binding to a pre-authored one. The node catalog is **reshaped toward it**:
   `MaterialOutput` becomes a **domain-driven sink** (its pins are the domain's output
   contract, not a reflection of a hand-authored shader's `GetFields()`); every node
@@ -246,14 +260,17 @@ possibility the node model merely tolerates. **Design overview:**
 The order to *take the remaining areas up* (each becomes its own planset), not a
 schedule:
 
-1. **Material domains + codegen foundation (area 13)** is **prioritized**: add the
-   material **domain** concept (Surface + PostProcess), stand up the PostProcess
-   fullscreen-material path, and **reshape the node model toward codegen** (the
-   foundation), with full node→Slang codegen as its named follow-on. Builds on the
-   delivered node graph (area 6 sub-C) and `SceneRenderer` (area 8).
+1. **Material domains (area 13's first slice) is delivered (planset-18)**: the domain
+   concept (Surface + PostProcess), the unified ring-buffered parameter block, the
+   PostProcess fullscreen-material path, and the domain-aware node catalog. Its named
+   follow-on, **node→Slang codegen** (the graph emits the fragment source — every node
+   an expression emitter, const-vs-exposed params, generated-Slang compile target), is
+   now **prioritized**, with the domain slice having landed the foundational
+   domain-driven output sink it needs.
 2. **Editor — scene editor (area 6, sub-area D)** is the **next editor planset**;
    all its gates are met (area 7, area 10, area 8's `SceneRenderer`, and editor
-   sub-areas B/C).
+   sub-areas B/C). It and node→Slang codegen are the two prioritized next areas,
+   whichever is taken up first.
 3. **Event & input (area 4)** and the named still-future increments of the areas done
    in part (1, 2, 7, 8, 9, 10, 12) are each independent and off the critical path —
    slot in whenever wanted.
@@ -272,13 +289,16 @@ retrofit.
 Vision only beyond what is delivered in the plansets
 ([plans/README.md](../README.md)).
 
-**Prioritized:** **material domains + codegen foundation** (area 13) — the material
-**domain** concept (Surface + PostProcess), the PostProcess fullscreen-material path,
-and the node-model reshape toward codegen, with full node→Slang codegen as the named
-follow-on.
+**Delivered (planset-18):** area 13's **material-domains first slice** — the material
+**domain** concept (Surface + PostProcess), the unified ring-buffered parameter block,
+the PostProcess fullscreen-material path, the standard per-domain vertex shaders,
+tonemap-as-material, and the domain-aware node catalog.
 
-**Next editor planset:** the **scene editor** (area 6, sub-area D) — all its gates met
-(areas 7, 10, 8, and editor sub-areas B/C).
+**Prioritized:** area 13's named follow-on, **node→Slang codegen** (the graph generates
+the fragment source — every node an expression emitter, const-vs-exposed params,
+generated-Slang compile target), and the **scene editor** (area 6, sub-area D — all its
+gates met: areas 7, 10, 8, and editor sub-areas B/C). Whichever the next planset takes
+up.
 
 **Undetailed / unscheduled:** area 4 (events/input) and the named still-future
 increments of the
