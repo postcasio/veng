@@ -208,9 +208,10 @@ namespace Veng::Cook
         // --- 3b. Validate the fragment outputs against the domain's contract ---
 
         // The domain selects the fragment output contract: Surface writes the
-        // g-buffer MRT (float4 SV_Target0 albedo + float4 SV_Target1 normal),
-        // PostProcess writes a single float4 SV_Target0. A mismatch is a located
-        // cook error — the loader trusts the pack and never re-reflects.
+        // g-buffer MRT (float4 SV_Target0 albedo + float4 SV_Target1 normal +
+        // float4 SV_Target2 packed ORM), PostProcess writes a single float4
+        // SV_Target0. A mismatch is a located cook error — the loader trusts the
+        // pack and never re-reflects.
         const Result<vector<ReflectedFragmentOutput>> outputs =
             ReflectFragmentOutputs(fragSlangPath, fragEntry);
         if (!outputs)
@@ -218,14 +219,16 @@ namespace Veng::Cook
 
         if (domain == 0) // Surface
         {
-            const bool ok = outputs->size() == 2
+            const bool ok = outputs->size() == 3
                 && (*outputs)[0].TargetIndex == 0 && (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4
-                && (*outputs)[1].TargetIndex == 1 && (*outputs)[1].IsFloat && (*outputs)[1].ComponentCount == 4;
+                && (*outputs)[1].TargetIndex == 1 && (*outputs)[1].IsFloat && (*outputs)[1].ComponentCount == 4
+                && (*outputs)[2].TargetIndex == 2 && (*outputs)[2].IsFloat && (*outputs)[2].ComponentCount == 4;
             if (!ok)
             {
                 return std::unexpected(fmt::format(
                     "material importer: '{}': surface material must write the g-buffer "
-                    "(float4 SV_Target0 + float4 SV_Target1); its fragment shader does not",
+                    "(float4 SV_Target0 + float4 SV_Target1 + float4 SV_Target2); "
+                    "its fragment shader does not",
                     vmatPath.string()));
             }
         }

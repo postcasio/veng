@@ -192,7 +192,7 @@ namespace Veng
 
     // The current material-format version; bumped on any layout change, never a
     // silent reinterpretation. The loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 2u;
+    inline constexpr u32 CookedMaterialVersion = 3u;
 
     struct CookedMaterialHeader
     {

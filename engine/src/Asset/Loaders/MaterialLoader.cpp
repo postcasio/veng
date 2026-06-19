@@ -162,16 +162,18 @@ namespace Veng
                 vertexBufferLayout = layoutResult->Get()->GetLayout();
             }
 
-            // An opaque material renders into the deferred g-buffer: two color
-            // attachments (G0 albedo, G1 world-normal) and the shared depth
-            // attachment, each color target opaque (no blend). The fragment
-            // shader writes both through GBufferOutput; the attachment formats are
-            // the fixed g-buffer contract, not the context's output format.
+            // An opaque material renders into the deferred g-buffer: three color
+            // attachments (G0 albedo, G1 world-normal, G2 packed ORM) and the
+            // shared depth attachment, each color target opaque (no blend). The
+            // fragment shader writes all three through GBufferOutput; the
+            // attachment formats are the fixed g-buffer contract, not the context's
+            // output format.
             return Renderer::GraphicsPipeline::Create(context, {
                 .Name = fmt::format("Material {} Pipeline", id.Value),
                 .ColorAttachments = {
                     {.Format = Renderer::GBuffer::AlbedoFormat, .Blend = Renderer::BlendState::Opaque()},
                     {.Format = Renderer::GBuffer::NormalFormat, .Blend = Renderer::BlendState::Opaque()},
+                    {.Format = Renderer::GBuffer::ORMFormat, .Blend = Renderer::BlendState::Opaque()},
                 },
                 .DepthAttachmentFormat = Renderer::GBuffer::DepthFormat,
                 .VertexBufferLayout = vertexBufferLayout,

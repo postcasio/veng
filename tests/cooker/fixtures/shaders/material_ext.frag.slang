@@ -28,6 +28,7 @@ struct GBufferOutput
 {
     float4 Albedo : SV_Target0;
     float4 Normal : SV_Target1;
+    float4 ORM    : SV_Target2;
 };
 
 struct PushConstants
@@ -59,5 +60,6 @@ GBufferOutput fsMain(VSOutput input)
     GBufferOutput output;
     output.Albedo = albedo * p.Factors * p.Roughness;
     output.Normal = float4(normalize(input.v_WorldNormal), 0.0);
+    output.ORM = float4(1.0, p.Roughness, 0.0, 0.0);
     return output;
 }

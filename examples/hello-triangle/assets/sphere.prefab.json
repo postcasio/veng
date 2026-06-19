@@ -13,6 +13,17 @@
           "SpeedRadiansPerSec": 1.0
         }
       }
+    },
+    {
+      "name": "Receiver Plane",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [0.0, -1.0, 0.0],
+          "Rotation": [0.0, 0.0, 0.0, 1.0],
+          "Scale": [1.0, 1.0, 1.0]
+        },
+        "::Veng::MeshRenderer": {}
+      }
     }
   ]
 }

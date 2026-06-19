@@ -75,12 +75,14 @@ namespace Veng::Renderer
         // The g-buffer the geometry pass writes and a fullscreen pass samples.
         ResourceId GBufferAlbedo;  // G0 — base color
         ResourceId GBufferNormal;  // G1 — world-space normal
+        ResourceId GBufferOrm;     // G2 — packed occlusion/roughness/metallic/emissive
         ResourceId GBufferDepth;   // depth attachment, also a sampled source
 
         // The bindless texture slots the renderer registered for the g-buffer
         // images, threaded to whichever pass samples them.
         TextureHandle AlbedoHandle;
         TextureHandle NormalHandle;
+        TextureHandle OrmHandle;
         TextureHandle DepthHandle;
 
         // The HDR target a lighting pass writes (and a tail pass samples).

@@ -1,10 +1,9 @@
 #include "material_data.slang"
 
-// Deferred opaque material fragment stage: loads the per-draw MaterialParams
-// block from the bindless set-0 buffer, samples its albedo texture/sampler by
-// handle tinted by Factors, and writes the g-buffer — albedo into G0 (sRGB
-// target), the world-space normal into G1. The handle slots and the Factors tint
-// share one block; the bindless/texture path is unchanged.
+// Deferred opaque material fragment stage (cooker fixture): loads the per-draw
+// MaterialParams block, samples its albedo texture/sampler by handle tinted by
+// Factors, and writes the three-target g-buffer — albedo into G0, the world-space
+// normal into G1, and a constant packed ORM into G2 (the surface output contract).
 struct VSOutput
 {
     float4 sv_position : SV_Position;
@@ -22,5 +21,6 @@ GBufferOutput fsMain(VSOutput input)
     GBufferOutput output;
     output.Albedo = albedo * p.Factors;
     output.Normal = float4(normalize(input.v_WorldNormal), 0.0);
+    output.ORM = float4(1.0, 1.0, 0.0, 0.0);
     return output;
 }

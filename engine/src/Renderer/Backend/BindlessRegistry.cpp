@@ -64,6 +64,10 @@ namespace Veng::Renderer
                 // folds the current frame's region base into that index, so the load
                 // lands in this frame's copy of the ring-buffered buffer.
                 {.Binding = MaterialParamBinding, .Type = DescriptorType::StorageBuffer, .Count = 1, .Stages = ShaderStage::All},
+                // The per-frame view-constants buffer: a single ByteAddressBuffer
+                // byte-addressed at index * ViewConstantsStride. A pass pushes the
+                // current frame-in-flight index so the load reads this frame's region.
+                {.Binding = ViewConstantsBinding, .Type = DescriptorType::StorageBuffer, .Count = 1, .Stages = ShaderStage::All},
             },
         });
 
@@ -86,6 +90,17 @@ namespace Veng::Renderer
         // Bound at its full range; a draw selects the current frame's region by
         // folding the frame base into the pushed material index.
         m_Set->Write(MaterialParamBinding, m_MaterialParamBuffer);
+
+        // framesInFlight copies of one view-constants region, host-mapped: each
+        // frame owns one ViewConstantsStride region, rewritten directly while it is
+        // the current (not-yet-submitted) frame.
+        m_ViewConstantsBuffer = Buffer::Create(context, {
+            .Name = "Bindless ViewConstants",
+            .Size = static_cast<u64>(m_FramesInFlight) * ViewConstantsStride,
+            .Usage = BufferUsage::Storage,
+            .HostMapped = true,
+        });
+        m_Set->Write(ViewConstantsBinding, m_ViewConstantsBuffer);
 
         m_Textures.Init(MaxTextures, m_FramesInFlight);
         m_Samplers.Init(MaxSamplers, m_FramesInFlight);
@@ -255,6 +270,24 @@ namespace Veng::Renderer
     u32 BindlessRegistry::GetCurrentFrameBase() const
     {
         return m_Context.GetCurrentFrameInFlight() * MaxMaterials;
+    }
+
+    void BindlessRegistry::WriteViewConstants(std::span<const std::byte> block)
+    {
+        VE_ASSERT(block.size() <= ViewConstantsStride,
+                  "BindlessRegistry::WriteViewConstants: block is {} bytes, exceeds stride {}",
+                  block.size(), ViewConstantsStride);
+
+        // Write only the current (not-yet-submitted) frame's region; it is rewritten
+        // every Execute, so there is nothing to flush to other regions.
+        const u64 offset = static_cast<u64>(m_Context.GetCurrentFrameInFlight()) * ViewConstantsStride;
+        auto* base = static_cast<u8*>(m_ViewConstantsBuffer->GetMappedData());
+        std::memcpy(base + offset, block.data(), block.size());
+    }
+
+    u32 BindlessRegistry::GetCurrentViewConstantsIndex() const
+    {
+        return m_Context.GetCurrentFrameInFlight();
     }
 
     void BindlessRegistry::OnFrameAcquired(u32 frameInFlight)

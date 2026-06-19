@@ -150,14 +150,21 @@ protected:
         VE_ASSERT(prefab.has_value(), "{}", prefab.error().Detail);
 
         const vector<Entity> roots = prefab->Get()->SpawnInto(*m_Scene, GetAssetManager());
-        VE_ASSERT(!roots.empty(), "prefab spawned no root entities");
+        VE_ASSERT(roots.size() >= 2, "prefab spawned fewer than the expected sphere + receiver-plane roots");
 
-        // Adopt the runtime mesh into an AssetHandle and assign it to the spawned
-        // renderer — the one piece wired in code, because the prefab cannot
+        // A flat receiver plane beneath the sphere, sharing the brick material, so
+        // the deferred lighting reads across two surfaces (and later plans have
+        // geometry to shadow/occlude). Built at runtime like the sphere.
+        const Ref<Veng::Mesh> plane = Veng::Mesh::Create(
+            context, Veng::Primitives::Plane(vec2(4.0f), uvec2(1), m_BrickMaterial), "Receiver Plane");
+
+        // Adopt the runtime meshes into AssetHandles and assign them to the spawned
+        // renderers — the one piece wired in code, because the prefab cannot
         // reference a runtime resource by id. The adopted handle owns the mesh's
         // residency; dropping the scene drops the component, the handle, and the
         // mesh in turn.
         m_Scene->Get<MeshRenderer>(roots[0]).Mesh = GetAssetManager().Adopt(sphere);
+        m_Scene->Get<MeshRenderer>(roots[1]).Mesh = GetAssetManager().Adopt(plane);
 
         // A directional light so the deferred lighting pass shades the scene. Its
         // direction is fixed (top-front-right toward the origin), so the smoke pose

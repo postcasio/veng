@@ -269,23 +269,27 @@ namespace
 }
 
 // The deferred-lighting oracle. A brick cube fills the view, its front face
-// (world normal +Z) squarely toward the camera. Three lighting setups render the
-// same scene and assert the deferred lighting model at known sample points:
+// (world normal +Z) squarely toward the camera. The fixture material is a fully
+// rough dielectric (roughness 1, metallic 0), so the Cook-Torrance result is
+// diffuse-dominant. Three lighting setups render the same scene and assert
+// qualitative properties of the deferred BRDF at known sample points:
 //
 //  - Light traveling along -Z (toward the front face): the front face is fully
-//    lit (N·L = 1), so the center texel ≈ albedo × intensity + ambient.
+//    lit (N·L = 1), so the center is bright, red-dominant brick — well above the
+//    ambient-only term.
 //  - Light traveling along -X (across the front face): N·L = 0 on the front face,
-//    so the center texel ≈ albedo × ambient only — the shadowed/ambient term.
+//    so the center reads the hemispheric ambient × albedo only — distinctly
+//    darker than the lit case.
 //  - No Light in the scene: the renderer's zero-intensity default, so the center
-//    texel is the same flat-ambient term, never pure black.
+//    is the same flat-ambient term, never pure black.
 //
 // The brick albedo is linear (200, 80, 40)/255, sampled through the sRGB G0
-// round-trip. The lighting pass's ambient constant is 0.03 (deferred_lighting.frag).
+// round-trip. The lighting pass's ambient is the hemispheric AmbientColor in
+// deferred_lighting.frag gated by ORM.r (occlusion 1 here).
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "scene renderer: deferred lighting oracle — a lit face matches N·L, "
-                  "an unlit face and the no-light default match the ambient term")
+                  "scene renderer: deferred lighting oracle — a lit face is bright, "
+                  "an unlit face and the no-light default fall to the ambient term")
 {
-    constexpr f32 Ambient = 0.03f;
     constexpr vec3 BrickAlbedo{200.0f / 255.0f, 80.0f / 255.0f, 40.0f / 255.0f};
 
     RegisterBuiltinTypes(Types);
@@ -365,55 +369,55 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Intensity = 1.0f,
     };
 
+    f32 litCenterR = 0.0f;
     {
         const vector<u8> pixels = Render();
         const vec3 center = DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
         const vec3 corner = DecodeTexel(pixels, extent.x, 2, 2);
+        litCenterR = center.r;
 
-        // Fully lit: albedo × (1·intensity) + albedo × ambient.
-        const vec3 expected = BrickAlbedo * (1.0f + Ambient);
-        CHECK(center.r == doctest::Approx(expected.r).epsilon(0.06f));
-        CHECK(center.g == doctest::Approx(expected.g).epsilon(0.10f));
-        CHECK(center.b == doctest::Approx(expected.b).epsilon(0.12f));
+        // Fully lit: the diffuse term dominates, so the center is bright and
+        // red-dominant brick, well above the ambient-only term.
+        CHECK(center.r > 0.4f);
         CHECK(center.r > center.g);
         CHECK(center.g > center.b);
 
         // The background (g-buffer clear, no geometry) lights from a zero normal,
-        // so only its ambient survives — dark, far below the lit cube.
+        // so only the ambient survives — dark, far below the lit cube.
         CHECK(corner.r < 0.2f);
 
         const f64 lit = MeanLuminance(pixels);
         CHECK(lit > 0.05);
-        CHECK(lit < 0.6);
+        CHECK(lit < 0.7);
     }
 
-    // Case 2 — light across the front face (N·L = 0): the center is ambient only.
+    // Case 2 — light across the front face (N·L = 0): the center falls to the
+    // hemispheric ambient × albedo only.
     scene->Get<Light>(lightEntity).Direction = vec3(-1.0f, 0.0f, 0.0f);
 
+    f32 ambientCenterR = 0.0f;
     {
         const vector<u8> pixels = Render();
         const vec3 center = DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
+        ambientCenterR = center.r;
 
-        const vec3 expected = BrickAlbedo * Ambient;
-        CHECK(center.r == doctest::Approx(expected.r).epsilon(0.02f));
-        CHECK(center.g == doctest::Approx(expected.g).epsilon(0.02f));
-        CHECK(center.b == doctest::Approx(expected.b).epsilon(0.02f));
+        // The ambient term is AmbientColor.r (0.12) × albedo.r (≈0.78) ≈ 0.094.
+        CHECK(center.r == doctest::Approx(0.12f * BrickAlbedo.r).epsilon(0.4f));
         // Distinctly darker than the lit case — the diffuse term contributed nothing.
-        CHECK(center.r < BrickAlbedo.r * 0.5f);
+        CHECK(center.r < litCenterR * 0.5f);
+        CHECK(center.r > 0.0f);
     }
 
     // Case 3 — no Light in the scene: the renderer's zero-intensity default, so the
-    // center is flat-ambient, never pure black.
+    // center is the same flat-ambient term, never pure black.
     scene->DestroyEntity(lightEntity);
 
     {
         const vector<u8> pixels = Render();
         const vec3 center = DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
 
-        const vec3 expected = BrickAlbedo * Ambient;
-        CHECK(center.r == doctest::Approx(expected.r).epsilon(0.02f));
-        CHECK(center.g == doctest::Approx(expected.g).epsilon(0.02f));
-        CHECK(center.b == doctest::Approx(expected.b).epsilon(0.02f));
+        // Identical to the across-face case: only the ambient term survives.
+        CHECK(center.r == doctest::Approx(ambientCenterR).epsilon(0.05f));
         // Flat-ambient, but not pure black.
         CHECK(center.r > 0.0f);
     }
@@ -677,6 +681,78 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const f32 bright = CenterLuma();
 
     CHECK(bright > dim + 0.05f);
+
+    std::filesystem::remove(outArchive);
+}
+
+// The BRDF property assertion (this plan's riskiest single golden move, pinned by a
+// property beyond the re-blessed image). A metallic, smooth surface shows a specular
+// response that a rough, dielectric surface does not: with the light, the view, and
+// the surface normal aligned (a face-on cube lit straight on), the half-vector
+// equals the normal and the GGX specular peaks for a smooth surface. The same scene
+// is rendered twice through one renderer; only the material's authored
+// roughness/metallic differ between renders, isolating the specular term.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a metallic/smooth surface shows a specular response a "
+                  "rough/dielectric one does not")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_brdf_property.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "BRDF Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    // A white light straight at the front face: N, L, and V all align, the
+    // half-vector equals the normal, and the specular lobe peaks.
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f), .Color = vec3(1.0f), .Intensity = 1.0f,
+    };
+
+    constexpr uvec2 extent{128, 128};
+
+    Camera camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Settings = {.Mode = DebugView::Final},
+    });
+
+    auto CenterLuma = [&]() -> f32
+    {
+        const vector<u8> pixels = RenderOutput(Context, *renderer, *scene, camera);
+        const vec3 c = DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
+        return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
+    };
+
+    Material& mat = const_cast<Material&>(*material->Get());
+
+    // Rough dielectric: roughness 1, metallic 0 — broad, weak specular.
+    mat.SetParam("RoughnessFactor", 1.0f);
+    mat.SetParam("MetallicFactor", 0.0f);
+    const f32 roughLuma = CenterLuma();
+
+    // Smooth metal: roughness ~0.1, metallic 1 — a tight, strong specular peak at
+    // the aligned N=L=V geometry, brightening the center beyond the dielectric.
+    mat.SetParam("RoughnessFactor", 0.1f);
+    mat.SetParam("MetallicFactor", 1.0f);
+    const f32 smoothLuma = CenterLuma();
+
+    // The specular response is the discriminating property: the smooth metal reads
+    // measurably brighter at the aligned highlight than the rough dielectric.
+    CHECK(smoothLuma > roughLuma + 0.05f);
 
     std::filesystem::remove(outArchive);
 }

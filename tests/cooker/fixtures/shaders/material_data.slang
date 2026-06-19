@@ -5,7 +5,8 @@
 // reflection. The set-0 bindings mirror the BindlessRegistry layout (sampled
 // images = 0, samplers = 1, per-material block = 4). The cooker reflects this
 // struct to validate a material's fields and pack their values at the reflected
-// offsets.
+// offsets. This fixture's MaterialParams is deliberately self-contained (not the
+// engine's PBR set) — it exercises the cook machinery generically.
 
 struct MaterialParams
 {
@@ -31,14 +32,14 @@ MaterialParams LoadMaterialParams(uint index)
     return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
 }
 
-// The deferred opaque g-buffer outputs the material fragment stage writes. The
-// v1 minimum channel set, funnelled through one struct so a future G2
-// (roughness/metallic/AO) extends it in one place. Albedo's target is sRGB
-// (the sampler decodes to linear on read); Normal is the world-space normal.
+// The deferred opaque g-buffer outputs the material fragment stage writes: albedo
+// into G0 (sRGB), the world-space normal into G1, and packed
+// occlusion/roughness/metallic/emissive into G2 — the surface output contract.
 struct GBufferOutput
 {
     float4 Albedo : SV_Target0;
     float4 Normal : SV_Target1;
+    float4 ORM    : SV_Target2;
 };
 
 // One shared push-constant block, used by both stages. The vertex stage reads

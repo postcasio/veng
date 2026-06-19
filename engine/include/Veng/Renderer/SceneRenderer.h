@@ -113,6 +113,7 @@ namespace Veng::Renderer
         // only GetOutput().
         [[nodiscard]] Ref<ImageView> GetAlbedoView() const;
         [[nodiscard]] Ref<ImageView> GetNormalView() const;
+        [[nodiscard]] Ref<ImageView> GetOrmView() const;
         [[nodiscard]] Ref<ImageView> GetDepthView() const;
 
         // The HDR target the deferred lighting pass writes (before the tail
@@ -147,12 +148,14 @@ namespace Veng::Renderer
         Ref<Image> m_OutputImage;
         Ref<ImageView> m_OutputView;
 
-        // The g-buffer targets: G0 albedo, G1 world-normal, depth. Renderer-owned
-        // (sampled downstream, so not graph transients) and imported.
+        // The g-buffer targets: G0 albedo, G1 world-normal, G2 packed ORM, depth.
+        // Renderer-owned (sampled downstream, so not graph transients) and imported.
         Ref<Image> m_AlbedoImage;
         Ref<ImageView> m_AlbedoView;
         Ref<Image> m_NormalImage;
         Ref<ImageView> m_NormalView;
+        Ref<Image> m_OrmImage;
+        Ref<ImageView> m_OrmView;
         Ref<Image> m_DepthImage;
         Ref<ImageView> m_DepthView;
 
@@ -180,6 +183,7 @@ namespace Veng::Renderer
         // per-frame retire window).
         TextureHandle m_AlbedoHandle;
         TextureHandle m_NormalHandle;
+        TextureHandle m_OrmHandle;
         TextureHandle m_DepthHandle;
         TextureHandle m_HdrHandle;
         SamplerHandle m_SamplerHandle;
@@ -211,6 +215,7 @@ namespace Veng::Renderer
         // views per Execute and threaded to the pass units through PassIO.
         ResourceId m_AlbedoId;
         ResourceId m_NormalId;
+        ResourceId m_OrmId;
         ResourceId m_DepthId;
         ResourceId m_HdrId;
         ResourceId m_OutputId;

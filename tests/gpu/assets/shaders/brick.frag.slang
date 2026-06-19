@@ -1,10 +1,11 @@
 #include "material_data.slang"
 
-// Deferred opaque material fragment stage: loads the per-draw MaterialParams
-// block from the bindless set-0 buffer, samples its albedo texture/sampler by
-// handle tinted by Factors, and writes the g-buffer — albedo into G0 (sRGB
-// target), the world-space normal into G1. The handle slots and the Factors tint
-// share one block; the bindless/texture path is unchanged.
+// Deferred opaque metallic-roughness material fragment stage (gpu fixture): loads
+// the per-draw MaterialParams block, samples base color tinted by BaseColorFactor,
+// and writes the g-buffer — base color into G0, the world-space normal into G1,
+// and the authored occlusion/roughness/metallic/emissive factors into G2. The
+// deferred-lighting oracle reads back known roughness/metallic values, so this
+// fixture writes the factors directly rather than sampling a packed ORM texture.
 struct VSOutput
 {
     float4 sv_position : SV_Position;
@@ -16,11 +17,13 @@ struct VSOutput
 GBufferOutput fsMain(VSOutput input)
 {
     MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
-    float4 albedo = g_Textures[NonUniformResourceIndex(p.Albedo)].Sample(
-        g_Samplers[NonUniformResourceIndex(p.AlbedoSampler)], input.v_UV);
+
+    float4 baseColor = g_Textures[NonUniformResourceIndex(p.BaseColor)].Sample(
+        g_Samplers[NonUniformResourceIndex(p.BaseColorSampler)], input.v_UV);
 
     GBufferOutput output;
-    output.Albedo = albedo * p.Factors;
+    output.Albedo = baseColor * p.BaseColorFactor;
     output.Normal = float4(normalize(input.v_WorldNormal), 0.0);
+    output.ORM = float4(1.0, p.RoughnessFactor, p.MetallicFactor, p.EmissiveFactor.a);
     return output;
 }

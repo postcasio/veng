@@ -43,6 +43,10 @@ namespace Veng
         [[nodiscard]] mat4 Projection() const { return m_Projection; }
         [[nodiscard]] mat4 ViewProjection() const { return m_Projection * m_View; }
 
+        // The camera's world-space position: the translation column of the view's
+        // inverse (the world matrix that placed the camera).
+        [[nodiscard]] vec3 GetPosition() const { return vec3(glm::inverse(m_View)[3]); }
+
     private:
         mat4 m_View{1.0f};
         mat4 m_Projection{1.0f};

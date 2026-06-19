@@ -273,6 +273,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/scene_ecs.cpp
             tests/unit/scene_queries.cpp
             tests/unit/reflection.cpp
+            tests/unit/material_params.cpp
     )
     target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
 

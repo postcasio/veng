@@ -120,6 +120,20 @@ namespace Veng::Renderer
         // dynamic descriptor offset. The shader's indexing is unchanged.
         [[nodiscard]] u32 GetCurrentFrameBase() const;
 
+        // Write the per-frame view-constants block into the current frame-in-flight's
+        // region of the ring-buffered view-constants buffer. `block` must be <=
+        // ViewConstantsStride. Writing the current region is always safe — that
+        // frame is not yet submitted. A pass selects this frame's region by pushing
+        // GetCurrentViewConstantsIndex(), folded into the shader's
+        // index * ViewConstantsStride load, exactly as the material block avoids a
+        // dynamic descriptor offset inside set 0's Metal argument buffer.
+        void WriteViewConstants(std::span<const std::byte> block);
+
+        // The current frame-in-flight's index into the ring-buffered view-constants
+        // buffer (== the frame-in-flight slot). A pass pushes it so the shader's
+        // index * ViewConstantsStride load reads this frame's region.
+        [[nodiscard]] u32 GetCurrentViewConstantsIndex() const;
+
         [[nodiscard]] const Ref<DescriptorSetLayout>& GetSet0Layout() const { return m_Layout; }
 
         // Called by Context::AcquireNextFrame() — reclaims slots released
@@ -130,6 +144,7 @@ namespace Veng::Renderer
         static constexpr u32 SamplerBinding = 1;
         static constexpr u32 StorageImageBinding = 2;
         static constexpr u32 MaterialParamBinding = 4;
+        static constexpr u32 ViewConstantsBinding = 5;
 
         static constexpr u32 MaxTextures = 1024;
         static constexpr u32 MaxSamplers = 128;
@@ -143,6 +158,13 @@ namespace Veng::Renderer
         // shader, read at index * MaterialParamStride. A block exceeding this is a
         // cook-time error.
         static constexpr u32 MaterialParamStride = 256;
+
+        // The fixed byte stride of one frame-in-flight's view-constants region in
+        // the binding-ViewConstantsBinding ByteAddressBuffer. One stride per
+        // frame-in-flight; a pass reads at index * ViewConstantsStride. The
+        // ViewConstants block (an InvViewProj mat4 + three vec4) is 112 bytes, well
+        // within the stride.
+        static constexpr u32 ViewConstantsStride = 256;
 
     private:
         // A free-list slot allocator with deferred release, one per arrayed
@@ -213,5 +235,18 @@ namespace Veng::Renderer
         // memcpy a material slot's cached block into the given frame-in-flight's
         // region of the mapped buffer.
         void WriteMaterialRegion(u32 materialIndex, u32 frameInFlight) const;
+
+        // The per-frame view-constants buffer (binding ViewConstantsBinding): a
+        // host-visible, persistently-mapped storage buffer holding framesInFlight
+        // copies of one ViewConstantsStride region, bound at its full range. Each
+        // frame-in-flight f owns the region [f * ViewConstantsStride, ...); a pass
+        // pushes f (GetCurrentViewConstantsIndex()) so the shader's
+        // index * ViewConstantsStride load reads the current frame's region. Like
+        // the material block, it is a plain (non-dynamic) storage buffer selected by
+        // a folded index, not a dynamic offset (which mistranslates inside set 0's
+        // Metal argument buffer on MoltenVK). A frame's view constants are rewritten
+        // every Execute, so only the current (not-yet-submitted) region is touched —
+        // no fence, no staging.
+        Ref<Buffer> m_ViewConstantsBuffer;
     };
 }

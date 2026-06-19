@@ -13,8 +13,10 @@ add_asset_pack(hello_triangle_assets
         # so the cook reflects libhello_triangle's native types via --module.
         MODULE hello_triangle
         DEPENDS
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/brick.tex.json
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/brick.png
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/brick16b.tex.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/brick16b.png
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/brick_orm.tex.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/brick_orm.png
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/meshes/cube.mesh.json
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/meshes/cube.obj
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/material_data.slang

@@ -1,6 +1,8 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/ScenePass.h>
 
+#include <span>
+
 #include <fmt/format.h>
 #include <glm/gtc/matrix_inverse.hpp>
 
@@ -67,16 +69,30 @@ namespace Veng::Renderer
         static_assert(sizeof(NormalMatrixPush) == 48, "NormalMatrix push must be a column-major float3x3 (48 bytes)");
 
         // The deferred-lighting fragment shader's push block: the bindless slots it
-        // samples the g-buffer through, plus the directional light. Matches the
-        // shader's PushConstants byte-for-byte (the four u32 indices are packed,
-        // then two vec4s at their 16-byte alignment).
+        // samples the g-buffer through plus the current frame's view-constants
+        // region index. Per-view data (InvViewProj, camera position, the light)
+        // rides the ring-buffered view-constants buffer, not push constants —
+        // push constants carry only per-invocation bindless indices. Matches the
+        // shader's PushConstants byte-for-byte (eight packed u32s).
         struct LightingPushConstants
         {
             u32 AlbedoTexture;
             u32 NormalTexture;
+            u32 OrmTexture;
             u32 DepthTexture;
             u32 Sampler;
-            vec4 LightDirection; // xyz: world-space travel direction
+            u32 ViewConstantsIndex;
+            u32 Pad0;
+            u32 Pad1;
+        };
+
+        // The per-frame view-constants block the lighting pass reads from set-0
+        // binding 5. Mirrors the core material.slang ViewConstants byte-for-byte.
+        struct ViewConstantsBlock
+        {
+            mat4 InvViewProj;
+            vec4 CameraPosition; // xyz; w unused
+            vec4 LightDirection; // xyz: world-space travel direction; w unused
             vec4 LightColor;     // rgb: linear color; a: intensity
         };
 
@@ -90,10 +106,10 @@ namespace Veng::Renderer
         };
 
         // The deferred g-buffer geometry pass: draws every (Transform, MeshRenderer)
-        // entity into the renderer's imported g-buffer (G0 albedo, G1 world-normal)
-        // with the shared depth attachment. Each material's pipeline writes both
-        // color targets through its GBufferOutput. Sourced from the per-frame
-        // SceneView.
+        // entity into the renderer's imported g-buffer (G0 albedo, G1 world-normal,
+        // G2 packed ORM) with the shared depth attachment. Each material's pipeline
+        // writes all three color targets through its GBufferOutput. Sourced from the
+        // per-frame SceneView.
         class GBufferScenePass final : public ScenePass
         {
         public:
@@ -118,6 +134,14 @@ namespace Veng::Renderer
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
                         .Clear = ClearColor{0.0f, 0.0f, 0.0f, 0.0f},
+                    })
+                    .Color({
+                        .Resource = io.GBufferOrm,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        // Default occlusion 1 (unoccluded), roughness/metallic/emissive 0
+                        // for any background texel; a material overwrites all four.
+                        .Clear = ClearColor{1.0f, 0.0f, 0.0f, 0.0f},
                     })
                     .Depth({
                         .Resource = io.GBufferDepth,
@@ -208,11 +232,12 @@ namespace Veng::Renderer
         };
 
         // The fullscreen deferred-lighting pass: samples the g-buffer (G0 albedo,
-        // G1 world-normal, depth) through their bindless handles, applies the
-        // scene's directional light from the per-frame SceneView, and writes the
-        // renderer's imported HDR target. Declaring .Sample on each g-buffer id
-        // lets the graph derive the attachment → shader-read transitions —
-        // including the depth attachment → shader-read transition, the only depth
+        // G1 world-normal, G2 ORM, depth) through their bindless handles, evaluates
+        // a Cook-Torrance BRDF over the directional light read from the per-frame
+        // view-constants buffer (reconstructing world position from depth), and
+        // writes the renderer's imported HDR target. Declaring .Sample on each
+        // g-buffer id lets the graph derive the attachment → shader-read transitions
+        // — including the depth attachment → shader-read transition, the only depth
         // target read as a texture in the engine.
         class DeferredLightingScenePass final : public ScenePass
         {
@@ -228,6 +253,7 @@ namespace Veng::Renderer
             {
                 const TextureHandle albedoHandle = io.AlbedoHandle;
                 const TextureHandle normalHandle = io.NormalHandle;
+                const TextureHandle ormHandle = io.OrmHandle;
                 const TextureHandle depthHandle = io.DepthHandle;
                 const SamplerHandle samplerHandle = io.SamplerHandle;
 
@@ -240,12 +266,12 @@ namespace Veng::Renderer
                     })
                     .Sample(io.GBufferAlbedo)
                     .Sample(io.GBufferNormal)
+                    .Sample(io.GBufferOrm)
                     .Sample(io.GBufferDepth)
-                    .Execute([this, albedoHandle, normalHandle, depthHandle, samplerHandle](PassContext& inner)
+                    .Execute([this, albedoHandle, normalHandle, ormHandle, depthHandle, samplerHandle](PassContext& inner)
                     {
                         const ScenePassContext ctx = Wrap(inner);
                         CommandBuffer& cmd = ctx.Cmd();
-                        const Light& light = ctx.View().Light;
 
                         cmd.BindPipeline(m_Pipeline);
                         cmd.SetViewport({0, 0}, m_Extent);
@@ -254,10 +280,10 @@ namespace Veng::Renderer
                         cmd.PushConstants(LightingPushConstants{
                             .AlbedoTexture = albedoHandle.Index,
                             .NormalTexture = normalHandle.Index,
+                            .OrmTexture = ormHandle.Index,
                             .DepthTexture = depthHandle.Index,
                             .Sampler = samplerHandle.Index,
-                            .LightDirection = vec4(light.Direction, 0.0f),
-                            .LightColor = vec4(light.Color, light.Intensity),
+                            .ViewConstantsIndex = m_Context.GetBindlessRegistry().GetCurrentViewConstantsIndex(),
                         });
                         cmd.DrawFullscreenTriangle();
                     });
@@ -458,6 +484,7 @@ namespace Veng::Renderer
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_AlbedoHandle);
         bindless.Release(m_NormalHandle);
+        bindless.Release(m_OrmHandle);
         bindless.Release(m_DepthHandle);
         bindless.Release(m_HdrHandle);
         bindless.Release(m_SamplerHandle);
@@ -567,6 +594,7 @@ namespace Veng::Renderer
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_AlbedoHandle);
         bindless.Release(m_NormalHandle);
+        bindless.Release(m_OrmHandle);
         bindless.Release(m_DepthHandle);
 
         m_AlbedoImage = Image::Create(m_Context, {
@@ -584,6 +612,14 @@ namespace Veng::Renderer
             .Usage = GBuffer::ColorUsage,
         });
         m_NormalView = ImageView::Create(m_Context, {.Name = "SceneRenderer GBuffer Normal View", .Image = m_NormalImage});
+
+        m_OrmImage = Image::Create(m_Context, {
+            .Name = "SceneRenderer GBuffer ORM",
+            .Extent = {m_Extent.x, m_Extent.y, 1},
+            .Format = GBuffer::ORMFormat,
+            .Usage = GBuffer::ColorUsage,
+        });
+        m_OrmView = ImageView::Create(m_Context, {.Name = "SceneRenderer GBuffer ORM View", .Image = m_OrmImage});
 
         m_DepthImage = Image::Create(m_Context, {
             .Name = "SceneRenderer GBuffer Depth",
@@ -606,6 +642,7 @@ namespace Veng::Renderer
 
         m_AlbedoHandle = bindless.Register(m_AlbedoView);
         m_NormalHandle = bindless.Register(m_NormalView);
+        m_OrmHandle = bindless.Register(m_OrmView);
         m_DepthHandle = bindless.Register(m_DepthView);
     }
 
@@ -641,12 +678,14 @@ namespace Veng::Renderer
         RenderGraph graph(m_Context);
         const ResourceId albedoId = graph.Import("SceneRenderer GBuffer Albedo");
         const ResourceId normalId = graph.Import("SceneRenderer GBuffer Normal");
+        const ResourceId ormId = graph.Import("SceneRenderer GBuffer ORM");
         const ResourceId depthId = graph.Import("SceneRenderer GBuffer Depth");
         const ResourceId hdrId = graph.Import("SceneRenderer HDR");
         m_OutputId = graph.Import("SceneRenderer Output");
 
         m_AlbedoId = albedoId;
         m_NormalId = normalId;
+        m_OrmId = ormId;
         m_DepthId = depthId;
         m_HdrId = hdrId;
 
@@ -684,9 +723,11 @@ namespace Veng::Renderer
         const PassIO io{
             .GBufferAlbedo = albedoId,
             .GBufferNormal = normalId,
+            .GBufferOrm = ormId,
             .GBufferDepth = depthId,
             .AlbedoHandle = m_AlbedoHandle,
             .NormalHandle = m_NormalHandle,
+            .OrmHandle = m_OrmHandle,
             .DepthHandle = m_DepthHandle,
             .Hdr = hdrId,
             .HdrHandle = m_HdrHandle,
@@ -742,9 +783,23 @@ namespace Veng::Renderer
             break; // the first Light entity wins
         }
 
+        // Pack the per-frame view constants — the inverse view-projection (for
+        // world-position reconstruction), the camera position, and the resolved
+        // directional light — and write them into the current frame's ring-buffered
+        // region. The lighting pass reads them back through set-0 binding 5.
+        const mat4 viewProj = view.Camera.ViewProjection();
+        const ViewConstantsBlock viewConstants{
+            .InvViewProj = glm::inverse(viewProj),
+            .CameraPosition = vec4(view.Camera.GetPosition(), 0.0f),
+            .LightDirection = vec4(resolvedView.Light.Direction, 0.0f),
+            .LightColor = vec4(resolvedView.Light.Color, resolvedView.Light.Intensity),
+        };
+        m_Context.GetBindlessRegistry().WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
+
         const RenderGraph::ImportBinding bindings[] = {
             {m_AlbedoId, m_AlbedoView},
             {m_NormalId, m_NormalView},
+            {m_OrmId, m_OrmView},
             {m_DepthId, m_DepthView},
             {m_HdrId, m_HdrView},
             {m_OutputId, m_OutputView},
@@ -755,6 +810,7 @@ namespace Veng::Renderer
     Ref<ImageView> SceneRenderer::GetOutput() const { return m_OutputView; }
     Ref<ImageView> SceneRenderer::GetAlbedoView() const { return m_AlbedoView; }
     Ref<ImageView> SceneRenderer::GetNormalView() const { return m_NormalView; }
+    Ref<ImageView> SceneRenderer::GetOrmView() const { return m_OrmView; }
     Ref<ImageView> SceneRenderer::GetDepthView() const { return m_DepthView; }
     Ref<ImageView> SceneRenderer::GetHdrView() const { return m_HdrView; }
 }

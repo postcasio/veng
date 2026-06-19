@@ -2,8 +2,14 @@
   "domain": "surface",
   "shaders": { "vertex": 7619531439638779021, "fragment": 1005 },
   "fields": [
-    { "name": "Albedo",        "type": "texture", "id": 1001 },
-    { "name": "AlbedoSampler", "type": "sampler", "texture": "Albedo" },
-    { "name": "Factors",       "type": "vec4",    "value": [1.0, 1.0, 1.0, 1.0] }
+    { "name": "BaseColor",         "type": "texture", "id": 1001 },
+    { "name": "BaseColorSampler",  "type": "sampler", "texture": "BaseColor" },
+    { "name": "ORM",               "type": "texture", "id": 1006 },
+    { "name": "ORMSampler",        "type": "sampler", "texture": "ORM" },
+    { "name": "BaseColorFactor",   "type": "vec4",    "value": [1.0, 1.0, 1.0, 1.0] },
+    { "name": "EmissiveFactor",    "type": "vec4",    "value": [0.0, 0.0, 0.0, 0.0] },
+    { "name": "MetallicFactor",    "type": "float",   "value": 1.0 },
+    { "name": "RoughnessFactor",   "type": "float",   "value": 1.0 },
+    { "name": "OcclusionStrength", "type": "float",   "value": 1.0 }
   ]
 }

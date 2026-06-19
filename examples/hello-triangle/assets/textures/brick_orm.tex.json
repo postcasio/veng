@@ -1,0 +1,11 @@
+{
+  "image": "brick_orm.png",
+  "srgb": false,
+  "sampler": {
+    "min": "linear",
+    "mag": "linear",
+    "mipmap": "linear",
+    "wrap_u": "repeat",
+    "wrap_v": "repeat"
+  }
+}
