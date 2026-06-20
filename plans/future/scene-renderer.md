@@ -1,14 +1,17 @@
 # Scene renderer — design overview
 
 > **Delivered — [planset-12](../planset-12/README.md) (spine) + [planset-19](../planset-19/README.md)
-> (PBR + batteries).** The shell + the minimal-deferred spine shipped in planset-12;
-> planset-19 turned it into a **physically-based deferred renderer** — a metallic-roughness
-> three-target g-buffer, tangent-space normal mapping, Cook-Torrance over typed lights,
-> directional shadows, SSAO, and bloom-as-a-PostProcess-material. What remains future is a
-> transparent/forward pass, shadowed punctual lights, colored emissive, CSM, clustered light
-> culling, parallel pass recording, and on-tile deferred — each behind the same mechanism, and
-> a **scene/mesh AABB + bounds** facility gating the tight shadow fit and CSM. This document
-> records **what shipped** against **what is still future**, so the direction stays legible. It builds on the
+> (PBR + batteries) + [planset-20](../planset-20/README.md) (bounds facility + CSM).** The shell +
+> the minimal-deferred spine shipped in planset-12; planset-19 turned it into a **physically-based
+> deferred renderer** — a metallic-roughness three-target g-buffer, tangent-space normal mapping,
+> Cook-Torrance over typed lights, directional shadows, SSAO, and bloom-as-a-PostProcess-material.
+> planset-20 stood up the engine's **bounds facility** (an `AABB` primitive, local-space mesh
+> bounds, a world-space `SceneBounds`) and on it delivered **cascaded shadow maps** — replacing the
+> single fixed-box directional shadow with a fit-per-frustum-slice cascaded atlas in a dedicated
+> descriptor set, sampled through a hardware comparison sampler. What remains future is a
+> transparent/forward pass, shadowed punctual lights, colored emissive, clustered light
+> culling, parallel pass recording, and on-tile deferred — each behind the same mechanism. This
+> document records **what shipped** against **what is still future**, so the direction stays legible. It builds on the
 > shipped renderer / bindless / material foundation (planset-5), the **compiled
 > [`RenderGraph`](compiled-rendergraph.md)** (area 9, planset-8), and the runtime
 > [scene/entity model](README.md#7-scene--entity-model) (area 7, planset-10); the
@@ -253,6 +256,16 @@ be registered. The renderer-owned images are registered into bindless **once** a
 `TextureHandle` through `PassIO`. This is exactly the sample's existing cross-graph
 sampling pattern (own an image, register it once, import it).
 
+**The bound-view exception (planset-20).** A closed producer→consumer resource — the
+shadow atlas, written by the shadow pass and read only by the lighting pass and the
+`DebugView` blit — reaches its consumer through a **dedicated descriptor set** via a
+`PassIO` **bound-view** slot, *off* bindless, rather than a `TextureHandle`. The driver:
+the lighting pass uses a comparison sampler / hardware `SampleCmp`, which the set-0
+bindless argument buffer bars on MoltenVK, and a closed resource needs no global
+registration. It is still an `Import`ed, graph-declared resource (the `.Sample` drives the
+graph-derived barrier); only its *binding* moves off bindless. This is the seam a future
+closed render-to-texture chain reuses.
+
 ## The deferred chain & the material contract — DELIVERED (the v1 spine)
 
 The v1 pipeline is a **minimal deferred chain**: a g-buffer geometry pass (an opaque
@@ -335,12 +348,46 @@ same `ScenePass` + `Configure`-recompile mechanism:
   light-space matrix/the SSAO view+proj — per-view data rides the buffer, never push constants.
 - **Tangent-space normal mapping** (the surface vertex emits the world tangent; the fragment
   perturbs the world normal into G1), **multiple typed lights** (directional/point/spot, a
-  ring-buffered light list the pass loops over), a **directional shadow map** (manual PCF), and
-  **SSAO** folded into the ambient/occlusion term.
+  ring-buffered light list the pass loops over), a **directional shadow map**, and **SSAO**
+  folded into the ambient/occlusion term. (planset-20 replaced the directional shadow with
+  cascaded shadow maps — see the delivered-CSM section below.)
 - **Bloom authored as a PostProcess material** — the first multi-stage authorable post chain
   (bright-pass → separable blur → composite ahead of tonemap).
 - **`DebugView` arms** for each new channel: the packed-ORM `Roughness`/`Metallic`/`Occlusion`,
   the `AO` target, and the directional `Shadows` map.
+
+## Delivered bounds facility + CSM — planset-20
+
+planset-20 stood up the engine's first **bounds facility** and on it delivered **cascaded
+shadow maps**, replacing planset-19's single fixed-box directional shadow:
+
+- **The bounds facility.** An `AABB` glm-only math primitive (`Veng/Math/AABB.h` — the
+  min/max `vec3` pair with the union/expand/center/extents/corners/transform algebra and an
+  empty sentinel), a **local-space bound per `Mesh`** computed from its canonical vertex
+  positions at load (`Mesh::GetBounds()`, no cooked-format change), and a **world-space bound
+  per `Scene`** (`SceneBounds(scene)`, unioning every resident `(Transform, MeshRenderer)`
+  world bound via `ComputeWorldMatrices`, recompute-on-demand). The cascade math
+  (`Renderer::ComputeCascades`) is a pure, device-free function of the camera, light, and
+  scene bound — unit-tested with no ICD.
+- **Cascaded shadow maps.** The camera frustum is split into depth slices (a PSSM log/uniform
+  blend, the `CascadeSplitLambda` knob); each cascade is fit to its slice by a **bounding
+  sphere** (rotation-invariant → no shimmer as the camera turns) and **texel-snapped** (no
+  shimmer as it translates), with the scene bound only extending each cascade's near plane
+  toward the light to catch off-screen casters. The cascades render into a D32 **atlas** sized
+  to `CascadeCount` (a `min(Count,2)×ceil(Count/2)` tile grid, `ShadowResolution²` per tile,
+  default 1024) in **one** pass via per-cascade viewports.
+- **Shadows off bindless — a dedicated set + hardware `SampleCmp`.** The shadow map is a closed
+  producer→consumer resource, so it leaves the set-0 bindless registry for a **dedicated set 1**
+  carrying the whole directional-shadow system: the atlas, an **immutable comparison sampler**,
+  and a per-frame `ShadowConstants` block (`CascadeViewProj[4]` + `CascadeSplits` +
+  `ShadowParams`) bound as a **dynamic uniform**. The lighting pass selects the cascade by the
+  fragment's view-space depth, remaps to the atlas tile, and uses hardware **`SampleCmp`** (the
+  set-1 comparison sampler) with a boundary cross-fade — replacing planset-19's manual in-shader
+  PCF at its root. This is net-new descriptor infrastructure veng gains here — immutable samplers
+  + the `UniformBufferDynamic` / `pDynamicOffsets` bind path — and the `PassIO` **bound-view**
+  seam delivering a producer's view into a consumer's dedicated set. `DebugView::Cascades`
+  visualizes the cascade selection; the set-0 view-constants block is trimmed to camera/view
+  state.
 
 ## Still future — the named next increments
 
@@ -351,13 +398,12 @@ mechanism:
   *final color*, not g-buffer channels), **MSAA**, and a deeper post stack.
 - **Shadowed punctual lights** (point/spot shadow cubemaps/atlas — directional is the only
   shadowed light today) and **clustered/tiled light culling** (the lighting pass loops a
-  bounded list with no spatial culling).
+  bounded list with no spatial culling). Shadowed punctual lights and **frustum culling** (the
+  other prime consumer of mesh bounds) are the named next increments reading the delivered
+  `AABB`/`SceneBounds` facility; a **cached/dirty-tracked scene bound** or a **BVH** is the
+  scaling step both share (recompute-on-demand is the current shape).
 - **Colored emissive** — an emissive color distinct from albedo needs the separate-emissive
   layout (a fourth g-buffer target); only scalar emissive strength rides G2.a today.
-- **Scene/mesh AABB + bounds — the named next prerequisite.** Directional shadows ship with a
-  fixed-size orthographic box because no bounds facility exists; a **tight shadow fit** and
-  **cascaded shadow maps (CSM)** both need a real scene/mesh AABB facility first. This is the
-  gate the shadow-quality follow-ons sit behind.
 - **CSM shadow-render path: a single-pass depth array (multiview / layered), over the atlas —
   a planset-20 follow-on.** [planset-20](../planset-20/README.md) renders the cascades into a
   depth **atlas** sized to the cascade count (one pass, per-cascade viewports) because that needs
@@ -410,11 +456,21 @@ single-copy output across frames-in-flight with zero added memory.
 **Delivered — [planset-19](../planset-19/README.md):** the renderer is now physically-based —
 a metallic-roughness three-target g-buffer, tangent-space normal mapping, Cook-Torrance over
 multiple typed lights (directional/point/spot) behind the ring-buffered view-constants buffer,
-a directional shadow map (manual PCF), SSAO, scalar emissive, bloom as a PostProcess material,
-and a `DebugView` arm per new channel.
+a directional shadow map, SSAO, scalar emissive, bloom as a PostProcess material, and a
+`DebugView` arm per new channel.
 
-**Still future:** a transparent/forward pass, shadowed punctual lights, colored emissive,
-**scene/mesh AABB + bounds** (the gate on a tight shadow fit and CSM), clustered light culling,
-history-buffer ringing for temporal effects, cross-queue synchronization, parallel pass
-recording, and on-tile/subpass-fused deferred (a measure-first `RenderGraph`-core change) —
-each named above as a next increment behind the same mechanism.
+**Delivered — [planset-20](../planset-20/README.md):** the engine's **bounds facility** — an
+`AABB` primitive (`Veng/Math/`), local-space mesh bounds, and a world-space `SceneBounds` — and
+on it **cascaded shadow maps** for the directional light: a fit-per-frustum-slice cascaded depth
+atlas in a dedicated descriptor set (off bindless), sampled through a hardware comparison sampler
+(`SampleCmp`) with a boundary cross-fade, plus the `CascadeCount`/`CascadeSplitLambda`/
+`ShadowResolution` knobs and a `DebugView::Cascades` arm. The view/shadow shader headers split
+into `view_constants.slang` (the now material-facing set-0 view state) and `shadow.slang` (the
+set-1 cascade selection + `SampleCmp`).
+
+**Still future:** a transparent/forward pass, **shadowed punctual lights** and **frustum
+culling** (the next increments behind the delivered bounds facility), colored emissive, clustered
+light culling, a cached/dirty-tracked scene bound or BVH (the scaling step), history-buffer
+ringing for temporal effects, cross-queue synchronization, parallel pass recording, the
+single-pass depth-array CSM render path, and on-tile/subpass-fused deferred (a measure-first
+`RenderGraph`-core change) — each named above as a next increment behind the same mechanism.

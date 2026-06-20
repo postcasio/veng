@@ -317,18 +317,38 @@ three-target g-buffer (albedo G0, world-normal G1, packed occlusion/roughness/me
 + emissive G2, plus a sampled depth attachment) with **tangent-space normal mapping**,
 a fullscreen **Cook-Torrance** lighting pass evaluating GGX specular + Lambert diffuse
 over **multiple typed lights** (directional / point / spot) and reconstructing world
-position from depth, then tonemap to the output. The batteries hang off the g-buffer: a
-**directional shadow map** (manual PCF, the lighting pass samples it), **SSAO** folded
-into the ambient/occlusion term, and **bloom authored as a PostProcess material** ahead
-of tonemap. Each battery is a `SceneRendererSettings` toggle driving the `Configure`
+position from depth, then tonemap to the output. The batteries hang off the g-buffer:
+**cascaded shadow maps** for the directional light, **SSAO** folded into the
+ambient/occlusion term, and **bloom authored as a PostProcess material** ahead of
+tonemap. Each battery is a `SceneRendererSettings` toggle driving the `Configure`
 recompile.
 
+The directional light is shadowed by **cascaded shadow maps**: the camera frustum is
+split into depth slices, each cascade fit (bounding-sphere + texel-snapped) to its
+slice and rendered into a depth **atlas** in **one** pass (per-cascade viewports), and
+the lighting pass selects the cascade by the fragment's view-space depth, remaps to the
+atlas tile, and **`SampleCmp`s** it through a **hardware comparison sampler** with a
+boundary cross-fade. Cascade fit is pure, device-free math (`Renderer::ComputeCascades`,
+`Veng/Renderer/ShadowCascades.h`) over the camera, light direction, and the world-space
+scene bound (the bound only extends each cascade's near plane toward the light to catch
+off-screen casters; the XY extent is the frustum slice). **Set 1 is the whole
+directional-shadow system** — the atlas (sampled image), an **immutable comparison
+sampler**, and a per-frame `ShadowConstants` buffer (cascade matrices + splits + params)
+bound as a **dynamic uniform** — held off the set-0 bindless registry, where a
+comparison sampler mistranslates inside the Metal argument buffer on MoltenVK and a
+closed producer→consumer resource needs no global registration. The set-0 view-constants
+block stays trimmed to material-facing camera/view state. `CascadeCount`,
+`CascadeSplitLambda`, and `ShadowResolution` (default 1024) are the CSM knobs;
+`DebugView::Cascades` tints each fragment by the cascade it selects.
+
 Per-view data rides a **ring-buffered view-constants buffer**, not push constants: the
-`InvViewProj`/`CameraPosition` (for world-position reconstruction), the directional
-light's light-space matrix, the shadow params, and the SSAO view/projection live in a
-per-frame set-0 buffer ringed for frames-in-flight and selected by an index fold (a
-dynamic-offset descriptor mistranslates in set 0 on MoltenVK). Its stride is **512
-bytes**, holding the combined block. Push constants in the deferred path carry only
+`InvViewProj`/`CameraPosition` (for world-position reconstruction), the view/projection,
+and the SSAO view/projection live in a per-frame set-0 buffer ringed for frames-in-flight
+and selected by an index fold (a dynamic-offset descriptor mistranslates in set 0 on
+MoltenVK). Its stride is **512 bytes**. The shadow system's own state — the cascade
+matrices, splits, and params — rides the **set-1** `ShadowConstants` block instead, so
+set 0 stays a lean, material-facing view block (shared by materials, lighting, and SSAO).
+Push constants in the deferred path carry only
 small per-invocation bindless handle indices and the live light count; the typed lights
 ride a separate ring-buffered light buffer the lighting pass loops over.
 
@@ -338,7 +358,15 @@ graph transients — because a fullscreen pass samples an upstream target throug
 bindless set-0 array, which needs a `Ref<ImageView>` to `Register` (a transient
 exposes only a per-frame `ImageView&`). They are registered into bindless once at
 `Create` (re-registered on `Resize`) and reach the sampling pass as `TextureHandle`s
-through `PassIO`.
+through `PassIO`. The one exception is the **shadow atlas**: a closed
+producer→consumer resource (the shadow pass writes it, the lighting pass and the
+`DebugView` blit read it, nothing else) reaches its consumer through a **dedicated
+descriptor set** via a `PassIO` **bound-view** slot — off bindless — because the
+lighting pass uses a comparison sampler / `SampleCmp`, which a set-0 bindless argument
+buffer bars on MoltenVK, and a closed resource needs no global registration. It is
+still an `Import`ed, graph-declared resource (the lighting pass's `.Sample` drives the
+graph-derived `DepthAttachment → ShaderReadOnly` barrier); only its *binding* sits off
+bindless.
 
 The per-frame `SceneView { const Scene& World; const Camera& Camera; Light Light;
 f32 Delta; }` reaches pass callbacks through an **opaque `void* userData`** channel
@@ -862,6 +890,15 @@ Vulkan clip space) plus `CameraComponent`, `MeshRenderer` (holds the
 directional light — `Direction`/`Color`/`Intensity`; `SceneRenderer::Execute` selects
 the first `Light` entity into the `SceneView`, or a zero-intensity default → flat
 ambient when the scene has none).
+
+A `Scene` reduces to a world-space bound on demand: `SceneBounds(scene)`
+(`Veng/Scene/Transforms.h`) unions every resident `(Transform, MeshRenderer)` entity's
+world-space mesh bound, reusing `ComputeWorldMatrices`' one amortized pass — recompute-on-
+demand, no dirty-flag cache (a BVH is the deferred scaling answer shared with frustum
+culling). Each `Mesh` carries a local-space `GetBounds()` derived from its canonical
+vertex positions at load (no cooked-format change). Both build on `AABB`
+(`Veng/Math/AABB.h`), the engine's glm-only bounds primitive — a min/max `vec3` pair with
+the union/expand/center/extents/corners/transform algebra and an empty sentinel.
 
 A `Scene` is **`Unique`, single-owner** — nothing holds a `Ref` to it; the app owns it
 and a renderer reads it per frame as a `const Scene&`. Drop it in `OnDispose()` like

@@ -151,17 +151,28 @@ Tonemap is the first; bloom (planset-19) is the first multi-stage authorable cha
 physically-based — a **metallic-roughness three-target g-buffer** (the G2 ORM target this
 area reserved, extending the one `GBufferOutput` struct), tangent-space normal mapping,
 Cook-Torrance over **multiple typed lights** (directional/point/spot) behind a ring-buffered
-view-constants buffer, a **directional shadow map** (manual PCF), **SSAO**, scalar emissive,
+view-constants buffer, a **directional shadow map**, **SSAO**, scalar emissive,
 **bloom as a PostProcess material**, and a `DebugView` arm per new channel. Each landed behind
 the same `ScenePass` + `Configure`-recompile mechanism (a tunable effect as a PostProcess
 material, plumbing as a C++ pass).
 
+**Delivered — planset-20 (bounds facility + CSM):** the engine's first **bounds facility** — an
+`AABB` primitive (`Veng/Math/`), a local-space bound per `Mesh`, and a world-space
+`SceneBounds(scene)` — and on it **cascaded shadow maps** for the directional light, replacing
+the fixed ortho box: per-frustum-slice fit (bounding-sphere + texel-snapped) rendered into a
+cascade-sized depth **atlas** in one pass, bound in a **dedicated set 1** (the atlas + an
+immutable comparison sampler + a dynamic-uniform `ShadowConstants` block, off bindless) and
+sampled by the lighting pass via hardware **`SampleCmp`** with a boundary cross-fade — plus the
+`CascadeCount`/`CascadeSplitLambda`/`ShadowResolution` knobs and a `DebugView::Cascades` arm.
+Net-new descriptor infrastructure (immutable samplers, dynamic uniform buffers, the `PassIO`
+bound-view seam) lands with it.
+
 **Still future:** a **transparent/forward pass** (a second material contract whose fragment
 outputs final color), **MSAA**, **shadowed punctual lights** (point/spot shadow cubemaps/atlas
-— directional is the only shadowed light), **colored emissive** (a fourth g-buffer target),
-**CSM**, and **clustered/tiled light culling**. A **scene/mesh AABB + bounds** facility is the
-named next prerequisite — directional shadows ship with a fixed-size ortho box, and a tight
-shadow fit and CSM both need real bounds first. Also future: **history-buffer ringing** for
+— directional is the only shadowed light) and **frustum culling** — the named next increments
+reading the delivered `AABB`/`SceneBounds` facility — a **cached/dirty-tracked scene bound or
+BVH** (the scaling step they share), **colored emissive** (a fourth g-buffer target), and
+**clustered/tiled light culling**. Also future: **history-buffer ringing** for
 temporal effects (TAA/motion-blur reading an older frame); **cross-queue synchronization** (an
 explicit semaphore once a handoff side moves off the single graphics queue); and **parallel
 pass recording** into secondary command buffers (area 2's seam — the user-pointer channel is
@@ -371,8 +382,9 @@ increments of the
 areas done in part — area 1's
 **hot-reload**, area 2's task graph / staging pool / cancellation, area 7's
 **systems framework** + perf follow-ons + the `ShaderInterface`/`MaterialField`
-unification + container/array fields, area 8's **batteries** + multiple/typed lights
-+ history-buffer ringing / cross-queue sync, area 9's culling / multi-queue /
+unification + container/array fields, area 8's **transparent/forward pass** +
+**shadowed punctual lights / frustum culling** + history-buffer ringing / cross-queue
+sync, area 9's culling / multi-queue /
 parallel recording, area 10's **cross-compiled cooking**, and area 12's **drive
 imgui private** + stateful editor-widget classes (the base `Veng::UI` vocab + full
 migration delivered by planset-17). Each becomes its own planset when taken up.

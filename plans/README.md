@@ -320,6 +320,42 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   battery. The remaining renderer increments — a transparent/forward pass, shadowed punctual
   lights, colored emissive, CSM, and clustered light culling — stay future.
 
+- **[planset-20](planset-20/README.md)** — scene/mesh AABB + bounds, cascaded shadow maps
+  (✅ done, 6 plans). Stands up the engine's first **bounds facility** and on it delivers
+  **cascaded shadow maps** for the directional light — cashing in the prerequisite
+  [planset-19](planset-19/README.md) named (a tight shadow fit and CSM both gate on a real
+  scene/mesh AABB) and taking it all the way to CSM rather than the intermediate single-map fit.
+  **Foundation-first:** an `AABB` glm-only math primitive in a new `Veng/Math/` home (min/max
+  `vec3` pair, union/expand/center/extents/corners/transform algebra, empty sentinel), a
+  **local-space bound per `Mesh`** folded from its canonical vertex positions at load (no
+  cooked-format change), and a **world-space `SceneBounds(scene)`** unioning every resident
+  `(Transform, MeshRenderer)` world bound via `ComputeWorldMatrices` (recompute-on-demand, no
+  dirty-flag cache); then a pure, device-free **`ComputeCascades`** turning the camera, light,
+  and scene bound into per-cascade light-space matrices + split distances (PSSM log/uniform
+  split blend, bounding-sphere fit + texel snapping to kill shimmer, the scene bound extending
+  each cascade's near plane toward the light) — both halves fully unit-tested with no ICD. On
+  that analytic core: the cascades render into a D32 **atlas** sized to `CascadeCount` (a
+  `min(Count,2)×ceil(Count/2)` tile grid, `ShadowResolution²` per tile, default 1024) in **one**
+  pass via per-cascade viewports. **Shadows leave bindless:** the closed producer→consumer
+  shadow resource moves to a **dedicated set 1** carrying the whole directional-shadow system —
+  the atlas, an **immutable comparison sampler**, and a per-frame `ShadowConstants` block
+  (`CascadeViewProj[4]` + `CascadeSplits` + `ShadowParams`) bound as a **dynamic uniform** — so
+  the lighting pass selects the cascade by view-space depth, remaps to the atlas tile, and uses
+  hardware **`SampleCmp`** with a boundary cross-fade, replacing planset-19's manual in-shader
+  PCF at its root (a comparison sampler is barred from set 0's Metal argument buffer on MoltenVK,
+  but is standard in a dedicated set). Net-new, reusable descriptor infrastructure lands with it
+  — immutable samplers, `UniformBufferDynamic` + the `pDynamicOffsets` bind path, and the
+  `PassIO` **bound-view** seam delivering a producer's view into a consumer's dedicated set — and
+  the set-0 view-constants block is trimmed to material-facing camera/view state (the view/shadow
+  shader headers split into `view_constants.slang` + `shadow.slang`, fixing a latent SSAO
+  stride/offset bug). A **`DebugView::Cascades`** arm and `CascadeCount`/`CascadeSplitLambda`/
+  `ShadowResolution` settings expose the CSM surface. **Shadowed punctual lights** (point/spot
+  cubemap/atlas) and **frustum culling** (the other prime consumer of mesh bounds) are the named
+  next increments behind the delivered facility; a cached/dirty-tracked scene bound or a BVH is
+  the scaling step they share, and the single-pass depth-**array** CSM render path (multiview /
+  layered, a quality not perf change on MoltenVK) stays a [future](future/scene-renderer.md)
+  follow-on gated on a `RenderGraph` layered-pass seam.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
