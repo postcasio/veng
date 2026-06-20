@@ -39,6 +39,7 @@
 #include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/PunctualShadows.h>
 #include <Veng/Renderer/TypedBuffers.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>
@@ -215,6 +216,27 @@ namespace
         (void)WorldMatrix(*scene, child);
     }
 
+    // -- Punctual shadow-view death cases (pure-logic, no device) ------------
+
+    void RunSpotShadowRangeNonPositive()
+    {
+        // A zero range trips the spot view's range > 0 assert.
+        (void)Renderer::ComputeSpotShadowView(vec3(0.0f), vec3(0.0f, 0.0f, -1.0f), 0.0f, 0.5f);
+    }
+
+    void RunSpotShadowConeOutOfRange()
+    {
+        // An outer cone past π/2 is outside (0, π/2) — the single-frustum model's
+        // practical spot range — and trips the cone assert.
+        (void)Renderer::ComputeSpotShadowView(vec3(0.0f), vec3(0.0f, 0.0f, -1.0f), 10.0f, 2.0f);
+    }
+
+    void RunPointShadowRangeNonPositive()
+    {
+        // A negative range trips the point view's range > 0 assert.
+        (void)Renderer::ComputePointShadowView(vec3(0.0f), -1.0f);
+    }
+
     // -- GPU-coupled death cases (need a headless Context) -------------------
 
     // Bring up a headless Context, run `body` (which is expected to abort), and
@@ -326,6 +348,9 @@ int main(int argc, char** argv)
     else if (name == "type_id_collision") RunTypeIdCollision();
     else if (name == "transform_parent_cycle") RunTransformParentCycle();
     else if (name == "transform_parent_dead") RunTransformParentDead();
+    else if (name == "spot_shadow_range_nonpositive") RunSpotShadowRangeNonPositive();
+    else if (name == "spot_shadow_cone_out_of_range") RunSpotShadowConeOutOfRange();
+    else if (name == "point_shadow_range_nonpositive") RunPointShadowRangeNonPositive();
     // GPU-coupled
     else if (name == "buffer_upload_overrun") RunBufferUploadOverrun();
     else if (name == "index_u16_into_u32") RunIndexU16IntoU32();

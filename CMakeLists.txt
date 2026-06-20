@@ -261,6 +261,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/frustum.cpp
             tests/unit/bvh.cpp
             tests/unit/shadow_cascades.cpp
+            tests/unit/punctual_shadows.cpp
             tests/unit/scene_ecs.cpp
             tests/unit/scene_queries.cpp
             tests/unit/scene_version.cpp
@@ -359,6 +360,18 @@ if (VENG_BUILD_TESTS)
     add_test(NAME death.transform_parent_dead COMMAND veng_death transform_parent_dead)
     set_tests_properties(death.transform_parent_dead PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "Parent references a dead or stale entity")
+
+    add_test(NAME death.spot_shadow_range_nonpositive COMMAND veng_death spot_shadow_range_nonpositive)
+    set_tests_properties(death.spot_shadow_range_nonpositive PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "ComputeSpotShadowView needs range > 0")
+
+    add_test(NAME death.spot_shadow_cone_out_of_range COMMAND veng_death spot_shadow_cone_out_of_range)
+    set_tests_properties(death.spot_shadow_cone_out_of_range PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "ComputeSpotShadowView needs outerCone")
+
+    add_test(NAME death.point_shadow_range_nonpositive COMMAND veng_death point_shadow_range_nonpositive)
+    set_tests_properties(death.point_shadow_range_nonpositive PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "ComputePointShadowView needs range > 0")
 
     # GPU-coupled death cases (need a headless Context; skip with no driver).
     add_test(NAME death.buffer_upload_overrun COMMAND veng_death buffer_upload_overrun)
