@@ -256,6 +256,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/asset_archive.cpp
             tests/unit/asset_manager.cpp
             tests/unit/primitives.cpp
+            tests/unit/bounds.cpp
             tests/unit/scene_ecs.cpp
             tests/unit/scene_queries.cpp
             tests/unit/reflection.cpp

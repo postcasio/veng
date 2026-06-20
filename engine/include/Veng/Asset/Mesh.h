@@ -8,6 +8,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Math/AABB.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/TypedBuffers.h>
 #include <Veng/Renderer/Types.h>
@@ -79,6 +80,10 @@ namespace Veng
         Renderer::VertexBufferLayout Layout;
         vector<SubMesh> SubMeshes;
         vector<AssetHandle<Material>> Materials;
+        // Local/object-space bound of the mesh's vertices. The factories that
+        // build geometry (runtime Mesh::Create, MeshLoader) fold it from the
+        // canonical positions with Mesh::ComputeBounds.
+        AABB Bounds = AABB::Empty();
     };
 
     class Mesh
@@ -118,6 +123,15 @@ namespace Veng
             });
         }
 
+        // Folds the local-space bound of canonical-layout vertex positions.
+        // ComputeBounds(span<CanonicalVertex>) is the typed form the runtime
+        // Create path has; the raw (bytes, stride) form is what MeshLoader has,
+        // reading the leading vec3 Position (offset 0) of each interleaved
+        // vertex. Both are one definition of "a mesh's bound." Zero vertices
+        // yields AABB::Empty().
+        [[nodiscard]] static AABB ComputeBounds(std::span<const CanonicalVertex> vertices);
+        [[nodiscard]] static AABB ComputeBounds(std::span<const u8> interleaved, usize stride);
+
         [[nodiscard]] const string& GetName() const { return m_Name; }
         [[nodiscard]] const Ref<Renderer::Buffer>& GetVertexBuffer() const { return m_VertexBuffer; }
         [[nodiscard]] const Renderer::IndexBuffer& GetIndexBuffer() const { return m_IndexBuffer; }
@@ -126,6 +140,9 @@ namespace Veng
         [[nodiscard]] u32 GetIndexCount() const { return static_cast<u32>(m_IndexBuffer.GetIndexCount()); }
         [[nodiscard]] std::span<const SubMesh> GetSubMeshes() const { return m_SubMeshes; }
         [[nodiscard]] std::span<const AssetHandle<Material>> GetMaterials() const { return m_Materials; }
+        // The mesh's local/object-space bound. A consumer lifts it to world space
+        // per instance via AABB::Transformed(worldMatrix).
+        [[nodiscard]] const AABB& GetBounds() const { return m_Bounds; }
 
     private:
         explicit Mesh(const MeshInfo& info) :
@@ -134,7 +151,8 @@ namespace Veng
             m_IndexBuffer(info.IndexBuffer),
             m_Layout(info.Layout),
             m_SubMeshes(info.SubMeshes),
-            m_Materials(info.Materials)
+            m_Materials(info.Materials),
+            m_Bounds(info.Bounds)
         {
         }
 
@@ -144,6 +162,7 @@ namespace Veng
         Renderer::VertexBufferLayout m_Layout;
         vector<SubMesh> m_SubMeshes;
         vector<AssetHandle<Material>> m_Materials;
+        AABB m_Bounds = AABB::Empty();
     };
 
     template <>

@@ -1,5 +1,6 @@
 #include <Veng/Asset/Mesh.h>
 
+#include <cstring>
 #include <span>
 #include <utility>
 
@@ -11,6 +12,29 @@
 namespace Veng
 {
     using namespace Renderer;
+
+    AABB Mesh::ComputeBounds(std::span<const CanonicalVertex> vertices)
+    {
+        AABB bounds = AABB::Empty();
+        for (const CanonicalVertex& vertex : vertices)
+            bounds.Expand(vertex.Position);
+        return bounds;
+    }
+
+    AABB Mesh::ComputeBounds(std::span<const u8> interleaved, usize stride)
+    {
+        VE_ASSERT(stride >= sizeof(vec3),
+                  "Mesh::ComputeBounds: stride {} smaller than a vec3 position", stride);
+
+        AABB bounds = AABB::Empty();
+        for (usize offset = 0; offset + sizeof(vec3) <= interleaved.size(); offset += stride)
+        {
+            vec3 position;
+            std::memcpy(&position, interleaved.data() + offset, sizeof(position));
+            bounds.Expand(position);
+        }
+        return bounds;
+    }
 
     Ref<Mesh> Mesh::Create(Context& context, const MeshData& data, const string& name)
     {
@@ -65,6 +89,7 @@ namespace Veng
             .Layout = Mesh::CanonicalLayout(),
             .SubMeshes = std::move(subMeshes),
             .Materials = data.Materials,
+            .Bounds = Mesh::ComputeBounds(std::span<const CanonicalVertex>(data.Vertices)),
         });
     }
 }

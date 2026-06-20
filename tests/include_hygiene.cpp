@@ -45,6 +45,8 @@
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/ImGui/ImGuiTexture.h>
 
+#include <Veng/Math/AABB.h>
+
 #include <Veng/UI/UI.h>
 #include <Veng/UI/Types.h>
 #include <Veng/UI/Widgets.h>

@@ -1,6 +1,7 @@
 #include <Veng/Scene/Transforms.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/Mesh.h>
 #include <Veng/Scene/Scene.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -68,5 +69,29 @@ namespace Veng
         {
             out.push_back(WorldMatrix(scene, dense[i]));
         }
+    }
+
+    AABB SceneBounds(const Scene& scene)
+    {
+        // One amortized pass for every Transform-bearing entity's world matrix,
+        // in the Transform pool's dense order — the same order DensePtr walks
+        // below, so a Transform entity's world matrix is out[i].
+        vector<mat4> worldMatrices;
+        ComputeWorldMatrices(scene, worldMatrices);
+
+        const TypeId transformId = scene.m_Registry->IdOf<Transform>();
+        const Entity* dense = scene.DensePtr(transformId);
+        const usize count = scene.PoolCount(transformId);
+
+        AABB bounds = AABB::Empty();
+        for (usize i = 0; i < count; ++i)
+        {
+            const MeshRenderer* renderer = scene.TryGet<MeshRenderer>(dense[i]);
+            if (renderer == nullptr || !renderer->Mesh.IsLoaded())
+                continue;
+
+            bounds.Expand(renderer->Mesh->GetBounds().Transformed(worldMatrices[i]));
+        }
+        return bounds;
     }
 }

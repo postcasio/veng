@@ -206,6 +206,7 @@ namespace Veng
             .Layout = canonical,
             .SubMeshes = std::move(subMeshes),
             .Materials = std::move(materials),
+            .Bounds = Veng::Mesh::ComputeBounds(vertexData, header.VertexStride),
         });
 
         return Detail::LoadJob{.Resource = Detail::RefAny(mesh)};
