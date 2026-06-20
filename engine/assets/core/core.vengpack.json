@@ -24,6 +24,7 @@
     { "id": 17076675692748364383, "type": "shader", "source": "shaders/bloom_blur.frag.shader.json" },
     { "id": 2003080298304761885, "type": "shader", "source": "shaders/bloom_composite.frag.shader.json" },
     { "id": 14636915322047737276, "type": "shader", "source": "shaders/hi_z_reduce.comp.shader.json" },
+    { "id": 4658282122408301406, "type": "shader", "source": "shaders/hi_z_occlusion_test.comp.shader.json" },
     { "id": 13589203438992884788, "type": "material", "source": "materials/tonemap.vmat.json" },
     { "id": 12810382439826585239, "type": "material", "source": "materials/bloom_brightpass.vmat.json" },
     { "id": 8097762669847173119, "type": "material", "source": "materials/bloom_blur_horizontal.vmat.json" },

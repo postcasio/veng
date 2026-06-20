@@ -6,6 +6,7 @@
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
+#include <Veng/Renderer/HiZHistory.h>
 #include <Veng/Renderer/PunctualShadows.h>
 #include <Veng/Renderer/ShadowCascades.h>
 
@@ -416,6 +417,23 @@ namespace Veng::Renderer
         /// @brief Returns the number of mip levels in the hi-Z pyramid.
         [[nodiscard]] u32 GetHiZMipCount() const;
 
+        /// @brief Returns whether the previous-frame pyramid is valid to occlusion-test against this frame.
+        ///
+        /// False on the first Execute, the Execute immediately after a Resize/Configure
+        /// recreated the pyramid, and on a detected large view delta (translation past a
+        /// fraction of the scene diagonal, forward-axis rotation past the threshold, or
+        /// any projection change). When false the GPU cull skips occlusion (frustum-only),
+        /// so stale or absent history can only leave a draw in, never wrongly cull it.
+        /// Reflects the most recent Execute; defaults false before the first.
+        [[nodiscard]] bool IsHiZHistoryValid() const;
+
+        /// @brief Returns the camera world->clip matrix Execute captured last frame.
+        ///
+        /// The occlusion test screen-bounds a candidate against the previous-frame pyramid,
+        /// so it must use the previous-frame view-projection (decision 2). Identity before
+        /// the first Execute. Valid to test against only when IsHiZHistoryValid() is true.
+        [[nodiscard]] mat4 GetPreviousViewProj() const;
+
         /// @brief Returns the HDR target the deferred lighting pass writes before tonemap.
         ///
         /// Exposed for tests and tooling. Invalidated by Resize.
@@ -546,6 +564,25 @@ namespace Veng::Renderer
         Ref<ImageView> m_HiZSampleView;
         /// @brief Bindless slot for the whole-chain sampled hi-Z view.
         TextureHandle m_HiZSampleHandle;
+
+        /// @brief Camera world->clip captured at the end of last Execute (this frame's pyramid pairs with it).
+        ///
+        /// Identity before the first Execute. The occlusion test pairs the previous-frame
+        /// pyramid with this previous-frame matrix (decision 2).
+        mat4 m_PreviousViewProj{1.0f};
+        /// @brief Last frame's camera state, for the history-validity comparison.
+        HiZHistoryState m_PreviousHiZState;
+        /// @brief Whether the previous-frame pyramid is valid to occlusion-test against this frame.
+        ///
+        /// Computed each Execute by IsHiZHistoryValid + the frame-0/post-resize gate; false
+        /// until the first Execute.
+        bool m_HiZHistoryValid = false;
+        /// @brief Set whenever CreateHiZ recreates the pyramid, forcing the next Execute invalid.
+        ///
+        /// Covers frame 0 (constructed true) and every Resize/Configure (both rebuild the
+        /// pyramid through CreateGBuffer → CreateHiZ), so the cleared/new pyramid is never
+        /// tested against last frame's matrix.
+        bool m_HiZHistoryReset = true;
 
         /// @brief HDR target the deferred lighting pass writes (linear, unbounded range).
         ///

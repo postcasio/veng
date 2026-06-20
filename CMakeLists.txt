@@ -290,6 +290,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/bvh.cpp
             tests/unit/shadow_cascades.cpp
             tests/unit/punctual_shadows.cpp
+            tests/unit/hi_z_history.cpp
             tests/unit/scene_ecs.cpp
             tests/unit/scene_queries.cpp
             tests/unit/scene_version.cpp
@@ -554,6 +555,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/adopt.cpp
             tests/gpu/scene_renderer.cpp
             tests/gpu/hi_z_pyramid.cpp
+            tests/gpu/occlusion_test.cpp
             tests/gpu/prefab_spawn.cpp
     )
     target_link_libraries(veng_gpu PRIVATE veng::veng veng_test_support doctest::doctest)

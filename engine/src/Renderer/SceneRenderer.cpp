@@ -1472,6 +1472,10 @@ namespace Veng::Renderer
             set->Write(1, m_HiZMips[level]);
             m_HiZReduceSets.push_back(std::move(set));
         }
+
+        // The freshly created pyramid carries no last-frame depth; the next Execute must
+        // skip occlusion rather than test against an undefined/stale chain.
+        m_HiZHistoryReset = true;
     }
 
     void SceneRenderer::CreateHdr()
@@ -2071,6 +2075,24 @@ namespace Veng::Renderer
         };
         registry.WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
 
+        // Decide whether last frame's pyramid is trustworthy this frame. The reset
+        // flag (frame 0 / post-resize / post-configure) forces invalid regardless of
+        // the view delta; otherwise the device-free metric compares this frame's
+        // camera against last frame's. The result feeds the GPU cull (occlusion skipped
+        // when invalid); this plan lands it for tests and the cull to consume.
+        const mat4 invView = glm::inverse(view.Camera.View());
+        const HiZHistoryState currentHiZState{
+            .CameraPosition = view.Camera.GetPosition(),
+            // The camera looks down -Z in view space; its world forward is the negated
+            // third basis column of the view's inverse.
+            .CameraForward = glm::normalize(-vec3(invView[2])),
+            .Projection = view.Camera.Projection(),
+        };
+        const f32 sceneDiagonal = sceneBounds.IsEmpty() ? 0.0f : glm::length(sceneBounds.Size());
+        m_HiZHistoryValid =
+            !m_HiZHistoryReset && Renderer::IsHiZHistoryValid(m_PreviousHiZState, currentHiZState,
+                                                              sceneDiagonal, HiZHistorySettings{});
+
         // Pack set-1 ShadowConstants: tile-remapped cascade view-projs, splits, and
         // params. Enabled only when the shadow pass is wired AND a directional light
         // exists this frame; otherwise the lighting pass reads full visibility.
@@ -2137,6 +2159,15 @@ namespace Veng::Renderer
             bindings.push_back({m_HiZChainId.Level(level), m_HiZMips[level]});
         }
         m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
+
+        // Capture this frame's camera + matrix for next frame's history comparison and
+        // occlusion test: the reduction declared in this graph wrote the pyramid from
+        // this frame's depth, so it pairs with this frame's view-projection next time.
+        m_PreviousViewProj = viewProj;
+        m_PreviousHiZState = currentHiZState;
+        // The pyramid now holds this frame's depth, so the next Execute may test against
+        // it (subject to the view-delta metric).
+        m_HiZHistoryReset = false;
     }
 
     Ref<ImageView> SceneRenderer::GetOutput() const
@@ -2189,6 +2220,14 @@ namespace Veng::Renderer
     u32 SceneRenderer::GetHiZMipCount() const
     {
         return static_cast<u32>(m_HiZMips.size());
+    }
+    bool SceneRenderer::IsHiZHistoryValid() const
+    {
+        return m_HiZHistoryValid;
+    }
+    mat4 SceneRenderer::GetPreviousViewProj() const
+    {
+        return m_PreviousViewProj;
     }
     Ref<ImageView> SceneRenderer::GetHdrView() const
     {
