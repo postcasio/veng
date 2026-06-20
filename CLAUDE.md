@@ -80,10 +80,10 @@ ctest --test-dir build --output-on-failure
 ### Formatting
 
 Code style is enforced by `clang-format` against the repo-root `.clang-format`.
-A checked-in pre-commit hook (`.githooks/pre-commit`) format-checks **only the
-lines a commit touches** via `git clang-format --staged`, so the existing
-hand-formatted tree is left alone and only changed lines must conform. Enable it
-once per clone:
+The whole tree conforms to it. A checked-in pre-commit hook
+(`.githooks/pre-commit`) format-checks **only the lines a commit touches** via
+`git clang-format --staged`, so a commit stays fast and each changed line must
+conform. Enable it once per clone:
 
 ```sh
 git config core.hooksPath .githooks
