@@ -287,32 +287,73 @@ protected:
     }
 
 private:
+    // Apply the current scene settings and re-bind the GetOutput()-derived handles
+    // Configure invalidates: a topology/sizing change recreates the output image, so
+    // the ImGui texture and the composite pass's scene source must both be re-fetched.
+    void ReconfigureScene()
+    {
+        m_SceneRenderer->Configure(m_SceneSettings);
+        m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
+        m_Composite->SetSceneSource(m_SceneRenderer->GetOutput());
+    }
+
     void RenderUserInterface()
     {
         if (auto sceneWindow = UI::Window("Scene"))
         {
             // The DebugView combo drives SceneRenderer::Configure, re-wiring the pass
-            // set (Final / Albedo / Normal / Depth) — a live exercise of the recompile
-            // seam. Configure recreates the output image, so the ImGui texture and the
-            // composite pass's scene bindless slot must both be re-bound after it (the
-            // GetOutput()-invalidated-by-Configure contract).
-            static constexpr std::array<string_view, 4> modeNames{"Final", "Albedo", "Normal", "Depth"};
+            // set — a live exercise of the recompile seam. The entries mirror the
+            // DebugView enum in declaration order, so the combo index is the enum value
+            // and every arm is selectable. Configure recreates the output image, so the
+            // ImGui texture and the composite pass's scene bindless slot must both be
+            // re-bound after it (the GetOutput()-invalidated-by-Configure contract).
+            static constexpr std::array<string_view, 10> modeNames{
+                "Final", "Albedo", "Normal", "Depth",
+                "Roughness", "Metallic", "Occlusion",
+                "AO", "Shadows", "Cascades"};
             i32 mode = static_cast<i32>(m_SceneSettings.Mode);
             if (UI::Combo("View", mode, modeNames))
             {
                 m_SceneSettings.Mode = static_cast<Renderer::DebugView>(mode);
-                m_SceneRenderer->Configure(m_SceneSettings);
-                m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
-                m_Composite->SetSceneSource(m_SceneRenderer->GetOutput());
+                ReconfigureScene();
             }
 
             // The SSAO toggle is a topology change (Configure → recompile), the same
             // GetOutput()-invalidated re-bind as the Mode combo.
             if (UI::Checkbox("SSAO", m_SceneSettings.AO))
             {
-                m_SceneRenderer->Configure(m_SceneSettings);
-                m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
-                m_Composite->SetSceneSource(m_SceneRenderer->GetOutput());
+                ReconfigureScene();
+            }
+
+            // The directional-shadow knobs. Shadows on/off and the cascade count /
+            // per-cascade resolution size the shadow atlas, so each is a Configure →
+            // recompile (the same GetOutput()-invalidated re-bind). The PSSM split blend
+            // is a recompile-safe per-frame value the renderer re-derives each Execute;
+            // it is routed through Configure here only because the example holds its
+            // settings there.
+            if (UI::Checkbox("Shadows", m_SceneSettings.Shadows))
+            {
+                ReconfigureScene();
+            }
+
+            i32 cascadeCount = static_cast<i32>(m_SceneSettings.CascadeCount);
+            if (UI::Slider("Cascades##count", cascadeCount, 1, static_cast<i32>(Renderer::MaxCascades)))
+            {
+                m_SceneSettings.CascadeCount = static_cast<u32>(cascadeCount);
+                ReconfigureScene();
+            }
+
+            i32 shadowResolution = static_cast<i32>(m_SceneSettings.ShadowResolution);
+            if (UI::Drag("Shadow resolution", shadowResolution,
+                         {.Speed = 16.0f, .Min = 256.0f, .Max = 4096.0f}))
+            {
+                m_SceneSettings.ShadowResolution = static_cast<u32>(shadowResolution);
+                ReconfigureScene();
+            }
+
+            if (UI::Slider("Split lambda", m_SceneSettings.CascadeSplitLambda, {.Min = 0.0f, .Max = 1.0f}))
+            {
+                ReconfigureScene();
             }
 
             const vec2 available = UI::ContentRegionAvail();

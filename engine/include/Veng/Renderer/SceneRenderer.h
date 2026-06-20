@@ -91,7 +91,9 @@ namespace Veng::Renderer
         // The per-cascade shadow tile edge length in texels. Sizing: changing it
         // recreates the shadow atlas (through the deferred retire path) and
         // recompiles. A higher value sharpens the shadow at a memory/fill cost.
-        u32 ShadowResolution = 2048;
+        // A default 4-cascade atlas is then 2048² — the same footprint as a single
+        // 2048 map.
+        u32 ShadowResolution = 1024;
 
         // The number of shadow cascades the directional light splits its frustum
         // into, clamped to [1, MaxCascades]. Sizing: it sizes the atlas tile grid
