@@ -19,6 +19,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <Veng/Assert.h>
+#include <Veng/Log.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/ComputePipeline.h>
@@ -2121,10 +2122,22 @@ namespace Veng::Renderer
 
     void SceneRenderer::ResolveActiveCullMode()
     {
-        m_ActiveCull = (m_Settings.Cull == SceneRendererSettings::CullMode::GPU &&
-                        m_Context.IsGpuDrivenCullingSupported())
-                           ? SceneRendererSettings::CullMode::GPU
-                           : SceneRendererSettings::CullMode::CPU;
+        const bool gpuRequested = m_Settings.Cull == SceneRendererSettings::CullMode::GPU;
+        const bool gpuSupported = m_Context.IsGpuDrivenCullingSupported();
+
+        // The GPU path is an optimization, not a correctness requirement: a device lacking
+        // multiDrawIndirect / drawIndirectFirstInstance silently runs the CPU path, which
+        // renders the same image. The fallback is logged once so it is observable, and
+        // GetActiveCullMode() reports the real mode for the debug UI and tests.
+        if (gpuRequested && !gpuSupported && !m_GpuCullWarned)
+        {
+            Log::Warn("SceneRenderer: CullMode::GPU requested but the device lacks "
+                      "multiDrawIndirect / drawIndirectFirstInstance; using CullMode::CPU.");
+            m_GpuCullWarned = true;
+        }
+
+        m_ActiveCull = (gpuRequested && gpuSupported) ? SceneRendererSettings::CullMode::GPU
+                                                      : SceneRendererSettings::CullMode::CPU;
     }
 
     void SceneRenderer::DeclareCullPass(RenderGraph& graph)
@@ -2210,10 +2223,12 @@ namespace Veng::Renderer
             }
         }
 
-        // The drawn count is the frustum-survivor count (a materialless or not-yet-resident
-        // submesh still survived the cull, even though it adds no draw slot below) — the
-        // per-submesh cull result the draw-count fixtures assert on.
-        m_LastDrawnCount = static_cast<u32>(m_CullScratch.size());
+        // The per-submesh frustum survivors are both the frustum-survived and the drawn funnel
+        // stage: a survivor is a draw under CullMode::CPU (a materialless or not-yet-resident one
+        // counts even though it fills no slot below — the per-submesh cull result the draw-count
+        // fixtures assert on). The occlusion stage shows up separately as GetLastGpuSurvivorCount.
+        m_FrustumSurvivedCount = static_cast<u32>(m_CullScratch.size());
+        m_LastDrawnCount = m_FrustumSurvivedCount;
 
         auto* drawData = static_cast<GpuDrawData*>(m_DrawDataBuffer->GetMappedData());
         GpuCullCandidate* cullData =
@@ -2672,6 +2687,10 @@ namespace Veng::Renderer
             flags[i] = commands[base + i].InstanceCount;
         }
         return flags;
+    }
+    u32 SceneRenderer::GetFrustumSurvivedCount() const
+    {
+        return m_FrustumSurvivedCount;
     }
     u32 SceneRenderer::GetLastDrawnCount() const
     {

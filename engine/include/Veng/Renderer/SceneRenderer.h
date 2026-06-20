@@ -406,9 +406,21 @@ namespace Veng::Renderer
 
         /// @brief Returns the number of submesh candidates that survived the camera-frustum cull in the last Execute.
         ///
-        /// One per per-submesh candidate the g-buffer pass processed after the cull; always
-        /// <= GetLastVisibleCount(). A materialless submesh still counts as a survivor.
-        /// Zero before the first Execute.
+        /// The BVH frustum descent's survivor count — one per per-submesh candidate the
+        /// camera frustum kept, always <= GetLastVisibleCount(). A materialless or
+        /// not-yet-resident survivor still counts. Under CullMode::GPU this is the count
+        /// uploaded to the cull compute pass. The middle stage of the gathered →
+        /// frustum-survived → drawn funnel. Zero before the first Execute.
+        [[nodiscard]] u32 GetFrustumSurvivedCount() const;
+
+        /// @brief Returns the per-submesh count the g-buffer pass drew in the last Execute.
+        ///
+        /// Equals GetFrustumSurvivedCount() — every frustum survivor is a draw under
+        /// CullMode::CPU (a materialless or not-yet-resident survivor counts even though it
+        /// records no command). The terminal stage of the gathered → frustum-survived → drawn
+        /// funnel. Under CullMode::GPU the occlusion stage shows up separately as
+        /// GetLastGpuSurvivorCount() (the device-side draws after the hi-Z test zeros occluded
+        /// commands). Zero before the first Execute.
         [[nodiscard]] u32 GetLastDrawnCount() const;
 
         /// @brief Returns the cull mode actually in effect, after the device-support fallback.
@@ -881,11 +893,17 @@ namespace Veng::Renderer
         /// A static scene does not rebuild the tree.
         SceneBroadphase m_Broadphase;
 
-        /// @brief Per-submesh frustum-survivor count from the last Execute (the drawn count).
+        /// @brief Per-submesh frustum-survivor count from the last Execute.
         ///
         /// Set by PrepareDraws each Execute: the number of per-submesh candidates the camera
-        /// frustum kept (a materialless or not-yet-resident survivor still counts, matching the
-        /// per-submesh cull result the draw-count fixtures assert on). Zero before the first Execute.
+        /// frustum kept (a materialless or not-yet-resident survivor still counts). The middle
+        /// funnel stage; the upload count under CullMode::GPU. Zero before the first Execute.
+        u32 m_FrustumSurvivedCount = 0;
+
+        /// @brief Per-submesh drawn count from the last Execute (equals m_FrustumSurvivedCount).
+        ///
+        /// The terminal funnel stage: every frustum survivor is a draw under CullMode::CPU.
+        /// Zero before the first Execute.
         u32 m_LastDrawnCount = 0;
 
         /// @brief Allocates the per-draw and GPU-cull buffers + their descriptor sets.
@@ -967,6 +985,8 @@ namespace Veng::Renderer
 
         /// @brief The cull mode in effect after the device-support fallback (CPU if GPU unsupported).
         SceneRendererSettings::CullMode m_ActiveCull = SceneRendererSettings::CullMode::CPU;
+        /// @brief Set once the GPU-unsupported fallback has logged, so the WARN fires only once.
+        bool m_GpuCullWarned = false;
         /// @brief Survivor count read back from the previous GPU Execute (the debug stat).
         mutable u32 m_LastGpuSurvivorCount = 0;
         /// @brief Number of candidate slots the GPU cull wrote this Execute (for the readback span).

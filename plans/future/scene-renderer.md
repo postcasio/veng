@@ -432,20 +432,51 @@ mechanism:
   `SceneBroadphase` holds a BVH over the draw candidates, rebuilt from the scene's spatial version
   behind the `GatherMeshes`/broadphase seam — the gather stays the pure one-shot candidate set, the
   broadphase caches it and the tree and rebuilds only when the version moves. The camera and every
-  shadow cascade query it by descent; a static scene rebuilds not at all. Its refinements, behind the
-  same `Sync`/`Cull` + version-gate seam:
+  shadow cascade query it by descent; a static scene rebuilds not at all.
+  - **Per-submesh leaf granularity — delivered ([planset-25](../planset-25/README.md)).** The tree's
+    leaves are one per `SubMesh`, on a local-space `AABB` folded over the submesh's index range at
+    load (no cooked-format change); `Cull` returns per-submesh survivors by the same descent.
+  - **GPU/compute-driven occlusion culling — delivered ([planset-25](../planset-25/README.md)).**
+    Under `CullMode::GPU` the camera-frustum survivors upload to a GPU buffer, a compute pass runs a
+    **hi-Z occlusion test** against the previous-frame depth pyramid and writes each indirect
+    command's `instanceCount` (1/0), and the geometry pass issues them through
+    `vkCmdDrawIndexedIndirect`. The CPU path is the default and the fallback.
+
+  Its remaining refinements, behind the same `Sync`/`Cull` + version-gate (or the delivered
+  indirect/compute) seam:
   - **Incremental tree maintenance** — per-object insert/update/remove with fat boxes (a moved object
     a no-op within its margin) + rotation balancing, for when *N* grows into the thousands and
     per-frame rebuild cost matters; rebuild-on-change is the current shape.
-  - **GPU/compute-driven culling** and **occlusion (hi-Z / two-phase)** — the cull moved onto the GPU,
-    indirect-drawing the survivors, plus depth-occlusion on top of frustum rejection.
-  - **Per-submesh leaf granularity** — a leaf per submesh rather than per mesh (ties to
-    [planset-25](../planset-25/README.md)), finer rejection on large meshes.
+  - **GPU-driven shadow-caster culling** — the **highest-payoff** next consumer of the delivered
+    indirect/compute seam: planset-24's `N` spot + `6N` cube shadow views are exactly the
+    upload-once-test-against-many-frustums workload GPU culling wins most on (decision 9 of
+    [planset-25](../planset-25/README.md)). The camera view is proven first; shadow culling reads the
+    same seam.
+  - **Meshlet/cluster-granularity GPU culling** — sub-submesh cluster rejection, finer than the
+    delivered per-submesh leaf, for large meshes.
+  - **Two-pass occlusion** — depth prepass this frame → build hi-Z → cull the main pass, the
+    higher-quality alternative to the delivered temporal (previous-frame) hi-Z, trading a frame of
+    latency for no disocclusion pop.
+  - **GPU compaction into a count buffer** — `vkCmdDrawIndexedIndirectCount` over a compute-compacted
+    survivor list, blocked on MoltenVK gaining `drawIndirectCount` (see the finding below); the
+    delivered shape writes `instanceCount = 0` for culled commands (a no-op draw) over a fixed buffer
+    instead.
   - **A Scene-shared tree** — one tree shared across consumers rather than one per renderer, once a
     single `Scene` drives several views that want the same structure.
   [planset-24](../planset-24/README.md)'s per-light shadow views are the broadphase's **delivered
   prime consumer** — a shadow frustum per punctual light queries one tree, many times (`N` spot
   frustums + `6N` cube faces per frame, on top of the camera and cascade queries).
+
+  **Finding (2026-06, verified with `vulkaninfo` against the installed MoltenVK 1.4 ICD on the
+  M-series dev box):** `drawIndirectCount = false`, `multiDrawIndirect = true`,
+  `drawIndirectFirstInstance = true`, `maxDrawIndirectCount = 1073741824`. So
+  `vkCmdDrawIndexedIndirectCount` (the Vulkan 1.2 `drawIndirectCount` feature) is **not available**
+  on the primary platform, but `vkCmdDrawIndexedIndirect` over a multi-draw command buffer with a
+  per-command base instance **is**. This fixes the delivered GPU-cull submission shape: a fixed
+  maximum of command slots, the compute writing `instanceCount = 1/0` per candidate (zero a no-op),
+  one `vkCmdDrawIndexedIndirect` over the whole buffer, the candidate id carried in `firstInstance`.
+  GPU compaction into a count buffer is the refinement for when MoltenVK gains `drawIndirectCount`.
+  Same dev-box-verified-finding discipline as the multiview block below.
 - **Shadowed punctual lights — delivered ([planset-24](../planset-24/README.md)).** A bounded set
   of point/spot lights (a `MaxShadowedPunctual` budget) cast real shadows: a spot through one
   perspective map, a point through six cube faces, both into a **shared punctual shadow atlas** in
@@ -543,8 +574,9 @@ candidates, rebuilt only on a frame the scene's spatial version moved (`Scene::G
 the access-as-write change-tick) behind the `GatherMeshes`/broadphase seam. The camera and every
 shadow cascade query it by tree descent instead of a per-view linear scan; a static scene rebuilds
 not at all. The query returns the linear scan's exact set in `GatherMeshes` order, so the image stays
-byte-identical (the golden does not move). Refinements: incremental tree maintenance, GPU/occlusion
-culling, per-submesh leaves, and a Scene-shared tree.
+byte-identical (the golden does not move). Refinements: incremental tree maintenance, GPU-driven
+shadow-caster culling, meshlet/cluster culling, two-pass occlusion, GPU count-buffer compaction,
+and a Scene-shared tree.
 
 **Delivered — [planset-24](../planset-24/README.md):** **shadowed punctual lights** — a bounded
 set of point/spot lights (a `MaxShadowedPunctual` budget) cast real shadows: a spot through one
@@ -560,11 +592,27 @@ own frustum — the **delivered prime consumer** of planset-23's BVH, one tree q
 frustums + `6N` cube faces per frame. `PunctualShadows`/`PunctualShadowResolution` are the knobs and
 `DebugView::PunctualShadows` the visualizer.
 
+**Delivered — [planset-25](../planset-25/README.md):** **GPU-driven occlusion culling** — the BVH's
+leaves are now **per-submesh** (a local-space `AABB` per `SubMesh`, folded over its index range at
+load, no cooked-format change), and `SceneRendererSettings::Cull` selects the submission path. Under
+`CullMode::GPU` the camera-frustum survivors upload to a GPU buffer, a **compute** pass runs a
+**hi-Z occlusion test** (the screen-space AABB against the previous-frame max-Z depth pyramid,
+conservative and temporal — a history-invalid frame is frustum-only) and writes each
+`VkDrawIndexedIndirectCommand`'s `instanceCount` (1/0), and the geometry pass issues them through a
+single `vkCmdDrawIndexedIndirect` per mesh group (the `drawIndirectCount`-free, `instanceCount = 0`
+no-op shape MoltenVK supports). Both modes drive the **same buffer-indexed surface shader**; the CPU
+path is the default and the fallback where `multiDrawIndirect`/`drawIndirectFirstInstance` is absent,
+`GetActiveCullMode()` reporting the real mode. The image is frustum-identical and occlusion drops
+only the provably hidden, so the golden does not move; draw-count fixtures and a GPU↔CPU
+set-equivalence readback are the guard. `Occlusion` toggles the GPU occlusion test;
+`GetFrustumSurvivedCount()`/`GetLastGpuSurvivorCount()` report the cull funnel.
+
 **Still future:** a transparent/forward pass, colored emissive, **clustered/tiled light culling**,
 **cached/static shadow maps** (the highest-value shadow follow-on — it retires the per-frame `6N`
 redraw for a static scene), **per-light dynamic resolution / shadow LOD**, the BVH broadphase's
-refinements (**incremental tree maintenance**, **GPU/occlusion culling**, **per-submesh leaves**, a
-**Scene-shared tree**), history-buffer ringing for temporal effects, cross-queue synchronization,
-parallel pass recording, the single-pass depth-array CSM render path, and on-tile/subpass-fused
-deferred (a measure-first `RenderGraph`-core change) — each named above as a next increment behind
-the same mechanism.
+remaining refinements (**incremental tree maintenance**, **GPU-driven shadow-caster culling** — the
+highest-payoff next consumer of the delivered indirect/compute seam — **meshlet/cluster culling**,
+**two-pass occlusion**, **GPU count-buffer compaction**, a **Scene-shared tree**), history-buffer
+ringing for temporal effects, cross-queue synchronization, parallel pass recording, the single-pass
+depth-array CSM render path, and on-tile/subpass-fused deferred (a measure-first `RenderGraph`-core
+change) — each named above as a next increment behind the same mechanism.

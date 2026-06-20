@@ -19,9 +19,10 @@ move the test GPU-side and submit the survivors indirectly. The rendered image s
 draws (conservative, never a visible artifact), pinned by draw-count fixtures and a
 GPU-survivor-set ↔ CPU-cull-set equivalence test rather than the golden.
 
-> **Status:** reviewed. This README and all six plan files are drafted and approved (`ready` in
-> the table below); implementation follows the cadence in **Process & conventions**, one commit
-> per plan in the table order.
+> **Status:** delivered. All six plans are landed and verified (`done` in the table below) —
+> per-submesh BVH leaves, the hi-Z pyramid, the occlusion-test primitive, the indirect-draw
+> infrastructure, the GPU compute occlusion cull → indirect draw, and the `CullMode` settings +
+> debug + docs re-cut.
 
 ## Dependencies & relationship to the delivered broadphase
 
@@ -182,7 +183,7 @@ Ten decisions fix the boundary of this work.
 | 03 | [Hi-Z occlusion-test primitive](03-occlusion-test.md) | The screen-AABB-vs-previous-frame-pyramid occlusion test, proven in isolation (a compute pass writing a per-candidate visibility buffer, read back in a test; occluder-fully-covering-a-mesh → occluded). History-invalid → frustum-only fallback. Not yet wired into drawing; golden unmoved. | done |
 | 04 | [Indirect-draw infrastructure](04-indirect-infra.md) | Graph buffer-resource class + `BufferUsage::Indirect` + `AccessKind::IndirectRead`/barrier scope; `CommandBuffer::DrawIndexedIndirect` over `multiDrawIndirect`; the `multiDrawIndirect` + `drawIndirectFirstInstance` device gate (the base-instance index path verified here) + the verified MoltenVK finding; validation gate. | done |
 | 05 | [GPU compute occlusion cull → indirect draw](05-compute-cull.md) | Upload the BVH-frustum survivors; a compute pass runs hi-Z occlusion and writes each indirect command's `instanceCount` (1/0); the geometry pass drives one `vkCmdDrawIndexedIndirect` per mesh group. Per-draw transform/material moves to GPU buffers indexed by the candidate id (`firstInstance` + instance attribute); the **CPU path migrates onto the same buffer-indexed draw** (one shared surface shader). Golden byte-identical (order-independent g-buffer); set-equivalence + draw-count guards. | done |
-| 06 | [`CullMode` settings + debug + docs/roadmap](06-settings-docs.md) | `CullMode` (CPU/GPU) + occlusion toggle (recompile knobs); CPU fallback where `multiDrawIndirect`/`drawIndirectFirstInstance` is absent, with `GetActiveCullMode()` reporting the real mode; debug stats (gathered/frustum-survived/occlusion-survived/drawn); `CLAUDE.md` + `future/scene-renderer.md` re-cut (meshlet/cluster culling, two-pass occlusion, GPU-driven shadow culling named next). | ready |
+| 06 | [`CullMode` settings + debug + docs/roadmap](06-settings-docs.md) | `CullMode` (CPU/GPU) + occlusion toggle (recompile knobs); CPU fallback where `multiDrawIndirect`/`drawIndirectFirstInstance` is absent, with `GetActiveCullMode()` reporting the real mode; debug stats (gathered/frustum-survived/occlusion-survived/drawn); `CLAUDE.md` + `future/scene-renderer.md` re-cut (meshlet/cluster culling, two-pass occlusion, GPU-driven shadow culling named next). | done |
 
 ## Dependency analysis
 

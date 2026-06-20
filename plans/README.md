@@ -422,7 +422,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   regenerated once**. **Clustered/tiled light culling**, **cached/static shadow maps** (the
   highest-value follow-on), and **per-light dynamic resolution / shadow LOD** stay named next.
 
-- **[planset-25](planset-25/README.md)** — occlusion + GPU/compute-driven culling (📝 proposed,
+- **[planset-25](planset-25/README.md)** — occlusion + GPU/compute-driven culling (✅ done,
   6 plans). Takes planset-21's mesh-granularity **CPU** frustum cull all the way to
   **GPU-driven** — the deepest culling refinement. Staged: **per-submesh bounds** + a CPU
   per-submesh cull (a pure refinement, bounds derived at load with no cooked-format change);

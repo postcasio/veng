@@ -199,27 +199,56 @@ scene-agnostic. A `ScenePass` reads it back through a typed `ScenePassContext`
 (`Cmd()` / `View()` / `Resolved(id)`); `View()` asserts the pointer is non-null
 before the reinterpret, and `SceneRenderer` sets it on every `Execute`.
 
-The scene-drawing passes **cull by frustum through a BVH broadphase**. A renderer-owned
-`SceneBroadphase` (`Veng/Scene/SceneBroadphase.h`) holds a bounding volume hierarchy over the
-resident draw candidates. Each `Execute` calls `SceneBroadphase::Sync`: it re-gathers the
-candidates (the pure `GatherMeshes` pass, `Veng/Scene/Visibility.h`, over every resident
-`(Transform, MeshRenderer)` entity — world matrix + world-space `AABB` + resident mesh) and
-rebuilds the tree **only on a frame the scene's spatial version moved** (or a still-loading
-mesh became resident) — a static scene rebuilds the tree not at all and queries a stable one.
-The gathered list (in `GatherMeshes` order) rides `std::span<const VisibleMesh> Visible` on
-`SceneView`; the g-buffer geometry pass descends the tree with the **camera** frustum and the
-cascaded shadow pass descends it once per cascade with **each cascade's** light frustum, so the
+The scene-drawing passes **cull at submesh granularity through a BVH broadphase**. A
+renderer-owned `SceneBroadphase` (`Veng/Scene/SceneBroadphase.h`) holds a bounding volume
+hierarchy whose **leaves are per-submesh** — one leaf per `SubMesh`, on its local-space `AABB`
+folded over the submesh's index range at load (no cooked-format change). Each `Execute` calls
+`SceneBroadphase::Sync`: it re-gathers the candidates (the pure `GatherMeshes` pass,
+`Veng/Scene/Visibility.h`, over every resident `(Transform, MeshRenderer)` entity — world
+matrix + world-space `AABB` + resident mesh) and rebuilds the tree **only on a frame the
+scene's spatial version moved** (or a still-loading mesh became resident) — a static scene
+rebuilds the tree not at all and queries a stable one. The gathered list rides `std::span<const
+VisibleMesh> Visible` on `SceneView`; `SceneBroadphase::Cull` descends the tree once per view —
+the g-buffer geometry pass with the **camera** frustum, the cascaded shadow pass once per
+cascade with **each cascade's** light frustum, each punctual light's view with its own — so the
 many-view shadow workload queries **one tree, many times** rather than re-scanning the list per
-view. A query returns exactly the linear scan's set in `GatherMeshes` order (a node wholly
-outside a frustum rejects its subtree; a leaf is accepted on its tight box), so the cull is
-conservative (an extra draw, never a dropped visible mesh) and the rendered image is
-**byte-identical** — only the draw calls issued differ. `SceneRendererSettings::FrustumCull`
-(default on) toggles it; `GetLastVisibleCount()` / `GetLastDrawnCount()` report the
-gathered-vs-drawn counts of the last `Execute`, and `DidBroadphaseRebuildLastFrame()` /
-`GetBroadphaseNodeCount()` report whether the tree rebuilt this frame and its size. The **BVH
-broadphase is the delivered scaling step** the gather shares with `SceneBounds`; **incremental
-tree maintenance** (per-object insert/update/remove with fat boxes), **GPU/occlusion culling**,
-and **per-submesh leaves** are its refinements behind the same `Sync`/`Cull` + version-gate seam.
+view. A query returns exactly the linear scan's per-submesh survivor set (a node wholly outside
+a frustum rejects its subtree; a leaf is accepted on its tight box), so the cull is conservative
+(an extra draw, never a dropped visible submesh) and the rendered image is **byte-identical** —
+only the draw calls issued differ.
+
+`SceneRendererSettings::Cull` selects how those survivors are submitted. Under
+**`CullMode::CPU`** (the default) the renderer records a direct per-submesh draw for each
+camera-frustum survivor. Under **`CullMode::GPU`** the same frustum survivors are uploaded to a
+GPU buffer, a **compute** pass runs a **hi-Z occlusion test** over each candidate's screen-space
+AABB against the **previous-frame depth pyramid** and writes each `VkDrawIndexedIndirectCommand`'s
+`instanceCount` (1 for a survivor, 0 for an occluded candidate, which executes as a no-op), and
+the geometry pass issues the whole fixed buffer through a single `vkCmdDrawIndexedIndirect` per
+mesh group. The compute does **not** re-run frustum culling — the BVH already did; it adds only
+occlusion. The hi-Z pyramid is a **max-Z mip chain** reduced from the depth target by compute
+into a renderer-owned, cross-frame-persisted resource (temporal hi-Z: the test reads last
+frame's chain, so a history-invalid frame — frame 0, the frame after a `Resize`/`Configure`, or
+a large view delta — is frustum-only, never a stale false-cull). `SceneRendererSettings::Occlusion`
+gates the occlusion test within the GPU path; with it off the GPU path issues every
+camera-frustum survivor. The submission shape is the **`drawIndirectCount`-free** form MoltenVK
+supports (`multiDrawIndirect` + `drawIndirectFirstInstance`, the candidate id carried in each
+command's `firstInstance` and read as an instance-rate vertex attribute); both modes drive the
+**same buffer-indexed surface shader**, differing only in submission. `CullMode::GPU` is gated on
+`Context::IsGpuDrivenCullingSupported()`: on a device lacking either feature the renderer logs
+once and falls back to `CullMode::CPU`, and `GetActiveCullMode()` reports the real mode.
+
+`SceneRendererSettings::FrustumCull` (default on) toggles the frustum cull itself; the cull
+funnel is reported by `GetLastVisibleCount()` (gathered submesh candidates) → `GetFrustumSurvivedCount()`
+(frustum survivors) → `GetLastDrawnCount()` (drawn — equal to the frustum survivors on the CPU
+path), with `GetLastGpuSurvivorCount()` the GPU occlusion survivor count read back one frame late
+under `CullMode::GPU`, and
+`DidBroadphaseRebuildLastFrame()` / `GetBroadphaseNodeCount()` reporting whether the tree rebuilt
+and its size. The **BVH broadphase, per-submesh leaves, and GPU-driven hi-Z occlusion culling are
+delivered**; **incremental tree maintenance** (per-object insert/update/remove with fat boxes),
+**meshlet/cluster-granularity GPU culling**, **two-pass occlusion** (the higher-quality
+alternative to temporal hi-Z), and **GPU-driven shadow-caster culling** (the highest-payoff next
+consumer — the `N` spot + `6N` cube shadow views) are its refinements behind the same
+`Sync`/`Cull` + version-gate seam.
 
 A `ScenePass` is a reusable, self-contained pipeline stage (`Configure` / `Resize` /
 `Declare(RenderGraph&, const PassIO&)`) that **contributes** one or more
@@ -642,10 +671,12 @@ demand, no dirty-flag cache. `GatherMeshes` (`Veng/Scene/Visibility.h`) is the p
 candidate gather over the same pass (world matrix + world-space `AABB` + resident mesh per
 entity); the `SceneBroadphase` caches that gather and builds the BVH from it, re-gathering only
 when the scene's spatial version moves (or a still-loading mesh becomes resident). The **BVH
-broadphase is the delivered scaling step** the gather shares with `SceneBounds`; incremental
-tree maintenance, GPU/occlusion culling, and per-submesh leaves are its refinements. Each
-`Mesh` carries a local-space `GetBounds()` derived from its canonical
-vertex positions at load (no cooked-format change). Both build on `AABB`
+broadphase, per-submesh leaves, and GPU-driven hi-Z occlusion culling are delivered**; incremental
+tree maintenance, meshlet/cluster-granularity GPU culling, two-pass occlusion, and GPU-driven
+shadow-caster culling are its refinements. Each `Mesh` carries a local-space `GetBounds()`
+derived from its canonical vertex positions at load (no cooked-format change), and each `SubMesh`
+a local-space `AABB` folded over its index range — the per-submesh leaf granularity the cull
+operates at. Both build on `AABB`
 (`Veng/Math/AABB.h`), the engine's glm-only bounds primitive — a min/max `vec3` pair with
 the union/expand/center/extents/corners/transform algebra and an empty sentinel. `Frustum`
 (`Veng/Math/Frustum.h`) is its visibility companion — six bounding planes extracted
