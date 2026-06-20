@@ -375,19 +375,27 @@ scene-agnostic. A `ScenePass` reads it back through a typed `ScenePassContext`
 (`Cmd()` / `View()` / `Resolved(id)`); `View()` asserts the pointer is non-null
 before the reinterpret, and `SceneRenderer` sets it on every `Execute`.
 
-The scene-drawing passes **cull by frustum**. `Execute` runs one per-frame `GatherMeshes`
-(`Veng/Scene/Visibility.h`) pass over every resident `(Transform, MeshRenderer)` entity —
-world matrix + world-space `AABB` + resident mesh per candidate — into renderer scratch a
-`std::span<const VisibleMesh> Visible` on `SceneView` points at; the g-buffer geometry pass
-then records only the candidates the **camera** frustum touches and the cascaded shadow pass
-only the casters **each cascade's** light frustum touches, each testing that one shared list
-against its own `Frustum` (`Veng/Math/Frustum.h`) inline. The cull is conservative (an extra
-draw, never a dropped visible mesh) and recompute-on-demand off the gather's
-`ComputeWorldMatrices` pass, so the rendered image is unchanged — only the draw calls issued
-differ. `SceneRendererSettings::FrustumCull` (default on) toggles it; `GetLastVisibleCount()`
-/ `GetLastDrawnCount()` report the gathered-vs-drawn counts of the last `Execute`. A **BVH (or
-a cached, dirty-tracked scene bound)** is the named scaling step the gather shares with
-`SceneBounds`; occlusion, per-submesh, and GPU culling are named refinements behind it.
+The scene-drawing passes **cull by frustum through a BVH broadphase**. A renderer-owned
+`SceneBroadphase` (`Veng/Scene/SceneBroadphase.h`) holds a bounding volume hierarchy over the
+resident draw candidates. Each `Execute` calls `SceneBroadphase::Sync`: it re-gathers the
+candidates (the pure `GatherMeshes` pass, `Veng/Scene/Visibility.h`, over every resident
+`(Transform, MeshRenderer)` entity — world matrix + world-space `AABB` + resident mesh) and
+rebuilds the tree **only on a frame the scene's spatial version moved** (or a still-loading
+mesh became resident) — a static scene rebuilds the tree not at all and queries a stable one.
+The gathered list (in `GatherMeshes` order) rides `std::span<const VisibleMesh> Visible` on
+`SceneView`; the g-buffer geometry pass descends the tree with the **camera** frustum and the
+cascaded shadow pass descends it once per cascade with **each cascade's** light frustum, so the
+many-view shadow workload queries **one tree, many times** rather than re-scanning the list per
+view. A query returns exactly the linear scan's set in `GatherMeshes` order (a node wholly
+outside a frustum rejects its subtree; a leaf is accepted on its tight box), so the cull is
+conservative (an extra draw, never a dropped visible mesh) and the rendered image is
+**byte-identical** — only the draw calls issued differ. `SceneRendererSettings::FrustumCull`
+(default on) toggles it; `GetLastVisibleCount()` / `GetLastDrawnCount()` report the
+gathered-vs-drawn counts of the last `Execute`, and `DidBroadphaseRebuildLastFrame()` /
+`GetBroadphaseNodeCount()` report whether the tree rebuilt this frame and its size. The **BVH
+broadphase is the delivered scaling step** the gather shares with `SceneBounds`; **incremental
+tree maintenance** (per-object insert/update/remove with fat boxes), **GPU/occlusion culling**,
+and **per-submesh leaves** are its refinements behind the same `Sync`/`Cull` + version-gate seam.
 
 A `ScenePass` is a reusable, self-contained pipeline stage (`Configure` / `Resize` /
 `Declare(RenderGraph&, const PassIO&)`) that **contributes** one or more
@@ -849,8 +857,21 @@ drives off the smallest participating pool. **Structural changes during iteratio
 illegal** — adding/removing components or destroying entities mid-`View`/`Each` is API
 misuse; the single-threaded model offers no re-entrancy guard. A stale `Entity` (its
 slot recycled, generation bumped) accessed through the API is a fatal `VE_ASSERT`, not
-silent UB. A **component is just a reflected type a `Scene` pools** — pools are made
-lazily on first `Add` of a type; there is no separate component-id space.
+silent UB. `DestroyEntity` is **recursive** — it destroys the entity's whole `Parent`
+subtree, so no child is left with a dangling parent link. A **component is just a reflected
+type a `Scene` pools** — pools are made lazily on first `Add` of a type; there is no
+separate component-id space.
+
+A `Scene` carries a monotonic **spatial version counter** (`GetSpatialVersion()`): it bumps
+on any change to a **spatial pool** (`Transform`/`Parent`/`MeshRenderer`) — a structural
+`Add`/`Remove`, a `DestroyEntity` touching one, a **non-`const`** access (the mutable
+`Get`/`View`/`Each` path, a potential in-place edit), or a `ForEachComponent` visit (the
+editor inspector's erased-`void*` edit path). A **`const`** `View`/`Each` does **not** bump it,
+so a read-only consumer iterates without forcing a version move. This is the access-as-write
+change-tick a consumer (the `SceneBroadphase`) gates its tree rebuild on: it caches the version
+it last built against and rebuilds only when the version moved. One constraint: a `Transform&`
+retained across frames and written without re-acquiring it bypasses the bump — write transforms
+through the scene accessors each frame, as all engine and sample code does.
 `Scene::ForEachComponent(Entity, const function<void(TypeId, void*)>&)` iterates every
 pool that holds the entity, calling the visitor with each component's `TypeId` and an
 erased pointer — the type-agnostic enumeration the editor inspector walks (templated
@@ -908,8 +929,13 @@ ambient when the scene has none).
 A `Scene` reduces to a world-space bound on demand: `SceneBounds(scene)`
 (`Veng/Scene/Transforms.h`) unions every resident `(Transform, MeshRenderer)` entity's
 world-space mesh bound, reusing `ComputeWorldMatrices`' one amortized pass — recompute-on-
-demand, no dirty-flag cache (a BVH is the deferred scaling answer shared with frustum
-culling). Each `Mesh` carries a local-space `GetBounds()` derived from its canonical
+demand, no dirty-flag cache. `GatherMeshes` (`Veng/Scene/Visibility.h`) is the pure one-shot
+candidate gather over the same pass (world matrix + world-space `AABB` + resident mesh per
+entity); the `SceneBroadphase` caches that gather and builds the BVH from it, re-gathering only
+when the scene's spatial version moves (or a still-loading mesh becomes resident). The **BVH
+broadphase is the delivered scaling step** the gather shares with `SceneBounds`; incremental
+tree maintenance, GPU/occlusion culling, and per-submesh leaves are its refinements. Each
+`Mesh` carries a local-space `GetBounds()` derived from its canonical
 vertex positions at load (no cooked-format change). Both build on `AABB`
 (`Veng/Math/AABB.h`), the engine's glm-only bounds primitive — a min/max `vec3` pair with
 the union/expand/center/extents/corners/transform algebra and an empty sentinel. `Frustum`

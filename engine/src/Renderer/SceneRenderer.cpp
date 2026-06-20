@@ -1734,6 +1734,7 @@ namespace Veng::Renderer
     u32 SceneRenderer::GetLastVisibleCount() const { return static_cast<u32>(m_Broadphase.GetCandidates().size()); }
     u32 SceneRenderer::GetLastDrawnCount() const { return m_GBufferDrawnCount ? *m_GBufferDrawnCount : 0; }
     bool SceneRenderer::DidBroadphaseRebuildLastFrame() const { return m_Broadphase.DidRebuildLastSync(); }
+    u32 SceneRenderer::GetBroadphaseNodeCount() const { return m_Broadphase.GetNodeCount(); }
     Ref<ImageView> SceneRenderer::GetAlbedoView() const { return m_AlbedoView; }
     Ref<ImageView> SceneRenderer::GetNormalView() const { return m_NormalView; }
     Ref<ImageView> SceneRenderer::GetOrmView() const { return m_OrmView; }

@@ -236,6 +236,10 @@ namespace Veng::Renderer
         // SceneBroadphase::DidRebuildLastSync().
         [[nodiscard]] bool DidBroadphaseRebuildLastFrame() const;
 
+        // The number of nodes in the broadphase BVH (internal + leaf). Diagnostics;
+        // zero before the first Execute or with no resident candidates.
+        [[nodiscard]] u32 GetBroadphaseNodeCount() const;
+
         // The deferred g-buffer the geometry pass writes — the sampleable views
         // and their bindless slots. Renderer-owned and imported into the internal
         // graph; recreated and re-registered on Resize. Exposed for tests and

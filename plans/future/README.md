@@ -183,13 +183,22 @@ the **g-buffer pass by the camera frustum**, the **cascaded shadow pass by each 
 frustum** — behind a `SceneRendererSettings::FrustumCull` knob (default on). The rendered image is
 byte-identical (a draw-count test over an off-frustum fixture is the guard, not the golden).
 
+**Delivered — planset-23 (BVH broadphase):** the **delivered scaling step** behind the
+`GatherMeshes`/broadphase seam — a renderer-owned **`SceneBroadphase`** holding a **BVH**
+(`Veng/Math/BVH.h`) over the draw candidates, rebuilt only on a frame the scene's spatial version
+moved (**`Scene::GetSpatialVersion()`**, the access-as-write change-tick recovered from the
+immediate-mode ECS). The camera and every shadow cascade query it by tree descent rather than a
+per-view linear scan; a static scene rebuilds not at all. The query returns the linear scan's exact
+set in `GatherMeshes` order — byte-identical, the golden does not move.
+
 **Still future:** a **transparent/forward pass** (a second material contract whose fragment
 outputs final color), **MSAA**, and **shadowed punctual lights** (point/spot shadow cubemaps/atlas
-— directional is the only shadowed light) — the named next increment reading the delivered
-`AABB`/`Frustum` facility. A **cached/dirty-tracked scene bound or BVH** is the **immediate shared
-scaling step** (the `GatherMeshes` gather its seam, replacing the linear scan behind the same
-surface) for both the `SceneBounds` reduction and the frustum-cull gather; **occlusion / per-submesh
-/ GPU culling** are the named refinements behind the delivered mesh-granularity frustum cull. Also
+— directional is the only shadowed light) — the **next renderer feature** reading the delivered
+`AABB`/`Frustum`/broadphase facility. The BVH broadphase's refinements, behind the same
+`Sync`/`Cull` + version-gate seam: **incremental tree maintenance** (per-object insert/update/remove
+with fat boxes, for large *N*), **GPU/compute-driven culling** + **occlusion (hi-Z / two-phase)**,
+**per-submesh leaf granularity**, and **a Scene-shared tree** (one tree across consumers).
+planset-24's per-light shadow views are the broadphase's prime new consumer. Also
 named: **colored emissive** (a fourth g-buffer target) and **clustered/tiled light
 culling**. Also future: **history-buffer ringing** for
 temporal effects (TAA/motion-blur reading an older frame); **cross-queue synchronization** (an
@@ -403,7 +412,8 @@ areas done in part — area 1's
 **systems framework** + the **hierarchy representation redesign** + perf follow-ons +
 the `ShaderInterface`/`MaterialField`
 unification + container/array fields, area 8's **transparent/forward pass** +
-**shadowed punctual lights** + a **cached scene bound / BVH** (the shared scaling step) +
+**shadowed punctual lights** + the **BVH broadphase's refinements** (incremental tree
+maintenance / GPU/occlusion culling / per-submesh leaves / a Scene-shared tree) +
 history-buffer ringing / cross-queue
 sync, area 9's culling / multi-queue /
 parallel recording, area 10's **cross-compiled cooking**, and area 12's **drive

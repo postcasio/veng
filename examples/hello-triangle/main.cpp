@@ -218,8 +218,11 @@ protected:
                 transform.Rotation = glm::angleAxis(SmokeAngle, SpinAxis);
             });
         }
-        else
+        else if (!m_PauseSpin)
         {
+            // Pausing the spin skips this non-const Each, so the scene's spatial
+            // version stops moving and the broadphase reads `static` — the visible
+            // proof that a still scene rebuilds the tree not at all.
             m_Scene->Each<Transform, Spinner>([delta](Entity, Transform& transform, Spinner& spinner)
             {
                 const quat step = glm::angleAxis(spinner.SpeedRadiansPerSec * delta, SpinAxis);
@@ -381,6 +384,19 @@ private:
             const u32 drawn = m_SceneRenderer->GetLastDrawnCount();
             const u32 total = m_SceneRenderer->GetLastVisibleCount();
             UI::Text(fmt::format("Meshes: {} / {}", drawn, total));
+
+            // The broadphase rebuilds its BVH only on a frame the scene's spatial
+            // version moved; a still scene reads `static` and touches the tree not
+            // at all. The pause-spin toggle below stops the per-frame Transform write,
+            // so the readout flips live between `rebuilt` and `static`.
+            const bool rebuilt = m_SceneRenderer->DidBroadphaseRebuildLastFrame();
+            UI::Text(fmt::format("Broadphase: {} ({} nodes)",
+                                 rebuilt ? "rebuilt" : "static",
+                                 m_SceneRenderer->GetBroadphaseNodeCount()));
+
+            // The checkbox writes m_PauseSpin directly; its "changed" return is unused —
+            // the pause takes effect next frame in OnUpdate regardless.
+            (void)UI::Checkbox("Pause spin", m_PauseSpin);
         }
     }
 
@@ -454,6 +470,12 @@ private:
     f32 m_LastDelta = 0.0f;
     u32 m_FrameCount = 0;
     const char* m_SmokeOutput = nullptr;
+
+    // Windowed-only: when set, OnUpdate skips the spinner's per-frame Transform
+    // write, so the scene's spatial version stops moving and the broadphase reads
+    // `static`. Never set in smoke mode (the fixed pose path is separate), so the
+    // golden capture is untouched.
+    bool m_PauseSpin = false;
 };
 
 // The module's entry point: the launcher dlopens this library and calls this

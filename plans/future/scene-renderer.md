@@ -426,18 +426,27 @@ mechanism:
 
 - **A transparent/forward pass** (a second material contract whose fragment shader outputs
   *final color*, not g-buffer channels), **MSAA**, and a deeper post stack.
-- **A BVH (or a cached, dirty-tracked scene bound)** is the **immediate shared scaling step** —
-  the answer for both the `SceneBounds` reduction and the frustum-cull gather when the per-frame
-  linear scan is measured hot. The gather (`GatherMeshes`) is its seam: a spatial structure replaces
-  the linear scan behind the same surface, with no consumer change. Recompute-on-demand is the
-  current shape.
+- **The BVH broadphase is delivered ([planset-23](../planset-23/README.md)).** A renderer-owned
+  `SceneBroadphase` holds a BVH over the draw candidates, rebuilt from the scene's spatial version
+  behind the `GatherMeshes`/broadphase seam — the gather stays the pure one-shot candidate set, the
+  broadphase caches it and the tree and rebuilds only when the version moves. The camera and every
+  shadow cascade query it by descent; a static scene rebuilds not at all. Its refinements, behind the
+  same `Sync`/`Cull` + version-gate seam:
+  - **Incremental tree maintenance** — per-object insert/update/remove with fat boxes (a moved object
+    a no-op within its margin) + rotation balancing, for when *N* grows into the thousands and
+    per-frame rebuild cost matters; rebuild-on-change is the current shape.
+  - **GPU/compute-driven culling** and **occlusion (hi-Z / two-phase)** — the cull moved onto the GPU,
+    indirect-drawing the survivors, plus depth-occlusion on top of frustum rejection.
+  - **Per-submesh leaf granularity** — a leaf per submesh rather than per mesh (ties to
+    [planset-25](../planset-25/README.md)), finer rejection on large meshes.
+  - **A Scene-shared tree** — one tree shared across consumers rather than one per renderer, once a
+    single `Scene` drives several views that want the same structure.
+  [planset-24](../planset-24/README.md)'s per-light shadow views are the broadphase's **prime new
+  consumer** — a shadow frustum per punctual light queries one tree, many times.
 - **Shadowed punctual lights** (point/spot shadow cubemaps/atlas — directional is the only
-  shadowed light today) and **clustered/tiled light culling** (the lighting pass loops a
-  bounded list with no spatial culling). Shadowed punctual lights remain the other named increment
-  reading the delivered `AABB`/`Frustum` facility.
-- **Occlusion culling** (hi-Z / queries), **per-submesh** bounds + culling, and **GPU/compute-driven
-  culling** (plus portal/PVS visibility) are the named refinements behind the delivered
-  mesh-granularity CPU frustum cull, each reading the same `AABB`/`Frustum`/gather surface.
+  shadowed light today) remain the **next renderer feature**, and **clustered/tiled light culling**
+  (the lighting pass loops a bounded list with no spatial culling) the increment beside it. Both read
+  the delivered `AABB`/`Frustum`/broadphase facility.
 - **Colored emissive** — an emissive color distinct from albedo needs the separate-emissive
   layout (a fourth g-buffer target); only scalar emissive strength rides G2.a today.
 - **CSM shadow-render path: a single-pass depth array (multiview / layered), over the atlas —
@@ -512,10 +521,19 @@ the g-buffer pass by the camera frustum, the cascaded shadow pass by each cascad
 behind a `SceneRendererSettings::FrustumCull` knob (default on). The rendered image is byte-identical;
 a draw-count test over an off-frustum fixture is the guard.
 
-**Still future:** a transparent/forward pass, **shadowed punctual lights** (the other named increment
-behind the delivered bounds facility), colored emissive, clustered light culling, a
-**cached/dirty-tracked scene bound or BVH** (the immediate shared scaling step, the gather its seam),
-occlusion / per-submesh / GPU culling (the refinements behind the delivered frustum cull),
-history-buffer ringing for temporal effects, cross-queue synchronization, parallel pass recording,
-the single-pass depth-array CSM render path, and on-tile/subpass-fused deferred (a measure-first
-`RenderGraph`-core change) — each named above as a next increment behind the same mechanism.
+**Delivered — [planset-23](../planset-23/README.md):** the **BVH broadphase** — a renderer-owned
+`SceneBroadphase` (`Veng/Scene/SceneBroadphase.h`) holding a BVH (`Veng/Math/BVH.h`) over the draw
+candidates, rebuilt only on a frame the scene's spatial version moved (`Scene::GetSpatialVersion()`,
+the access-as-write change-tick) behind the `GatherMeshes`/broadphase seam. The camera and every
+shadow cascade query it by tree descent instead of a per-view linear scan; a static scene rebuilds
+not at all. The query returns the linear scan's exact set in `GatherMeshes` order, so the image stays
+byte-identical (the golden does not move). Refinements: incremental tree maintenance, GPU/occlusion
+culling, per-submesh leaves, and a Scene-shared tree.
+
+**Still future:** a transparent/forward pass, **shadowed punctual lights** (the next renderer
+feature, reading the delivered broadphase), colored emissive, clustered light culling, the BVH
+broadphase's refinements (**incremental tree maintenance**, **GPU/occlusion culling**,
+**per-submesh leaves**, a **Scene-shared tree**), history-buffer ringing for temporal effects,
+cross-queue synchronization, parallel pass recording, the single-pass depth-array CSM render path,
+and on-tile/subpass-fused deferred (a measure-first `RenderGraph`-core change) — each named above as
+a next increment behind the same mechanism.

@@ -391,21 +391,21 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   misuse). `WriteFields` is untouched; a `gpu`-band test feeds a truncated cooked prefab blob and
   asserts `LoadSync` returns `Corrupt`, not an abort.
 
-- **[planset-23](planset-23/README.md)** — cached, dirty-tracked scene transforms & bounds
-  (📝 proposed, 4 plans). Cashes in the **shared scaling step** planset-20/21 both named — a
-  **cross-frame cache** behind the stable `ComputeWorldMatrices`/`SceneBounds`/`GatherMeshes`
-  seam, so a static scene stops re-walking every parent chain and re-transforming every mesh
-  bound each frame. **Foundation-first**: a scoped `Scene::TransformEpoch()` (bumped on
-  Transform/Parent structural change and **non-`const`** Transform/Parent access, never on other
-  pools or `const` access) + a `const` `View`/`Each` path so read-only iteration doesn't
-  self-dirty (dropping the renderer's light-pack `const_cast`), then a consumer-owned
-  `SceneTransformCache` that recomputes via the pure functions only on an epoch miss — both pure,
-  device-free, unit-tested (hit == miss == standalone gather) before the renderer consumes them.
-  The rendered image is **byte-identical** (the golden never moves; a hit/miss stat is the
-  evidence). This is the **cross-frame half** of the scaling step; the **full BVH broadphase**
-  (the spatial half — sub-linear cull even for a moving scene, feeding planset-24's many shadow
-  views) is named as the next scaling exploration with its implications-to-explore recorded,
-  behind the **same** gather seam.
+- **[planset-23](planset-23/README.md)** — frustum-cull BVH broadphase (✅ done, 4 plans).
+  Cashes in the **shared scaling step** planset-20/21 both named — a **bounding volume hierarchy**
+  over the resident draw candidates behind the stable `GatherMeshes` seam, so frustum culling stops
+  being a per-view linear scan. A renderer-owned **`SceneBroadphase`** holds the tree and rebuilds it
+  only on a frame the scene's spatial state moved, gated by a single **`Scene::GetSpatialVersion()`**
+  counter (bumped on spatial-pool — `Transform`/`Parent`/`MeshRenderer` — structural change and
+  **non-`const`** access, never on a `const` `View`/`Each` or other pools; a `const` iteration path
+  lands with it, dropping the renderer's light-pack `const_cast`). The camera and every shadow cascade
+  query the **one tree** by descent — the workload planset-24's per-light shadow views most reward.
+  The BVH and the version gate are both pure, device-free, unit-tested (query == linear tight scan
+  over randomized builds and frustums) before the renderer consumes them; the rendered image is
+  **byte-identical** (the golden never moves; a rebuilt-this-frame stat is the evidence). `DestroyEntity`
+  becomes **recursive** (destroys the subtree) with it. **Incremental tree maintenance**,
+  **GPU/occlusion culling**, **per-submesh leaves**, and **a Scene-shared tree** are the recorded
+  refinements behind the same `Sync`/`Cull` + version-gate seam.
 
 - **[planset-24](planset-24/README.md)** — shadowed punctual lights (📝 proposed, 5 plans).
   The other named increment behind the delivered `AABB`/`Frustum`/gather facility: extend the
@@ -414,9 +414,9 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   six-face **cube** — sampled in the deferred lighting pass with hardware `SampleCmp` + PCF and
   multiplied into each light's contribution. **Set 1 generalizes** from "the directional system"
   to "a shadow system" (directional cascades + a punctual atlas + per-light shadow records), and
-  each shadow view culls its casters off the **shared gather** against its own frustum (a spot
+  each shadow view culls its casters off the **shared broadphase** against its own frustum (a spot
   frustum, six cube-face frustums) — the many-shadow-view workload that most rewards planset-23's
-  cache and the named BVH. **Builds on planset-23** (warm cache for the per-light culls);
+  BVH broadphase. **Builds on planset-23** (one tree, queried once per shadow view);
   foundation-first (the punctual shadow-view math is pure/device-free). The image changes — the
   **golden is regenerated once**. Clustered light culling and cached/static shadow maps stay named
   next.
