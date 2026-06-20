@@ -184,7 +184,15 @@ A code comment states a fact about the code as it is *now*. It does not narrate
 how the code got here or what is planned for it. The roadmap lives in `plans/`;
 git history records the evolution. Neither belongs in a comment.
 
-**Forbidden in comments:**
+There are **two tiers** of comment, and the rules below apply to both:
+
+- **Doc comments** sit on a *declaration* — a class/struct, a method or free
+  function, a field, an enum and its enumerators, a macro, a public type alias.
+  They are **Doxygen** (see below) and describe the API contract for a caller.
+- **Inline comments** sit *inside* a function body. They are plain `//` and give
+  the local *why* — never a restatement of what the next line does.
+
+**Forbidden in either tier:**
 - **Plan/planset citations.** No `(plan 09)`, `(planset-5/05)`, `(plan 08b)`,
   "the acceptance chain from planset-1/08", "decided in the API rework, plan 07",
   "see plans/…". The reader of the code has no reason to care which plan landed
@@ -194,10 +202,29 @@ git history records the evolution. Neither belongs in a comment.
   "before 06-09 add real loaders", "this is not the current direction". If a
   limitation is real, state it as a present-tense fact ("veng is single-threaded;
   no synchronization is provided") with no promise about the future.
+- **Decorative version tags.** No `v1`/`v2` sprinkled into prose to mean "and a
+  later version will differ" ("the v1 reflection surface", "v1 flattens every
+  mesh"). Drop the tag and state what the code *is*. A version number that the
+  code actually checks — an on-disk format number rejected on mismatch — is a real
+  fact and stays; describe it as such.
 - **Historical narrative.** No "used to be special-cased inside Context",
   "ported from the planset-3 one-exe test", "the public API no longer exposes
   barriers", "extracted from Barrier.cpp", "this contradicts plan 01's
   assumption". Describe the current structure, not the refactor that produced it.
+  Beware `no longer` / `previously` / `used to` that contrast with an *older
+  version of the source* — cut them. (`previously`/`later` that refer to an
+  earlier/later moment in *program execution* — "clear any previously bound
+  pipeline", "a later graph pass" — are factual and stay.)
+- **Re-documenting the callee at a call site.** A comment at a *usage* site
+  explains why *this* code makes *this* call — the local decision, what this
+  app/test demonstrates, the constraint that forced it. It does **not** restate
+  the general behavior of the type or function being called; that documentation
+  lives on the declaration. Test: if you pasted the comment onto the callee's own
+  declaration, would it read as that callee's doc comment? If yes, it is
+  misplaced — replace it with the local reason, or delete it if the call is
+  self-explanatory. When one engine contract recurs at many call sites, document
+  it once and reference it (or say nothing) at the rest, rather than restating it
+  each time.
 
 **Encouraged:** comments that give the *factual reason* a piece of code is
 unusual, surprising, or deliberately restricted — stated plainly, without the
@@ -210,6 +237,39 @@ arrived at it*.
 The test: if a sentence would still be true and useful to someone who has never
 seen the roadmap and does not care about the project's history, keep it.
 Otherwise cut it.
+
+#### Doc comments are Doxygen, and the API is fully documented
+
+Every declaration in a **public header** (`engine/include/Veng/`, and the public
+headers of `assetpack`/`cooker`/`editor`) carries a Doxygen doc comment — the
+surface is documented end to end so a doc generator produces a complete reference.
+Internal headers (`*/src/`) document every non-trivial declaration; a truly
+self-evident private helper may go without.
+
+The house Doxygen style:
+- **`///` line comments**, not `/** … */`. Tags are `@`-prefixed (`@brief`), not
+  `\`-prefixed.
+- **First line is `@brief`** — one sentence, the summary a doc index shows. Then a
+  blank `///` line, then any detailed description (the existing rationale prose
+  lives here, unchanged in spirit, still bound by the rules above).
+- **Document the contract:** `@param` per parameter, `@tparam` per template
+  parameter, `@return` for a non-void return, `@pre`/`@post` for ordering or state
+  requirements, `@warning` for a footgun, `@see` to cross-reference. A `@param` is
+  not mandatory when the brief already says everything (a one-arg setter); use
+  judgment — the goal is a complete, non-redundant reference, not boilerplate.
+- A field/enumerator doc may be a trailing `///<` on the same line when it is
+  short.
+
+```cpp
+/// @brief Stages and copies data into the image, blocking until the copy completes.
+///
+/// Runs the host memcpy + WaitIdle path, not the async transfer queue. Used by the
+/// sync loaders, tests, and the smoke render; prefer Upload() off the render thread.
+/// @param commandBuffer  Command buffer the copy is recorded into.
+/// @param data           Source pixels, in the image's format.
+/// @pre The image was created with ImageUsage::TransferDst.
+void UploadSync(CommandBuffer& commandBuffer, std::span<const std::byte> data);
+```
 
 ### Resource ownership & lifetime
 
