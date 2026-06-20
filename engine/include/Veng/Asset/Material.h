@@ -81,7 +81,11 @@ namespace Veng
         vector<std::byte> Block;
         /// @brief Reflected field table describing the parameter block layout.
         vector<MaterialField> Fields;
-        /// @brief Push-constant offset of the per-draw material selector.
+        /// @brief Push-constant offset of the per-draw material selector, or NoSelectorPush.
+        ///
+        /// A PostProcess material pushes its selector at offset 0. A Surface material reads its
+        /// material index from the per-draw DrawData SSBO (indexed by the candidate id), not a
+        /// push, so it carries NoSelectorPush and Bind() pushes nothing.
         u32 SelectorOffset = 0;
     };
 
@@ -95,6 +99,9 @@ namespace Veng
     class Material
     {
     public:
+        /// @brief SelectorOffset sentinel: the material pushes no selector (it reads its index from the DrawData SSBO).
+        static constexpr u32 NoSelectorPush = ~0u;
+
         /// @brief Creates a Material from the given info.
         static Ref<Material> Create(const MaterialInfo& info)
         {
@@ -121,7 +128,15 @@ namespace Veng
         ///
         /// Set 0 (the bindless registry) must already be bound for the frame. Issue mesh draws
         /// after this call. A PostProcess material has no owned pipeline; only the selector is pushed.
+        /// A Surface material pushes nothing — it reads its index from the per-draw DrawData SSBO.
         void Bind(Renderer::CommandBuffer& cmd) const;
+
+        /// @brief Returns the frame-folded material selector (GetCurrentFrameBase() + slot index).
+        ///
+        /// The value the shader uses to index the ring-buffered per-material parameter block. A
+        /// Surface material's geometry pass writes this into each per-draw DrawData record instead
+        /// of pushing it; it changes per frame-in-flight, so read it at record time.
+        [[nodiscard]] u32 GetMaterialSelector() const;
 
         /// @brief Sets the texture for a named handle field and rewrites the SSBO entry in place.
         void SetTexture(std::string_view name, AssetHandle<Texture> texture);

@@ -2935,4 +2935,170 @@ TEST_CASE_FIXTURE(
 
 #endif // GPU_POSTPROCESS_FIXTURE_DIR
 
+// The occlusion guard — the byte-identical golden proves the GPU frustum survivors equal
+// the CPU's, but says nothing about whether occlusion drops a hidden draw. This drives
+// CullMode::GPU directly over purpose-built scenes:
+//   (a) the GPU survivor set equals the CPU SceneBroadphase::Cull set on a frustum-only
+//       frame (occlusion OFF) — catching a CPU/GPU divergence the golden cannot;
+//   (b) with occlusion ON, a mesh fully behind a screen-filling occluder drops — the GPU
+//       survivor count falls and the hidden mesh's indirect command carries instanceCount 0.
+// Both need the brick material so the meshes become real draw slots; the draw-count case
+// runs >=2 frames at a fixed pose (frame 0 builds the pyramid history-invalid → frustum-only,
+// frame 1 tests against it).
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "scene renderer: GPU cull — survivor set matches CPU cull; occlusion drops a hidden draw")
+{
+    if (!Context.IsGpuDrivenCullingSupported())
+    {
+        MESSAGE("GPU-driven culling unsupported on this device; skipping");
+        return;
+    }
+
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_cull.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.0f, *material), "Cull Cube");
+
+    constexpr uvec2 extent{128, 128};
+
+    auto RenderGpu = [&](SceneRenderer& renderer, const Scene& scene, const Camera& camera)
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer.Execute(
+                    cmd, Renderer::SceneView{.World = scene, .Camera = camera, .Delta = 0.0f});
+            });
+    };
+
+    SUBCASE("frustum-only (occlusion off): GPU survivor set equals the CPU Cull set")
+    {
+        const Unique<Scene> scene = Scene::Create(Types);
+        AddCubeAt(*scene, assets, cube, vec3(-2.0f, 0.0f, 0.0f));   // in view
+        AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, 0.0f));    // in view
+        AddCubeAt(*scene, assets, cube, vec3(2.0f, 0.0f, 0.0f));    // in view
+        AddCubeAt(*scene, assets, cube, vec3(1000.0f, 0.0f, 0.0f)); // off-frustum
+
+        Camera camera;
+        camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+        camera.SetView(vec3(0.0f, 0.0f, 8.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+        const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = extent,
+            .Settings = {.Mode = DebugView::Albedo,
+                         .Cull = SceneRendererSettings::CullMode::GPU,
+                         .Occlusion = false},
+        });
+        REQUIRE(renderer->GetActiveCullMode() == SceneRendererSettings::CullMode::GPU);
+
+        RenderGpu(*renderer, *scene, camera);
+
+        // The CPU cull set for the same frustum: the per-submesh survivors.
+        AABB sceneBounds = AABB::Empty();
+        vector<VisibleMesh> gathered;
+        GatherMeshes(*scene, gathered, sceneBounds);
+        const Frustum cameraFrustum = Frustum::FromViewProjection(camera.ViewProjection());
+        u32 cpuSurvivors = 0;
+        for (const VisibleMesh& item : gathered)
+        {
+            if (Intersects(cameraFrustum, item.WorldBounds))
+            {
+                ++cpuSurvivors;
+            }
+        }
+        REQUIRE(cpuSurvivors == 3); // the three in-view cubes
+
+        // The GPU wrote instanceCount 1 for every uploaded survivor (occlusion off), so the
+        // survivor set equals the CPU Cull set: same count, every flag 1.
+        const vector<u32> flags = renderer->ReadbackGpuSurvivorFlags();
+        REQUIRE(flags.size() == cpuSurvivors);
+        u32 gpuSurvivors = 0;
+        for (const u32 f : flags)
+        {
+            CHECK(f == 1u);
+            gpuSurvivors += f;
+        }
+        CHECK(gpuSurvivors == cpuSurvivors);
+    }
+
+    SUBCASE("occlusion on: a mesh behind a screen-filling occluder drops its draw")
+    {
+        const Unique<Scene> scene = Scene::Create(Types);
+        // A large occluder between the camera and a small cube far behind it on the same
+        // axis, sized to fill the screen so the cube's whole footprint is behind it.
+        const Ref<Mesh> occluder =
+            Mesh::Create(Context, Primitives::Cube(10.0f, *material), "Occluder");
+        const Entity occluderEntity = scene->CreateEntity();
+        scene->Add<Transform>(occluderEntity).Position = vec3(0.0f, 0.0f, 0.0f);
+        scene->Add<MeshRenderer>(occluderEntity).Mesh = assets.Adopt(occluder);
+
+        const Entity hiddenEntity = AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, -20.0f));
+        (void)hiddenEntity;
+
+        Camera camera;
+        camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+        camera.SetView(vec3(0.0f, 0.0f, 12.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+        // Occlusion off baseline: both cubes are camera-frustum survivors and draw.
+        const Unique<SceneRenderer> rendererOff = SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = extent,
+            .Settings = {.Mode = DebugView::Albedo,
+                         .Cull = SceneRendererSettings::CullMode::GPU,
+                         .Occlusion = false},
+        });
+        // Two frames at a fixed pose: the count is read back one frame late.
+        RenderGpu(*rendererOff, *scene, camera);
+        RenderGpu(*rendererOff, *scene, camera);
+        const u32 survivorsOcclusionOff = rendererOff->GetLastGpuSurvivorCount();
+        CHECK(survivorsOcclusionOff == 2);
+
+        // Occlusion on: frame 0 builds the pyramid (history-invalid → frustum-only), frame 1
+        // tests the hidden cube against it and drops it.
+        const Unique<SceneRenderer> rendererOn = SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = extent,
+            .Settings = {.Mode = DebugView::Albedo,
+                         .Cull = SceneRendererSettings::CullMode::GPU,
+                         .Occlusion = true},
+        });
+        RenderGpu(*rendererOn, *scene, camera); // frame 0: builds pyramid, draws both
+        RenderGpu(*rendererOn, *scene, camera); // frame 1: occludes the hidden cube
+        RenderGpu(*rendererOn, *scene, camera); // frame 2: stat reflects frame 1's cull
+
+        // Strictly fewer survivors with occlusion on — the hidden cube was dropped.
+        const u32 survivorsOcclusionOn = rendererOn->GetLastGpuSurvivorCount();
+        CHECK(survivorsOcclusionOn < survivorsOcclusionOff);
+        CHECK(survivorsOcclusionOn == 1); // only the occluder survives
+
+        // Exactly one uploaded candidate's command carries instanceCount 0 (the hidden cube).
+        const vector<u32> flags = rendererOn->ReadbackGpuSurvivorFlags();
+        REQUIRE(flags.size() == 2);
+        u32 drawn = 0;
+        u32 dropped = 0;
+        for (const u32 f : flags)
+        {
+            drawn += (f == 1u) ? 1u : 0u;
+            dropped += (f == 0u) ? 1u : 0u;
+        }
+        CHECK(drawn == 1);
+        CHECK(dropped == 1);
+    }
+
+    std::filesystem::remove(outArchive);
+}
+
 #endif // GPU_GBUFFER_FIXTURE_DIR

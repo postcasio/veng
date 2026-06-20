@@ -48,18 +48,18 @@ namespace Veng::Renderer
         }
 
         vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
-        vk::VertexInputBindingDescription bindingDescription;
+        vector<vk::VertexInputBindingDescription> bindingDescriptions;
         vector<vk::VertexInputAttributeDescription> attributeDescriptions;
 
         if (info.VertexBufferLayout.has_value())
         {
             auto& vertexBufferLayout = info.VertexBufferLayout.value();
 
-            bindingDescription = {
+            bindingDescriptions.push_back({
                 .binding = 0,
                 .stride = vertexBufferLayout.GetStride(),
                 .inputRate = vk::VertexInputRate::eVertex,
-            };
+            });
 
             auto& elements = vertexBufferLayout.GetElements();
 
@@ -67,19 +67,35 @@ namespace Veng::Renderer
             {
                 auto& element = elements[i];
 
-                const vk::VertexInputAttributeDescription attributeDescription = {
+                attributeDescriptions.push_back({
                     .location = i,
                     .binding = 0,
                     .format = ToVk(element.Type),
                     .offset = element.Offset,
-                };
+                });
+            }
 
-                attributeDescriptions.push_back(attributeDescription);
+            // The instance-rate candidate id: binding 1, one uint per instance, at the
+            // attribute location after the per-vertex attributes. The surface vertex
+            // stage reads it at the draw's firstInstance to index its DrawData record.
+            if (info.InstanceCandidateId)
+            {
+                bindingDescriptions.push_back({
+                    .binding = 1,
+                    .stride = sizeof(u32),
+                    .inputRate = vk::VertexInputRate::eInstance,
+                });
+                attributeDescriptions.push_back({
+                    .location = static_cast<u32>(elements.size()),
+                    .binding = 1,
+                    .format = vk::Format::eR32Uint,
+                    .offset = 0,
+                });
             }
 
             vertexInputInfo = {
-                .vertexBindingDescriptionCount = 1,
-                .pVertexBindingDescriptions = &bindingDescription,
+                .vertexBindingDescriptionCount = static_cast<u32>(bindingDescriptions.size()),
+                .pVertexBindingDescriptions = bindingDescriptions.data(),
                 .vertexAttributeDescriptionCount = static_cast<u32>(attributeDescriptions.size()),
                 .pVertexAttributeDescriptions = attributeDescriptions.data(),
             };

@@ -395,6 +395,12 @@ namespace Veng::Cook
                 };
                 vector<ReflectedInput> reflectedInputs;
 
+                // The engine injects an instance-rate candidate-id input (a_CandidateId, a
+                // uint on a separate vertex binding) into every surface pipeline for the
+                // GPU-driven cull; it is not part of the per-vertex layout, so it is excluded
+                // from the float-only check and the layout element-for-element validation.
+                constexpr std::string_view InstanceCandidateInputName = "a_CandidateId";
+
                 for (unsigned i = 0; i < entryPointLayout->getParameterCount(); ++i)
                 {
                     slang::VariableLayoutReflection* param =
@@ -410,6 +416,11 @@ namespace Veng::Cook
                         for (unsigned f = 0; f < typeLayout->getFieldCount(); ++f)
                         {
                             slang::VariableLayoutReflection* field = typeLayout->getFieldByIndex(f);
+                            if (field->getName() != nullptr &&
+                                field->getName() == InstanceCandidateInputName)
+                            {
+                                continue;
+                            }
                             const Result<u32> format = MapVertexInputFormat(
                                 field->getType(), field->getName(), sourcePath, entryName);
                             if (!format)
@@ -422,6 +433,11 @@ namespace Veng::Cook
                     }
                     else
                     {
+                        if (param->getName() != nullptr &&
+                            param->getName() == InstanceCandidateInputName)
+                        {
+                            continue;
+                        }
                         const Result<u32> format = MapVertexInputFormat(
                             param->getType(), param->getName(), sourcePath, entryName);
                         if (!format)

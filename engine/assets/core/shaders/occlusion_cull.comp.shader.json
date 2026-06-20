@@ -1,0 +1,4 @@
+{
+  "source": "occlusion_cull.comp.slang",
+  "entry": "csMain"
+}
