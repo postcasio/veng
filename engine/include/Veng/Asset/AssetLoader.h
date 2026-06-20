@@ -8,11 +8,6 @@
 
 #include <span>
 
-// The engine-side loader table: one AssetLoader per
-// AssetType, registered into AssetManager and dispatched from Load/LoadSync.
-// This is the only place a type touches Context — mirrors how the cooker keeps
-// its GPU-free Cook() separate (Veng::Cook::AssetImporter).
-
 namespace Veng::Renderer
 {
     class Context;
@@ -26,51 +21,54 @@ namespace Veng
 
     namespace Detail
     {
-        // The two-phase result a loader hands back. The "worker phase"
-        // (create + record upload + resolve dependencies) has run; the
-        // main-thread "finalize phase" (registration into the bindless registry,
-        // index patching, pipeline build) is deferred into Finalize so the async
-        // path can run it on the render-thread continuation.
+        /// @brief Two-phase load result returned by AssetLoader::Load.
+        ///
+        /// The worker phase (create + record upload + resolve dependencies) has run;
+        /// the main-thread finalize phase (bindless registration, index patching,
+        /// pipeline build) is deferred into Finalize so the async path can run it
+        /// on the render-thread continuation.
         struct LoadJob
         {
-            // The created-but-unregistered resource (type-erased; AssetHandle<T>
-            // downcasts it). Swapped into the cache entry once finalized.
+            /// @brief The created-but-unregistered resource (type-erased; AssetHandle<T> downcasts it).
+            ///
+            /// Swapped into the cache entry once Finalize completes.
             RefAny Resource;
 
-            // Dependency cache entries this asset's Finalize requires resident
-            // and finalized first (a material's textures + shaders). Empty for a
-            // leaf asset. Keeps the dependencies alive until Finalize runs.
+            /// @brief Dependency cache entries this asset's Finalize requires resident and finalized first.
+            ///
+            /// Empty for leaf assets (Raw/Mesh/Shader/VertexLayout). Keeps dependencies alive until Finalize runs.
             vector<Ref<AssetCacheEntry>> Dependencies;
 
-            // Main-thread finalize: register into the bindless registry, patch
-            // resolved indices, build the GPU pipeline, etc. Null if the asset
-            // needs no finalize (Raw/Mesh/Shader/VertexLayout). Runs once every
-            // Dependencies entry is resident (finalized). Returns a VoidResult so
-            // a deferred failure (e.g. a corrupt material the pipeline build
-            // rejects) surfaces as an AssetLoadError on the sync path.
+            /// @brief Main-thread finalize callback: register into the bindless registry, patch indices, build pipelines.
+            ///
+            /// Null when the asset needs no finalize step. Runs once every Dependencies entry is resident.
+            /// Returns VoidResult so a deferred failure surfaces as an AssetLoadError on the sync path.
             function<VoidResult()> Finalize;
         };
     }
 
+    /// @brief Per-type cooked-blob loader, registered into AssetManager and dispatched from Load/LoadSync.
     class AssetLoader
     {
     public:
         virtual ~AssetLoader() = default;
 
+        /// @brief Returns the AssetType this loader handles.
         [[nodiscard]] virtual AssetType Type() const = 0;
 
-        // Cooked blob (assetpack layout) -> a LoadJob: the created, unregistered
-        // engine resource plus its main-thread Finalize and dependency set. When
-        // async is true the loader records GPU uploads through the task system
-        // (no device wait) and resolves dependencies via manager.Load; when
-        // false it uploads through the blocking UploadSync path and resolves
-        // dependencies via manager.LoadSync. A MissingDependency surfaces as an
-        // AssetLoadError, not a crash.
-        //
-        // `types` is the engine-owned TypeRegistry threaded through the
-        // AssetManager; the prefab loader reflects a component's fields against it
-        // to surface embedded AssetHandle ids as dependencies. Every other loader
-        // ignores it.
+        /// @brief Decodes a cooked blob into a LoadJob containing the unregistered resource and its finalize step.
+        ///
+        /// When async is true the loader records GPU uploads through the task system (no device wait) and
+        /// resolves dependencies via manager.Load; when false it uses the blocking UploadSync path and
+        /// manager.LoadSync. A MissingDependency surfaces as an AssetLoadError, not a crash.
+        ///
+        /// @param manager  The owning AssetManager (dependency resolution).
+        /// @param context  The render context (GPU resource creation).
+        /// @param tasks    The task system (async upload recording).
+        /// @param types    The engine TypeRegistry; used by the prefab loader to surface embedded AssetHandle dependencies.
+        /// @param id       The asset being loaded.
+        /// @param cooked   The cooked blob bytes from the archive.
+        /// @param async    True to record uploads asynchronously; false for the blocking sync path.
         [[nodiscard]] virtual AssetResult<Detail::LoadJob> Load(
             AssetManager& manager, Renderer::Context& context, TaskSystem& tasks,
             TypeRegistry& types, AssetId id, std::span<const u8> cooked, bool async) const = 0;

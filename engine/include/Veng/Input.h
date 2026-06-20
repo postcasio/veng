@@ -2,11 +2,12 @@
 
 #include <Veng/Veng.h>
 
-// Engine-owned input vocabulary so consumers don't include GLFW. The
-// enumerator values are GLFW-compatible, so the backend mapping in Window.cpp
-// is a direct cast.
 namespace Veng
 {
+    /// @brief Keyboard key codes.
+    ///
+    /// Engine-owned so consumers need not include GLFW. Values are GLFW-compatible;
+    /// the backend mapping in Window.cpp is a direct cast.
     enum class Key : u16
     {
         Space = 32,
@@ -26,6 +27,7 @@ namespace Veng
         RightShift = 344, RightControl = 345, RightAlt = 346, RightSuper = 347,
     };
 
+    /// @brief Mouse button codes; values match GLFW constants.
     enum class MouseButton : u8
     {
         Left = 0, Right = 1, Middle = 2,

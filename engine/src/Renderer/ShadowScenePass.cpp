@@ -189,8 +189,6 @@ namespace Veng::Renderer
                         }
                     };
 
-                    // Query the broadphase against this cascade's light frustum;
-                    // with culling off, all candidates are drawn for every cascade.
                     if (m_FrustumCull)
                     {
                         m_CullScratch.clear();

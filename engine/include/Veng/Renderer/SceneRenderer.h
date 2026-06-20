@@ -16,15 +16,18 @@
 
 #include <span>
 
-// A long-lived, configurable render pipeline that owns an offscreen target,
-// renders a Scene from a Camera through an internal compiled RenderGraph composed
-// of reusable ScenePass units, and hands back a sampleable result.
-//
-// Its surface is a lifetime split keyed on how often each piece of state changes:
-// Create allocates persistent resources and compiles the graph; Resize recreates
-// extent-sized resources and recompiles; Configure recreates affected resources
-// and recompiles topology; Execute replays the graph against a per-frame SceneView
-// and never reallocates or recompiles; GetOutput returns the owned result.
+/// @brief Long-lived, configurable deferred render pipeline.
+///
+/// Owns an offscreen target, renders a Scene from a Camera through an internal
+/// compiled RenderGraph composed of reusable ScenePass units, and hands back a
+/// sampleable result.
+///
+/// Surface lifetime split by how often each piece of state changes:
+/// - Create: allocate persistent resources and compile the graph.
+/// - Resize: recreate extent-sized resources and recompile.
+/// - Configure: recreate affected resources and recompile topology.
+/// - Execute: replay the graph per frame — no reallocation or recompile.
+/// - GetOutput: return the owned sampleable result.
 namespace Veng
 {
     class Scene;
@@ -45,240 +48,288 @@ namespace Veng::Renderer
     class DescriptorSet;
     class DescriptorSetLayout;
 
-    // The maximum number of shadow-casting point/spot lights. The first N shadow-casting
-    // punctual lights (by the per-frame selection) get a shadow map; the rest light
-    // unshadowed, as all punctual lights do today. Small by design: a point light costs
-    // six cube-face redraws of its caster set, so N bounds the punctual shadow atlas and
-    // the lighting loop's sample set at 6N depth tiles / sample faces.
+    /// @brief Maximum number of simultaneously shadowed point/spot lights.
+    ///
+    /// The first N shadow-casting punctual lights (by per-frame selection) receive a
+    /// shadow map; the rest are lit without shadows. A point light costs six cube-face
+    /// redraws of its caster set, so N bounds the punctual shadow atlas and the lighting
+    /// loop's sample set at 6N depth tiles.
     inline constexpr u32 MaxShadowedPunctual = 4;
 
-    // One shadowed punctual light's GPU record. glm-only — no backend types — so it
-    // rides a public header; its layout is std140/std430-identical to the shader's
-    // PunctualShadowRecord, so the same struct serves a uniform or an SSBO binding.
+    /// @brief Per-shadowed-light GPU record uploaded to set 1 binding 3.
+    ///
+    /// glm-only — no backend types — so it lives in a public header. Its layout is
+    /// std140/std430-identical to the shader's PunctualShadowRecord, so the same struct
+    /// serves a uniform or SSBO binding.
     struct PunctualShadowRecord
     {
-        // The world → light-clip transforms with the atlas tile-remap baked in: [0]
-        // for a spot's single perspective view, [0..5] for a point's six cube faces
-        // (in CubeFace order). A lit fragment projected by ViewProj[f] lands in this
-        // light's atlas tile f, so the lighting pass samples the right tile by
-        // construction, exactly as a cascade tile does.
-        mat4 ViewProj[CubeFaceCount];      // 384
-        // xyz the light's world position (the cube-face select + linearize), w its
-        // range (the falloff radius the depth pass projects to).
-        vec4 PositionRange;                // 16
-        // x type (1 point / 2 spot; 0 = no map, the zeroed/unused slot), y near,
-        // z far, w depth bias.
-        vec4 Params;                       // 16
-    };                                     // 416
+        /// @brief World → light-clip transforms with atlas tile-remap baked in (384 bytes).
+        ///
+        /// [0] for a spot's single perspective view; [0..5] for a point's six cube faces
+        /// in CubeFace order. A lit fragment projected by ViewProj[f] lands in this
+        /// light's atlas tile f, so the lighting pass samples the correct tile.
+        mat4 ViewProj[CubeFaceCount];
 
-    // Which result the renderer produces, re-wiring the pass set: Final is the full
-    // deferred chain (g-buffer → lighting → tonemap), the others terminate the chain
-    // after the g-buffer (and, for AO/Shadows, the producing battery pass) with a
-    // single fullscreen debug blit of one channel/target. Changing it is a genuine
-    // topology change driven through Configure → recompile.
-    //
-    // Roughness/Metallic/Occlusion read the packed G2 ORM channels (R=occlusion,
-    // G=roughness, B=metallic). AO reads the SSAO target and Shadows the directional
-    // shadow map; the producing pass is force-wired in those modes so the channel is
-    // always present regardless of the Settings.AO / Settings.Shadows toggle.
-    // Cascades tints each fragment by the shadow cascade its view-space depth selects
-    // (0 red, 1 green, 2 blue, 3 yellow), force-wiring the shadow pass so the cascade
-    // constants are present — pinning cascade selection, not just shadow presence.
-    // PunctualShadows blits the punctual shadow atlas (raw depth, through an ordinary
-    // sampler), force-wiring the punctual shadow pass so its produced map is present.
+        /// @brief World position (xyz) and falloff range (w) (16 bytes).
+        ///
+        /// xyz is the light's world position for cube-face selection and depth
+        /// linearization; w is the range the depth pass projects to.
+        vec4 PositionRange;
+
+        /// @brief Type (x), near (y), far (z), depth bias (w) (16 bytes).
+        ///
+        /// x encodes the light type: 1 = point, 2 = spot, 0 = unused/zeroed slot.
+        vec4 Params;
+    };
+
+    /// @brief Selects which result the renderer produces, re-wiring the pass set.
+    ///
+    /// Final is the full deferred chain (g-buffer → lighting → tonemap). All other
+    /// values terminate the chain after the g-buffer with a single fullscreen debug blit
+    /// of one channel or target. A change here is a topology change driven through
+    /// Configure → recompile.
+    ///
+    /// Roughness/Metallic/Occlusion read the packed G2 ORM channels (R=occlusion,
+    /// G=roughness, B=metallic). AO reads the SSAO target and Shadows the directional
+    /// shadow map; the producing pass is force-wired in those modes regardless of the
+    /// Settings.AO / Settings.Shadows toggle. Cascades tints each fragment by the
+    /// cascade its view-space depth selects (0 red, 1 green, 2 blue, 3 yellow),
+    /// force-wiring the shadow pass so cascade constants are present. PunctualShadows
+    /// blits the punctual shadow atlas (raw depth), force-wiring the punctual shadow pass.
     enum class DebugView : u8
     {
+        /// @brief Full deferred pipeline output.
         Final,
-        Albedo, Normal, Depth,
-        Roughness, Metallic, Occlusion,
+        /// @brief G0 base color channel.
+        Albedo,
+        /// @brief G1 world-space normal channel.
+        Normal,
+        /// @brief Depth buffer visualized as a linear grey scale.
+        Depth,
+        /// @brief G2 roughness channel (green).
+        Roughness,
+        /// @brief G2 metallic channel (blue).
+        Metallic,
+        /// @brief G2 ambient occlusion channel (red).
+        Occlusion,
+        /// @brief SSAO target (force-wires the SSAO pass).
         AO,
+        /// @brief Directional shadow atlas raw depth (force-wires the shadow pass).
         Shadows,
+        /// @brief Per-fragment cascade tint (force-wires the shadow pass).
         Cascades,
+        /// @brief Punctual shadow atlas raw depth (force-wires the punctual shadow pass).
         PunctualShadows,
     };
 
-    // Topology/sizing knobs. A change here is a Configure → recompile: a knob that
-    // turns a pass on/off or re-wires the pass set lives here, not in SceneView.
+    /// @brief Topology and sizing knobs for SceneRenderer.
+    ///
+    /// A change to any field here is a Configure → recompile. Knobs that turn a pass
+    /// on/off or re-wire the pass set live here; per-frame values belong on SceneView.
     struct SceneRendererSettings
     {
-        // Re-wires the pass set (a topology change → Configure → recompile).
+        /// @brief Selects which result the renderer produces; re-wires the pass set on change.
         DebugView Mode = DebugView::Final;
 
-        // The tonemap pass's exposure scale, applied before the tone curve. A
-        // recompile-safe value (it never changes topology) kept a setting so the
-        // Settings surface is exercised; a purely per-frame knob could instead ride
-        // SceneView (the per-frame-vs-recompile distinction).
+        /// @brief Exposure scale applied before the tone curve.
+        ///
+        /// Recompile-safe: it never changes topology, so it could ride SceneView, but
+        /// lives here to exercise the Settings surface.
         f32 Exposure = 1.0f;
 
-        // Whether the bloom post chain runs ahead of tonemap. A topology change: it
-        // inserts/removes the four bloom stages (bright-pass → blur H → blur V →
-        // composite), so it drives a Configure → recompile. The bloom Threshold and
-        // Intensity are per-frame values on SceneView, not settings — they tune the
-        // effect without a recompile, the split the plumbing-vs-effect line draws.
+        /// @brief Whether the bloom post chain runs ahead of tonemap.
+        ///
+        /// A topology change: it inserts/removes the four bloom stages (bright-pass →
+        /// blur H → blur V → composite). BloomThreshold and BloomIntensity are
+        /// per-frame values on SceneView and do not trigger a recompile.
         bool Bloom = true;
 
-        // Whether the directional light casts a shadow. A topology change: it
-        // inserts/removes the depth-only ShadowScenePass and the lighting pass's
-        // shadow sample, so it drives a Configure → recompile. With it off the
-        // lighting pass reads full visibility for the directional term.
+        /// @brief Whether the directional light casts a shadow.
+        ///
+        /// A topology change: it inserts/removes the depth-only ShadowScenePass and the
+        /// lighting pass's shadow sample. When off, the lighting pass reads full
+        /// visibility for the directional term.
         bool Shadows = true;
 
-        // Whether the bounded set of point/spot lights cast shadows. A topology
-        // change: it inserts/removes the depth-only PunctualShadowScenePass and the
-        // lighting pass's per-light punctual sample, so it drives a Configure →
-        // recompile. With it off the per-light selection writes slot -1 to every
-        // light, so the lighting pass reads full visibility for every punctual term.
-        // MaxShadowedPunctual caps how many punctual lights are shadowed when it is on.
+        /// @brief Whether the bounded set of point/spot lights cast shadows.
+        ///
+        /// A topology change: it inserts/removes the depth-only PunctualShadowScenePass
+        /// and the lighting pass's per-light sample. When off, the per-light selection
+        /// writes slot -1 to every light and the lighting pass reads full visibility for
+        /// every punctual term. MaxShadowedPunctual caps the number of shadowed lights
+        /// when enabled.
         bool PunctualShadows = true;
 
-        // The per-cascade shadow tile edge length in texels. Sizing: changing it
-        // recreates the shadow atlas (through the deferred retire path) and
-        // recompiles. A higher value sharpens the shadow at a memory/fill cost.
-        // A default 4-cascade atlas is then 2048² — the same footprint as a single
-        // 2048 map.
+        /// @brief Per-cascade shadow tile edge length in texels.
+        ///
+        /// Changing this recreates the shadow atlas and recompiles. A default 4-cascade
+        /// atlas at 1024 is 2048² — the same footprint as a single 2048 map. Values
+        /// above GetMaxShadowResolution() are clamped before any atlas is sized.
         u32 ShadowResolution = 1024;
 
-        // The per-tile edge length in texels of the punctual shadow atlas (a spot's
-        // single tile, a point's six cube-face tiles). Sizing: changing it recreates
-        // the punctual atlas (through the deferred retire path) and recompiles. The
-        // atlas is then MaxShadowedPunctual·CubeFaceCount tiles of this resolution.
+        /// @brief Per-tile edge length in texels of the punctual shadow atlas.
+        ///
+        /// A spot uses one tile; a point uses six cube-face tiles. Changing this recreates
+        /// the punctual atlas and recompiles. The atlas is MaxShadowedPunctual·CubeFaceCount
+        /// tiles of this resolution. Values above GetMaxPunctualShadowResolution() are
+        /// clamped.
         u32 PunctualShadowResolution = 1024;
 
-        // The number of shadow cascades the directional light splits its frustum
-        // into, clamped to [1, MaxCascades]. Sizing: it sizes the atlas tile grid
-        // (min(Count,2)×ceil(Count/2)), so it recreates the atlas and recompiles.
+        /// @brief Number of shadow cascades the directional light's frustum is split into.
+        ///
+        /// Clamped to [1, MaxCascades]. Sizing: it sizes the atlas tile grid
+        /// (min(Count,2)×ceil(Count/2)), so it recreates the atlas and recompiles.
         u32 CascadeCount = MaxCascades;
 
-        // The PSSM split blend (0 = uniform splits, 1 = logarithmic). A
-        // recompile-safe per-frame value — it changes the cascade fit, not the
-        // atlas size or pass topology.
+        /// @brief PSSM split blend factor (0 = uniform splits, 1 = logarithmic).
+        ///
+        /// Recompile-safe: it changes the cascade fit, not the atlas size or topology.
         f32 CascadeSplitLambda = 0.85f;
 
-        // Whether the screen-space ambient occlusion pass runs. A topology change:
-        // it inserts/removes the fullscreen SsaoScenePass and selects the lighting
-        // pipeline variant that folds the AO target into its ambient term (vs the
-        // baked-occlusion-only variant), so it drives a Configure → recompile. SSAO
-        // modulates the ambient/indirect term only; the radius/intensity/bias are
-        // fixed kernel constants in the SSAO shader.
+        /// @brief Whether the screen-space ambient occlusion pass runs.
+        ///
+        /// A topology change: it inserts/removes the fullscreen SsaoScenePass and
+        /// selects the lighting pipeline variant that folds the AO target into the
+        /// ambient term. SSAO modulates the ambient/indirect term only; kernel constants
+        /// (radius/intensity/bias) are fixed in the SSAO shader.
         bool AO = true;
 
-        // Whether the scene passes cull by frustum. The g-buffer pass tests each
-        // mesh's world bound against the camera frustum; the shadow pass tests it
-        // against each cascade's light frustum. Off → both record every resident
-        // mesh. The passes capture it in Configure, so a toggle drives a recompile —
-        // topology-neutral (the same passes record fewer draws), so the rebuild is a
-        // no-op beyond re-declaring; it still invalidates GetOutput() like any
-        // Configure.
+        /// @brief Whether scene passes cull by frustum.
+        ///
+        /// The g-buffer pass tests each mesh's world bound against the camera frustum;
+        /// the shadow pass tests it against each cascade's light frustum. When off both
+        /// record every resident mesh. A toggle drives a recompile (the same passes
+        /// record fewer draws), so it still invalidates GetOutput() like any Configure.
         bool FrustumCull = true;
     };
 
+    /// @brief Construction parameters for SceneRenderer.
     struct SceneRendererInfo
     {
+        /// @brief The Vulkan context for resource creation.
         Context& Context;
-        // The renderer's passes load their engine shaders (the fullscreen blit,
-        // the lighting pass) from the core pack through this manager; it must
-        // outlive the renderer.
+        /// @brief Asset manager used to load engine shaders (lighting pass, fullscreen blit).
+        ///
+        /// Must outlive the renderer.
         AssetManager& Assets;
-        Format OutputFormat = Format::Undefined; // a format, not a caller-owned target
+        /// @brief Pixel format of the owned output target.
+        Format OutputFormat = Format::Undefined;
+        /// @brief Initial render extent.
         uvec2 Extent = {};
+        /// @brief Initial topology and sizing knobs.
         SceneRendererSettings Settings;
     };
 
-    // Per-frame input. Not owned by the renderer and shared across N renderers:
-    // World/Camera are borrowed references. Fields are named for their role.
-    //
-    // The renderer reads the scene's lights itself: on every Execute it walks
-    // View<Transform, Light> up to MaxLights, packs each into the ring-buffered
-    // light buffer, and the lighting pass loops over the live count. A scene with
-    // no Light renders flat-ambient (the loop runs zero times).
+    /// @brief Per-frame input for SceneRenderer::Execute.
+    ///
+    /// Not owned by the renderer; World and Camera are borrowed references. The renderer
+    /// overwrites the output fields (LightCount, CascadeViewProj, etc.) on every Execute
+    /// — a caller's values in those fields are ignored.
+    ///
+    /// The renderer reads the scene's lights itself: on every Execute it walks
+    /// View<Transform, Light> up to MaxLights, packs each into the ring-buffered light
+    /// buffer, and the lighting pass loops over the live count. A scene with no Light
+    /// renders flat-ambient.
     struct SceneView
     {
+        /// @brief The scene to render.
         const Scene& World;
+        /// @brief The viewpoint to render from.
         const Camera& Camera;
+        /// @brief Frame delta time in seconds.
         f32 Delta = 0.0f;
 
-        // The live light count this frame, set by the renderer on every Execute
-        // (the number of (Transform, Light) entities it packed, capped at
-        // MaxLights). The lighting pass loops [0, LightCount). A caller's value is
-        // overwritten — the renderer owns this selection.
+        /// @brief Live light count this frame; set by the renderer on every Execute.
+        ///
+        /// The number of (Transform, Light) entities packed, capped at MaxLights. The
+        /// lighting pass loops [0, LightCount). A caller's value is overwritten.
         u32 LightCount = 0;
 
-        // The fixed cap on lights the renderer packs per frame; the lighting pass
-        // evaluates the full BRDF per light up to this count.
+        /// @brief Maximum number of lights the renderer packs per frame.
         static constexpr u32 MaxLights = BindlessRegistry::MaxLights;
 
-        // The bloom bright-pass luminance knee and the composite mix — per-frame
-        // values written into the bloom materials' ring-buffered param blocks each
-        // Execute (the same stall-free path Exposure uses). Tuning them never
-        // recompiles; only the Bloom on/off topology toggle does. Ignored when the
-        // bloom chain is inactive.
+        /// @brief Bloom bright-pass luminance knee; written into the bloom material's param block each Execute.
+        ///
+        /// Tuning this does not trigger a recompile. Ignored when the bloom chain is inactive.
         f32 BloomThreshold = 1.0f;
+        /// @brief Bloom composite mix intensity; written into the bloom material's param block each Execute.
+        ///
+        /// Tuning this does not trigger a recompile. Ignored when the bloom chain is inactive.
         f32 BloomIntensity = 1.0f;
 
-        // The per-cascade world → light-clip transforms this frame, computed by the
-        // renderer on every Execute from the first directional light (or identity
-        // when there is none). These are the RAW (non-tile-remapped) cascade
-        // matrices: the shadow pass renders cascade k with CascadeViewProj[k]
-        // pushed and the viewport placing it in its atlas tile. Only
-        // [0, CascadeCount) are valid. A caller's values are overwritten — the
-        // renderer owns this selection. (The lighting pass reads the tile-remapped
-        // matrices from the set-1 ShadowConstants buffer, not these.)
+        /// @brief RAW (non-tile-remapped) per-cascade world → light-clip transforms this frame.
+        ///
+        /// Computed by the renderer on every Execute from the first directional light (identity
+        /// when there is none). The shadow pass renders cascade k with CascadeViewProj[k] pushed
+        /// and the viewport placing it in its atlas tile. Only [0, CascadeCount) are valid. The
+        /// lighting pass reads the tile-remapped matrices from the set-1 ShadowConstants buffer.
+        /// A caller's values are overwritten.
         std::array<mat4, MaxCascades> CascadeViewProj{};
+        /// @brief Number of valid entries in CascadeViewProj; set by the renderer each Execute.
         u32 CascadeCount = 0;
 
-        // The shadowed punctual lights selected this frame (the first MaxShadowedPunctual
-        // shadow-casting point/spot lights). The punctual shadow pass renders each record's
-        // view(s) into the atlas; the lighting pass samples Records[slot]. PunctualShadowCount
-        // records are valid. A caller's values are overwritten by the renderer each Execute.
+        /// @brief Shadowed punctual lights selected this frame (the first MaxShadowedPunctual shadow-casting lights).
+        ///
+        /// The punctual shadow pass renders each record's views into the atlas; the lighting pass
+        /// samples Records[slot]. PunctualShadowCount records are valid. A caller's values are
+        /// overwritten by the renderer each Execute.
         std::array<PunctualShadowRecord, MaxShadowedPunctual> PunctualShadows{};
+        /// @brief Number of valid entries in PunctualShadows.
         u32 PunctualShadowCount = 0;
 
-        // The RAW (non-tile-remapped) per-record/per-face world → light-clip transforms
-        // this frame, parallel to PunctualShadows and computed by the renderer on every
-        // Execute (a spot fills [slot][0], a point [slot][0..5]). The punctual shadow
-        // pass renders each view with this raw matrix pushed and the viewport placing it
-        // in the record's atlas tile, and culls against the raw matrix's frustum — the
-        // light's own, not the tile-remapped one. The lighting pass instead samples the
-        // tile-remapped PunctualShadows[slot].ViewProj. Only [0, PunctualShadowCount) are
-        // valid; a caller's values are overwritten by the renderer each Execute.
+        /// @brief RAW (non-tile-remapped) per-record/per-face world → light-clip transforms this frame.
+        ///
+        /// Parallel to PunctualShadows; computed by the renderer on every Execute. A spot fills
+        /// [slot][0]; a point fills [slot][0..5]. The punctual shadow pass renders each view with
+        /// this raw matrix pushed and the viewport placing it in the record's atlas tile, and culls
+        /// against the raw (not tile-remapped) frustum. Only [0, PunctualShadowCount) are valid; a
+        /// caller's values are overwritten.
         std::array<std::array<mat4, CubeFaceCount>, MaxShadowedPunctual> PunctualShadowRawViewProj{};
 
-        // The frame's resident mesh candidates, set by the renderer on every Execute
-        // from the broadphase's cached candidate list. The g-buffer pass culls this
-        // span against the camera frustum; the shadow pass culls it against each
-        // cascade's light frustum. The renderer owns it — a caller's value is
-        // overwritten. It borrows broadphase-cached scratch valid only for the Execute
-        // that produced it.
+        /// @brief Resident mesh candidates for this frame; set by the renderer on every Execute.
+        ///
+        /// The g-buffer pass culls this span against the camera frustum; the shadow pass culls it
+        /// against each cascade's light frustum. Borrowed broadphase-cached scratch valid only for
+        /// the Execute that produced it. A caller's value is overwritten.
         std::span<const VisibleMesh> Visible;
 
-        // The renderer's broadphase, set on every Execute. A pass queries it (Cull)
-        // for the candidate indices its frustum touches; the returned ids index
-        // Visible. The renderer owns it — a caller's value is overwritten.
+        /// @brief The renderer's spatial broadphase; set on every Execute.
+        ///
+        /// A pass queries it (Cull) for the candidate indices its frustum touches; returned ids
+        /// index Visible. A caller's value is overwritten.
         const SceneBroadphase* Broadphase = nullptr;
     };
 
+    /// @brief Long-lived deferred render pipeline owning an offscreen target.
+    ///
+    /// Single-owner (Unique); Create is the factory. See the namespace-level doc
+    /// for the lifetime-split surface (Create/Resize/Configure/Execute/GetOutput).
     class SceneRenderer
     {
     public:
+        /// @brief Creates a SceneRenderer and compiles its initial render graph.
         static Unique<SceneRenderer> Create(const SceneRendererInfo& info);
+        /// @brief Destroys all owned resources through the deferred-destruction retire path.
         ~SceneRenderer();
 
         SceneRenderer(const SceneRenderer&) = delete;
         SceneRenderer& operator=(const SceneRenderer&) = delete;
 
-        // Recreate the extent-sized output through the deferred-destruction retire
-        // path and rebuild + recompile the internal graph. Invalidates the Ref a
-        // prior GetOutput() returned — a consumer caching a bindless TextureHandle
-        // or ImGui texture from it must re-fetch and re-register after this.
+        /// @brief Recreates the extent-sized output and recompiles the internal graph.
+        ///
+        /// Invalidates the Ref a prior GetOutput() returned. A consumer caching a
+        /// bindless TextureHandle or ImGui texture from it must re-fetch and re-register
+        /// after this call.
+        /// @param extent  New render extent in pixels.
         void Resize(uvec2 extent);
 
-        // Recreate only affected resources and recompile the graph's topology.
-        // Invalidates the prior GetOutput() Ref like Resize.
-        //
-        // ShadowResolution / PunctualShadowResolution above the device-supported
-        // maximum (GetMaxShadowResolution / GetMaxPunctualShadowResolution) are
-        // clamped before any atlas is sized, so an over-large request degrades to
-        // the largest valid atlas rather than a fatal driver error.
+        /// @brief Recreates affected resources and recompiles the graph's topology.
+        ///
+        /// Invalidates the prior GetOutput() Ref like Resize. ShadowResolution and
+        /// PunctualShadowResolution are clamped to GetMaxShadowResolution() /
+        /// GetMaxPunctualShadowResolution() before any atlas is sized, so an over-large
+        /// request degrades to the largest valid atlas rather than a fatal driver error.
+        /// @param settings  New topology and sizing knobs.
         void Configure(const SceneRendererSettings& settings);
 
         /// @brief Largest directional-cascade tile resolution this device supports.
@@ -301,358 +352,425 @@ namespace Veng::Renderer
         /// @return The maximum valid PunctualShadowResolution, in texels.
         [[nodiscard]] u32 GetMaxPunctualShadowResolution() const;
 
-        // Replay the internal graph against this frame's view, recording each pass
-        // unit's draws. Never reallocates or recompiles.
+        /// @brief Replays the internal graph against this frame's view.
+        ///
+        /// Records each pass unit's draws. Never reallocates or recompiles.
+        /// @param cmd   Command buffer to record into.
+        /// @param view  Per-frame scene input; the renderer overwrites its output fields.
         void Execute(CommandBuffer& cmd, const SceneView& view);
 
-        // The sampleable view of the owned result. Invalidated by Resize/Configure.
+        /// @brief Returns the sampleable view of the owned result.
+        ///
+        /// Invalidated by Resize and Configure; re-fetch after those calls.
         [[nodiscard]] Ref<ImageView> GetOutput() const;
 
-        // Culling stats for the last Execute. GetLastVisibleCount is the gathered
-        // candidate total (every resident (Transform, MeshRenderer) with a loaded
-        // mesh, pre-cull); GetLastDrawnCount is the meshes the g-buffer pass actually
-        // recorded (after the camera-frustum cull and the material-readiness skip).
-        // Drawn <= visible; with FrustumCull off and all materials ready they are
-        // equal. Both are zero before the first Execute.
+        /// @brief Returns the total resident candidate count from the last Execute.
+        ///
+        /// Every (Transform, MeshRenderer) with a loaded mesh, before any frustum cull.
+        /// Zero before the first Execute.
         [[nodiscard]] u32 GetLastVisibleCount() const;
+
+        /// @brief Returns the number of meshes the g-buffer pass actually recorded in the last Execute.
+        ///
+        /// After camera-frustum cull and material-readiness skip; always <= GetLastVisibleCount().
+        /// Equal to GetLastVisibleCount() when FrustumCull is off and all materials are ready.
+        /// Zero before the first Execute.
         [[nodiscard]] u32 GetLastDrawnCount() const;
 
-        // Whether the broadphase rebuilt its tree during the most recent Execute
-        // (false on a fully static frame — the scene's spatial version was unchanged).
-        // Diagnostics; the rendered image is identical regardless. Backed by
-        // SceneBroadphase::DidRebuildLastSync().
+        /// @brief Returns true if the broadphase rebuilt its tree during the most recent Execute.
+        ///
+        /// False on a fully static frame (the scene's spatial version was unchanged).
+        /// Diagnostic only; the rendered image is identical regardless.
         [[nodiscard]] bool DidBroadphaseRebuildLastFrame() const;
 
-        // The number of nodes in the broadphase BVH (internal + leaf). Diagnostics;
-        // zero before the first Execute or with no resident candidates.
+        /// @brief Returns the number of nodes in the broadphase BVH (internal + leaf).
+        ///
+        /// Diagnostic only. Zero before the first Execute or with no resident candidates.
         [[nodiscard]] u32 GetBroadphaseNodeCount() const;
 
-        // The deferred g-buffer the geometry pass writes — the sampleable views
-        // and their bindless slots. Renderer-owned and imported into the internal
-        // graph; recreated and re-registered on Resize. Exposed for tests and
-        // tooling that inspect the intermediate targets; a normal consumer reads
-        // only GetOutput().
+        /// @brief Returns the g-buffer albedo (G0) view.
+        ///
+        /// Renderer-owned; invalidated by Resize. Exposed for tests and tooling; normal
+        /// consumers read only GetOutput().
         [[nodiscard]] Ref<ImageView> GetAlbedoView() const;
+        /// @brief Returns the g-buffer world-normal (G1) view. Invalidated by Resize.
         [[nodiscard]] Ref<ImageView> GetNormalView() const;
+        /// @brief Returns the g-buffer packed ORM (G2) view. Invalidated by Resize.
         [[nodiscard]] Ref<ImageView> GetOrmView() const;
+        /// @brief Returns the depth buffer view. Invalidated by Resize.
         [[nodiscard]] Ref<ImageView> GetDepthView() const;
 
-        // The HDR target the deferred lighting pass writes (before the tail
-        // pass maps it to the output). Exposed for tests and tooling.
+        /// @brief Returns the HDR target the deferred lighting pass writes before tonemap.
+        ///
+        /// Exposed for tests and tooling. Invalidated by Resize.
         [[nodiscard]] Ref<ImageView> GetHdrView() const;
 
-        // The bloom composite result the tonemap stage reads when Bloom is on (the
-        // HDR target plus the blurred bright residual). Null when Bloom is off — the
-        // tonemap stage then reads the raw HDR target. Exposed for tests.
+        /// @brief Returns the bloom composite result the tonemap stage reads when Bloom is on.
+        ///
+        /// Null when Bloom is off (tonemap reads the raw HDR target instead). Exposed for tests.
         [[nodiscard]] Ref<ImageView> GetBloomResultView() const;
 
-        // The punctual shadow atlas the lighting pass SampleCmps (set 1 binding 4): a
-        // 2D depth atlas of MaxShadowedPunctual·CubeFaceCount tiles. Renderer-owned and
-        // long-lived past any Configure (the layout must always be satisfiable); the
-        // punctual shadow render pass writes its tiles. Recreated on Resize/Configure,
-        // so a cached Ref is invalidated by those calls. Exposed for that render-pass
-        // handoff and for tests inspecting the atlas extent.
+        /// @brief Returns the punctual shadow atlas view (set 1 binding 4).
+        ///
+        /// A 2D depth atlas of MaxShadowedPunctual·CubeFaceCount tiles, SampleCmp'd by the
+        /// lighting pass. Renderer-owned; invalidated by Resize and Configure. Exposed for
+        /// the render-pass handoff and for tests inspecting the atlas extent.
         [[nodiscard]] Ref<ImageView> GetPunctualShadowView() const;
 
     private:
         explicit SceneRenderer(const SceneRendererInfo& info);
 
-        // Recreate the owned output image/view at the current extent/format.
+        /// @brief Recreates the owned output image and view at the current extent and format.
         void CreateOutput();
-        // Recreate the g-buffer images/views at the current extent and (re-)register
-        // them and the shared sampler into the bindless registry.
+        /// @brief Recreates g-buffer images/views at the current extent and (re-)registers them into bindless.
         void CreateGBuffer();
-        // Recreate the HDR image/view at the current extent and (re-)register it
-        // into the bindless registry.
+        /// @brief Recreates the HDR image/view at the current extent and (re-)registers it into bindless.
         void CreateHdr();
-        // Recreate the four bloom intermediate images/views at the current extent
-        // and (re-)register them into the bindless registry. The bright residual,
-        // the two separable-blur ping-pong targets, and the composite result are
-        // renderer-owned and imported (a later stage samples the prior stage's output
-        // through bindless, which needs a Ref<ImageView> — a transient cannot be
-        // registered). Recreated through the deferred Release() path on
-        // Resize/Configure like the g-buffer/HDR targets.
+        /// @brief Recreates the four bloom intermediate images/views and registers them into bindless.
+        ///
+        /// The bright residual, two separable-blur ping-pong targets, and the composite result are
+        /// renderer-owned and imported; a later stage samples the prior stage's output through its
+        /// bindless handle, so each needs a Ref<ImageView> (a graph transient cannot be registered).
         void CreateBloom();
-        // Build the engine-owned fullscreen pipelines (lighting and the
-        // albedo/normal/depth debug blits) and load the core tonemap PostProcess
-        // material once at Create.
+        /// @brief Builds the engine-owned fullscreen pipelines and loads the core PostProcess materials.
+        ///
+        /// Called once at Create; the lighting pipeline writes the HDR format, the debug-blit pipelines
+        /// write the output format.
         void CreatePipelines();
 
-        // Allocate the directional-shadow set-1 system once at Create: the comparison
-        // sampler, the set-1 layout, the descriptor set, the dummy atlas, and the
-        // ShadowConstants ring buffer. Long-lived past any Configure.
+        /// @brief Allocates the directional-shadow set-1 descriptor system once at Create.
+        ///
+        /// Covers the comparison sampler, the set-1 layout, the descriptor set, the dummy atlas, and
+        /// the ShadowConstants ring buffer. All are long-lived past any Configure.
         void CreateShadowSystem();
 
-        // Clamp m_Settings.ShadowResolution / PunctualShadowResolution to the
-        // device-supported maxima (GetMaxShadowResolution / GetMaxPunctualShadowResolution).
-        // Called before any atlas is sized — the constructor body and Configure — so an
-        // over-large request degrades to the largest valid atlas, never a fatal driver
-        // error from an image past maxImageDimension2D.
+        /// @brief Clamps m_Settings shadow resolutions to the device-supported maxima.
+        ///
+        /// Called before any atlas is sized (at construction and before Configure) so an over-large
+        /// request degrades to the largest valid atlas rather than a fatal driver error.
         void ClampShadowResolutions();
 
-        // Recreate the punctual shadow atlas at the current PunctualShadowResolution ×
-        // (MaxShadowedPunctual·CubeFaceCount) tile grid through the deferred retire
-        // path, clear it to depth = 1, and (re)write it into set 1 binding 4. Called
-        // at Create and on every Resize/Configure (the resolution is a recompile knob).
+        /// @brief Recreates the punctual shadow atlas and writes it into set 1 binding 4.
+        ///
+        /// Sized at PunctualShadowResolution × (MaxShadowedPunctual·CubeFaceCount) tiles.
+        /// Called at Create and on every Resize/Configure.
         void CreatePunctualShadowAtlas();
 
-        // (Re)write set 1's atlas binding (binding 0) to the given view — the wired
-        // shadow pass's atlas, or the dummy when shadows are off — and the debug
-        // blit set's binding 0. Called from Rebuild after the pass set is chosen.
+        /// @brief Writes set 1's atlas binding (binding 0) and the debug-blit set's binding 0.
+        ///
+        /// Supplies either the wired shadow pass's atlas or the dummy when shadows are off.
+        /// Called from Rebuild after the pass set is chosen.
         void WriteShadowAtlasBinding(const Ref<ImageView>& atlasView);
-        // Rebuild the pass set from Settings.Mode and the RenderGraph from it, then
-        // re-Compile().
+        /// @brief Rebuilds the pass set from Settings.Mode and recompiles the RenderGraph.
         void Rebuild();
 
+        /// @brief Vulkan context for all resource creation.
         Context& m_Context;
+        /// @brief Asset manager for engine shader loading.
         AssetManager& m_Assets;
+        /// @brief Pixel format of the owned output target.
         Format m_OutputFormat;
+        /// @brief Current render extent.
         uvec2 m_Extent;
+        /// @brief Current topology and sizing knobs.
         SceneRendererSettings m_Settings;
 
+        /// @brief Owned output image.
         Ref<Image> m_OutputImage;
+        /// @brief View over m_OutputImage.
         Ref<ImageView> m_OutputView;
 
-        // The g-buffer targets: G0 albedo, G1 world-normal, G2 packed ORM, depth.
-        // Renderer-owned (sampled downstream, so not graph transients) and imported.
+        /// @brief G-buffer targets (G0 albedo, G1 world-normal, G2 packed ORM, depth).
+        ///
+        /// Renderer-owned (sampled downstream, so not graph transients) and imported into
+        /// the internal graph.
         Ref<Image> m_AlbedoImage;
+        /// @brief View over m_AlbedoImage.
         Ref<ImageView> m_AlbedoView;
+        /// @brief G1 world-normal image.
         Ref<Image> m_NormalImage;
+        /// @brief View over m_NormalImage.
         Ref<ImageView> m_NormalView;
+        /// @brief G2 packed ORM image.
         Ref<Image> m_OrmImage;
+        /// @brief View over m_OrmImage.
         Ref<ImageView> m_OrmView;
+        /// @brief Depth image.
         Ref<Image> m_DepthImage;
+        /// @brief View over m_DepthImage.
         Ref<ImageView> m_DepthView;
 
-        // The HDR target the deferred lighting pass writes (linear, unbounded
-        // range) and the tonemap pass samples. Renderer-owned and imported like the
-        // g-buffer; tonemap maps it to the output format.
-        //
-        // Single-in-flight contract: every renderer-owned image above (g-buffer,
-        // depth, HDR, output) is single-copy. One Execute resolves and completes
-        // before the next begins; within a frame, written-then-read images are
-        // correctly ordered by the graph's derived barriers, and the retire path
-        // covers destruction safety on Resize/Configure. There is no cross-frame ring
-        // buffer because the output is consumed in the frame it is written — a
-        // compositor samples GetOutput() for the same frame the renderer wrote it, so
-        // the frames-in-flight > 1 hazard (a compositor caching/sampling an output
-        // across frames-in-flight) does not arise.
+        /// @brief HDR target the deferred lighting pass writes (linear, unbounded range).
+        ///
+        /// Renderer-owned and imported like the g-buffer; tonemap maps it to the output format.
+        /// Single-copy: one Execute resolves and completes before the next begins, so no
+        /// cross-frame ring buffer is needed — the output is consumed in the frame it is written.
         Ref<Image> m_HdrImage;
+        /// @brief View over m_HdrImage.
         Ref<ImageView> m_HdrView;
 
-        // The bloom chain's renderer-owned intermediates (linear HDR-format, same
-        // single-copy contract as the g-buffer/HDR targets): the bright-pass residual,
-        // the two separable-blur ping-pong targets, and the composite result the
-        // tonemap stage reads. Imported into the internal graph; a later stage samples
-        // the prior stage's output through its bindless handle, so each needs a
-        // Ref<ImageView> (a graph transient cannot be registered into bindless).
+        /// @brief Bloom chain intermediates (linear HDR-format, same single-copy contract).
+        ///
+        /// Bright-pass residual, two separable-blur ping-pong targets, and the composite result.
+        /// Imported into the internal graph; each needs a Ref<ImageView> so it can be registered
+        /// into the bindless set (a graph transient cannot be registered).
         Ref<Image> m_BloomBrightImage;
+        /// @brief Bright-pass residual view.
         Ref<ImageView> m_BloomBrightView;
+        /// @brief Horizontal blur ping-pong image.
         Ref<Image> m_BloomBlurHImage;
+        /// @brief Horizontal blur view.
         Ref<ImageView> m_BloomBlurHView;
+        /// @brief Vertical blur ping-pong image.
         Ref<Image> m_BloomBlurVImage;
+        /// @brief Vertical blur view.
         Ref<ImageView> m_BloomBlurVView;
+        /// @brief Bloom composite result image.
         Ref<Image> m_BloomResultImage;
+        /// @brief Bloom composite result view.
         Ref<ImageView> m_BloomResultView;
 
-        // The shared sampler a fullscreen pass samples the g-buffer/HDR through.
+        /// @brief Shared sampler fullscreen passes use to sample the g-buffer and HDR target.
         Ref<Sampler> m_Sampler;
 
-        // Bindless slots for the g-buffer/HDR views + the sampler, registered once
-        // at Create and re-registered on Resize (the old slots released through the
-        // per-frame retire window).
+        /// @brief Bindless slots for the g-buffer/HDR views and the shared sampler.
+        ///
+        /// Registered once at Create; re-registered on Resize (old slots released through the
+        /// per-frame retire window).
         TextureHandle m_AlbedoHandle;
+        /// @brief Bindless slot for the world-normal view.
         TextureHandle m_NormalHandle;
+        /// @brief Bindless slot for the ORM view.
         TextureHandle m_OrmHandle;
+        /// @brief Bindless slot for the depth view.
         TextureHandle m_DepthHandle;
+        /// @brief Bindless slot for the HDR view.
         TextureHandle m_HdrHandle;
+        /// @brief Bindless slot for the shared sampler.
         SamplerHandle m_SamplerHandle;
 
-        // Bindless slots for the bloom intermediates, registered with them in
-        // CreateBloom and released through the per-frame retire window on recreate.
+        /// @brief Bindless slots for the bloom intermediates; registered in CreateBloom.
         TextureHandle m_BloomBrightHandle;
+        /// @brief Bindless slot for the horizontal blur view.
         TextureHandle m_BloomBlurHHandle;
+        /// @brief Bindless slot for the vertical blur view.
         TextureHandle m_BloomBlurVHandle;
+        /// @brief Bindless slot for the bloom composite view.
         TextureHandle m_BloomResultHandle;
 
-        // The engine-owned fullscreen pipelines + layouts, all built once at Create
-        // from the core pack's shaders. The lighting pipeline writes the HDR format;
-        // the three debug-blit pipelines (albedo/normal/depth) write the output
-        // format. The pass set Configure wires from Mode references the pipelines it
-        // needs; the rest stay built but unused.
+        /// @brief Engine-owned lighting pipeline writing the HDR format.
+        ///
+        /// Built once at Create from the core pack's shaders. The pass set Mode references the
+        /// pipelines it needs; the rest stay built but unused.
         Ref<class GraphicsPipeline> m_LightingPipeline;
+        /// @brief Layout for m_LightingPipeline.
         Ref<class PipelineLayout> m_LightingLayout;
-        // The SSAO-enabled lighting variant: a separate fragment shader compiled
-        // with the AO fold, its own layout (the push block carries the AO bindless
-        // slot). Selected over m_LightingPipeline when Settings.AO is on — SSAO is a
-        // compile-time variant, not a per-frame branch.
+
+        /// @brief SSAO-enabled lighting variant; selected when Settings.AO is on.
+        ///
+        /// A separate fragment shader compiled with the AO fold. SSAO is a compile-time pipeline
+        /// variant, not a per-frame branch.
         Ref<class GraphicsPipeline> m_SsaoLightingPipeline;
+        /// @brief Layout for the SSAO lighting variant.
         Ref<class PipelineLayout> m_SsaoLightingLayout;
-        // The cascade-debug lighting variant (DebugView::Cascades): the cascade-tint
-        // fragment shader over the plain lighting layout (set 1 + the non-SSAO push
-        // block), writing the output format directly. Reuses m_LightingLayout — same
-        // set 1 + push block, no AO fold — and the cascade selection logic the shadow
-        // sample uses, so the visualization pins the selection.
+
+        /// @brief Cascade-debug lighting variant (DebugView::Cascades).
+        ///
+        /// Tint fragment shader over the plain lighting layout (set 1 + non-SSAO push block),
+        /// writing the output format directly. Reuses m_LightingLayout.
         Ref<class GraphicsPipeline> m_CascadeDebugPipeline;
-        // The SSAO pass's fullscreen pipeline (writes the R8 AO target) + its layout.
-        // Built once at Create; the SsaoScenePass records through it.
+
+        /// @brief SSAO fullscreen pipeline writing the R8 AO target.
         Ref<class GraphicsPipeline> m_SsaoPipeline;
+        /// @brief Layout for the SSAO pipeline.
         Ref<class PipelineLayout> m_SsaoLayout;
+
+        /// @brief Debug blit for the albedo channel.
         Ref<class GraphicsPipeline> m_AlbedoBlitPipeline;
         Ref<class PipelineLayout> m_AlbedoBlitLayout;
+        /// @brief Debug blit for the normal channel.
         Ref<class GraphicsPipeline> m_NormalBlitPipeline;
         Ref<class PipelineLayout> m_NormalBlitLayout;
+        /// @brief Debug blit for the depth buffer.
         Ref<class GraphicsPipeline> m_DepthBlitPipeline;
         Ref<class PipelineLayout> m_DepthBlitLayout;
-        // The ORM-channel blit (one pipeline shared by the Roughness/Metallic/
-        // Occlusion arms — the channel select is a push value, not a separate
-        // pipeline), the AO target blit, and the directional-shadow-map blit. All
-        // write the output format.
+
+        /// @brief ORM-channel blit shared by the Roughness/Metallic/Occlusion arms.
+        ///
+        /// The channel select is a push value, not a separate pipeline. Writes the output format.
         Ref<class GraphicsPipeline> m_OrmBlitPipeline;
         Ref<class PipelineLayout> m_OrmBlitLayout;
+        /// @brief Debug blit for the SSAO target.
         Ref<class GraphicsPipeline> m_AoBlitPipeline;
         Ref<class PipelineLayout> m_AoBlitLayout;
+        /// @brief Debug blit for the directional shadow atlas.
         Ref<class GraphicsPipeline> m_ShadowBlitPipeline;
         Ref<class PipelineLayout> m_ShadowBlitLayout;
 
-        // The directional-shadow system's dedicated descriptor set (Vulkan set 1 on
-        // both lighting pipelines): binding 0 the shadow atlas (sampled image),
-        // binding 1 an immutable comparison sampler (hardware SampleCmp), binding 2
-        // the ShadowConstants dynamic uniform. SceneRenderer-owned and long-lived
-        // past any Configure — the layout, the comparison sampler, the dummy atlas,
-        // and the dummy ShadowConstants must exist whenever the layout does,
-        // independent of the per-recompile shadow pass. Bindings 0-1 are written once
-        // at Create/Resize/Configure (the atlas is single-copy); binding 2 rings
-        // per frame-in-flight, its region picked by the bind-time dynamic offset.
+        /// @brief Directional-shadow set-1 descriptor set (both lighting pipelines).
+        ///
+        /// Binding 0: shadow atlas (sampled image). Binding 1: immutable comparison sampler
+        /// (hardware SampleCmp). Binding 2: ShadowConstants dynamic uniform. Long-lived past any
+        /// Configure — the layout, comparison sampler, dummy atlas, and dummy ShadowConstants must
+        /// exist whenever the layout does. Bindings 0–1 are written once per Create/Resize/Configure;
+        /// binding 2 rings per frame-in-flight, region selected by the dynamic offset at bind.
         Ref<DescriptorSetLayout> m_ShadowSetLayout;
         Ref<DescriptorSet> m_ShadowSet;
+        /// @brief Immutable hardware comparison sampler for SampleCmp.
         Ref<Sampler> m_ComparisonSampler;
 
-        // The debug shadow-atlas blit's dedicated set (set 1 of the shadow-blit
-        // pipeline): binding 0 the atlas, binding 1 an ordinary sampler (raw depth,
-        // not the comparison sampler). Its own layout/set so the DebugView::Shadows
-        // arm visualizes stored depth.
+        /// @brief Debug shadow-atlas blit's dedicated descriptor set.
+        ///
+        /// Set 1 of the shadow-blit pipeline: binding 0 the atlas, binding 1 an ordinary sampler
+        /// (raw depth read, not SampleCmp). Separate layout/set so DebugView::Shadows visualizes
+        /// stored depth values.
         Ref<DescriptorSetLayout> m_ShadowBlitSetLayout;
         Ref<DescriptorSet> m_ShadowBlitSet;
 
-        // A 1×1 D32 atlas cleared to depth = 1 (full visibility / far depth), bound
-        // into set 1 binding 0 whenever no shadow pass is wired, so the layout is
-        // always satisfied and a SampleCmp yields full visibility.
+        /// @brief 1×1 D32 dummy atlas cleared to depth = 1 (full visibility).
+        ///
+        /// Bound into set 1 binding 0 whenever no shadow pass is wired, so the layout is always
+        /// satisfied and a SampleCmp returns full visibility.
         Ref<Image> m_DummyShadowImage;
+        /// @brief View over m_DummyShadowImage.
         Ref<ImageView> m_DummyShadowView;
 
-        // The ShadowConstants ring buffer (set 1 binding 2): host-visible,
-        // persistently mapped, framesInFlight regions of m_ShadowRingStride bytes
-        // (align_up(sizeof(ShadowConstantsBlock), minUniformBufferOffsetAlignment)).
-        // A per-frame write touches only the current (not-yet-submitted) region; the
-        // dynamic offset at bind selects it.
+        /// @brief ShadowConstants ring buffer (set 1 binding 2).
+        ///
+        /// Host-visible, persistently mapped; framesInFlight regions of m_ShadowRingStride bytes
+        /// (align_up(sizeof(ShadowConstantsBlock), minUniformBufferOffsetAlignment)). A per-frame
+        /// write touches only the current (not-yet-submitted) region; the dynamic offset at bind
+        /// selects it.
         Ref<Buffer> m_ShadowConstantsBuffer;
+        /// @brief Stride in bytes between ShadowConstants ring regions.
         u32 m_ShadowRingStride = 0;
+        /// @brief Number of frames-in-flight the ring is sized for.
         u32 m_FramesInFlight = 0;
 
-        // The punctual shadow atlas (set 1 binding 4): a second D32 depth image
-        // alongside the directional cascade atlas, off bindless, a 2D atlas of
-        // MaxShadowedPunctual·CubeFaceCount tiles of PunctualShadowResolution² (a spot
-        // uses one tile, a point six). DepthAttachment | Sampled — the punctual shadow
-        // pass writes per-tile viewports, the lighting pass SampleCmps it through the
-        // shared comparison sampler (binding 1). SceneRenderer-owned, recreated through
-        // the deferred retire path on Resize/Configure. A closed producer→consumer
-        // resource needs no bindless registration; a comparison-sampled image bars set-0
-        // bindless on MoltenVK regardless. Cleared to depth = 1 at creation so it is in a
-        // valid sampleable layout whenever bound.
+        /// @brief Punctual shadow atlas (set 1 binding 4).
+        ///
+        /// A 2D D32 atlas of MaxShadowedPunctual·CubeFaceCount tiles at PunctualShadowResolution²
+        /// (a spot uses one tile, a point six). DepthAttachment | Sampled — the punctual shadow
+        /// pass writes per-tile viewports; the lighting pass SampleCmps through the shared
+        /// comparison sampler. Off bindless: a comparison-sampled image bars set-0 bindless on
+        /// MoltenVK, and a closed producer→consumer resource needs no global registration.
+        /// Cleared to depth = 1 at creation so it is always in a valid sampleable layout.
         Ref<Image> m_PunctualShadowImage;
+        /// @brief View over m_PunctualShadowImage.
         Ref<ImageView> m_PunctualShadowView;
 
-        // The per-light punctual shadow records (set 1 binding 3): a std140 dynamic
-        // uniform ringed framesInFlight regions of m_PunctualRingStride bytes, the
-        // current region picked by the bind-time dynamic offset, beside the
-        // ShadowConstants ring. Host-visible + persistently mapped; a per-frame write
-        // touches only the current (not-yet-submitted) region. Zeroed regions read as
-        // "no map" (every record Params.x type = 0) so the budget-zero frame is fully
-        // lit.
+        /// @brief Per-light punctual shadow records (set 1 binding 3).
+        ///
+        /// A std140 dynamic uniform ringed for framesInFlight regions of m_PunctualRingStride bytes,
+        /// beside the ShadowConstants ring. Host-visible + persistently mapped; a per-frame write
+        /// touches only the current (not-yet-submitted) region. Zeroed regions read as "no map"
+        /// (every record Params.x type = 0), so a frame with no shadowed lights is fully lit.
         Ref<Buffer> m_PunctualShadowBuffer;
+        /// @brief Stride in bytes between punctual ring regions.
         u32 m_PunctualRingStride = 0;
 
-        // The core tonemap PostProcess material, loaded once at Create. The Final
-        // chain's terminal PostProcessScenePass drives it (HDR target as the
-        // runtime-bound input, exposure written per Execute into its param block).
+        /// @brief Core tonemap PostProcess material, loaded once at Create.
+        ///
+        /// The Final chain's terminal PostProcessScenePass drives it (HDR target as the
+        /// runtime-bound input; Exposure written per Execute into its param block).
         AssetHandle<Material> m_TonemapMaterial;
 
-        // The core bloom PostProcess materials, loaded once at Create. The bloom
-        // chain (when Settings.Bloom) drives four PostProcessScenePass stages over
-        // them ahead of tonemap: bright-pass → blur H → blur V → composite. The two
-        // blur stages reuse one shader through two materials differing only in the
-        // cooked Horizontal axis param. Threshold (bright-pass) and Intensity
-        // (composite) are written per Execute into their ring-buffered blocks.
+        /// @brief Core bloom PostProcess materials, loaded once at Create.
+        ///
+        /// The bloom chain drives four PostProcessScenePass stages ahead of tonemap:
+        /// bright-pass → blur H → blur V → composite. The two blur stages reuse one shader
+        /// through two materials differing only in the cooked Horizontal axis param.
+        /// BloomThreshold and BloomIntensity are written per Execute into their ring-buffered blocks.
         AssetHandle<Material> m_BloomBrightMaterial;
+        /// @brief Horizontal blur material.
         AssetHandle<Material> m_BloomBlurHMaterial;
+        /// @brief Vertical blur material.
         AssetHandle<Material> m_BloomBlurVMaterial;
+        /// @brief Bloom composite material.
         AssetHandle<Material> m_BloomCompositeMaterial;
 
-        // The renderer owns its pass units; the set is rebuilt per Settings.Mode on
-        // every Rebuild (the geometry pass is always first; Mode selects the tail).
+        /// @brief Renderer-owned pass units; rebuilt per Settings.Mode on every Rebuild.
+        ///
+        /// The geometry pass is always first; Mode selects the tail.
         vector<Unique<ScenePass>> m_Passes;
 
-        // The spatial broadphase: a BVH over the resident draw candidates, served
-        // through one cached candidate list rebuilt when the scene's spatial version
-        // moves (or a mesh finishes loading). Synced once at the top of Execute; its
-        // candidate span is pointed at by SceneView::Visible and its tree is queried
-        // by the g-buffer and shadow passes. A static scene rebuilds not at all.
+        /// @brief BVH broadphase over resident draw candidates.
+        ///
+        /// Synced once at the top of Execute; its candidate span is pointed at by
+        /// SceneView::Visible and its tree is queried by the g-buffer and shadow passes.
+        /// A static scene does not rebuild the tree.
         SceneBroadphase m_Broadphase;
 
-        // The g-buffer pass's per-record drawn counter, pointed at every Rebuild
-        // (the pass owns the u32 through m_Passes; the renderer reads it back through
-        // GetLastDrawnCount). Null before the first Rebuild. A raw pointer rather than
-        // a typed pass back-reference because GBufferScenePass is a .cpp-local type.
+        /// @brief Non-owning pointer to the g-buffer pass's drawn-mesh counter.
+        ///
+        /// Set on every Rebuild (the pass owns the u32 through m_Passes). Null before the
+        /// first Rebuild. Raw pointer rather than a typed back-reference because
+        /// GBufferScenePass is a .cpp-local type.
         const u32* m_GBufferDrawnCount = nullptr;
 
-        // The imported ids every rebuild re-declares, bound to their concrete
-        // views per Execute and threaded to the pass units through PassIO.
+        /// @brief Imported resource ids re-declared on every Rebuild.
+        ///
+        /// Bound to their concrete views per Execute and threaded to pass units through PassIO.
         ResourceId m_AlbedoId;
+        /// @brief Imported id for the world-normal target.
         ResourceId m_NormalId;
+        /// @brief Imported id for the packed ORM target.
         ResourceId m_OrmId;
+        /// @brief Imported id for the depth target.
         ResourceId m_DepthId;
+        /// @brief Imported id for the HDR target.
         ResourceId m_HdrId;
+        /// @brief Imported id for the bright-pass residual.
         ResourceId m_BloomBrightId;
+        /// @brief Imported id for the horizontal blur target.
         ResourceId m_BloomBlurHId;
+        /// @brief Imported id for the vertical blur target.
         ResourceId m_BloomBlurVId;
+        /// @brief Imported id for the bloom composite result.
         ResourceId m_BloomResultId;
+        /// @brief Imported id for the directional shadow atlas.
         ResourceId m_ShadowId;
+        /// @brief Imported id for the SSAO target.
         ResourceId m_SsaoId;
+        /// @brief Imported id for the final output target.
         ResourceId m_OutputId;
 
-        // Whether the last Rebuild wired the bloom chain (Final mode + Settings.Bloom).
-        // Execute binds the bloom imports and writes the bloom params only then.
+        /// @brief True when the last Rebuild wired the bloom chain (Final mode + Settings.Bloom).
+        ///
+        /// Execute binds the bloom imports and writes the bloom params only when true.
         bool m_BloomActive = false;
 
-        // Whether the last Rebuild wired the shadow pass (Final mode + Settings.Shadows).
-        // Execute binds the shadow import + writes the light-space matrix only then.
+        /// @brief True when the last Rebuild wired the directional shadow pass (Final mode + Settings.Shadows).
+        ///
+        /// Execute binds the shadow import and writes the light-space matrix only when true.
         bool m_ShadowActive = false;
 
-        // The wired shadow pass (owned through m_Passes), or null when shadows are
-        // compiled out. The renderer reads its produced handle/view to thread into
-        // PassIO and to bind the shadow import per Execute. The pass outlives the
-        // raw pointer (m_Passes is cleared and rebuilt together).
+        /// @brief Non-owning pointer to the wired ShadowScenePass, or null when shadows are compiled out.
+        ///
+        /// The renderer reads its produced atlas view to thread into PassIO and to bind the shadow
+        /// import per Execute. The pass outlives this pointer (m_Passes is cleared and rebuilt together).
         ShadowScenePass* m_ShadowPass = nullptr;
 
-        // Whether the last Rebuild wired the punctual shadow pass (Final mode +
-        // Settings.Shadows, or the PunctualShadows debug arm). Execute binds the
-        // punctual atlas import only then. The pass renders the renderer-owned punctual
-        // atlas (m_PunctualShadowView), so the renderer binds m_PunctualShadowId to it.
+        /// @brief True when the last Rebuild wired the punctual shadow pass.
+        ///
+        /// Execute binds the punctual atlas import only when true. The pass renders the
+        /// renderer-owned punctual atlas (m_PunctualShadowView).
         bool m_PunctualShadowActive = false;
+        /// @brief Imported id for the punctual shadow atlas.
         ResourceId m_PunctualShadowId;
+        /// @brief Non-owning pointer to the wired punctual shadow pass.
         PunctualShadowScenePass* m_PunctualShadowPass = nullptr;
 
-        // Whether the last Rebuild wired the SSAO pass (Final mode + Settings.AO).
-        // Execute binds the AO import only then. m_SsaoPass is a non-owning pointer
-        // into m_Passes (the renderer owns the SsaoScenePass via Unique there); the
-        // renderer queries its produced view to bind the AO import per Execute.
+        /// @brief True when the last Rebuild wired the SSAO pass (Final mode + Settings.AO).
+        ///
+        /// Execute binds the AO import only when true.
         bool m_SsaoActive = false;
+        /// @brief Non-owning pointer into m_Passes to the SsaoScenePass; null when AO is off.
         class SsaoScenePass* m_SsaoPass = nullptr;
 
-        // Compiled once per Create/Resize/Configure, replayed every Execute. The
-        // concrete type is RenderGraph's CompiledGraph; held by an opaque pointer so
-        // this header stays free of the full RenderGraph definition.
+        /// @brief Opaque compiled graph; replayed every Execute.
+        ///
+        /// Held behind an opaque pointer so this header stays free of the full CompiledGraph type.
         struct Internal;
         Unique<Internal> m_Internal;
     };

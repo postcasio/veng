@@ -3,160 +3,398 @@
 #include <Veng/Veng.h>
 #include <variant>
 
-// Engine-owned vocabulary types. Consumers write these instead of vk::/GLFW/nfd
-// types; the backend maps them to Vulkan in TypeMapping.h with exhaustive
-// switches. Enumerators are populated on demand — the backend mapping asserts on
-// unmapped values, so a missing format/usage is a loud, one-line fix.
+/// @brief Engine-owned vocabulary types for the renderer surface.
+///
+/// Consumers write these instead of vk:: types; the backend maps them to Vulkan in
+/// TypeMapping.h with exhaustive switches. Enumerators are populated on demand — the
+/// backend mapping asserts on unmapped values, so a missing entry is a loud, one-line fix.
 namespace Veng::Renderer
 {
+    /// @brief Pixel format of an image or attachment.
     enum class Format : u8
     {
+        /// @brief No format / uninitialized.
         Undefined,
+        /// @brief 8-bit single-channel, normalized [0,1].
         R8Unorm,
+        /// @brief 8-bit per channel RGBA, normalized [0,1].
         RGBA8Unorm,
+        /// @brief 8-bit per channel RGBA, sRGB-encoded.
         RGBA8Srgb,
+        /// @brief 8-bit per channel BGRA, sRGB-encoded (common swapchain format).
         BGRA8Srgb,
+        /// @brief 16-bit single-channel float.
         R16Sfloat,
+        /// @brief 16-bit per channel RGBA float.
         RGBA16Sfloat,
+        /// @brief 32-bit single-channel float.
         R32Sfloat,
+        /// @brief 32-bit per channel RG float.
         RG32Sfloat,
+        /// @brief 32-bit per channel RGB float.
         RGB32Sfloat,
+        /// @brief 32-bit per channel RGBA float.
         RGBA32Sfloat,
+        /// @brief 16-bit depth, normalized.
         D16Unorm,
+        /// @brief 32-bit depth float.
         D32Sfloat,
+        /// @brief 8-bit stencil.
         S8Uint,
+        /// @brief 16-bit depth + 8-bit stencil.
         D16UnormS8Uint,
+        /// @brief 24-bit depth + 8-bit stencil.
         D24UnormS8Uint,
+        /// @brief 32-bit depth float + 8-bit stencil.
         D32SfloatS8Uint,
+        /// @brief 24-bit depth packed in 32 bits (8 bits unused).
         X8D24UnormPack32,
     };
 
-    enum class ImageType : u8 { Type1D, Type2D, Type3D };
+    /// @brief Dimensionality of an image resource.
+    enum class ImageType : u8
+    {
+        /// @brief One-dimensional image.
+        Type1D,
+        /// @brief Two-dimensional image.
+        Type2D,
+        /// @brief Three-dimensional (volume) image.
+        Type3D,
+    };
 
+    /// @brief Vulkan image layout; used by barrier derivation.
     enum class ImageLayout : u8
     {
+        /// @brief Unknown or discard-on-transition layout.
         Undefined,
+        /// @brief Supports all access types.
         General,
+        /// @brief Optimal for color attachment read/write.
         ColorAttachment,
+        /// @brief Optimal for depth/stencil attachment read/write.
         DepthAttachment,
+        /// @brief Optimal for shader-sample reads.
         ShaderReadOnly,
+        /// @brief Optimal for transfer source operations.
         TransferSrc,
+        /// @brief Optimal for transfer destination operations.
         TransferDst,
+        /// @brief Required for swapchain present.
         PresentSrc,
     };
 
+    /// @brief Dimensionality and array structure of an ImageView.
     enum class ImageViewType : u8
     {
-        Type1D, Type2D, Type3D, Cube, Array1D, Array2D, CubeArray,
+        /// @brief 1D image view.
+        Type1D,
+        /// @brief 2D image view.
+        Type2D,
+        /// @brief 3D image view.
+        Type3D,
+        /// @brief Cube-map image view (6 layers).
+        Cube,
+        /// @brief Array of 1D images.
+        Array1D,
+        /// @brief Array of 2D images.
+        Array2D,
+        /// @brief Array of cube-map images.
+        CubeArray,
     };
 
+    /// @brief Bitmask of intended GPU usages for an Image.
     enum class ImageUsage : u32
     {
+        /// @brief Read by a shader sampler.
         Sampled = 1 << 0,
+        /// @brief Read/written as a storage image.
         Storage = 1 << 1,
+        /// @brief Used as a color render target.
         ColorAttachment = 1 << 2,
+        /// @brief Used as a depth/stencil render target.
         DepthAttachment = 1 << 3,
+        /// @brief Source of a copy/blit operation.
         TransferSrc = 1 << 4,
+        /// @brief Destination of a copy/blit operation.
         TransferDst = 1 << 5,
     };
 
+    /// @brief Bitmask of intended GPU usages for a Buffer.
     enum class BufferUsage : u32
     {
+        /// @brief Vertex buffer binding.
         Vertex = 1 << 0,
+        /// @brief Index buffer binding.
         Index = 1 << 1,
+        /// @brief Uniform buffer binding.
         Uniform = 1 << 2,
+        /// @brief Storage buffer binding.
         Storage = 1 << 3,
+        /// @brief Source of a copy operation.
         TransferSrc = 1 << 4,
+        /// @brief Destination of a copy operation.
         TransferDst = 1 << 5,
     };
 
+    /// @brief Bitmask of shader stages.
     enum class ShaderStage : u32
     {
+        /// @brief Vertex shader stage.
         Vertex = 1 << 0,
+        /// @brief Fragment shader stage.
         Fragment = 1 << 1,
+        /// @brief Compute shader stage.
         Compute = 1 << 2,
+        /// @brief All stages.
         All = 0xFFFFFFFF,
     };
 
-    enum class LoadOp : u8 { Load, Clear, DontCare };
-    enum class StoreOp : u8 { Store, DontCare };
+    /// @brief Load operation applied to an attachment at the start of a render pass.
+    enum class LoadOp : u8
+    {
+        /// @brief Preserve existing attachment contents.
+        Load,
+        /// @brief Clear to the specified ClearValue.
+        Clear,
+        /// @brief Contents are undefined (fastest; use when every pixel is overwritten).
+        DontCare,
+    };
 
-    // How a resource is used by a pass or operation. Each kind resolves to a
-    // (layout, stage, access) scope (Backend::ScopeFor) that drives barrier
-    // derivation. Declared on RenderGraph passes, and passed to
-    // CommandBuffer::PrepareForAccess for out-of-graph consumers (e.g. ImGui)
-    // the graph cannot see.
+    /// @brief Store operation applied to an attachment at the end of a render pass.
+    enum class StoreOp : u8
+    {
+        /// @brief Write the rendered result to memory.
+        Store,
+        /// @brief Discard the result (fastest; use for transient depth attachments).
+        DontCare,
+    };
+
+    /// @brief How a resource is used by a pass or operation.
+    ///
+    /// Each kind resolves to a (layout, pipeline-stage, access) scope (Backend::ScopeFor)
+    /// that drives barrier derivation. Declared on RenderGraph passes; also passed to
+    /// CommandBuffer::PrepareForAccess for out-of-graph consumers the graph cannot see.
     enum class AccessKind : u8
     {
+        /// @brief Written as a color attachment.
         ColorAttachment,
+        /// @brief Read/written as a depth/stencil attachment.
         DepthAttachment,
+        /// @brief Sampled by a shader.
         Sample,
+        /// @brief Read as a storage image.
         StorageRead,
+        /// @brief Written as a storage image.
         StorageWrite,
+        /// @brief Source of a transfer operation.
         TransferSrc,
+        /// @brief Destination of a transfer operation.
         TransferDst,
     };
 
-    enum class IndexType : u8 { U16, U32 };
-
-    enum class CompareOp : u8
+    /// @brief Width of index elements in an index buffer.
+    enum class IndexType : u8
     {
-        Never, Less, Equal, LessOrEqual, Greater, NotEqual, GreaterOrEqual, Always,
+        /// @brief 16-bit unsigned integer indices.
+        U16,
+        /// @brief 32-bit unsigned integer indices.
+        U32,
     };
 
-    enum class CullMode : u8 { None, Front, Back, FrontAndBack };
-    enum class PolygonMode : u8 { Fill, Line, Point };
+    /// @brief Comparison operator used by depth tests and shadow SampleCmp.
+    enum class CompareOp : u8
+    {
+        /// @brief Always fails.
+        Never,
+        /// @brief Passes when reference < sample.
+        Less,
+        /// @brief Passes when reference == sample.
+        Equal,
+        /// @brief Passes when reference <= sample.
+        LessOrEqual,
+        /// @brief Passes when reference > sample.
+        Greater,
+        /// @brief Passes when reference != sample.
+        NotEqual,
+        /// @brief Passes when reference >= sample.
+        GreaterOrEqual,
+        /// @brief Always passes.
+        Always,
+    };
 
-    enum class Filter : u8 { Nearest, Linear };
-    enum class MipmapMode : u8 { Nearest, Linear };
-    enum class AddressMode : u8 { Repeat, MirroredRepeat, ClampToEdge, ClampToBorder };
-    enum class BorderColor : u8 { TransparentBlack, OpaqueBlack, OpaqueWhite };
+    /// @brief Face-culling mode for rasterization.
+    enum class CullMode : u8
+    {
+        /// @brief No face culling.
+        None,
+        /// @brief Cull front-facing triangles.
+        Front,
+        /// @brief Cull back-facing triangles.
+        Back,
+        /// @brief Cull all triangles (rasterization is skipped).
+        FrontAndBack,
+    };
 
-    enum class PipelineBindPoint : u8 { Graphics, Compute };
+    /// @brief Rasterization fill mode.
+    enum class PolygonMode : u8
+    {
+        /// @brief Fill triangles (standard rendering).
+        Fill,
+        /// @brief Render triangle edges as lines (wireframe).
+        Line,
+        /// @brief Render vertices as points.
+        Point,
+    };
 
-    enum class CommandBufferLevel : u8 { Primary, Secondary };
+    /// @brief Texture filtering mode.
+    enum class Filter : u8
+    {
+        /// @brief Nearest-neighbor filtering (no interpolation).
+        Nearest,
+        /// @brief Bilinear interpolation between texels.
+        Linear,
+    };
 
+    /// @brief Mip-level interpolation mode for samplers.
+    enum class MipmapMode : u8
+    {
+        /// @brief Select the nearest mip level.
+        Nearest,
+        /// @brief Linearly interpolate between adjacent mip levels.
+        Linear,
+    };
+
+    /// @brief Texture coordinate wrap mode.
+    enum class AddressMode : u8
+    {
+        /// @brief Tile the texture.
+        Repeat,
+        /// @brief Tile with mirroring on each repeat.
+        MirroredRepeat,
+        /// @brief Clamp to the last texel at the edge.
+        ClampToEdge,
+        /// @brief Clamp to the configured border color.
+        ClampToBorder,
+    };
+
+    /// @brief Border color used with ClampToBorder address mode.
+    enum class BorderColor : u8
+    {
+        /// @brief (0, 0, 0, 0).
+        TransparentBlack,
+        /// @brief (0, 0, 0, 1).
+        OpaqueBlack,
+        /// @brief (1, 1, 1, 1).
+        OpaqueWhite,
+    };
+
+    /// @brief Which pipeline type a descriptor set is bound to.
+    enum class PipelineBindPoint : u8
+    {
+        /// @brief Graphics pipeline.
+        Graphics,
+        /// @brief Compute pipeline.
+        Compute,
+    };
+
+    /// @brief Level of a command buffer in the Vulkan command hierarchy.
+    enum class CommandBufferLevel : u8
+    {
+        /// @brief Submitted directly to a queue.
+        Primary,
+        /// @brief Executed from a primary command buffer.
+        Secondary,
+    };
+
+    /// @brief Bitmask of command-buffer usage hints.
     enum class CommandBufferUsage : u32
     {
+        /// @brief No special usage.
         None = 0,
+        /// @brief The buffer is submitted once and then reset or freed.
         OneTimeSubmit = 1 << 0,
     };
 
+    /// @brief Vulkan descriptor resource type.
     enum class DescriptorType : u8
     {
-        CombinedImageSampler, SampledImage, StorageImage, UniformBuffer, StorageBuffer,
-        // Plain sampler (no image) — the bindless registry's separate sampler
-        // array. Appended rather than inserted to avoid renumbering existing
-        // values.
+        /// @brief Sampled image combined with a sampler in a single binding.
+        CombinedImageSampler,
+        /// @brief Sampled image without an embedded sampler.
+        SampledImage,
+        /// @brief Image accessed as a storage resource.
+        StorageImage,
+        /// @brief Read-only uniform buffer.
+        UniformBuffer,
+        /// @brief Read/write storage buffer.
+        StorageBuffer,
+        /// @brief Plain sampler (no image) — the bindless registry's separate sampler array.
         Sampler,
-        // A uniform buffer whose bound region is selected by a dynamic offset at
-        // vkCmdBindDescriptorSets (DescriptorSetBindInfo::DynamicOffsets). One
-        // buffer holds several regions and the bind selects the live one — the
-        // conventional per-frame-constants ring for a plain descriptor set.
+        /// @brief Uniform buffer whose bound region is selected by a dynamic offset at bind time.
+        ///
+        /// One buffer holds several regions; the dynamic offset at vkCmdBindDescriptorSets
+        /// selects the live one. Used for per-frame-constants ring buffers on plain descriptor sets.
         UniformBufferDynamic,
     };
 
+    /// @brief Source or destination factor for a blend equation.
     enum class BlendFactor : u8
     {
-        Zero, One, SrcColor, OneMinusSrcColor, SrcAlpha, OneMinusSrcAlpha,
-        DstAlpha, OneMinusDstAlpha,
+        /// @brief Factor of 0.
+        Zero,
+        /// @brief Factor of 1.
+        One,
+        /// @brief Source color channels.
+        SrcColor,
+        /// @brief 1 minus source color channels.
+        OneMinusSrcColor,
+        /// @brief Source alpha.
+        SrcAlpha,
+        /// @brief 1 minus source alpha.
+        OneMinusSrcAlpha,
+        /// @brief Destination alpha.
+        DstAlpha,
+        /// @brief 1 minus destination alpha.
+        OneMinusDstAlpha,
     };
 
-    enum class BlendOp : u8 { Add, Subtract, ReverseSubtract, Min, Max };
+    /// @brief Arithmetic operator applied in a blend equation.
+    enum class BlendOp : u8
+    {
+        /// @brief Result = Src + Dst.
+        Add,
+        /// @brief Result = Src − Dst.
+        Subtract,
+        /// @brief Result = Dst − Src.
+        ReverseSubtract,
+        /// @brief Result = min(Src, Dst).
+        Min,
+        /// @brief Result = max(Src, Dst).
+        Max,
+    };
 
-    // Per-color-attachment blend state. Construct directly or use a preset.
+    /// @brief Per-color-attachment blend state. Construct directly or use a preset.
     struct BlendState
     {
+        /// @brief Whether blending is active for this attachment.
         bool Enable = false;
+        /// @brief Source color blend factor.
         BlendFactor SrcColorFactor = BlendFactor::One;
+        /// @brief Destination color blend factor.
         BlendFactor DstColorFactor = BlendFactor::Zero;
+        /// @brief Color blend operation.
         BlendOp ColorOp = BlendOp::Add;
+        /// @brief Source alpha blend factor.
         BlendFactor SrcAlphaFactor = BlendFactor::One;
+        /// @brief Destination alpha blend factor.
         BlendFactor DstAlphaFactor = BlendFactor::Zero;
+        /// @brief Alpha blend operation.
         BlendOp AlphaOp = BlendOp::Add;
 
+        /// @brief Returns an opaque (no-blend) state.
         static BlendState Opaque() { return {}; }
 
+        /// @brief Returns a standard pre-multiplied alpha-blend state.
         static BlendState AlphaBlend()
         {
             return {
@@ -171,13 +409,35 @@ namespace Veng::Renderer
         }
     };
 
-    struct ClearColor { f32 R = 0, G = 0, B = 0, A = 1; };
-    struct ClearDepth { f32 Depth = 1; u32 Stencil = 0; };
+    /// @brief RGBA clear value for a color attachment.
+    struct ClearColor
+    {
+        /// @brief Red channel clear value.
+        f32 R = 0;
+        /// @brief Green channel clear value.
+        f32 G = 0;
+        /// @brief Blue channel clear value.
+        f32 B = 0;
+        /// @brief Alpha channel clear value (default opaque).
+        f32 A = 1;
+    };
+
+    /// @brief Depth/stencil clear value for a depth attachment.
+    struct ClearDepth
+    {
+        /// @brief Depth clear value (1.0 = far plane).
+        f32 Depth = 1;
+        /// @brief Stencil clear value.
+        u32 Stencil = 0;
+    };
+
+    /// @brief Clear value for a color or depth attachment.
     using ClearValue = std::variant<ClearColor, ClearDepth>;
 }
 
-// Bitwise operators + HasFlag for a scoped flags enum. Values stored/compared
-// via the underlying type.
+/// @brief Defines bitwise |, &, |= operators and HasFlag for a scoped flags enum.
+///
+/// Values are stored and compared via the underlying integer type.
 #define VE_ENUM_FLAGS(E)                                                                   \
     inline constexpr E operator|(E a, E b)                                                 \
     {                                                                                      \

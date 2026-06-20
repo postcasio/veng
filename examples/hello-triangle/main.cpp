@@ -33,9 +33,8 @@
 
 using namespace Veng;
 
-// A game-defined component spun about a fixed axis. Registered through the same
-// public TypeRegistry::Register<T> path the engine uses for its builtins, so the
-// scene stores, queries, and serializes a type the engine never sees at compile time.
+// A game-defined component spun about a fixed axis; registered through the public
+// TypeRegistry so the scene stores, queries, and serializes it without engine knowledge.
 struct Spinner
 {
     f32 SpeedRadiansPerSec = 1.0f;
@@ -61,8 +60,6 @@ protected:
 
         m_SmokeOutput = std::getenv("HT_SMOKE");
 
-        // One SceneRenderer drives the main view; the sample composites its output,
-        // the smoke path downloads it.
         m_SceneRenderer = Renderer::SceneRenderer::Create({
             .Context = context,
             .Assets = GetAssetManager(),
@@ -71,25 +68,21 @@ protected:
             .Settings = m_SceneSettings,
         });
 
-        // Mount from the executable's directory so the pack resolves wherever the
-        // launcher is copied.
+        // Executable-relative so the pack resolves wherever the launcher is copied.
         const VoidResult mountResult = GetAssetManager().Mount(ExecutableDirectory() / "sample.vengpack");
         VE_ASSERT(mountResult, "{}", mountResult.error());
 
-        // The primitive generator records this material instance on the produced
-        // submesh, so it must be resident before Mesh::Create hands it in.
+        // Must be resident before Mesh::Create so the primitive generator can record
+        // the material on the produced submesh.
         const AssetResult<AssetHandle<Veng::Material>> brickMaterial =
             GetAssetManager().LoadSync<Veng::Material>(AssetId{0x3EB});
         VE_ASSERT(brickMaterial.has_value(), "{}", brickMaterial.error().Detail);
         m_BrickMaterial = *brickMaterial;
 
-        // Built at runtime, not cooked: an icosphere's near-uniform tessellation shows
-        // the brick UV mapping without a UV sphere's pole clustering.
+        // Icosphere: near-uniform tessellation avoids the pole clustering of a UV sphere.
         const Ref<Veng::Mesh> sphere = Veng::Mesh::Create(
             context, Veng::Primitives::Icosphere(0.8f, 4, m_BrickMaterial), "Demo Sphere");
 
-        // The composite path (ImGui overlay + swapchain present) is windowed-only; the
-        // headless smoke run renders just the scene and downloads it.
         if (GetImGuiLayer())
         {
             // Edge-clamped so the "Scene" window's UI::Image never samples past the
@@ -102,8 +95,6 @@ protected:
             });
             m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
 
-            // Blends the ImGui overlay (holding the "Scene" window) over the scene
-            // into the swapchain.
             m_Composite = Renderer::SwapChainCompositePass::Create({
                 .Context = context,
                 .ImGui = *GetImGuiLayer(),
@@ -112,18 +103,14 @@ protected:
                 .SwapChainFormat = context.GetSwapChainFormat(),
             });
 
-            // A swapchain resize invalidates the composite pass's baked extent, so
-            // rebuild the composite graph against the new size. The SceneRenderer keeps
-            // a fixed internal extent, so its output stays valid.
+            // Swapchain resize invalidates the composite graph's baked extent; SceneRenderer
+            // keeps a fixed internal extent so its output stays valid.
             context.AddSwapChainInvalidationCallback([this]
             {
                 m_CompositeGraph = BuildCompositeGraph();
             });
         }
 
-        // Spawn a cooked prefab carrying each entity's Transform, a MeshRenderer (its
-        // Mesh field "no asset", since a runtime primitive has no content identity),
-        // and the game-defined Spinner.
         m_Scene = Scene::Create(GetTypeRegistry());
 
         const AssetResult<AssetHandle<Veng::Prefab>> prefab =
@@ -133,19 +120,16 @@ protected:
         const vector<Entity> roots = prefab->Get()->SpawnInto(*m_Scene, GetAssetManager());
         VE_ASSERT(roots.size() >= 2, "prefab spawned fewer than the expected sphere + receiver-plane roots");
 
-        // A flat receiver plane beneath the sphere, sharing the brick material, so the
-        // shadow passes have a surface to catch the sphere's shadow. Built at runtime.
+        // Receiver plane: gives the shadow passes a surface beneath the sphere.
         const Ref<Veng::Mesh> plane = Veng::Mesh::Create(
             context, Veng::Primitives::Plane(vec2(4.0f), uvec2(1), m_BrickMaterial), "Receiver Plane");
 
-        // Adopt the runtime meshes into AssetHandles and assign them to the spawned
-        // renderers — wired in code because a prefab cannot reference a runtime resource
-        // by id. The adopted handle owns the mesh's residency.
+        // Wire the runtime meshes in code: a prefab cannot reference a runtime resource by id.
         m_Scene->Get<MeshRenderer>(roots[0]).Mesh = GetAssetManager().Adopt(sphere);
         m_Scene->Get<MeshRenderer>(roots[1]).Mesh = GetAssetManager().Adopt(plane);
 
-        // Fixed direction so the smoke pose is lit reproducibly; intensity pushes facets
-        // past 1.0 in linear HDR to give bloom something to act on.
+        // Fixed direction for a reproducible smoke pose; intensity pushes facets past 1.0
+        // in linear HDR so bloom has something to act on.
         const Entity lightEntity = m_Scene->CreateEntity();
         m_Scene->Add<Light>(lightEntity) = Light{
             .Type = LightType::Directional,
@@ -154,8 +138,7 @@ protected:
             .Intensity = 4.0f,
         };
 
-        // A warm point light off to the right, exercising the lighting pass's
-        // distance-attenuated accumulation alongside the directional light.
+        // Warm point light: exercises distance-attenuated accumulation alongside the directional.
         const Entity pointEntity = m_Scene->CreateEntity();
         m_Scene->Add<Transform>(pointEntity).Position = vec3(1.5f, 0.5f, 1.5f);
         m_Scene->Add<Light>(pointEntity) = Light{
@@ -165,13 +148,10 @@ protected:
             .Range = 6.0f,
         };
 
-        // A Camera looking down -Z at the origin from (0,0,3).
         const f32 aspect = static_cast<f32>(sceneExtent.x) / static_cast<f32>(sceneExtent.y);
         m_Camera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
         m_Camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
-        // Compiled once and replayed every frame; a swapchain resize rebuilds it via
-        // the callback above.
         if (GetImGuiLayer())
             m_CompositeGraph = BuildCompositeGraph();
     }
@@ -180,9 +160,7 @@ protected:
     {
         m_LastDelta = delta;
 
-        // Smoke mode pins the fixed pose so the capture is reproducible and
-        // golden-compared; the windowed app advances each spinner's Transform by
-        // speed * delta.
+        // Smoke mode pins a fixed pose for golden comparison; otherwise advance each spinner.
         if (m_SmokeOutput)
         {
             m_Scene->Each<Transform, Spinner>([](Entity, Transform& transform, Spinner&)
@@ -192,8 +170,7 @@ protected:
         }
         else if (!m_PauseSpin)
         {
-            // Pausing skips this non-const Each, so the scene's spatial version stops
-            // and the broadphase reads `static` — a still scene rebuilds the tree not at all.
+            // Skipping this non-const Each stops the spatial version, so the broadphase reads `static`.
             m_Scene->Each<Transform, Spinner>([delta](Entity, Transform& transform, Spinner& spinner)
             {
                 const quat step = glm::angleAxis(spinner.SpeedRadiansPerSec * delta, SpinAxis);
@@ -201,8 +178,7 @@ protected:
             });
         }
 
-        // After a few rendered frames, dump the scene image and exit. Runs before this
-        // frame's commands record, so the image holds the previous frame's contents.
+        // Runs before this frame's commands record, so the image holds the previous frame's contents.
         if (m_SmokeOutput && ++m_FrameCount == 20)
         {
             WriteSceneCapture(m_SmokeOutput);
@@ -215,9 +191,8 @@ protected:
         auto& context = GetRenderContext();
         auto& cmd = context.GetCurrentCommandBuffer();
 
-        // BloomThreshold/BloomIntensity are per-frame SceneView values (no recompile):
-        // a knee just below the brightest facets, with a modest mix, so highlights
-        // bloom without washing out the scene.
+        // Knee just below the brightest facets; modest mix so highlights bloom without
+        // washing out the scene.
         const Renderer::SceneView view{
             .World = *m_Scene,
             .Camera = m_Camera,
@@ -227,12 +202,9 @@ protected:
         };
         m_SceneRenderer->Execute(cmd, view);
 
-        // Headless (smoke) renders only the scene; the ImGui overlay and the
-        // composite-to-swapchain pass are windowed-only.
         if (GetImGuiLayer())
         {
-            // ImGui samples the scene output outside the graph, so transition it to a
-            // sampleable layout before the overlay's read.
+            // ImGui samples the scene output outside the graph; transition before the overlay reads it.
             cmd.PrepareForAccess(m_SceneRenderer->GetOutput(), Renderer::AccessKind::Sample);
 
             RenderUserInterface();
@@ -243,8 +215,6 @@ protected:
 
     void OnDispose() override
     {
-        // Release every engine resource before the context tears down (see
-        // Application::OnDispose).
         m_SceneRenderer.reset();
         m_CompositeGraph.reset();
         m_Composite.reset();
@@ -255,9 +225,8 @@ protected:
     }
 
 private:
-    // Apply the current scene settings and re-bind the GetOutput()-derived handles:
-    // Configure can recreate the output image, so the ImGui texture and the composite
-    // pass's scene source must both be re-fetched.
+    // Configure can recreate the output image, so the ImGui texture and composite
+    // scene source must be re-fetched after each call.
     void ReconfigureScene()
     {
         m_SceneRenderer->Configure(m_SceneSettings);
@@ -269,8 +238,7 @@ private:
     {
         if (auto sceneWindow = UI::Window("Scene"))
         {
-            // Entries mirror the DebugView enum in declaration order, so the combo index
-            // is the enum value. Selecting one recompiles via ReconfigureScene.
+            // Entries mirror the DebugView enum in declaration order; combo index == enum value.
             static constexpr std::array<string_view, 11> modeNames{
                 "Final", "Albedo", "Normal", "Depth",
                 "Roughness", "Metallic", "Occlusion",
@@ -282,16 +250,13 @@ private:
                 ReconfigureScene();
             }
 
-            // The SSAO toggle is a topology change; recompiles via ReconfigureScene.
+            // SSAO toggle is a topology change.
             if (UI::Checkbox("SSAO", m_SceneSettings.AO))
             {
                 ReconfigureScene();
             }
 
-            // Directional-shadow knobs. Shadows on/off and the cascade count / resolution
-            // size the shadow atlas, so each recompiles via ReconfigureScene. The split
-            // lambda is a per-frame value, routed through Configure only because the
-            // example holds its settings there.
+            // Shadows on/off and cascade count/resolution size the atlas; each requires ReconfigureScene.
             if (UI::Checkbox("Shadows", m_SceneSettings.Shadows))
             {
                 ReconfigureScene();
@@ -319,10 +284,7 @@ private:
                 ReconfigureScene();
             }
 
-            // Punctual-shadow knobs. On/off inserts/removes the punctual depth pass +
-            // per-light sample, and the per-tile resolution sizes the punctual atlas, so
-            // each recompiles via ReconfigureScene. The shadowed lights are the first
-            // MaxShadowedPunctual the renderer selects.
+            // On/off adds/removes the punctual depth pass; resolution sizes the atlas. Each requires ReconfigureScene.
             if (UI::Checkbox("Punctual shadows", m_SceneSettings.PunctualShadows))
             {
                 ReconfigureScene();
@@ -338,8 +300,7 @@ private:
                 ReconfigureScene();
             }
 
-            // Frustum culling toggling recompiles via ReconfigureScene (a no-op rebuild,
-            // since the cull rewires no topology).
+            // No topology change, but ReconfigureScene is the uniform path for all settings.
             if (UI::Checkbox("Frustum culling", m_SceneSettings.FrustumCull))
             {
                 ReconfigureScene();
@@ -356,23 +317,17 @@ private:
         {
             UI::Text(fmt::format("{:.1f} fps ({:.2f} ms)", UI::FrameRate(), 1000.0f / UI::FrameRate()));
 
-            // Drawn (post-cull, post-material-readiness) over gathered candidates. On
-            // this minimal scene a steady n / n is expected; the readout earns its keep
-            // on denser scenes.
+            // Post-cull, post-material-readiness count over gathered candidates.
             const u32 drawn = m_SceneRenderer->GetLastDrawnCount();
             const u32 total = m_SceneRenderer->GetLastVisibleCount();
             UI::Text(fmt::format("Meshes: {} / {}", drawn, total));
 
-            // The broadphase rebuilds its BVH only on a frame the scene's spatial version
-            // moved; a still scene reads `static`. The pause-spin toggle below stops the
-            // per-frame Transform write, so the readout flips live.
+            // Flips live as the pause-spin toggle stops/resumes the per-frame Transform write.
             const bool rebuilt = m_SceneRenderer->DidBroadphaseRebuildLastFrame();
             UI::Text(fmt::format("Broadphase: {} ({} nodes)",
                                  rebuilt ? "rebuilt" : "static",
                                  m_SceneRenderer->GetBroadphaseNodeCount()));
 
-            // The checkbox writes m_PauseSpin directly; its "changed" return is unused —
-            // the pause takes effect next frame in OnUpdate regardless.
             (void)UI::Checkbox("Pause spin", m_PauseSpin);
         }
     }
@@ -402,8 +357,7 @@ private:
         Log::Info("Wrote scene capture to {}", outPath);
     }
 
-    // Import the swapchain target and hand it to the composite pass's Compile. A
-    // swapchain resize re-runs this against the new extent.
+    // Re-run on swapchain resize to rebuild against the new extent.
     Unique<Renderer::CompiledGraph> BuildCompositeGraph()
     {
         Renderer::RenderGraph graph(GetRenderContext());
@@ -421,21 +375,17 @@ private:
 
     AssetHandle<Veng::Material> m_BrickMaterial;
 
-    // The scene output surfaced in the "Scene" window via UI::Image: an ImGui
-    // texture over the renderer output, recreated when Configure invalidates it.
+    // Recreated when Configure invalidates the output image.
     Ref<Renderer::Sampler> m_SceneSampler;
     Ref<ImGuiTexture> m_SceneTexture;
 
-    // The fullscreen scene-behind-ImGui composite into the swapchain + its bindless
-    // slots and pipeline.
     Unique<Renderer::SwapChainCompositePass> m_Composite;
 
-    // Compiled once and replayed every frame; re-Compile()d on swapchain resize.
+    // Re-Compile()d on swapchain resize.
     Unique<Renderer::CompiledGraph> m_CompositeGraph;
 
-    // The fixed rotation the smoke capture renders, in radians.
+    // Fixed rotation for the smoke capture, in radians.
     static constexpr f32 SmokeAngle = 0.9f;
-    // The axis the spinner rotates about.
     static inline const vec3 SpinAxis = glm::normalize(vec3(0.5f, 1.0f, 0.2f));
 
     Unique<Scene> m_Scene;
@@ -445,23 +395,16 @@ private:
     u32 m_FrameCount = 0;
     const char* m_SmokeOutput = nullptr;
 
-    // Windowed-only: when set, OnUpdate skips the spinner's per-frame Transform write,
-    // so the broadphase reads `static`. Never set in smoke mode, so the golden capture
-    // is untouched.
+    // Skips the per-frame Transform write so the broadphase reads `static`; never set in smoke mode.
     bool m_PauseSpin = false;
 };
 
-// The module's entry point: the launcher dlopens this library and calls it once to
-// register the factory that constructs the Application. The factory captures the
-// headless decision and the ApplicationInfo, so the launcher stays game-agnostic.
+// Factory captures the headless flag so the launcher stays game-agnostic.
 extern "C" void VengModuleRegister(VengModuleHost* host)
 {
-    // The game registers its own component types through the same public path the
-    // engine uses for its builtins. The engine has no compile-time knowledge of Spinner.
     host->Types.Register<Spinner>();
 
-    // Smoke mode runs headless: no window or swapchain, render off-screen and dump
-    // it — the display-free CI path.
+    // Smoke mode: no window or swapchain, render off-screen and dump — the display-free CI path.
     const bool smoke = std::getenv("HT_SMOKE") != nullptr;
 
     host->App.RegisterApplication([smoke](TypeRegistry& types)

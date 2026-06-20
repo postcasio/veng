@@ -58,7 +58,7 @@ namespace Veng::Renderer
 
     Buffer::~Buffer()
     {
-        // A released buffer (via ReleaseBuffer) has a null handle — skip retire.
+        // A released buffer (via ReleaseBuffer) has a null handle — skip deferred destruction.
         if (!m_Native->Buffer)
         {
             return;

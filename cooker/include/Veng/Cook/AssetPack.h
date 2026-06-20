@@ -8,26 +8,36 @@
 
 namespace Veng::Cook
 {
-    // A parsed asset pack registry: id -> (type, source). Pure data, populated
-    // by ParseAssetPack (which owns JSON parsing) — assetpack stays JSON-free.
-    // Used for cross-pack id resolution during cooking and for AssetId minting.
+    /// @brief One entry from a parsed pack JSON: the asset's id, type, and source path.
     struct AssetPackEntry
     {
+        /// @brief The asset's unique identifier.
         AssetId Id;
+        /// @brief The asset type (texture, mesh, shader, …).
         AssetType Type{};
-        string Source; // source path as written in the pack JSON, relative to the pack dir
+        /// @brief Source path as written in the pack JSON, relative to the pack directory.
+        string Source;
     };
 
+    /// @brief Parsed asset pack registry mapping ids to their type and source path.
+    ///
+    /// Pure data, populated by ParseAssetPack. Used for cross-pack id resolution
+    /// during cooking and for AssetId minting.
     struct AssetPack
     {
-        path Dir;                       // directory the pack JSON lives in (source paths are relative to it)
+        /// @brief Directory the pack JSON lives in; entry source paths are relative to it.
+        path Dir;
+        /// @brief All entries parsed from the pack JSON.
         vector<AssetPackEntry> Entries;
 
+        /// @brief Returns the entry with the given id, or nullptr if not found.
         [[nodiscard]] const AssetPackEntry* FindById(AssetId id) const;
     };
 
-    // Mints a random non-zero u64 AssetId that collides with no id in any of the
-    // provided packs. Regenerates on the astronomically-unlikely collision. The
-    // caller owns loading/parsing the packs.
+    /// @brief Mints a random non-zero AssetId that collides with no id in any of the provided packs.
+    ///
+    /// Regenerates on collision (astronomically unlikely). The caller owns loading/parsing the packs.
+    /// @param packs  Packs to check for collisions.
+    /// @return A fresh, collision-free AssetId.
     [[nodiscard]] AssetId GenerateAssetId(std::span<const AssetPack* const> packs);
 }

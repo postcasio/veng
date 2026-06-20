@@ -96,14 +96,8 @@ namespace Veng::Cook
             return output;
         }
 
-        // Collects the SV_TargetN render targets carried by an entry point's
-        // result variable layout. The result is either a single varying (a bare
-        // SV_TargetN return) or a struct of varyings (a GBufferOutput-style MRT
-        // return) — both are walked here. A varying carrying no SV_Target semantic
-        // is a located error (a fragment output must name a render target).
-        // Slang normalizes a render-target semantic to "SV_TARGET" with the index
-        // carried separately in getSemanticIndex(), so the prefix match is
-        // case-insensitive and the N comes from the index, not the name.
+        // Slang normalizes any SV_TargetN semantic to "SV_TARGET" (uppercase, no
+        // trailing digit); the index comes from getSemanticIndex(), not the name.
         bool IsTargetSemantic(const char* semantic)
         {
             if (!semantic)
@@ -120,6 +114,9 @@ namespace Veng::Cook
             return true;
         }
 
+        // Walks the entry result layout — either a bare SV_TargetN or a struct of
+        // varyings (MRT) — and collects each render target. Missing SV_Target is a
+        // located error.
         Result<vector<ReflectedFragmentOutput>> CollectOutputs(
             slang::VariableLayoutReflection* result, std::string_view entry)
         {

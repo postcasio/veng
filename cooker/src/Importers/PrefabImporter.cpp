@@ -107,10 +107,8 @@ namespace Veng::Cook
                 case FieldClass::Quaternion:
                 case FieldClass::Matrix:
                 {
-                    // Arity is the field's byte size / sizeof(f32) (vec2/3/4 = 2/3/4,
-                    // quat = 4, mat4 = 16). All components are f32, written in the
-                    // field type's storage order — a quat is [x,y,z,w] (glm's
-                    // memory layout), so the identity quaternion is [0,0,0,1].
+                    // All components are f32 in the field type's storage order.
+                    // A quat is [x,y,z,w] (glm memory layout), so identity is [0,0,0,1].
                     const usize size = registry.Info(field.Type).Size;
                     const usize arity = size / sizeof(f32);
 

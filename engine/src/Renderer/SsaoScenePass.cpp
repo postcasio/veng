@@ -49,8 +49,6 @@ namespace Veng::Renderer
 
     void SsaoScenePass::CreateTarget()
     {
-        // AO target is pass-owned and Imported: the SSAO pass writes it, the lighting
-        // pass samples it through bindless.
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_AoHandle);
 

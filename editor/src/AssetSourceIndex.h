@@ -4,35 +4,40 @@
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Veng.h>
 
-// AssetSourceIndex: maps an AssetId to its per-asset JSON source file by parsing
-// the pack manifest (the .vengpack.json the cooker reads). The editor needs the
-// source path — not just the cooked blob in the archive — to edit and recook an
-// asset on demand. The archive TOC carries no source path, so this is the only
-// bridge from a mounted AssetId back to the file the texture editor edits.
+/// @brief Maps an AssetId to its per-asset JSON source file by parsing the pack
+/// manifest (.vengpack.json). The archive TOC carries no source path; this index
+/// is the only bridge from a mounted AssetId back to the file an asset editor edits.
 
 namespace VengEditor
 {
+    /// @brief AssetId-to-source-file index built from the pack manifest.
     class AssetSourceIndex
     {
     public:
+        /// @brief One manifest entry: asset type and absolute source path.
         struct Entry
         {
+            /// @brief Asset type of this entry.
             Veng::AssetType Type{};
-            // Absolute path to the per-asset JSON source (e.g. brick.tex.json).
+            /// @brief Absolute path to the per-asset JSON source (e.g. brick.tex.json).
             Veng::path Source;
         };
 
-        // Parses the manifest at manifestPath. Source paths in the manifest are
-        // relative to the manifest's directory; they are resolved to absolute
-        // here. An unreadable or malformed manifest yields an empty index (logged).
+        /// @brief Parses the manifest at manifestPath and returns the resulting index.
+        ///
+        /// Source paths in the manifest are relative to the manifest's directory and
+        /// are resolved to absolute paths here. An unreadable or malformed manifest
+        /// yields an empty index (logged via Log::Error).
+        /// @param manifestPath Path to the .vengpack.json manifest.
         static AssetSourceIndex Parse(const Veng::path& manifestPath);
 
-        // The source entry for an id, or nullptr if the id is not in the manifest.
+        /// @brief Returns the source entry for an id, or nullptr when not in the manifest.
         [[nodiscard]] const Entry* Find(Veng::AssetId id) const;
 
-        // Every manifest id of a given asset type, in unspecified order — the
-        // candidate set the inspector's AssetHandle picker offers. Returned by
-        // value so a caller can sort/filter without holding the index's storage.
+        /// @brief Returns all manifest ids of a given asset type, in unspecified order.
+        ///
+        /// Returned by value so the caller can sort/filter without holding the index's storage.
+        /// Used by the inspector's AssetHandle picker to enumerate candidates.
         [[nodiscard]] Veng::vector<Veng::AssetId> EntriesOfType(Veng::AssetType type) const;
 
     private:

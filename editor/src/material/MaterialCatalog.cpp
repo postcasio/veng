@@ -13,15 +13,14 @@ namespace VengEditor
     {
         using Veng::TypeIdOf;
 
-        // The Param node's property POD: one typed leaf value. Authored as a vec4
-        // so it holds any of f32/vec2/vec3/vec4 (the compiler reads the live pin
-        // type to pick the emitted arity) and a uint alias for an integer param.
+        // Param property POD: one vec4 value covering f32/vec2/vec3/vec4 arities;
+        // the compiler reads the live pin type to pick the emitted arity.
         struct ParamProps
         {
             Veng::vec4 Value{0.0f, 0.0f, 0.0f, 0.0f};
         };
 
-        // The TextureSample node's property POD: the sampled texture handle.
+        // TextureSample property POD: the sampled texture handle.
         struct TextureSampleProps
         {
             Veng::AssetHandle<Veng::Texture> Texture;

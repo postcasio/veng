@@ -10,10 +10,8 @@ namespace Veng::Primitives
 {
     namespace
     {
-        // Finishes a primitive's single submesh from the material handle: a
-        // valid handle is recorded as the mesh's one resident material and
-        // indexed by the submesh; an empty handle leaves the submesh
-        // unassigned (SubMesh::NoMaterial) and the material list empty.
+        // Appends a single submesh over the full index range. A valid material handle is
+        // recorded as the mesh's resident material; an empty handle leaves the submesh unassigned.
         void FinishSubMesh(MeshData& data, AssetHandle<Material> material)
         {
             const u32 indexCount = static_cast<u32>(data.Indices.size());

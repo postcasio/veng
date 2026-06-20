@@ -58,9 +58,8 @@ namespace Veng
 
         m_Tree.Build(m_LeafScratch);
 
-        // Record the entities whose mesh is not yet resident so a later Sync rebuilds
-        // when one loads. The const View routes through the const TryGetRaw only, so
-        // refreshing the set never bumps the spatial version.
+        // Record entities whose mesh is not yet resident so a later Sync rebuilds
+        // when one loads; const View avoids bumping the spatial version.
         m_Pending.clear();
         for (auto [entity, transform, renderer] : scene.View<Transform, MeshRenderer>())
         {
@@ -74,9 +73,8 @@ namespace Veng
     {
         const usize start = out.size();
         m_Tree.Query(frustum, out);
-        // Sort the appended range ascending so draws issue in GatherMeshes order,
-        // identical to the pre-BVH linear scan; an earlier-appended range is left
-        // untouched.
+        // Sort the appended range ascending so draws issue in GatherMeshes order;
+        // an earlier-appended range is left untouched.
         std::sort(out.begin() + static_cast<std::ptrdiff_t>(start), out.end());
     }
 }

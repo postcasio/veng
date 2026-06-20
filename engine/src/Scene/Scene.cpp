@@ -9,10 +9,8 @@ namespace Veng
 {
     bool Scene::IsSpatialId(TypeId id)
     {
-        // The three pools the broadphase reads — they decide an entity's draw
-        // candidacy and where its world bound sits. Compared against the
-        // compile-time TypeId off each type's trait, not a registry lookup, so the
-        // check in the hot mutation/access paths is a plain integer comparison.
+        // These three pools decide draw candidacy and world bounds; checking compile-time
+        // TypeId constants (not a registry lookup) keeps mutation-path overhead minimal.
         return id == TypeIdOf<Transform>() || id == TypeIdOf<Parent>()
                || id == TypeIdOf<MeshRenderer>();
     }

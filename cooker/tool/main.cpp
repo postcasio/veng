@@ -25,8 +25,7 @@ namespace
             "  vengc verify <archive.vengpack>\n");
     }
 
-    // Prints the loaded type table as a names → TypeId manifest, for
-    // tooling/debugging. A printed table, not a persisted artifact.
+    // Prints the loaded type table as a name → TypeId manifest (stdout, not persisted).
     void PrintTypeManifest(const TypeRegistry& types)
     {
         vector<const TypeInfo*> infos;
@@ -130,9 +129,7 @@ int main(int argc, char** argv)
             outPath->replace_extension(".vengpack");
         }
 
-        // --module loads the game module and reflects its native types, so a
-        // prefab entry can cook against the component descriptors. The loaded
-        // module image and its registry are kept alive across the whole cook.
+        // The module image and its registry must outlive the cook.
         optional<LoadedModuleTypes> moduleTypes;
         if (modulePath)
         {
@@ -218,8 +215,7 @@ int main(int argc, char** argv)
             packPtrs.push_back(&p);
 
         const AssetId id = GenerateAssetId(packPtrs);
-        // Both representations: hex for C++ AssetId literals, decimal for JSON
-        // asset packs (JSON has no hex literal).
+        // Hex for C++ literals, decimal for JSON packs (JSON has no hex literal).
         fmt::print("hex (C++):      0x{:X}\n", id.Value);
         fmt::print("decimal (JSON): {}\n", id.Value);
         return 0;
@@ -250,8 +246,7 @@ int main(int argc, char** argv)
             }
         }
 
-        // Collision-check against every already-registered id: the engine
-        // builtins always, plus the game's own types when --module loads them.
+        // Collision-checks against builtins always, plus game types when --module is given.
         // The module image must outlive the registry it populates.
         optional<LoadedModuleTypes> moduleTypes;
         TypeRegistry  builtins;
@@ -275,9 +270,7 @@ int main(int argc, char** argv)
 
         const TypeId id = GenerateTypeId(*registry);
 
-        // Both representations: hex for C++ VE_REFLECT literals, decimal for JSON
-        // (JSON has no hex literal) — matching generate-id and the house id
-        // convention.
+        // Hex for C++ literals, decimal for JSON packs (JSON has no hex literal).
         fmt::print("hex (C++):      0x{:X}ULL\n", id);
         fmt::print("decimal (JSON): {}\n", id);
         return 0;

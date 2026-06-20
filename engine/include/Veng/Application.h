@@ -10,108 +10,122 @@
 
 namespace Veng
 {
-    // The directory containing the running executable (for the launcher, the
-    // launcher binary). A game mounts its asset pack relative to this so the
-    // launcher + module + pack are a relocatable trio resolved beside the binary,
-    // not at an absolute build-tree path. path-typed, so it pulls in no backend
-    // include — include_hygiene stays green.
+    /// @brief Returns the directory containing the running executable.
+    ///
+    /// A game mounts its asset pack relative to this so the launcher + module +
+    /// pack resolve beside the binary, not at an absolute build-tree path.
+    /// @return Absolute path to the directory holding the running binary.
     [[nodiscard]] VE_API path ExecutableDirectory();
 
+    /// @brief Construction parameters for Application.
     struct ApplicationInfo
     {
+        /// @brief Application name passed to the Vulkan instance.
         string Name = "Veng Application";
+        /// @brief Engine name passed to the Vulkan instance.
         string EngineName = "Veng";
+        /// @brief Off-screen render resolution before presentation.
         uvec2 InternalRenderExtent{1280, 720};
+        /// @brief Window creation parameters.
         WindowInfo WindowInfo;
-        // ImGui is opt-in: engaged (the default) creates an ImGuiLayer; set to
-        // nullopt for a UI-free app that pays nothing for ImGui at runtime.
-        // (ImGui needs a window, so it is force-disabled when Headless.)
+        /// @brief ImGui integration; nullopt disables it for UI-free apps.
+        ///
+        /// Engaged by default. Force-disabled when Headless (ImGui requires a window).
         optional<ImGuiLayerInfo> ImGui = ImGuiLayerInfo{};
-        // Headless: create no window and a windowless (off-screen) context. The
-        // run loop then runs until RequestExit() rather than the window closing.
+        /// @brief Run without a window, using an off-screen context; exits on RequestExit().
         bool Headless = false;
-        // When set, the render context seeds its pipeline cache from this file at
-        // startup (if it exists) and writes the cache back here at shutdown.
-        // nullopt (default) keeps the cache in-memory only — no file is read or
-        // written. The app owns the path; veng does not choose a cache directory.
+        /// @brief Path for pipeline cache persistence; nullopt keeps the cache in-memory only.
+        ///
+        /// When set, seeds the pipeline cache from this file at startup (if it exists)
+        /// and writes it back at shutdown. veng does not choose the path.
         optional<path> PipelineCachePath = std::nullopt;
     };
 
+    /// @brief Base class for a veng application; subclass and override the lifecycle hooks.
     class Application
     {
     public:
-        // The TypeRegistry is borrowed, not owned: the host (launcher or cooker)
-        // constructs it and pre-registers builtins before the module's
-        // VengModuleRegister runs — which is before this Application exists — so
-        // it lives one frame up and is threaded in here. It must outlive the app.
+        /// @brief Constructs the application with the given settings and a borrowed type registry.
+        ///
+        /// The TypeRegistry is borrowed, not owned: the host (launcher or cooker)
+        /// constructs it and pre-registers builtins before VengModuleRegister runs.
+        /// It must outlive this Application.
+        /// @param info   Application creation parameters.
+        /// @param types  Host-owned registry of reflected types; must outlive the app.
         Application(ApplicationInfo info, TypeRegistry& types);
         virtual ~Application() = default;
 
+        /// @brief Enter the main loop, blocking until the app exits.
+        /// @param arguments  Command-line arguments forwarded from the launcher.
         void Run(vector<string> arguments);
 
+        /// @brief Returns the application window.
         [[nodiscard]] Window& GetWindow() const
         {
             return *m_Window;
         }
 
+        /// @brief Returns the render context.
         [[nodiscard]] Renderer::Context& GetRenderContext()
         {
             return m_RenderContext;
         }
 
+        /// @brief Returns the task system.
         [[nodiscard]] TaskSystem& GetTaskSystem()
         {
             return *m_TaskSystem;
         }
 
+        /// @brief Returns the asset manager.
         [[nodiscard]] AssetManager& GetAssetManager()
         {
             return *m_AssetManager;
         }
 
-        // The host-owned, process-wide registry of reflected types (a reflected
-        // type is identical across every Scene). Borrowed: the host pre-registers
-        // the engine builtins and the module registers its own component types,
-        // both before this app exists. Threaded by reference into Scene::Create —
-        // the same explicit-dependency discipline as the Context / AssetManager /
-        // TaskSystem.
+        /// @brief Returns the host-owned, process-wide registry of reflected types.
+        ///
+        /// Borrowed: the host constructs it, pre-registers builtins, and calls
+        /// VengModuleRegister before passing it here. Must outlive this Application.
         [[nodiscard]] TypeRegistry& GetTypeRegistry()
         {
             return m_TypeRegistry;
         }
 
-        // The ImGui layer, or nullptr if the app opted out (ApplicationInfo::ImGui
-        // == nullopt).
+        /// @brief Returns the ImGui layer, or nullptr if the app opted out.
         [[nodiscard]] ImGuiLayer* GetImGuiLayer() const
         {
             return m_ImGuiLayer.get();
         }
 
     protected:
+        /// @brief Called once after all engine systems are initialized.
         virtual void OnInitialize()
         {
         }
 
+        /// @brief Called once per frame before rendering.
+        /// @param delta  Time in seconds since the previous frame.
         virtual void OnUpdate(f32 delta)
         {
         }
 
+        /// @brief Called once per frame to record draw commands.
         virtual void OnRender()
         {
         }
 
-        // Called after the main loop exits and the GPU is idle, immediately
-        // before the rendering context is torn down. Release every engine
-        // resource held by the application here (reset Refs/Uniques,
-        // AssetHandles included) — resources that outlive the context fail on
-        // destruction.
+        /// @brief Called after the main loop exits and the GPU is idle, before context teardown.
+        ///
+        /// Release every engine resource held by the application here (reset Refs/Uniques,
+        /// AssetHandles included) — resources that outlive the context fail on destruction.
         virtual void OnDispose()
         {
         }
 
-        // Ask the run loop to exit after the current frame. This is the only way
-        // to stop a headless app (which has no window to close), and also works
-        // for windowed apps.
+        /// @brief Signals the run loop to exit after the current frame.
+        ///
+        /// The only way to stop a headless app; also works for windowed apps.
         void RequestExit() { m_ShouldExit = true; }
 
     private:
@@ -120,24 +134,17 @@ namespace Veng
 
         ApplicationInfo m_Info;
 
-        // Borrowed from the host (launcher or cooker), which owns it and keeps it
-        // alive past this app. Carries no GPU state and is not in the
-        // deferred-destruction path; outlives every Scene the app creates.
+        /// @brief Borrowed from the host; must outlive this app and every Scene it creates.
         TypeRegistry& m_TypeRegistry;
 
         Unique<Window> m_Window;
 
         Renderer::Context m_RenderContext;
 
-        // The CPU concurrency subsystem, constructed beside the Context and
-        // threaded by reference into consumers. Destroyed (joining its workers)
-        // after m_AssetManager: a worker may hold a Context& and touch
-        // AssetManager state, so neither may be torn down while a worker is live.
+        /// @brief Worker pool; destroyed after m_AssetManager to avoid tearing down live workers.
         Unique<TaskSystem> m_TaskSystem;
 
-        // Constructed after m_RenderContext (it needs a live Context); reset
-        // before DisposeResources() so cached assets retire while the context
-        // is still alive.
+        /// @brief Constructed after m_RenderContext; reset before teardown so assets retire safely.
         Unique<AssetManager> m_AssetManager;
 
         Unique<ImGuiLayer> m_ImGuiLayer;

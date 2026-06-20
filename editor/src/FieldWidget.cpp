@@ -34,10 +34,7 @@ namespace VengEditor
 
     namespace
     {
-        // The AssetHandle picker: a combo over the manifest's ids of the field's
-        // asset type, writing the chosen id back through the leading u64 of the
-        // handle (offset 0 is pinned by AssetHandle's layout guard, so the id is
-        // writable without naming the asset's concrete type). "(none)" clears it.
+        // Combo over the manifest's ids of the field's asset type; "(none)" clears it.
         void DrawAssetPicker(void* fieldPtr, const FieldDescriptor& field, string_view label,
                              const FieldWidgetContext& ctx)
         {
@@ -55,9 +52,7 @@ namespace VengEditor
                 return;
             }
 
-            // The combo entries are "(none)" first, then one per candidate id; the
-            // selected index addresses this same list, so index 0 clears the handle
-            // and index N picks the candidate at N-1.
+            // Index 0 is "(none)" (clears the handle); index N picks candidate N-1.
             const vector<AssetId> candidates = ctx.Sources.EntriesOfType(*assetType);
 
             vector<string> labels;
@@ -93,8 +88,7 @@ namespace VengEditor
         if (field.Hidden)
             return;
 
-        // A game-registered custom widget for this field's type overrides the
-        // built-in chosen from FieldClass.
+        // A game-registered custom widget for this type overrides the built-in.
         if (const FieldWidgetFn* custom = ctx.Editors.FieldWidgetFor(field.Type))
         {
             (*custom)(fieldPtr, field);
@@ -105,9 +99,8 @@ namespace VengEditor
 
         auto id = UI::PushId(label);
 
-        // The field's optional editor metadata is the single source of drag speed
-        // and clamp range; absent metadata leaves the DragOptions defaults
-        // (0.01f speed, unclamped).
+        // Drag speed and clamp range come from the field's optional editor metadata;
+        // absent metadata leaves the DragOptions defaults (0.01f speed, unclamped).
         UI::DragOptions drag;
         if (field.Step) drag.Speed = static_cast<f32>(*field.Step);
         if (field.Min) drag.Min = static_cast<f32>(*field.Min);
@@ -127,8 +120,7 @@ namespace VengEditor
             }
             else if (field.Type == TypeIdOf<u32>())
             {
-                // u32 has no Drag overload; edit through a signed view clamped at 0
-                // so the unsigned field never receives a negative value.
+                // u32 has no Drag overload; edit through a signed view clamped to 0+.
                 i32 value = static_cast<i32>(*static_cast<u32*>(fieldPtr));
                 if (UI::Drag(label, value, UI::DragOptions{ .Min = 0.0f }))
                     *static_cast<u32*>(fieldPtr) = static_cast<u32>(value < 0 ? 0 : value);
@@ -164,8 +156,6 @@ namespace VengEditor
         }
         case FieldClass::String:
         {
-            // UI::InputText owns the commit-on-deactivate semantics and writes the
-            // value back internally; it returns true only on a fresh commit.
             string& value = *static_cast<string*>(fieldPtr);
             UI::InputText(label, value);
             break;
@@ -197,8 +187,7 @@ namespace VengEditor
         }
         case FieldClass::Enum:
         {
-            // No enum-value table is recorded in the reflection layer; show the
-            // backing integer read-only until a value table exists.
+            // The reflection layer records no enum-value table; show the backing integer read-only.
             const i32 value = *static_cast<const i32*>(fieldPtr);
             UI::Label(label, fmt::format("{}", value));
             break;

@@ -12,8 +12,7 @@
 
 namespace Veng
 {
-    // The result a worker hands back. A void job's payload is std::monostate, so
-    // a single template covers both value and void jobs.
+    /// @brief Payload type for a job returning T; void jobs collapse to std::monostate.
     template <typename T>
     using TaskPayload = std::conditional_t<std::is_void_v<T>, std::monostate, T>;
 
@@ -21,47 +20,59 @@ namespace Veng
 
     namespace Detail
     {
-        // The shared state behind a Task<T>: the slot the worker writes its
-        // Result into, the readiness flag, and the registered main-thread
-        // continuation. The Task<T> handle and the worker both reference it.
+        /// @brief Shared state between a Task<T> handle and the worker that runs it.
+        ///
+        /// Holds the Result slot, the readiness flag, and the registered main-thread
+        /// continuation. Both sides reference it through a Ref<TaskState<T>>.
         template <typename T>
         struct TaskState
         {
+            /// @brief Resolved payload type for T.
             using Payload = TaskPayload<T>;
 
+            /// @brief Guards Done, Value, and Continuation.
             std::mutex Mutex;
+            /// @brief Signalled when Done becomes true.
             std::condition_variable Ready;
+            /// @brief True once the worker has written Value.
             bool Done = false;
+            /// @brief The job result, valid when Done.
             optional<Result<Payload>> Value;
-
-            // A Then continuation registered before the result landed. Stored
-            // here until the worker finishes, then handed to the main-thread
-            // queue so it runs on the pumping thread, never on a worker.
+            /// @brief Continuation registered before the result landed.
+            ///
+            /// Stored here until the worker finishes, then handed to the main-thread
+            /// queue so it runs during PumpMainThread(), never on a worker.
             function<void(Result<Payload>)> Continuation;
         };
 
-        // True when a job's return type is already a Result<U>, so a job can
-        // report a recoverable failure rather than only a value.
+        /// @brief Trait: true when R is a Result<U>, allowing a job to report recoverable failures.
         template <typename R>
         struct IsResult : std::false_type
         {
         };
 
+        /// @brief Specialization for std::expected<U, std::string>.
         template <typename U>
         struct IsResult<std::expected<U, std::string>> : std::true_type
         {
         };
     }
 
+    /// @brief Handle to an async job submitted to the TaskSystem.
+    ///
+    /// Provides IsReady() for non-blocking polling, Get() for blocking retrieval,
+    /// and Then() for main-thread continuations. A default-constructed Task is empty.
+    /// @tparam T  Return type of the job (void is allowed).
     template <typename T>
     class Task
     {
     public:
+        /// @brief Resolved payload type (void → std::monostate).
         using Payload = TaskPayload<T>;
 
         Task() = default;
 
-        // Non-blocking: has the worker written the result yet?
+        /// @brief Non-blocking check: returns true if the worker has written the result.
         [[nodiscard]] bool IsReady() const
         {
             if (!m_State)
@@ -73,8 +84,9 @@ namespace Veng
             return m_State->Done;
         }
 
-        // Blocks until the result lands, then moves it out. A failed job
-        // surfaces its error here as Result<T>::error() — no exceptions.
+        /// @brief Blocks until the result is ready, then moves it out.
+        ///
+        /// A failed job surfaces its error as Result<Payload>::error() — no exceptions.
         [[nodiscard]] Result<Payload> Get()
         {
             VE_ASSERT(m_State, "Get() on an empty Task");
@@ -84,10 +96,11 @@ namespace Veng
             return std::move(*m_State->Value);
         }
 
-        // Register a continuation that runs on the main thread during
-        // TaskSystem::PumpMainThread(), never on a worker. If the result has
-        // already landed the continuation is queued onto the pump immediately;
-        // otherwise the worker queues it on completion.
+        /// @brief Registers a continuation that runs on the main thread during PumpMainThread().
+        ///
+        /// If the result has already landed, the continuation is queued immediately;
+        /// otherwise the worker queues it on completion. Never runs on a worker thread.
+        /// @param fn  Callable accepting Result<Payload>.
         void Then(function<void(Result<Payload>)> fn);
 
     private:
@@ -99,71 +112,82 @@ namespace Veng
         {
         }
 
+        /// @brief The owning TaskSystem; null on empty Tasks.
         TaskSystem* m_System = nullptr;
+        /// @brief Shared state with the worker.
         Ref<Detail::TaskState<T>> m_State;
     };
 
+    /// @brief Construction parameters for TaskSystem.
     struct TaskSystemInfo
     {
-        // 0 = derive from hardware_concurrency() - 1 (leave the main thread a core).
+        /// @brief Number of worker threads; 0 derives from hardware_concurrency() - 1.
         u32 WorkerCount = 0;
     };
 
-    // A fixed pool of worker threads draining a shared work queue, returning
-    // Task<T> result handles. Owned by Application and threaded by reference into
-    // consumers — there is no global instance. Submit runs a callable on a
-    // worker; PumpMainThread drains continuations on the calling thread.
+    /// @brief Fixed pool of worker threads draining a shared work queue.
+    ///
+    /// Owned by Application and threaded by reference into consumers; there is no global
+    /// instance. Submit() runs a callable on a worker; PumpMainThread() drains continuations
+    /// on the calling thread.
     class TaskSystem
     {
     public:
-        // Sentinel worker index for any thread that is not a TaskSystem worker
-        // (the main thread, etc.). GetCurrentWorkerIndex never returns this — it
-        // asserts instead.
+        /// @brief Sentinel returned to callers; GetCurrentWorkerIndex() asserts rather than returning it.
         static constexpr u32 NotAWorker = static_cast<u32>(-1);
 
+        /// @brief Constructs the pool and starts the worker threads.
         explicit TaskSystem(const TaskSystemInfo& info = {});
+
+        /// @brief Stops all workers and joins them.
         ~TaskSystem();
 
         TaskSystem(const TaskSystem&) = delete;
         TaskSystem& operator=(const TaskSystem&) = delete;
 
-        // The index of the worker the calling thread is. Valid only inside a job
-        // running on a worker (a Submit-ed callable or a ForEachWorker body);
-        // asserts off a worker. The async upload path uses it to select that
-        // worker's own transfer command pool (GetTransferCommandBuffer).
+        /// @brief Returns the index of the worker thread calling this function.
+        ///
+        /// Valid only inside a Submit()ed callable or ForEachWorker() body; asserts on
+        /// any other thread. The async upload path uses it to select that worker's
+        /// transfer command pool.
         [[nodiscard]] static u32 GetCurrentWorkerIndex();
 
-        // Submit a callable returning T (or void). The callable runs on a worker;
-        // the returned Task<T> carries its Result back. A callable that returns
-        // Result<T> is unwrapped, so a job may report a recoverable failure.
+        /// @brief Submits a callable to run on a worker and returns a Task<T> handle.
+        ///
+        /// A callable returning Result<T> is unwrapped so the job can report a
+        /// recoverable failure. Void return is also supported.
+        /// @param fn  Callable with no arguments returning T, void, or Result<T>.
         template <typename Fn>
         auto Submit(Fn&& fn);
 
-        // Run fn on each worker once, passing the worker's index, for per-thread
-        // setup. Blocks until every worker has run it.
+        /// @brief Runs fn on each worker once with its index; blocks until all have finished.
+        ///
+        /// Used for per-worker setup (e.g. allocating per-thread command pools).
+        /// @param fn  Callable accepting a worker index.
         void ForEachWorker(const function<void(u32 workerIndex)>& fn);
 
-        // Drain the main-thread continuation queue, running each Then on the
-        // calling thread. Application calls this at the top of Frame(), before
-        // BeginFrame().
+        /// @brief Drains the main-thread continuation queue on the calling thread.
+        ///
+        /// Application calls this at the top of Frame(), before BeginFrame(), so
+        /// off-thread continuations land on the main thread.
         void PumpMainThread();
 
-        // Block until the work queue is empty and every in-flight job has
-        // finished. Pending continuations are left for the next PumpMainThread.
+        /// @brief Blocks until the work queue is empty and every in-flight job has finished.
+        ///
+        /// Pending continuations are left for the next PumpMainThread() call.
         void WaitForAll();
 
+        /// @brief Returns the number of worker threads in the pool.
         [[nodiscard]] u32 GetWorkerCount() const { return m_WorkerCount; }
 
     private:
         template <typename T>
         friend class Task;
 
-        // Push a ready continuation onto the main-thread queue.
+        /// @brief Pushes a ready continuation onto the main-thread queue.
         void EnqueueMainThread(function<void()> fn);
 
-        // Called on a worker when a job finishes: store the Result, wake any
-        // blocked Get(), hand a registered Then to the main-thread queue, and
-        // tick the active-job count so WaitForAll can observe completion.
+        /// @brief Called by a worker on job completion: stores the result, wakes Get(), and hands off any Then.
         template <typename T>
         void Finish(Detail::TaskState<T>& state, Result<typename Detail::TaskState<T>::Payload> result)
         {
@@ -195,19 +219,30 @@ namespace Veng
             m_WorkDrained.notify_all();
         }
 
+        /// @brief Entry function for each worker thread.
         void WorkerLoop(u32 workerIndex);
 
+        /// @brief Number of worker threads.
         u32 m_WorkerCount = 0;
+        /// @brief Worker thread handles.
         vector<std::thread> m_Workers;
 
+        /// @brief Guards m_Queue, m_ActiveJobs, m_Stopping.
         std::mutex m_QueueMutex;
+        /// @brief Signalled when new work is enqueued.
         std::condition_variable m_WorkAvailable;
+        /// @brief Signalled when m_ActiveJobs reaches zero.
         std::condition_variable m_WorkDrained;
+        /// @brief Pending job closures.
         std::deque<function<void()>> m_Queue;
+        /// @brief Count of in-flight + queued jobs.
         u32 m_ActiveJobs = 0;
+        /// @brief Set to true to drain and shut down workers.
         bool m_Stopping = false;
 
+        /// @brief Guards m_MainThreadQueue.
         std::mutex m_MainThreadMutex;
+        /// @brief Ready continuations for PumpMainThread().
         std::deque<function<void()>> m_MainThreadQueue;
     };
 
@@ -241,9 +276,7 @@ namespace Veng
     {
         using Returned = std::invoke_result_t<Fn>;
 
-        // A job may report a recoverable failure by returning Result<U>; in that
-        // case the Task's payload is U. Otherwise the payload is the plain return
-        // type (void collapsing to std::monostate).
+        // A Result<U>-returning job's payload is U; a void job's is std::monostate.
         if constexpr (Detail::IsResult<Returned>::value)
         {
             using Payload = typename Returned::value_type;

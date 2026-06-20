@@ -6,45 +6,46 @@
 
 namespace Veng
 {
-    // Forward-declared, defined only in the editor framework. libveng never sees
-    // its definition; a non-editor host passes Editor = nullptr. Held by pointer,
-    // so the incomplete type suffices.
+    /// @brief Forward-declared editor registry; libveng never sees its definition.
+    ///
+    /// A non-editor host passes Editor = nullptr. Held by pointer so the incomplete type suffices.
     class EditorRegistry;
 
-    // The host's side of the module contract: what a loaded module registers
-    // into. The host owns these for the module's whole lifetime; a module
-    // registers into them and never frees a host object. Registration is
-    // GPU-free — a factory and reflected type descriptors — so no live
-    // Context/AssetManager is needed here; the host owns the registries and
-    // threads them into the Application it later constructs.
+    /// @brief The host-side module contract: the registries a loaded module writes into.
+    ///
+    /// The host owns these for the module's whole lifetime. Registration is GPU-free
+    /// (a factory + reflected type descriptors), so no live Context/AssetManager is required;
+    /// the host threads them into the Application it later constructs.
     struct VengModuleHost
     {
-        ApplicationRegistry& App;    // the module hands the host its Application factory
-        TypeRegistry&        Types;  // the module registers its component/type descriptors
-        EditorRegistry*      Editor; // non-null ONLY when loaded by the editor; null otherwise
+        /// @brief Receives the module's Application factory.
+        ApplicationRegistry& App;
+        /// @brief Receives the module's component/type descriptors.
+        TypeRegistry& Types;
+        /// @brief Non-null only when loaded by the editor host.
+        EditorRegistry* Editor;
     };
 }
 
 extern "C"
 {
-    // Exported by every game / editor module. The host dlsym()s this exact name,
-    // calls it once after load, and the module registers what it provides into
-    // the registries the host passes in. C ABI so the symbol resolves robustly
-    // and a stale module fails loudly at load; the VengModuleHost payload is rich
-    // C++.
+    /// @brief Entry point exported by every game/editor module.
+    ///
+    /// The host dlsym()s this name, calls it once after load, and the module
+    /// registers its factory and types into the provided host registries.
+    /// C ABI ensures the symbol resolves robustly across module boundaries.
     VE_MODULE_EXPORT void VengModuleRegister(Veng::VengModuleHost* host);
 }
 
-// Bumped whenever VengModuleHost's layout or the entry contract changes. Host
-// and module each bake in the value from the header they compiled against; the
-// loader compares them before calling VengModuleRegister. Guarded with #ifndef
-// so a target can force a wrong value with a -D define.
+/// @brief ABI version token baked into both host and module at compile time.
+///
+/// Bumped whenever VengModuleHost's layout or the entry contract changes.
+/// The loader compares host vs. module values before calling VengModuleRegister.
+/// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
 #define VENG_MODULE_ABI_VERSION 2u
 #endif
 
-// A module drops this in exactly one translation unit to export the version it
-// was built against, beside its VengModuleRegister. The loader resolves and
-// checks it.
+/// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.
 #define VE_EXPORT_MODULE_ABI() \
     extern "C" VE_MODULE_EXPORT Veng::u32 VengModuleAbiVersion() { return VENG_MODULE_ABI_VERSION; }

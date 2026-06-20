@@ -50,7 +50,7 @@ namespace VengEditor
         if (found == nullptr)
             return; // stale / non-existent — a no-op
 
-        // Drop every link touching this node from either endpoint.
+        // Drop every link incident to this node.
         std::erase_if(m_Links, [&](const Link& link) {
             return link.From.Node == node || link.To.Node == node;
         });
@@ -163,13 +163,12 @@ namespace VengEditor
 
     Veng::vector<NodeId> NodeGraph::TopoOrder() const
     {
-        // Kahn's algorithm over node-level edges, seeding and draining in
-        // node-creation order (m_Live is creation-ordered) so the result is stable.
+        // Kahn's algorithm; m_Live is creation-ordered, so ties resolve stably.
         Veng::vector<NodeId> order;
         order.reserve(m_Live.size());
 
-        // In-degree per live node, counting distinct node-level predecessors only
-        // once (two links between the same node pair must not double-count).
+        // In-degree per live node; distinct predecessors only (two links between the
+        // same node pair must not double-count).
         Veng::vector<Veng::u32> indegree(m_Live.size(), 0);
 
         const auto liveIndexOf = [&](NodeId node) -> Veng::usize {
@@ -194,8 +193,7 @@ namespace VengEditor
             indegree[i] = static_cast<Veng::u32>(sources.size());
         }
 
-        // Ready queue as a creation-ordered scan, re-swept after each emission so
-        // ties always resolve toward the earliest-created node.
+        // Re-sweep m_Live after each emission; first zero-indegree node wins.
         Veng::vector<bool> emitted(m_Live.size(), false);
         for (Veng::usize emittedCount = 0; emittedCount < m_Live.size(); ++emittedCount)
         {
@@ -209,8 +207,7 @@ namespace VengEditor
                 }
             }
 
-            // A remaining cycle would leave no zero-indegree node; the graph is a
-            // DAG by construction, so this never fires.
+            // The graph is a DAG by construction; this fires only on a bug.
             VE_ASSERT(pick != m_Live.size(), "TopoOrder: graph is not acyclic");
 
             const NodeId picked = m_Live[pick];

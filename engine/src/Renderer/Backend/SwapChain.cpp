@@ -37,10 +37,6 @@ namespace Veng::Renderer
         return vk::PresentModeKHR::eFifo;
     }
 
-    /// @brief Creates the Vulkan swapchain and its images and image views.
-    ///
-    /// Queries surface capabilities, selects image count and extent, and seeds each image's
-    /// tracked pipeline stage to match the acquire semaphore wait stage.
     void SwapChain::Initialize()
     {
         auto& contextNative = m_Context.GetNative();
@@ -135,9 +131,6 @@ namespace Veng::Renderer
         }
     }
 
-    /// @brief Constructs a swapchain with the given format and image count.
-    /// @param context  The owning render context.
-    /// @param info     Swapchain configuration (format, dimensions, max image count).
     SwapChain::SwapChain(Context& context, const SwapChainInfo& info) :
         m_Context(context),
         m_Width(info.Width),
@@ -149,13 +142,11 @@ namespace Veng::Renderer
         Initialize();
     }
 
-    /// @brief Disposes the swapchain.
     SwapChain::~SwapChain()
     {
         Dispose();
     }
 
-    /// @brief Destroys the swapchain images, views, and the Vulkan swapchain handle.
     void SwapChain::Dispose()
     {
         m_Images.clear();
@@ -172,14 +163,12 @@ namespace Veng::Renderer
         }
     }
 
-    /// @brief Recreates the swapchain after a resize.
     void SwapChain::RenderExtentChanged()
     {
         Dispose();
         Initialize();
     }
 
-    /// @brief Resolves the surface extent from capabilities, clamping framebuffer size if needed.
     vk::Extent2D SwapChain::GetSurfaceExtent(Window& window, SwapChainSupportDetails& swapChainSupport)
     {
         auto capabilities = swapChainSupport.Capabilities;
@@ -209,8 +198,6 @@ namespace Veng::Renderer
         return FromVk(m_Format);
     }
 
-    /// @brief Acquires the next presentable image, signalling the given semaphore on completion.
-    /// @return The raw Vulkan result; eSuboptimalKHR and eErrorOutOfDateKHR are handled by the caller.
     vk::Result SwapChain::AcquireNextImage(Semaphore& semaphore)
     {
         return GetVkDevice(m_Context).acquireNextImageKHR(m_VkSwapChain, UINT64_MAX,

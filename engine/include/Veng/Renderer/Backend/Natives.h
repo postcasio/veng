@@ -42,8 +42,8 @@ namespace Veng::Renderer
     {
         vk::Buffer Buffer;
         VmaAllocation Allocation{};
-        // The persistent mapping for a HostMapped buffer (VMA maps it at
-        // creation via VMA_ALLOCATION_CREATE_MAPPED_BIT); null otherwise.
+        /// @brief Persistent mapping for a HostMapped buffer (VMA_ALLOCATION_CREATE_MAPPED_BIT);
+        /// null for device-local buffers.
         void* MappedData = nullptr;
     };
 
@@ -53,25 +53,29 @@ namespace Veng::Renderer
         VmaAllocationInfo AllocationInfo{};
         VmaAllocation Allocation = nullptr;
 
-        // Per-subresource (layer * mip) layout/stage/access tracking — the state
-        // the render graph diffs against to derive barriers. Seeded to Undefined
-        // / TopOfPipe so the first use of any subresource emits a correct
-        // undefined-source transition.
+        /// @brief Per-subresource (layer × mip) layout/stage/access tracking —
+        /// the state the render graph diffs against to derive barriers.
+        ///
+        /// Seeded to Undefined/TopOfPipe so the first use of any subresource
+        /// emits a correct undefined-source transition.
         struct SubresourceState
         {
             vk::ImageLayout Layout = vk::ImageLayout::eUndefined;
             vk::PipelineStageFlags Stage = vk::PipelineStageFlagBits::eTopOfPipe;
             vk::AccessFlags Access{};
 
-            // The queue family that last produced this subresource (see
-            // Backend::SubresourceState::ProducingFamily). IGNORED means
-            // graphics-produced — the default until an async upload marks it.
+            /// @brief The queue family that last produced this subresource
+            /// (see Backend::SubresourceState::ProducingFamily).
+            ///
+            /// VK_QUEUE_FAMILY_IGNORED means graphics-produced — the default
+            /// until an async upload marks it otherwise.
             u32 ProducingFamily = VK_QUEUE_FAMILY_IGNORED;
 
-            // The transfer-timeline value an async upload signalled for this
-            // subresource. The first graphics use folds this into the frame
-            // submit as a transfer wait, then clears it to 0. Zero means no
-            // pending transfer wait.
+            /// @brief Transfer-timeline value an async upload signalled for this
+            /// subresource.
+            ///
+            /// The first graphics use folds this into the frame submit as a
+            /// transfer wait, then clears it to 0. Zero means no pending wait.
             u64 PendingTransferValue = 0;
         };
 
@@ -135,9 +139,10 @@ namespace Veng::Renderer
     struct CommandBuffer::Native
     {
         vk::CommandBuffer CommandBuffer;
-        // The pool this buffer was allocated from — a transfer command buffer
-        // comes from a per-worker transfer pool, not the shared graphics pool,
-        // and must be freed back to the pool that owns it.
+        /// @brief The pool this buffer was allocated from.
+        ///
+        /// A transfer command buffer comes from a per-worker transfer pool, not
+        /// the shared graphics pool, and must be freed back to the pool that owns it.
         vk::CommandPool Pool;
     };
 

@@ -11,52 +11,59 @@
 
 namespace VengEditor
 {
-    // One entry of a compiled .vmat "fields" array — the typed form the .cpp
-    // serializes to JSON (nlohmann::json stays out of this header). Type selects
-    // which payload member is meaningful.
+    /// @brief One entry of a compiled .vmat "fields" array.
+    ///
+    /// @p Type selects which payload member is meaningful. nlohmann::json stays
+    /// out of this header; serialization lives in the .cpp.
     struct CompiledField
     {
+        /// @brief Field name matching the shader's reflected field table.
         Veng::string Name;
-        Veng::string Type;            // "texture" | "sampler" | "float" | "vec2".."vec4" | "uint"
-        Veng::u64 TextureId = 0;      // texture: the AssetId
-        Veng::string SamplerTexture;  // sampler: the paired texture field's name
-        Veng::vector<Veng::f32> Values; // float / vecN: the components
-        Veng::u32 UintValue = 0;      // uint
+        /// @brief Field type tag: "texture" | "sampler" | "float" | "vec2".."vec4" | "uint".
+        Veng::string Type;
+        /// @brief Texture AssetId (meaningful when Type == "texture").
+        Veng::u64 TextureId = 0;
+        /// @brief Paired texture field name (meaningful when Type == "sampler").
+        Veng::string SamplerTexture;
+        /// @brief Component values (meaningful when Type is "float" or "vecN").
+        Veng::vector<Veng::f32> Values;
+        /// @brief Integer value (meaningful when Type == "uint").
+        Veng::u32 UintValue = 0;
     };
 
-    // Emits the bound .vmat field list — one CompiledField per the loaded
-    // material's reflected field — sourcing values from the graph's upstream
-    // feeders (a TextureSample per texture handle, a Param per scalar/vector param),
-    // consumed in node-creation order:
-    //   - a texture field → a "texture" field (the next TextureSample's Texture
-    //     property AssetId) plus an implicit paired "sampler" field;
-    //   - a param field → a "float"/"vecN" field (the next Param's value, coerced
-    //     to the field's arity);
-    //   - a sampler field → a "sampler" field paired by the <Texture>Sampler
-    //     convention.
-    // The domain shapes the output node's sink pins (Albedo/Normal for Surface,
-    // Color for PostProcess), not the bound field set. Returns an error when the
-    // graph has no MaterialOutput node or a param field has an unsupported size.
+    /// @brief Compiles a material node graph into the .vmat field list.
+    ///
+    /// Emits one CompiledField per the loaded material's reflected field, sourcing
+    /// values from the graph's upstream feeders consumed in node-creation order:
+    /// a texture field → "texture" entry (next TextureSample's AssetId) plus an
+    /// implicit paired "sampler"; a param field → "float"/"vecN" entry (next Param's
+    /// value coerced to the field's arity); a sampler field → "sampler" entry paired
+    /// by the \<Texture\>Sampler convention.
+    ///
+    /// The domain shapes the MaterialOutput's sink pins, not the bound field set.
+    /// @return Error when the graph has no MaterialOutput node or a param field has
+    ///         an unsupported size.
     [[nodiscard]] Veng::Result<Veng::vector<CompiledField>> CompileMaterialGraph(
         const NodeGraph& graph, const NodeCatalog& catalog,
         const MaterialShaderInterface& shader, Veng::MaterialDomain domain);
 
-    // Serializes a compiled field list into a .vmat document string: the lowercase
-    // "domain" key (surface/postprocess), the "shaders" block (vertex/fragment ids
-    // from shader), and the regenerated "fields" array. The JSON assembly lives in
-    // the .cpp so this header carries no JSON type.
+    /// @brief Serializes a compiled field list into a .vmat JSON document string.
+    ///
+    /// Writes the lowercase "domain" key, the "shaders" block (vertex/fragment ids
+    /// from @p shader), and the regenerated "fields" array. JSON assembly is in the
+    /// .cpp so this header carries no JSON type.
     [[nodiscard]] Veng::string WriteMaterialVmat(const Veng::vector<CompiledField>& fields,
                                                  const MaterialShaderInterface& shader,
                                                  Veng::MaterialDomain domain);
 
-    // Synthesizes a default graph from a flat material's field table: a
-    // MaterialOutput seeded from the domain output contract (its sink pins), a
-    // TextureSample per texture field (its Texture property set to the field's
-    // TextureId), a Param per param field, each wired into the next free
-    // type-compatible domain sink — laid out left-to-right. A sampler field is
-    // consumed by its paired texture, never its own node. Import does not rewrite
-    // fields; CompileMaterialGraph(BuildGraphFromMaterial(shader)) reproduces the
-    // source field list (the round-trip identity guard).
+    /// @brief Synthesizes a default node graph from a material's field table.
+    ///
+    /// Produces a MaterialOutput seeded from the domain output contract, a
+    /// TextureSample per texture field (Texture property set to the field's
+    /// TextureId), and a Param per param field, each wired into the next free
+    /// type-compatible domain sink. Sampler fields are consumed by their paired
+    /// texture node, not their own node. CompileMaterialGraph applied to the result
+    /// reproduces the source field list exactly.
     [[nodiscard]] NodeGraph BuildGraphFromMaterial(const MaterialShaderInterface& shader,
                                                    const NodeCatalog& catalog,
                                                    const MaterialNodeTypes& types);

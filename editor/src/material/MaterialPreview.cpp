@@ -44,9 +44,7 @@ namespace VengEditor
 
         BuildScene();
 
-        // The preview shows inside a UI::Image: an ImGui texture over the renderer
-        // output, sampled with edge clamping so the preview never samples past the
-        // image.
+        // Edge clamping prevents sampling past the preview image boundary.
         m_SceneSampler = Renderer::Sampler::Create(context, {
             .Name = "Material Preview Sampler",
             .AddressModeU = Renderer::AddressMode::ClampToEdge,
@@ -74,8 +72,6 @@ namespace VengEditor
 
         m_Scene = Scene::Create(*m_Types);
 
-        // A materialless sphere; SetMaterial assigns the previewed material's owning
-        // mesh once a handle is available.
         m_Sphere = Mesh::Create(m_Context, Primitives::Icosphere(0.85f, 4), "Material Preview Sphere");
 
         m_SphereEntity = m_Scene->CreateEntity();
@@ -137,8 +133,7 @@ namespace VengEditor
         const f32 aspect = static_cast<f32>(m_Extent.x) / static_cast<f32>(m_Extent.y);
         m_Camera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
 
-        // Resize invalidates GetOutput(); recreate the ImGui texture over the new
-        // view (an ImGuiTexture wraps a fixed view, so the prior one is dropped).
+        // Resize invalidates GetOutput(); the prior texture's view is now dangling.
         m_SceneTexture = m_ImGui.CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
     }
 }

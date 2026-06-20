@@ -7,9 +7,7 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 
-// Generic launcher compiled per-game by veng_add_game with the module filename
-// baked in as VENG_GAME_MODULE. Loads the module, calls VengModuleRegister,
-// constructs the registered Application, and runs it.
+// Generic launcher emitted by veng_add_game; VENG_GAME_MODULE is baked in at compile time.
 int main(const int argc, char** argv)
 {
     // Declared first so it destructs last: the factory closure and type descriptors

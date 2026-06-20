@@ -1,20 +1,17 @@
 #pragma once
 
-// Veng.h — the foundational header every other veng header builds on. It pulls
-// in the standard-library and glm pieces the engine leans on and defines the
-// house-style aliases (Veng::string, vector<T>, Ref<T>, u32, vec3, ...).
+// Veng.h — the foundational header every other veng header builds on.
 //
-// House-style aliases: part of veng's public identity, written throughout the
-// public API and sample app. They live here, in one self-contained header, so
-// the vocabulary is defined in exactly one place.
+// Pulls in the standard-library and glm pieces the engine leans on and defines
+// the house-style aliases (Veng::string, vector<T>, Ref<T>, u32, vec3, ...).
+// These aliases are part of veng's public identity and are written throughout
+// the public API. They live here so the vocabulary is defined in exactly one place.
 //
-// Threading contract: the render thread is single. Context::BeginFrame /
-// EndFrame, draw recording, ImGui, input, and Time are driven from the one
-// thread that owns the Context — never call those concurrently. Work runs off
-// the main thread only through the TaskSystem: a job may decode and upload a
-// resource on a worker (the transfer queue), and its result lands back on the
-// main thread through the continuation pump. Direct concurrent calls into veng
-// APIs from outside the task system are illegal.
+// Threading contract: the render thread is single. Context::BeginFrame/EndFrame,
+// draw recording, ImGui, input, and Time are driven from the one thread that owns
+// the Context. Work runs off the main thread only through TaskSystem (transfer
+// queue decode+upload, result delivered via the continuation pump). Direct
+// concurrent calls into veng APIs from outside the task system are illegal.
 
 #include <filesystem>
 #include <map>
@@ -44,8 +41,10 @@
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtx/euler_angles.hpp>
 
-// Shared-library export annotation. On macOS/Linux veng is built with default
-// symbol visibility, so this is only meaningful for a future Windows port.
+/// @brief Shared-library export/import annotation for public veng symbols.
+///
+/// On macOS/Linux veng uses default symbol visibility, so this only matters
+/// on Windows (dllexport when building the library, dllimport when consuming it).
 #if defined(_WIN32)
   #if defined(VE_BUILD_SHARED)
     #define VE_API __declspec(dllexport)
@@ -58,11 +57,12 @@
   #define VE_API __attribute__((visibility("default")))
 #endif
 
-// The export attribute for a module's C-ABI entry point. A module always
-// DEFINES and exports this symbol, so it must carry export semantics on every
-// platform — never dllimport. VE_API cannot be reused: in a consumer VE_API is
-// dllimport on Windows, which would mark the entry the module itself defines as
-// an import (a link error). So VE_MODULE_EXPORT is unconditionally export.
+/// @brief Export annotation for a module's C-ABI entry point.
+///
+/// A module always defines and exports VengModuleRegister, so this must be
+/// unconditionally dllexport on Windows. VE_API cannot be reused: a consumer
+/// build defines it as dllimport, which would produce a link error on the symbol
+/// the module itself defines.
 #if defined(_WIN32)
   #define VE_MODULE_EXPORT __declspec(dllexport)
 #else
@@ -71,85 +71,122 @@
 
 namespace Veng
 {
+    /// @brief House alias for std::filesystem::path.
     using path = std::filesystem::path;
+    /// @brief House alias for std::string.
     using string = std::string;
+    /// @brief House alias for std::string_view.
     using string_view = std::string_view;
+    /// @brief House alias for std::vector<T>.
     template <typename T>
     using vector = std::vector<T>;
+    /// @brief House alias for std::set<T>.
     template <typename T>
     using set = std::set<T>;
+    /// @brief House alias for std::map<K,V>.
     template <typename K, typename V>
     using map = std::map<K, V>;
+    /// @brief House alias for std::unordered_map<K,V>.
     template <typename K, typename V>
     using unordered_map = std::unordered_map<K, V>;
+    /// @brief House alias for std::optional<T>.
     template <typename T>
     using optional = std::optional<T>;
+    /// @brief House alias for std::function<Sig>.
     template <typename Sig>
     using function = std::function<Sig>;
 
+    /// @brief Concept satisfied when T is derived from U.
     template <class T, class U>
     concept Derived = std::is_base_of_v<U, T>;
 
+    /// @brief Single-owner smart pointer; use for primitives nothing else references.
     template <typename T>
     using Unique = std::unique_ptr<T>;
 
+    /// @brief Constructs a Unique<T> via std::make_unique.
     template <typename T, typename... Args>
     constexpr Unique<T> CreateUnique(Args&&... args)
     {
         return std::make_unique<T>(std::forward<Args>(args)...);
     }
 
-    // Renderer::X::Create() return-type rule: a shared GPU resource that other
-    // objects hold references to (buffers, images, views, samplers, shaders,
-    // pipelines, descriptor sets/layouts, pipeline layouts, command buffers)
-    // returns Ref<X> — multiple owners are normal (e.g. a pipeline holds
-    // Ref<ShaderModule>, a descriptor set holds Ref<ImageView>). A single-owner
-    // synchronization primitive (Fence, Semaphore) returns Unique<X> — nothing
-    // else ever holds a reference to one.
+    /// @brief Shared-ownership smart pointer for GPU resources that multiple objects reference.
+    ///
+    /// X::Create() returns Ref<X> for shared GPU resources (buffers, images, views,
+    /// samplers, shaders, pipelines, descriptor sets/layouts). Single-owner primitives
+    /// (Fence, Semaphore) return Unique<X> instead.
     template <typename T>
     using Ref = std::shared_ptr<T>;
 
+    /// @brief Constructs a Ref<T> via std::make_shared.
     template <typename T, typename... Args>
     constexpr Ref<T> CreateRef(Args&&... args)
     {
         return std::make_shared<T>(std::forward<Args>(args)...);
     }
 
+    /// @brief Non-owning reference to a Ref<T>; does not extend lifetime.
     template <typename T>
     using WeakRef = std::weak_ptr<T>;
 
+    /// @brief Creates a WeakRef<T> from a Ref<T>.
     template <typename T>
     constexpr WeakRef<T> CreateWeakRef(const Ref<T>& ref)
     {
         return std::weak_ptr<T>(ref);
     }
 
-
+    /// @brief Signed 8-bit integer.
     using i8 = int8_t;
+    /// @brief Unsigned 8-bit integer.
     using u8 = uint8_t;
+    /// @brief Signed 16-bit integer.
     using i16 = int16_t;
+    /// @brief Unsigned 16-bit integer.
     using u16 = uint16_t;
+    /// @brief Signed 32-bit integer.
     using i32 = int32_t;
+    /// @brief Unsigned 32-bit integer.
     using u32 = uint32_t;
+    /// @brief Signed 64-bit integer.
     using i64 = int64_t;
+    /// @brief Unsigned 64-bit integer.
     using u64 = uint64_t;
+    /// @brief 32-bit floating point.
     using f32 = float;
+    /// @brief 64-bit floating point.
     using f64 = double;
 
+    /// @brief 2-component float vector.
     using vec2 = glm::vec2;
+    /// @brief 3-component float vector.
     using vec3 = glm::vec3;
+    /// @brief 4-component float vector.
     using vec4 = glm::vec4;
+    /// @brief 2x2 float matrix.
     using mat2 = glm::mat2;
+    /// @brief 3x3 float matrix.
     using mat3 = glm::mat3;
+    /// @brief 4x4 float matrix.
     using mat4 = glm::mat4;
+    /// @brief Quaternion.
     using quat = glm::quat;
+    /// @brief 2-component signed integer vector.
     using ivec2 = glm::ivec2;
+    /// @brief 3-component signed integer vector.
     using ivec3 = glm::ivec3;
+    /// @brief 4-component signed integer vector.
     using ivec4 = glm::ivec4;
+    /// @brief 2-component unsigned integer vector.
     using uvec2 = glm::uvec2;
+    /// @brief 3-component unsigned integer vector.
     using uvec3 = glm::uvec3;
+    /// @brief 4-component unsigned integer vector.
     using uvec4 = glm::uvec4;
 
+    /// @brief Unsigned size type.
     using usize = std::size_t;
+    /// @brief Signed difference type.
     using isize = std::ptrdiff_t;
 }

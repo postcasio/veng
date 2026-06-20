@@ -16,10 +16,8 @@ namespace Veng::Cook
 
         LoadedModuleTypes result{.Module = std::move(*loaded), .Types = {}};
 
-        // Pre-register the engine builtins (GPU-free), then run the module's
-        // VengModuleRegister so the game's component types land alongside them.
-        // The Application factory it also registers is captured into this
-        // throwaway registry and never invoked — the cooker constructs no app.
+        // Pre-register engine builtins, then run the module's VengModuleRegister.
+        // The Application factory it also registers lands in a throwaway registry and is never invoked.
         RegisterBuiltinTypes(result.Types);
 
         ApplicationRegistry throwaway;

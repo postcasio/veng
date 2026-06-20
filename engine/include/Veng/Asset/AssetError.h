@@ -5,30 +5,40 @@
 
 #include <expected>
 
-// The structured asset-load error. AssetManager::LoadSync
-// returns AssetResult<T> = std::expected<T, AssetLoadError> rather than the
-// string-error Veng::Result, so callers can branch on AssetError::Kind without
-// string-matching Detail.
-
 namespace Veng
 {
+    /// @brief Structured error code for a failed asset load.
+    ///
+    /// Returned inside AssetLoadError so callers can branch on the kind without
+    /// string-matching the Detail message.
     enum class AssetError
     {
-        NotFound,         // id not present in any mounted archive
-        WrongType,        // id resolves, but to a different AssetType than requested
-        Corrupt,          // cooked blob failed to parse (malformed header/payload)
-        VersionMismatch,  // cooked blob's format version is not one this engine reads
-        MissingDependency,// a referenced AssetId (e.g. a material's texture) isn't mounted
-        LoadFailed,       // loader-specific failure (e.g. no loader registered for the type)
+        /// @brief Id not present in any mounted archive.
+        NotFound,
+        /// @brief Id resolves, but to a different AssetType than requested.
+        WrongType,
+        /// @brief Cooked blob failed to parse (malformed header/payload).
+        Corrupt,
+        /// @brief Cooked blob's format version is not one this engine reads.
+        VersionMismatch,
+        /// @brief A referenced AssetId (e.g. a material's texture) isn't mounted.
+        MissingDependency,
+        /// @brief Loader-specific failure (e.g. no loader registered for the type).
+        LoadFailed,
     };
 
+    /// @brief Structured load-failure carrying the error kind, the failing id, and a detail message.
     struct AssetLoadError
     {
+        /// @brief The error category.
         AssetError Kind;
+        /// @brief The id that failed to load.
         AssetId Id;
+        /// @brief Human-readable detail (not for programmatic branching; use Kind).
         string Detail;
     };
 
+    /// @brief Expected-based result of AssetManager::LoadSync — either a resident handle or an AssetLoadError.
     template <typename T>
     using AssetResult = std::expected<T, AssetLoadError>;
 }

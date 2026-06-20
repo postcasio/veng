@@ -59,8 +59,6 @@ namespace Veng::UI
         }
     }
 
-    // ImGui::Begin's End is paired unconditionally even when the window is
-    // collapsed; m_Live guards only against a moved-from guard double-ending.
     ScopedWindow::~ScopedWindow()
     {
         if (m_Live)
@@ -73,8 +71,6 @@ namespace Veng::UI
             ImGui::EndChild();
     }
 
-    // A TreeNode owes a TreePop only when open; CollapsingHeader owes none, so
-    // m_Pop is false for it.
     ScopedTree::~ScopedTree()
     {
         if (m_Live && m_Open && m_Pop)

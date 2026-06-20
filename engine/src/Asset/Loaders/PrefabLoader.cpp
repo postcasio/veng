@@ -33,7 +33,6 @@ namespace Veng
         }
 
         // Load one embedded dependency by id + type, returning its cache entry.
-        // The Prefab keeps the entry resident for its lifetime so SpawnInto's rehydration is a cache hit.
         AssetResult<Ref<Detail::AssetCacheEntry>> LoadDependency(
             AssetManager& manager, AssetId parentId, AssetId depId, AssetType type, bool async)
         {
@@ -78,10 +77,8 @@ namespace Veng
             AssetType Type = AssetType::Raw;
         };
 
-        // Walk a value's reflected fields, collecting every embedded AssetHandle
-        // field's (id, expected type) (recursing into nested struct fields). Reads
-        // the id off offset 0 of each handle field, per the AssetHandle layout
-        // guard.
+        // Collect (id, type) for every embedded AssetHandle field, recursing into struct fields.
+        // Reads the AssetId off offset 0 of each handle field per the AssetHandle layout contract.
         VoidResult CollectHandleDeps(AssetId parentId, const void* obj, const TypeInfo& type,
                                      const TypeRegistry& registry, vector<HandleDep>& out)
         {
@@ -243,10 +240,6 @@ namespace Veng
         // ── 5. Construct the Prefab ──────────────────────────────────────────
         const Ref<Prefab> prefab = Prefab::Create(std::move(entities), dependencies);
 
-        // The prefab is CPU data — no GPU resource, no bindless registration. The
-        // trivial finalize exists only so the async path orders the embedded
-        // dependencies before the prefab becomes resident, uniform with every
-        // dependent asset.
         return Detail::LoadJob{
             .Resource = Detail::RefAny(prefab),
             .Dependencies = std::move(dependencies),

@@ -43,9 +43,8 @@ namespace VengEditor
             u32 Sampler;
         };
 
-        // The built-in texture editor factory: resolves a texture AssetId to its
-        // .tex.json source through the shared manifest index, then mints a
-        // TextureEditorPanel wired to the host's engine refs and cook driver.
+        // Resolves a texture AssetId to its .tex.json source through the manifest
+        // index, then opens a TextureEditorPanel wired to the host's engine refs.
         class TextureEditorFactory final : public AssetEditorFactory
         {
         public:
@@ -77,10 +76,8 @@ namespace VengEditor
             VengEditor::CookDriver m_Cook;
         };
 
-        // The built-in material editor factory: resolves a material AssetId to its
-        // .vmat.json source through the shared manifest index, then mints a
-        // MaterialEditorPanel wired to the host's engine refs, the source index
-        // (the asset picker's candidate enumeration), and the cook driver.
+        // Resolves a material AssetId to its .vmat.json source through the manifest
+        // index, then opens a MaterialEditorPanel wired to the host's engine refs.
         class MaterialEditorFactory final : public AssetEditorFactory
         {
         public:
@@ -115,9 +112,7 @@ namespace VengEditor
         };
     }
 
-    // Owns the host-side registries so the base Application can borrow the
-    // TypeRegistry. Constructed before EditorHost in Create, so the reference the
-    // base stores is valid.
+    // Owns the host-side registries so the base Application can borrow the TypeRegistry.
     struct EditorHost::Registries
     {
         ApplicationRegistry App;
@@ -183,7 +178,6 @@ namespace VengEditor
         const VoidResult mount = GetAssetManager().Mount(ExecutableDirectory() / "sample.vengpack");
         VE_ASSERT(mount, "{}", mount.error());
 
-        // The blit pipeline that presents the ImGui output to the swapchain.
         {
             const AssetResult<AssetHandle<Shader>> vs = GetAssetManager().LoadSync<Shader>(FullscreenVertId);
             VE_ASSERT(vs.has_value(), "{}", vs.error().Detail);
@@ -232,25 +226,19 @@ namespace VengEditor
             m_PresentGraph = BuildPresentGraph();
         });
 
-        // The scene viewport panel records the scene render itself, so the host
-        // keeps a direct handle to drive it before the panels are drawn.
+        // Keep a direct handle to drive the viewport's scene render before the panels are drawn.
         auto viewport = CreateUnique<SceneViewportPanel>(
             GetRenderContext(), GetAssetManager(), *GetImGuiLayer(), GetTypeRegistry());
         m_Viewport = viewport.get();
         m_Panels.push_back({std::move(viewport), true});
 
-        // The shared source index (AssetId -> per-asset JSON source), parsed once
-        // and referenced by the asset-editor factories and the inspector's asset
-        // picker. An empty index when no manifest is configured keeps the picker
+        // Parsed once; an empty index when no manifest is configured keeps the picker
         // candidate-free rather than absent.
         m_Sources = CreateUnique<AssetSourceIndex>(
             m_Info.AssetManifestPath ? AssetSourceIndex::Parse(*m_Info.AssetManifestPath)
                                      : AssetSourceIndex{});
 
-        // The built-in asset editors: registered before the modules' own editor
-        // factories would be (first-write-wins), so a game module registering its
-        // own editor for the same type does not override the built-in. The cook
-        // driver is RequestCook bound to this host.
+        // try_emplace no-ops if the game module already registered a factory for these types.
         if (m_Info.AssetManifestPath)
         {
             auto cookFor = [this] {
@@ -324,18 +312,14 @@ namespace VengEditor
             return;
         }
 
-        // Inject the project's pack manifest so the cook resolves the source's
-        // cross-asset references (a material's shaders and textures) by AssetId.
-        // The host owns the manifest path; panels build a manifest-agnostic request.
+        // Inject the manifest path so the cook resolves cross-asset references by AssetId;
+        // panels build manifest-agnostic requests.
         CookRequest resolved = request;
         if (m_Info.AssetManifestPath)
             resolved.ReferenceManifest = *m_Info.AssetManifestPath;
 
         Task<vector<u8>> task = m_Info.Cook(resolved, GetTaskSystem());
 
-        // The continuation runs on the main thread via the task system's pump, so
-        // the shadow-mount and the callback land on the render thread, where the
-        // AssetManager lives.
         task.Then([this, targetId = request.TargetId, source = request.SourcePath,
                    onComplete = std::move(onComplete)](Result<vector<u8>> bytes) mutable
         {
@@ -374,12 +358,11 @@ namespace VengEditor
     {
         auto& cmd = GetRenderContext().GetCurrentCommandBuffer();
 
-        // The viewport records its scene render before the dockspace UI is built,
-        // so its output is sampleable when ImGui draws it into the viewport panel.
+        // Drive the viewport's scene render before the dockspace UI is built, so its
+        // output is sampleable when ImGui draws it into the viewport panel.
         m_Viewport->Render(cmd);
 
-        // Feed the inspector the viewport's live scene and selection. With no
-        // hierarchy panel yet, the viewport's prefab root is the default selection.
+        // Feed the inspector the viewport's live scene and selection.
         m_Inspector->SetSelection(&m_Viewport->GetScene(), m_Viewport->PrimaryEntity());
 
         // Adopt any panels opened via OpenAssetEditor since last frame.
@@ -387,9 +370,7 @@ namespace VengEditor
             m_Panels.push_back({std::move(opened), true});
         m_PendingPanels.clear();
 
-        // Drive each open panel's offscreen render (a material editor's preview)
-        // before the ImGui frame is built, so its output is sampleable. The
-        // viewport is driven explicitly above; its OnRender is a no-op.
+        // The viewport is driven explicitly above; its OnRender is a no-op.
         for (PanelSlot& slot : m_Panels)
             if (slot.Open)
                 slot.Panel->OnRender(cmd);
@@ -404,10 +385,10 @@ namespace VengEditor
 
             const UI::WindowFlags flags = slot.Panel->GetWindowFlags();
 
-            // A no-scrollbar panel (the scene viewport) is drawn edge-to-edge, so
-            // its window padding is pushed to zero. WindowPadding is read at Begin,
-            // so the guard outliving Begin into the body is equivalent to popping
-            // it immediately after — it is constructed only in the no-padding case.
+            // NoScrollbar panels (e.g. the scene viewport) are drawn edge-to-edge;
+            // push window padding to zero. WindowPadding is read at Begin, so the
+            // guard outliving Begin into the body is equivalent to popping immediately
+            // after — constructed only in the no-padding case.
             const bool noPadding = (flags & UI::WindowFlags::NoScrollbar) != UI::WindowFlags::None;
             optional<UI::StyleVarScope> padding;
             if (noPadding)

@@ -8,15 +8,6 @@
 #include <Veng/Asset/AssetLoader.h>
 #include <Veng/Asset/AssetType.h>
 
-// AssetManager: mounts cooked .vengpack archives, resolves AssetIds against
-// them, and loads assets via a per-type AssetLoader (see AssetLoader.h), handing
-// back a typed, refcounted AssetHandle<T>.
-//
-// Load is asynchronous: it returns a not-yet-resident handle immediately and
-// fills it in on the main-thread continuation (decode + GPU upload run on the
-// task system). LoadSync is the blocking sibling — it runs the whole pipeline
-// inline and returns a resident handle (or a structured AssetLoadError).
-
 namespace Veng::Renderer
 {
     class Context;
@@ -27,18 +18,20 @@ namespace Veng
     class TaskSystem;
     class TypeRegistry;
 
+    /// @brief Construction parameters for AssetManager.
     struct AssetManagerInfo
     {
     };
 
-    // A RAII token for an in-memory archive mounted via MountMemory. Holding it
-    // keeps the archive mounted; dropping it unmounts and frees the bytes. The
-    // editor holds one per in-flight asset, replacing it on each recook so the
-    // prior archive's bytes are freed by the old handle's drop. Moveable,
-    // non-copyable; a default-constructed (or moved-from) handle owns nothing.
+    /// @brief RAII token for an in-memory archive mounted via MountMemory.
+    ///
+    /// Holding the handle keeps the archive mounted; dropping it unmounts and
+    /// frees the bytes. Moveable, non-copyable; a default-constructed or moved-from
+    /// handle owns nothing.
     class VE_API MountHandle
     {
     public:
+        /// @brief Constructs an empty (owning-nothing) handle.
         MountHandle() = default;
         ~MountHandle();
 
@@ -48,6 +41,7 @@ namespace Veng
         MountHandle(MountHandle&& other) noexcept;
         MountHandle& operator=(MountHandle&& other) noexcept;
 
+        /// @brief Returns true when this handle owns a mounted archive.
         [[nodiscard]] bool IsValid() const { return m_Manager != nullptr; }
 
     private:
@@ -60,43 +54,52 @@ namespace Veng
         u64 m_Token = 0;
     };
 
+    /// @brief Mounts cooked .vengpack archives, resolves AssetIds, and loads assets via per-type AssetLoaders.
+    ///
+    /// Load<T> is asynchronous: it returns a not-yet-resident handle immediately and fills it in
+    /// on the main-thread continuation (decode + GPU upload run on the task system).
+    /// LoadSync<T> is the blocking sibling — it runs the whole pipeline inline and returns a
+    /// resident handle or a structured AssetLoadError.
     class VE_API AssetManager
     {
     public:
         friend class MountHandle;
 
+        /// @brief Constructs an AssetManager bound to the given context, task system, and type registry.
         AssetManager(Renderer::Context& context, TaskSystem& tasks, TypeRegistry& types,
                      const AssetManagerInfo& info = {});
         ~AssetManager();
 
-        // Opens archive and indexes its TOC. Mounting the same path twice is a
-        // no-op. If the same AssetId appears in more than one mounted archive,
-        // the archive mounted first wins.
+        /// @brief Opens an on-disk .vengpack archive and indexes its table of contents.
+        ///
+        /// Mounting the same path twice is a no-op. When the same AssetId appears in more
+        /// than one mounted archive, the archive mounted first wins.
         VoidResult Mount(const path& archive);
+
+        /// @brief Unmounts the archive at the given path.
         void Unmount(const path& archive);
 
-        // Mounts an in-memory archive (e.g. an embedded core pack). The bytes
-        // are copied into the reader's own storage. Deduplicates by identity
-        // (a synthetic path string such as "<core>"); mounting the same identity
-        // twice is a no-op.
+        /// @brief Mounts an in-memory archive, copying the bytes into the reader's own storage.
+        ///
+        /// Deduplicates by identity (a synthetic path string such as "<core>"); mounting the
+        /// same identity twice is a no-op.
         VoidResult MountBytes(const path& identity, std::span<const u8> bytes);
 
-        // Mounts an in-memory archive that shadows the on-disk mounts: Load<T>(id)
-        // resolves against memory mounts before any path-mounted archive, so a
-        // freshly cooked blob overrides the on-disk version of the same AssetId.
-        // The bytes are moved into the manager. Returns a MountHandle that
-        // unmounts and frees the archive on destruction. Mounting failures (a
-        // malformed archive) assert — the bytes come from an in-process cook, not
-        // untrusted input.
+        /// @brief Mounts an in-memory archive that shadows all on-disk mounts.
+        ///
+        /// Load<T>(id) resolves against memory mounts before any path-mounted archive, so a
+        /// freshly cooked blob overrides the on-disk version of the same AssetId. The bytes
+        /// are moved into the manager. The returned MountHandle unmounts and frees the archive
+        /// on destruction. Mounting failures assert — the bytes come from an in-process cook,
+        /// not untrusted input.
         [[nodiscard]] MountHandle MountMemory(vector<u8> archiveBytes, string debugName);
 
-        // Asynchronous load: returns immediately with a handle that is not yet
-        // resident (IsLoaded() == false). The decode + GPU upload run on the task
-        // system; registration into the bindless registry and the cache swap run
-        // on the main thread during PumpFinalizes() (called from the frame loop).
-        // A cache hit (resident or pending) returns the existing handle. A
-        // resolution failure (NotFound/WrongType) returns an empty handle; a
-        // later load/decode failure leaves the entry permanently pending and logs.
+        /// @brief Asynchronous load — returns immediately with a handle that may not yet be resident.
+        ///
+        /// Decode + GPU upload run on the task system; bindless registration and the cache swap
+        /// run on the main thread during PumpFinalizes(). A cache hit (resident or pending) returns
+        /// the existing handle. A resolution failure (NotFound/WrongType) returns an empty handle;
+        /// a later decode failure leaves the entry permanently pending and logs.
         template <typename T>
         AssetHandle<T> Load(AssetId id)
         {
@@ -107,11 +110,10 @@ namespace Veng
             return AssetHandle<T>(id, entry);
         }
 
-        // Blocking load: resolves, loads, uploads, and finalizes inline, then
-        // returns a resident handle. Dependency loads are synchronous and eager.
-        // Returns a structured AssetLoadError on failure (branch on
-        // AssetError::Kind). Does not deadlock against the async continuation
-        // queue — it bypasses it entirely.
+        /// @brief Blocking load — resolves, loads, uploads, and finalizes inline, then returns a resident handle.
+        ///
+        /// Dependency loads are synchronous and eager. Returns a structured AssetLoadError on failure
+        /// (branch on AssetError::Kind). Bypasses the async continuation queue entirely — no deadlock risk.
         template <typename T>
         AssetResult<AssetHandle<T>> LoadSync(AssetId id)
         {
@@ -122,25 +124,22 @@ namespace Veng
             return AssetHandle<T>(id, *entry);
         }
 
-        // The cache entry backing a handle — loaders use it to record a
-        // material's texture/shader sub-loads as dependencies of its async
-        // finalize. Returns null for an empty handle.
+        /// @brief Returns the cache entry backing a handle.
+        ///
+        /// Loaders use this to record a material's texture/shader sub-loads as dependencies of
+        /// its async finalize. Returns null for an empty handle.
         template <typename T>
         [[nodiscard]] static Ref<Detail::AssetCacheEntry> EntryOf(const AssetHandle<T>& handle)
         {
             return handle.m_Entry;
         }
 
-        // Wraps an already-resident, runtime-created resource (e.g. a Mesh built
-        // from Primitives) in an AssetHandle<T> so it is usable everywhere a
-        // cooked, AssetId-loaded handle is. The handle carries the invalid
-        // AssetId (Id().IsValid() == false): a runtime resource has no content
-        // identity, so a reflective serializer records it as "no asset". The
-        // backing cache entry is detached — never inserted into the AssetId map,
-        // so CollectGarbage() leaves it alone — and stays alive for exactly as
-        // long as a handle references it; the last drop retires the resource
-        // through the per-frame deferred-destruction path like any other.
-        // Adopting does not deduplicate: each call yields a distinct entry.
+        /// @brief Wraps an already-resident, runtime-created resource in an AssetHandle<T>.
+        ///
+        /// The handle carries the invalid AssetId (Id().IsValid() == false): a runtime resource
+        /// has no content identity, so a reflective serializer records it as "no asset". The
+        /// backing cache entry is detached — never inserted into the AssetId map, so CollectGarbage()
+        /// leaves it alone. Each call yields a distinct entry; adopting does not deduplicate.
         template <typename T>
         [[nodiscard]] AssetHandle<T> Adopt(Ref<T> resource)
         {
@@ -155,18 +154,17 @@ namespace Veng
             return AssetHandle<T>(AssetId{}, std::move(entry));
         }
 
-        // The cache entry for an id, or null if it is not cached. Untyped — the
-        // prefab loader's spawn uses it to rehydrate an embedded handle whose
-        // dependency was already loaded (and whose entry the prefab keeps
-        // resident), without naming the asset's concrete type. Never touches
-        // mounted archives or loaders.
+        /// @brief Returns the cache entry for an id, or null if it is not cached.
+        ///
+        /// Untyped — the prefab loader uses it to rehydrate an embedded handle without naming
+        /// the asset's concrete type. Never touches mounted archives or loaders.
         [[nodiscard]] Ref<Detail::AssetCacheEntry> CachedEntry(AssetId id) const
         {
             const auto it = m_Cache.find(id);
             return it == m_Cache.end() ? nullptr : it->second;
         }
 
-        // Cached lookup only — never touches mounted archives or loaders.
+        /// @brief Cache-only typed lookup — never touches mounted archives or loaders.
         template <typename T>
         [[nodiscard]] optional<AssetHandle<T>> Get(AssetId id) const
         {
@@ -177,32 +175,31 @@ namespace Veng
             return AssetHandle<T>(id, it->second);
         }
 
-        // The borrowed type registry the prefab loader reflects components
-        // through. An editor inspector reads it to recurse into a struct field's
-        // own reflected fields.
+        /// @brief Returns the type registry the prefab loader and editor reflect components through.
         [[nodiscard]] TypeRegistry& GetTypeRegistry() const { return m_Types; }
 
-        // Run any pending async finalizes whose upload completed and whose
-        // dependencies are resident. Called from the frame loop after the task
-        // system's continuation pump, on the main thread.
+        /// @brief Runs any pending async finalizes whose uploads completed and whose dependencies are resident.
+        ///
+        /// Called from the frame loop after the task system's continuation pump, on the main thread.
         void PumpFinalizes();
 
-        // Drops cache entries with no AssetHandle<T> referencing them. Their
-        // engine resources retire through the existing per-frame
-        // deferred-destruction path (Context::Retire) — safe to call mid-frame.
-        // A still-pending (not-yet-resident) entry is never evicted.
+        /// @brief Drops cache entries with no AssetHandle<T> referencing them.
+        ///
+        /// Their engine resources retire through the per-frame deferred-destruction path — safe to
+        /// call mid-frame. A still-pending (not-yet-resident) entry is never evicted.
         void CollectGarbage();
 
     private:
+        /// @brief One on-disk .vengpack archive and its indexed reader.
         struct MountedArchive
         {
             path Path;
             ArchiveReader Reader;
         };
 
-        // An in-memory archive mounted via MountMemory, searched before the
-        // path-mounted archives so it shadows the on-disk version of any id it
-        // carries. Identified by a monotonic token a MountHandle drops.
+        /// @brief An in-memory archive mounted via MountMemory, searched before on-disk mounts.
+        ///
+        /// Identified by a monotonic token that the owning MountHandle drops on destruction.
         struct MemoryMount
         {
             u64 Token;
@@ -210,30 +207,37 @@ namespace Veng
             ArchiveReader Reader;
         };
 
-        // Drops the memory mount with the given token. Invoked by MountHandle on
-        // destruction; a token with no live mount is a no-op.
+        /// @brief Drops the memory mount with the given token.
+        ///
+        /// Invoked by MountHandle on destruction; a token with no live mount is a no-op.
         void UnmountMemory(u64 token);
 
-        // A submitted-but-not-yet-finalized async load. The cache entry exists
-        // (pending: null Resource); Finalize swaps the resource in once every
-        // Dependency is resident + finalized. The async upload itself need not
-        // have completed: the render graph folds the transfer-timeline wait into
-        // the first frame that samples the resource, so registration is safe
-        // before the GPU copy lands.
+        /// @brief A submitted-but-not-yet-finalized async load.
+        ///
+        /// The cache entry exists with a null Resource (pending); Finalize swaps the resource in
+        /// once every Dependency is resident and finalized. The render graph folds the
+        /// transfer-timeline wait into the first frame that samples the resource, so registration
+        /// is safe before the GPU copy lands.
         struct PendingLoad
         {
+            /// @brief The asset being loaded.
             AssetId Id;
+            /// @brief The cache slot (Resource is null until finalized).
             Ref<Detail::AssetCacheEntry> Entry;
+            /// @brief The created-but-unregistered resource.
             Detail::RefAny Resource;
+            /// @brief Kept alive until Finalize runs.
             vector<Ref<Detail::AssetCacheEntry>> Dependencies;
+            /// @brief Main-thread registration step; null if not needed.
             function<VoidResult()> Finalize;
         };
 
         [[nodiscard]] Ref<Detail::AssetCacheEntry> LoadUntyped(AssetType type, AssetId id);
         [[nodiscard]] AssetResult<Ref<Detail::AssetCacheEntry>> LoadSyncUntyped(AssetType type, AssetId id);
 
-        // Resolves id to a loader and cooked blob, validating type. Shared by the
-        // async and sync paths.
+        /// @brief Resolves an id to a loader and cooked blob, validating type against the archive entry.
+        ///
+        /// Shared by the async and sync load paths.
         [[nodiscard]] AssetResult<std::pair<AssetLoader*, ArchiveEntry>> Resolve(AssetType type, AssetId id);
 
         [[nodiscard]] optional<ArchiveEntry> Find(AssetId id) const;
@@ -242,8 +246,7 @@ namespace Veng
 
         Renderer::Context& m_Context;
         TaskSystem& m_Tasks;
-        // Borrowed: the prefab loader reflects a component's fields through it.
-        // Same explicit-threading discipline as the context and task system.
+        /// @brief Borrowed; the prefab loader reflects component fields through it.
         TypeRegistry& m_Types;
 
         vector<MountedArchive> m_Mounts;

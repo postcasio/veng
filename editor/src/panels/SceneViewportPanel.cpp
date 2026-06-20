@@ -50,9 +50,8 @@ namespace VengEditor
 
         BuildScene();
 
-        // The scene shows inside this panel via UI::Image: an ImGui texture over the
-        // renderer output, sampled with edge clamping so the panel never samples past
-        // the image.
+        // Edge clamping prevents sampling past the image boundary when the panel size
+        // does not align to a texel.
         m_SceneSampler = Renderer::Sampler::Create(context, {
             .Name = "Scene Viewport Sampler",
             .AddressModeU = Renderer::AddressMode::ClampToEdge,
@@ -105,10 +104,8 @@ namespace VengEditor
 
     void SceneViewportPanel::Render(Renderer::CommandBuffer& cmd)
     {
-        // Resize and Configure both invalidate GetOutput(), so a single rebind of the
-        // ImGui texture covers either (an ImGuiTexture wraps a fixed view, so the prior
-        // one is dropped). Both run here, before recording, so the rebound output is the
-        // one this frame renders into.
+        // Resize and Configure both invalidate GetOutput(); rebind the ImGui texture
+        // once after both are applied, before recording.
         bool outputInvalidated = false;
 
         // A pending resize from the previous frame's content region: recreate the
@@ -124,8 +121,7 @@ namespace VengEditor
             outputInvalidated = true;
         }
 
-        // A pending debug-view (or other settings) change from OnImGui: recompile the
-        // pass set before recording this frame's scene.
+        // Settings changed in OnImGui; apply before recording so the output reflects the new pass set.
         if (m_SettingsDirty)
         {
             m_SceneRenderer->Configure(m_Settings);
@@ -140,12 +136,9 @@ namespace VengEditor
 
         const f32 delta = Time::GetDeltaTime();
 
-        // Spin every entity carrying a Transform, advancing each by its Spinner's
-        // speed. The game's Spinner type is not a compile-time symbol in
-        // libveng_editor, so the viewport reads its speed reflectively (by field
-        // name through the TypeRegistry) — which is what makes editing Spinner.Speed
-        // in the inspector change the visible rotation rate. An entity without a
-        // Spinner (or one whose field is absent) advances at the default rate.
+        // Spinner is a game type, not a compile-time symbol in libveng_editor; read
+        // its speed reflectively so inspector edits to Spinner.Speed take effect
+        // immediately. Entities without Spinner advance at the default rate.
         m_Scene->Each<Transform>([this, delta](Entity entity, Transform& transform)
         {
             f32 speed = 1.0f;
@@ -178,10 +171,8 @@ namespace VengEditor
 
     void SceneViewportPanel::OnImGui()
     {
-        // The debug-view dropdown re-wires the renderer's pass set. Its entries mirror
-        // the DebugView enum in declaration order, so the combo index is the enum value
-        // and every arm is selectable. The change is deferred to Render (m_SettingsDirty)
-        // so the Configure recompile runs before the next scene record, not mid-ImGui.
+        // Combo index is the DebugView enum value (declaration order). Change is
+        // deferred via m_SettingsDirty so Configure runs before recording, not mid-ImGui.
         static constexpr std::array<string_view, 10> modeNames{
             "Final", "Albedo", "Normal", "Depth",
             "Roughness", "Metallic", "Occlusion",

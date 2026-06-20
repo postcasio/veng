@@ -1,7 +1,8 @@
 #pragma once
 
-// Veng::UI umbrella — one include for the whole engine-tier UI surface. A consumer
-// writes #include <Veng/UI/UI.h> and has the widgets, layout helpers, and queries.
+/// @brief Umbrella include for the entire `Veng::UI` engine-tier immediate-mode surface.
+///
+/// Include this header to access widgets, layout helpers, scope guards, and input queries.
 
 #include <Veng/UI/Types.h>
 #include <Veng/UI/Widgets.h>

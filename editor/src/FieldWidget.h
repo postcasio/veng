@@ -14,35 +14,41 @@ namespace VengEditor
 {
     class AssetSourceIndex;
 
-    // The asset type a FieldClass::AssetHandle field references, derived from its
-    // leaf TypeId — the filter the picker enumerates manifest candidates by.
-    // nullopt for a handle type the picker offers no enumeration for.
+    /// @brief Returns the AssetType a FieldClass::AssetHandle field references, or
+    /// nullopt for a handle type the picker has no enumeration for.
+    ///
+    /// Used to filter manifest candidates in the asset picker.
     [[nodiscard]] Veng::optional<Veng::AssetType> AssetTypeOfHandle(Veng::TypeId type);
 
-    // Write a picked AssetId back through an AssetHandle field pointer: the id is
-    // the leading u64 of any AssetHandle<T> (offset 0 is pinned by AssetHandle's
-    // layout guard), so it is writable without naming the concrete asset type.
-    // The single write-back the picker's combo selection performs.
+    /// @brief Writes a chosen AssetId back through an AssetHandle field pointer.
+    ///
+    /// The id occupies the leading u64 of any AssetHandle<T> (pinned at offset 0
+    /// by AssetHandle's layout guard), so it is writable without naming the
+    /// concrete asset type.
+    /// @param fieldPtr Pointer to the AssetHandle field bytes.
+    /// @param chosen   The selected asset id to write.
     void ApplyAssetPick(void* fieldPtr, Veng::AssetId chosen);
 
-    // The dependencies a field widget needs beyond the field bytes themselves:
-    // the asset manager (handle widgets resolve the referenced asset), the source
-    // index (the AssetHandle picker's type-filtered candidate enumeration), and
-    // the editor registry (RegisterFieldWidget overrides + struct recursion).
+    /// @brief Dependencies a field widget needs beyond the field bytes themselves.
     struct FieldWidgetContext
     {
+        /// @brief Asset manager for resolving handle widgets.
         Veng::AssetManager& Assets;
+        /// @brief Source index for type-filtered candidate enumeration in the asset picker.
         const AssetSourceIndex& Sources;
+        /// @brief Editor registry for RegisterFieldWidget overrides and struct recursion.
         const Veng::EditorRegistry& Editors;
     };
 
-    // Draws one field's inspector widget into the live ImGui frame: the per-
-    // FieldClass built-in widget, a registered RegisterFieldWidget override when
-    // one exists for the field's TypeId, and a recursion into a nested struct's
-    // own fields. The entity inspector and the node-property inspector both call
-    // this, so the two share identical widget behavior. fieldPtr addresses the
-    // field's bytes (base + FieldDescriptor::Offset); the widget mutates them in
-    // place.
+    /// @brief Draws one field's inspector widget into the live ImGui frame.
+    ///
+    /// Applies a RegisterFieldWidget override when one is registered for the field's
+    /// TypeId; otherwise uses the per-FieldClass built-in widget, recursing into
+    /// nested structs. Both the entity inspector and the node-property inspector
+    /// call this function, so they share identical widget behavior.
+    /// @param fieldPtr Pointer to the field bytes (base + FieldDescriptor::Offset).
+    /// @param field    Descriptor giving the field's type, class, and metadata.
+    /// @param ctx      Dependencies: asset manager, source index, editor registry.
     void DrawFieldWidget(void* fieldPtr, const Veng::FieldDescriptor& field,
                          const FieldWidgetContext& ctx);
 }

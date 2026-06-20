@@ -230,8 +230,7 @@ namespace Veng
 
     namespace
     {
-        // Build the nfd filter array, borrowing the FileDialogFilter strings
-        // (which outlive the dialog call).
+        // Borrows FileDialogFilter strings, which outlive the synchronous dialog call.
         vector<nfdu8filteritem_t> ToNfdFilters(const vector<FileDialogFilter>& filters)
         {
             vector<nfdu8filteritem_t> items;

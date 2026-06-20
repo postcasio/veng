@@ -173,11 +173,8 @@ namespace Veng::Renderer
         static_assert(sizeof(ShadowConstantsBlock) == 288,
                       "ShadowConstantsBlock must be the std140-packed 288-byte block");
 
-        // The punctual shadow records (set 1 binding 3, ring-buffered dynamic uniform,
-        // separate from the directional ShadowConstants so that block's layout is
-        // unchanged). The record array is std140/std430-identical: PunctualShadowRecord
-        // is 416 bytes each (mat4[6] + two vec4), so MaxShadowedPunctual·416 = 1664 bytes
-        // at N = 4 — well inside the 16 KiB min-max-uniform guarantee.
+        // Set 1 binding 3, ring-buffered dynamic uniform. Separate from ShadowConstantsBlock
+        // so the directional block's layout is unchanged when punctual records are added.
         struct PunctualShadowBlock
         {
             PunctualShadowRecord Records[MaxShadowedPunctual];
@@ -188,11 +185,8 @@ namespace Veng::Renderer
                       "PunctualShadowBlock must be the std140-packed record array (416 bytes per "
                       "record) plus the trailing AtlasParams vec4");
 
-        // Bakes an atlas-tile remap into a cascade's view-proj: a fragment projected by
-        // CascadeViewProj[k] · world lands in cascade k's tile sub-rect of the atlas,
-        // so the lighting pass samples the right tile by construction.
-        // ComputeCascades is tile-agnostic; the renderer composes this remap when
-        // packing set-1 ShadowConstants.
+        // Bakes an atlas-tile remap into a cascade view-proj: a fragment projected by the result
+        // lands in cascade k's tile, so the lighting pass samples the correct tile by construction.
         mat4 ComposeTileRemap(const mat4& cascadeViewProj, u32 cascade, u32 columns, u32 rows)
         {
             const f32 sx = 1.0f / static_cast<f32>(columns);
@@ -222,9 +216,7 @@ namespace Veng::Renderer
         constexpr u32 PunctualAtlasColumns = CubeFaceCount;
         constexpr u32 PunctualAtlasRows = MaxShadowedPunctual;
 
-        // Same construction as ComposeTileRemap but for a punctual light: a fragment
-        // projected by the remapped matrix lands in slot s's face-f tile sub-rect of
-        // the atlas, so the lighting pass samples the right tile by construction.
+        // Punctual variant of ComposeTileRemap: maps slot s, face f to the corresponding tile.
         mat4 ComposePunctualTileRemap(const mat4& viewProj, u32 slot, u32 face)
         {
             const f32 sx = 1.0f / static_cast<f32>(PunctualAtlasColumns);
@@ -241,7 +233,6 @@ namespace Veng::Renderer
         }
 
         // Push block shared by all single-target debug blits: a texture + sampler index.
-        // The albedo, normal, depth, AO, and shadow-map visualizers all declare these two fields.
         struct BlitPushConstants
         {
             u32 Texture;
@@ -257,9 +248,6 @@ namespace Veng::Renderer
             u32 Channel;
         };
 
-        // The deferred g-buffer geometry pass: draws every (Transform, MeshRenderer)
-        // entity into the imported g-buffer (G0 albedo, G1 world-normal, G2 ORM)
-        // with the shared depth attachment. Each material writes through GBufferOutput.
         class GBufferScenePass final : public ScenePass
         {
         public:
@@ -362,9 +350,7 @@ namespace Veng::Renderer
                         if (subMesh.MaterialIndex == SubMesh::NoMaterial)
                             continue;
 
-                        // Pipeline must be bound before registry.Bind: Bind uses the
-                        // currently-bound layout. MVP occupies the leading 64 bytes,
-                        // MaterialIndex offset 64 (pushed by Material::Bind), NormalMatrix offset 80.
+                        // Pipeline must be bound before registry.Bind: Bind uses the currently-bound layout.
                         materials[subMesh.MaterialIndex].Get()->Bind(cmd);
                         registry.Bind(cmd);
                         cmd.PushConstants(MeshPushConstants{.MVP = mvp});
@@ -393,15 +379,14 @@ namespace Veng::Renderer
             Context& m_Context;
             uvec2 m_Extent;
             bool m_FrustumCull = true;
-            mutable u32 m_LastDrawn = 0;        ///< Reset and incremented per Record; mutable because Record is const.
-            mutable vector<u32> m_CullScratch;  ///< Frustum-query scratch (indices into view.Visible); reused across frames.
+            /// @brief Reset and incremented per Record; mutable because Record is const.
+            mutable u32 m_LastDrawn = 0;
+            /// @brief Frustum-query scratch (indices into view.Visible); reused across frames.
+            mutable vector<u32> m_CullScratch;
         };
 
-        // The fullscreen deferred-lighting pass: samples the g-buffer through bindless
-        // handles, evaluates Cook-Torrance BRDF over all lights (reconstructing world
-        // position from depth), and writes the HDR target. Declaring .Sample on each
-        // g-buffer id drives the graph-derived attachment → shader-read transitions,
-        // including the depth attachment → shader-read transition.
+        // Declaring .Sample on each g-buffer id drives the graph-derived attachment →
+        // shader-read transitions, including the depth attachment → shader-read barrier.
         class DeferredLightingScenePass final : public ScenePass
         {
         public:
@@ -526,10 +511,7 @@ namespace Veng::Renderer
             bool m_WriteToOutput = false;
         };
 
-        // A reusable fullscreen blit pass for the Albedo, Normal, Depth, and AO debug
-        // views. Each constructs one with a source-specific fragment pipeline; the
-        // declared .Sample on the source id drives the graph-derived attachment →
-        // shader-read transition.
+        // The declared .Sample on the source id drives the graph-derived attachment → shader-read transition.
         class FullscreenBlitScenePass final : public ScenePass
         {
         public:
@@ -604,8 +586,7 @@ namespace Veng::Renderer
             Source m_Source;
         };
 
-        // Fullscreen blit of one packed-ORM channel: 0 = occlusion, 1 = roughness,
-        // 2 = metallic. Each ORM debug arm constructs one with a different channel.
+        // Channel: 0 = occlusion, 1 = roughness, 2 = metallic (matches OrmBlitPushConstants::Channel).
         class OrmBlitScenePass final : public ScenePass
         {
         public:
@@ -654,10 +635,8 @@ namespace Veng::Renderer
             u32 m_Channel;
         };
 
-        // Shadow-atlas debug blit. The atlas is off bindless and reaches the shader
-        // through a dedicated set-1 descriptor set (binding 0 = atlas, binding 1 =
-        // an ordinary sampler for raw depth). Declares .Sample on the atlas import id
-        // for the graph-derived depth-attachment → shader-read barrier.
+        // Off bindless: reaches the shader through a dedicated set-1 (atlas + ordinary sampler,
+        // raw depth). Declares .Sample on the atlas id for the graph-derived barrier.
         class ShadowBlitScenePass final : public ScenePass
         {
         public:
@@ -731,9 +710,8 @@ namespace Veng::Renderer
         VE_ASSERT(material.GetDomain() == MaterialDomain::PostProcess,
                   "PostProcessScenePass: material '{}' is not a PostProcess material", material.GetName());
 
-        // Fullscreen pipeline: screenspace vertex stage, material fragment stage, no vertex
-        // inputs, no depth, one color target. The layout (set 0 reserved, selector push range)
-        // comes from the loader; only this color-format-dependent pipeline is the pass's to create.
+        // The layout (set 0 reserved, selector push range) comes from the material loader;
+        // only this color-format-dependent GraphicsPipeline is the pass's to create.
         m_Pipeline = GraphicsPipeline::Create(m_Context, {
             .Name = fmt::format("PostProcess Pipeline ({})", material.GetName()),
             .ColorAttachments = {{.Format = m_OutputFormat}},
@@ -899,23 +877,19 @@ namespace Veng::Renderer
         // format directly — a terminal debug arm with no tonemap tail.
         m_CascadeDebugPipeline = MakePipeline("SceneRenderer Cascade Debug Pipeline", m_LightingLayout, cascadeDebugFs, m_OutputFormat);
 
-        // SSAO pipeline: samples g-buffer normal/depth, writes the R8 AO target.
-        // Its push block is eight u32s (g-buffer slots + extent).
+        // Push block is eight u32s (g-buffer slots + extent); Size = 32 matches SsaoPushConstants.
         m_SsaoLayout = PipelineLayout::Create(m_Context, {
             .Name = "SceneRenderer SSAO Layout",
             .PushConstantRanges = {PushConstantRange{.Offset = 0, .Size = 32, .Stages = ShaderStage::Fragment}},
         });
         m_SsaoPipeline = MakePipeline("SceneRenderer SSAO Pipeline", m_SsaoLayout, ssaoFs, SsaoFormat);
 
-        // Tonemap PostProcess material: samples HDR through a runtime-bound handle
-        // and exposes Exposure. Loaded resident so the pass builds its pipeline against
-        // the output format.
+        // Loaded resident so the PostProcessScenePass builds its pipeline against the output format.
         const AssetResult<AssetHandle<Material>> tonemap = m_Assets.LoadSync<Material>(TonemapMaterialId);
         VE_ASSERT(tonemap.has_value(), "SceneRenderer: tonemap material load failed: {}", tonemap.error().Detail);
         m_TonemapMaterial = *tonemap;
 
-        // Bloom PostProcess materials: loaded resident so each stage's pipeline
-        // can be built against the HDR format.
+        // Bloom materials loaded resident for the same reason (pipeline against HdrFormat).
         auto LoadMaterial = [this](const AssetId id, const char* what) -> AssetHandle<Material>
         {
             const AssetResult<AssetHandle<Material>> result = m_Assets.LoadSync<Material>(id);
@@ -1169,9 +1143,8 @@ namespace Veng::Renderer
 
     void SceneRenderer::CreateOutput()
     {
-        // Sampled (consumer composites the result) + TransferSrc (smoke path Download()).
-        // Single-copy: the consumer samples GetOutput() in the same frame the renderer
-        // wrote it, so no cross-frame hazard arises.
+        // TransferSrc for the smoke path Download(); Sampled for the composite consumer.
+        // Single-copy: the consumer samples GetOutput() in the same frame it is written.
         m_OutputImage = Image::Create(m_Context, {
             .Name = "SceneRenderer Output",
             .Extent = {m_Extent.x, m_Extent.y, 1},
@@ -1187,9 +1160,8 @@ namespace Veng::Renderer
 
     void SceneRenderer::CreateGBuffer()
     {
-        // The g-buffer is renderer-owned and Imported (sampled downstream through
-        // bindless, so not a graph transient). Releasing the old slots defers
-        // through the same per-frame window as the image retires.
+        // Renderer-owned and Imported (not a graph transient — sampled downstream through bindless).
+        // Releasing old slots defers through the same per-frame window as the images retire.
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_AlbedoHandle);
         bindless.Release(m_NormalHandle);
@@ -1247,8 +1219,6 @@ namespace Veng::Renderer
 
     void SceneRenderer::CreateHdr()
     {
-        // HDR target is renderer-owned and Imported: lighting writes it, the tail
-        // pass samples it through bindless.
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_HdrHandle);
 
@@ -1265,9 +1235,7 @@ namespace Veng::Renderer
 
     void SceneRenderer::CreateBloom()
     {
-        // Bloom intermediates are renderer-owned and Imported: each stage writes one
-        // and the next samples it through bindless. Same HDR format — bloom operates
-        // in linear HDR before tonemap.
+        // Bloom intermediates use HdrFormat: bloom operates in linear HDR space before tonemap.
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_BloomBrightHandle);
         bindless.Release(m_BloomBlurHHandle);
@@ -1299,10 +1267,8 @@ namespace Veng::Renderer
 
     void SceneRenderer::Rebuild()
     {
-        // Settings.Mode selects the tail: Final is the full deferred chain
-        // (lighting → bloom → tonemap); debug modes terminate after the g-buffer
-        // with a single fullscreen blit. Bloom inserts four PostProcess stages between
-        // lighting and tonemap; its imports are declared only when active.
+        // Final is the full deferred chain; debug modes terminate after the g-buffer with one blit.
+        // Bloom imports are declared only when active.
         const bool bloomActive = m_Settings.Mode == DebugView::Final && m_Settings.Bloom;
         m_BloomActive = bloomActive;
 
@@ -1395,8 +1361,7 @@ namespace Veng::Renderer
         m_GBufferDrawnCount = gbufferPass->GetLastDrawnPointer();
         m_Passes.push_back(std::move(gbufferPass));
 
-        // The SSAO pass owns its AO target and produces the handle the lighting variant
-        // folds in (Final) or the AO debug blit reads. Created before the tail switch.
+        // Created before the tail switch so ssaoHandle is set when the Final arm reads it.
         if (ssaoActive)
         {
             auto ssaoPass = CreateUnique<SsaoScenePass>(
@@ -1635,17 +1600,13 @@ namespace Veng::Renderer
                 const_cast<Material&>(*m_BloomCompositeMaterial.Get()).SetParam("Intensity", view.BloomIntensity);
         }
 
-        // Walk the scene's (Transform, Light) entities, packing each into a GpuLight.
-        // The first MaxShadowedPunctual point/spot lights are also assigned a punctual
-        // shadow slot (Cone.z carries the slot, -1 = unshadowed); the records ride
-        // set-1 binding 3.
+        // The first MaxShadowedPunctual point/spot lights are assigned a shadow slot
+        // (Cone.z carries it, -1 = unshadowed); their records ride set-1 binding 3.
         std::array<GpuLight, SceneView::MaxLights> packedLights{};
         PunctualShadowBlock punctualBlock{};
         std::array<PunctualShadowRecord, MaxShadowedPunctual> punctualRecords{};
-        // Raw (non-tile-remapped) matrices used by the depth pass for rendering and
-        // frustum culling. The records carry the tile-remapped matrices for the lighting
-        // pass. Raw + per-tile viewport and remapped + sample agree because the viewport
-        // maps NDC to the same tile sub-rect the remap maps world points to.
+        // Raw (non-tile-remapped) matrices for the depth pass and frustum cull;
+        // the records carry tile-remapped matrices for the lighting pass.
         std::array<std::array<mat4, CubeFaceCount>, MaxShadowedPunctual> punctualRawViewProj{};
         u32 lightCount = 0;
         u32 punctualCount = 0;

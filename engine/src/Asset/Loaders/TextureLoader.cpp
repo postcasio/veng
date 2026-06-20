@@ -129,7 +129,6 @@ namespace Veng
             },
         };
 
-        // The texture comes back unregistered; Finalize registers it on the main thread.
         Ref<Veng::Texture> texture;
         if (async)
         {

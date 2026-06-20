@@ -2,17 +2,19 @@
 
 #include <Veng/Cook/Cooker.h>
 
-// Registers the cooker's built-in importers.
-
 namespace Veng::Cook
 {
-    // The veng-free importers (texture/mesh/shader/material/...). Registered by
-    // both the full vengc and the veng-free bootstrap cooker.
+    /// @brief Registers the veng-free built-in importers (texture, mesh, shader, material, …).
+    ///
+    /// Called by both the full vengc and the veng-free bootstrap cooker.
+    /// @param cooker  The cooker to register into.
     void RegisterBuiltinImporters(Cooker& cooker);
 
-    // The prefab importer. Separate because it reuses libveng's reflection
-    // serializer (WriteFields), so it lives in the veng-linked part of the cooker
-    // and is not pulled into the veng-free bootstrap cooker (which cooks no
-    // prefabs). The full vengc registers it alongside RegisterBuiltinImporters.
+    /// @brief Registers the prefab importer.
+    ///
+    /// Separate from RegisterBuiltinImporters because it links libveng's reflection
+    /// serializer (WriteFields) and is therefore absent from the veng-free bootstrap
+    /// cooker. The full vengc calls both.
+    /// @param cooker  The cooker to register into.
     void RegisterPrefabImporter(Cooker& cooker);
 }

@@ -21,154 +21,214 @@ namespace Veng::Renderer
     class SynchronizationFrame;
     class TimelineSemaphore;
 
+    /// @brief Per-device queue family indices resolved at initialization.
     struct QueueFamilyIndices
     {
+        /// @brief Graphics (and compute) queue family.
         optional<u32> GraphicsFamily;
+        /// @brief Presentation queue family.
         optional<u32> PresentFamily;
 
-        // The family transfer uploads submit to. On a discrete GPU this is a
-        // dedicated transfer-only family (the DMA path); on MoltenVK it collapses
-        // to the graphics family. When TransferFamily == GraphicsFamily there is
-        // no cross-queue ownership transfer and the submission lock alone
-        // serializes the shared queue.
+        /// @brief The family transfer uploads submit to.
+        ///
+        /// On a discrete GPU this is a dedicated transfer-only family (the DMA path);
+        /// on MoltenVK it collapses to the graphics family. When TransferFamily ==
+        /// GraphicsFamily there is no cross-queue ownership transfer and the submission
+        /// lock alone serializes the shared queue.
         optional<u32> TransferFamily;
 
-        // Graphics is all a headless context needs; presentation is only
-        // required when there's a surface (see CanPresent).
+        /// @brief Returns true when the graphics family is present.
+        ///
+        /// Graphics is all a headless context needs; presentation is only required when
+        /// there is a surface (see CanPresent).
         [[nodiscard]] bool IsComplete() const
         {
             return GraphicsFamily.has_value();
         }
 
+        /// @brief Returns true when a presentation queue family is available.
         [[nodiscard]] bool CanPresent() const
         {
             return PresentFamily.has_value();
         }
 
-        // True when the transfer family is the graphics family (MoltenVK and any
-        // GPU exposing no transfer-only family). Callers key cross-queue
-        // ownership-transfer decisions off this.
+        /// @brief Returns true when the transfer family is the graphics family.
+        ///
+        /// True on MoltenVK and any GPU exposing no transfer-only family. Callers key
+        /// cross-queue ownership-transfer decisions off this.
         [[nodiscard]] bool TransferIsGraphics() const
         {
             return TransferFamily == GraphicsFamily;
         }
     };
 
+    /// @brief Creation parameters for a render context.
     struct ContextInfo
     {
+        /// @brief Application name for the Vulkan instance.
         string ApplicationName;
+        /// @brief Engine name for the Vulkan instance.
         string EngineName = "Veng";
+        /// @brief Off-screen render resolution.
         uvec2 InternalRenderExtent;
+        /// @brief Color format of the off-screen output target.
         Format OutputFormat = Format::RGBA16Sfloat;
+        /// @brief Depth format of the off-screen depth target.
         Format DepthFormat = Format::D32Sfloat;
-        // When set, the pipeline cache is seeded from this file at init and
-        // written back at shutdown. nullopt keeps it in-memory only.
+
+        /// @brief When set, the pipeline cache is seeded from this file at init and written back
+        /// at shutdown. nullopt keeps it in-memory only.
         optional<path> PipelineCachePath;
     };
 
+    /// @brief The Vulkan device context: owns the instance, device, queues, swap chain,
+    /// frame synchronization, transfer pools, and the bindless registry.
     class Context
     {
     public:
+        /// @brief Constructs a context; call Initialize to set up Vulkan.
         Context();
+        /// @brief Destructor; all GPU resources must be released before this runs.
         ~Context();
 
-        // The window is borrowed, not owned; it must outlive the context and is
-        // created by the application before the context initializes. Pass
-        // window == nullptr for a headless context (no surface or swapchain,
-        // off-screen rendering only).
+        /// @brief Initializes the Vulkan instance, device, and swap chain.
+        ///
+        /// The window is borrowed, not owned; it must outlive the context and is created
+        /// by the application before the context initializes. Pass window == nullptr for
+        /// a headless context (no surface or swapchain, off-screen rendering only).
+        /// @param info   Context creation parameters.
+        /// @param window Borrowed window, or nullptr for headless.
         void Initialize(const ContextInfo& info, Window* window);
+
+        /// @brief Releases all GPU resources held by the context.
         void DisposeResources();
+
+        /// @brief Tears down the Vulkan instance and device.
         void Dispose();
 
-        // Create one transfer command pool per worker, indexed by worker index,
-        // by running pool creation on each worker once through ForEachWorker.
-        // VkCommandPool is single-thread, so a worker may only ever touch its
-        // own pool; storing the pools on the Context (not thread_local) ties
-        // their lifetime to the device for clean teardown. Called by Application
-        // after the TaskSystem is constructed and before any upload is submitted;
-        // a headless/test Context with no TaskSystem simply has no transfer pools
-        // (nothing submits transfers on that path). The pools are torn down in
-        // Dispose(), by which point every worker has been joined.
+        /// @brief Creates one transfer command pool per worker, indexed by worker index.
+        ///
+        /// VkCommandPool is single-thread, so a worker may only ever touch its own pool;
+        /// storing the pools on the Context (not thread_local) ties their lifetime to the
+        /// device for clean teardown. Called by Application after the TaskSystem is
+        /// constructed and before any upload is submitted; a headless/test Context with no
+        /// TaskSystem simply has no transfer pools. The pools are torn down in Dispose(),
+        /// by which point every worker has been joined.
+        /// @param taskSystem The application's task system.
         void InitializeTransferPools(TaskSystem& taskSystem);
 
-        // True when initialized without a window (no surface/swapchain): the
-        // swapchain accessors and present path are unavailable.
+        /// @brief Returns true when initialized without a window (no surface/swapchain).
+        ///
+        /// The swapchain accessors and present path are unavailable in headless mode.
         [[nodiscard]] bool IsHeadless() const;
 
+        /// @brief Returns the resolved queue family indices.
         [[nodiscard]] const QueueFamilyIndices& GetQueueFamilies() const;
+
+        /// @brief Returns the borrowed window.
         [[nodiscard]] Window& GetWindow() const { return *m_Window; }
 
+        /// @brief Advances to the next frame-in-flight, waiting the outgoing frame's fence.
         SynchronizationFrame& AcquireNextFrame();
+
+        /// @brief Returns the synchronization frame that is currently being recorded.
         SynchronizationFrame& GetCurrentFrame();
 
-        // Current frame's command buffer — the common case for recording.
+        /// @brief Returns the current frame's command buffer — the common case for recording.
         [[nodiscard]] CommandBuffer& GetCurrentCommandBuffer();
 
-        // Acquires the next frame (and swapchain image, if not headless),
-        // resets its fence, and begins recording its command buffer. The
-        // returned reference is the same buffer GetCurrentCommandBuffer()
-        // returns for the rest of the frame — callers don't need to hold onto
-        // it.
+        /// @brief Acquires the next frame (and swapchain image, if not headless), resets its
+        /// fence, and begins recording its command buffer.
+        ///
+        /// The returned reference is the same buffer GetCurrentCommandBuffer() returns for
+        /// the rest of the frame — callers don't need to hold onto it.
+        /// @return The frame's command buffer, ready to record.
         CommandBuffer& BeginFrame();
 
-        // Transitions the swapchain image to present (if not headless), ends
-        // recording, submits, and presents the current frame.
+        /// @brief Ends recording, submits, and presents the current frame.
+        ///
+        /// Transitions the swapchain image to present first (if not headless).
         void EndFrame();
 
+        /// @brief Submits the given synchronization frame's command buffer to the graphics queue.
         void SubmitFrame(const SynchronizationFrame& frame) const;
+
+        /// @brief Presents the given synchronization frame's swapchain image.
         void PresentFrame(const SynchronizationFrame& frame);
 
-        // Register a transfer-timeline wait the next frame submit must satisfy
-        // before sampling an async-uploaded resource: the frame's graphics submit
-        // waits timeline >= value at the fragment-shader (sampled-image) stage.
-        // The render side calls this on first graphics use of a just-uploaded
-        // resource; SubmitFrame folds every accumulated wait in and clears the set
-        // each frame. Rides alongside the binary present/acquire semaphores, never
-        // replacing them.
+        /// @brief Registers a transfer-timeline wait the next frame submit must satisfy.
+        ///
+        /// The frame's graphics submit waits timeline >= value at the fragment-shader
+        /// (sampled-image) stage. The render side calls this on first graphics use of a
+        /// just-uploaded resource; SubmitFrame folds every accumulated wait in and clears
+        /// the set each frame. Rides alongside the binary present/acquire semaphores,
+        /// never replacing them.
+        /// @param timeline The transfer timeline to wait.
+        /// @param value    The timeline value to wait for.
         void AddFrameTransferWait(const TimelineSemaphore& timeline, u64 value);
+
+        /// @brief Submits `commandBuffer` immediately and waits for it to complete.
         void SubmitImmediateCommands(CommandBuffer& commandBuffer) const;
 
-        // Prepare a worker's transfer command buffer for recording a new upload.
-        // The buffer is reused across uploads, so this first waits the worker's
-        // last submitted transfer-timeline value (the GPU is done reading it),
-        // then resets and begins it, returning it for the caller to record into.
-        // Only the owning worker may call this with its own index.
+        /// @brief Prepares a worker's transfer command buffer for recording a new upload.
+        ///
+        /// First waits the worker's last submitted transfer-timeline value (the GPU is done
+        /// reading it), then resets and begins the buffer, returning it ready to record.
+        /// Only the owning worker may call this with its own index.
+        /// @param workerIndex The calling worker's index.
+        /// @return The transfer command buffer, ready to record.
         [[nodiscard]] CommandBuffer& BeginTransferRecording(u32 workerIndex);
 
-        // End and submit a worker's transfer command buffer on the transfer queue,
-        // signalling the given timeline. The next monotonic timeline value is
-        // allocated *inside* the submission lock — never precomputed and raced for
-        // the lock — recorded as the worker's last submitted value, and returned.
-        // The caller uses the returned value for the staging buffer's
-        // transfer-keyed retire and the render side's frame transfer-wait. No
-        // device wait. Only the owning worker may call this with its own index.
+        /// @brief Ends and submits a worker's transfer command buffer on the transfer queue.
+        ///
+        /// The next monotonic timeline value is allocated inside the submission lock (never
+        /// precomputed and raced for the lock), recorded as the worker's last submitted value,
+        /// and returned. The caller uses the returned value for the staging buffer's
+        /// transfer-keyed retire and the render side's frame transfer-wait. No device wait.
+        /// Only the owning worker may call this with its own index.
+        /// @param workerIndex The calling worker's index.
+        /// @param timeline    The timeline to signal.
+        /// @return The timeline value signalled by this submit.
         [[nodiscard]] u64 SubmitTransfer(u32 workerIndex, const TimelineSemaphore& timeline);
 
-        // The context-owned transfer timeline async uploads signal. Worker copies
-        // signal a strictly increasing value on it (via SubmitTransfer); the frame
-        // submit and the transfer-keyed retire wait/poll it.
+        /// @brief The context-owned transfer timeline that async uploads signal.
+        ///
+        /// Worker copies signal a strictly increasing value on it (via SubmitTransfer);
+        /// the frame submit and the transfer-keyed retire wait/poll it.
         [[nodiscard]] TimelineSemaphore& GetTransferTimeline() const;
 
-        // The transfer command buffer owned by the given worker's transfer pool.
-        // VkCommandPool is single-thread: a worker may call this only with its
-        // own index, and only the owning worker may record into the returned
-        // buffer. The buffer is reused across uploads, so its reuse is
-        // timeline-gated — a command buffer recorded for upload N must not be
-        // reset or re-recorded until that upload's transfer-timeline value has
-        // been reached (the GPU is done reading it); resetting it earlier
-        // corrupts an in-flight submit. The owning worker enforces this by
-        // waiting its own last transfer-timeline value before re-recording.
-        // Requires InitializeTransferPools to have run.
+        /// @brief The transfer command buffer owned by the given worker's transfer pool.
+        ///
+        /// VkCommandPool is single-thread: a worker may call this only with its own index,
+        /// and only the owning worker may record into the returned buffer. The buffer is
+        /// reused across uploads, so its reuse is timeline-gated — a command buffer
+        /// recorded for upload N must not be reset or re-recorded until that upload's
+        /// transfer-timeline value has been reached (the GPU is done reading it). The
+        /// owning worker enforces this by waiting its own last transfer-timeline value
+        /// before re-recording. Requires InitializeTransferPools to have run.
+        /// @param workerIndex The calling worker's index.
+        /// @return The worker's transfer command buffer.
         [[nodiscard]] CommandBuffer& GetTransferCommandBuffer(u32 workerIndex);
+
+        /// @brief Returns the context's off-screen output format.
         [[nodiscard]] Format GetOutputFormat() const { return m_OutputFormat; }
+
+        /// @brief Returns the context's depth buffer format.
         [[nodiscard]] Format GetDepthFormat() const { return m_DepthFormat; }
 
+        /// @brief Updates the render extent to match the current window size.
         void UpdateRenderExtent();
 
+        /// @brief Returns the fixed internal render resolution (may differ from the window size).
         [[nodiscard]] uvec2 GetInternalRenderExtent() const { return m_InternalRenderExtent; }
+
+        /// @brief Returns the current effective render extent.
         [[nodiscard]] uvec2 GetRenderExtent() const { return m_RenderExtent; }
 
+        /// @brief Returns the maximum number of frames that may be in flight simultaneously.
         [[nodiscard]] u32 GetMaxFramesInFlight() const;
+
+        /// @brief Returns the index of the current frame-in-flight (0 .. GetMaxFramesInFlight()-1).
         [[nodiscard]] u32 GetCurrentFrameInFlight() const;
 
         /// @brief The maximum width/height of a 2D image this device supports.
@@ -180,59 +240,86 @@ namespace Veng::Renderer
         /// @return The device's maximum 2D image edge length, in texels.
         [[nodiscard]] u32 GetMaxImageDimension2D() const;
 
-        // Current swap chain image/view and extent/format, for compositing.
+        /// @brief Returns the current swap chain extent.
         [[nodiscard]] uvec2 GetSwapChainExtent() const;
+
+        /// @brief Returns the swap chain's surface format.
         [[nodiscard]] Format GetSwapChainFormat() const;
+
+        /// @brief Returns the swap chain image for the current frame.
         [[nodiscard]] Ref<Image> GetCurrentSwapChainImage() const;
+
+        /// @brief Returns the swap chain image view for the current frame.
         [[nodiscard]] Ref<ImageView> GetCurrentSwapChainImageView() const;
+
+        /// @brief Returns the total number of swap chain images.
         [[nodiscard]] u32 GetSwapChainImageCount() const;
+
+        /// @brief Returns the index of the current swap chain image.
         [[nodiscard]] u32 GetCurrentSwapChainImageIndex() const;
 
-        // Register a callback fired after the swap chain is recreated (resize).
-        // The ImGui layer uses this to recreate its offscreen target.
+        /// @brief Registers a callback fired after the swap chain is recreated (e.g. on resize).
+        ///
+        /// The ImGui layer uses this to recreate its offscreen target.
+        /// @param callback The function to call after swap chain recreation.
         void AddSwapChainInvalidationCallback(std::function<void()> callback);
 
+        /// @brief Records commands via a callback on a one-shot command buffer and waits for completion.
         void ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const;
+
+        /// @brief Acquires the next swap chain image, signalling `semaphore` when available.
         void AcquireNextImage(Semaphore& semaphore);
+
+        /// @brief Blocks until the device is idle.
         void WaitIdle() const;
 
-        // The global bindless descriptor registry (set 0). Valid from the end
-        // of Initialize() until Dispose(). See BindlessRegistry.h.
+        /// @brief Returns the global bindless descriptor registry (set 0).
+        ///
+        /// Valid from the end of Initialize() until Dispose(). See BindlessRegistry.h.
         [[nodiscard]] BindlessRegistry& GetBindlessRegistry() const;
 
-        // Queue a one-time graphics-queue acquire + shader-read transition for a
-        // bindless-sampled resource that has just gone resident. A texture
-        // sampled through set 0 is invisible to the RenderGraph, so the graph
-        // can never derive its layout transition or fold its upload's
-        // transfer-timeline wait into the submit. The resident half of the async
-        // upload (Texture::Finalize) enqueues the view here; BeginFrame drains
-        // the queue into the frame's command buffer before any pass records, so
-        // the resource is in shader-read layout and graphics-owned by the time
-        // anything samples it. The transition is idempotent — it is recorded
-        // once, on the first frame after the resource becomes resident. Called
-        // on the main thread only (same thread as BeginFrame); not synchronized.
+        /// @brief Queues a one-time graphics-queue acquire and shader-read transition for a
+        /// bindless-sampled resource that has just gone resident.
+        ///
+        /// A texture sampled through set 0 is invisible to the RenderGraph, so the graph
+        /// cannot derive its layout transition or fold its upload's transfer-timeline wait
+        /// into the submit. The resident half of the async upload (Texture::Finalize)
+        /// enqueues the view here; BeginFrame drains the queue into the frame's command
+        /// buffer before any pass records, so the resource is in shader-read layout and
+        /// graphics-owned by the time anything samples it. The transition is recorded once,
+        /// on the first frame after the resource becomes resident. Called on the main thread
+        /// only (same thread as BeginFrame); not synchronized.
+        /// @param view The image view to transition.
         void EnqueueBindlessAcquire(const Ref<ImageView>& view);
 
+        /// @brief Backend handle accessor. Returns a mutable ref from a const method by design —
+        /// see the Native idiom in Native.h.
         struct Native;
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        // Borrowed from the application in Initialize(); never owned.
+        /// @brief Borrowed from the application in Initialize(); never owned.
         Window* m_Window = nullptr;
 
+        /// @brief Fixed render resolution as supplied to Initialize.
         uvec2 m_InternalRenderExtent;
+        /// @brief Current effective render resolution (swapchain extent or internal extent for headless).
         uvec2 m_RenderExtent;
+        /// @brief Off-screen output format.
         Format m_OutputFormat = Format::RGBA16Sfloat;
+        /// @brief Depth buffer format.
         Format m_DepthFormat = Format::D32Sfloat;
 
+        /// @brief Set when a resize is pending; triggers swapchain recreation at the next PresentFrame.
         bool m_RenderExtentChanged = false;
 
-        // Bindless-sampled resources awaiting their one-time graphics-queue
-        // acquire; populated by EnqueueBindlessAcquire and drained by BeginFrame.
-        // Holds a Ref so a view enqueued for a texture dropped before the next
-        // frame can't dangle.
+        /// @brief Bindless-sampled resources awaiting their one-time graphics-queue acquire.
+        ///
+        /// Populated by EnqueueBindlessAcquire and drained by BeginFrame. Holds a Ref so a
+        /// view enqueued for a texture dropped before the next frame cannot dangle.
         vector<Ref<ImageView>> m_PendingBindlessAcquires;
 
+        /// @brief Backend Vulkan state (instance, device, queues, swapchain, sync frames).
         Unique<Native> m_Native;
     };
 }

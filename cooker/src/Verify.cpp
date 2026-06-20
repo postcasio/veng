@@ -9,9 +9,7 @@ namespace Veng::Cook
 {
     namespace
     {
-        // xxh3-128 of a byte range, packed into the format's ContentHash — the
-        // same hash the cooker writes, so a clean re-hash reproduces the stored
-        // value bit for bit.
+        // xxh3-128 of a byte range, packed into the format's ContentHash.
         ContentHash Xxh3_128(std::span<const u8> bytes)
         {
             const XXH128_hash_t h = XXH3_128bits(bytes.data(), bytes.size());
@@ -57,8 +55,7 @@ namespace Veng::Cook
 
         const ArchiveReader& reader = *readerResult;
 
-        // Per-blob pass: re-hash each blob and compare to its stored Hash. A zero
-        // stored hash counts as a mismatch — every cooked archive is fully hashed.
+        // Re-hash each blob; a zero stored hash counts as a mismatch.
         report.Assets.reserve(reader.Entries().size());
         for (const ArchiveTocEntry& entry : reader.Entries())
         {
@@ -74,11 +71,7 @@ namespace Veng::Cook
             report.Assets.push_back(asset);
         }
 
-        // Digest pass: re-hash the serialized TOC bytes and compare to the
-        // stored header digest. Catches TOC-level tampering (reordered entries,
-        // an edited id/type/offset/size, or a per-blob Hash field altered to mask
-        // a swapped blob) that re-hashing blobs alone cannot. A zero stored
-        // digest is a mismatch, like a zero per-blob hash.
+        // Re-hash the TOC bytes to catch TOC-level tampering that blob re-hashing alone cannot detect.
         const ContentHash stored = reader.ArchiveDigest();
         const ContentHash recomputed = Xxh3_128(reader.TocBytes());
         report.DigestOk = !IsZero(stored) && Equal(recomputed, stored);

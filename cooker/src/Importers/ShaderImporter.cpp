@@ -125,8 +125,7 @@ namespace Veng::Cook
         }
 
         // Maps a Slang-reflected vertex input type to a format ordinal.
-        // Used only in the Slang source path (for element-for-element validation
-        // against the referenced VertexLayout). Only float/floatN are valid.
+        // Only float/floatN are valid; used for element-for-element layout validation.
         Result<u32> MapVertexInputFormat(slang::TypeReflection* type, const string& name,
             const path& sourcePath, const string& entryName)
         {
@@ -158,9 +157,8 @@ namespace Veng::Cook
             return unsupported();
         }
 
-        // Assembles the final cooked blob: CookedShaderHeader, CookedShaderInterfaceHeader,
-        // bindings, push constants, then SPIR-V. No vertex-input table — the layout
-        // is referenced by AssetId (0 = no vertex inputs).
+        // Assembles the cooked shader blob. The vertex layout is referenced by AssetId
+        // rather than inlined; 0 = no vertex inputs.
         vector<u8> BuildBlob(const string& entryPoint, std::span<const u8> spirv,
             const vector<CookedDescriptorBinding>& bindings,
             const vector<CookedPushConstantBlock>& pushConstants,
@@ -443,12 +441,10 @@ namespace Veng::Cook
                     }
                 }
             }
-            // If vertex_layout is absent (vertexLayoutAssetId == 0), any reflected
-            // vertex inputs are discarded — vertex-pulling / no-input semantics.
+            // vertex_layout absent: reflected vertex inputs are discarded (vertex-pulling).
 
-            // Slang's SPIR-V backend names every entry point "main" regardless of
-            // its source name (confirmed via spirv-dis), so ShaderModule::Create's
-            // ShaderModuleBinaryInfo::EntryPoint is always "main" for this path.
+            // Slang's SPIR-V backend names every entry point "main" regardless of its
+            // source name, so the cooked EntryPoint field is always "main".
             return BuildBlob("main",
                 std::span(static_cast<const u8*>(code->getBufferPointer()), code->getBufferSize()),
                 bindings, pushConstants, vertexLayoutAssetId);

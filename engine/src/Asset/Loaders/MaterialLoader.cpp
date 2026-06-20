@@ -81,11 +81,9 @@ namespace Veng
                     descLayouts.push_back(l);
             }
 
-            // Push-constant ranges: merge ranges with identical (Offset, Size) by
-            // OR-ing Stages. A Surface push block (MVP + materialIndex) is declared
-            // in both stages; without merging, two ranges cover the same bytes and
-            // CommandBuffer::PushConstants<T> asserts ambiguity. After the merge
-            // there is one range per (offset, size).
+            // Merge push-constant ranges with identical (Offset, Size) by OR-ing Stages.
+            // A Surface push block is declared in both stages; without merging, two ranges
+            // cover the same bytes and CommandBuffer::PushConstants asserts ambiguity.
             vector<Renderer::PushConstantRange> mergedRanges;
             auto mergeRange = [&](const Renderer::PushConstantRange& incoming)
             {

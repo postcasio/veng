@@ -1,18 +1,24 @@
 #pragma once
 #include <Veng/Veng.h>
 
-// Veng::UI layout helpers — the small remainder of cursor/spacing primitives a
-// widget author reaches for inline. imgui-free signatures; impl in Layout.cpp.
+/// @brief Cursor and spacing layout helpers for widget authors.
+///
+/// ImGui-free signatures; impl in Layout.cpp.
 
 namespace Veng::UI
 {
+    /// @brief Draws a horizontal separator line.
     void Separator();
+
+    /// @brief Advances the cursor to the same line as the previous widget.
     void SameLine();
+
+    /// @brief Inserts a blank line of spacing.
     void Spacing();
 
-    // Space remaining in the current content region.
+    /// @brief Returns the space remaining in the current content region.
     [[nodiscard]] vec2 ContentRegionAvail();
 
-    // Scrolls so the current cursor position is visible (the console auto-scroll).
+    /// @brief Scrolls so the current cursor position is visible.
     void ScrollToHere();
 }

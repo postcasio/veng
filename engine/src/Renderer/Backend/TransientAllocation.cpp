@@ -16,13 +16,6 @@ namespace Veng::Renderer::Backend
         }
     }
 
-    /// @brief Assigns each transient resource to a physical backing slot, aliasing non-overlapping lifetimes.
-    ///
-    /// A greedy first-fit algorithm sorts by FirstUse and reuses the earliest free slot with a matching
-    /// AllocationKey. Slots with different keys are never aliased (they require distinct backing storage).
-    /// @param lifetimes  Per-transient first and last pass indices.
-    /// @param keys       Per-transient allocation keys; must be parallel to @p lifetimes.
-    /// @return Per-transient slot index into the physical slot array (size = number of unique slots).
     vector<u32> AssignTransientSlots(const vector<TransientLifetime>& lifetimes,
                                      const vector<AllocationKey>& keys)
     {

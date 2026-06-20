@@ -25,9 +25,7 @@ namespace Veng
         m_Fields(info.Fields),
         m_SelectorOffset(info.SelectorOffset)
     {
-        // Construction is unregistered: the handle indices in m_Block are not yet
-        // resolved (the textures register on the main thread) and the SSBO slot is
-        // allocated in Finalize().
+        // Unregistered at construction: handle indices and the SSBO slot are assigned in Finalize().
     }
 
     Material::~Material()
@@ -85,7 +83,6 @@ namespace Veng
             std::memcpy(m_Block.data() + field.Offset, &index, sizeof(u32));
         }
 
-        // Allocate a slot in the registry and upload the single parameter block.
         m_Handle = m_Context.GetBindlessRegistry().RegisterMaterial(
             std::span<const std::byte>(m_Block));
         m_Registered = true;
@@ -135,7 +132,6 @@ namespace Veng
 
         const Texture& tex = *texture.Get();
 
-        // Write the sampled-image handle index into m_Block at the field's offset.
         VE_ASSERT(field->Offset + sizeof(u32) <= m_Block.size(),
                   "Material::SetTexture: field '{}' offset {} + 4 exceeds block size {}",
                   name, field->Offset, m_Block.size());
@@ -155,8 +151,6 @@ namespace Veng
             std::memcpy(m_Block.data() + samplerField->Offset, &samplerIndex, sizeof(u32));
         }
 
-        // Keep the texture asset resident (replace by AssetId if already present,
-        // otherwise append).
         const u64 texId = texture.Id().Value;
         bool found = false;
         for (AssetHandle<Texture>& existing : m_Textures)

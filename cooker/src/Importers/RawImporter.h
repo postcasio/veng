@@ -4,14 +4,15 @@
 
 namespace Veng::Cook
 {
-    // Reads "source" (relative to CookContext::PackDir) verbatim into
-    // AssetType::Raw blob bytes — the end-to-end proof for the cooker shell,
-    // with zero type-specific logic.
+    /// @brief Copies the "source" file (relative to CookContext::PackDir) verbatim
+    /// into an AssetType::Raw blob with no type-specific processing.
     class RawImporter final : public AssetImporter
     {
     public:
+        /// @brief Returns AssetType::Raw.
         [[nodiscard]] AssetType Type() const override { return AssetType::Raw; }
 
+        /// @brief Cooks the raw asset described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context, const json& entry) const override;
     };
 }

@@ -30,10 +30,7 @@ namespace Veng::Cook
             dest[n] = '\0';
         }
 
-        // Assembles the final cooked material blob:
-        //   CookedMaterialHeader
-        //   CookedMaterialField[FieldCount]
-        //   param block (BlockBytes)
+        // Assembles CookedMaterialHeader + CookedMaterialField[] + param block into one blob.
         vector<u8> BuildBlob(const CookedMaterialHeader& header,
             const vector<CookedMaterialField>& fields,
             const vector<u8>& block)
@@ -85,9 +82,7 @@ namespace Veng::Cook
 
         // --- 1b. Parse the optional domain (default surface) ---
 
-        // Stored in the header as the underlying MaterialDomain integer. Absent →
-        // Surface, so every existing material cooks unchanged; an unknown value is
-        // a located cook error.
+        // Absent → Surface (0); unknown value is a located cook error.
         u32 domain = 0; // MaterialDomain::Surface
         if (vmat.contains("domain"))
         {
@@ -207,11 +202,8 @@ namespace Veng::Cook
 
         // --- 3b. Validate the fragment outputs against the domain's contract ---
 
-        // The domain selects the fragment output contract: Surface writes the
-        // g-buffer MRT (float4 SV_Target0 albedo + float4 SV_Target1 normal +
-        // float4 SV_Target2 packed ORM), PostProcess writes a single float4
-        // SV_Target0. A mismatch is a located cook error — the loader trusts the
-        // pack and never re-reflects.
+        // Surface: float4 SV_Target0 (albedo) + SV_Target1 (normal) + SV_Target2 (ORM).
+        // PostProcess: single float4 SV_Target0. Mismatch is a located cook error.
         const Result<vector<ReflectedFragmentOutput>> outputs =
             ReflectFragmentOutputs(fragSlangPath, fragEntry);
         if (!outputs)
@@ -245,10 +237,8 @@ namespace Veng::Cook
             }
         }
 
-        // The single combined param block: handle slots (uint members) and the
-        // shader's authored scalar/vector uniforms, laid out in one MaterialParams
-        // struct. Optional — a material with no fields declares no struct, which
-        // reflects as an empty layout.
+        // MaterialParams is optional — a fieldless material declares no struct,
+        // which reflects as an empty (Size 0) layout.
         const Result<ReflectedStruct> blockReflected =
             ReflectStructLayout(fragSlangPath, "MaterialParams", /*optional=*/true);
         if (!blockReflected)

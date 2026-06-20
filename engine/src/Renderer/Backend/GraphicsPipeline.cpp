@@ -9,14 +9,8 @@
 
 namespace Veng::Renderer
 {
-    /// @brief Returns the backend-native pipeline handle.
     GraphicsPipeline::Native& GraphicsPipeline::GetNative() const { return *m_Native; }
 
-    /// @brief Constructs and compiles a Vulkan graphics pipeline from the given info.
-    ///
-    /// Uses dynamic viewport/scissor state and dynamic rendering (no render pass object).
-    /// @param context  The owning render context.
-    /// @param info     Pipeline configuration including shaders, attachments, and rasterizer state.
     GraphicsPipeline::GraphicsPipeline(Context& context, const GraphicsPipelineInfo& info) : m_Context(context), m_Name(info.Name),
         m_Native(CreateUnique<Native>()), m_PipelineLayout(info.PipelineLayout),
         m_DepthAttachmentFormat(info.DepthAttachmentFormat)
@@ -191,7 +185,6 @@ namespace Veng::Renderer
         DebugMarkers::MarkPipeline(GetVkDevice(m_Context), m_Native->Pipeline, m_Name);
     }
 
-    /// @brief Defers destruction of the Vulkan pipeline handle until the GPU is done with it.
     GraphicsPipeline::~GraphicsPipeline()
     {
         m_Context.GetNative().Retire(m_Native->Pipeline);

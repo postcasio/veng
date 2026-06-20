@@ -32,128 +32,143 @@ namespace VengEditor
     class InspectorPanel;
     class AssetSourceIndex;
 
+    /// @brief Construction parameters for EditorHost.
     struct EditorHostInfo
     {
-        // The game module the host dlopen's at startup (the libgame the editor
-        // edits). It registers its types and Application factory; with an editor
-        // module also present, its editor panels and asset editors.
+        /// @brief Game module the host dlopen's at startup (the libgame being edited).
+        ///
+        /// Registers types, the Application factory, and — when an editor module is
+        /// also present — editor panels and asset editors.
         Veng::path GameModulePath;
 
-        // The optional libgame_editor — the game's editor extensions. nullopt
-        // skips it; the game module alone still loads.
+        /// @brief Optional game editor-extension module. nullopt skips it.
         Veng::optional<Veng::path> EditorModulePath;
 
-        // The pack source manifest (the .vengpack.json the cooker reads). The
-        // editor maps an AssetId to its per-asset JSON source through it, so an
-        // asset editor knows which source file to edit and recook. nullopt
-        // disables source resolution — asset editors then have no source to open.
+        /// @brief Source-pack manifest (.vengpack.json). Maps an AssetId to its
+        /// per-asset JSON source so asset editors know which file to edit and recook.
+        ///
+        /// nullopt disables source resolution; asset editors have no source to open.
         Veng::optional<Veng::path> AssetManifestPath;
 
+        /// @brief Engine application parameters.
         Veng::ApplicationInfo App;
 
-        // The cook-on-demand backend, supplied by the editor exe (which links
-        // libveng_cook). nullopt disables cook-on-demand — RequestCook then
-        // reports an error to the callback. libveng_editor itself never links the
-        // importer table, so the backend is injected from the exe layer.
+        /// @brief Cook-on-demand backend, injected by the editor exe (which links
+        /// libveng_cook). Null disables cook-on-demand; RequestCook then reports an error.
         VengEditor::CookBackend Cook;
     };
 
-    // The editor application: an Application subclass owning the host-side module
-    // registries (the same pattern as the launcher), the EditorRegistry the
-    // module registers into, a panel set drawn into a top-level ImGui dockspace,
-    // and the scene viewport's SceneRenderer.
+    /// @brief The editor application: an Application subclass that hosts the module
+    /// registries, the EditorRegistry, a panel set in a top-level ImGui dockspace,
+    /// and the scene viewport's SceneRenderer.
     class EditorHost : public Veng::Application, public PanelHost
     {
     public:
+        /// @brief Constructs and returns an EditorHost from the given parameters.
         static Veng::Unique<EditorHost> Create(const EditorHostInfo& info);
         ~EditorHost() override;
 
-        // PanelHost: resolve the asset's editor through the registry and queue it
-        // for adoption into the panel set at the next safe point in the frame.
+        /// @brief Resolves the asset's registered editor and queues the panel for
+        /// adoption into the panel set at the next safe point in the frame.
         void OpenAssetEditor(Veng::AssetType type, Veng::AssetId id) override;
 
-        // Cooks a source asset on demand through the injected cook backend (off
-        // the render thread) and, on success, shadow-mounts the resulting
-        // in-memory archive so Load<T>(request.TargetId) resolves the cooked blob.
-        // onComplete fires on the main thread with a live MountHandle (mounted,
-        // ready to Load) or an error. A cook error is also logged via Log::Error
-        // for the console panel. Calling with no cook backend reports an error.
+        /// @brief Cooks a source asset on demand through the injected cook backend
+        /// and shadow-mounts the result so Load<T>(request.TargetId) resolves it.
+        ///
+        /// onComplete fires on the main thread with a live MountHandle or an error.
+        /// A cook error is also logged via Log::Error. Reports an error when no
+        /// backend is configured.
+        /// @param request    The source asset and target id to cook.
+        /// @param onComplete Continuation called on the main thread with the result.
         void RequestCook(const VengEditor::CookRequest& request,
                          Veng::function<void(Veng::Result<Veng::MountHandle>)> onComplete);
 
     protected:
+        /// @brief Initializes the panel set, shaders, blit pipeline, and source index.
         void OnInitialize() override;
+        /// @brief Records per-frame render passes and drives the ImGui dockspace.
         void OnRender() override;
+        /// @brief Releases all panels and GPU resources before the context is torn down.
         void OnDispose() override;
 
     private:
-        // Owned registries, constructed before this app so the base Application
-        // may borrow the TypeRegistry by reference. Their definitions live in
-        // libveng (ApplicationRegistry) and libveng_editor (EditorRegistry).
+        /// @brief Owned registries, constructed before this Application so the base
+        /// can borrow the TypeRegistry by reference.
         struct Registries;
+        /// @brief Private constructor; use Create().
         EditorHost(const EditorHostInfo& info, Veng::Unique<Registries> registries,
                    Veng::Unique<Veng::LoadedModule> gameModule,
                    Veng::optional<Veng::LoadedModule> editorModule);
 
+        /// @brief Draws the main menu bar (File / Window menus).
         void DrawMenuBar();
 
-        // Build + compile the present graph: a fullscreen blit of the ImGui
-        // output into the swapchain image. Re-compiled on swapchain resize.
+        /// @brief Builds and compiles the present render graph: a fullscreen blit of
+        /// the ImGui output into the swapchain. Recompiled on swapchain resize.
         Veng::Unique<Veng::Renderer::CompiledGraph> BuildPresentGraph();
 
         EditorHostInfo m_Info;
 
-        // The loaded modules must outlive every registered closure and reflected
-        // descriptor (code/data in the module images). Declared before m_Registries
-        // so they are destroyed AFTER it (C++ destroys members in reverse
-        // declaration order).
+        /// @brief Loaded modules; must outlive every registered closure and reflected
+        /// descriptor. Declared before m_Registries so they are destroyed after it
+        /// (C++ destroys members in reverse declaration order).
         Veng::Unique<Veng::LoadedModule> m_GameModule;
+        /// @brief Optional game editor-extension module.
         Veng::optional<Veng::LoadedModule> m_EditorModule;
 
-        // Declared after the modules so it is destroyed first; its ApplicationRegistry
-        // holds a function<> whose closure code lives in the game module.
+        /// @brief Declared after the modules so it is destroyed first; its
+        /// ApplicationRegistry holds closures whose code lives in the game module.
         Veng::Unique<Registries> m_Registries;
 
-        // The shared AssetId -> source manifest index, parsed once and referenced
-        // by the inspector's asset picker and the asset-editor factories. nullopt
-        // when no manifest path is configured.
+        /// @brief AssetId to source-file index, parsed once from the manifest.
+        /// nullptr when no manifest path is configured.
         Veng::Unique<AssetSourceIndex> m_Sources;
 
-        // The host-owned panel set: built-ins plus any game-contributed panels,
-        // each with an open/close flag the Window menu toggles.
+        /// @brief One open panel slot with its Window-menu visibility flag.
         struct PanelSlot
         {
+            /// @brief The panel instance.
             Veng::Unique<EditorPanel> Panel;
+            /// @brief Whether the panel's window is currently open.
             bool Open = true;
         };
+        /// @brief Host-owned panel set: built-ins plus any game-contributed panels.
         Veng::vector<PanelSlot> m_Panels;
 
-        // Non-owning: points into m_Panels' viewport slot, used to drive the scene
-        // render before the UI is built each frame.
+        /// @brief Non-owning pointer into m_Panels' viewport slot, used to drive the
+        /// scene render before the UI is built each frame.
         SceneViewportPanel* m_Viewport = nullptr;
 
-        // Non-owning: points into m_Panels' inspector slot, fed the viewport's
-        // scene and the current selection each frame before the UI is built.
+        /// @brief Non-owning pointer into m_Panels' inspector slot, fed the viewport's
+        /// scene and selection each frame before the UI is built.
         InspectorPanel* m_Inspector = nullptr;
 
-        // Panels opened via OpenAssetEditor since the last frame, adopted into
-        // m_Panels at a point outside the panel-iteration so opening from inside a
-        // panel's OnImGui is safe.
+        /// @brief Panels opened via OpenAssetEditor since the last frame; adopted into
+        /// m_Panels outside panel-iteration so opening from OnImGui is safe.
         Veng::vector<Veng::Unique<EditorPanel>> m_PendingPanels;
 
-        // The present pipeline: a fullscreen blit of the ImGui output into the
-        // swapchain, addressed through the bindless set 0.
+        /// @brief Vertex shader for the fullscreen ImGui-to-swapchain blit.
         Veng::AssetHandle<Veng::Shader> m_BlitVS;
+        /// @brief Fragment shader for the fullscreen ImGui-to-swapchain blit.
         Veng::AssetHandle<Veng::Shader> m_BlitFS;
+        /// @brief Pipeline layout for the blit pass (push constants: texture + sampler handles).
         Veng::Ref<Veng::Renderer::PipelineLayout> m_BlitLayout;
+        /// @brief Graphics pipeline for the blit pass.
         Veng::Ref<Veng::Renderer::GraphicsPipeline> m_BlitPipeline;
+        /// @brief Sampler used to read the ImGui output texture during the blit.
         Veng::Ref<Veng::Renderer::Sampler> m_Sampler;
+        /// @brief Image view over the ImGui layer's output image.
         Veng::Ref<Veng::Renderer::ImageView> m_ImGuiView;
+        /// @brief Bindless handle for the ImGui output texture.
         Veng::Renderer::TextureHandle m_ImGuiHandle;
+        /// @brief Bindless handle for the blit sampler.
         Veng::Renderer::SamplerHandle m_SamplerHandle;
 
+        /// @brief Compiled present render graph; rebuilt on swapchain resize.
         Veng::Unique<Veng::Renderer::CompiledGraph> m_PresentGraph;
+        /// @brief Render graph resource id for the swapchain image.
         Veng::Renderer::ResourceId m_SwapId;
+        /// @brief Render graph resource id for the ImGui output image.
         Veng::Renderer::ResourceId m_ImGuiId;
     };
 }

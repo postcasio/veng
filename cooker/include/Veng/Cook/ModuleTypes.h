@@ -4,37 +4,36 @@
 #include <Veng/Module/ModuleLoader.h>
 #include <Veng/Reflection/TypeRegistry.h>
 
-// The cooker-side module reflection. Loading a game module into the cooker
-// process pulls in libveng (the scoped dependency inversion: the prefab-cooking
-// path links veng::veng to call ModuleLoader/TypeRegistry symbols). The graphics
-// stack is linked but never initialized — no Context, no device — so this runs
-// headless with no Vulkan ICD.
-
 namespace Veng::Cook
 {
-    // A populated TypeRegistry paired with the module image whose descriptors it
-    // points into. A component's strings and lifecycle thunks live in the loaded
-    // module, so the handle must outlive every use of the registry. Move-only
-    // (LoadedModule is non-copyable); declaration order destroys Types before
-    // Module, so dlclose runs last.
+    /// @brief A populated TypeRegistry paired with the module image whose descriptors it points into.
+    ///
+    /// Component strings and lifecycle thunks live in the loaded module, so the handle must outlive
+    /// every use of the registry. Move-only (LoadedModule is non-copyable). Declaration order ensures
+    /// Types is destroyed before Module, so dlclose runs last.
     struct LoadedModuleTypes
     {
-        LoadedModule Module; // the RAII dlopen handle (must outlive Types)
-        TypeRegistry Types;  // builtins + every type the module registered
+        /// @brief RAII dlopen handle; must outlive Types.
+        LoadedModule Module;
+        /// @brief Engine builtins plus every type the module registered.
+        TypeRegistry Types;
     };
 
-    // Loads the game module, runs its VengModuleRegister against a cooker-owned
-    // host carrying a fresh TypeRegistry (engine builtins pre-registered via
-    // RegisterBuiltinTypes), and returns the populated registry paired with the
-    // live module handle. The Application factory the module also registers is
-    // captured into a throwaway ApplicationRegistry and never invoked (the cooker
-    // constructs no app); Editor is null. GPU-free — no Context is created.
-    // Located Result error on load / ABI failure.
+    /// @brief Loads a game module and returns its reflected type registry paired with the live module handle.
+    ///
+    /// Engine builtins are pre-registered via RegisterBuiltinTypes, then the module's VengModuleRegister
+    /// adds the game's component types. The Application factory the module also registers is captured
+    /// into a throwaway ApplicationRegistry and never invoked — the cooker constructs no app.
+    /// GPU-free: no Context or Vulkan device is created.
+    /// @param modulePath  Path to the game module shared library.
+    /// @return Populated LoadedModuleTypes, or a located error on load or ABI failure.
     [[nodiscard]] Result<LoadedModuleTypes> LoadModuleTypes(const path& modulePath);
 
-    // Mints a fresh non-zero TypeId that collides with no id registered in the
-    // given registry — the TypeId analogue of GenerateAssetId. The caller passes
-    // a registry holding the builtins (and, on --module, the game's types) so the
-    // minted id is unique across everything already known.
+    /// @brief Mints a fresh non-zero TypeId that collides with no id in the given registry.
+    ///
+    /// The TypeId analogue of GenerateAssetId. Pass a registry holding the engine builtins
+    /// (and the game's types when using `--module`) so the result is unique across all known ids.
+    /// @param existing  Registry to check for collisions.
+    /// @return A fresh, collision-free TypeId.
     [[nodiscard]] TypeId GenerateTypeId(const TypeRegistry& existing);
 }

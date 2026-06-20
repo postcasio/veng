@@ -72,10 +72,6 @@ namespace VengEditor
         m_TempPath = m_SourcePath.parent_path() /
                      fmt::format(".{}.editor-tmp.vmat.json", m_SourcePath.stem().string());
 
-        // The library-singleton imnodes context is owned by libveng's ImGuiLayer.
-        // A panel owns only its own canvas state, so multiple material editors get
-        // isolated panning/node positions and tearing one down never touches the
-        // shared singleton.
         m_NodeEditorContext = ImNodes::EditorContextCreate();
 
         m_Preview = CreateUnique<MaterialPreview>(m_Context, m_Assets, m_ImGui, PreviewExtent);
@@ -228,8 +224,7 @@ namespace VengEditor
             }
         }
 
-        // The compiled .vmat document carries the regenerated "shaders" + "fields";
-        // merge those over the preserved base.
+        // Merge the regenerated keys over the preserved base so unknown keys survive.
         const Json regenerated =
             Json::parse(WriteMaterialVmat(*compiled, iface, m_Domain), nullptr, false);
         if (!regenerated.is_discarded() && regenerated.is_object())
@@ -239,8 +234,8 @@ namespace VengEditor
             doc["fields"] = regenerated["fields"];
         }
 
-        // The graph document under "_editor" (a JSON object, parsed from the
-        // serializer's string so the .vmat is a single document).
+        // Parse the serializer's string into a JSON object so "_editor" embeds as
+        // a nested object rather than an escaped string.
         const Json graphDoc = Json::parse(WriteNodeGraph(*m_Graph, m_Catalog), nullptr, false);
         if (!graphDoc.is_discarded())
             doc[EditorKey] = graphDoc;
@@ -293,9 +288,8 @@ namespace VengEditor
                 return;
             }
 
-            // Replace the mount (old archive frees with the old handle's drop) and
-            // re-fetch the material behind the stable id. The async load lands
-            // resident on a later frame, where OnImGui swaps it into the preview.
+            // Replace the mount and re-fetch; OnImGui swaps the handle into the
+            // preview once the async load lands resident.
             m_Mount = std::move(*mount);
             m_Handle = m_Assets.Load<Material>(m_Id);
             m_MaterialDirty = true;
@@ -486,10 +480,8 @@ namespace VengEditor
         UI::Text(type->Name);
         UI::Separator();
 
-        // Copy the property bytes into a scratch buffer, draw the widgets over it,
-        // then route any change back through the mutation vocabulary so the model
-        // stays the single writable path. Each property's byte size is the span to
-        // the next property's offset (the last runs to the buffer end).
+        // Draw widgets over a scratch copy; route changes back through the mutation
+        // vocabulary so the graph stays the single writable path.
         const std::span<const std::byte> bytes = m_Graph->PropertyBytes(node);
         vector<std::byte> scratch(bytes.begin(), bytes.end());
 
@@ -524,7 +516,7 @@ namespace VengEditor
 
     void MaterialEditorPanel::OnImGui()
     {
-        // Advance the debounce so a slider drag fires one settled cook.
+        // Debounce so a slider drag does not fire a cook per frame.
         if (m_CookPending)
         {
             m_DebounceRemaining -= Time::GetDeltaTime();

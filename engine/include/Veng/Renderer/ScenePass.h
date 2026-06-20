@@ -15,30 +15,35 @@ namespace Veng
     class Material;
 }
 
-// The reusable-pass-unit layer SceneRenderer composes its pipeline from. A
-// ScenePass is a self-contained pipeline stage: it knows how to size its own
-// resources, declare its reads/writes, and record — never what feeds it. The
-// renderer owns the wiring (which pass reads whose target); each pass owns itself.
-//
-// A ScenePass is distinct from RenderGraph::Pass: it contributes one or more
-// RenderGraph passes into the renderer's single internal graph, it is not one.
+/// @brief Reusable pipeline-stage layer that SceneRenderer composes its pipeline from.
+///
+/// A ScenePass is a self-contained stage: it knows how to size its own resources,
+/// declare its reads/writes, and record — never what feeds it. The renderer owns the
+/// wiring (which pass reads whose target); each pass owns itself.
+///
+/// A ScenePass is distinct from RenderGraph::Pass: it contributes one or more
+/// RenderGraph passes into the renderer's single internal graph; it is not one.
 namespace Veng::Renderer
 {
     class CommandBuffer;
     class Context;
     class GraphicsPipeline;
 
-    // The record-time context a ScenePass callback receives: the RenderGraph
-    // record-time channel plus this frame's SceneView, typed back from the graph's
-    // opaque user pointer. SceneRenderer is the Scene-aware layer that owns this
-    // wrapper and guarantees the pointer is set and the right type on every Execute.
+    /// @brief Record-time context handed to a ScenePass callback.
+    ///
+    /// Wraps the RenderGraph PassContext and adds a typed View() accessor that reads
+    /// this frame's SceneView from the graph's opaque user pointer. SceneRenderer sets
+    /// the pointer on every Execute.
     class ScenePassContext
     {
     public:
+        /// @brief The command buffer for this pass.
         [[nodiscard]] CommandBuffer& Cmd() const { return m_Inner.Cmd(); }
 
-        // This frame's view. Asserts the graph's user pointer is non-null, then
-        // reinterprets it — SceneRenderer sets it to &view on every Execute.
+        /// @brief This frame's scene view.
+        ///
+        /// Asserts the graph's user pointer is non-null, then reinterprets it.
+        /// SceneRenderer sets it to &view on every Execute.
         [[nodiscard]] const SceneView& View() const
         {
             void* userData = m_Inner.UserData();
@@ -48,179 +53,218 @@ namespace Veng::Renderer
             return *static_cast<const SceneView*>(userData);
         }
 
+        /// @brief Resolves a declared transient to its concrete view for this frame.
         [[nodiscard]] ImageView& Resolved(ResourceId id) const { return m_Inner.Resolved(id); }
 
     private:
-        // A ScenePass wraps the RenderGraph PassContext it receives in its Declare
-        // callback through ScenePass::Wrap; SceneRenderer guarantees the user pointer
-        // is set on every Execute.
+        /// @brief Constructed via ScenePass::Wrap; SceneRenderer guarantees the pointer is set.
         friend class ScenePass;
         explicit ScenePassContext(PassContext& inner) : m_Inner(inner) {}
 
+        /// @brief The underlying RenderGraph PassContext.
         PassContext& m_Inner;
     };
 
-    // The wiring a SceneRenderer hands each pass: a named-slot struct, not a flat
-    // in/out pair. The renderer fills the slots a given pass reads/writes; resources
-    // flow both directions (a pass may produce one a later pass consumes), and a
-    // pass may declare multiple RenderGraph passes.
-    //
-    // The renderer owns the g-buffer/HDR/output images and Imports them into the
-    // graph; the ids name those imports and the handles name the bindless slots a
-    // sampling pass reads through. The geometry pass writes the g-buffer; a
-    // fullscreen pass reads it (by handle) and writes the output. The HDR slot is
-    // the lighting pass's target.
+    /// @brief Named-slot wiring the SceneRenderer hands each pass.
+    ///
+    /// The renderer fills the slots a given pass reads or writes; resources flow both
+    /// directions (a pass may produce one a later pass consumes), and a pass may
+    /// declare multiple RenderGraph passes.
+    ///
+    /// The renderer owns the g-buffer/HDR/output images and Imports them into the
+    /// graph; the ids name those imports and the handles name the bindless slots a
+    /// sampling pass reads through.
     struct PassIO
     {
-        // The g-buffer the geometry pass writes and a fullscreen pass samples.
-        ResourceId GBufferAlbedo;  // G0 — base color
-        ResourceId GBufferNormal;  // G1 — world-space normal
-        ResourceId GBufferOrm;     // G2 — packed occlusion/roughness/metallic/emissive
-        ResourceId GBufferDepth;   // depth attachment, also a sampled source
+        /// @brief G0 — base color; written by the geometry pass.
+        ResourceId GBufferAlbedo;
+        /// @brief G1 — world-space normal.
+        ResourceId GBufferNormal;
+        /// @brief G2 — packed occlusion/roughness/metallic/emissive.
+        ResourceId GBufferOrm;
+        /// @brief Depth attachment, also a sampled source for the lighting pass.
+        ResourceId GBufferDepth;
 
-        // The bindless texture slots the renderer registered for the g-buffer
-        // images, threaded to whichever pass samples them.
+        /// @brief Bindless texture slots for the g-buffer images, threaded to sampling passes.
         TextureHandle AlbedoHandle;
+        /// @brief Bindless slot for the world-normal target.
         TextureHandle NormalHandle;
+        /// @brief Bindless slot for the packed ORM target.
         TextureHandle OrmHandle;
+        /// @brief Bindless slot for the depth target.
         TextureHandle DepthHandle;
 
-        // The HDR target a lighting pass writes (and a tail pass samples).
+        /// @brief HDR target the lighting pass writes and the tail pass samples.
         ResourceId Hdr;
+        /// @brief Bindless slot for the HDR target.
         TextureHandle HdrHandle;
 
-        // The screen-space AO target the SsaoScenePass produces and the lighting
-        // pass samples — valid only when the AO pass is wired (Settings.AO). The id
-        // is the SsaoScenePass's own Imported target; the handle is its bindless
-        // slot. An invalid handle means no AO pass this build.
+        /// @brief Screen-space AO target produced by SsaoScenePass and sampled by the lighting pass.
+        ///
+        /// Valid only when the AO pass is wired (Settings.AO). An invalid handle means no AO
+        /// pass is active.
         ResourceId Ssao;
+        /// @brief Bindless slot for the SSAO target; invalid when AO is off.
         TextureHandle SsaoHandle;
 
-        // The shared sampler bindless slot a fullscreen pass samples through.
+        /// @brief Shared sampler bindless slot used by fullscreen passes.
         SamplerHandle SamplerHandle;
 
-        // The directional shadow atlas the ShadowScenePass writes (depth) and the
-        // lighting pass samples. The id is invalid when the shadow pass is compiled
-        // out (Settings.Shadows == false); the lighting pass declares its .Sample
-        // only when the id is valid, so the graph derives the
-        // DepthAttachment → ShaderReadOnly transition. Binding is separate from this
-        // barrier declaration: the atlas reaches the lighting pass through a
-        // dedicated descriptor set (ShadowView below), not bindless.
+        /// @brief Directional shadow atlas written by ShadowScenePass and sampled by the lighting pass.
+        ///
+        /// Invalid when Settings.Shadows is false. When valid the lighting pass declares .Sample
+        /// so the graph derives the DepthAttachment → ShaderReadOnly transition. The atlas
+        /// reaches the lighting pass through a dedicated descriptor set (ShadowView), not bindless.
         ResourceId ShadowMap;
 
-        // The atlas view delivered into a consumer's dedicated descriptor set (the
-        // bound-view seam: a producer's Ref<ImageView> bound into a consumer's own
-        // set, not a bindless slot). Null when the shadow pass is compiled out. The
-        // layout it is sampled in is always ShaderReadOnly (the graph transitions it
-        // there from the declared .Sample), so no separate layout field is needed.
+        /// @brief Directional shadow atlas view bound into the lighting pass's dedicated descriptor set.
+        ///
+        /// The bound-view seam: a producer's Ref<ImageView> bound into a consumer's own set, not a
+        /// bindless slot. Null when the shadow pass is compiled out. Always sampled in ShaderReadOnly
+        /// layout after the graph-derived transition.
         Ref<ImageView> ShadowView;
 
-        // The punctual shadow atlas the PunctualShadowScenePass writes (depth) and the
-        // lighting pass samples. The id is invalid when the punctual shadow pass is
-        // compiled out; the lighting pass declares its .Sample only when the id is
-        // valid, so the graph derives the DepthAttachment → ShaderReadOnly transition.
-        // The atlas is renderer-owned (set 1 binding 4, off bindless), so the punctual
-        // pass writes the view threaded in PunctualShadowView, not a pass-owned one.
+        /// @brief Punctual shadow atlas written by PunctualShadowScenePass and sampled by the lighting pass.
+        ///
+        /// Invalid when the punctual shadow pass is compiled out. When valid the lighting pass declares
+        /// .Sample so the graph derives the DepthAttachment → ShaderReadOnly transition. The atlas is
+        /// renderer-owned (set 1 binding 4, off bindless); the punctual pass writes the view threaded
+        /// in PunctualShadowView.
         ResourceId PunctualShadowMap;
+        /// @brief Punctual shadow atlas view for the lighting pass's set 1 binding.
         Ref<ImageView> PunctualShadowView;
 
-        // The imported output id the terminal pass writes.
+        /// @brief Imported output id the terminal pass writes.
         ResourceId Output;
     };
 
-    // A reusable, self-contained pipeline stage. The renderer calls Configure/Resize
-    // when those knobs change, then Declare to contribute the pass's RenderGraph
-    // pass(es) + record callback into the renderer's single internal graph.
+    /// @brief Abstract base for a reusable, self-contained SceneRenderer pipeline stage.
+    ///
+    /// The renderer calls Configure/Resize when those knobs change, then Declare to
+    /// contribute the pass's RenderGraph pass(es) and record callback into the
+    /// renderer's single internal graph.
     class ScenePass
     {
     public:
+        /// @brief Virtual destructor; subclasses own their resources.
         virtual ~ScenePass() = default;
 
+        /// @brief Notifies the pass of a topology/settings change.
         virtual void Configure(const SceneRendererSettings&) {}
+        /// @brief Notifies the pass of a render-target extent change.
         virtual void Resize(uvec2) {}
+        /// @brief Contributes this pass's RenderGraph pass(es) into graph.
+        /// @param graph  The renderer's internal graph being rebuilt.
+        /// @param io     Named resource slots the renderer has populated.
         virtual void Declare(RenderGraph& graph, const PassIO& io) = 0;
 
     protected:
-        // Type a RenderGraph record-time context as a ScenePassContext. A subclass
-        // calls this inside its Declare record callback to read the per-frame
-        // SceneView.
+        /// @brief Types a RenderGraph PassContext as a ScenePassContext.
+        ///
+        /// A subclass calls this inside its Declare record callback to access the
+        /// per-frame SceneView via the typed View() accessor.
         [[nodiscard]] static ScenePassContext Wrap(PassContext& inner)
         {
             return ScenePassContext(inner);
         }
     };
 
-    // A reusable fullscreen post-process pass driven by a PostProcess-domain
-    // material. It builds a fullscreen GraphicsPipeline from the material's
-    // reflected shaders + pipeline layout against a single color target whose
-    // format the renderer supplies (a PostProcess material's loader cannot know
-    // it), binds set-0 bindless, samples one upstream Imported target through a
-    // runtime-bound material handle field (its bindless index written each frame
-    // via Material::SetTextureHandle/SetSamplerHandle), pushes the material's
-    // per-draw selector at the PostProcess domain's offset (0), and draws the
-    // fullscreen triangle.
-    //
-    // The renderer owns the wiring: the constructor names which Imported source
-    // the pass samples, the bindless slots for that source, the material field
-    // names to write them into, and the output id/format. One PostProcessScenePass
-    // type drives any PostProcess material; a chain of them is the post-stack the
-    // renderer lists.
+    /// @brief Primary runtime-bound input for a PostProcessScenePass.
+    ///
+    /// Names the imported upstream target this pass samples and the material fields
+    /// the pass writes each frame with the resolved bindless handles.
     struct PostProcessInput
     {
-        // The Imported upstream target this pass samples (declared .Sample so the
-        // graph derives its attachment → shader-read barrier).
+        /// @brief The imported upstream target (declared .Sample so the graph derives the barrier).
         ResourceId Source;
-        // The bindless slots the renderer registered for the source view + the
-        // shared sampler, written into the material's input handle fields each
-        // frame.
+        /// @brief Bindless slot for the source view, written into TextureField each frame.
         TextureHandle SourceTexture;
+        /// @brief Bindless slot for the shared sampler, written into SamplerField each frame.
         SamplerHandle Sampler;
-        // The material's runtime-bound input field names (the texture handle field
-        // and its paired sampler handle field).
+        /// @brief Material field name to receive the source texture handle.
         string TextureField;
+        /// @brief Material field name to receive the sampler handle.
         string SamplerField;
     };
 
-    // A second runtime-bound input some PostProcess materials sample alongside the
-    // primary one (the bloom composite samples the HDR target and the blurred bloom
-    // residual together). When Texture is valid the pass declares .Sample on Source
-    // and writes the handle pair into the named fields each frame; an
-    // invalid-handle entry is skipped.
+    /// @brief Optional second runtime-bound input for a PostProcessScenePass.
+    ///
+    /// Some PostProcess materials sample a second upstream target alongside the
+    /// primary one (e.g. the bloom composite samples the HDR target and the blurred
+    /// bloom residual together). When Texture is valid the pass declares .Sample on
+    /// Source and writes the handle pair into the named fields each frame; an invalid
+    /// Texture is skipped.
     struct PostProcessExtraInput
     {
+        /// @brief The second imported upstream target.
         ResourceId Source;
+        /// @brief Bindless slot for the second source; invalid means this entry is inactive.
         TextureHandle Texture;
+        /// @brief Bindless sampler slot written into SamplerField each frame.
         SamplerHandle Sampler;
+        /// @brief Material field name to receive the second texture handle.
         string TextureField;
+        /// @brief Material field name to receive the second sampler handle.
         string SamplerField;
     };
 
+    /// @brief Fullscreen post-process pass driven by a PostProcess-domain material.
+    ///
+    /// Builds a fullscreen GraphicsPipeline from the material's reflected shaders and
+    /// pipeline layout against a renderer-supplied single-color target format, binds
+    /// set-0 bindless, samples one upstream imported target through a runtime-bound
+    /// material handle field (written each frame via Material::SetTextureHandle /
+    /// SetSamplerHandle), pushes the material's per-draw selector at the PostProcess
+    /// domain's offset (0), and draws the fullscreen triangle.
+    ///
+    /// The renderer owns the wiring: the constructor names which imported source the
+    /// pass samples, the bindless slots for that source, the material field names to
+    /// write them into, and the output id/format. One PostProcessScenePass type drives
+    /// any PostProcess material.
     class PostProcessScenePass final : public ScenePass
     {
     public:
+        /// @brief Constructs the pass and builds the fullscreen pipeline from the material.
+        /// @param context       Renderer context for pipeline and resource creation.
+        /// @param material      The PostProcess-domain material driving this pass.
+        /// @param input         Primary runtime-bound input descriptor.
+        /// @param output        The output ResourceId this pass writes.
+        /// @param outputFormat  Color format of the output target.
+        /// @param extent        Initial render extent; updated via Resize.
         PostProcessScenePass(Context& context, AssetHandle<Material> material,
                              PostProcessInput input, ResourceId output,
                              Format outputFormat, uvec2 extent);
 
-        // A pass sampling a second runtime-bound source (the bloom composite reads
-        // the HDR target and the blurred bloom together). The graph derives the
-        // second source's attachment → shader-read barrier from its declared
-        // .Sample, exactly as for the primary input.
+        /// @brief Registers a second runtime-bound input sampled alongside the primary.
+        ///
+        /// The graph derives the second source's attachment → shader-read barrier from
+        /// its declared .Sample, exactly as for the primary input.
         void SetExtraInput(PostProcessExtraInput extra) { m_Extra = std::move(extra); }
 
+        /// @brief Updates the render extent.
         void Resize(uvec2 extent) override { m_Extent = extent; }
+        /// @brief Contributes the fullscreen pass into graph and sets its record callback.
         void Declare(RenderGraph& graph, const PassIO& io) override;
 
     private:
+        /// @brief Builds or rebuilds the fullscreen GraphicsPipeline from the material.
         void BuildPipeline();
 
+        /// @brief Context for pipeline creation.
         Context& m_Context;
+        /// @brief The PostProcess material driving this pass.
         AssetHandle<Material> m_Material;
+        /// @brief Primary input descriptor.
         PostProcessInput m_Input;
+        /// @brief Optional second input (inactive when Texture is invalid).
         PostProcessExtraInput m_Extra;
+        /// @brief Output resource id.
         ResourceId m_Output;
+        /// @brief Output color format.
         Format m_OutputFormat;
+        /// @brief Current render extent.
         uvec2 m_Extent;
+        /// @brief Built from the material's shaders.
         Ref<GraphicsPipeline> m_Pipeline;
     };
 }

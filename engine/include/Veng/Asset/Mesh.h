@@ -19,34 +19,38 @@ namespace Veng::Renderer
     class Context;
 }
 
-// Mesh: a cooked mesh's GPU buffers + draw ranges. A vertex
-// buffer + u32 index buffer in veng's fixed canonical vertex layout
-// (position/normal/tangent/uv, v1), plus a submesh table — each submesh a
-// (index range, material index) draw range. The mesh owns a list of resident
-// material instances and each submesh indexes into it.
 namespace Veng
 {
-    // One draw range within a mesh's index buffer. MaterialIndex selects an entry
-    // in the owning Mesh's material list; NoMaterial leaves the submesh
-    // unassigned, in which case the caller binds its own material.
+    /// @brief One draw range within a mesh's index buffer.
+    ///
+    /// MaterialIndex selects an entry in the owning Mesh's material list;
+    /// NoMaterial leaves the submesh unassigned and the caller binds its own material.
     struct SubMesh
     {
+        /// @brief First index in the mesh's index buffer.
         u32 IndexOffset = 0;
+        /// @brief Number of indices in this range.
         u32 IndexCount = 0;
+        /// @brief Index into the owning Mesh's material list, or NoMaterial.
         u32 MaterialIndex = NoMaterial;
+        /// @brief Sentinel: submesh has no assigned material.
         static constexpr u32 NoMaterial = ~0u;
     };
 
-    // One interleaved vertex in the canonical layout (48 bytes). Field order,
-    // sizeof, and offsets are statically asserted to match CanonicalLayout():
-    // position @0, normal @12, tangent @24, uv @40. Tangent is a vec4 — xyz the
-    // tangent, w the bitangent handedness sign (±1), reconstructed in-shader as
-    // cross(N, T.xyz) * T.w.
+    /// @brief One interleaved vertex in the canonical layout (48 bytes).
+    ///
+    /// Field order, sizeof, and offsets are statically asserted to match CanonicalLayout():
+    /// position @0, normal @12, tangent @24, uv @40. Tangent is a vec4 — xyz the tangent,
+    /// w the bitangent handedness sign (±1), reconstructed in-shader as cross(N, T.xyz) * T.w.
     struct CanonicalVertex
     {
+        /// @brief Local-space vertex position.
         vec3 Position;
+        /// @brief Local-space vertex normal.
         vec3 Normal;
+        /// @brief xyz = tangent, w = bitangent handedness sign (±1).
         vec4 Tangent;
+        /// @brief Texture coordinates.
         vec2 UV;
     };
 
@@ -56,63 +60,74 @@ namespace Veng
     static_assert(offsetof(CanonicalVertex, Tangent) == 24);
     static_assert(offsetof(CanonicalVertex, UV) == 40);
 
-    // CPU-side mesh geometry in the canonical layout. Plain data — primitive
-    // generators and tests build it with no GPU. Upload it into a GPU Mesh with
-    // Mesh::Create(context, data, name).
+    /// @brief CPU-side mesh geometry in the canonical layout.
+    ///
+    /// Plain data — primitive generators and tests build it with no GPU context.
+    /// Upload into a GPU Mesh with Mesh::Create(context, data, name).
     struct MeshData
     {
+        /// @brief Vertices in the canonical layout.
         vector<CanonicalVertex> Vertices;
+        /// @brief Triangle index list.
         vector<u32> Indices;
-        // Resident materials the produced Mesh will own; submeshes index this
-        // list. Empty = the mesh has no materials.
+        /// @brief Resident materials the produced Mesh will own; submeshes index this list.
         vector<AssetHandle<Material>> Materials;
-        // Each submesh is a draw range + a MaterialIndex into Materials
-        // (SubMesh::NoMaterial = unassigned). Empty → the factory synthesizes
-        // one unassigned submesh over [0, Indices.size()).
+        /// @brief Draw ranges; empty → the factory synthesizes one unassigned submesh over [0, Indices.size()).
         vector<SubMesh> SubMeshes;
     };
 
+    /// @brief Construction parameters for a GPU Mesh.
     struct MeshInfo
     {
+        /// @brief Debug name for the mesh.
         string Name;
+        /// @brief Uploaded vertex data.
         Ref<Renderer::Buffer> VertexBuffer;
+        /// @brief Uploaded index data.
         Renderer::IndexBuffer IndexBuffer;
+        /// @brief Vertex attribute layout.
         Renderer::VertexBufferLayout Layout;
+        /// @brief Draw ranges and material indices.
         vector<SubMesh> SubMeshes;
+        /// @brief Material instances owned by the mesh.
         vector<AssetHandle<Material>> Materials;
-        // Local/object-space bound of the mesh's vertices. The factories that
-        // build geometry (runtime Mesh::Create, MeshLoader) fold it from the
-        // canonical positions with Mesh::ComputeBounds.
+        /// @brief Local/object-space bound of the mesh's vertices, folded from canonical positions by Mesh::ComputeBounds.
         AABB Bounds = AABB::Empty();
     };
 
+    /// @brief Cooked mesh's GPU buffers and draw ranges.
+    ///
+    /// A vertex buffer and u32 index buffer in the fixed canonical vertex layout
+    /// (position/normal/tangent/uv, all 32-bit float, 48-byte stride), plus a submesh table.
+    /// Each submesh is a (index range, material index) draw range. The mesh owns a list of
+    /// resident material instances and each submesh indexes into it.
     class Mesh
     {
     public:
-        // Well-known AssetId of the canonical layout in the embedded core pack
-        // (canonical = position/normal/tangent/uv; tangent is a vec4 whose w is
-        // the bitangent handedness sign). Must match core.vengpack.json.
+        /// @brief Well-known AssetId of the canonical VertexLayout asset in the embedded core pack.
+        ///
+        /// Must match the id assigned in core.vengpack.json.
         static constexpr AssetId CanonicalLayoutId{0x4DC267CE63429B6CULL};
 
+        /// @brief Creates a Mesh directly from a MeshInfo (GPU buffers already uploaded).
         static Ref<Mesh> Create(const MeshInfo& info)
         {
             return Ref<Mesh>(new Mesh(info));
         }
 
-        // Uploads CPU-side geometry into a resident GPU Mesh in the canonical
-        // layout, carrying data.Materials onto the mesh. An empty SubMeshes list
-        // synthesizes one unassigned submesh over the whole index range. Uploads
-        // with the blocking UploadSync, so the returned Mesh is ready to draw.
+        /// @brief Uploads CPU-side geometry into a resident GPU Mesh in the canonical layout.
+        ///
+        /// Carries data.Materials onto the mesh. An empty SubMeshes list synthesizes one
+        /// unassigned submesh over the whole index range. Uses the blocking UploadSync path,
+        /// so the returned Mesh is immediately ready to draw.
         [[nodiscard]] static Ref<Mesh> Create(
             Renderer::Context& context, const MeshData& data, const string& name);
 
-        // veng's fixed canonical vertex layout v1 (position/normal/tangent/uv,
-        // all 32-bit float, 48-byte stride). Tangent is a vec4: xyz is the
-        // tangent, w is the bitangent handedness sign (±1), so shaders
-        // reconstruct the bitangent as cross(N, T.xyz) * T.w. The cooker writes
-        // meshes in this layout and the loader validates each cooked mesh
-        // against it; pipelines that draw cooked meshes declare it as their
-        // VertexBufferLayout.
+        /// @brief Returns the fixed canonical vertex layout (position/normal/tangent/uv, 48-byte stride).
+        ///
+        /// Tangent is a vec4: xyz is the tangent, w is the bitangent handedness sign (±1).
+        /// The cooker writes every mesh in this layout; the loader validates against it;
+        /// pipelines that draw cooked meshes declare it as their VertexBufferLayout.
         [[nodiscard]] static Renderer::VertexBufferLayout CanonicalLayout()
         {
             return Renderer::VertexBufferLayout({
@@ -123,25 +138,43 @@ namespace Veng
             });
         }
 
-        // Folds the local-space bound of canonical-layout vertex positions.
-        // ComputeBounds(span<CanonicalVertex>) is the typed form the runtime
-        // Create path has; the raw (bytes, stride) form is what MeshLoader has,
-        // reading the leading vec3 Position (offset 0) of each interleaved
-        // vertex. Both are one definition of "a mesh's bound." Zero vertices
-        // yields AABB::Empty().
+        /// @brief Folds the local-space AABB of typed canonical vertices.
+        ///
+        /// Zero vertices yields AABB::Empty().
         [[nodiscard]] static AABB ComputeBounds(std::span<const CanonicalVertex> vertices);
+
+        /// @brief Folds the local-space AABB from raw interleaved bytes, reading the leading vec3 Position at offset 0.
+        ///
+        /// Used by MeshLoader, which operates on raw bytes. Zero vertices yields AABB::Empty().
         [[nodiscard]] static AABB ComputeBounds(std::span<const u8> interleaved, usize stride);
 
+        /// @brief Returns the mesh's debug name.
         [[nodiscard]] const string& GetName() const { return m_Name; }
+
+        /// @brief Returns the GPU vertex buffer.
         [[nodiscard]] const Ref<Renderer::Buffer>& GetVertexBuffer() const { return m_VertexBuffer; }
+
+        /// @brief Returns the GPU index buffer.
         [[nodiscard]] const Renderer::IndexBuffer& GetIndexBuffer() const { return m_IndexBuffer; }
+
+        /// @brief Returns the vertex attribute layout.
         [[nodiscard]] const Renderer::VertexBufferLayout& GetLayout() const { return m_Layout; }
+
+        /// @brief Returns the index type (always u32 for cooked meshes).
         [[nodiscard]] Renderer::IndexType GetIndexType() const { return m_IndexBuffer.GetIndexType(); }
+
+        /// @brief Returns the total number of indices across all submeshes.
         [[nodiscard]] u32 GetIndexCount() const { return static_cast<u32>(m_IndexBuffer.GetIndexCount()); }
+
+        /// @brief Returns the submesh draw ranges.
         [[nodiscard]] std::span<const SubMesh> GetSubMeshes() const { return m_SubMeshes; }
+
+        /// @brief Returns the mesh's resident material instances.
         [[nodiscard]] std::span<const AssetHandle<Material>> GetMaterials() const { return m_Materials; }
-        // The mesh's local/object-space bound. A consumer lifts it to world space
-        // per instance via AABB::Transformed(worldMatrix).
+
+        /// @brief Returns the mesh's local/object-space bound.
+        ///
+        /// Lift to world space per instance via AABB::Transformed(worldMatrix).
         [[nodiscard]] const AABB& GetBounds() const { return m_Bounds; }
 
     private:
@@ -165,9 +198,11 @@ namespace Veng
         AABB m_Bounds = AABB::Empty();
     };
 
+    /// @brief AssetTypeTrait specialization mapping Mesh to AssetType::Mesh.
     template <>
     struct AssetTypeTrait<Mesh>
     {
+        /// @brief The asset type tag for Mesh.
         static constexpr AssetType Type = AssetType::Mesh;
     };
 }

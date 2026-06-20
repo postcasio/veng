@@ -36,16 +36,17 @@ namespace VengEditor
 {
     class AssetSourceIndex;
 
-    // The node-based material editor: an imnodes canvas over the generic
-    // NodeGraph, a node-property inspector reusing the shared field widgets, and a
-    // live MaterialPreview sphere. Opened by double-clicking a material; on open
-    // it parses the source's "_editor" graph block (or synthesizes a default graph
-    // from the flat field table), and any edit recooks the material off the render
-    // thread and refreshes the preview. The panel owns no model truth — the graph
-    // is the source of truth, compiled into a .vmat field list on each cook.
+    /// @brief Node-based material editor: imnodes canvas, node-property inspector,
+    /// and a live MaterialPreview sphere.
+    ///
+    /// On open, parses the source's "_editor" graph block or synthesizes a default
+    /// graph from the flat field table. Any edit recooks the material off the render
+    /// thread and refreshes the preview. The graph is the source of truth, compiled
+    /// into a .vmat field list on each cook.
     class MaterialEditorPanel final : public EditorPanel
     {
     public:
+        /// @brief Opens the editor for the material at @p id / @p sourcePath.
         MaterialEditorPanel(Veng::AssetId id, Veng::path sourcePath,
                             const AssetSourceIndex& sources, Veng::Renderer::Context& context,
                             Veng::AssetManager& assets, Veng::ImGuiLayer& imgui,
@@ -57,50 +58,48 @@ namespace VengEditor
         void OnRender(Veng::Renderer::CommandBuffer& cmd) override;
 
     private:
-        // Load the material synchronously to read its reflected field table + shader
-        // ids into m_Fields (kept resident so the shader interface span is stable).
-        // Returns false (logged) when the material fails to load.
+        /// @brief Loads the material synchronously, populating m_Fields and shader ids.
+        /// @return False (logged) if the material fails to load.
         bool LoadInterface();
 
-        // Build the catalog + node types from the current shader interface, then
-        // either read the source's "_editor" graph block or synthesize a default
-        // graph from the flat field table. A "_editor" version newer than the
-        // editor's opens read-only (Save disabled), never regenerating from a
-        // degraded parse.
+        /// @brief Builds the catalog + node types, then reads the "_editor" block or
+        /// synthesizes a default graph. A newer graph version opens read-only.
         void BuildGraph();
 
-        // The shader interface view over the panel's owned field-table copy.
+        /// @brief Returns the shader interface view over the panel's owned field table.
         [[nodiscard]] MaterialShaderInterface Interface() const;
 
-        // Project the graph through imnodes for one frame and translate the user's
-        // gestures (link create/destroy, node drag, delete, add-node menu) into the
-        // Layer-1 mutation vocabulary. Returns true when a mutation occurred.
+        /// @brief Projects the graph through imnodes for one frame, translating gestures
+        /// into graph mutations.
+        /// @return True if a mutation occurred.
         bool DrawCanvas();
 
-        // Draw the selected node's properties through the shared field widgets.
-        // Returns true when a property edit occurred.
+        /// @brief Draws the selected node's properties through the shared field widgets.
+        /// @return True if a property edit occurred.
         bool DrawNodeInspector();
 
-        // Mark the graph dirty and arm the debounced recook.
+        /// @brief Marks the graph dirty and arms the debounced recook.
         void MarkDirty();
 
-        // Compile the graph, write the temp .vmat next to the real source, and drive
-        // the cook driver. A compile/IO error is recorded and logged.
+        /// @brief Writes the temp .vmat and drives the cook driver.
+        ///
+        /// A compile or I/O error is recorded in m_CookError and logged.
         void TriggerCook();
 
-        // Assemble the patched .vmat JSON (regenerated "fields", a refreshed
-        // "_editor" graph block, preserved "shaders" + unknown keys) from the
-        // current graph, reading sourcePath as the base document. Returns nullopt
-        // (error recorded) on a compile failure.
+        /// @brief Assembles the patched .vmat JSON from the current graph.
+        ///
+        /// Regenerates "fields" and "_editor", preserves "shaders" and unknown keys.
+        /// @return The document string, or nullopt on compile failure (error recorded).
         [[nodiscard]] Veng::optional<Veng::string> AssembleVmat() const;
 
-        // Write the patched document to the given path. Returns false (error
-        // recorded) on a compile/IO failure.
+        /// @brief Writes the assembled document to @p target.
+        /// @return False (error recorded) on compile or I/O failure.
         bool WriteVmat(const Veng::path& target);
 
         Veng::AssetId m_Id;
         Veng::path m_SourcePath;
-        Veng::path m_TempPath; // the dotfile temp cook source, removed on close
+        /// @brief Dotfile temp cook source beside the real source; removed on close.
+        Veng::path m_TempPath;
         Veng::string m_Title;
 
         const AssetSourceIndex& m_Sources;
@@ -110,44 +109,42 @@ namespace VengEditor
         Veng::EditorRegistry& m_Editors;
         CookDriver m_Cook;
 
-        // The loaded material's reflected field table + shader ids, owned so the
-        // shader interface span stays valid for the catalog and compiler.
+        /// @brief Reflected field table owned by the panel so the shader interface span stays valid.
         Veng::vector<Veng::MaterialField> m_Fields;
         Veng::AssetId m_VertexShader;
         Veng::AssetId m_FragmentShader;
 
-        // The loaded material's domain. It selects the MaterialOutput sink contract
-        // (Albedo/Normal for Surface, Color for PostProcess) and is re-emitted into
-        // the regenerated .vmat so a node-authored domain survives the cook.
+        /// @brief Domain selects the MaterialOutput pin contract and is re-emitted into the .vmat.
         Veng::MaterialDomain m_Domain = Veng::MaterialDomain::Surface;
 
-        // Built per loaded material (MaterialOutput pins are the domain output
-        // contract). The catalog must outlive the graph.
+        /// @brief Node type catalog; must outlive the graph.
         NodeCatalog m_Catalog;
         MaterialNodeTypes m_Types;
         Veng::Unique<NodeGraph> m_Graph;
 
-        // This panel's own imnodes canvas state (panning, node positions). The
-        // library-singleton imnodes context is owned by libveng's ImGuiLayer.
+        /// @brief Per-panel imnodes canvas state (panning, node positions).
+        ///
+        /// The library-singleton imnodes context is owned by libveng's ImGuiLayer;
+        /// each panel owns only its canvas slice so multiple editors stay isolated.
         ImNodesEditorContext* m_NodeEditorContext = nullptr;
 
         Veng::Unique<MaterialPreview> m_Preview;
         bool m_PreviewReady = false;
 
-        // A "_editor" version newer than the editor opened this read-only: Save is
-        // disabled and the graph is never regenerated.
+        /// @brief True when the loaded graph version is newer than the editor supports;
+        /// Save is disabled and the graph is never regenerated.
         bool m_ReadOnly = false;
 
-        // The cook/hot-reload state, mirroring the texture editor.
         Veng::AssetHandle<Veng::Material> m_Handle;
         Veng::MountHandle m_Mount;
         bool m_Cooking = false;
         bool m_CookPending = false;
         Veng::f32 m_DebounceRemaining = 0.0f;
-        bool m_MaterialDirty = false; // a fresh handle is resident; swap into the preview
+        /// @brief True when a fresh handle is resident and ready to swap into the preview.
+        bool m_MaterialDirty = false;
         Veng::optional<Veng::string> m_CookError;
 
-        // A transient rejected-connection notice shown for a short while.
+        /// @brief Transient rejected-connection notice; displayed while m_ToastRemaining > 0.
         Veng::optional<Veng::string> m_Toast;
         Veng::f32 m_ToastRemaining = 0.0f;
     };

@@ -16,12 +16,16 @@
 
 namespace Veng::Cook
 {
-    // Parse the "elements" array from an already-loaded .vlayout.json object.
-    // diagnosticContext is used in error messages (e.g. the source path string).
+    /// @brief Parses the "elements" array from an already-loaded .vlayout.json object.
+    ///
+    /// @param layoutJson        The parsed JSON object containing the "elements" array.
+    /// @param diagnosticContext Context string used in located error messages (e.g. source path).
     [[nodiscard]] Result<vector<CookedVertexLayoutElement>>
     ParseVertexLayoutElements(const json& layoutJson, const string& diagnosticContext);
 
-    // Read and parse a .vlayout.json file, returning its elements.
+    /// @brief Reads and parses a .vlayout.json file, returning its elements.
+    ///
+    /// @param filePath Absolute path to the .vlayout.json file.
     [[nodiscard]] Result<vector<CookedVertexLayoutElement>>
     ReadVertexLayoutFile(const path& filePath);
 }

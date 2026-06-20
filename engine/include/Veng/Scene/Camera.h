@@ -6,19 +6,19 @@
 
 namespace Veng
 {
-    // A plain CPU value type that builds the view + projection matrices a scene
-    // renderer draws through — the thing the future SceneView will carry. Pure
-    // math, no backend handles; the sample uses it directly in place of a
-    // hand-rolled MVP.
-    //
-    // Projection follows the engine's clip conventions: a column-major GLM
-    // perspective with the Y axis flipped (Vulkan clip space has Y pointing
-    // down). The matrices are recomputed on demand from the stored parameters.
+    /// @brief Plain CPU value type that builds the view and projection matrices a SceneView carries.
+    ///
+    /// Pure math, no backend handles. Projection follows the engine's Vulkan clip
+    /// conventions: a column-major GLM perspective with Y flipped (Vulkan clip space
+    /// has Y pointing down). Matrices are recomputed on demand from stored parameters.
     class Camera
     {
     public:
-        // fovYRadians is the vertical field of view; near/far are positive clip
-        // distances. aspect is width / height.
+        /// @brief Sets a perspective projection.
+        /// @param fovYRadians  Vertical field of view in radians.
+        /// @param aspect       Width divided by height.
+        /// @param near         Positive near clip distance.
+        /// @param far          Positive far clip distance.
         void SetPerspective(f32 fovYRadians, f32 aspect, f32 near, f32 far)
         {
             mat4 projection = glm::perspective(fovYRadians, aspect, near, far);
@@ -28,54 +28,66 @@ namespace Veng
             m_Far = far;
         }
 
+        /// @brief Sets the view matrix from eye, target, and up vectors.
         void SetView(vec3 eye, vec3 target, vec3 up)
         {
             m_View = glm::lookAt(eye, target, up);
         }
 
-        // Sets the view from a camera entity's world matrix: the view is its
-        // inverse (world places the camera; view brings the world into camera
-        // space).
+        /// @brief Sets the view matrix from a camera entity's world matrix.
+        ///
+        /// The view is the inverse of the world matrix: world places the camera,
+        /// view brings the world into camera space.
         void SetViewFromWorld(const mat4& world)
         {
             m_View = glm::inverse(world);
         }
 
+        /// @brief Returns the view matrix.
         [[nodiscard]] mat4 View() const { return m_View; }
+        /// @brief Returns the projection matrix.
         [[nodiscard]] mat4 Projection() const { return m_Projection; }
+        /// @brief Returns the combined view-projection matrix.
         [[nodiscard]] mat4 ViewProjection() const { return m_Projection * m_View; }
 
-        // The camera's world-space position: the translation column of the view's
-        // inverse (the world matrix that placed the camera).
+        /// @brief Returns the camera's world-space position (the translation column of the view's inverse).
         [[nodiscard]] vec3 GetPosition() const { return vec3(glm::inverse(m_View)[3]); }
 
-        // The view-space clip range. Recovering near/far from the projection matrix
-        // is fiddly under the Y-flip, so the camera carries them; SetPerspective
-        // sets them. A camera whose projection was set by another path keeps these
-        // defaults, so a perspective camera built by other means must set the range.
+        /// @brief Returns the near clip distance.
+        ///
+        /// Recovering near/far from the projection matrix is fiddly under the Y-flip,
+        /// so the camera stores them. SetPerspective sets both; a camera whose
+        /// projection was set by another path keeps the defaults (0.1 / 100.0).
         [[nodiscard]] f32 GetNear() const { return m_Near; }
+        /// @brief Returns the far clip distance.
         [[nodiscard]] f32 GetFar() const { return m_Far; }
 
     private:
+        /// @brief View matrix (world-to-camera).
         mat4 m_View{1.0f};
+        /// @brief Projection matrix (Y-flipped for Vulkan clip space).
         mat4 m_Projection{1.0f};
+        /// @brief Near clip distance, mirroring the value passed to SetPerspective.
         f32 m_Near = 0.1f;
+        /// @brief Far clip distance, mirroring the value passed to SetPerspective.
         f32 m_Far = 100.0f;
     };
 
-    // A camera that lives on an entity; its view derives from the entity's world
-    // transform. Registered like every other component for the future scene
-    // renderer; the sample wires a bare Camera and registers this for
-    // completeness.
+    /// @brief Camera component for an entity whose view derives from its world transform.
     struct CameraComponent
     {
+        /// @brief Vertical field of view in radians.
         f32 FovY = glm::radians(60.0f);
+        /// @brief Near clip distance.
         f32 Near = 0.1f;
+        /// @brief Far clip distance.
         f32 Far = 100.0f;
     };
 
-    // Builds a Camera from a CameraComponent, an aspect ratio, and the camera
-    // entity's world matrix (WorldMatrix from Transforms.h).
+    /// @brief Builds a Camera from a CameraComponent, an aspect ratio, and the camera entity's world matrix.
+    /// @param camera  The component supplying FovY/Near/Far.
+    /// @param aspect  Viewport width divided by height.
+    /// @param world   The camera entity's world matrix (from WorldMatrix in Transforms.h).
     [[nodiscard]] inline Camera MakeCamera(const CameraComponent& camera, f32 aspect, const mat4& world)
     {
         Camera result;

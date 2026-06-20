@@ -9,29 +9,33 @@ namespace Veng
     class Scene;
     class Mesh;
 
-    // One resident drawable candidate (pre-cull — the name reflects "a mesh that
-    // may be visible," not a post-cull result): a (Transform, MeshRenderer)
-    // entity's world matrix, its world-space bound, and its resident mesh. Built
-    // per frame and borrowed for the frame — Mesh points into the MeshRenderer's
-    // resident AssetHandle, valid for exactly the Execute that gathered it because
-    // no garbage collection or handle mutation runs mid-Execute. A cross-frame
-    // consumer must not reuse the span across frames.
+    /// @brief One resident drawable candidate from a (Transform, MeshRenderer) entity.
+    ///
+    /// Carries the entity's world matrix, world-space bound, and resident mesh.
+    /// Built per frame and valid for exactly the Execute that gathered it — Mesh
+    /// points into the MeshRenderer's resident AssetHandle, and no garbage
+    /// collection or handle mutation runs mid-Execute. A consumer must not reuse
+    /// a span of these across frames.
     struct VisibleMesh
     {
+        /// @brief The entity that owns this drawable.
         Entity      Owner;
+        /// @brief Entity's world matrix.
         mat4        World;
+        /// @brief World-space AABB of the mesh.
         AABB        WorldBounds;
+        /// @brief Resident mesh pointer; valid for the gathering Execute only.
         const Mesh* Mesh;
     };
 
-    // Gather every resident (Transform, MeshRenderer) entity into `out` (cleared
-    // first) and union their world bounds into `outBounds` (AABB::Empty() when
-    // none). One pass over the Transform pool's dense order computes each world
-    // matrix; each entry's WorldBounds = Mesh->GetBounds().Transformed(world). A
-    // non-resident mesh handle (not IsLoaded()) is skipped, so an async-loading
-    // scene gathers what is loaded. There is no culling — this is the unculled
-    // candidate set; a consumer applies Intersects per frustum. outBounds is
-    // exactly SceneBounds(scene), a free by-product of the same pass.
-    // Recompute-on-demand, no cached visibility.
+    /// @brief Gathers every resident (Transform, MeshRenderer) entity into out and unions their world bounds.
+    ///
+    /// Clears out first, then fills it in Transform pool dense order. Each entry's
+    /// WorldBounds = Mesh->GetBounds().Transformed(world). A non-resident mesh
+    /// handle (not IsLoaded()) is skipped. outBounds equals SceneBounds(scene) and
+    /// is AABB::Empty() when no resident mesh renderers exist. No culling is
+    /// applied — this is the unculled candidate set.
+    /// @param out       Destination; cleared then filled with gathered candidates.
+    /// @param outBounds Receives the union of all gathered world bounds.
     void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds);
 }

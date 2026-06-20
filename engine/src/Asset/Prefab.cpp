@@ -14,12 +14,8 @@ namespace Veng
 {
     namespace
     {
-        // Walk a value's reflected fields, remapping Reference fields through the
-        // prefab-index -> spawned-Entity table and rehydrating AssetHandle fields
-        // through the manager. Recurses into nested struct fields. Runs after
-        // ReadFields has populated the value's bytes, so a Reference holds the
-        // cooked prefab-local index in its Index slot and an AssetHandle holds its
-        // raw AssetId at offset 0 with a null cache entry.
+        // Post-ReadFields pass: remap Reference fields (prefab-local index → spawned Entity)
+        // and rehydrate AssetHandle fields (raw AssetId → cache entry). Recurses into structs.
         void Resolve(void* obj, const TypeInfo& type, const TypeRegistry& registry,
                      const vector<Entity>& spawned, AssetManager& manager)
         {

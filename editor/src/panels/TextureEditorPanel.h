@@ -23,19 +23,21 @@ namespace Veng
 
 namespace VengEditor
 {
-    // The cook driver the texture editor uses to recook its source on demand:
-    // EditorHost::RequestCook bound to the host. The host shadow-mounts the
-    // result and hands back a MountHandle (or an error) on the main thread.
+    /// @brief Off-thread cook callback bound to EditorHost::RequestCook.
+    ///
+    /// The host shadow-mounts the cooked result and delivers a MountHandle (or
+    /// error) back on the main thread.
     using CookDriver = Veng::function<void(
         const CookRequest&, Veng::function<void(Veng::Result<Veng::MountHandle>)>)>;
 
-    // The texture editor: a docked panel showing a decoded texture in a live
-    // preview, editing the .tex.json sampler/sRGB settings, recooking on change
-    // (debounced), and round-tripping the JSON source on save. Opened by
-    // double-clicking a texture in the asset browser.
+    /// @brief Docked panel for previewing and editing a .tex.json texture source.
+    ///
+    /// Shows the decoded texture in a live preview, exposes sampler and sRGB
+    /// settings, recooks on change (debounced), and round-trips the JSON on save.
     class TextureEditorPanel final : public EditorPanel
     {
     public:
+        /// @brief Opens the editor for the texture at @p id / @p sourcePath.
         TextureEditorPanel(Veng::AssetId id, Veng::path sourcePath,
                            Veng::Renderer::Context& context, Veng::AssetManager& assets,
                            Veng::ImGuiLayer& imgui, CookDriver cook);
@@ -45,11 +47,12 @@ namespace VengEditor
         void OnImGui() override;
 
     private:
-        // Mirrors the .tex.json fields the editor exposes; each enum value matches
-        // the importer's string vocabulary (TextureImporter.cpp).
+        /// @brief Sampler filter modes; ordinals match the importer's string vocabulary.
         enum class Filter : Veng::u32 { Nearest = 0, Linear = 1 };
+        /// @brief Texture wrap modes; ordinals match the importer's string vocabulary.
         enum class Wrap : Veng::u32 { Repeat = 0, MirroredRepeat = 1, ClampToEdge = 2, ClampToBorder = 3 };
 
+        /// @brief Editable subset of the .tex.json fields.
         struct Settings
         {
             bool Srgb = true;
@@ -60,16 +63,15 @@ namespace VengEditor
             Wrap WrapV = Wrap::Repeat;
         };
 
-        // Read the on-disk .tex.json into m_Settings (tolerant: absent fields keep
-        // their defaults). Logs and keeps defaults on a malformed file.
+        /// @brief Reads the on-disk .tex.json into m_Settings; absent fields keep defaults.
         void LoadSettings();
 
-        // Patch the settings keys in the existing JSON (preserving unknown keys)
-        // and write it back with 4-space indent. Returns false (with an error
-        // recorded) on an I/O or parse failure.
+        /// @brief Patches the settings keys in the existing JSON (preserving unknown keys)
+        /// and writes it back with 4-space indent.
+        /// @return False (error recorded) on I/O or parse failure.
         bool SaveSettings();
 
-        // Kick off a recook of the current on-disk source through the cook driver.
+        /// @brief Submits a recook of the current on-disk source through the cook driver.
         void TriggerCook();
 
         Veng::AssetId m_Id;
@@ -88,17 +90,15 @@ namespace VengEditor
         Veng::AssetHandle<Veng::Texture> m_Handle;
         Veng::MountHandle m_Mount;
 
-        // A recook is in flight (cook submitted, not yet mounted) — shows the
-        // "Cooking…" overlay and suppresses a second concurrent cook.
+        /// @brief Cook submitted but not yet mounted; suppresses concurrent cooks.
         bool m_Cooking = false;
 
-        // A settings change is pending a debounced cook: m_CookPending fires the
-        // cook once m_DebounceRemaining counts down to zero.
+        /// @brief A settings change is pending; fires TriggerCook when m_DebounceRemaining reaches zero.
         bool m_CookPending = false;
         Veng::f32 m_DebounceRemaining = 0.0f;
 
-        // The texture handle is resident but its preview ImGuiTexture has not been
-        // (re)created yet — deferred to OnImGui where the ImGui frame is live.
+        /// @brief Handle is resident but the preview ImGuiTexture has not been (re)created;
+        /// creation is deferred to OnImGui where the ImGui frame is live.
         bool m_PreviewDirty = false;
 
         Veng::optional<Veng::string> m_CookError;

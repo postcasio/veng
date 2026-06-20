@@ -43,13 +43,11 @@ namespace Veng::Renderer
         }
     }
 
-    /// @brief Constructs a vertex element with its format, name, and computed byte size.
     VertexBufferElement::VertexBufferElement(const Format type, const string& name)
         : Type(type), Name(name), Size(GetFormatSize(type)), Offset(0)
     {
     }
 
-    /// @brief Constructs a vertex buffer layout from an initializer list of elements, computing offsets and stride.
     VertexBufferLayout::VertexBufferLayout(const std::initializer_list<VertexBufferElement>& elements) : m_Elements(
         elements)
     {
@@ -66,7 +64,6 @@ namespace Veng::Renderer
         m_FloatCount = floatCount;
     }
 
-    /// @brief Constructs a vertex buffer layout from a vector of elements, computing offsets and stride.
     VertexBufferLayout::VertexBufferLayout(const vector<VertexBufferElement>& elements) : m_Elements(elements)
     {
         u32 offset = 0;

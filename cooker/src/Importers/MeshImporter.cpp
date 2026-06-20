@@ -16,20 +16,19 @@ namespace Veng::Cook
 {
     namespace
     {
-        // veng's fixed canonical vertex layout v1: position/normal/tangent/uv,
-        // interleaved, all 32-bit float. The Format ordinals mirror
-        // Veng::Renderer::Format (Renderer/Types.h) — kept in sync by hand per
-        // the cycle-avoidance rule documented in assetpack's CookedBlobs.h.
-        // The engine loader validates a cooked mesh's attribute descriptor
-        // against this same layout (MeshLoader).
+        // Canonical mesh vertex layout: position/normal/tangent/uv, interleaved,
+        // all 32-bit float. Format ordinals mirror Veng::Renderer::Format
+        // (Renderer/Types.h) — kept in sync by hand per the cycle-avoidance rule
+        // in assetpack's CookedBlobs.h. MeshLoader validates the cooked attribute
+        // descriptor against this same layout.
         constexpr u32 FormatRGBA32Sfloat = 10;
         constexpr u32 FormatRGB32Sfloat = 9;
         constexpr u32 FormatRG32Sfloat = 8;
         constexpr u32 IndexTypeU32 = 1; // underlying Renderer::IndexType::U32
 
         // One interleaved vertex in the canonical layout (48 bytes, 12 floats).
-        // Tangent is a vec4: xyz is the tangent, w is the handedness sign (±1)
-        // used to reconstruct the bitangent in-shader as cross(N, T.xyz) * T.w.
+        // Tangent is a vec4: xyz is the tangent direction, w is the handedness sign (±1)
+        // for reconstructing the bitangent in-shader as cross(N, T.xyz) * T.w.
         struct CanonicalVertex
         {
             f32 Position[3];

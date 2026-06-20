@@ -5,24 +5,25 @@
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Veng.h>
 
-// CookSession: the editor exe's cook-on-demand seam. It links libveng_cook
-// (the importer table) — which libveng and libveng_editor never do — and drives
-// a single source asset through its importer off the render thread, returning an
-// in-memory .vengpack the AssetManager can shadow-mount.
-//
-// The boundary holds: this type is compiled into the editor exe, not into
-// libveng_editor, so the importer dependency stays out of the editor framework
-// library.
+/// @brief Cook-on-demand driver compiled into the editor exe (not libveng_editor).
+///
+/// Links libveng_cook (the importer table), which libveng and libveng_editor
+/// never link, keeping the importer dependency confined to the exe layer.
 
 namespace VengEditor
 {
+    /// @brief Drives a single source asset through its importer off the render thread.
     class CookSession
     {
     public:
-        // Submits the cook on a task worker and returns a Task whose continuation
-        // fires on the main thread carrying the in-memory archive bytes (a
-        // single-entry .vengpack) or a located error string. The cook is
-        // Vulkan-free, so it never touches the render context.
+        /// @brief Submits the cook on a task worker and returns a Task.
+        ///
+        /// The continuation fires on the main thread carrying the in-memory archive
+        /// bytes (a single-entry .vengpack) or a located error string. The cook is
+        /// Vulkan-free and never touches the render context.
+        /// @param request The source asset and target id to cook.
+        /// @param tasks   Task system used to schedule the worker.
+        /// @return Task resolving to the archive bytes or an error.
         [[nodiscard]] Veng::Task<Veng::vector<Veng::u8>> Cook(
             const CookRequest& request, Veng::TaskSystem& tasks);
     };

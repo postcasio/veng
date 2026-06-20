@@ -18,246 +18,315 @@
 
 namespace Veng
 {
-    // Texture: stb-decoded, single mip.
-    // Sampler fields mirror Veng::Renderer::SamplerInfo, stored as underlying
-    // integer/float types per the cycle-avoidance rule above. Followed by
-    // Width * Height * bytes-per-pixel(Format) raw pixel bytes.
+    /// @brief Cooked header for a texture asset.
+    ///
+    /// Sampler fields mirror Veng::Renderer::SamplerInfo, stored as underlying integer/float
+    /// types per the cycle-avoidance rule above. The header is followed by
+    /// Width * Height * bytes-per-pixel(Format) raw pixel bytes.
     struct CookedTextureHeader
     {
-        u32 Format = 0; // underlying Renderer::Format
+        /// @brief Pixel format; underlying Renderer::Format integer.
+        u32 Format = 0;
+        /// @brief Texture width in pixels.
         u32 Width = 0;
+        /// @brief Texture height in pixels.
         u32 Height = 0;
+        /// @brief Number of mip levels.
         u32 MipCount = 1;
 
-        u32 MinFilter = 0;    // underlying Renderer::Filter
-        u32 MagFilter = 0;    // underlying Renderer::Filter
-        u32 MipmapMode = 0;   // underlying Renderer::MipmapMode
-        u32 AddressModeU = 0; // underlying Renderer::AddressMode
-        u32 AddressModeV = 0; // underlying Renderer::AddressMode
-        u32 AddressModeW = 0; // underlying Renderer::AddressMode
-        u32 AnisotropyEnabled = 0; // bool
+        /// @brief Minification filter; underlying Renderer::Filter integer.
+        u32 MinFilter = 0;
+        /// @brief Magnification filter; underlying Renderer::Filter integer.
+        u32 MagFilter = 0;
+        /// @brief Mipmap filter mode; underlying Renderer::MipmapMode integer.
+        u32 MipmapMode = 0;
+        /// @brief U-axis address mode; underlying Renderer::AddressMode integer.
+        u32 AddressModeU = 0;
+        /// @brief V-axis address mode; underlying Renderer::AddressMode integer.
+        u32 AddressModeV = 0;
+        /// @brief W-axis address mode; underlying Renderer::AddressMode integer.
+        u32 AddressModeW = 0;
+        /// @brief Whether anisotropic filtering is enabled (stored as u32 bool).
+        u32 AnisotropyEnabled = 0;
+        /// @brief Maximum anisotropy level when anisotropic filtering is enabled.
         f32 MaxAnisotropy = 1.0f;
     };
 
-    // Mesh: interleaved vertices + indices in a declared layout. The
-    // blob is, in order:
-    //   CookedMeshHeader
-    //   CookedVertexAttribute[AttributeCount]   — the interleaved layout
-    //   CookedSubMesh[SubMeshCount]             — draw ranges + material ids
-    //   vertex bytes  (VertexCount * VertexStride)
-    //   index bytes   (IndexCount * (IndexType == U16 ? 2 : 4))
-    // The attribute descriptor records the on-disk interleaved format so the
-    // loader can validate it against the engine's canonical VertexBufferLayout
-    // (a loud Corrupt error on mismatch, not silent UB). v1 is a fixed canonical
-    // layout (position/normal/tangent/uv), but the descriptor is stored
-    // self-describingly so a later layout change is a format-version bump, not a
-    // silent reinterpretation.
+    /// @brief Cooked header for a mesh asset.
+    ///
+    /// The blob is, in order:
+    ///   CookedMeshHeader
+    ///   CookedVertexAttribute[AttributeCount]   — the interleaved layout
+    ///   CookedSubMesh[SubMeshCount]             — draw ranges + material ids
+    ///   vertex bytes  (VertexCount * VertexStride)
+    ///   index bytes   (IndexCount * (IndexType == U16 ? 2 : 4))
+    ///
+    /// The attribute descriptor records the on-disk interleaved format so the loader can
+    /// validate it against the engine's canonical VertexBufferLayout (a loud Corrupt error
+    /// on mismatch, not silent UB). The descriptor is stored self-describingly so a layout
+    /// change is a format-version bump, not a silent reinterpretation.
     struct CookedMeshHeader
     {
+        /// @brief Byte stride per vertex.
         u32 VertexStride = 0;
+        /// @brief Number of vertices in the vertex buffer.
         u32 VertexCount = 0;
+        /// @brief Number of indices in the index buffer.
         u32 IndexCount = 0;
-        u32 IndexType = 0; // underlying Renderer::IndexType
+        /// @brief Index element type; underlying Renderer::IndexType integer.
+        u32 IndexType = 0;
+        /// @brief Number of CookedSubMesh entries following the attribute table.
         u32 SubMeshCount = 0;
+        /// @brief Number of CookedVertexAttribute entries following this header.
         u32 AttributeCount = 0;
     };
 
-    // One interleaved vertex attribute, in layout order. Format is stored as the
-    // underlying Renderer::Format integer (cycle-avoidance rule above); Offset
-    // is its byte offset within a vertex (redundant with the running stride, but
-    // stored so validation is a direct field-by-field compare).
+    /// @brief One interleaved vertex attribute, in layout order.
+    ///
+    /// Offset is the byte offset within a vertex (redundant with the running stride, but
+    /// stored so validation is a direct field-by-field compare).
     struct CookedVertexAttribute
     {
-        u32 Format = 0; // underlying Renderer::Format
+        /// @brief Attribute format; underlying Renderer::Format integer.
+        u32 Format = 0;
+        /// @brief Byte offset of this attribute within a vertex.
         u32 Offset = 0;
     };
 
-    // One draw range within a cooked mesh's index buffer, with the material it
-    // was authored against (AssetId, a forward reference resolved at load
-    // time).
+    /// @brief One draw range within a cooked mesh's index buffer.
+    ///
+    /// MaterialId is an AssetId forward reference resolved at load time.
     struct CookedSubMesh
     {
+        /// @brief First index in the index buffer for this sub-mesh.
         u32 IndexOffset = 0;
+        /// @brief Number of indices in this sub-mesh's draw call.
         u32 IndexCount = 0;
-        u64 MaterialId = 0; // AssetId
+        /// @brief AssetId of the material this sub-mesh was authored against.
+        u64 MaterialId = 0;
     };
 
-    // Names in cooked blobs are fixed-size and nul-terminated, truncated at
-    // ShaderNameCapacity - 1 — generous for GLSL/Slang identifiers. Shared
-    // by shader bindings/blocks/attributes and vertex-layout element names.
+    /// @brief Maximum byte length (including nul terminator) for names in cooked blobs.
+    ///
+    /// Shared by shader bindings, blocks, attributes, and vertex-layout element names.
+    /// Sized generously for GLSL/Slang identifiers; names are truncated at ShaderNameCapacity - 1.
     inline constexpr usize ShaderNameCapacity = 64;
 
-    // VertexLayout: a named list of vertex-buffer elements that shaders and
-    // pipelines reference by AssetId. The blob is, in order:
-    //   CookedVertexLayoutHeader
-    //   CookedVertexLayoutElement[ElementCount]
+    /// @brief Cooked header for a vertex layout asset.
+    ///
+    /// The blob is, in order:
+    ///   CookedVertexLayoutHeader
+    ///   CookedVertexLayoutElement[ElementCount]
     struct CookedVertexLayoutHeader
     {
+        /// @brief Number of CookedVertexLayoutElement entries following this header.
         u32 ElementCount = 0;
-        // Followed by ElementCount * CookedVertexLayoutElement.
     };
 
-    // One vertex-buffer element in location order. Format is the underlying
-    // Renderer::Format integer (cycle-avoidance rule at the top of this file).
+    /// @brief One vertex-buffer element in location order.
+    ///
+    /// Format is the underlying Renderer::Format integer (cycle-avoidance rule at the top of this file).
     struct CookedVertexLayoutElement
     {
-        u32 Format = 0; // underlying Renderer::Format
+        /// @brief Element format; underlying Renderer::Format integer.
+        u32 Format = 0;
+        /// @brief Nul-terminated element name, at most ShaderNameCapacity - 1 bytes.
         char Name[ShaderNameCapacity] = {};
     };
 
-    // Shader: reflected interface + SPIR-V. One cooked shader is one
-    // SPIR-V module with one entry point, covering one shader stage — a
-    // Material asset references a vertex-stage and a fragment-stage shader
-    // as separate AssetIds. The blob is, in order:
-    //   CookedShaderHeader
-    //   CookedShaderInterfaceHeader
-    //   CookedDescriptorBinding[BindingCount]
-    //   CookedPushConstantBlock[PushConstantCount]
-    //   SPIR-V bytes (SpirvBytes)
-    // InterfaceBytes is the size of CookedShaderInterfaceHeader + the two
-    // arrays (bindings + push constants) combined, so the loader can seek
-    // straight to the SPIR-V. The referenced vertex layout is carried as
-    // VertexLayoutAssetId in CookedShaderInterfaceHeader (0 = none).
-
-    // Bindings/blocks (and the entry point below) are identified by name.
-
+    /// @brief Cooked header for a shader asset.
+    ///
+    /// One cooked shader is one SPIR-V module with one entry point, covering one shader stage.
+    /// A Material asset references a vertex-stage and a fragment-stage shader as separate AssetIds.
+    /// The blob is, in order:
+    ///   CookedShaderHeader
+    ///   CookedShaderInterfaceHeader
+    ///   CookedDescriptorBinding[BindingCount]
+    ///   CookedPushConstantBlock[PushConstantCount]
+    ///   SPIR-V bytes (SpirvBytes)
+    ///
+    /// InterfaceBytes is the size of CookedShaderInterfaceHeader plus the two arrays combined,
+    /// so the loader can seek straight to the SPIR-V. The referenced vertex layout is carried
+    /// as VertexLayoutAssetId in CookedShaderInterfaceHeader (0 = none).
+    /// Bindings, blocks, and the entry point are identified by name.
     struct CookedShaderHeader
     {
-        // The SPIR-V module's OpEntryPoint name (Slang does not always emit
-        // "main" — Shader::Create's ShaderBinaryInfo::EntryPoint must match
-        // exactly, or pipeline creation fails validation).
+        /// @brief The SPIR-V module's OpEntryPoint name.
+        ///
+        /// Slang does not always emit "main" — Shader::Create's ShaderBinaryInfo::EntryPoint
+        /// must match exactly, or pipeline creation fails validation.
         char EntryPoint[ShaderNameCapacity] = {};
+        /// @brief Byte size of the reflected interface region (CookedShaderInterfaceHeader + binding + push-constant arrays).
         u32 InterfaceBytes = 0;
+        /// @brief Byte size of the SPIR-V module that follows the interface region.
         u32 SpirvBytes = 0;
     };
 
+    /// @brief Reflected interface counts and optional vertex-layout reference for a shader.
     struct CookedShaderInterfaceHeader
     {
+        /// @brief Number of CookedDescriptorBinding entries.
         u32 BindingCount = 0;
+        /// @brief Number of CookedPushConstantBlock entries.
         u32 PushConstantCount = 0;
-        u64 VertexLayoutAssetId = 0; // 0 = no vertex inputs (nullopt)
+        /// @brief AssetId of the referenced vertex layout, or 0 if the shader has no vertex inputs.
+        u64 VertexLayoutAssetId = 0;
     };
     static_assert(sizeof(CookedShaderInterfaceHeader) == 16,
         "CookedShaderInterfaceHeader must be 16 bytes — guard against padding between the u32 fields and the u64");
 
-    // One descriptor binding reflected from the shader, set >= 1 (set 0 is the
-    // bindless registry — recognized and excluded by the importer).
+    /// @brief One descriptor binding reflected from the shader.
+    ///
+    /// Set is >= 1; set 0 is the bindless registry and is excluded by the importer.
     struct CookedDescriptorBinding
     {
+        /// @brief Descriptor set index (always >= 1).
         u32 Set = 0;
+        /// @brief Binding index within the set.
         u32 Binding = 0;
-        u32 Type = 0;      // underlying Renderer::DescriptorType
+        /// @brief Descriptor type; underlying Renderer::DescriptorType integer.
+        u32 Type = 0;
+        /// @brief Descriptor array count.
         u32 Count = 1;
-        u32 StageMask = 0; // underlying Renderer::ShaderStage (bitmask)
+        /// @brief Shader stage bitmask; underlying Renderer::ShaderStage integer.
+        u32 StageMask = 0;
+        /// @brief Nul-terminated binding name, at most ShaderNameCapacity - 1 bytes.
         char Name[ShaderNameCapacity] = {};
     };
 
-    // One push-constant block (or field) reflected from the shader, validated
-    // <=128B at cook time (Vulkan's guaranteed minimum push-constant block size).
+    /// @brief One push-constant block (or field) reflected from the shader.
+    ///
+    /// Validated to be <= 128 bytes at cook time (Vulkan's guaranteed minimum push-constant block size).
     struct CookedPushConstantBlock
     {
+        /// @brief Byte offset of the block within the push-constant range.
         u32 Offset = 0;
+        /// @brief Byte size of the block.
         u32 Size = 0;
-        u32 StageMask = 0; // underlying Renderer::ShaderStage (bitmask)
+        /// @brief Shader stage bitmask; underlying Renderer::ShaderStage integer.
+        u32 StageMask = 0;
+        /// @brief Nul-terminated block name, at most ShaderNameCapacity - 1 bytes.
         char Name[ShaderNameCapacity] = {};
     };
 
-    // Material: a thin bindless material — a vertex + fragment shader
-    // (each an ordinary Shader asset, referenced by AssetId), and one parameter
-    // block holding both the bindless handle slots and the authored scalar/vector
-    // uniforms, byte-addressed at each field's reflected offset. The blob is, in
-    // order:
-    //   CookedMaterialHeader
-    //   CookedMaterialField[FieldCount]   — one entry per declared field
-    //   param block (BlockBytes)          — handle slots left zero (the loader
-    //                                       patches them with runtime bindless
-    //                                       indices) and authored params written at
-    //                                       their reflected offsets
-    // The two shader ids reference independent Shader pack entries (a forward
-    // material needs one vertex- and one fragment-stage cooked shader; the
-    // cooked-shader contract is one module / one entry point / one stage).
-    //
-    // The field table is reflected from the shader at cook time, so it is self-
-    // describing: a field's Kind tells the loader whether the u32 at its offset is
-    // a bindless handle slot to patch (Kind 1/2) or an authored value to keep
-    // (Kind 0). The loader patches handle fields by offset, and name-based
-    // Material::SetTexture/SetParam resolve a field by Name. The engine asserts
-    // Version == CookedMaterialVersion (a stale blob is a loud reject) and
-    // BlockBytes <= the per-material param stride.
-
-    // Domain is the underlying integer of Veng::MaterialDomain (cycle-avoidance
-    // rule above): 0 = Surface (the default — a material with no "domain" key
-    // cooks as Surface), 1 = PostProcess. The loader casts it to the engine enum
-    // guarded by a VE_ASSERT on an out-of-range value.
-
-    // The current material-format version; bumped on any layout change, never a
-    // silent reinterpretation. The loader rejects a blob whose Version != this.
+    /// @brief The current material-format version.
+    ///
+    /// Bumped on any layout change; the loader rejects a blob whose Version != this.
     inline constexpr u32 CookedMaterialVersion = 4u;
 
+    /// @brief Cooked header for a material asset.
+    ///
+    /// A material pairs a vertex and fragment shader (each an ordinary Shader asset referenced by
+    /// AssetId) with a single parameter block holding both bindless handle slots and authored
+    /// scalar/vector uniforms, byte-addressed at each field's reflected offset.
+    ///
+    /// The blob is, in order:
+    ///   CookedMaterialHeader
+    ///   CookedMaterialField[FieldCount]   — one entry per declared field
+    ///   param block (BlockBytes)          — handle slots left zero (the loader patches them with
+    ///                                       runtime bindless indices) and authored params written
+    ///                                       at their reflected offsets
+    ///
+    /// The field table is reflected from the shader at cook time and is self-describing: a field's
+    /// Kind tells the loader whether the u32 at its offset is a bindless handle slot to patch
+    /// (Kind 1/2) or an authored value to keep (Kind 0). The loader patches handle fields by offset;
+    /// Material::SetTexture/SetParam resolve a field by Name.
+    ///
+    /// The engine asserts Version == CookedMaterialVersion (a stale blob is a loud reject) and
+    /// BlockBytes <= the per-material param stride.
+    ///
+    /// Domain is the underlying integer of Veng::MaterialDomain (cycle-avoidance rule above):
+    /// 0 = Surface (the default — a material with no "domain" key cooks as Surface),
+    /// 1 = PostProcess. The loader casts it to the engine enum, guarded by a VE_ASSERT on an
+    /// out-of-range value.
     struct CookedMaterialHeader
     {
-        u64 VertexShaderId = 0;   // AssetId of the vertex-stage Shader asset
-        u64 FragmentShaderId = 0; // AssetId of the fragment-stage Shader asset
-        u32 Version = 0;          // == CookedMaterialVersion at cook
-        u32 Domain = 0;           // underlying MaterialDomain (0 = Surface)
+        /// @brief AssetId of the vertex-stage Shader asset.
+        u64 VertexShaderId = 0;
+        /// @brief AssetId of the fragment-stage Shader asset.
+        u64 FragmentShaderId = 0;
+        /// @brief Must equal CookedMaterialVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief Underlying MaterialDomain integer (0 = Surface, 1 = PostProcess).
+        u32 Domain = 0;
+        /// @brief Number of CookedMaterialField entries following this header.
         u32 FieldCount = 0;
-        u32 BlockBytes = 0;       // the single param block size, <= the param stride
+        /// @brief Byte size of the single parameter block; <= the per-material param stride.
+        u32 BlockBytes = 0;
     };
 
-    // One reflected material field, within the single param block. Param fields
-    // (Kind 0) carry their value pre-packed at Offset; handle fields (Kind 1/2)
-    // carry an AssetId in TextureId that the loader resolves to a bindless handle
-    // and writes as a u32 at Offset. Offset is within the one block.
+    /// @brief One reflected material field within the single parameter block.
+    ///
+    /// Param fields (Kind 0) carry their value pre-packed at Offset. Handle fields (Kind 1/2)
+    /// carry an AssetId in TextureId that the loader resolves to a bindless handle and writes
+    /// as a u32 at Offset. Offset is within the one block.
     struct CookedMaterialField
     {
+        /// @brief Nul-terminated field name, at most ShaderNameCapacity - 1 bytes.
         char Name[ShaderNameCapacity] = {};
-        u32 Offset = 0; // byte offset within the param block
-        u32 Size = 0;   // byte size of the field
-        u32 Kind = 0;   // 0 = param value, 1 = sampled-image handle, 2 = sampler handle
-        u64 TextureId = 0; // AssetId for Kinds 1/2; 0 for params
+        /// @brief Byte offset of the field within the parameter block.
+        u32 Offset = 0;
+        /// @brief Byte size of the field.
+        u32 Size = 0;
+        /// @brief Field kind: 0 = param value, 1 = sampled-image handle, 2 = sampler handle.
+        u32 Kind = 0;
+        /// @brief AssetId for Kinds 1/2 (resolved to a bindless handle at load time); 0 for params.
+        u64 TextureId = 0;
     };
 
-    // Prefab: a tree of entities, each carrying components keyed by their stable
-    // TypeId, each component's field values stored as the reflection serializer's
-    // name-keyed record. assetpack treats the records as opaque bytes — the
-    // engine's PrefabLoader interprets them through the TypeRegistry, so this file
-    // gains no reflection/engine dependency (cycle-avoidance rule at the top). The
-    // blob is, in order:
-    //   CookedPrefabHeader
-    //   CookedPrefabEntity[EntityCount]
-    //   CookedPrefabComponent[ComponentCount]   — each entity's components are a
-    //                                             contiguous run (FirstComponent..)
-    //   record blob (RecordBytes)               — the WriteFields records, concatenated
-    //
-    // A Reference (Entity) inside a record stores the prefab-local entity index
-    // (its position in CookedPrefabEntity[]) in the Entity's Index slot, with
-    // Generation written as 0; the loader remaps it to the spawned handle. The
-    // reserved index Entity::Null.Index (~0u) is a null reference the loader leaves
-    // null — never a valid prefab-local index, so null and an intra-prefab
-    // reference never collide.
-
-    // The current prefab-format version; bumped on any layout change, never a
-    // silent reinterpretation. The loader rejects a blob whose Version != this.
+    /// @brief The current prefab-format version.
+    ///
+    /// Bumped on any layout change; the loader rejects a blob whose Version != this.
     inline constexpr u32 CookedPrefabVersion = 1u;
 
-    struct CookedPrefabHeader   // blob head
+    /// @brief Cooked header for a prefab asset.
+    ///
+    /// A prefab is a tree of entities, each carrying components keyed by their stable TypeId, with
+    /// each component's field values stored as the reflection serializer's name-keyed record.
+    /// assetpack treats the records as opaque bytes — the engine's PrefabLoader interprets them
+    /// through the TypeRegistry, so this file gains no reflection/engine dependency
+    /// (cycle-avoidance rule at the top).
+    ///
+    /// The blob is, in order:
+    ///   CookedPrefabHeader
+    ///   CookedPrefabEntity[EntityCount]
+    ///   CookedPrefabComponent[ComponentCount]   — each entity's components are a contiguous run
+    ///   record blob (RecordBytes)               — the WriteFields records, concatenated
+    ///
+    /// A Reference (Entity) inside a record stores the prefab-local entity index (its position in
+    /// CookedPrefabEntity[]) in the Entity's Index slot, with Generation written as 0; the loader
+    /// remaps it to the spawned handle. The reserved index Entity::Null.Index (~0u) is a null
+    /// reference the loader leaves null — never a valid prefab-local index, so null and an
+    /// intra-prefab reference never collide.
+    struct CookedPrefabHeader
     {
-        u32 Version = 0;        // == CookedPrefabVersion at cook
+        /// @brief Must equal CookedPrefabVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief Number of CookedPrefabEntity entries.
         u32 EntityCount = 0;
-        u32 ComponentCount = 0; // total across all entities
-        u32 RecordBytes = 0;    // size of the trailing record blob
+        /// @brief Total number of CookedPrefabComponent entries across all entities.
+        u32 ComponentCount = 0;
+        /// @brief Byte size of the trailing record blob.
+        u32 RecordBytes = 0;
     };
 
-    struct CookedPrefabEntity   // CookedPrefabEntity[EntityCount]
+    /// @brief One entity in a cooked prefab, referencing a contiguous run of its components.
+    struct CookedPrefabEntity
     {
-        u32 FirstComponent = 0; // index into the component table
-        u32 ComponentCount = 0; // this entity's components are a contiguous run
+        /// @brief Index of this entity's first component in the component table.
+        u32 FirstComponent = 0;
+        /// @brief Number of components belonging to this entity.
+        u32 ComponentCount = 0;
     };
 
-    struct CookedPrefabComponent // CookedPrefabComponent[ComponentCount]
+    /// @brief One component entry in the cooked prefab's component table.
+    struct CookedPrefabComponent
     {
-        u64 TypeId = 0;         // the component's stable type id
-        u32 RecordOffset = 0;   // into the record blob
+        /// @brief The component's stable type id, matching the engine's TypeRegistry.
+        u64 TypeId = 0;
+        /// @brief Byte offset of this component's record within the record blob.
+        u32 RecordOffset = 0;
+        /// @brief Byte size of this component's record.
         u32 RecordSize = 0;
     };
 }

@@ -13,7 +13,7 @@ namespace VengEditor
 
     namespace
     {
-        // The manifest "type" strings the cooker recognizes (Cooker.h schema).
+        // Maps the manifest "type" string to an AssetType (Cooker.h schema).
         optional<AssetType> ParseAssetType(const std::string& name)
         {
             if (name == "raw") return AssetType::Raw;

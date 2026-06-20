@@ -83,9 +83,8 @@ namespace Veng
 
     void TaskSystem::ForEachWorker(const function<void(u32 workerIndex)>& fn)
     {
-        // One job per worker, each pinned to a distinct worker by a barrier: a
-        // worker that grabs a slot blocks until every slot is grabbed, so no
-        // worker runs the body twice and every worker runs it once.
+        // A barrier pins each job to a distinct worker: each job blocks until all
+        // workers have grabbed a slot, so every worker runs fn exactly once.
         std::mutex barrierMutex;
         std::condition_variable barrierReady;
         u32 arrived = 0;

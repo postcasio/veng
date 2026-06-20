@@ -52,15 +52,20 @@ namespace Veng
         [[nodiscard]] const Entity* DenseData() const { return m_Dense.data(); }
 
     private:
-        static constexpr u32 Tombstone = ~0u; ///< Sentinel for an absent sparse entry.
+        /// @brief Sentinel for an absent sparse entry.
+        static constexpr u32 Tombstone = ~0u;
 
         /// @brief Byte address of dense slot `index`.
         [[nodiscard]] void* DataAt(usize index);
 
+        /// @brief Borrowed reference to the component type's descriptor (size, thunks, name).
         const TypeInfo& m_Info;
 
-        vector<u32> m_Sparse;       ///< entity index → dense slot (Tombstone if none)
-        vector<Entity> m_Dense;     ///< dense slot → entity
-        vector<std::byte> m_Data;   ///< dense slot → component bytes (Count * Size)
+        /// @brief entity index → dense slot (Tombstone if none)
+        vector<u32> m_Sparse;
+        /// @brief dense slot → entity
+        vector<Entity> m_Dense;
+        /// @brief dense slot → component bytes (Count * Size)
+        vector<std::byte> m_Data;
     };
 }

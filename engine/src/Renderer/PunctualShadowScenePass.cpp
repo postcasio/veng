@@ -141,11 +141,8 @@ namespace Veng::Renderer
                     }
                 };
 
-                // Render one view per shadowed record's face: a spot uses face 0 only,
-                // a point uses six cube faces. Each face sets its tile viewport, pushes
-                // the raw light view-proj, and culls casters against the light's own
-                // frustum — an off-screen caster that shadows into the light's volume is
-                // kept; only what falls outside the range/cone is dropped.
+                // Cull against each face's own frustum: off-screen casters within the
+                // light's range/cone are kept; only what falls outside is dropped.
                 const u32 count = view.PunctualShadowCount < MaxShadowedPunctual
                                       ? view.PunctualShadowCount
                                       : MaxShadowedPunctual;

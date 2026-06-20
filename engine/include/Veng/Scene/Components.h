@@ -11,71 +11,89 @@ namespace Veng
 {
     class Mesh;
 
-    // The engine's builtin components. Each is a plain reflected type a Scene
-    // pools; they are registered into the TypeRegistry by RegisterBuiltinTypes
-    // through the same Register<T> a game uses — not special-cased.
-
-    // A human-readable label for an entity. Display/logging only; never an
-    // identity key.
+    /// @brief Human-readable label for an entity.
+    ///
+    /// Display and logging only; never an identity key.
     struct Name
     {
+        /// @brief The display label.
         string Value;
     };
 
-    // Local TRS — relative to the entity's Parent, or to world for a root.
-    // World matrices are derived by the Parent-chain walk in Transforms.h; this
-    // struct never stores a world matrix.
+    /// @brief Local TRS — relative to the entity's Parent, or to world for a root.
+    ///
+    /// World matrices are derived by the Parent-chain walk in Transforms.h;
+    /// this struct never stores a world matrix.
     struct Transform
     {
+        /// @brief Local position in parent space.
         vec3 Position{0.0f};
+        /// @brief Local rotation in parent space.
         quat Rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        /// @brief Local scale in parent space.
         vec3 Scale{1.0f};
     };
 
-    // Links an entity to its parent. The world transform composes
-    // parent.world * local up this chain. Entity::Null (the default) marks a
-    // root.
+    /// @brief Links an entity to its parent.
+    ///
+    /// The world transform composes parent.world * local up this chain.
+    /// Entity::Null (the default) marks a root.
     struct Parent
     {
+        /// @brief The parent entity, or Entity::Null for a root.
         Entity Value = Entity::Null;
     };
 
-    // The bridge from a scene entity to rendering: the mesh it draws. The mesh
-    // owns its materials, so a renderer queries (world Transform, MeshRenderer)
-    // and draws each submesh with its material.
+    /// @brief Component that binds a scene entity to a renderable mesh.
+    ///
+    /// The mesh owns its materials, so a renderer queries (Transform, MeshRenderer)
+    /// and draws each submesh with its material.
     struct MeshRenderer
     {
+        /// @brief The mesh this entity draws.
         AssetHandle<Mesh> Mesh;
     };
 
-    // The shape of a punctual light, selecting how the deferred lighting pass
-    // attenuates it. Directional has no position or falloff; Point and Spot are
-    // placed by the entity's Transform and fall off with distance (Spot adds a
-    // cone). The integer values are stable: they are packed into the light SSBO
-    // and persisted in prefabs.
+    /// @brief Selects how the deferred lighting pass attenuates a light.
+    ///
+    /// Directional has no position or falloff. Point and Spot are placed by the
+    /// entity's Transform and fall off with distance (Spot adds a cone). Integer
+    /// values are stable — packed into the light SSBO and persisted in prefabs.
     enum class LightType : u32
     {
+        /// @brief Infinite directional light; no position or falloff.
         Directional = 0,
+        /// @brief Omnidirectional point light; falls off within Range.
         Point = 1,
+        /// @brief Cone spot light; falls off within Range and the cone angles.
         Spot = 2,
     };
 
-    // A light shaded by the deferred lighting pass. Type selects directional,
-    // point, or spot. Direction is the world-space travel direction (directional
-    // and spot); Color is linear RGB; Intensity scales it. Range is the point/spot
-    // falloff radius. InnerCone/OuterCone are the spot's half-angles in radians:
-    // full intensity within InnerCone, zero beyond OuterCone, smooth between.
-    //
-    // The light's world position is the entity's Transform — never stored here —
-    // so a parented or animated light moves with its entity.
+    /// @brief Light component shaded by the deferred lighting pass.
+    ///
+    /// Type selects directional, point, or spot. Direction is the world-space
+    /// travel direction (directional and spot); Color is linear RGB; Intensity
+    /// scales it. Range is the point/spot falloff radius. InnerCone/OuterCone
+    /// are the spot's half-angles in radians: full intensity within InnerCone,
+    /// zero beyond OuterCone, smooth between.
+    ///
+    /// The light's world position comes from the entity's Transform — never stored
+    /// here — so a parented or animated light moves with its entity.
     struct Light
     {
+        /// @brief Light shape.
         LightType Type{LightType::Directional};
+        /// @brief World-space travel direction (directional and spot).
         vec3 Direction{0.0f, -1.0f, 0.0f};
+        /// @brief Linear RGB color.
         vec3 Color{1.0f, 1.0f, 1.0f};
+        /// @brief Scales the color at full brightness.
         f32 Intensity{1.0f};
+        /// @brief Falloff radius for point and spot lights.
         f32 Range{10.0f};
+        /// @brief Spot inner half-angle in radians; full intensity within.
         f32 InnerCone{0.0f};
+        /// @brief Spot outer half-angle in radians; zero intensity beyond.
         f32 OuterCone{0.5f};
     };
 }

@@ -45,7 +45,7 @@ namespace Veng
 
     void Application::Run(vector<string> arguments)
     {
-        // If a directory is passed as the first argument, use it as the working directory.
+        // A second argument selects the working directory (launcher convention).
         if (arguments.size() > 1)
         {
             if (std::filesystem::exists(arguments[1]) && std::filesystem::is_directory(arguments[1]))
@@ -73,27 +73,20 @@ namespace Veng
 
         m_RenderContext.WaitIdle();
 
-        // Let every in-flight job finish before OnDispose, so continuations that
-        // hand resources to the application have all run and there is no live
-        // worker touching engine state during teardown.
+        // Drain in-flight jobs before OnDispose: continuations that hand resources
+        // back to the app must complete before teardown touches engine state.
         m_TaskSystem->WaitForAll();
 
-        // Consumers must release their engine resources here — the context is
-        // torn down right after, and resources outliving it are an error.
         OnDispose();
 
         // Shut ImGui down before the context: its backend, descriptor pool and
         // offscreen target must be released while the device is still alive.
         m_ImGuiLayer.reset();
 
-        // Drop every cached asset (regardless of outstanding AssetHandles) so
-        // their engine resources retire into this frame's bins before
-        // DisposeResources() drains them.
+        // Drop all cached assets so their GPU resources retire before DisposeResources() drains the bins.
         m_AssetManager.reset();
 
-        // Join the workers only after the AssetManager is gone: a pending load's
-        // worker holds a Context& and touches AssetManager state, so neither may
-        // be torn down while a worker is live.
+        // Workers must stop after the AssetManager: a live load worker holds Context& and AssetManager state.
         m_TaskSystem.reset();
 
         m_RenderContext.DisposeResources();
@@ -103,15 +96,12 @@ namespace Veng
 
     void Application::Frame()
     {
-        // Run main-thread continuations before BeginFrame advances the frame
-        // index: a continuation that registers a resource or retires a handle
-        // must land before AcquireNextFrame, or its GPU-state mutation falls in
-        // an ambiguous frame window.
+        // Before BeginFrame: continuations that register or retire resources must
+        // land before AcquireNextFrame or their GPU-state mutation is frame-ambiguous.
         m_TaskSystem->PumpMainThread();
 
-        // Finalize any async loads whose dependencies are now resident: register
-        // into the bindless registry and swap the resource into its cache entry.
-        // Main-thread-only, same window as the continuation pump.
+        // Finalize resident async loads (bindless registration + cache swap) before
+        // BeginFrame, in the same main-thread window as the continuation pump.
         m_AssetManager->PumpFinalizes();
 
         const f32 delta = Time::Update();

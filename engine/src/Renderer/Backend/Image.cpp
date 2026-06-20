@@ -229,8 +229,8 @@ namespace Veng::Renderer
 
             Backend::MarkProducedOn(*self, transferFamily, value);
 
-            // The staging buffer lives until the transfer timeline value it signalled;
-            // routing through Buffer::~Buffer would frame-bin it on the wrong fence.
+            // The staging buffer must live until the transfer timeline value it signalled;
+            // letting Buffer::~Buffer run would queue it on the per-frame graphics fence, not the transfer fence.
             const ReleasedBuffer released = ReleaseBuffer(*staging);
             context.GetNative().RetireOnTransfer(released.Buffer, released.Allocation, value);
         });

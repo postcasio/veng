@@ -277,11 +277,8 @@ namespace Veng
 
     void ImGuiLayer::BeginFrame()
     {
-        // Free descriptor sets whose retire window has elapsed: a set queued at
-        // DestroyTexture is freed only after every frame in flight that could have
-        // referenced it has completed. The free runs outside the erase_if predicate
-        // because a hardened STL may evaluate the predicate more than once per
-        // element, which would free the set twice.
+        // The free runs outside the erase_if predicate: a hardened STL may evaluate
+        // the predicate more than once per element, which would free the same set twice.
         vector<vk::DescriptorSet> setsToFree;
         std::erase_if(m_PendingTextureRemovals, [&setsToFree](PendingTextureRemoval& removal)
         {
@@ -355,12 +352,9 @@ namespace Veng
 
     void ImGuiLayer::DestroyTexture(const ImGuiTexture& texture)
     {
-        // The descriptor set may still be read by command buffers in flight; defer
-        // its free until those frames complete, or the GPU faults on a set whose
-        // pool slot has been reused. The drain runs in BeginFrame, before
-        // Context::BeginFrame waits this frame's fence, so the count must cover the
-        // frame in flight at the time of queueing plus the MaxFramesInFlight cycles
-        // that follow — hence MaxFramesInFlight + 1.
+        // The drain runs in BeginFrame before this frame's fence is waited, so the
+        // count must cover the frame in flight at queueing time plus the subsequent
+        // MaxFramesInFlight cycles — hence MaxFramesInFlight + 1.
         m_PendingTextureRemovals.push_back({texture.GetNative().Set, m_Context.GetMaxFramesInFlight() + 1});
     }
 }

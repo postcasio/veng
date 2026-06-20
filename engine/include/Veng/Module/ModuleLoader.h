@@ -6,39 +6,48 @@
 
 namespace Veng
 {
-    // RAII handle over a loaded shared library. Closes the library on
-    // destruction. Returned by value through Result<LoadedModule>, so it must
-    // move correctly: a missed handle null-out is a double-close, fatal under
-    // -fno-exceptions.
+    /// @brief RAII handle over a loaded shared library; closes the library on destruction.
+    ///
+    /// Returned by value through Result<LoadedModule>, so it must move correctly:
+    /// a missed handle null-out in the move constructor would produce a double-close.
     class VE_API LoadedModule
     {
     public:
-        ~LoadedModule();                       // dlclose / FreeLibrary
+        /// @brief Closes the library (dlclose / FreeLibrary).
+        ~LoadedModule();
+        /// @brief Transfers ownership; nulls the source handle.
         LoadedModule(LoadedModule&&) noexcept;
+        /// @brief Transfers ownership; nulls the source handle.
         LoadedModule& operator=(LoadedModule&&) noexcept;
 
         LoadedModule(const LoadedModule&) = delete;
         LoadedModule& operator=(const LoadedModule&) = delete;
 
-        // Resolve the module's entry and call it once with the host. Fatal if the
-        // entry is missing — a version-matched module without VengModuleRegister
-        // is a build error surfaced at load, not a recoverable condition.
+        /// @brief Resolves VengModuleRegister and calls it once with the given host.
+        ///
+        /// Fatal if the entry is missing — a version-matched module without
+        /// VengModuleRegister is a build error surfaced at load, not a recoverable condition.
+        /// @param host  Host registries the module writes into.
         void Register(VengModuleHost& host) const;
 
     private:
         friend class ModuleLoader;
         LoadedModule() = default;
 
-        void* m_Handle = nullptr; // dlopen / LoadLibrary handle (opaque)
+        /// @brief dlopen / LoadLibrary handle (opaque).
+        void* m_Handle = nullptr;
     };
 
+    /// @brief Loads a shared library and verifies its ABI version.
     class VE_API ModuleLoader
     {
     public:
-        // Load a shared library by path and verify its ABI version. Recoverable:
-        // a missing/unloadable file, a missing version symbol, or a version
-        // mismatch is a Result error (the launcher reports it and exits), not an
-        // assert.
+        /// @brief Loads a shared library by path and verifies its ABI version.
+        ///
+        /// A missing/unloadable file, a missing version symbol, or a version mismatch
+        /// is returned as a Result error — the launcher reports it and exits.
+        /// @param modulePath  Path to the shared library to load.
+        /// @return The loaded module on success, or an error string on failure.
         [[nodiscard]] static Result<LoadedModule> Load(const path& modulePath);
     };
 }

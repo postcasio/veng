@@ -25,16 +25,17 @@ namespace Veng
 
 namespace VengEditor
 {
-    // The scene viewport: owns a SceneRenderer driving the hello-triangle prefab
-    // scene, renders it each frame, and shows GetOutput() in a UI::Image. The
-    // image resizes to the panel's content region (debounced — the SceneRenderer
-    // is recreated only when the size settles to a new non-zero value).
-    //
-    // It records the scene render itself, so the host hands it the frame's command
-    // buffer before drawing the panel.
+    /// @brief Scene viewport panel: owns a SceneRenderer, records and displays the
+    /// scene each frame in a UI::Image.
+    ///
+    /// The image resizes to the panel's content region (debounced — SceneRenderer
+    /// is recreated only when the size settles). The host must call Render() with
+    /// the frame's command buffer before OnImGui so the output is ready.
     class SceneViewportPanel final : public EditorPanel
     {
     public:
+        /// @brief Constructs the viewport, creating a SceneRenderer at the context's
+        /// current internal render extent.
         SceneViewportPanel(Veng::Renderer::Context& context, Veng::AssetManager& assets,
                            Veng::ImGuiLayer& imgui, Veng::TypeRegistry& types);
         ~SceneViewportPanel() override;
@@ -45,20 +46,20 @@ namespace VengEditor
             return Veng::UI::WindowFlags::NoScrollbar | Veng::UI::WindowFlags::NoScrollWithMouse;
         }
 
-        // Record this frame's scene render. Called by the host before OnImGui so
-        // the output is ready for the UI::Image sample.
+        /// @brief Records this frame's scene render.
+        /// @pre Called by the host before OnImGui so the output is ready for UI::Image.
         void Render(Veng::Renderer::CommandBuffer& cmd);
 
-        // The scene the viewport renders, read by the inspector as a const Scene*.
+        /// @brief Returns the scene the viewport renders; read by the inspector.
         [[nodiscard]] Veng::Scene& GetScene() const { return *m_Scene; }
 
-        // The prefab's spawned root entity — the inspector's default selection,
-        // the sphere carrying Name/Transform/MeshRenderer/Spinner.
+        /// @brief Returns the prefab's spawned root entity (the inspector's default selection).
         [[nodiscard]] Veng::optional<Veng::Entity> PrimaryEntity() const { return m_PrimaryEntity; }
 
         void OnImGui() override;
 
     private:
+        /// @brief Loads assets, spawns the prefab, and initialises the camera.
         void BuildScene();
 
         Veng::Renderer::Context& m_Context;
@@ -72,26 +73,24 @@ namespace VengEditor
 
         Veng::AssetHandle<Veng::Material> m_BrickMaterial;
 
-        // The scene output surfaced inside this panel via UI::Image: a sampler and
-        // an ImGui texture over SceneRenderer::GetOutput(), recreated when Resize
-        // invalidates the output.
+        /// @brief ImGui texture over SceneRenderer::GetOutput(); recreated when Resize
+        /// or Configure invalidates the output.
         Veng::Ref<Veng::Renderer::Sampler> m_SceneSampler;
         Veng::Ref<Veng::ImGuiTexture> m_SceneTexture;
 
         Veng::optional<Veng::Entity> m_PrimaryEntity;
 
-        // The renderer's topology/sizing settings, driven by the debug-view dropdown.
-        // A change sets m_SettingsDirty; Render applies it through Configure before the
-        // next Execute, so the recompile happens off the ImGui pass and the rebound
-        // output is the freshly-rendered one (no one-frame stale sample).
+        /// @brief Renderer settings driven by the debug-view dropdown.
+        ///
+        /// A change from OnImGui sets m_SettingsDirty; Render applies it through
+        /// Configure before recording, so the rebound output is the freshly-rendered one.
         Veng::Renderer::SceneRendererSettings m_Settings;
         bool m_SettingsDirty = false;
 
         Veng::uvec2 m_RenderExtent{};
         Veng::uvec2 m_PendingExtent{};
 
-        // Per-entity accumulated spin angle (keyed by entity index), advanced each
-        // frame by the entity's Spinner speed.
+        /// @brief Per-entity accumulated spin angle (keyed by entity index).
         Veng::map<Veng::u32, Veng::f32> m_SpinAccum;
     };
 }

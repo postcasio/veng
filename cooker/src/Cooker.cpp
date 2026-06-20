@@ -45,8 +45,7 @@ namespace Veng::Cook
             return std::nullopt;
         }
 
-        // Parse the common pack JSON preamble and return the json object.
-        // On error returns std::unexpected with a located message.
+        // Parses and validates the common pack JSON preamble. On error returns a located message.
         Result<json> ReadAndValidatePack(const path& packJson)
         {
             std::ifstream file(packJson, std::ios::binary);
@@ -193,9 +192,8 @@ namespace Veng::Cook
 
         const json& pack = *packResult;
 
-        // A prefab entry cooks against the loaded module's reflected component
-        // descriptors, so it requires --module. Caught here before resolution
-        // parsing (which classifies entry types) so the message names the cause.
+        // Prefab entries require --module for their reflected component descriptors.
+        // Check before full entry parsing so the error names the cause.
         if (types == nullptr)
         {
             const json& assets = pack["assets"];
@@ -212,12 +210,10 @@ namespace Veng::Cook
             }
         }
 
-        // Build the main AssetPack for resolution.
         const Result<AssetPack> mainPackResult = ParseAssetPack(packJson);
         if (!mainPackResult)
             return std::unexpected(mainPackResult.error());
 
-        // Parse all reference packs.
         vector<AssetPack> refPacks;
         refPacks.reserve(referencePacks.size());
         for (const path& refPath : referencePacks)
@@ -231,10 +227,7 @@ namespace Veng::Cook
             refPacks.push_back(std::move(*refPackResult));
         }
 
-        // Every source file the cook reads, recorded for the build's depfile.
-        // std::set keeps it sorted and de-duplicated. The manifest and each
-        // reference pack are inputs; per-asset JSONs and binary payloads land
-        // here through CookContext::RecordDependency during cooking.
+        // std::set keeps dependencies sorted and de-duplicated.
         std::set<path> dependencies;
         auto record = [&dependencies](const path& p) { dependencies.insert(NormalizeDependency(p)); };
 
@@ -242,13 +235,10 @@ namespace Veng::Cook
         for (const path& refPath : referencePacks)
             record(refPath);
 
-        // Build the Resolve closure: search the main pack first, then references.
-        // Returns the absolute path (pack.Dir / entry.Source) and type, recording
-        // the resolved source as a dependency.
+        // Resolve searches the main pack first, then reference packs in order.
         const AssetPack& mainPack = *mainPackResult;
         auto resolve = [&mainPack, &refPacks, &record](AssetId id) -> optional<ResolvedSource>
         {
-            // Search main pack first.
             if (const AssetPackEntry* e = mainPack.FindById(id))
             {
                 if (e->Source.empty())
@@ -257,7 +247,6 @@ namespace Veng::Cook
                 record(absolute);
                 return ResolvedSource{.AbsolutePath = absolute, .Type = e->Type};
             }
-            // Then reference packs in order.
             for (const AssetPack& ref : refPacks)
             {
                 if (const AssetPackEntry* e = ref.FindById(id))
@@ -293,14 +282,9 @@ namespace Veng::Cook
             }
         }
 
-        // The archive digest covers the serialized TOC byte region — the
-        // contiguous run of on-disk TOC entries (id/type/offset/size + each
-        // per-blob hash) between the header and the blob region. Hashing the
-        // bytes in their on-disk order (Build() emits them id-sorted) means
-        // verify re-hashes the same bytes with no separate sort step, and the
-        // header's ArchiveDigest field is not part of the hashed range. Build
-        // once to lay out those bytes, read them back through the reader, hash,
-        // then rebuild with the digest set.
+        // Build once to lay out the TOC bytes, hash them via the reader, then
+        // rebuild with the digest set. The header's ArchiveDigest field is
+        // excluded from the hashed range so the second build is stable.
         const vector<u8> staged = writer.Build();
         const Result<ArchiveReader> reader = ArchiveReader::FromBytes(staged);
         if (!reader)
@@ -324,10 +308,6 @@ namespace Veng::Cook
                 "cook '{}': no importer registered for the requested type", sourcePath.string()));
         }
 
-        // Parse the reference packs so cross-asset references (a material's
-        // shaders and textures) resolve by AssetId to their source paths, exactly
-        // as a full pack cook resolves them. A standalone cook with no reference
-        // packs resolves cross-asset references to nothing.
         vector<AssetPack> refPacks;
         refPacks.reserve(referencePacks.size());
         for (const path& refPath : referencePacks)
@@ -355,10 +335,7 @@ namespace Veng::Cook
             return std::nullopt;
         };
 
-        // The importer reads entry["source"] relative to context.PackDir, so the
-        // source directory is the pack dir and the entry names the file. The
-        // cook-on-demand path writes no filesystem output, so it tracks no build
-        // dependencies — RecordDependency is a no-op.
+        // CookSource writes no files, so RecordDependency is a no-op.
         const CookContext context{
             .PackDir = sourcePath.parent_path(),
             .Resolve = resolve,
@@ -412,9 +389,7 @@ namespace Veng::Cook
         if (importerIt == m_Importers.end())
             return std::unexpected(fmt::format("no importer registered for type '{}'", typeStr));
 
-        // The per-asset JSON source is a dependency of every entry; the importer
-        // reads it relative to PackDir. Binary payloads it references are
-        // recorded by the importer itself.
+        // Record the per-asset JSON source; importers record their binary payloads.
         if (entry.contains("source") && entry["source"].is_string())
             context.RecordDependency(context.PackDir / entry["source"].get<string>());
 

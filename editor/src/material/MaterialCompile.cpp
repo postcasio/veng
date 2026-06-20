@@ -110,12 +110,8 @@ namespace VengEditor
         if (!outputCount)
             return std::unexpected("CompileMaterialGraph: no MaterialOutput node in the graph");
 
-        // The binding model emits one .vmat field per the loaded material's reflected
-        // field — the cooked target compile binds the authored values to. The values
-        // come from the graph's upstream feeders (a TextureSample per texture handle,
-        // a Param per scalar/vector param), consumed in node-creation order so the
-        // synthesized graph round-trips its source field list. The domain output node
-        // is the contract endpoint; it does not name the bound fields.
+        // Collect feeders in node-creation order so the synthesized graph round-trips
+        // its source field list; the domain output node is the contract endpoint only.
         Veng::vector<NodeId> textureFeeders;
         Veng::vector<NodeId> paramFeeders;
         for (NodeId node : graph.Nodes())

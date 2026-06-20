@@ -256,8 +256,7 @@ namespace Veng
             return nullptr;
         }
 
-        // Create the entry in a pending state (null Resource) and return it now.
-        // The resource is held by the PendingLoad until Finalize swaps it in.
+        // Create the entry pending (null Resource) and return it; the PendingLoad holds the resource until Finalize swaps it in.
         Ref<Detail::AssetCacheEntry> entry = CreateRef<Detail::AssetCacheEntry>(Detail::AssetCacheEntry{
             .Id = id,
             .Type = type,
@@ -287,10 +286,9 @@ namespace Veng
 
     void AssetManager::PumpFinalizes()
     {
-        // Finalize every pending load whose dependencies are all resident. A
-        // material whose textures finalize this same pump waits one more pump
-        // (its dependency entries aren't resident until their own finalize ran);
-        // the loop terminates because each pump makes monotonic progress.
+        // Finalize every pending load whose dependencies are resident. A material whose textures
+        // finalize this same pump waits one more iteration; the loop terminates because each
+        // pass makes monotonic progress (at least one entry finalizes per pass).
         bool progressed = true;
         while (progressed)
         {

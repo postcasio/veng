@@ -16,12 +16,10 @@ namespace VengEditor
 
     namespace
     {
-        // A builtin leaf property field decomposes into a fixed number of f32
-        // components for the JSON form: a Scalar f32/i32/u32 is one number, a
-        // vecN is an N-element array, a quat is four. Enum and AssetHandle are
-        // handled separately (integer / decimal id). The node-property
-        // restriction to builtin leaves keeps this switch closed and registry-
-        // free.
+        // Maps a builtin leaf field to a component count and element repr for JSON:
+        // Scalar → 1 element, vecN → N, quat → 4. Enum and AssetHandle are handled
+        // separately. The node-property restriction to builtin leaves keeps this switch
+        // closed and registry-free.
         struct LeafLayout
         {
             enum class Repr : Veng::u8 { F32, I32, U32 };
@@ -150,9 +148,8 @@ namespace VengEditor
             }
         }
 
-        // Deserializes one JSON value into a property field's bytes, by
-        // FieldClass. A missing/typeless value leaves the byte buffer's
-        // zero-initialised default.
+        // Deserializes one JSON value into a property field's bytes by FieldClass.
+        // A missing or typeless value leaves the zero-initialised default.
         void JsonToPropertyValue(const Json& value, std::byte* fieldPtr,
                                  const Veng::FieldDescriptor& field)
         {
@@ -185,9 +182,8 @@ namespace VengEditor
                 }
                 case Veng::FieldClass::AssetHandle:
                 {
-                    // null / non-number is "no asset" (id stays zero). The cache
-                    // entry is left null; rehydration to a resident handle is the
-                    // panel's job.
+                    // null/non-number leaves id zero ("no asset"); rehydration to a live
+                    // handle is the panel's job.
                     Veng::u64 id = value.is_number_unsigned() ? value.get<Veng::u64>() : 0;
                     std::memcpy(fieldPtr, &id, sizeof(id));
                     break;
@@ -197,8 +193,7 @@ namespace VengEditor
             }
         }
 
-        // The byte size of a permitted node-property field, derived registry-free
-        // from its FieldClass/TypeId — the size SetProperty writes.
+        // Byte size of a node-property field, derived registry-free from FieldClass/TypeId.
         Veng::usize PropertyFieldSize(const Veng::FieldDescriptor& field)
         {
             switch (field.Class)
@@ -243,8 +238,7 @@ namespace VengEditor
 
         Json nodes = Json::array();
 
-        // A serialization-local index per live node, so links reference nodes by
-        // position in this array rather than the runtime NodeId.
+        // Links reference nodes by position in this array, not by runtime NodeId.
         Veng::vector<NodeId> order;
         for (NodeId node : graph.Nodes())
             order.push_back(node);
@@ -307,8 +301,7 @@ namespace VengEditor
     NodeGraphReadOutcome ReadNodeGraph(Veng::string_view json, NodeGraph& dest,
                                        const NodeCatalog& catalog)
     {
-        // JSON_NOEXCEPTION turns a parse error into a discarded value rather than
-        // a throw; check explicitly.
+        // JSON_NOEXCEPTION: a parse error yields a discarded value, not a throw.
         const Json in = Json::parse(json, nullptr, false);
         if (in.is_discarded() || !in.is_object())
             return NodeGraphReadOutcome::Malformed;
@@ -317,14 +310,12 @@ namespace VengEditor
         if (in.contains("version") && in["version"].is_number_integer())
             version = in["version"].get<Veng::i32>();
 
-        // A newer document is refused outright: a degraded parse must not
-        // overwrite the author's data, so the panel opens read-only.
+        // Refuse newer documents outright; a degraded parse must not overwrite the author's data.
         if (version > NodeGraphFormatVersion)
             return NodeGraphReadOutcome::VersionTooNew;
 
-        // Maps a serialized node array index to the freshly spawned NodeId. An
-        // entry stays null (IsValid == false) when its node was dropped (unknown
-        // type), so a link touching it is dropped too.
+        // serialIndex -> spawned NodeId; entries stay null (IsValid == false) for
+        // dropped nodes (unknown type), so incident links are also dropped.
         Veng::vector<NodeId> spawned;
         Veng::vector<const NodeType*> spawnedTypes;
 
@@ -368,8 +359,7 @@ namespace VengEditor
                         if (!props.contains(field.Name))
                             continue; // omitted field keeps its default
 
-                        // Decode into a scratch buffer sized to the field, then
-                        // route through the mutation vocabulary.
+                        // Decode into a scratch buffer, then route through SetProperty.
                         Veng::vector<std::byte> scratch(PropertyFieldSize(field), std::byte{0});
                         if (scratch.empty())
                             continue;

@@ -9,8 +9,6 @@
 
 #include <span>
 
-// Texture: an Image + ImageView + Sampler, sampled bindlessly (set 0) via
-// GetHandle()/GetSamplerHandle() once Finalize() has registered it.
 namespace Veng
 {
     class TaskSystem;
@@ -28,31 +26,38 @@ namespace Veng::Renderer
 
 namespace Veng
 {
+    /// @brief Construction parameters for a Texture.
     struct TextureInfo
     {
+        /// @brief Debug name for the texture.
         string Name;
+        /// @brief Image dimensions in pixels.
         uvec2 Extent;
+        /// @brief Pixel format.
         Renderer::Format Format;
+        /// @brief Source pixel data.
         std::span<const u8> Pixels;
+        /// @brief Sampler parameters.
         Renderer::SamplerInfo Sampler;
     };
 
-    // Texture: an Image + ImageView + Sampler. Creation is the worker-legal half
-    // (image/view/sampler create + upload); registration into the bindless
-    // registry is the main-thread Finalize() half — the two are split so the
-    // async asset path can run creation on a worker and Finalize() on the
-    // render-thread continuation. GetHandle()/GetSamplerHandle() are valid only
-    // after Finalize().
+    /// @brief An Image + ImageView + Sampler, sampled bindlessly (set 0) after Finalize() registers it.
+    ///
+    /// Creation (image/view/sampler create + upload) is worker-legal; registration into the
+    /// bindless registry is deferred to the main-thread Finalize() step so the async asset
+    /// path can run creation on a worker and finalize on the render-thread continuation.
+    /// GetHandle()/GetSamplerHandle() are valid only after Finalize().
     class Texture
     {
     public:
-        // Synchronous create + blocking UploadSync. Unregistered; the caller
-        // (the loader / AssetManager) calls Finalize() on the main thread.
+        /// @brief Synchronous create + blocking UploadSync. Unregistered; the caller must call Finalize() on the main thread.
         static Ref<Texture> Create(Renderer::Context& context, const TextureInfo& info);
 
-        // Worker-legal create + async upload recorded on the transfer queue.
-        // Returns the unregistered texture and a Task that completes once the
-        // upload is submitted; the caller waits/registers on the main thread.
+        /// @brief Worker-legal create + async upload recorded on the transfer queue.
+        ///
+        /// Returns the unregistered texture and a Task that completes once the upload is submitted.
+        /// The caller waits for the task and calls Finalize() on the main thread.
+        /// @param outUpload  Receives the upload task to wait on before calling Finalize().
         static Ref<Texture> CreateAsync(Renderer::Context& context, const TextureInfo& info,
                                         TaskSystem& tasks, Task<void>& outUpload);
 
@@ -61,25 +66,39 @@ namespace Veng
         Texture(const Texture&) = delete;
         Texture& operator=(const Texture&) = delete;
 
-        // Register the view + sampler into the bindless registry (set 0). Runs on
-        // the main thread; idempotent guard via VE_ASSERT against double-register.
+        /// @brief Registers the view and sampler into the bindless registry (set 0).
+        ///
+        /// Runs on the main thread. Asserts against double-registration.
         void Finalize();
 
+        /// @brief Returns the texture's debug name.
         [[nodiscard]] const string& GetName() const { return m_Name; }
+
+        /// @brief Returns the underlying Image.
         [[nodiscard]] const Ref<Renderer::Image>& GetImage() const { return m_Image; }
+
+        /// @brief Returns the ImageView used for sampling.
         [[nodiscard]] const Ref<Renderer::ImageView>& GetView() const { return m_View; }
+
+        /// @brief Returns the Sampler.
         [[nodiscard]] const Ref<Renderer::Sampler>& GetSampler() const { return m_Sampler; }
+
+        /// @brief Returns the texture's pixel format.
         [[nodiscard]] Renderer::Format GetFormat() const { return m_Format; }
+
+        /// @brief Returns the texture's dimensions in pixels.
         [[nodiscard]] uvec2 GetExtent() const { return m_Extent; }
 
+        /// @brief Returns the bindless texture handle (valid after Finalize()).
         [[nodiscard]] Renderer::TextureHandle GetHandle() const { return m_TextureHandle; }
+
+        /// @brief Returns the bindless sampler handle (valid after Finalize()).
         [[nodiscard]] Renderer::SamplerHandle GetSamplerHandle() const { return m_SamplerHandle; }
 
     private:
         Texture(Renderer::Context& context, const TextureInfo& info);
 
-        // The context this resource was created with (deferred-destruction
-        // back-ref; a resource must not outlive its context).
+        /// @brief Back-reference for deferred destruction; resource must not outlive its context.
         Renderer::Context& m_Context;
         string m_Name;
         uvec2 m_Extent;
@@ -94,9 +113,11 @@ namespace Veng
         bool m_Registered = false;
     };
 
+    /// @brief AssetTypeTrait specialization mapping Texture to AssetType::Texture.
     template <>
     struct AssetTypeTrait<Texture>
     {
+        /// @brief The asset type tag for Texture.
         static constexpr AssetType Type = AssetType::Texture;
     };
 }

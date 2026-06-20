@@ -188,7 +188,9 @@ namespace Veng::Renderer
         return flags;
     }
 
-    // A single shader stage (not a flag set) for PipelineShaderStageInfo.
+    /// @brief Maps a single ShaderStage enumerator to a vk::ShaderStageFlagBits.
+    ///
+    /// Asserts if @p stage is a combined flag set rather than a single stage.
     inline vk::ShaderStageFlagBits ToVkBit(ShaderStage stage)
     {
         switch (stage)
@@ -314,20 +316,26 @@ namespace Veng::Renderer
         VE_ASSERT(false, "ToVk(PipelineBindPoint): unmapped value {}", static_cast<u32>(point));
     }
 
-    // Single source of truth for DescriptorType <-> Vulkan: the Vulkan
-    // descriptor type, the Primary Pool's per-type descriptor budget, and
-    // whether the type may be used with a bindless (UpdateAfterBind) binding
-    // on this device. DescriptorSetLayout derives binding flags from
-    // SupportsBindless (see DescriptorSetLayout.cpp) and Context sizes the
-    // Primary Pool from PoolBudget (see Context.cpp) — adding a
-    // DescriptorType updates this one switch.
+    /// @brief Aggregates all per-DescriptorType properties into one structure.
+    ///
+    /// Single source of truth for DescriptorType ↔ Vulkan: the Vulkan descriptor
+    /// type, the Primary Pool's per-type descriptor budget, and whether the type
+    /// supports UpdateAfterBind (bindless) bindings. DescriptorSetLayout derives
+    /// binding flags from SupportsBindless and Context sizes the Primary Pool from
+    /// PoolBudget — adding a DescriptorType updates only GetDescriptorTypeInfo.
     struct DescriptorTypeInfo
     {
+        /// @brief The corresponding Vulkan descriptor type.
         vk::DescriptorType VkType;
+        /// @brief Maximum descriptors of this type in the Primary Pool.
         u32 PoolBudget;
+        /// @brief Whether UpdateAfterBind is valid for this type.
         bool SupportsBindless;
     };
 
+    /// @brief Returns the DescriptorTypeInfo for @p type.
+    ///
+    /// Asserts on an unmapped DescriptorType.
     inline DescriptorTypeInfo GetDescriptorTypeInfo(DescriptorType type)
     {
         switch (type)
@@ -346,8 +354,8 @@ namespace Veng::Renderer
         VE_ASSERT(false, "GetDescriptorTypeInfo: unmapped DescriptorType {}", static_cast<u32>(type));
     }
 
-    // All DescriptorType values, for iterating GetDescriptorTypeInfo (e.g. to
-    // build the Primary Pool's pool sizes).
+    /// @brief All DescriptorType values, for iterating GetDescriptorTypeInfo
+    /// (e.g. to build the Primary Pool's pool sizes).
     inline constexpr std::array AllDescriptorTypes = {
         DescriptorType::CombinedImageSampler, DescriptorType::SampledImage, DescriptorType::StorageImage,
         DescriptorType::UniformBuffer, DescriptorType::StorageBuffer, DescriptorType::Sampler,

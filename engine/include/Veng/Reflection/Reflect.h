@@ -7,11 +7,11 @@
 
 #include <cstddef>
 
-// VE_REFLECT — the v1 reflection authoring surface. Placed at namespace scope
-// next to a struct, it specialises VengReflect<T> with the type's stable TypeId
-// plus its field descriptors, so the zero-arg TypeRegistry::Register<T>() reads
-// the schema back at startup. The struct stays the single source of truth; only
-// the field names are restated, once.
+// VE_REFLECT — the reflection authoring surface for fielded structs. Placed at
+// namespace scope next to a struct, it specialises VengReflect<T> with the
+// type's stable TypeId plus its field descriptors, so the zero-arg
+// TypeRegistry::Register<T>() reads the schema back at startup. The struct
+// stays the single source of truth; only the field names are restated, once.
 //
 //   struct Transform { vec3 Position; quat Rotation; vec3 Scale; };
 //
@@ -28,7 +28,7 @@
 
 namespace Veng::Detail
 {
-    // DisplayName falls back to the serialization key when the author omits it.
+    /// @brief Sets DisplayName to Name when the author omits it.
     inline FieldDescriptor FinishField(FieldDescriptor desc)
     {
         if (desc.DisplayName.empty())
@@ -36,9 +36,10 @@ namespace Veng::Detail
         return desc;
     }
 
-    // Sink that the describe-block drives once to collect a type's fields.
+    /// @brief Sink that the describe-block drives once to collect a type's fields.
     struct FieldCollector
     {
+        /// @brief Accumulated field descriptors.
         vector<FieldDescriptor> Fields;
 
         template <class Owner, class Field>
@@ -48,13 +49,13 @@ namespace Veng::Detail
         }
     };
 
-    // Sink that the same describe-block drives to auto-register each field's
-    // type through the uniform Register<T>(): a struct-class field recurses
-    // (carrying its own fields); a leaf field records itself with an empty field
-    // list (so a generic walk can read its Size off its TypeInfo) and bottoms
-    // out the recursion. Idempotent.
+    /// @brief Sink that the same describe-block drives to auto-register each field's type.
+    ///
+    /// A struct-class field recurses (carrying its own fields); a leaf field records
+    /// itself with an empty field list and bottoms out the recursion. Idempotent.
     struct DependencyRegistrar
     {
+        /// @brief The registry receiving each field's type registration.
         TypeRegistry& Registry;
 
         template <class Owner, class Field>
@@ -71,8 +72,9 @@ namespace Veng::Detail
 // Fields() and RegisterDependencies() replay it with a different sink, so the
 // field names are written exactly once.
 
-// Opens VengReflect<T>: names the owning type and starts the shared Describe
-// body. The two public entry points (Fields / RegisterDependencies) call into it.
+/// @brief Opens VengReflect\<T\>: names the owning type and starts the shared Describe body.
+///
+/// Both public entry points (Fields / RegisterDependencies) call into it.
 #define VE_REFLECT(Type, TypeIdLiteral)                                         \
     template <>                                                                 \
     struct ::Veng::VengReflect<Type>                                            \
@@ -85,9 +87,10 @@ namespace Veng::Detail
         static void Describe([[maybe_unused]] Sink& sink)                       \
         {
 
-// One field record. Type and Class are compile-time constants read off the field
-// type's trait; the trailing … are optional designated-initialiser editor
-// metadata, applied last so they override the defaults above.
+/// @brief Declares one field record within a VE_REFLECT block.
+///
+/// Type and Class are compile-time constants read off the field type's trait;
+/// the trailing … are optional designated-initialiser editor metadata.
 #define VE_FIELD(Member, ...)                                                   \
             sink.template Field_<Owner, decltype(Owner::Member)>(               \
                 ::Veng::FieldDescriptor{                                        \
@@ -97,6 +100,7 @@ namespace Veng::Detail
                     .Offset = offsetof(Owner, Member),                         \
                     __VA_ARGS__ });
 
+/// @brief Closes a VE_REFLECT block and emits Fields() / RegisterDependencies().
 #define VE_REFLECT_END()                                                        \
         }                                                                       \
         static ::Veng::vector<::Veng::FieldDescriptor> Fields()                 \

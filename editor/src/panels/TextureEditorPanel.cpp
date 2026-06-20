@@ -162,10 +162,8 @@ namespace VengEditor
                 return;
             }
 
-            // Replace the mount (the old archive's bytes free with the old handle's
-            // drop) and re-fetch the texture; the new memory mount shadows the prior
-            // cooked blob for this id. The async load lands resident on a later
-            // frame's PumpFinalizes, where OnImGui rebuilds the preview.
+            // Replace the mount and re-fetch; OnImGui rebuilds the preview once
+            // the async load lands resident.
             m_Mount = std::move(*mount);
             m_Handle = m_Assets.Load<Texture>(m_Id);
             m_PreviewDirty = true;
@@ -174,8 +172,7 @@ namespace VengEditor
 
     void TextureEditorPanel::OnImGui()
     {
-        // Advance the debounce: a settled change fires one cook, so a slider drag
-        // does not issue a cook per frame.
+        // Debounce so a slider drag does not fire a cook per frame.
         if (m_CookPending)
         {
             m_DebounceRemaining -= Time::GetDeltaTime();
@@ -186,8 +183,7 @@ namespace VengEditor
             }
         }
 
-        // Rebuild the preview once the freshly loaded handle is resident: dropping
-        // the old ImGuiTexture queues its descriptor set for deferred removal.
+        // Rebuild the preview once the freshly cooked texture is resident.
         if (m_PreviewDirty && m_Handle.IsLoaded())
         {
             m_Preview = m_ImGui.CreateTexture(*m_Sampler, *m_Handle->GetView());

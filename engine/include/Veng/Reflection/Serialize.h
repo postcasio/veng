@@ -27,16 +27,24 @@ namespace Veng
     // static_assert in AssetHandle.h); rehydration to a resident handle is the
     // loader's job.
 
-    // Appends obj's fields to out per the type's descriptors.
+    /// @brief Appends obj's fields to out per the type's descriptors.
+    /// @param out      Destination buffer; fields are appended.
+    /// @param obj      Pointer to the source value.
+    /// @param type     TypeInfo carrying the field descriptors.
+    /// @param registry Registry used to resolve nested struct field types.
     VE_API void WriteFields(vector<u8>& out, const void* obj, const TypeInfo& type,
                             const TypeRegistry& registry);
 
-    // Reads fields from in into a (default-constructed) obj per the descriptors,
-    // tolerating drift in either direction. A truncated record — a length prefix
-    // or value that runs past the end of `in` — is a recoverable error, not an
-    // abort: the byte stream may come from a corrupt cooked blob or a mid-edit
-    // source. A descriptor that names a type the registry does not hold is a
-    // schema/registration fault and stays a fatal assert.
+    /// @brief Reads fields from in into obj per the descriptors, tolerating schema drift in either direction.
+    ///
+    /// A truncated record (a length prefix or value that runs past the end of `in`)
+    /// is a recoverable error returned as an error string. A descriptor that names
+    /// a type the registry does not hold is a schema/registration fault and a fatal assert.
+    /// @param in       Source byte span (name-keyed, length-prefixed field records).
+    /// @param obj      Pointer to the destination value (default-constructed by the caller).
+    /// @param type     TypeInfo carrying the field descriptors.
+    /// @param registry Registry used to resolve nested struct field types.
+    /// @return         Empty on success; an error string on truncation or format error.
     VE_API VoidResult ReadFields(std::span<const u8> in, void* obj, const TypeInfo& type,
                                  const TypeRegistry& registry);
 }

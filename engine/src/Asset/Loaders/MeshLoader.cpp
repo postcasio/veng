@@ -111,11 +111,8 @@ namespace Veng
             return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than submesh table"));
 
         // Resolve cooked submesh material ids into resident material instances
-        // eagerly — mirroring how Material resolves its texture/shader deps. A
-        // distinct non-zero id becomes one entry in the mesh's material list;
-        // each submesh stores the index of its material (or NoMaterial for id 0).
-        // A failed material load fails the mesh load, same as a missing texture
-        // fails a material load.
+        // eagerly: a distinct non-zero id becomes one entry in the material list;
+        // each submesh stores an index into it (or NoMaterial for id 0).
         vector<AssetHandle<Veng::Material>> materials;
         vector<u64> materialIds;
 

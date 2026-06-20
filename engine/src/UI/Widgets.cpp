@@ -13,8 +13,6 @@ namespace Veng::UI
             return string(s);
         }
 
-        // A null DragOptions::Format means "use the type's default spec". The
-        // float overloads default to "%.3f", the integer one to "%d".
         const char* FloatFormat(const DragOptions& options)
         {
             return options.Format ? options.Format : "%.3f";

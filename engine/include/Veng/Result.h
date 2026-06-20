@@ -5,14 +5,17 @@
 
 namespace Veng
 {
-    // Return type for operations that can fail in a way an application may
-    // sensibly recover from at runtime (e.g. loading a shader file that may not
-    // exist). The error is a human-readable string.
-    //
-    // Everything that is *not* recoverable — API misuse, device loss, OOM,
-    // unsupported enum/format — is fatal via VE_ASSERT instead. See Assert.h.
+    /// @brief Return type for operations that can fail recoverably at runtime.
+    ///
+    /// Used when a failure (e.g. loading a shader file that may not exist) is
+    /// something an application can reasonably handle. The error is a
+    /// human-readable string. Non-recoverable conditions (API misuse, device
+    /// loss, OOM, unsupported enum/format) are fatal via VE_ASSERT instead.
+    /// @tparam T  The success value type.
+    /// @see Assert.h
     template <typename T>
     using Result = std::expected<T, std::string>;
 
+    /// @brief Result specialization for operations that succeed with no value.
     using VoidResult = std::expected<void, std::string>;
 }

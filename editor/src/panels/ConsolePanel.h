@@ -6,9 +6,10 @@
 
 namespace VengEditor
 {
-    // Mirrors Log:: output into a scrolling text area. On construction it installs
-    // a Log sink that appends entries to a bounded ring; on destruction it restores
-    // the default sink.
+    /// @brief Scrolling log panel backed by a bounded ring of Log entries.
+    ///
+    /// Installs a Log sink on construction that appends to the ring; restores
+    /// the default sink on destruction.
     class ConsolePanel final : public EditorPanel
     {
     public:
@@ -19,6 +20,7 @@ namespace VengEditor
         void OnImGui() override;
 
     private:
+        /// @brief A single captured log entry.
         struct Entry
         {
             Veng::Log::Level Level;
@@ -26,8 +28,10 @@ namespace VengEditor
         };
 
         Veng::vector<Entry> m_Entries;
+        /// @brief Set when a new entry is appended; cleared after ScrollToHere.
         bool m_ScrollToBottom = false;
 
+        /// @brief Maximum number of entries retained before the oldest is evicted.
         static constexpr Veng::usize MaxEntries = 1000;
     };
 }
