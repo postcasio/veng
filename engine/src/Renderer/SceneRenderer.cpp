@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <span>
@@ -20,6 +21,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/ComputePipeline.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
@@ -63,6 +65,9 @@ namespace Veng::Renderer
         constexpr AssetId AoBlitFragId{0x97974B40192934E4ULL};
         constexpr AssetId ShadowBlitFragId{0x0B61D5D42DAEF190ULL};
 
+        // The hi-Z max-Z reduction compute shader.
+        constexpr AssetId HiZReduceCompId{0xCB20C4EF8A20ADBCULL};
+
         // The core bloom PostProcess materials.
         constexpr AssetId BloomBrightMaterialId{0xB1C79EF4EAC3F697ULL};
         constexpr AssetId BloomBlurHMaterialId{0x7061083E93A8D7FFULL};
@@ -78,6 +83,18 @@ namespace Veng::Renderer
         // Single-channel unorm format for the SSAO target; the renderer builds the
         // SSAO pipeline against this format, and SsaoScenePass owns the image.
         constexpr Format SsaoFormat = Format::R8Unorm;
+
+        // Single-channel float for the hi-Z pyramid; the reduction stores max depth.
+        constexpr Format HiZFormat = Format::R32Sfloat;
+
+        // The hi-Z reduction push block: the destination and source mip extents, so a
+        // boundary invocation skips out-of-range texels and an odd parent dimension
+        // folds its dropped row/column into the max (matches hi_z_reduce.comp).
+        struct HiZReducePush
+        {
+            uvec2 DestExtent;
+            uvec2 SourceExtent;
+        };
 
         // The shared push-constant block both g-buffer stages use: MVP at offset 0,
         // MaterialIndex at offset 64 (pushed by Material::Bind), NormalMatrix at
@@ -866,6 +883,7 @@ namespace Veng::Renderer
         bindless.Release(m_NormalHandle);
         bindless.Release(m_OrmHandle);
         bindless.Release(m_DepthHandle);
+        bindless.Release(m_HiZSampleHandle);
         bindless.Release(m_HdrHandle);
         bindless.Release(m_BloomBrightHandle);
         bindless.Release(m_BloomBlurHHandle);
@@ -1039,6 +1057,42 @@ namespace Veng::Renderer
                        });
         m_OrmBlitPipeline = MakePipeline("SceneRenderer ORM Blit Pipeline", m_OrmBlitLayout,
                                          ormBlitFs, m_OutputFormat);
+
+        // The hi-Z reduction compute pipeline. Set 1 (binding 0 sampled source, binding 1
+        // storage dest) is off bindless — a closed producer→consumer reduction needs no
+        // global registration, and a dedicated set sidesteps the set-0 storage-image
+        // argument-buffer path on MoltenVK.
+        const AssetHandle<Veng::Shader> hiZReduceCs =
+            LoadShader(HiZReduceCompId, "hi-Z reduce compute");
+        m_HiZReduceSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer HiZ Reduce Set Layout",
+                           .Bindings =
+                               {
+                                   {.Binding = 0,
+                                    .Type = DescriptorType::SampledImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                                   {.Binding = 1,
+                                    .Type = DescriptorType::StorageImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                               },
+                       });
+        m_HiZReduceLayout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer HiZ Reduce Layout",
+                .DescriptorSetLayouts = {m_HiZReduceSetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<HiZReducePush>(ShaderStage::Compute)},
+            });
+        m_HiZReducePipeline = ComputePipeline::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer HiZ Reduce Pipeline",
+                .PipelineLayout = m_HiZReduceLayout,
+                .ShaderStage = {.Stage = ShaderStage::Compute, .Module = hiZReduceCs.Get()->Module},
+            });
     }
 
     void SceneRenderer::CreateShadowSystem()
@@ -1359,6 +1413,65 @@ namespace Veng::Renderer
         m_NormalHandle = bindless.Register(m_NormalView);
         m_OrmHandle = bindless.Register(m_OrmView);
         m_DepthHandle = bindless.Register(m_DepthView);
+
+        CreateHiZ();
+    }
+
+    void SceneRenderer::CreateHiZ()
+    {
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        bindless.Release(m_HiZSampleHandle);
+
+        // A full mip chain over the depth extent: floor(log2(max(w,h))) + 1 levels.
+        const u32 maxDim = std::max(m_Extent.x, m_Extent.y);
+        const u32 mipCount = maxDim == 0 ? 1 : (std::bit_width(maxDim));
+
+        m_HiZImage =
+            Image::Create(m_Context, {
+                                         .Name = "SceneRenderer HiZ",
+                                         .Extent = {m_Extent.x, m_Extent.y, 1},
+                                         .MipLevels = mipCount,
+                                         .Format = HiZFormat,
+                                         .Usage = ImageUsage::Storage | ImageUsage::Sampled,
+                                     });
+
+        // One single-mip storage view per level (the reduction writes each), plus a
+        // whole-chain sampled view for the occlusion test.
+        m_HiZMips.clear();
+        m_HiZMips.reserve(mipCount);
+        for (u32 level = 0; level < mipCount; level++)
+        {
+            m_HiZMips.push_back(ImageView::Create(
+                m_Context, {
+                               .Name = fmt::format("SceneRenderer HiZ Mip {} View", level),
+                               .Image = m_HiZImage,
+                               .BaseMipLevel = level,
+                               .MipLevels = 1,
+                           }));
+        }
+        m_HiZSampleView = ImageView::Create(m_Context, {
+                                                           .Name = "SceneRenderer HiZ Sample View",
+                                                           .Image = m_HiZImage,
+                                                           .MipLevels = mipCount,
+                                                       });
+        m_HiZSampleHandle = bindless.Register(m_HiZSampleView);
+
+        // Per-mip reduction descriptor sets: set k binds mip k's source (the depth
+        // target for k=0, hi-Z mip k-1 otherwise) and mip k's destination storage view.
+        m_HiZReduceSets.clear();
+        m_HiZReduceSets.reserve(mipCount);
+        for (u32 level = 0; level < mipCount; level++)
+        {
+            Ref<DescriptorSet> set = DescriptorSet::Create(
+                m_Context, {
+                               .Name = fmt::format("SceneRenderer HiZ Reduce Set {}", level),
+                               .Layout = m_HiZReduceSetLayout,
+                           });
+            const Ref<ImageView>& source = level == 0 ? m_DepthView : m_HiZMips[level - 1];
+            set->Write(0, source);
+            set->Write(1, m_HiZMips[level]);
+            m_HiZReduceSets.push_back(std::move(set));
+        }
     }
 
     void SceneRenderer::CreateHdr()
@@ -1696,7 +1809,69 @@ namespace Veng::Renderer
             pass->Declare(graph, io);
         }
 
+        // The hi-Z reduction runs last so it reduces this frame's completed depth.
+        // Nothing samples the pyramid yet — it is built and persisted for the
+        // next-frame occlusion test — so it changes no rendered pixel.
+        DeclareHiZReduction(graph);
+
         m_Internal->Graph = graph.Compile();
+    }
+
+    void SceneRenderer::DeclareHiZReduction(RenderGraph& graph)
+    {
+        const u32 mipCount = static_cast<u32>(m_HiZMips.size());
+        m_HiZChainId = graph.ImportImageMips("SceneRenderer HiZ", mipCount);
+
+        // One compute dispatch per mip. Dispatch k reads mip k's source and writes mip
+        // k; the per-mip graph surface derives the read-after-write barrier between
+        // dispatch k's write of mip k and dispatch k+1's read of it. Mip 0's source is
+        // the depth target (declared .Sample, reusing the depth import so the barrier
+        // chains off the lighting pass's read); a source mip n-1 is declared .StorageRead.
+        for (u32 level = 0; level < mipCount; level++)
+        {
+            // Mip extents (image extent >> level, floored at 1).
+            const u32 dstW = std::max(m_Extent.x >> level, 1u);
+            const u32 dstH = std::max(m_Extent.y >> level, 1u);
+            const u32 srcW = level == 0 ? m_Extent.x : std::max(m_Extent.x >> (level - 1), 1u);
+            const u32 srcH = level == 0 ? m_Extent.y : std::max(m_Extent.y >> (level - 1), 1u);
+
+            // The source (depth target or prior mip) binds as a sampled image, so it
+            // must be in ShaderReadOnly — declared .Sample, not .StorageRead. The
+            // destination is a storage write (General). A prior mip therefore goes
+            // General (its write) → ShaderReadOnly (its read as the next source), a
+            // graph-derived per-mip transition.
+            RenderGraph::PassBuilder builder =
+                graph.AddComputePass(fmt::format("HiZ Reduce Mip {}", level));
+            if (level == 0)
+            {
+                builder.Sample(m_DepthId);
+            }
+            else
+            {
+                builder.Sample(m_HiZChainId.Level(level - 1));
+            }
+            builder.StorageWrite(m_HiZChainId.Level(level));
+
+            const Ref<ComputePipeline> pipeline = m_HiZReducePipeline;
+            const Ref<DescriptorSet> set = m_HiZReduceSets[level];
+            const HiZReducePush push{
+                .DestExtent = {dstW, dstH},
+                .SourceExtent = {srcW, srcH},
+            };
+            builder.Execute(
+                [pipeline, set, push](PassContext& inner)
+                {
+                    CommandBuffer& cmd = inner.Cmd();
+                    cmd.BindPipeline(pipeline);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {set},
+                        .FirstSet = 1, // set 0 is reserved for the bindless registry
+                        .PipelineBindPoint = PipelineBindPoint::Compute,
+                    });
+                    cmd.PushConstants(push);
+                    cmd.Dispatch((push.DestExtent.x + 7) / 8, (push.DestExtent.y + 7) / 8, 1);
+                });
+        }
     }
 
     void SceneRenderer::Resize(const uvec2 extent)
@@ -1956,6 +2131,11 @@ namespace Veng::Renderer
         {
             bindings.push_back({m_SsaoId, m_SsaoPass->GetAoView()});
         }
+        // Bind each hi-Z mip's per-frame storage view to its per-mip import slot.
+        for (u32 level = 0; level < m_HiZMips.size(); level++)
+        {
+            bindings.push_back({m_HiZChainId.Level(level), m_HiZMips[level]});
+        }
         m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
     }
 
@@ -1995,6 +2175,20 @@ namespace Veng::Renderer
     Ref<ImageView> SceneRenderer::GetDepthView() const
     {
         return m_DepthView;
+    }
+    Ref<ImageView> SceneRenderer::GetHiZView() const
+    {
+        return m_HiZSampleView;
+    }
+    Ref<ImageView> SceneRenderer::GetHiZMipView(const u32 level) const
+    {
+        VE_ASSERT(level < m_HiZMips.size(), "SceneRenderer::GetHiZMipView: level {} out of range",
+                  level);
+        return m_HiZMips[level];
+    }
+    u32 SceneRenderer::GetHiZMipCount() const
+    {
+        return static_cast<u32>(m_HiZMips.size());
     }
     Ref<ImageView> SceneRenderer::GetHdrView() const
     {

@@ -67,6 +67,31 @@ namespace Veng::Renderer
         ImageUsage Usage;
     };
 
+    /// @brief Handle to an imported image addressed at per-mip-level granularity.
+    ///
+    /// Produced by RenderGraph::ImportImageMips. Internally each mip level is its own
+    /// resource-table slot in a contiguous run, so the graph derives a per-mip
+    /// (subresource) barrier when one dispatch writes mip k and the next reads it.
+    /// A pass declares an access on a single level via Level(level); a callback
+    /// resolves that level's concrete view via PassContext::ResolvedMip.
+    struct MipChainId
+    {
+        /// @brief First mip level's slot in the resource table.
+        ResourceId Base;
+        /// @brief Number of contiguous per-mip slots (== the image's mip count).
+        u32 LevelCount = 0;
+
+        /// @brief Returns the ResourceId addressing mip @p level of the chain.
+        /// @param level  Mip level in [0, LevelCount); asserted in-range at use.
+        [[nodiscard]] ResourceId Level(u32 level) const
+        {
+            return ResourceId{.Index = Base.Index + level};
+        }
+
+        /// @brief Returns true when this handle was produced by ImportImageMips.
+        [[nodiscard]] bool IsValid() const { return Base.IsValid() && LevelCount != 0; }
+    };
+
     /// @brief Per-frame record-time context handed to a pass callback.
     ///
     /// Resolves a declared transient to its concrete view for this frame and exposes
@@ -80,6 +105,15 @@ namespace Veng::Renderer
         /// @brief The concrete view a declared transient resolves to this frame.
         /// @pre id must be a resource resolved for this graph — asserted otherwise.
         [[nodiscard]] ImageView& Resolved(ResourceId id) const;
+
+        /// @brief The concrete per-mip view a mip chain's level resolves to this frame.
+        ///
+        /// The subresource analogue of Resolved: a reduction dispatch records against
+        /// ResolvedMip(chain, k) for the destination mip and ResolvedMip(chain, k-1) for
+        /// the source mip, each a distinct per-mip view bound per frame.
+        /// @param chain  A handle from RenderGraph::ImportImageMips.
+        /// @param level  Mip level in [0, chain.LevelCount); asserted in-range.
+        [[nodiscard]] ImageView& ResolvedMip(MipChainId chain, u32 level) const;
 
         /// @brief Opaque per-Execute pointer threaded through to every pass callback.
         ///
@@ -216,6 +250,18 @@ namespace Veng::Renderer
         /// per frame as an ImportBinding passed to Execute.
         /// @return A handle usable in access declarations.
         [[nodiscard]] ResourceId Import(string_view name);
+
+        /// @brief Declares an external image as a run of per-mip subresource resources.
+        ///
+        /// One resource-table slot per mip level, contiguous, so a chain of dispatches
+        /// that read mip k-1 and write mip k of the same image get a per-mip
+        /// read-after-write barrier derived (each level's slot tracks its own state),
+        /// rather than a single whole-image hazard. The renderer supplies each level's
+        /// concrete per-mip Ref<ImageView> per frame as an ImportBinding on Level(k).
+        /// @param name        Debug name; each level's slot is named "<name> Mip k".
+        /// @param levelCount  Number of mip levels; must be non-zero.
+        /// @return A MipChainId whose Level(k) addresses mip k for access declarations.
+        [[nodiscard]] MipChainId ImportImageMips(string_view name, u32 levelCount);
 
         /// @brief Binds an imported resource's concrete view for one Execute call.
         struct ImportBinding

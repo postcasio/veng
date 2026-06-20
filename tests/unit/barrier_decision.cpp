@@ -175,6 +175,53 @@ TEST_CASE("DecideBarrier: graphics-produced read-after-read is unchanged by the 
           (vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eComputeShader));
 }
 
+TEST_CASE("DecideBarrier: per-mip storage write -> sampled read of the same mip is a RAW barrier")
+{
+    // The hi-Z reduction's core hazard: dispatch k writes mip k as a storage image
+    // (General/ShaderWrite), dispatch k+1 reads that mip as a sampled source
+    // (ShaderReadOnly/ShaderRead). Tracked state is per-(image, mipLevel), so this is
+    // exactly the state mip k carries when the read arrives — both the source write
+    // and the layout change make it a barrier.
+    const SubresourceState mipWritten{
+        .Layout = vk::ImageLayout::eGeneral,
+        .Stage = vk::PipelineStageFlagBits::eComputeShader,
+        .Access = vk::AccessFlagBits::eShaderWrite,
+    };
+
+    const auto d =
+        DecideSameQueue(mipWritten, vk::ImageLayout::eShaderReadOnlyOptimal,
+                        vk::PipelineStageFlagBits::eComputeShader, vk::AccessFlagBits::eShaderRead);
+
+    CHECK(d.NeedsBarrier); // source write + layout change
+    CHECK(d.Src.Layout == vk::ImageLayout::eGeneral);
+    CHECK(d.Src.Access == vk::AccessFlagBits::eShaderWrite);
+    CHECK(d.Dst.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
+    CHECK(d.Dst.Access == vk::AccessFlagBits::eShaderRead);
+}
+
+TEST_CASE("DecideBarrier: a different mip's state is tracked independently")
+{
+    // Per-(image, mipLevel) tracking: a mip the reduction has not yet written this
+    // pass (its slot is still General/ShaderWrite from the prior frame's last write)
+    // re-written this frame derives only the write-after-write barrier on its own
+    // state — it never inherits a neighbouring mip's just-applied ShaderReadOnly
+    // layout, so the chain's per-mip read-after-write does not spill across levels.
+    const SubresourceState mipWritten{
+        .Layout = vk::ImageLayout::eGeneral,
+        .Stage = vk::PipelineStageFlagBits::eComputeShader,
+        .Access = vk::AccessFlagBits::eShaderWrite,
+    };
+
+    const auto d = DecideSameQueue(mipWritten, vk::ImageLayout::eGeneral,
+                                   vk::PipelineStageFlagBits::eComputeShader,
+                                   vk::AccessFlagBits::eShaderWrite);
+
+    CHECK(d.NeedsBarrier);                            // write-after-write on this mip
+    CHECK(d.Src.Layout == vk::ImageLayout::eGeneral); // no layout change
+    CHECK(d.Dst.Layout == vk::ImageLayout::eGeneral);
+    CHECK(d.NewState.Access == vk::AccessFlagBits::eShaderWrite);
+}
+
 TEST_CASE("IsWriteAccess classifies write bits and reads")
 {
     CHECK(IsWriteAccess(vk::AccessFlagBits::eColorAttachmentWrite));
