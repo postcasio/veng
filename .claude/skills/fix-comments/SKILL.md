@@ -14,10 +14,11 @@ Bring a target's comments in line with the **Comments** section of `CLAUDE.md`
    takes a paragraph to say one thing. Cut every kept comment down to the shortest
    form that still carries its *why*. See **Concision** below — this is the job most
    easily skipped, and the one the user cares about most.
-3. **Doc-comment coverage** — every declaration in a public header carries a
-   Doxygen `///` doc comment, complete enough that a doc generator produces a full
-   reference. Inline body comments stay plain `//` and follow the same content
-   rules.
+3. **Doc-comment coverage** — every declaration in a public header carries its
+   *own* Doxygen `///` doc comment (one comment per declaration, never shared across
+   two), complete enough that a doc generator produces a full reference. Every
+   public member is documented even when the comment is obvious. Inline body
+   comments stay plain `//` and follow the same content rules.
 
 This skill **reports, then auto-applies**: it prints the categorized findings, makes
 the edits, and builds. The user reviews the resulting diff.
@@ -62,9 +63,12 @@ If no target was given, ask for one before doing anything. Do not assume `all`.
    shortest form that keeps its *why* (see **Concision**).
 
 6. **Doc-coverage pass.** For each declaration in a public header missing a doc
-   comment, write one in house Doxygen style. For each *existing* declaration
-   comment not yet in Doxygen form, convert it (`@brief` first line + detailed body)
-   without losing any factual content.
+   comment, write one in house Doxygen style — including obvious getters/setters and
+   overrides, which still get a short `@brief`. Verify each `@brief` covers exactly
+   *one* declaration: a comment sitting above two getters/overloads/fields documents
+   only the first, leaving the rest uncovered — split it. For each *existing*
+   declaration comment not yet in Doxygen form, convert it (`@brief` first line +
+   detailed body) without losing any factual content.
 
 7. **Report** the findings grouped by category, `file:line` each, with the rewrite.
 
@@ -186,10 +190,25 @@ Full spec lives in `CLAUDE.md`. In brief:
 - First line `@brief` (one sentence) → blank `///` → detailed body (existing
   rationale prose moves here unchanged in spirit, still bound by the reject rules).
 - Contract tags as warranted: `@param`, `@tparam`, `@return`, `@pre`/`@post`,
-  `@warning`, `@see`. Don't pad a self-evident one-arg setter with boilerplate.
+  `@warning`, `@see`. Don't pad a self-evident one-arg setter with boilerplate —
+  but it still gets a `@brief` (see Coverage).
 - Short field/enumerator docs may be trailing `///<`.
-- **Coverage:** every declaration in a public header is documented; internal
-  (`*/src/`) headers document every non-trivial declaration.
+- **One comment per declaration — never share.** A `@brief` documents only the
+  single declaration directly beneath it. Two getters / two overloads / two fields
+  under one comment = the second is **undocumented**; give each its own `///` block
+  or trailing `///<`. This is a common failure mode — when you write a doc comment,
+  check that exactly one declaration follows before the next blank line.
+- **Coverage:** *every* public declaration is documented, **even when the comment is
+  obvious** — a plain getter, a one-arg setter, a `Configure(settings)` override all
+  get a `@brief`, however short. "Self-evident" never excuses skipping a *public*
+  member; it only excuses a trivial *private* helper. Internal (`*/src/`) headers
+  document every non-trivial declaration.
+- **Doxygen form applies to private declarations too.** A documented declaration
+  uses `@brief` regardless of visibility — a private field or helper that gets a doc
+  comment is a `@brief` block, never bare `///` prose. Converting a two-line `///`
+  prose comment on a private member to `@brief` + blank `///` + detail is in scope
+  for the doc-coverage pass. (Bare `//`/`///` without `@brief` is only for *inline
+  body* comments.)
 
 ## Delegation
 

@@ -2,6 +2,9 @@
 
 namespace Veng::Renderer
 {
+    /// @brief Allocates the per-frame synchronization primitives and command buffer.
+    ///
+    /// The in-flight fence is created pre-signalled so the first frame does not wait indefinitely.
     SynchronizationFrame::SynchronizationFrame(Context& context)
     {
         m_ImageAvailableSemaphore = Semaphore::Create(context, "ImageAvailableSemaphore");

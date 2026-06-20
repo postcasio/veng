@@ -28,18 +28,13 @@ namespace Veng::Renderer
     namespace
     {
         // The core pack's depth-only shadow vertex shader (canonical layout in,
-        // light-space MVP, no fragment stage) — the same stage the cascade pass uses.
+        // light-space MVP, no fragment stage).
         constexpr AssetId ShadowDepthVertId{0x156C14C99FFF6B7CULL};
 
         // The atlas's depth format: a single-channel float depth target the lighting
-        // pass SampleCmps. Its DepthAttachment | Sampled usage and the image itself are
-        // renderer-owned; this pass only writes the depth-attachment view per tile.
+        // pass SampleCmps. The image is renderer-owned; this pass only writes the
+        // depth-attachment view per tile.
         constexpr Format PunctualShadowFormat = Format::D32Sfloat;
-
-        // The punctual atlas tile grid is CubeFaceCount columns × MaxShadowedPunctual
-        // rows. Record slot s, face f maps to tile (column f, row s) — the same layout
-        // ComposePunctualTileRemap targets, so the per-tile viewport here (offset
-        // (face·res, slot·res)) and the tile-remapped sample agree.
 
         // The depth-only pass's vertex push block: the light-space MVP at offset 0,
         // matching the shared push block's leading float4x4.
@@ -56,9 +51,8 @@ namespace Veng::Renderer
         VE_ASSERT(vs.has_value(), "PunctualShadowScenePass: depth vertex shader load failed: {}", vs.error().Detail);
         m_VertexShader = *vs;
 
-        // The depth-only pipeline: set 0 reserved (the registry binds it so the bound
-        // set matches the layout), one vertex push range for the light-space MVP, no
-        // fragment stage, depth write on, no color targets — the cascade pass's shape.
+        // Depth-only pipeline: set 0 reserved, one vertex push range for the
+        // light-space MVP, no fragment stage, depth write on, no color targets.
         m_Layout = PipelineLayout::Create(m_Context, {
             .Name = "PunctualShadowScenePass Layout",
             .PushConstantRanges = {PushConstantRange::Of<PunctualShadowPushConstants>(ShaderStage::Vertex)},
@@ -123,8 +117,6 @@ namespace Veng::Renderer
                 cmd.BindPipeline(m_Pipeline);
                 registry.Bind(cmd);
 
-                // The same per-submesh loop the cascade pass runs over the shared
-                // candidate list; only positions matter and only depth is written.
                 const auto Draw = [&](const VisibleMesh& item, const mat4& lightViewProj)
                 {
                     const Mesh& mesh = *item.Mesh;
@@ -149,19 +141,18 @@ namespace Veng::Renderer
                     }
                 };
 
-                // Render one view per shadowed record's face: a spot is face 0 only, a
-                // point is six faces. Each face sets its slot/face tile viewport, pushes
-                // the RAW light view-proj, and culls casters against that raw matrix's
-                // frustum — the light's own, never the camera's: an off-screen caster
-                // shadowing into the light's volume is kept, a caster outside the
-                // range/cone is dropped, so the cull is conservative.
+                // Render one view per shadowed record's face: a spot uses face 0 only,
+                // a point uses six cube faces. Each face sets its tile viewport, pushes
+                // the raw light view-proj, and culls casters against the light's own
+                // frustum — an off-screen caster that shadows into the light's volume is
+                // kept; only what falls outside the range/cone is dropped.
                 const u32 count = view.PunctualShadowCount < MaxShadowedPunctual
                                       ? view.PunctualShadowCount
                                       : MaxShadowedPunctual;
                 for (u32 slot = 0; slot < count; ++slot)
                 {
-                    // Params.x is the record type: 2 spot (one face), 1 point (six
-                    // faces), 0 the zeroed/unused slot (skipped).
+                    // Params.x encodes the record type: 2 = spot (one face),
+                    // 1 = point (six faces), 0 = unused slot (skipped).
                     const f32 type = view.PunctualShadows[slot].Params.x;
                     if (type < 0.5f)
                         continue;

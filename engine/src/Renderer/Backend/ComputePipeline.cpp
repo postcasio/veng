@@ -21,7 +21,7 @@ namespace Veng::Renderer
         const vk::PipelineShaderStageCreateInfo shaderStageInfo{
             .stage = ToVkBit(info.ShaderStage.Stage),
             .module = info.ShaderStage.Module->GetNative().Module,
-            // ShaderModule stores/owns this string; it must live through pipeline creation.
+            // Must outlive createComputePipeline; ShaderModule holds the string.
             .pName = info.ShaderStage.Module->GetEntryPoint().c_str(),
             .pSpecializationInfo = nullptr,
         };

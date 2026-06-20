@@ -19,9 +19,8 @@ namespace Veng::Renderer::Backend
         auto& native = image.GetNative();
 
         // The base subresource stands in for the whole declared range; views the
-        // graph declares cover a range that is uniform in tracked state. The pure
-        // hazard rule lives in DecideBarrier (Backend/BarrierDecision.h); here we
-        // only read/write the device-bound tracked state and emit the barrier.
+        // graph declares cover a uniform-state range. The hazard rule lives in
+        // DecideBarrier (Backend/BarrierDecision.h).
         const auto& tracked = native.At(baseLayer, baseMip);
         const SubresourceState current{tracked.Layout, tracked.Stage, tracked.Access, tracked.ProducingFamily};
 
@@ -74,10 +73,8 @@ namespace Veng::Renderer::Backend
                 vk::DependencyFlags{}, 0, nullptr, 0, nullptr, 1, &barrier);
         }
 
-        // Record the resulting state across the subresource range: a barrier resets
-        // it to the desired state; a no-hazard use carries the widened read scope.
-        // The producing family follows the decision (a graphics use marks the
-        // subresource graphics-produced), and the pending transfer wait is cleared
+        // Update tracked state across the range: a barrier resets it to the desired
+        // state; a no-hazard read widens the scope. Clear the pending transfer value
         // once consumed so a later use never re-waits.
         for (u32 layer = baseLayer; layer < baseLayer + layerCount; layer++)
             for (u32 mip = baseMip; mip < baseMip + mipCount; mip++)
@@ -128,13 +125,12 @@ namespace Veng::Renderer::Backend
 
         auto& native = image.GetNative();
 
-        // Release half of the transfer->graphics ownership transfer. Both halves
-        // name the same old/new layout (TransferDst -> ShaderReadOnly); the
-        // acquire half on first graphics use completes the transition. The release
-        // makes no memory available on this queue (dstStage = BottomOfPipe,
-        // dstAccess = none) — that is the acquire's job on the graphics queue.
-        // The tracked layout is left at TransferDst so the acquire sees the
-        // matching old layout.
+        // Release half of the transfer→graphics ownership transfer. Both halves
+        // name the same old/new layout (TransferDst → ShaderReadOnly); the acquire
+        // on first graphics use completes the transition. The release makes no
+        // memory available (dstStage = BottomOfPipe, dstAccess = none) — that is
+        // the acquire's job. Tracked layout stays TransferDst so the acquire sees
+        // the matching old layout.
         const vk::ImageMemoryBarrier barrier{
             .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
             .dstAccessMask = {},

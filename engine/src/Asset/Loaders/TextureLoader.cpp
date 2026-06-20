@@ -81,7 +81,7 @@ namespace Veng
             return std::unexpected(AssetLoadError{
                 .Kind = AssetError::Corrupt,
                 .Id = id,
-                .Detail = fmt::format("texture: unsupported MipCount {} (v1 is single-mip)", header.MipCount),
+                .Detail = fmt::format("texture: unsupported MipCount {} (only single-mip textures are supported)", header.MipCount),
             });
         }
 
@@ -129,10 +129,7 @@ namespace Veng
             },
         };
 
-        // Async: create the resource and record the upload on the transfer queue
-        // (no device wait). Sync: create + blocking UploadSync. Either way the
-        // texture comes back unregistered; Finalize registers it on the main
-        // thread.
+        // The texture comes back unregistered; Finalize registers it on the main thread.
         Ref<Veng::Texture> texture;
         if (async)
         {

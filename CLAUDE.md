@@ -271,10 +271,29 @@ Otherwise cut it.
 Every declaration in a **public header** (`engine/include/Veng/`, and the public
 headers of `assetpack`/`cooker`/`editor`) carries a Doxygen doc comment — the
 surface is documented end to end so a doc generator produces a complete reference.
-Internal headers (`*/src/`) document every non-trivial declaration; a truly
-self-evident private helper may go without.
+**Every public member is documented, even when the comment is obvious** — a
+one-arg setter, a plain getter, a `Configure(settings)` override all still get a
+`@brief`, however short (`/// @brief Configures the pass from the settings.`).
+"Self-evident" is never a reason to skip a *public* declaration; it only excuses a
+truly trivial *private* helper. Internal headers (`*/src/`) document every
+non-trivial declaration; a self-evident private helper may go without.
+
+**A documented declaration is in Doxygen form regardless of visibility.** Private
+members are not second-class: when a private field, helper, or member gets a doc
+comment, it is a `@brief` block exactly like a public one — a bare `///` prose
+comment sitting on a *declaration* is not acceptable (`/// @brief Frustum-query
+scratch.` followed by a blank `///` and the detail, not two lines of plain `///`
+prose). Plain `//`/`///` prose without `@brief` is only for *inline body* comments,
+which are never doc comments.
 
 The house Doxygen style:
+- **One doc comment documents exactly one declaration — never a group.** A `@brief`
+  attaches only to the single declaration immediately below it; the next
+  declaration needs its own. Two getters, two overloads, or two fields sharing one
+  comment leaves the second *undocumented* — write a separate `///` block (or
+  trailing `///<`) for each. If two members are genuinely parallel, say so in each
+  ("@brief Number of atlas tile columns." / "@brief Number of atlas tile rows."),
+  don't fold them into one comment over both.
 - **`///` line comments**, not `/** … */`. Tags are `@`-prefixed (`@brief`), not
   `\`-prefixed.
 - **First line is `@brief`** — one sentence, the summary a doc index shows. Then a

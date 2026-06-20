@@ -61,7 +61,7 @@ namespace Veng
             return std::unexpected(Corrupt(id, fmt::format("mesh: unrecognized IndexType {}", header.IndexType)));
 
         if (*indexType != Renderer::IndexType::U32)
-            return std::unexpected(Corrupt(id, "mesh: only u32 indices are supported (v1)"));
+            return std::unexpected(Corrupt(id, "mesh: only u32 indices are supported"));
 
         // Validate the cooked attribute descriptor against the engine's single
         // canonical layout: count, per-attribute format + offset, and stride
@@ -184,10 +184,6 @@ namespace Veng
         Renderer::IndexBuffer indexBuffer =
             Renderer::IndexBuffer::Create(context, fmt::format("Mesh {} Indices", id.Value), header.IndexCount);
 
-        // A Buffer is host-visible+coherent, so an upload is a plain memcpy with
-        // no GPU command and no device wait. Async runs it off the main thread;
-        // sync runs it inline. Either way the data is ready before any draw binds
-        // these buffers (a mesh has no bindless registration to defer).
         if (async)
         {
             Task<void> vertexUpload = vertexBuffer->Upload(tasks, vertexData);

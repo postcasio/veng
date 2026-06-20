@@ -248,9 +248,7 @@ namespace Veng
         AssetLoader* loader = resolved->first;
         const ArchiveEntry& archiveEntry = resolved->second;
 
-        // Run the loader's worker phase (create + record async upload + fan out
-        // dependency sub-loads). The blob lives in the mounted archive reader's
-        // storage, so the span outlives the call.
+        // The blob lives in the mounted archive reader's storage, so the span outlives the call.
         AssetResult<Detail::LoadJob> job = loader->Load(*this, m_Context, m_Tasks, m_Types, id, archiveEntry.Blob, true);
         if (!job)
         {
@@ -377,8 +375,6 @@ namespace Veng
         AssetLoader* loader = resolved->first;
         const ArchiveEntry& archiveEntry = resolved->second;
 
-        // Synchronous worker phase: uploads route through the blocking UploadSync
-        // path, so the GPU data is resident before the resource is registered.
         AssetResult<Detail::LoadJob> job = loader->Load(*this, m_Context, m_Tasks, m_Types, id, archiveEntry.Blob, false);
         if (!job)
             return std::unexpected(job.error());

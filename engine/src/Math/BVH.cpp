@@ -92,8 +92,7 @@ namespace Veng
                 ++bucketCount[b];
             }
 
-            // Sweep the BucketCount-1 candidate splits, accumulating box+count from
-            // each side. SAH cost is leftArea*leftCount + rightArea*rightCount.
+            // Sweep candidate splits; SAH cost = leftArea*leftCount + rightArea*rightCount.
             f32 bestCost = std::numeric_limits<f32>::infinity();
             i32 bestSplit = -1;
             for (i32 split = 1; split < BucketCount; ++split)
@@ -158,9 +157,8 @@ namespace Veng
         if (m_Root == NullNode)
             return;
 
-        // Explicit-stack descent: an internal node whose enclosing box misses the
-        // frustum prunes its whole subtree; a leaf is accepted by its tight box,
-        // the same Intersects the linear scan runs — so the result is exact.
+        // Explicit-stack descent: a node whose box misses the frustum prunes its
+        // subtree; a leaf is accepted on its tight box, so the result is exact.
         i32 stack[64];
         i32 top = 0;
         stack[top++] = m_Root;

@@ -12,17 +12,14 @@ namespace Veng::Renderer
 {
     namespace
     {
-        // The AO target's format: a single-channel unorm occlusion factor. Sampled
-        // by the lighting pass, so it carries Sampled alongside ColorAttachment —
-        // RenderGraph::Compile asserts a sampled target's usage, so the flag is
-        // load-bearing.
+        // Single-channel unorm occlusion factor. Sampled alongside ColorAttachment so
+        // RenderGraph::Compile's usage assertion passes.
         constexpr Format AoFormat = Format::R8Unorm;
         constexpr ImageUsage AoUsage = ImageUsage::ColorAttachment | ImageUsage::Sampled;
 
-        // The SSAO fragment shader's push block: the g-buffer normal/depth bindless
-        // slots it samples, the shared sampler, the current frame's view-constants
-        // region index, and the target extent for the noise tiling. Matches the
-        // shader's PushConstants byte-for-byte (eight packed u32s).
+        // The SSAO fragment push block: g-buffer normal/depth slots, sampler,
+        // view-constants index, and extent for noise tiling.
+        // Matches ssao.frag PushConstants byte-for-byte (eight u32s).
         struct SsaoPushConstants
         {
             u32 NormalTexture;
@@ -46,16 +43,14 @@ namespace Veng::Renderer
 
     SsaoScenePass::~SsaoScenePass()
     {
-        // Release the bindless slot through the per-frame retire window before the
-        // image it names retires.
+        // Release the bindless slot before the image retires.
         m_Context.GetBindlessRegistry().Release(m_AoHandle);
     }
 
     void SsaoScenePass::CreateTarget()
     {
-        // The AO target is pass-owned and Imported: the SSAO pass writes it, the
-        // lighting pass samples it through bindless. Dropping the old Ref retires it;
-        // releasing the old slot defers through the same per-frame window.
+        // AO target is pass-owned and Imported: the SSAO pass writes it, the lighting
+        // pass samples it through bindless.
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_AoHandle);
 
@@ -72,10 +67,9 @@ namespace Veng::Renderer
 
     void SsaoScenePass::Resize(const uvec2 extent)
     {
-        // The constructor already created the target at the initial extent; the
-        // renderer's Rebuild loop calls Resize on every pass with the current extent,
-        // so a same-extent call must not recreate (it would invalidate the bindless
-        // handle the renderer already read for the lighting pass).
+        // Skip recreation when the extent is unchanged: Rebuild calls Resize on every
+        // pass with the current extent, and recreating would invalidate the bindless
+        // handle the renderer already read for the lighting pass.
         if (extent == m_Extent && m_AoView)
             return;
         m_Extent = extent;
@@ -93,10 +87,8 @@ namespace Veng::Renderer
             .Color({
                 .Resource = io.Ssao,
                 .Load = LoadOp::Clear,
-                // Cleared to 1 (unoccluded) for any texel the kernel leaves as the
-                // background fully-unoccluded default.
                 .Store = StoreOp::Store,
-                .Clear = ClearColor{1.0f, 1.0f, 1.0f, 1.0f},
+                .Clear = ClearColor{1.0f, 1.0f, 1.0f, 1.0f}, // 1 = unoccluded, the default for texels the kernel does not touch
             })
             .Sample(io.GBufferNormal)
             .Sample(io.GBufferDepth)

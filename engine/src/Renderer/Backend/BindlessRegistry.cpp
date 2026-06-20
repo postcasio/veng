@@ -82,22 +82,18 @@ namespace Veng::Renderer
 
         m_FramesInFlight = context.GetMaxFramesInFlight();
 
-        // framesInFlight copies of the material table, host-mapped: each frame owns
-        // one MaxMaterials * MaterialParamStride region, written directly while it
-        // is the current (not-yet-submitted) frame.
+        // Ring-buffered by framesInFlight; each frame writes its own region while
+        // not yet submitted. Bound at full range — a draw folds the frame base into
+        // the pushed material index to select the current frame's region.
         m_MaterialParamBuffer = Buffer::Create(context, {
             .Name = "Bindless MaterialParams",
             .Size = static_cast<u64>(m_FramesInFlight) * MaxMaterials * MaterialParamStride,
             .Usage = BufferUsage::Storage,
             .HostMapped = true,
         });
-        // Bound at its full range; a draw selects the current frame's region by
-        // folding the frame base into the pushed material index.
         m_Set->Write(MaterialParamBinding, m_MaterialParamBuffer);
 
-        // framesInFlight copies of one view-constants region, host-mapped: each
-        // frame owns one ViewConstantsStride region, rewritten directly while it is
-        // the current (not-yet-submitted) frame.
+        // Ring-buffered by framesInFlight; each frame rewrites its own region every Execute.
         m_ViewConstantsBuffer = Buffer::Create(context, {
             .Name = "Bindless ViewConstants",
             .Size = static_cast<u64>(m_FramesInFlight) * ViewConstantsStride,
@@ -106,9 +102,7 @@ namespace Veng::Renderer
         });
         m_Set->Write(ViewConstantsBinding, m_ViewConstantsBuffer);
 
-        // framesInFlight copies of the MaxLights light table, host-mapped: each
-        // frame owns one MaxLights * LightStride region, rewritten directly while it
-        // is the current (not-yet-submitted) frame.
+        // Ring-buffered by framesInFlight; each frame rewrites its own region every Execute.
         m_LightBuffer = Buffer::Create(context, {
             .Name = "Bindless Lights",
             .Size = static_cast<u64>(m_FramesInFlight) * MaxLights * LightStride,
@@ -220,20 +214,17 @@ namespace Veng::Renderer
         VE_ASSERT(handle.Index < MaxMaterials,
                   "BindlessRegistry::UpdateMaterial: slot {} out of range", handle.Index);
 
-        // Cache the block CPU-side and owe a write to every in-flight region: the
-        // next framesInFlight OnFrameAcquired calls cycle through every region and
-        // flush it there.
+        // Cache the block and mark it dirty for framesInFlight frames so
+        // OnFrameAcquired flushes it into every ring region.
         MaterialEntry& entry = m_MaterialEntries[handle.Index];
         const std::span<const u8> blockBytes(
             reinterpret_cast<const u8*>(block.data()), block.size());
         entry.Block.assign(blockBytes.begin(), blockBytes.end());
         entry.DirtyFrames = m_FramesInFlight;
 
-        // Also write the current frame's region now, so an update made mid-frame
-        // (after this frame's OnFrameAcquired already ran) is visible to this
-        // frame's draw. Writing the current region is always safe — that frame is
-        // not yet submitted. This does not consume a dirty count; the flush still
-        // owes framesInFlight writes that cover every region.
+        // Also write the current frame's region immediately so a mid-frame update
+        // is visible to this frame's draws. The current region is safe to write —
+        // it is not yet submitted. This does not consume a dirty count.
         WriteMaterialRegion(handle.Index, m_Context.GetCurrentFrameInFlight());
     }
 
@@ -293,8 +284,8 @@ namespace Veng::Renderer
                   "BindlessRegistry::WriteViewConstants: block is {} bytes, exceeds stride {}",
                   block.size(), ViewConstantsStride);
 
-        // Write only the current (not-yet-submitted) frame's region; it is rewritten
-        // every Execute, so there is nothing to flush to other regions.
+        // Write only the current frame's region; it is rewritten every Execute so
+        // other regions need no flush.
         const u64 offset = static_cast<u64>(m_Context.GetCurrentFrameInFlight()) * ViewConstantsStride;
         auto* base = static_cast<u8*>(m_ViewConstantsBuffer->GetMappedData());
         std::memcpy(base + offset, block.data(), block.size());
@@ -311,8 +302,8 @@ namespace Veng::Renderer
                   "BindlessRegistry::WriteLights: {} bytes exceeds the {}-light region ({} bytes)",
                   lights.size(), MaxLights, static_cast<usize>(MaxLights) * LightStride);
 
-        // Write only the current (not-yet-submitted) frame's region; the whole
-        // region is rewritten every Execute, so there is nothing to flush onward.
+        // Write only the current frame's region; it is rewritten every Execute so
+        // other regions need no flush.
         const u64 offset = static_cast<u64>(m_Context.GetCurrentFrameInFlight()) * MaxLights * LightStride;
         auto* base = static_cast<u8*>(m_LightBuffer->GetMappedData());
         std::memcpy(base + offset, lights.data(), lights.size());
@@ -330,9 +321,8 @@ namespace Veng::Renderer
         m_StorageImages.OnFrameAcquired(frameInFlight);
         m_Materials.OnFrameAcquired(frameInFlight);
 
-        // Flush any still-dirty material into the region just made current (this
-        // frame's prior GPU use has completed — the fence was waited before this
-        // call), then decrement the owed-writes counter.
+        // Flush still-dirty materials into the region just made current — the fence
+        // was waited before this call, so the prior GPU use has completed.
         for (u32 i = 0; i < MaxMaterials; i++)
         {
             MaterialEntry& entry = m_MaterialEntries[i];

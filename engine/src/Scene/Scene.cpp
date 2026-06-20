@@ -26,7 +26,7 @@ namespace Veng
 
     Unique<Scene> Scene::Create(TypeRegistry& registry)
     {
-        // Private constructor: construct in place rather than via CreateUnique.
+        // Private constructor: raw new, not CreateUnique.
         return Unique<Scene>(new Scene(registry));
     }
 
@@ -155,10 +155,8 @@ namespace Veng
 
     void* Scene::TryGetRaw(Entity entity, TypeId id)
     {
-        // A non-const access is a potential in-place edit of a spatial pool the
-        // ECS never sees the write of, so it bumps the version conservatively
-        // (over-bump, never under). The const overload below is the read-only
-        // path that does not bump.
+        // A non-const access is a potential in-place edit the ECS never sees,
+        // so bump the version conservatively (over-bump, never under).
         if (IsSpatialId(id))
         {
             BumpSpatial();

@@ -8,10 +8,7 @@ namespace Veng
 {
     void RegisterBuiltinTypes(TypeRegistry& registry)
     {
-        // The builtin components, through the same Register<T> path a game uses
-        // for its own types — builtins are not special-cased. Each Register<T>()
-        // is idempotent and auto-registers its field types' leaf vocabulary, so
-        // the order here is robustness, not a requirement.
+        // Builtins go through the same Register<T> path as game types; no special-casing.
         registry.Register<Name>();
         registry.Register<Transform>();
         registry.Register<Parent>();

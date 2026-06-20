@@ -7,11 +7,7 @@ namespace Veng::UI
 {
     namespace
     {
-        // ImGui's const char* widget overloads take a single null-terminated
-        // string used for both display and ID, with no data+size form (only the
-        // *Unformatted text helpers take an end pointer). A Veng::UI label is a
-        // string_view, so it is materialized into a temporary null-terminated
-        // string at the call boundary.
+        // ImGui takes const char*, not string_view; materialize at the call boundary.
         string AsCStr(string_view s)
         {
             return string(s);
@@ -99,13 +95,9 @@ namespace Veng::UI
     {
         const string id = AsCStr(label);
 
-        // v is written back only on Enter or deactivate-after-edit, never per
-        // keystroke. While the item is not the active one, the scratch tracks v so
-        // the field shows the current value; once focused, ImGui owns the scratch
-        // and v is left untouched until the commit point. ImGui activates at most
-        // one input item at a time, so a single file-static scratch (plus the id of
-        // whichever item currently owns it) suffices, and the CallbackResize
-        // handler grows it to fit (no fixed truncation).
+        // Write-back happens only on Enter or deactivate-after-edit. A single
+        // static scratch is safe: ImGui activates at most one input item at a time,
+        // so the scratch is owned by whichever item's id matches s_ActiveId.
         static vector<char> s_Scratch;
         static ImGuiID s_ActiveId = 0;
 
@@ -210,8 +202,7 @@ namespace Veng::UI
 
     void Label(string_view label, string_view value)
     {
-        // ImGui::LabelText is a printf interface; the value is passed as
-        // preformatted text through the "%.*s" + length form.
+        // LabelText is printf-only; pass the string_view value via "%.*s".
         const string id = AsCStr(label);
         ImGui::LabelText(id.c_str(), "%.*s", static_cast<int>(value.size()), value.data());
     }

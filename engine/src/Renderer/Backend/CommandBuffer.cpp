@@ -233,8 +233,8 @@ namespace Veng::Renderer
         m_LastBoundPipelineLayout = pipeline->GetPipelineLayout();
 
         // A compute pipeline has no rendering attachments; clear any previously
-        // bound graphics pipeline's formats so draw-time validation does not
-        // compare against a stale graphics pipeline.
+        // captured graphics formats so draw-time validation doesn't run against
+        // a stale graphics pipeline.
         m_BoundPipelineColorAttachmentFormats.clear();
         m_BoundPipelineDepthAttachmentFormat = Format::Undefined;
         m_HasBoundGraphicsPipelineFormats = false;

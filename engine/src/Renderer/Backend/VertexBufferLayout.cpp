@@ -8,11 +8,11 @@
 
 namespace Veng::Renderer
 {
-    // Vertex element formats are a small subset of Format — the plain
-    // float/vecN attributes a vertex shader input can be. Vulkan format
-    // mapping comes from the engine-wide ToVk(Format) in TypeMapping.h; only
-    // size/component-count (needed to lay out the buffer) are local to vertex
-    // elements.
+    /// @brief Returns the byte size of a vertex element format.
+    ///
+    /// Vertex element formats are the float/vecN subset of Format that vertex shader
+    /// inputs accept. Vulkan format mapping is in TypeMapping.h; only byte size (for
+    /// buffer layout) is local here.
     static u32 GetFormatSize(const Format format)
     {
         switch (format)
@@ -30,6 +30,7 @@ namespace Veng::Renderer
         }
     }
 
+    /// @brief Returns the number of scalar float components in a vertex element format.
     static u32 GetFormatComponentCount(const Format format)
     {
         switch (format)
@@ -42,11 +43,13 @@ namespace Veng::Renderer
         }
     }
 
+    /// @brief Constructs a vertex element with its format, name, and computed byte size.
     VertexBufferElement::VertexBufferElement(const Format type, const string& name)
         : Type(type), Name(name), Size(GetFormatSize(type)), Offset(0)
     {
     }
 
+    /// @brief Constructs a vertex buffer layout from an initializer list of elements, computing offsets and stride.
     VertexBufferLayout::VertexBufferLayout(const std::initializer_list<VertexBufferElement>& elements) : m_Elements(
         elements)
     {
@@ -63,6 +66,7 @@ namespace Veng::Renderer
         m_FloatCount = floatCount;
     }
 
+    /// @brief Constructs a vertex buffer layout from a vector of elements, computing offsets and stride.
     VertexBufferLayout::VertexBufferLayout(const vector<VertexBufferElement>& elements) : m_Elements(elements)
     {
         u32 offset = 0;

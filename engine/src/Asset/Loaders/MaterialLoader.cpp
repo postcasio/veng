@@ -58,12 +58,8 @@ namespace Veng
         // Build the material's pipeline layout from the (now-resident)
         // vertex/fragment shader interfaces — set 0 reserved for the bindless
         // registry, author-declared sets shifted to 1+, the merged push-constant
-        // ranges. Built for both domains: a Surface material's GraphicsPipeline is
-        // built from this layout below against the fixed g-buffer formats; a
-        // PostProcess material's GraphicsPipeline is built by the
-        // PostProcessScenePass against its color format, from this same layout. A
-        // drifted shader (no selector push-constant range at the domain's offset)
-        // is a recoverable Corrupt failure.
+        // ranges. A drifted shader (no selector push-constant range at the
+        // domain's offset) is a recoverable Corrupt failure.
         Result<Ref<Renderer::PipelineLayout>> BuildPipelineLayout(
             Renderer::Context& context, AssetId id, MaterialDomain domain,
             const Veng::Shader& vsAsset, const Veng::Shader& fsAsset)
@@ -137,10 +133,8 @@ namespace Veng
             });
         }
 
-        // Build a Surface material's graphics pipeline from its layout + shaders,
-        // against the fixed deferred g-buffer formats. Runs on the main thread at
-        // finalize: the shaders are guaranteed resident, so their Interface is
-        // readable, and the GPU pipeline build is main-thread-only work.
+        // Build a Surface material's graphics pipeline against the fixed deferred g-buffer formats.
+        // Called from the main-thread finalize, where the shaders are guaranteed resident.
         Result<Ref<Renderer::GraphicsPipeline>> BuildSurfacePipeline(
             AssetManager& manager, Renderer::Context& context, AssetId id,
             const Ref<Renderer::PipelineLayout>& layout,
@@ -148,9 +142,7 @@ namespace Veng
         {
             const Renderer::ShaderInterface& vsInterface = vsAsset.Interface;
 
-            // Vertex layout: resolve from the vertex shader's declared
-            // VertexLayoutId. CPU-only and instant, so a synchronous load here is
-            // free even on the async path.
+            // VertexLayout loads are CPU-only; synchronous here is free even on the async path.
             optional<Renderer::VertexBufferLayout> vertexBufferLayout;
             if (vsInterface.VertexLayoutId.has_value())
             {
@@ -162,12 +154,6 @@ namespace Veng
                 vertexBufferLayout = layoutResult->Get()->GetLayout();
             }
 
-            // An opaque material renders into the deferred g-buffer: three color
-            // attachments (G0 albedo, G1 world-normal, G2 packed ORM) and the
-            // shared depth attachment, each color target opaque (no blend). The
-            // fragment shader writes all three through GBufferOutput; the
-            // attachment formats are the fixed g-buffer contract, not the context's
-            // output format.
             return Renderer::GraphicsPipeline::Create(context, {
                 .Name = fmt::format("Material {} Pipeline", id.Value),
                 .ColorAttachments = {
@@ -202,9 +188,7 @@ namespace Veng
 
         usize cursor = sizeof(CookedMaterialHeader);
 
-        // The format guard: a stale blob is a loud reject, not a silent
-        // reinterpretation. A Corrupt error (not a VE_ASSERT) gives the user a
-        // clear load failure rather than a crash.
+        // A stale blob is a recoverable Corrupt error, not a silent reinterpretation or a crash.
         if (header.Version != CookedMaterialVersion)
         {
             return std::unexpected(Corrupt(id, fmt::format(
@@ -213,10 +197,8 @@ namespace Veng
                 header.Version, CookedMaterialVersion)));
         }
 
-        // The domain is stored as the underlying integer; cast guarded by a loud
-        // assert on an out-of-range value (the one-line-fix-on-drift pattern the
-        // other underlying-int enum fields use). The cook validates the fragment
-        // outputs against the domain's contract, so the runtime trusts it.
+        // Domain is stored as the underlying integer; the cook validates the fragment
+        // outputs against the domain's contract, so the runtime asserts range and trusts it.
         VE_ASSERT(header.Domain <= static_cast<u32>(MaterialDomain::PostProcess),
             "material: header Domain {} is out of range for MaterialDomain", header.Domain);
         const MaterialDomain domain = static_cast<MaterialDomain>(header.Domain);
@@ -253,9 +235,7 @@ namespace Veng
         cursor += header.BlockBytes;
 
         // ── 4. Fan out shader sub-loads ──────────────────────────────────────
-        // Async fans these out as concurrent async loads; sync blocks on each.
-        // Either way the material's Finalize runs only once both are resident
-        // (the manager orders the dependencies' finalizes before the parent's).
+        // Finalize runs only once both shaders are resident (dependencies finalize before the parent).
         vector<Ref<Detail::AssetCacheEntry>> dependencies;
 
         auto loadShader = [&](u64 shaderId) -> AssetResult<AssetHandle<Veng::Shader>>
@@ -404,10 +384,6 @@ namespace Veng
         const Ref<Veng::Material> material = Veng::Material::Create(info);
 
         // ── 7. The main-thread finalize ──────────────────────────────────────
-        // Runs only once every dependency (shaders + textures) is resident: build
-        // the pipeline layout (both domains), the GraphicsPipeline for Surface
-        // (the PostProcessScenePass builds the PostProcess one against its color
-        // format), then register + patch texture indices via Material::Finalize.
         return Detail::LoadJob{
             .Resource = Detail::RefAny(material),
             .Dependencies = std::move(dependencies),

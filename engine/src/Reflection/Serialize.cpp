@@ -12,8 +12,7 @@ namespace Veng
         Result<usize> ReadFieldsInner(std::span<const u8> in, void* obj, const TypeInfo& type,
                                       const TypeRegistry& registry);
 
-        // ----- little-endian-agnostic raw append/read (host byte order; this is
-        // an in-memory seam, not an on-disk format) ------------------------------
+        // Raw append/read in host byte order — this is an in-memory seam, not an on-disk format.
 
         void AppendBytes(vector<u8>& out, const void* src, usize size)
         {
@@ -80,7 +79,6 @@ namespace Veng
                 }
                 case FieldClass::Struct:
                 {
-                    // Recurse into the field type's own descriptors.
                     const TypeInfo& nested = registry.Info(field.Type);
                     WriteFields(out, fieldPtr, nested, registry);
                     break;
@@ -150,10 +148,8 @@ namespace Veng
                 case FieldClass::Struct:
                 {
                     const TypeInfo& nested = registry.Info(field.Type);
-                    // The nested value was written length-prefixed by WriteFields'
-                    // caller, but here we recurse over exactly the nested record's
-                    // bytes, so hand it the remaining span and advance by what it
-                    // consumed. ReadFields below reads a self-delimited blob.
+                    // The nested record is already isolated to its value bytes; recurse
+                    // and advance cursor by what it consumed.
                     const Result<usize> consumed = ReadFieldsInner(in.subspan(cursor), fieldPtr,
                                                                    nested, registry);
                     if (!consumed)
@@ -192,8 +188,7 @@ namespace Veng
                 if (cursor + *valueLen > in.size())
                     return std::unexpected("ReadFields: truncated field value");
 
-                // Locate the matching descriptor by name. A record with no
-                // matching descriptor is skipped (schema drift tolerance).
+                // No matching descriptor → skip (schema drift tolerance).
                 const FieldDescriptor* match = nullptr;
                 for (const FieldDescriptor& field : type.Fields)
                 {

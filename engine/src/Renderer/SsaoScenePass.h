@@ -12,22 +12,20 @@ namespace Veng::Renderer
     class Image;
     class ImageView;
 
-    // The screen-space ambient occlusion pass: a fullscreen ScenePass that samples
-    // the g-buffer depth + world-normal handles (received through PassIO), works in
-    // view space (reconstructing view-space position from depth and carrying the
-    // normal into view space), estimates occlusion with a fixed 16-sample hemisphere
-    // kernel, and writes a single-channel AO factor to its own full-res R8 target.
-    //
-    // The pass OWNS that AO target (an R8Unorm ColorAttachment | Sampled image): a
-    // downstream lighting pass samples it through bindless, so it is a renderer-style
-    // Imported resource, not a graph transient (a transient exposes no Ref<ImageView>
-    // to register). It recreates the target on Resize/Configure through the deferred
-    // Release() retire path and re-registers it. The produced id + bindless handle
-    // flow to the lighting pass through PassIO.Ssao / PassIO.SsaoHandle, which the
-    // renderer fills from this pass's accessors.
+    /// @brief Fullscreen SSAO pass that estimates occlusion with a 16-sample hemisphere kernel
+    ///        and writes a single-channel AO factor to its own full-res R8 target.
+    ///
+    /// Samples the g-buffer depth and world-normal handles from PassIO, works in view space
+    /// (reconstructing view-space position from depth), and writes an R8Unorm occlusion factor.
+    ///
+    /// The pass owns its AO target (ColorAttachment | Sampled): a downstream lighting pass
+    /// samples it through bindless, so it is an Imported resource, not a graph transient
+    /// (a transient exposes no Ref<ImageView> to register). GetAoView / GetAoHandle are the
+    /// accessors the renderer uses to fill PassIO.Ssao / PassIO.SsaoHandle.
     class SsaoScenePass final : public ScenePass
     {
     public:
+        /// @brief Constructs the pass and allocates the AO target at the given extent.
         SsaoScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
                       SamplerHandle samplerHandle, uvec2 extent);
         ~SsaoScenePass() override;
@@ -35,17 +33,19 @@ namespace Veng::Renderer
         SsaoScenePass(const SsaoScenePass&) = delete;
         SsaoScenePass& operator=(const SsaoScenePass&) = delete;
 
+        /// @brief Reallocates the AO target at the new extent.
         void Resize(uvec2 extent) override;
+
+        /// @brief Contributes the fullscreen SSAO pass into the graph, writing the AO target.
         void Declare(RenderGraph& graph, const PassIO& io) override;
 
-        // The produced AO target: the renderer Imports the id, binds this view per
-        // Execute, and threads the handle to the lighting pass through PassIO.
+        /// @brief The produced AO target view; the renderer binds this per Execute.
         [[nodiscard]] const Ref<ImageView>& GetAoView() const { return m_AoView; }
+        /// @brief The bindless handle for the AO target; threaded to the lighting pass through PassIO.
         [[nodiscard]] TextureHandle GetAoHandle() const { return m_AoHandle; }
 
     private:
-        // Recreate the owned AO target at the current extent and (re-)register it,
-        // releasing the prior slot through the deferred per-frame retire window.
+        /// @brief Allocates or reallocates the AO target at the current extent and re-registers it.
         void CreateTarget();
 
         Context& m_Context;

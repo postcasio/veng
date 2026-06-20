@@ -8,8 +8,7 @@ namespace Veng::UI
 {
     namespace
     {
-        // ImGui's const char* overloads take one null-terminated string for both
-        // display and ID; a string_view is materialized at the call boundary.
+        // ImGui takes const char*, not string_view; materialize at the call boundary.
         string AsCStr(string_view s)
         {
             return string(s);
@@ -146,14 +145,12 @@ namespace Veng::UI
     ScopedTree TreeNode(string_view label, TreeFlags flags)
     {
         const string id = AsCStr(label);
-        // An open TreeNodeEx owes a TreePop.
         return ScopedTree(ImGui::TreeNodeEx(id.c_str(), ToImGui(flags)), true);
     }
 
     ScopedTree CollapsingHeader(string_view label, TreeFlags flags)
     {
         const string id = AsCStr(label);
-        // CollapsingHeader has no TreePop counterpart, so the guard never pops.
         return ScopedTree(ImGui::CollapsingHeader(id.c_str(), ToImGui(flags)), false);
     }
 

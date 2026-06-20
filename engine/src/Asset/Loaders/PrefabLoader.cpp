@@ -33,9 +33,7 @@ namespace Veng
         }
 
         // Load one embedded dependency by id + type, returning its cache entry.
-        // Mirrors a Material's texture/shader sub-load: async fans out a
-        // non-blocking Load, sync blocks on LoadSync. The Prefab keeps the entry
-        // resident for its lifetime so SpawnInto's rehydration is a cache hit.
+        // The Prefab keeps the entry resident for its lifetime so SpawnInto's rehydration is a cache hit.
         AssetResult<Ref<Detail::AssetCacheEntry>> LoadDependency(
             AssetManager& manager, AssetId parentId, AssetId depId, AssetType type, bool async)
         {
@@ -192,12 +190,9 @@ namespace Veng
                     records.begin() + cc.RecordOffset,
                     records.begin() + cc.RecordOffset + cc.RecordSize);
 
-                // Extract embedded handle dependencies by deserializing the record
-                // into a type-erased instance (the same lifecycle thunks the cooker
-                // uses) and walking its descriptors. A component whose type the
-                // module does not register is a registry mismatch — fatal at spawn,
-                // but here we only need its handle ids, which a missing type cannot
-                // contribute, so skip it (spawn will assert).
+                // Deserialize the record into a type-erased instance to walk its handle fields.
+                // Skip unregistered types — they have no handle ids to contribute here;
+                // spawn will assert on the missing registration later.
                 if (types.IsRegistered(cc.TypeId))
                 {
                     const TypeInfo& typeInfo = types.Info(cc.TypeId);

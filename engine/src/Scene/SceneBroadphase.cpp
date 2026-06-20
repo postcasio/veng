@@ -49,8 +49,6 @@ namespace Veng
 
     void SceneBroadphase::Rebuild(const Scene& scene)
     {
-        // The pure one-shot gather fills the candidate list (resident only, in
-        // Transform-dense order) and the bound union in one pass.
         GatherMeshes(scene, m_Candidates, m_SceneBounds);
 
         m_LeafScratch.clear();

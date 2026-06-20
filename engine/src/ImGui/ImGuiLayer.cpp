@@ -74,9 +74,6 @@ namespace Veng
 
         ImGui_ImplGlfw_InitForVulkan(handle, true);
 
-        // ImGui draws into the offscreen image via dynamic rendering rather than
-        // a dedicated render pass/framebuffer: the only attachment is
-        // the RGBA16Sfloat color attachment that backs m_Image.
         const vk::Format colorAttachmentFormat = ToVk(Format::RGBA16Sfloat);
 
         const vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo = {
@@ -215,13 +212,12 @@ namespace Veng
             ImFontConfig config;
             config.MergeMode = true;
             config.GlyphOffset = ImVec2(0, 5.0f);
-            config.GlyphMinAdvanceX = 20.0f; // Use if you want to make the icon monospaced
+            config.GlyphMinAdvanceX = 20.0f;
             static constexpr ImWchar icon_ranges[] = {ICON_MIN_MD, ICON_MAX_16_MD, 0};
             io.Fonts->AddFontFromFileTTF(info.IconFontPath->string().c_str(), 20.0f, &config, icon_ranges);
         }
 
-        // Recreate the offscreen image/view whenever the swap chain is recreated
-        // (resize).
+        // Swap-chain recreation changes the render extent; recreate the offscreen image to match.
         m_Context.AddSwapChainInvalidationCallback([this]
         {
             DisposeResources();

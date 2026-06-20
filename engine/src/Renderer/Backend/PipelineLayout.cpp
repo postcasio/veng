@@ -9,15 +9,20 @@
 
 namespace Veng::Renderer
 {
+    /// @brief Returns the backend-native pipeline layout handle.
     PipelineLayout::Native& PipelineLayout::GetNative() const { return *m_Native; }
 
+    /// @brief Constructs a Vulkan pipeline layout, prepending the bindless registry's set-0 layout.
+    ///
+    /// Set 0 is reserved for the bindless registry across every pipeline layout; author-declared
+    /// sets shift to 1+.
+    /// @param context  The owning render context.
+    /// @param info     Layout configuration including descriptor set layouts and push constant ranges.
     PipelineLayout::PipelineLayout(Context& context, const PipelineLayoutInfo& info) : m_Context(context), m_Name(info.Name),
                                                                      m_Native(CreateUnique<Native>()),
                                                                      m_DescriptorSetLayouts(info.DescriptorSetLayouts),
                                                                      m_PushConstantRanges(info.PushConstantRanges)
     {
-        // Set 0 is reserved across every pipeline layout for the bindless
-        // registry — author-declared sets shift to 1+.
         vector<vk::DescriptorSetLayout> descriptorSetLayouts;
         descriptorSetLayouts.reserve(m_DescriptorSetLayouts.size() + 1);
         descriptorSetLayouts.push_back(GetVkDescriptorSetLayout(*context.GetBindlessRegistry().GetSet0Layout()));
@@ -51,6 +56,7 @@ namespace Veng::Renderer
         DebugMarkers::MarkPipelineLayout(GetVkDevice(m_Context), m_Native->Layout, m_Name);
     }
 
+    /// @brief Defers destruction of the Vulkan pipeline layout handle until the GPU is done with it.
     PipelineLayout::~PipelineLayout()
     {
         m_Context.GetNative().Retire(m_Native->Layout);

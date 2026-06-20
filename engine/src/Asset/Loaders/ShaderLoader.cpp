@@ -154,11 +154,7 @@ namespace Veng
                 header.InterfaceBytes, expectedInterfaceBytes)));
         }
 
-        // If the shader references a vertex layout, load it now to confirm it
-        // exists and is valid — a missing layout is a fatal load error (catches
-        // corrupted blobs or a missing core pack). Per-attribute validation
-        // already happened at cook time; the loader only needs to assert the
-        // asset is resolvable.
+        // A missing vertex layout is a fatal load error — catches a missing or corrupt core pack.
         if (interfaceHeader.VertexLayoutAssetId != 0)
         {
             const AssetResult<AssetHandle<Veng::VertexLayout>> layout =

@@ -12,9 +12,8 @@
 
 namespace Veng::Renderer
 {
-    // The declared-use table (Backend::ScopeFor) and the hazard rule it feeds
-    // (Backend::DecideBarrier) live in Backend/BarrierDecision.h so they are
-    // unit-testable without a device.
+    // Backend::ScopeFor and Backend::DecideBarrier live in Backend/BarrierDecision.h
+    // so they are unit-testable without a device.
     using Backend::ScopeFor;
 
     ImageView& PassContext::Resolved(const ResourceId id) const
@@ -133,13 +132,11 @@ namespace Veng::Renderer
         return PassBuilder(*pass);
     }
 
-    // The baked schedule + graph-allocated transients. Backend types
-    // (Backend::SubresourceState) keep this out of the public header.
+    // Backend::SubresourceState keeps this out of the public header.
     struct CompiledGraph::Native
     {
-        // A resolved resource-table slot: a transient carries its concrete
-        // image/view (allocated at compile); an import carries only its name, and
-        // is bound per frame from the call's ImportBinding.
+        // A resolved resource-table slot: transients carry their image/view
+        // (allocated at compile); imports carry only a name and are bound per frame.
         struct Resource
         {
             bool IsImport = false;
@@ -148,18 +145,16 @@ namespace Veng::Renderer
             Ref<ImageView> View;  // transient only
         };
 
-        // A baked transition: the resource slot to transition and the destination
-        // scope (layout/stage/access) ScopeFor derived for the declared use. The
-        // source side and the subresource range come from the resolved view's live
-        // tracked state at replay — only the destination and the structure bake.
+        // A baked transition: destination scope derived by ScopeFor at compile.
+        // The source and subresource range come from the resolved view's tracked state
+        // at replay — only the destination bakes.
         struct Transition
         {
             u32 Slot;
             Backend::SubresourceState Dst;
         };
 
-        // A baked graphics attachment: the resource slot plus the load/store/clear
-        // it was declared with and whether it is the depth attachment.
+        // A baked graphics attachment: slot + load/store/clear from the declaration.
         struct Attachment
         {
             u32 Slot;
@@ -179,8 +174,7 @@ namespace Veng::Renderer
             function<void(PassContext&)> Execute;
         };
 
-        // Deferred-destruction back-ref for the transient images; the compiled
-        // graph and its transients must not outlive the context.
+        // The compiled graph and its transients must not outlive the context.
         Context* Context = nullptr;
         vector<Resource> Resources;
         vector<Pass> Passes;
@@ -200,25 +194,21 @@ namespace Veng::Renderer
         }
 
         // Allocate transient backing with aliasing: compute each transient's live
-        // range over the linear pass order plus its size class, let the pure
-        // AssignTransientSlots rule collapse non-overlapping same-key transients
-        // onto a shared slot, then create one image per distinct slot. Imports
-        // stay unbacked and are resolved per frame.
+        // range and size class, collapse non-overlapping same-key transients onto a
+        // shared slot via AssignTransientSlots, then create one image per distinct slot.
         //
-        // Two transients sharing a slot share storage, but only across
-        // non-overlapping lifetimes, and the per-frame barrier schedule already
-        // serializes the reuse: the later transient's first write transitions the
-        // slot image from Undefined, and that transition waits on the prior
-        // content's last read through the same DecideBarrier hazard rule that
-        // orders every other access. No aliasing-specific barrier is required.
+        // Two transients sharing a slot reuse storage only across non-overlapping
+        // lifetimes; the per-frame barrier schedule serializes the reuse: the later
+        // transient's first write transitions from Undefined, and that transition waits
+        // on the prior content's last read through the same DecideBarrier hazard rule.
+        // No aliasing-specific barrier is required.
         {
-            // The subset of resource-table slots that are transients, in table
-            // order, with their live ranges and size classes.
+                // Resource-table slots that are transients, in table order,
+            // with their live ranges and size classes.
             vector<u32> transientSlots;
             vector<Backend::TransientLifetime> lifetimes;
             vector<Backend::AllocationKey> keys;
-            // FirstUse seen flag per transient, parallel to transientSlots.
-            vector<bool> firstWriteSeen;
+            vector<bool> firstWriteSeen; // parallel to transientSlots
 
             // Resource slot -> index into the transient arrays, or ~0u for imports.
             vector<u32> transientIndex(m_Resources.size(), ~0u);
@@ -236,9 +226,7 @@ namespace Veng::Renderer
                 keys.push_back({.Format = desc.Format, .Extent = desc.Extent, .Usage = desc.Usage});
             }
 
-            // Scan passes in order: FirstUse is the first pass that writes a
-            // transient; LastUse is the last pass that touches it (a never-read
-            // transient ends at its write pass, so LastUse == FirstUse).
+            // Scan passes in order: FirstUse = first write; LastUse = last touch.
             for (u32 passIndex = 0; passIndex < m_Passes.size(); passIndex++)
             {
                 for (const auto& access : m_Passes[passIndex]->Accesses)
@@ -263,8 +251,7 @@ namespace Veng::Renderer
             for (const u32 slot : assignment)
                 slotCount = std::max(slotCount, slot + 1);
 
-            // One image+view per distinct slot, named for the first transient
-            // assigned to it.
+            // One image+view per distinct slot, named for its first assigned transient.
             vector<Ref<Image>> slotImages(slotCount);
             vector<Ref<ImageView>> slotViews(slotCount);
 
@@ -292,8 +279,7 @@ namespace Veng::Renderer
             }
         }
 
-        // Track which slots have been written by a prior pass, to flag a transient
-        // read before any pass writes it.
+        // Tracks which slots have been written by a prior pass, to detect a read before any write.
         vector<bool> written(m_Resources.size(), false);
 
         for (const auto& pass : m_Passes)
@@ -309,8 +295,7 @@ namespace Veng::Renderer
                 const u32 slot = access.Resource.Index;
                 const Resource& source = m_Resources[slot];
 
-                // read-before-write: a transient sampled/read by this pass before
-                // any pass has written it produces undefined contents.
+                // A transient read before any pass writes it produces undefined contents.
                 const bool isRead = access.Kind == AccessKind::Sample ||
                                     access.Kind == AccessKind::StorageRead ||
                                     access.Kind == AccessKind::TransferSrc;
@@ -322,8 +307,7 @@ namespace Veng::Renderer
                               source.Name, pass->Name);
                 }
 
-                // format/usage: a transient used as an attachment or sampled must
-                // declare the matching ImageUsage.
+                // A transient used as an attachment or sampled must declare the matching ImageUsage.
                 if (!source.IsImport)
                 {
                     if (access.Kind == AccessKind::ColorAttachment)
@@ -385,9 +369,8 @@ namespace Veng::Renderer
     {
         Native& native = *m_Native;
 
-        // Resolve every slot to a concrete view this frame: a transient resolves to
-        // its allocated view; an import binds to the view supplied for its id.
-        // Indexed by ResourceId::Index.
+        // Resolve every slot to a concrete view: transients use their allocated view;
+        // imports bind to the caller-supplied view. Indexed by ResourceId::Index.
         vector<Ref<ImageView>> resolved(native.Resources.size());
 
         for (usize i = 0; i < native.Resources.size(); i++)
@@ -416,9 +399,8 @@ namespace Veng::Renderer
 
         for (const Native::Pass& pass : native.Passes)
         {
-            // 1. Replay the baked transitions. The destination scope baked at
-            // compile; the source comes from each image's live tracked state and
-            // the range from the resolved view, so the swapchain import and
+            // 1. Replay the baked transitions. The source state and subresource range
+            // come from each image's live tracked state, so swapchain and
             // transfer-produced imports stay correct each frame.
             for (const Native::Transition& transition : pass.Transitions)
             {
@@ -431,8 +413,8 @@ namespace Veng::Renderer
                     view->GetBaseMipLevel(), view->GetMipLevels());
             }
 
-            // 2. Graphics passes drive dynamic rendering from their baked
-            // attachments; compute/transfer passes just run their callback.
+            // 2. Graphics passes begin dynamic rendering from baked attachments;
+            // compute/transfer passes run their callback directly.
             if (pass.Type == RenderGraph::PassType::Graphics)
             {
                 RenderingInfo info;
@@ -442,9 +424,8 @@ namespace Veng::Renderer
                 {
                     const Ref<ImageView>& view = resolved[attachment.Slot];
 
-                    // Extent follows the attachment's mip level:
-                    // image_extent >> base_mip, floored at 1. Every color/depth
-                    // attachment of one pass must agree.
+                    // Extent at the attachment's mip level (image_extent >> base_mip, floored at 1);
+                    // all attachments in one pass must agree.
                     const auto extent = view->GetImage()->GetExtent();
                     const u32 mip = view->GetBaseMipLevel();
                     const uvec2 attachmentExtent{

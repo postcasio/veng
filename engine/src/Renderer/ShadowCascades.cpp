@@ -111,8 +111,7 @@ namespace Veng::Renderer
                 radius = std::max(radius, glm::length(corner - center));
             }
 
-            // The light view looks at the slice's sphere center from a point pulled
-            // back along the light axis. The pull-back covers the box's depth.
+            // Look at the sphere center from a point pulled back by radius along the light axis.
             const mat4 lightView = glm::lookAt(center - dir * radius, center, up);
 
             // Texel snapping: quantize the light-space box min to texel increments

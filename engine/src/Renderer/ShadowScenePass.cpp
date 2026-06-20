@@ -34,15 +34,13 @@ namespace Veng::Renderer
         // light-space MVP, no fragment stage).
         constexpr AssetId ShadowDepthVertId{0x156C14C99FFF6B7CULL};
 
-        // The atlas's depth format and usage: a single-channel float depth target
-        // that is both a depth attachment (written per cascade) and sampled by the
-        // lighting pass through its dedicated set.
+        // Depth format and usage: a single-channel float depth target written per cascade
+        // and sampled by the lighting pass through its dedicated set.
         constexpr Format ShadowFormat = Format::D32Sfloat;
         constexpr ImageUsage ShadowUsage = ImageUsage::DepthAttachment | ImageUsage::Sampled;
 
-        // The depth-only pass's vertex push block: the light-space MVP at offset 0,
-        // matching the shared push block's leading float4x4. The depth-only pipeline
-        // declares a vertex-stage range over just these 64 bytes.
+        // The depth-only vertex push block: light-space MVP at offset 0, matching the
+        // shared push block's leading float4x4 (64 bytes).
         struct ShadowPushConstants
         {
             mat4 MVP;
@@ -60,9 +58,7 @@ namespace Veng::Renderer
         VE_ASSERT(vs.has_value(), "ShadowScenePass: depth vertex shader load failed: {}", vs.error().Detail);
         m_VertexShader = *vs;
 
-        // The depth-only pipeline: set 0 reserved (the registry binds it for the
-        // material block / view constants the meshes' draws do not read here, but
-        // the layout must match the bound set), one vertex push range for the
+        // Depth-only pipeline: set 0 reserved, one vertex push range for the
         // light-space MVP, no fragment stage, depth write on, no color targets.
         m_Layout = PipelineLayout::Create(m_Context, {
             .Name = "ShadowScenePass Layout",
@@ -103,9 +99,7 @@ namespace Veng::Renderer
 
     void ShadowScenePass::CreateAtlas()
     {
-        // Recreate the depth atlas at the current resolution × tile grid; dropping
-        // the old Refs retires them through the deferred window, so an in-flight
-        // frame's sample of the prior atlas is not reclaimed early.
+        // Recreate the depth atlas at the current resolution × tile grid.
         const uvec2 atlasExtent = GetAtlasExtent();
 
         m_ShadowImage = Image::Create(m_Context, {
@@ -150,11 +144,8 @@ namespace Veng::Renderer
                 cmd.BindPipeline(m_Pipeline);
                 registry.Bind(cmd);
 
-                // Render every active cascade into its atlas tile: set the viewport
-                // + scissor to cascade k's tile sub-rect, then draw the scene's
-                // opaque meshes with cascade k's RAW light-space matrix pushed. The
-                // depth-only pipeline and shadow_depth.vert are unchanged — only the
-                // pushed matrix and the viewport differ per cascade.
+                // Render each cascade into its tile: set the viewport + scissor to the
+                // tile sub-rect, push cascade k's raw light-space matrix, and draw.
                 const u32 count = cascadeCount < view.CascadeCount ? cascadeCount : view.CascadeCount;
                 for (u32 k = 0; k < count; ++k)
                 {
@@ -167,15 +158,12 @@ namespace Veng::Renderer
 
                     const mat4 lightViewProj = view.CascadeViewProj[k];
 
-                    // Cull each cascade by ITS OWN light frustum, never the camera's:
-                    // an off-screen mesh behind or beside the camera can still cast a
-                    // shadow into view, and CascadeViewProj[k] is fit to the camera
-                    // slice and extended toward the light, so culling against it keeps
-                    // every caster the cascade can shadow and drops only what cannot.
+                    // Cull against the cascade's own light frustum: an off-screen mesh
+                    // can still cast a shadow into view; CascadeViewProj[k] is fit to the
+                    // camera slice and extended toward the light, so only what falls
+                    // completely outside the cascade's volume is dropped.
                     const Frustum cascadeFrustum = Frustum::FromViewProjection(lightViewProj);
 
-                    // The same per-submesh loop the g-buffer pass runs over the shared
-                    // candidate list; only positions matter and only depth is written.
                     const auto Draw = [&](const VisibleMesh& item)
                     {
                         const Mesh& mesh = *item.Mesh;
@@ -201,10 +189,8 @@ namespace Veng::Renderer
                         }
                     };
 
-                    // Query the broadphase tree against THIS cascade's light frustum;
-                    // the returned ids index view.Visible in ascending (GatherMeshes)
-                    // order, the tight linear scan's exact set. With culling off, the
-                    // full candidate span records into every cascade.
+                    // Query the broadphase against this cascade's light frustum;
+                    // with culling off, all candidates are drawn for every cascade.
                     if (m_FrustumCull)
                     {
                         m_CullScratch.clear();

@@ -8,8 +8,12 @@
 
 namespace Veng::Renderer
 {
+    /// @brief Returns the backend-native sampler handle.
     Sampler::Native& Sampler::GetNative() const { return *m_Native; }
 
+    /// @brief Creates a Vulkan sampler from the given configuration.
+    /// @param context  The owning render context.
+    /// @param info     Sampler parameters (filtering, addressing, LOD, anisotropy, comparison, etc.).
     Sampler::Sampler(Context& context, const SamplerInfo& info) : m_Context(context), m_Name(info.Name), m_Native(CreateUnique<Native>())
     {
         const vk::SamplerCreateInfo samplerCreateInfo{
@@ -35,6 +39,7 @@ namespace Veng::Renderer
         DebugMarkers::MarkSampler(GetVkDevice(m_Context), m_Native->Sampler, m_Name);
     }
 
+    /// @brief Defers destruction of the Vulkan sampler handle until the GPU is done with it.
     Sampler::~Sampler()
     {
         m_Context.GetNative().Retire(m_Native->Sampler);

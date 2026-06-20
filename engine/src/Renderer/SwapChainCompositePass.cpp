@@ -20,15 +20,12 @@ namespace Veng::Renderer
 {
     namespace
     {
-        // The composite vertex stage is the engine core pack's fullscreen triangle —
-        // shared with SceneRenderer's fullscreen blits — so the pass reuses its id
-        // rather than carrying a duplicate VS. The fragment stage is engine-owned.
+        // Core pack fullscreen vertex stage, shared with SceneRenderer's blits.
         constexpr AssetId FullscreenVertId{0xF46DD3C6F2AE0628ULL};
         constexpr AssetId CompositeFragId{0x4BCFF3ED0254B42EULL};
 
-        // Selects the composite shader's bindless scene/ImGui texture and sampler
-        // slots — set 0 is bound once via BindlessRegistry::Bind; these indices pick
-        // the array elements. Matches composite.frag's PushConstants byte-for-byte.
+        // Bindless scene/ImGui texture and sampler indices for the composite shader.
+        // Matches composite.frag PushConstants byte-for-byte.
         struct CompositePushConstants
         {
             u32 SceneTexture;
@@ -51,8 +48,7 @@ namespace Veng::Renderer
         TextureHandle ImGuiHandle;
         SamplerHandle SamplerHandle;
 
-        // The imported ids re-declared on every Compile, bound to their concrete
-        // views per replay.
+        // Imported ids re-declared on every Compile; bound to concrete views per replay.
         ResourceId SwapId;
         ResourceId SceneId;
         ResourceId ImGuiId;
@@ -74,7 +70,7 @@ namespace Veng::Renderer
 
         m_Impl->Sampler = Sampler::Create(info.Context, {
             .Name = "SwapChain Composite Sampler",
-            // ClampToEdge so a fullscreen blit never samples garbage past the edges.
+            // ClampToEdge prevents sampling garbage past the swapchain extent.
             .MagFilter = Filter::Linear,
             .MinFilter = Filter::Linear,
             .AddressModeU = AddressMode::ClampToEdge,
@@ -107,8 +103,7 @@ namespace Veng::Renderer
             },
         });
 
-        // A sampleable view over the ImGui layer's own rendered output, blended over
-        // the scene by the composite shader.
+        // View over the ImGui layer's rendered output, blended over the scene.
         m_Impl->ImGuiView = ImageView::Create(info.Context, {
             .Name = "SwapChain Composite Layer View",
             .Image = info.ImGui.GetOutputImage(),
@@ -133,8 +128,8 @@ namespace Veng::Renderer
         VE_ASSERT(sceneSource, "SwapChainCompositePass::SetSceneSource requires a non-null view");
         m_Impl->SceneSource = sceneSource;
 
-        // The composite reads m_Impl->SceneHandle.Index live per frame, so
-        // re-registering the slot takes effect on the next replay — no recompile.
+        // SceneHandle.Index is read live per frame, so re-registering takes effect
+        // on the next replay without a recompile.
         BindlessRegistry& bindless = m_Impl->Context.GetBindlessRegistry();
         if (m_Impl->SceneHandle.IsValid())
             bindless.Release(m_Impl->SceneHandle);

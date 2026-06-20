@@ -14,8 +14,15 @@
 
 namespace Veng::Renderer
 {
+    /// @brief Returns the backend-native image handle.
     Image::Native& Image::GetNative() const { return *m_Native; }
 
+    /// @brief Constructs an Image wrapping an externally-owned Vulkan image (e.g. a swapchain image).
+    ///
+    /// The image is marked unmanaged: the destructor does not destroy the underlying VkImage.
+    /// @param context  The owning render context.
+    /// @param info     Image metadata (extent, format, usage, etc.).
+    /// @param native   Backend native struct containing the pre-existing VkImage handle.
     Image::Image(Context& context, const ImageInfo& info, Unique<Native> native) :
         m_Context(context),
         m_Name(info.Name),
@@ -33,6 +40,11 @@ namespace Veng::Renderer
         DebugMarkers::MarkImage(GetVkDevice(m_Context), m_Native->Image, m_Name);
     }
 
+    /// @brief Constructs a managed Image, allocating a new Vulkan image via VMA.
+    ///
+    /// The destructor defers destruction of the VkImage and its allocation until the GPU is done with it.
+    /// @param context  The owning render context.
+    /// @param info     Image configuration.
     Image::Image(Context& context, const ImageInfo& info) :
         m_Context(context),
         m_Name(info.Name),
@@ -95,6 +107,7 @@ namespace Veng::Renderer
         DebugMarkers::MarkImage(GetVkDevice(m_Context), m_Native->Image, m_Name);
     }
 
+    /// @brief Defers destruction of the backing Vulkan image (managed images only).
     Image::~Image()
     {
         if (m_Managed)
@@ -104,6 +117,11 @@ namespace Veng::Renderer
     }
 
 
+    /// @brief Records blit commands to downsample each mip level from the previous one.
+    ///
+    /// Transitions each source mip to TransferSrc, blits to the next, then transitions to ShaderReadOnly.
+    /// The caller must have already transitioned mip 0 to TransferDst.
+    /// @param commandBuffer  Command buffer to record into.
     void Image::GenerateMipmaps(CommandBuffer& commandBuffer)
     {
         u32 mipWidth = m_Extent.x;
@@ -133,6 +151,11 @@ namespace Veng::Renderer
         Backend::TransitionImage(commandBuffer, *this, ImageLayout::ShaderReadOnly, 0, 1, m_MipLevels - 1, 1);
     }
 
+    /// @brief Uploads pixel data synchronously via a staging buffer, blocking until complete.
+    ///
+    /// Allocates a staging buffer, copies data, records a one-time command buffer, submits, and waits.
+    /// Generates mipmaps if the image has more than one mip level.
+    /// @param span  Source pixel data in the image's format.
     void Image::UploadSync(std::span<const u8> span)
     {
         auto stagingBuffer = Buffer::Create(m_Context, {
@@ -163,11 +186,17 @@ namespace Veng::Renderer
         m_Context.SubmitImmediateCommands(*commandBuffer);
     }
 
+    /// @brief Uploads pixel data asynchronously via the transfer queue.
+    ///
+    /// Records the copy on a worker's transfer command buffer and signals the transfer timeline.
+    /// The image is released to the graphics queue after the transfer; the first graphics use
+    /// acquires it and folds the timeline wait into the frame submit.
+    /// @param tasks  The task system; determines the worker context and transfer pool.
+    /// @param data   Source pixel data; a private copy is made so the caller's span need not outlive this call.
+    /// @return A task that completes when the transfer has been submitted (not necessarily finished on the GPU).
     Task<void> Image::Upload(TaskSystem& tasks, const std::span<const u8> data)
     {
-        // Capture an owning Ref via shared_from_this so the image cannot be
-        // destroyed before the worker runs, and a copy of the bytes since the
-        // caller's span may not outlive this call.
+        // Capture owning refs: the image must outlive the worker, and the caller's span may not.
         Ref<Image> self = shared_from_this();
         vector<u8> bytes(data.begin(), data.end());
 
@@ -180,10 +209,8 @@ namespace Veng::Renderer
             const u32 transferFamily = families.TransferFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
             const u32 graphicsFamily = families.GraphicsFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
 
-            // Staging is host-visible+coherent: a plain memcpy on the worker, no
-            // flush. Buffer::Create is concurrency-safe (VMA is internally
-            // synchronized); command-pool allocation is not, so the copy is
-            // recorded onto this worker's own transfer command buffer.
+            // Command-pool allocation is not thread-safe, so the copy records onto
+            // this worker's own transfer command buffer.
             auto staging = Buffer::Create(context, {
                 .Name = self->m_Name + " (Upload)",
                 .Size = bytes.size(),
@@ -196,24 +223,23 @@ namespace Veng::Renderer
             Backend::TransitionImage(cmd, *self, ImageLayout::TransferDst, 0, self->m_Layers, 0, self->m_MipLevels);
             cmd.CopyBufferToImage(staging, self);
 
-            // Release the image to the graphics queue (no-op when the families
-            // collapse) and mark it transfer-produced so the first graphics use
-            // acquires it and folds the timeline wait into the frame submit.
             Backend::ReleaseImageToGraphicsQueue(cmd, *self, transferFamily, graphicsFamily);
 
             const u64 value = context.SubmitTransfer(workerIndex, context.GetTransferTimeline());
 
             Backend::MarkProducedOn(*self, transferFamily, value);
 
-            // The staging buffer's GPU lifetime is the transfer timeline, not a
-            // frame fence: release its raw handle and pin it to the value its copy
-            // signalled. Routing it through Buffer::~Buffer would frame-bin retire
-            // it on the wrong lifetime.
+            // The staging buffer lives until the transfer timeline value it signalled;
+            // routing through Buffer::~Buffer would frame-bin it on the wrong fence.
             const ReleasedBuffer released = ReleaseBuffer(*staging);
             context.GetNative().RetireOnTransfer(released.Buffer, released.Allocation, value);
         });
     }
 
+    /// @brief Downloads image pixels to CPU memory synchronously, restoring the original layout.
+    ///
+    /// Allocates a readback buffer, copies image → buffer, submits and waits, then returns the bytes.
+    /// @return Raw pixel bytes in the image's format, row-major.
     vector<u8> Image::Download()
     {
         auto buffer = Buffer::Create(m_Context, {

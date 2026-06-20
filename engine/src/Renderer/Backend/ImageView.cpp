@@ -9,8 +9,12 @@
 
 namespace Veng::Renderer
 {
+    /// @brief Returns the backend-native image view handle.
     ImageView::Native& ImageView::GetNative() const { return *m_Native; }
 
+    /// @brief Creates a Vulkan image view over the specified image subresource range.
+    /// @param context  The owning render context.
+    /// @param info     View configuration including the source image, view type, and mip/layer range.
     ImageView::ImageView(Context& context, const ImageViewInfo& info) : m_Context(context), m_Name(info.Name), m_Format(info.Image->GetFormat()),
                                                       m_BaseMipLevel(info.BaseMipLevel), m_MipLevels(info.MipLevels),
                                                       m_BaseArrayLayer(info.BaseArrayLayer), m_ArrayLayers(info.ArrayLayers),
@@ -38,13 +42,13 @@ namespace Veng::Renderer
         DebugMarkers::MarkImageView(GetVkDevice(m_Context), m_Native->ImageView, info.Name);
     }
 
+    /// @brief Destroys the image view, either immediately or deferred.
+    ///
+    /// Swapchain image views (unmanaged) must be destroyed before the swapchain and are
+    /// always torn down with the GPU idle (WaitIdle before resize/teardown), so they are
+    /// destroyed immediately. Managed-image views are deferred until the GPU is done.
     ImageView::~ImageView()
     {
-        // A view over an unmanaged image is a presentable (swapchain) image
-        // view: it must be destroyed before its swapchain, and the swapchain is
-        // only ever torn down with the GPU idle (resize/teardown WaitIdle
-        // first), so destroy it immediately rather than deferring. Views over
-        // managed images take the normal deferred-destruction path.
         if (m_Image && !m_Image->IsManaged())
         {
             GetVkDevice(m_Context).destroyImageView(m_Native->ImageView);

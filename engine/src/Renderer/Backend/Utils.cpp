@@ -2,6 +2,7 @@
 
 namespace Veng::Renderer
 {
+    /// @brief Returns true if the format contains a depth component.
     bool Utils::IsDepthFormat(const vk::Format format)
     {
         switch (format)
@@ -19,6 +20,7 @@ namespace Veng::Renderer
         }
     }
 
+    /// @brief Returns true if the format contains a stencil component.
     bool Utils::IsStencilFormat(const vk::Format format)
     {
         switch (format)
@@ -33,6 +35,7 @@ namespace Veng::Renderer
         }
     }
 
+    /// @brief Returns the optimal Vulkan image layout for using a format as a render pass attachment.
     vk::ImageLayout Utils::GetFormatAttachmentImageLayout(const vk::Format format)
     {
         if (IsStencilFormat(format))
@@ -49,6 +52,7 @@ namespace Veng::Renderer
         }
     }
 
+    /// @brief Returns the image aspect flags appropriate for the given format.
     vk::ImageAspectFlags Utils::GetAspectFlags(vk::Format format)
     {
         if (IsStencilFormat(format))
@@ -65,6 +69,7 @@ namespace Veng::Renderer
         }
     }
 
+    /// @brief Returns the access flags corresponding to the given image layout for barrier construction.
     vk::AccessFlags Utils::GetAccessMask(const vk::ImageLayout imageLayout)
     {
         switch (imageLayout)
@@ -98,6 +103,7 @@ namespace Veng::Renderer
         }
     }
 
+    /// @brief Returns the destination pipeline stage mask for a transition into the given image layout.
     vk::PipelineStageFlags Utils::GetDestinationStageMask(const vk::ImageLayout imageLayout)
     {
         switch (imageLayout)

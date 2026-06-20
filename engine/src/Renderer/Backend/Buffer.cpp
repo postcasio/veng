@@ -58,8 +58,7 @@ namespace Veng::Renderer
 
     Buffer::~Buffer()
     {
-        // A released buffer (ReleaseBuffer) has nulled handles and is owned
-        // elsewhere — its destructor must not retire anything.
+        // A released buffer (via ReleaseBuffer) has a null handle — skip retire.
         if (!m_Native->Buffer)
         {
             return;
@@ -81,12 +80,9 @@ namespace Veng::Renderer
 
     Task<void> Buffer::Upload(TaskSystem& tasks, const std::span<const u8> data, const u64 offset)
     {
-        // A Buffer is HOST_VISIBLE | HOST_COHERENT, so an upload is a plain memcpy
-        // with no staging, no GPU command, and no device sync — there is nothing
-        // to gate on a timeline. The worker just runs the blocking memcpy off the
-        // main thread. Capture an owning Ref (shared_from_this) so the buffer
-        // cannot be destroyed before the job runs, and a copy of the bytes since
-        // the caller's span may not outlive this call.
+        // HOST_VISIBLE | HOST_COHERENT: upload is a plain memcpy — no staging,
+        // no GPU command, no timeline gate. Capture an owning Ref so the buffer
+        // survives until the job runs; copy the bytes since the span may not.
         Ref<Buffer> self = shared_from_this();
         vector<u8> bytes(data.begin(), data.end());
 

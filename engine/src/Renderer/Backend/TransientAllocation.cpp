@@ -9,13 +9,20 @@ namespace Veng::Renderer::Backend
 {
     namespace
     {
-        // Two live ranges overlap iff each starts no later than the other ends.
+        /// @brief Returns true iff the two live ranges share at least one pass index.
         [[nodiscard]] bool Overlaps(const TransientLifetime& a, const TransientLifetime& b)
         {
             return a.FirstUse <= b.LastUse && b.FirstUse <= a.LastUse;
         }
     }
 
+    /// @brief Assigns each transient resource to a physical backing slot, aliasing non-overlapping lifetimes.
+    ///
+    /// A greedy first-fit algorithm sorts by FirstUse and reuses the earliest free slot with a matching
+    /// AllocationKey. Slots with different keys are never aliased (they require distinct backing storage).
+    /// @param lifetimes  Per-transient first and last pass indices.
+    /// @param keys       Per-transient allocation keys; must be parallel to @p lifetimes.
+    /// @return Per-transient slot index into the physical slot array (size = number of unique slots).
     vector<u32> AssignTransientSlots(const vector<TransientLifetime>& lifetimes,
                                      const vector<AllocationKey>& keys)
     {

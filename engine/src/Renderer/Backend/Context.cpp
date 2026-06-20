@@ -308,20 +308,17 @@ namespace Veng::Renderer
 
     void Context::DisposeResources()
     {
-        // Drop any bindless acquires that never reached a frame (a context torn
-        // down without rendering): their views retire into the current bin, which
-        // the drain below reclaims while the device and allocator are still alive.
+        // Pending bindless acquires that never reached a frame retire into the
+        // current bin; the drain below reclaims them while the device is alive.
         m_PendingBindlessAcquires.clear();
 
-        // Application::Run has already waited the GPU idle. Anything the
-        // consumer released in OnDispose has retired into the bins — drain them
-        // all before the frames (and their command buffers) go away.
+        // GPU is idle (Application::Run already waited). Drain all retire bins
+        // before the sync frames and their command buffers go away.
         m_Native->DrainAllRetireBins();
 
-        // Upload scratch pinned to the transfer timeline never sees an
-        // AcquireNextFrame after the last upload (the headless smoke renders one
-        // frame then exits). The GPU is idle, so every value has been reached:
-        // host-wait the timeline's last signalled value, then reclaim all entries.
+        // The transfer timeline may have upload scratch that was never reclaimed
+        // by AcquireNextFrame. The GPU is idle, so every value has been reached —
+        // wait the last signalled value and drain the list.
         m_Native->TransferTimeline->Wait(m_Native->TransferTimelineValue);
         m_Native->DrainTransferRetireList();
 
@@ -332,16 +329,12 @@ namespace Veng::Renderer
     {
         Log::Info("Disposing rendering context...");
 
-        // Drop the registry's set/layout and registered-resource Refs first —
-        // their destructors retire handles into the current bins, which the
-        // drain below then cleans up while the device is still alive.
+        // Drop bindless first — its destructors retire handles into the bins,
+        // which the drain below cleans up while the device is still alive.
         m_Native->Bindless.reset();
 
-        // Drain any handles still in the bins while the device, allocator and
-        // descriptor pool are alive. Then host-wait the transfer timeline and
-        // reclaim any upload scratch still pinned to it — both before flipping
-        // Disposed, so a late retire/release is caught rather than leaked. After
-        // this point anything dropped is a leak/bug.
+        // Drain bins and transfer scratch before flipping Disposed, so a late
+        // retire is caught rather than leaked. After this point, any drop is a bug.
         m_Native->DrainAllRetireBins();
         m_Native->TransferTimeline->Wait(m_Native->TransferTimelineValue);
         m_Native->DrainTransferRetireList();
@@ -410,11 +403,9 @@ namespace Veng::Renderer
 
         m_Native->TransferPools.resize(workerCount);
 
-        // Create each pool on the worker that owns it. A VkCommandPool may only be
-        // accessed by one thread at a time; creating worker i's pool on worker i
-        // keeps that invariant from the first touch and matches the thread that
-        // records uploads into it. Pool creation is independent per worker, so the
-        // ForEachWorker bodies run concurrently with no shared state.
+        // Create each pool on the worker that owns it — a VkCommandPool may only be
+        // accessed by one thread at a time, and the creating thread is the one that
+        // later records uploads. Bodies run concurrently with no shared state.
         taskSystem.ForEachWorker([this, transferFamily](u32 workerIndex)
         {
             m_Native->TransferPools[workerIndex].Pool = m_Native->Device.createCommandPool(vk::CommandPoolCreateInfo{
@@ -423,11 +414,8 @@ namespace Veng::Renderer
             }).value;
         });
 
-        // Allocate each worker's transfer command buffer from its own pool, serially
-        // on this thread. AllocationPoolOverride is shared mutable state, so it must
-        // not be written from the concurrent ForEachWorker bodies above. Each buffer
-        // comes from a distinct pool no worker is touching yet, so the worker that
-        // later records into it remains the only thread accessing that pool.
+        // Allocate command buffers serially: AllocationPoolOverride is shared
+        // mutable state and must not be written from concurrent ForEachWorker bodies.
         for (u32 workerIndex = 0; workerIndex < workerCount; ++workerIndex)
         {
             auto& transferPool = m_Native->TransferPools[workerIndex];
@@ -487,10 +475,9 @@ namespace Veng::Renderer
         const auto vkCommandBuffer = pool.CommandBuffer->GetNative().CommandBuffer;
         const vk::Semaphore vkTimeline = timeline.GetNative().Semaphore;
 
-        // The value is allocated, the signal-info built, and the submit issued all
-        // under one lock: a timeline must signal strictly increasing values, so a
-        // worker must not compute its value and then race another worker for the
-        // queue (which could submit the lower value second).
+        // Allocate the value, build the signal-info, and submit all under one lock:
+        // a timeline must signal strictly increasing values, so value allocation and
+        // submit must be atomic — two workers racing could submit a lower value second.
         std::lock_guard lock(m_Native->SubmitMutex);
 
         const u64 value = ++m_Native->TransferTimelineValue;
@@ -555,11 +542,9 @@ namespace Veng::Renderer
 
         commandBuffer->Begin();
 
-        // Acquire any bindless-sampled resources that went resident since the
-        // last frame onto the graphics queue before any pass records — these are
-        // invisible to the RenderGraph (sampled through set 0), so the graph
-        // can't derive the transition itself. The acquire is idempotent and only
-        // ever does work the first frame after a resource becomes resident.
+        // Transition any resources that went resident since last frame into Sample
+        // layout before passes record. The RenderGraph cannot derive this transition
+        // — bindless resources are invisible to it (sampled through set 0).
         for (const Ref<ImageView>& view : m_PendingBindlessAcquires)
         {
             commandBuffer->PrepareForAccess(view, AccessKind::Sample);
@@ -789,9 +774,8 @@ namespace Veng::Renderer
 
         PhysicalDevice.getFeatures2(&features2);
 
-        // Timeline semaphores are a hard requirement for the loader↔render sync
-        // channel — not a fallback. Query support explicitly and fatal-assert if
-        // the device lacks it before enabling the feature below.
+        // Timeline semaphores are required for the async-upload sync channel.
+        // Fatal-assert if the device lacks support before enabling the feature.
         vk::PhysicalDeviceVulkan12Features supportedVulkan12Features{};
         vk::PhysicalDeviceFeatures2 supportedFeatures2{ .pNext = &supportedVulkan12Features };
         PhysicalDevice.getFeatures2(&supportedFeatures2);
@@ -831,13 +815,11 @@ namespace Veng::Renderer
     {
         m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight].GetInFlightFence().Wait();
 
-        // The fence is now signaled, so the GPU has finished the work that was
-        // recorded the last time this frame index was current — anything
-        // retired then is safe to destroy.
+        // Fence signalled: GPU finished the work from the last use of this frame
+        // index — everything retired then is safe to destroy now.
         m_Native->DrainRetireBin(m_Native->RetireBins[m_Native->CurrentFrameInFlight]);
 
-        // Reclaim any upload scratch whose transfer-timeline value the GPU has
-        // now reached — keyed on the transfer timeline, not this frame's fence.
+        // Reclaim upload scratch whose transfer-timeline value the GPU has now reached.
         m_Native->DrainTransferRetireList();
 
         m_Native->Bindless->OnFrameAcquired(m_Native->CurrentFrameInFlight);
@@ -944,9 +926,9 @@ namespace Veng::Renderer
     {
         const auto commandBuffer = frame.GetCommandBuffer()->GetNative().CommandBuffer;
 
-        // Drain the accumulated transfer-timeline waits under SubmitMutex; the
-        // submit itself re-takes the lock in LockedSubmit. Cleared each frame so
-        // a wait satisfied this frame never re-blocks the next.
+        // Drain accumulated transfer-timeline waits under SubmitMutex before
+        // LockedSubmit re-takes it. Cleared each frame — a satisfied wait must
+        // not re-block the next frame.
         vector<vk::Semaphore> waitSemaphores;
         vector<vk::PipelineStageFlags> waitStages;
         vector<u64> waitValues;
@@ -980,9 +962,7 @@ namespace Veng::Renderer
                 return;
             }
 
-            // Binary present/acquire semaphores need no timeline value, so a value
-            // is supplied for every wait semaphore (ignored for binary ones); here
-            // every wait is a timeline wait.
+            // Headless has no binary semaphores; every wait here is a timeline wait.
             const vk::TimelineSemaphoreSubmitInfo timelineInfo{
                 .waitSemaphoreValueCount = static_cast<u32>(waitValues.size()),
                 .pWaitSemaphoreValues = waitValues.data(),
@@ -1005,12 +985,10 @@ namespace Veng::Renderer
         const auto renderFinishedSemaphore = frame.GetRenderFinishedSemaphore().GetNative().Semaphore;
         const auto imageAvailableSemaphore = frame.GetImageAvailableSemaphore().GetNative().Semaphore;
 
-        // The image-available binary semaphore leads the wait arrays; the timeline
-        // waits ride alongside it, never replacing it. Its wait stage must match
-        // the srcStage each swapchain image's first transition is seeded with
-        // (SwapChain::AcquireWaitStage). The binary semaphore's slot in the
-        // timeline-values array is ignored by the driver but must be present so the
-        // value array length matches the semaphore array.
+        // The image-available binary semaphore leads the arrays; timeline waits
+        // follow. Its stage must match SwapChain::AcquireWaitStage. The binary
+        // semaphore's slot in the timeline-values array is ignored by the driver
+        // but must be present to keep the array lengths equal.
         waitSemaphores.insert(waitSemaphores.begin(), imageAvailableSemaphore);
         waitStages.insert(waitStages.begin(), SwapChain::AcquireWaitStage);
         waitValues.insert(waitValues.begin(), 0);

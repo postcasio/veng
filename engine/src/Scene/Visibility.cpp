@@ -9,9 +9,8 @@ namespace Veng
 {
     void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds)
     {
-        // One amortized pass for every Transform-bearing entity's world matrix,
-        // in the Transform pool's dense order — the same order DensePtr walks
-        // below, so a Transform entity's world matrix is worldMatrices[i].
+        // ComputeWorldMatrices uses Transform pool dense order, matching DensePtr below,
+        // so worldMatrices[i] is the world matrix for dense[i].
         vector<mat4> worldMatrices;
         ComputeWorldMatrices(scene, worldMatrices);
 

@@ -44,8 +44,7 @@ namespace Veng
             }
         }
 
-        // Compose root → entity: world = parent.world * local. chain is
-        // entity-first, so walk it in reverse.
+        // chain is entity-first (collected above), so walk root → entity in reverse.
         mat4 world(1.0f);
         for (usize i = chain.size(); i-- > 0;)
         {
@@ -73,9 +72,8 @@ namespace Veng
 
     AABB SceneBounds(const Scene& scene)
     {
-        // One amortized pass for every Transform-bearing entity's world matrix,
-        // in the Transform pool's dense order — the same order DensePtr walks
-        // below, so a Transform entity's world matrix is out[i].
+        // ComputeWorldMatrices uses Transform pool dense order, matching DensePtr below,
+        // so worldMatrices[i] is the world matrix for dense[i].
         vector<mat4> worldMatrices;
         ComputeWorldMatrices(scene, worldMatrices);
 

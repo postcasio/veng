@@ -57,10 +57,9 @@ namespace Veng::Renderer
             });
         }
 
-        // Static by default: a binding written at setup and then bound needs
-        // none of UpdateAfterBind/partiallyBound — those are descriptor-
-        // indexing flags with engine-owned prerequisites (device feature +
-        // pool budget, see GetDescriptorTypeInfo). Bindless opts in.
+        // Non-bindless bindings need none of UpdateAfterBind/partiallyBound;
+        // those require descriptor-indexing device features (see GetDescriptorTypeInfo)
+        // and are only set for bindings that explicitly opt in via Bindless.
         vector<vk::DescriptorBindingFlags> bindingFlags;
         bindingFlags.reserve(m_Bindings.size());
 
