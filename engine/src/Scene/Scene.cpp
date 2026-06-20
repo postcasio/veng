@@ -1,11 +1,22 @@
 #include <Veng/Scene/Scene.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Scene/Components.h>
 
 #include "ComponentPool.h"
 
 namespace Veng
 {
+    bool Scene::IsSpatialId(TypeId id)
+    {
+        // The three pools the broadphase reads — they decide an entity's draw
+        // candidacy and where its world bound sits. Compared against the
+        // compile-time TypeId off each type's trait, not a registry lookup, so the
+        // check in the hot mutation/access paths is a plain integer comparison.
+        return id == TypeIdOf<Transform>() || id == TypeIdOf<Parent>()
+               || id == TypeIdOf<MeshRenderer>();
+    }
+
     Scene::Scene(TypeRegistry& registry) :
         m_Registry(&registry)
     {
@@ -44,17 +55,71 @@ namespace Veng
     {
         VE_ASSERT(IsAlive(entity), "DestroyEntity on a dead or stale entity");
 
-        for (auto& [id, pool] : m_Pools)
+        // Destroying a parent destroys its whole subtree. Parent is an up-link
+        // only (no child index), so collect the subtree first by a breadth-first
+        // closure over the up-links, then tear down — never iterating-and-
+        // destroying a pool (a structural change mid-iteration is illegal).
+        const TypeId parentId = TypeIdOf<Parent>();
+
+        vector<Entity> collected;
+        collected.push_back(entity);
+        for (usize scanned = 0; scanned < collected.size(); ++scanned)
         {
-            pool->Remove(entity);
+            const Entity ancestor = collected[scanned];
+            if (const ComponentPool* parents = TryPoolFor(parentId))
+            {
+                const usize count = parents->Count();
+                const Entity* dense = parents->DenseData();
+                for (usize i = 0; i < count; ++i)
+                {
+                    const Entity child = dense[i];
+                    const Parent* link = static_cast<const Parent*>(parents->TryGet(child));
+                    if (link == nullptr || link->Value != ancestor)
+                    {
+                        continue;
+                    }
+
+                    bool alreadyCollected = false;
+                    for (const Entity seen : collected)
+                    {
+                        if (seen == child)
+                        {
+                            alreadyCollected = true;
+                            break;
+                        }
+                    }
+                    if (!alreadyCollected)
+                    {
+                        collected.push_back(child);
+                    }
+                }
+            }
         }
 
-        EntitySlot& slot = m_Slots[entity.Index];
-        slot.Alive = false;
-        // Bump so any surviving handle to this slot is detectably stale.
-        ++slot.Generation;
-        --m_LiveCount;
-        m_FreeIndices.push_back(entity.Index);
+        bool spatialTouched = false;
+        for (const Entity dead : collected)
+        {
+            for (auto& [id, pool] : m_Pools)
+            {
+                if (pool->Contains(dead))
+                {
+                    spatialTouched = spatialTouched || IsSpatialId(id);
+                    pool->Remove(dead);
+                }
+            }
+
+            EntitySlot& slot = m_Slots[dead.Index];
+            slot.Alive = false;
+            // Bump so any surviving handle to this slot is detectably stale.
+            ++slot.Generation;
+            --m_LiveCount;
+            m_FreeIndices.push_back(dead.Index);
+        }
+
+        if (spatialTouched)
+        {
+            BumpSpatial();
+        }
     }
 
     bool Scene::IsAlive(Entity entity) const
@@ -69,6 +134,10 @@ namespace Veng
 
     void* Scene::AddRaw(Entity entity, TypeId id)
     {
+        if (IsSpatialId(id))
+        {
+            BumpSpatial();
+        }
         return PoolFor(id).Add(entity);
     }
 
@@ -76,12 +145,24 @@ namespace Veng
     {
         if (ComponentPool* pool = TryPoolFor(id))
         {
+            if (IsSpatialId(id))
+            {
+                BumpSpatial();
+            }
             pool->Remove(entity);
         }
     }
 
     void* Scene::TryGetRaw(Entity entity, TypeId id)
     {
+        // A non-const access is a potential in-place edit of a spatial pool the
+        // ECS never sees the write of, so it bumps the version conservatively
+        // (over-bump, never under). The const overload below is the read-only
+        // path that does not bump.
+        if (IsSpatialId(id))
+        {
+            BumpSpatial();
+        }
         if (ComponentPool* pool = TryPoolFor(id))
         {
             return pool->TryGet(entity);
@@ -112,6 +193,13 @@ namespace Veng
         {
             if (void* component = pool->TryGet(entity))
             {
+                // The erased pointer is a mutable edit funnel (the inspector's),
+                // so visiting a spatial pool bumps the version like a non-const
+                // access.
+                if (IsSpatialId(id))
+                {
+                    BumpSpatial();
+                }
                 fn(id, component);
             }
         }

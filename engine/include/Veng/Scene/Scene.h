@@ -61,6 +61,15 @@ namespace Veng
 
         [[nodiscard]] usize EntityCount() const { return m_LiveCount; }
 
+        // Monotonic counter the Scene bumps whenever a spatial pool (Transform,
+        // Parent, or MeshRenderer) is structurally changed or accessed non-const (a
+        // potential in-place edit). A broadphase compares it against the version it
+        // last built against: equal means nothing spatial moved and the tree stands;
+        // changed means rebuild. A non-const access bumps it even when it was a read,
+        // so the bump never misses a write; read-only consumers use the const
+        // View/Each path to avoid bumping.
+        [[nodiscard]] u64 GetSpatialVersion() const { return m_SpatialVersion; }
+
         // The registry this scene was created with — the one its components'
         // descriptors are resolved against. Prefab spawning walks descriptors
         // through it.
@@ -179,6 +188,56 @@ namespace Veng
             }
         }
 
+        // Read-only Each: visits every entity holding all of Ts..., calling
+        // fn(entity, const Ts&...). It routes through the const TryGetRaw overload
+        // only, so a const iteration never bumps the spatial version — the path a
+        // read-only consumer (the broadphase, a read system) uses to look without
+        // marking the scene dirty. Same intersection and in-iteration
+        // structural-change constraints as the non-const Each.
+        template <class... Ts, class Fn>
+        void Each(Fn&& fn) const
+        {
+            static_assert(sizeof...(Ts) > 0, "Each requires at least one component type");
+
+            const std::array<TypeId, sizeof...(Ts)> ids = {m_Registry->IdOf<Ts>()...};
+
+            TypeId driver = ids[0];
+            usize best = PoolCount(ids[0]);
+            for (usize i = 1; i < ids.size(); ++i)
+            {
+                const usize count = PoolCount(ids[i]);
+                if (count < best)
+                {
+                    best = count;
+                    driver = ids[i];
+                }
+            }
+
+            const Entity* dense = DensePtr(driver);
+            for (usize i = 0; i < best; ++i)
+            {
+                const Entity entity = dense[i];
+
+                std::array<const void*, sizeof...(Ts)> slots{};
+                bool complete = true;
+                for (usize t = 0; t < ids.size(); ++t)
+                {
+                    slots[t] = TryGetRaw(entity, ids[t]);
+                    if (slots[t] == nullptr)
+                    {
+                        complete = false;
+                        break;
+                    }
+                }
+                if (!complete)
+                {
+                    continue;
+                }
+
+                InvokeEachConst<Ts...>(fn, entity, slots, std::index_sequence_for<Ts...>{});
+            }
+        }
+
         // Calls fn(typeId, componentPtr) for every component the entity holds,
         // across all pools. Type-erased: the caller resolves each TypeId through
         // the registry to walk the component's fields without knowing its C++
@@ -196,6 +255,15 @@ namespace Veng
             return SceneView<Ts...>(*this);
         }
 
+        // Read-only View: yields (Entity, const Ts&...) and resolves through the
+        // const TryGetRaw only, so iterating it never bumps the spatial version.
+        // The read-only escape hatch a consumer that only looks at the scene uses.
+        template <class... Ts>
+        [[nodiscard]] SceneView<const Ts...> View() const
+        {
+            return SceneView<const Ts...>(*this);
+        }
+
     private:
         explicit Scene(TypeRegistry& registry);
 
@@ -205,6 +273,14 @@ namespace Veng
                                std::index_sequence<Is...>)
         {
             fn(entity, *static_cast<Ts*>(slots[Is])...);
+        }
+
+        template <class... Ts, class Fn, usize... Is>
+        static void InvokeEachConst(Fn&& fn, Entity entity,
+                                    const std::array<const void*, sizeof...(Ts)>& slots,
+                                    std::index_sequence<Is...>)
+        {
+            fn(entity, *static_cast<const Ts*>(slots[Is])...);
         }
 
         // Dense-iteration access for the query templates, keyed by TypeId so the
@@ -227,11 +303,17 @@ namespace Veng
         ComponentPool* TryPoolFor(TypeId id);
         const ComponentPool* TryPoolFor(TypeId id) const;
 
+        // Advances the spatial version. Called from the spatial-pool mutation and
+        // non-const-access sites; true iff the given id names a spatial pool.
+        [[nodiscard]] static bool IsSpatialId(TypeId id);
+        void BumpSpatial() { ++m_SpatialVersion; }
+
         TypeRegistry* m_Registry;
 
         vector<EntitySlot> m_Slots;
         vector<u32> m_FreeIndices;
         usize m_LiveCount = 0;
+        u64 m_SpatialVersion = 0;
 
         // Keyed by TypeId; a Unique pool created lazily on first Add of a type.
         unordered_map<TypeId, Unique<ComponentPool>> m_Pools;
@@ -258,15 +340,25 @@ namespace Veng
     // (Entity, Ts&...) — so a structured binding `auto [e, a, b]` works and
     // `break` stops early. The same in-iteration structural-change constraint as
     // Each applies.
+    //
+    // Ts may be const-qualified: Scene::View<Ts...>() const yields SceneView<const
+    // Ts...>, which resolves each component through the const TryGetRaw and
+    // dereferences to const Ts& — so a const iteration never bumps the spatial
+    // version. The TypeId of each Ts is read off its unqualified type.
     template <class... Ts>
     class SceneView
     {
         static_assert(sizeof...(Ts) > 0, "View requires at least one component type");
 
+        // const Scene when any Ts is const (the read-only path binds the const
+        // TryGetRaw); a mutable Scene otherwise.
+        static constexpr bool AnyConst = (std::is_const_v<Ts> || ...);
+        using SceneRef = std::conditional_t<AnyConst, const Scene, Scene>;
+
     public:
-        explicit SceneView(Scene& scene) :
+        explicit SceneView(SceneRef& scene) :
             m_Scene(&scene),
-            m_Ids{scene.m_Registry->IdOf<Ts>()...}
+            m_Ids{scene.m_Registry->template IdOf<std::remove_const_t<Ts>>()...}
         {
             // Drive from the smallest pool; a missing pool (count 0) yields an
             // empty range.
@@ -350,7 +442,7 @@ namespace Veng
             return true;
         }
 
-        Scene* m_Scene;
+        SceneRef* m_Scene;
         std::array<TypeId, sizeof...(Ts)> m_Ids;
         TypeId m_Driver = InvalidTypeId;
         usize m_Count = 0;
