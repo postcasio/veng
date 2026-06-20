@@ -48,7 +48,8 @@ namespace
 TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
 {
     const path packJson = FixtureDir / "material_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material.vengpack";
 
     const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
     REQUIRE(reader.has_value());
@@ -71,9 +72,7 @@ TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
     CHECK(header.BlockBytes == 32);
 
     // Blob: header + 3 fields + 32-byte param block.
-    const usize expectedSize = sizeof(CookedMaterialHeader)
-        + 3 * sizeof(CookedMaterialField)
-        + 32;
+    const usize expectedSize = sizeof(CookedMaterialHeader) + 3 * sizeof(CookedMaterialField) + 32;
     REQUIRE(entry->Blob.size() == expectedSize);
 
     // --- Field table: only the 3 declared fields, pads omitted ---
@@ -104,9 +103,8 @@ TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
 
     // --- Param block: handle slots zeroed (the loader patches them) ---
 
-    const u8* block = entry->Blob.data()
-        + sizeof(CookedMaterialHeader)
-        + 3 * sizeof(CookedMaterialField);
+    const u8* block =
+        entry->Blob.data() + sizeof(CookedMaterialHeader) + 3 * sizeof(CookedMaterialField);
 
     for (usize i = 0; i < 16; ++i)
         CHECK(block[i] == 0u);
@@ -125,7 +123,7 @@ TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
 
     CHECK(reader->Find(AssetId{0x1005}).has_value()); // vertex shader
     CHECK(reader->Find(AssetId{0x1006}).has_value()); // fragment shader
-    CHECK(reader->Find(AssetId{0x7D1}).has_value()); // texture
+    CHECK(reader->Find(AssetId{0x7D1}).has_value());  // texture
 
     std::filesystem::remove(outArchive);
 }
@@ -133,7 +131,8 @@ TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
 TEST_CASE("Cooker: material cook fails when a params key has no matching MaterialParams field")
 {
     const path packJson = FixtureDir / "material_bad_param.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_bad_param.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_bad_param.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
@@ -151,7 +150,8 @@ TEST_CASE("Cooker: material cook fails when a params key has no matching Materia
 TEST_CASE("Cooker: material cook fails when a textures key has no matching MaterialParams field")
 {
     const path packJson = FixtureDir / "material_bad_texture.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_bad_texture.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_bad_texture.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
@@ -171,7 +171,8 @@ TEST_CASE("Cooker: an authored param beyond Factors cooks into the authored bloc
     // float4 Factors; float Roughness; } — std430: handle uints at 0..12,
     // Factors at 16, Roughness at 32.
     const path packJson = FixtureDir / "material_ext_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_ext.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_ext.vengpack";
 
     const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
     REQUIRE(reader.has_value());
@@ -194,8 +195,10 @@ TEST_CASE("Cooker: an authored param beyond Factors cooks into the authored bloc
     const CookedMaterialField* factors = nullptr;
     for (u32 i = 0; i < header.FieldCount; ++i)
     {
-        if (std::string_view(fieldTable[i].Name) == "Roughness") roughness = &fieldTable[i];
-        if (std::string_view(fieldTable[i].Name) == "Factors")   factors   = &fieldTable[i];
+        if (std::string_view(fieldTable[i].Name) == "Roughness")
+            roughness = &fieldTable[i];
+        if (std::string_view(fieldTable[i].Name) == "Factors")
+            factors = &fieldTable[i];
     }
     REQUIRE(roughness != nullptr);
     REQUIRE(factors != nullptr);
@@ -204,9 +207,8 @@ TEST_CASE("Cooker: an authored param beyond Factors cooks into the authored bloc
     CHECK(factors->Offset == 16u);
     CHECK(roughness->Offset == 32u);
 
-    const u8* block = entry->Blob.data()
-        + sizeof(CookedMaterialHeader)
-        + header.FieldCount * sizeof(CookedMaterialField);
+    const u8* block = entry->Blob.data() + sizeof(CookedMaterialHeader) +
+                      header.FieldCount * sizeof(CookedMaterialField);
 
     f32 roughnessVal = 0.0f;
     std::memcpy(&roughnessVal, block + roughness->Offset, sizeof(f32));
@@ -218,7 +220,8 @@ TEST_CASE("Cooker: an authored param beyond Factors cooks into the authored bloc
 TEST_CASE("Cooker: a handles-only material cooks with a zero-size authored block")
 {
     const path packJson = FixtureDir / "material_handles_only_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_handles_only.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_handles_only.vengpack";
 
     const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
     REQUIRE(reader.has_value());
@@ -229,9 +232,9 @@ TEST_CASE("Cooker: a handles-only material cooks with a zero-size authored block
     CookedMaterialHeader header{};
     std::memcpy(&header, entry->Blob.data(), sizeof(header));
 
-    CHECK(header.FieldCount == 2);   // Albedo + AlbedoSampler, no params
+    CHECK(header.FieldCount == 2); // Albedo + AlbedoSampler, no params
     CHECK(header.Version == CookedMaterialVersion);
-    CHECK(header.BlockBytes == 16);  // four handle uints
+    CHECK(header.BlockBytes == 16); // four handle uints
 
     const CookedMaterialField* fieldTable = reinterpret_cast<const CookedMaterialField*>(
         entry->Blob.data() + sizeof(CookedMaterialHeader));
@@ -247,7 +250,8 @@ TEST_CASE("Cooker: a params-only material cooks with no handle fields")
     // may declare zero handle fields. params_only.frag has a MaterialParams of
     // only authored params (no Albedo/AlbedoSampler uints).
     const path packJson = FixtureDir / "material_params_only_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_params_only.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_params_only.vengpack";
 
     const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
     REQUIRE(reader.has_value());
@@ -259,7 +263,7 @@ TEST_CASE("Cooker: a params-only material cooks with no handle fields")
     std::memcpy(&header, entry->Blob.data(), sizeof(header));
 
     CHECK(header.Version == CookedMaterialVersion);
-    CHECK(header.FieldCount == 2); // Factors + Strength, no handles
+    CHECK(header.FieldCount == 2);  // Factors + Strength, no handles
     CHECK(header.BlockBytes >= 20); // Factors (16) + Strength (4)
 
     const CookedMaterialField* fieldTable = reinterpret_cast<const CookedMaterialField*>(
@@ -275,7 +279,8 @@ TEST_CASE("Cooker: a multi-handle material cooks with two handle fields")
     // The handles-only material declares two handle fields (Albedo +
     // AlbedoSampler) — proving a handle count > 1 is shader-driven.
     const path packJson = FixtureDir / "material_handles_only_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_multi_handle.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_multi_handle.vengpack";
 
     const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
     REQUIRE(reader.has_value());
@@ -293,7 +298,8 @@ TEST_CASE("Cooker: a multi-handle material cooks with two handle fields")
         entry->Blob.data() + sizeof(CookedMaterialHeader));
     u32 handleFields = 0;
     for (u32 i = 0; i < header.FieldCount; ++i)
-        if (fieldTable[i].Kind != 0u) ++handleFields;
+        if (fieldTable[i].Kind != 0u)
+            ++handleFields;
     CHECK(handleFields == 2u);
 
     std::filesystem::remove(outArchive);
@@ -305,7 +311,8 @@ TEST_CASE("Cooker: every cooked material carries the current format version")
     // Version != CookedMaterialVersion. A freshly cooked blob must stamp the
     // current version so a stale one is distinguishable.
     const path packJson = FixtureDir / "material_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_version.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_version.vengpack";
 
     const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
     REQUIRE(reader.has_value());
@@ -325,7 +332,8 @@ TEST_CASE("Cooker: a material with no domain key cooks as Surface (domain 0)")
     // The default domain is surface, so an existing material with no "domain" key
     // cooks with Domain == 0.
     const path packJson = FixtureDir / "material_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_domain_default.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_domain_default.vengpack";
 
     const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
     REQUIRE(reader.has_value());
@@ -346,7 +354,8 @@ TEST_CASE("Cooker: a postprocess material cooks with domain 1")
     // A postprocess material declares "domain": "postprocess" and its fragment
     // shader writes a single float4 SV_Target0 — the postprocess output contract.
     const path packJson = FixtureDir / "material_postprocess_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_postprocess.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_postprocess.vengpack";
 
     const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
     REQUIRE(reader.has_value());
@@ -357,7 +366,7 @@ TEST_CASE("Cooker: a postprocess material cooks with domain 1")
     CookedMaterialHeader header{};
     std::memcpy(&header, entry->Blob.data(), sizeof(header));
     CHECK(header.Version == CookedMaterialVersion);
-    CHECK(header.Domain == 1u); // PostProcess
+    CHECK(header.Domain == 1u);    // PostProcess
     CHECK(header.FieldCount == 3); // Hdr + HdrSampler + Exposure
 
     std::filesystem::remove(outArchive);
@@ -366,7 +375,8 @@ TEST_CASE("Cooker: a postprocess material cooks with domain 1")
 TEST_CASE("Cooker: an unknown domain is a located cook error")
 {
     const path packJson = FixtureDir / "material_bad_domain_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_bad_domain.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_bad_domain.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
@@ -380,12 +390,14 @@ TEST_CASE("Cooker: an unknown domain is a located cook error")
     std::filesystem::remove(outArchive);
 }
 
-TEST_CASE("Cooker: a surface material whose fragment shader writes one target is a located cook error")
+TEST_CASE(
+    "Cooker: a surface material whose fragment shader writes one target is a located cook error")
 {
     // A surface material must write the g-buffer MRT (SV_Target0 + SV_Target1).
     // Pointing it at a shader that writes a single target is a contract mismatch.
     const path packJson = FixtureDir / "material_surface_wrong_output_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_surface_wrong.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_surface_wrong.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
@@ -398,12 +410,14 @@ TEST_CASE("Cooker: a surface material whose fragment shader writes one target is
     std::filesystem::remove(outArchive);
 }
 
-TEST_CASE("Cooker: a postprocess material whose fragment shader writes the MRT is a located cook error")
+TEST_CASE(
+    "Cooker: a postprocess material whose fragment shader writes the MRT is a located cook error")
 {
     // A postprocess material must write a single float4 SV_Target0. Pointing it at
     // a g-buffer (MRT) fragment shader is a contract mismatch.
     const path packJson = FixtureDir / "material_postprocess_wrong_output_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_postprocess_wrong.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_postprocess_wrong.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
@@ -419,7 +433,8 @@ TEST_CASE("Cooker: a postprocess material whose fragment shader writes the MRT i
 TEST_CASE("Cooker: an authored block exceeding the param stride is a located cook error")
 {
     const path packJson = FixtureDir / "material_oversize_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_oversize.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_oversize.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);

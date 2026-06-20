@@ -35,11 +35,16 @@ namespace Veng::Renderer
     {
         switch (format)
         {
-        case Format::R32Sfloat: return 1;
-        case Format::RG32Sfloat: return 2;
-        case Format::RGB32Sfloat: return 3;
-        case Format::RGBA32Sfloat: return 4;
-        default: VE_ASSERT(false, "Unknown vertex element Format");
+        case Format::R32Sfloat:
+            return 1;
+        case Format::RG32Sfloat:
+            return 2;
+        case Format::RGB32Sfloat:
+            return 3;
+        case Format::RGBA32Sfloat:
+            return 4;
+        default:
+            VE_ASSERT(false, "Unknown vertex element Format");
         }
     }
 
@@ -48,8 +53,9 @@ namespace Veng::Renderer
     {
     }
 
-    VertexBufferLayout::VertexBufferLayout(const std::initializer_list<VertexBufferElement>& elements) : m_Elements(
-        elements)
+    VertexBufferLayout::VertexBufferLayout(
+        const std::initializer_list<VertexBufferElement>& elements)
+        : m_Elements(elements)
     {
         u32 offset = 0;
         u32 floatCount = 0;
@@ -64,7 +70,8 @@ namespace Veng::Renderer
         m_FloatCount = floatCount;
     }
 
-    VertexBufferLayout::VertexBufferLayout(const vector<VertexBufferElement>& elements) : m_Elements(elements)
+    VertexBufferLayout::VertexBufferLayout(const vector<VertexBufferElement>& elements)
+        : m_Elements(elements)
     {
         u32 offset = 0;
         u32 floatCount = 0;

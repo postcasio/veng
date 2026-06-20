@@ -23,10 +23,14 @@ namespace Veng
         {
             switch (value)
             {
-                case 8: return Renderer::Format::RG32Sfloat;
-                case 9: return Renderer::Format::RGB32Sfloat;
-                case 10: return Renderer::Format::RGBA32Sfloat;
-                default: return std::nullopt;
+            case 8:
+                return Renderer::Format::RG32Sfloat;
+            case 9:
+                return Renderer::Format::RGB32Sfloat;
+            case 10:
+                return Renderer::Format::RGBA32Sfloat;
+            default:
+                return std::nullopt;
             }
         }
 
@@ -34,21 +38,26 @@ namespace Veng
         {
             switch (value)
             {
-                case 0: return Renderer::IndexType::U16;
-                case 1: return Renderer::IndexType::U32;
-                default: return std::nullopt;
+            case 0:
+                return Renderer::IndexType::U16;
+            case 1:
+                return Renderer::IndexType::U32;
+            default:
+                return std::nullopt;
             }
         }
 
         AssetLoadError Corrupt(AssetId id, string detail)
         {
-            return AssetLoadError{.Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(detail)};
+            return AssetLoadError{
+                .Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(detail)};
         }
     }
 
-    AssetResult<Detail::LoadJob> MeshLoader::Load(
-        AssetManager& manager, Renderer::Context& context, TaskSystem& tasks,
-        TypeRegistry& /*types*/, AssetId id, std::span<const u8> cooked, bool async) const
+    AssetResult<Detail::LoadJob> MeshLoader::Load(AssetManager& manager, Renderer::Context& context,
+                                                  TaskSystem& tasks, TypeRegistry& /*types*/,
+                                                  AssetId id, std::span<const u8> cooked,
+                                                  bool async) const
     {
         if (cooked.size() < sizeof(CookedMeshHeader))
             return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than CookedMeshHeader"));
@@ -58,7 +67,8 @@ namespace Veng
 
         const optional<Renderer::IndexType> indexType = BridgeIndexType(header.IndexType);
         if (!indexType)
-            return std::unexpected(Corrupt(id, fmt::format("mesh: unrecognized IndexType {}", header.IndexType)));
+            return std::unexpected(
+                Corrupt(id, fmt::format("mesh: unrecognized IndexType {}", header.IndexType)));
 
         if (*indexType != Renderer::IndexType::U32)
             return std::unexpected(Corrupt(id, "mesh: only u32 indices are supported"));
@@ -71,37 +81,42 @@ namespace Veng
 
         if (header.AttributeCount != elements.size())
         {
-            return std::unexpected(Corrupt(id, fmt::format(
-                "mesh: attribute count {} does not match canonical layout's {}",
-                header.AttributeCount, elements.size())));
+            return std::unexpected(Corrupt(
+                id, fmt::format("mesh: attribute count {} does not match canonical layout's {}",
+                                header.AttributeCount, elements.size())));
         }
 
         if (header.VertexStride != canonical.GetStride())
         {
-            return std::unexpected(Corrupt(id, fmt::format(
-                "mesh: vertex stride {} does not match canonical layout's {}",
-                header.VertexStride, canonical.GetStride())));
+            return std::unexpected(Corrupt(
+                id, fmt::format("mesh: vertex stride {} does not match canonical layout's {}",
+                                header.VertexStride, canonical.GetStride())));
         }
 
         // Blob cursor walks header -> attributes -> submeshes -> vertices ->
         // indices; each step bounds-checks before reading.
         usize cursor = sizeof(CookedMeshHeader);
 
-        const usize attributeBytes = static_cast<usize>(header.AttributeCount) * sizeof(CookedVertexAttribute);
+        const usize attributeBytes =
+            static_cast<usize>(header.AttributeCount) * sizeof(CookedVertexAttribute);
         if (cooked.size() < cursor + attributeBytes)
-            return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than attribute descriptor"));
+            return std::unexpected(
+                Corrupt(id, "mesh: cooked blob smaller than attribute descriptor"));
 
         for (u32 i = 0; i < header.AttributeCount; ++i)
         {
             CookedVertexAttribute attribute;
-            std::memcpy(&attribute, cooked.data() + cursor + i * sizeof(CookedVertexAttribute), sizeof(attribute));
+            std::memcpy(&attribute, cooked.data() + cursor + i * sizeof(CookedVertexAttribute),
+                        sizeof(attribute));
 
             const optional<Renderer::Format> format = BridgeVertexFormat(attribute.Format);
             if (!format || *format != elements[i].Type || attribute.Offset != elements[i].Offset)
             {
-                return std::unexpected(Corrupt(id, fmt::format(
-                    "mesh: attribute {} (format {}, offset {}) does not match canonical layout",
-                    i, attribute.Format, attribute.Offset)));
+                return std::unexpected(Corrupt(
+                    id,
+                    fmt::format(
+                        "mesh: attribute {} (format {}, offset {}) does not match canonical layout",
+                        i, attribute.Format, attribute.Offset)));
             }
         }
         cursor += attributeBytes;
@@ -139,7 +154,8 @@ namespace Veng
         for (u32 i = 0; i < header.SubMeshCount; ++i)
         {
             CookedSubMesh cookedSubMesh;
-            std::memcpy(&cookedSubMesh, cooked.data() + cursor + i * sizeof(CookedSubMesh), sizeof(cookedSubMesh));
+            std::memcpy(&cookedSubMesh, cooked.data() + cursor + i * sizeof(CookedSubMesh),
+                        sizeof(cookedSubMesh));
 
             u32 materialIndex = Veng::SubMesh::NoMaterial;
             if (cookedSubMesh.MaterialId != 0)
@@ -170,16 +186,19 @@ namespace Veng
             return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than index buffer"));
 
         const std::span<const u8> indexData = cooked.subspan(cursor, indexBytes);
-        const std::span<const u32> indices(reinterpret_cast<const u32*>(indexData.data()), header.IndexCount);
+        const std::span<const u32> indices(reinterpret_cast<const u32*>(indexData.data()),
+                                           header.IndexCount);
 
-        const Ref<Renderer::Buffer> vertexBuffer = Renderer::Buffer::Create(context, {
-            .Name = fmt::format("Mesh {} Vertices", id.Value),
-            .Size = vertexBytes,
-            .Usage = Renderer::BufferUsage::Vertex | Renderer::BufferUsage::TransferDst,
-        });
+        const Ref<Renderer::Buffer> vertexBuffer =
+            Renderer::Buffer::Create(context, {
+                                                  .Name = fmt::format("Mesh {} Vertices", id.Value),
+                                                  .Size = vertexBytes,
+                                                  .Usage = Renderer::BufferUsage::Vertex |
+                                                           Renderer::BufferUsage::TransferDst,
+                                              });
 
-        Renderer::IndexBuffer indexBuffer =
-            Renderer::IndexBuffer::Create(context, fmt::format("Mesh {} Indices", id.Value), header.IndexCount);
+        Renderer::IndexBuffer indexBuffer = Renderer::IndexBuffer::Create(
+            context, fmt::format("Mesh {} Indices", id.Value), header.IndexCount);
 
         if (async)
         {

@@ -71,14 +71,16 @@ TEST_CASE("Then continuations run only during PumpMainThread, only on the pumpin
     int delivered = 0;
 
     Task<int> t = tasks.Submit([] { return 99; });
-    t.Then([&](Result<int> r) {
-        ran.store(true);
-        ranOnPumpThread.store(std::this_thread::get_id() == pumpThread);
-        if (r.has_value())
+    t.Then(
+        [&](Result<int> r)
         {
-            delivered = *r;
-        }
-    });
+            ran.store(true);
+            ranOnPumpThread.store(std::this_thread::get_id() == pumpThread);
+            if (r.has_value())
+            {
+                delivered = *r;
+            }
+        });
 
     // The job has run (we can prove it), but the continuation must NOT have:
     // it only fires inside PumpMainThread.
@@ -96,7 +98,7 @@ TEST_CASE("Then registered after completion still defers to PumpMainThread")
     TaskSystem tasks;
 
     Task<int> t = tasks.Submit([] { return 5; });
-    (void)t.Get();   // ensure the result has already landed
+    (void)t.Get(); // ensure the result has already landed
 
     std::atomic<bool> ran = false;
     t.Then([&](Result<int>) { ran.store(true); });
@@ -114,10 +116,12 @@ TEST_CASE("WaitForAll blocks until every in-flight job is done")
     std::atomic<u32> completed = 0;
     for (u32 i = 0; i < Count; ++i)
     {
-        tasks.Submit([&completed] {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            completed.fetch_add(1);
-        });
+        tasks.Submit(
+            [&completed]
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                completed.fetch_add(1);
+            });
     }
 
     tasks.WaitForAll();
@@ -144,14 +148,16 @@ TEST_CASE("ForEachWorker runs once on each worker")
     set<u32> seen;
     std::atomic<u32> calls = 0;
 
-    tasks.ForEachWorker([&](u32 index) {
-        calls.fetch_add(1);
-        std::lock_guard lock(mutex);
-        seen.insert(index);
-    });
+    tasks.ForEachWorker(
+        [&](u32 index)
+        {
+            calls.fetch_add(1);
+            std::lock_guard lock(mutex);
+            seen.insert(index);
+        });
 
     CHECK(calls.load() == 4);
-    CHECK(seen.size() == 4);   // distinct indices: one run per worker
+    CHECK(seen.size() == 4); // distinct indices: one run per worker
 }
 
 TEST_CASE("Stress: many small jobs across the pool")

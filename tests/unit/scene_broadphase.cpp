@@ -76,10 +76,11 @@ namespace
             const vec3 target(pos(rng), pos(rng), pos(rng));
             if (glm::distance(eye, target) < 1.0f)
                 continue;
-            frustums.push_back(Frustum::FromViewProjection(MakeCameraAt(eye, target).ViewProjection()));
+            frustums.push_back(
+                Frustum::FromViewProjection(MakeCameraAt(eye, target).ViewProjection()));
         }
-        frustums.push_back(Frustum::FromViewProjection(
-            glm::ortho(-20.0f, 20.0f, -20.0f, 20.0f, 1.0f, 80.0f)));
+        frustums.push_back(
+            Frustum::FromViewProjection(glm::ortho(-20.0f, 20.0f, -20.0f, 20.0f, 1.0f, 80.0f)));
         return frustums;
     }
 }
@@ -143,8 +144,8 @@ TEST_CASE("SceneBroadphase: Cull appends to caller scratch, never clears it")
     SceneBroadphase broadphase;
     broadphase.Sync(*scene);
 
-    const Frustum wide = Frustum::FromViewProjection(
-        glm::ortho(-100.0f, 100.0f, -100.0f, 100.0f, 1.0f, 100.0f));
+    const Frustum wide =
+        Frustum::FromViewProjection(glm::ortho(-100.0f, 100.0f, -100.0f, 100.0f, 1.0f, 100.0f));
 
     vector<u32> out = {999u}; // a pre-seeded entry the append must preserve
     broadphase.Cull(wide, out);
@@ -166,7 +167,8 @@ TEST_CASE("SceneBroadphase: version gate — a second Sync of an unmutated scene
     for (i32 i = 0; i < 4; ++i)
     {
         const Entity e = scene->CreateEntity();
-        scene->Add<Transform>(e, Transform{.Position = vec3(static_cast<f32>(i) * 3.0f, 0.0f, 0.0f)});
+        scene->Add<Transform>(e,
+                              Transform{.Position = vec3(static_cast<f32>(i) * 3.0f, 0.0f, 0.0f)});
         scene->Add<MeshRenderer>(e, MeshRenderer{.Mesh = mesh});
     }
 
@@ -274,7 +276,8 @@ TEST_CASE("SceneBroadphase: every spatial mutation rebuilds and the tree stays c
     }
 }
 
-TEST_CASE("SceneBroadphase: a mesh becoming resident between frames enters the tree (no spatial mutation)")
+TEST_CASE("SceneBroadphase: a mesh becoming resident between frames enters the tree (no spatial "
+          "mutation)")
 {
     Renderer::Context context;
     TaskSystem tasks;
@@ -288,7 +291,8 @@ TEST_CASE("SceneBroadphase: a mesh becoming resident between frames enters the t
     // adopt it (resident), then null its cache entry's Resource so IsLoaded() is
     // false. The handle shares the entry, so re-populating it later flips IsLoaded()
     // in place WITHOUT touching the scene — no spatial-version bump.
-    const AssetHandle<Mesh> resident = manager.Adopt<Mesh>(BoundsMesh(AABB{vec3(-0.5f), vec3(0.5f)}));
+    const AssetHandle<Mesh> resident =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{vec3(-0.5f), vec3(0.5f)}));
 
     const Ref<Mesh> pendingMesh = BoundsMesh(AABB{vec3(-0.5f), vec3(0.5f)});
     AssetHandle<Mesh> pending = manager.Adopt<Mesh>(pendingMesh);

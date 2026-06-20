@@ -47,28 +47,34 @@ namespace
     };
 
     Ref<GraphicsPipeline> CreateSamplePipeline(Context& context, Ref<PipelineLayout>& outLayout,
-                                               const Ref<ShaderModule>& vertexModule, const Ref<ShaderModule>& fragmentModule)
+                                               const Ref<ShaderModule>& vertexModule,
+                                               const Ref<ShaderModule>& fragmentModule)
     {
-        outLayout = PipelineLayout::Create(context, {
-            .Name = "Async Upload Sample Layout",
-            .PushConstantRanges = {
-                PushConstantRange::Of<SamplePushConstants>(ShaderStage::Fragment),
-            },
-        });
+        outLayout = PipelineLayout::Create(
+            context, {
+                         .Name = "Async Upload Sample Layout",
+                         .PushConstantRanges =
+                             {
+                                 PushConstantRange::Of<SamplePushConstants>(ShaderStage::Fragment),
+                             },
+                     });
 
-        return GraphicsPipeline::Create(context, {
-            .Name = "Async Upload Sample Pipeline",
-            .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
-            .PipelineLayout = outLayout,
-            .ShaderStages = {
-                {.Stage = ShaderStage::Vertex, .Module = vertexModule},
-                {.Stage = ShaderStage::Fragment, .Module = fragmentModule},
-            },
-        });
+        return GraphicsPipeline::Create(
+            context, {
+                         .Name = "Async Upload Sample Pipeline",
+                         .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
+                         .PipelineLayout = outLayout,
+                         .ShaderStages =
+                             {
+                                 {.Stage = ShaderStage::Vertex, .Module = vertexModule},
+                                 {.Stage = ShaderStage::Fragment, .Module = fragmentModule},
+                             },
+                     });
     }
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "async upload: upload on a worker, then sample with a frame transfer-wait")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "async upload: upload on a worker, then sample with a frame transfer-wait")
 {
     // The solid color uploaded into the source image, exactly representable in
     // RGBA8Unorm: red, fully opaque.
@@ -79,28 +85,32 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "async upload: upload on a worker, the
     TaskSystem tasks{TaskSystemInfo{.WorkerCount = 2}};
     Context.InitializeTransferPools(tasks);
 
-    auto sourceImage = Image::Create(Context, {
-        .Name = "Async Upload Source",
-        .Extent = {Size, Size, 1},
-        .Format = Format::RGBA8Unorm,
-        .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
-    });
-    auto sourceView = ImageView::Create(Context, {.Name = "Async Upload Source View", .Image = sourceImage});
+    auto sourceImage =
+        Image::Create(Context, {
+                                   .Name = "Async Upload Source",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                               });
+    auto sourceView =
+        ImageView::Create(Context, {.Name = "Async Upload Source View", .Image = sourceImage});
 
-    auto outputImage = Image::Create(Context, {
-        .Name = "Async Upload Output",
-        .Extent = {Size, Size, 1},
-        .Format = Format::RGBA8Unorm,
-        .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
-    });
-    auto outputView = ImageView::Create(Context, {.Name = "Async Upload Output View", .Image = outputImage});
+    auto outputImage =
+        Image::Create(Context, {
+                                   .Name = "Async Upload Output",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    auto outputView =
+        ImageView::Create(Context, {.Name = "Async Upload Output View", .Image = outputImage});
 
     auto sampler = Sampler::Create(Context, {
-        .Name = "Async Upload Sampler",
-        .AddressModeU = AddressMode::ClampToEdge,
-        .AddressModeV = AddressMode::ClampToEdge,
-        .AddressModeW = AddressMode::ClampToEdge,
-    });
+                                                .Name = "Async Upload Sampler",
+                                                .AddressModeU = AddressMode::ClampToEdge,
+                                                .AddressModeV = AddressMode::ClampToEdge,
+                                                .AddressModeW = AddressMode::ClampToEdge,
+                                            });
 
     // Upload the source image off the main thread. Blocking on the returned task
     // only waits the *submit*; the GPU copy is gated by the transfer timeline the
@@ -136,7 +146,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "async upload: upload on a worker, the
     REQUIRE(fragmentAsset.has_value());
 
     Ref<PipelineLayout> layout;
-    auto pipeline = CreateSamplePipeline(Context, layout, vertexAsset->Get()->Module, fragmentAsset->Get()->Module);
+    auto pipeline = CreateSamplePipeline(Context, layout, vertexAsset->Get()->Module,
+                                         fragmentAsset->Get()->Module);
 
     // Sample inside a headless frame: EndFrame's SubmitFrame folds in the
     // transfer-timeline wait the Sample pass registers on first graphics use, so
@@ -154,19 +165,20 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "async upload: upload on a worker, the
             .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
         })
         .Sample(sourceId)
-        .Execute([&](PassContext& ctx)
-        {
-            CommandBuffer& cmd = ctx.Cmd();
-            cmd.BindPipeline(pipeline);
-            cmd.SetViewport({0, 0}, {Size, Size});
-            cmd.SetScissor({0, 0}, {Size, Size});
-            bindless.Bind(cmd);
-            cmd.PushConstants(SamplePushConstants{
-                .TextureIndex = textureHandle.Index,
-                .SamplerIndex = samplerHandle.Index,
+        .Execute(
+            [&](PassContext& ctx)
+            {
+                CommandBuffer& cmd = ctx.Cmd();
+                cmd.BindPipeline(pipeline);
+                cmd.SetViewport({0, 0}, {Size, Size});
+                cmd.SetScissor({0, 0}, {Size, Size});
+                bindless.Bind(cmd);
+                cmd.PushConstants(SamplePushConstants{
+                    .TextureIndex = textureHandle.Index,
+                    .SamplerIndex = samplerHandle.Index,
+                });
+                cmd.DrawFullscreenTriangle();
             });
-            cmd.DrawFullscreenTriangle();
-        });
     const RenderGraph::ImportBinding bindings[] = {
         {outputId, outputView},
         {sourceId, sourceView},
@@ -188,16 +200,18 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "async upload: upload on a worker, the
     tasks.WaitForAll();
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "blocking UploadSync still produces the uploaded pixels (regression guard)")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "blocking UploadSync still produces the uploaded pixels (regression guard)")
 {
     constexpr std::array<u8, 4> expected = {0, 200, 0, 255};
 
     auto image = Image::Create(Context, {
-        .Name = "Sync Upload Source",
-        .Extent = {Size, Size, 1},
-        .Format = Format::RGBA8Unorm,
-        .Usage = ImageUsage::Sampled | ImageUsage::TransferDst | ImageUsage::TransferSrc,
-    });
+                                            .Name = "Sync Upload Source",
+                                            .Extent = {Size, Size, 1},
+                                            .Format = Format::RGBA8Unorm,
+                                            .Usage = ImageUsage::Sampled | ImageUsage::TransferDst |
+                                                     ImageUsage::TransferSrc,
+                                        });
 
     std::vector<u8> texels(static_cast<size_t>(Size) * Size * 4);
     for (size_t pixel = 0; pixel < static_cast<size_t>(Size) * Size; pixel++)

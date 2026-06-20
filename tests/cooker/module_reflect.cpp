@@ -34,7 +34,7 @@ TEST_CASE("module reflect: LoadModuleTypes reflects builtins + the game's Spinne
 
     Result<LoadedModuleTypes> loaded = LoadModuleTypes(modulePath);
     REQUIRE_MESSAGE(loaded.has_value(),
-        "LoadModuleTypes failed: ", loaded ? string{} : loaded.error());
+                    "LoadModuleTypes failed: ", loaded ? string{} : loaded.error());
 
     const TypeRegistry& types = loaded->Types;
 
@@ -110,14 +110,16 @@ TEST_CASE("generate-type-id: --module does not collide with a registered game id
 
 TEST_CASE("module reflect: cooking a prefab entry with no --module is a located error")
 {
-    const path packPath = std::filesystem::temp_directory_path() / "veng_cooker_prefab_no_module_pack.json";
+    const path packPath =
+        std::filesystem::temp_directory_path() / "veng_cooker_prefab_no_module_pack.json";
     {
         std::ofstream out(packPath, std::ios::binary);
         out << R"({ "version": 1, "assets": [ { "id": 4242, "type": "prefab", "source": "x.prefab.json" } ] })";
     }
 
     Cooker cooker;
-    const path outPath = std::filesystem::temp_directory_path() / "veng_cooker_prefab_no_module.vengpack";
+    const path outPath =
+        std::filesystem::temp_directory_path() / "veng_cooker_prefab_no_module.vengpack";
 
     // No TypeRegistry passed (the no --module case).
     const VoidResult result = cooker.CookPack(packPath, outPath);

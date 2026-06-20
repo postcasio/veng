@@ -28,10 +28,14 @@ namespace Veng::Cook
 
         optional<u32> ParseFormatString(const string& name)
         {
-            if (name == "R32Sfloat")    return FormatR32Sfloat;
-            if (name == "RG32Sfloat")   return FormatRG32Sfloat;
-            if (name == "RGB32Sfloat")  return FormatRGB32Sfloat;
-            if (name == "RGBA32Sfloat") return FormatRGBA32Sfloat;
+            if (name == "R32Sfloat")
+                return FormatR32Sfloat;
+            if (name == "RG32Sfloat")
+                return FormatRG32Sfloat;
+            if (name == "RGB32Sfloat")
+                return FormatRGB32Sfloat;
+            if (name == "RGBA32Sfloat")
+                return FormatRGBA32Sfloat;
             return std::nullopt;
         }
     }
@@ -39,7 +43,8 @@ namespace Veng::Cook
     Result<vector<CookedVertexLayoutElement>>
     ParseVertexLayoutElements(const json& layoutJson, const string& diagnosticContext)
     {
-        if (!layoutJson.is_object() || !layoutJson.contains("elements") || !layoutJson["elements"].is_array())
+        if (!layoutJson.is_object() || !layoutJson.contains("elements") ||
+            !layoutJson["elements"].is_array())
         {
             return std::unexpected(fmt::format(
                 "vertex layout '{}': missing or invalid 'elements' array", diagnosticContext));
@@ -52,9 +57,8 @@ namespace Veng::Cook
         for (usize i = 0; i < elements.size(); ++i)
         {
             const json& e = elements[i];
-            if (!e.is_object()
-                || !e.contains("format") || !e["format"].is_string()
-                || !e.contains("name") || !e["name"].is_string())
+            if (!e.is_object() || !e.contains("format") || !e["format"].is_string() ||
+                !e.contains("name") || !e["name"].is_string())
             {
                 return std::unexpected(fmt::format(
                     "vertex layout '{}': element[{}]: must have string 'format' and 'name'",
@@ -65,10 +69,10 @@ namespace Veng::Cook
             const optional<u32> format = ParseFormatString(formatStr);
             if (!format)
             {
-                return std::unexpected(fmt::format(
-                    "vertex layout '{}': element[{}]: unrecognized format '{}' "
-                    "(valid: R32Sfloat, RG32Sfloat, RGB32Sfloat, RGBA32Sfloat)",
-                    diagnosticContext, i, formatStr));
+                return std::unexpected(
+                    fmt::format("vertex layout '{}': element[{}]: unrecognized format '{}' "
+                                "(valid: R32Sfloat, RG32Sfloat, RGB32Sfloat, RGBA32Sfloat)",
+                                diagnosticContext, i, formatStr));
             }
 
             CookedVertexLayoutElement elem{};
@@ -80,14 +84,13 @@ namespace Veng::Cook
         return result;
     }
 
-    Result<vector<CookedVertexLayoutElement>>
-    ReadVertexLayoutFile(const path& filePath)
+    Result<vector<CookedVertexLayoutElement>> ReadVertexLayoutFile(const path& filePath)
     {
         std::ifstream file(filePath, std::ios::binary);
         if (!file)
         {
-            return std::unexpected(fmt::format(
-                "vertex layout '{}': failed to open", filePath.string()));
+            return std::unexpected(
+                fmt::format("vertex layout '{}': failed to open", filePath.string()));
         }
 
         std::ostringstream ss;
@@ -97,8 +100,8 @@ namespace Veng::Cook
         const json parsed = json::parse(content, nullptr, false);
         if (parsed.is_discarded())
         {
-            return std::unexpected(fmt::format(
-                "vertex layout '{}': invalid JSON", filePath.string()));
+            return std::unexpected(
+                fmt::format("vertex layout '{}': invalid JSON", filePath.string()));
         }
 
         return ParseVertexLayoutElements(parsed, filePath.string());

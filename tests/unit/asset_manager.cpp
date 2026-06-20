@@ -32,7 +32,8 @@ namespace
         writer.Add(AssetId{0x3EA}, AssetType::Texture, Bytes({0xAB}));
         writer.Add(AssetId{0x3EB}, AssetType::Raw, Bytes({9}));
 
-        const path archivePath = std::filesystem::temp_directory_path() / "veng_asset_manager_unit.vengpack";
+        const path archivePath =
+            std::filesystem::temp_directory_path() / "veng_asset_manager_unit.vengpack";
         const VoidResult written = writer.Write(archivePath);
         REQUIRE(written.has_value());
         return archivePath;
@@ -106,7 +107,8 @@ TEST_CASE("AssetManager: Mount is idempotent, Unmount drops resolution for uncac
     CHECK(manager.LoadSync<RawAsset>(AssetId{0x3E9}).has_value());
 
     // Never cached and no longer mounted -> NotFound.
-    const AssetResult<AssetHandle<RawAsset>> afterUnmount = manager.LoadSync<RawAsset>(AssetId{0x3EB});
+    const AssetResult<AssetHandle<RawAsset>> afterUnmount =
+        manager.LoadSync<RawAsset>(AssetId{0x3EB});
     REQUIRE_FALSE(afterUnmount.has_value());
     CHECK(afterUnmount.error().Kind == AssetError::NotFound);
 
@@ -126,7 +128,8 @@ TEST_CASE("AssetManager: dropping the last AssetHandle makes the entry evictable
 
     WeakAssetHandle<RawAsset> weak;
     {
-        const AssetResult<AssetHandle<RawAsset>> loaded = manager.LoadSync<RawAsset>(AssetId{0x3E9});
+        const AssetResult<AssetHandle<RawAsset>> loaded =
+            manager.LoadSync<RawAsset>(AssetId{0x3E9});
         REQUIRE(loaded.has_value());
 
         weak = WeakAssetHandle<RawAsset>(*loaded);

@@ -31,8 +31,8 @@ namespace VengEditor
     }
 
     MaterialPreview::MaterialPreview(Renderer::Context& context, AssetManager& assets,
-                                     ImGuiLayer& imgui, uvec2 extent) :
-        m_Context(context), m_Assets(assets), m_ImGui(imgui), m_Extent(extent)
+                                     ImGuiLayer& imgui, uvec2 extent)
+        : m_Context(context), m_Assets(assets), m_ImGui(imgui), m_Extent(extent)
     {
         m_SceneRenderer = Renderer::SceneRenderer::Create({
             .Context = context,
@@ -45,12 +45,13 @@ namespace VengEditor
         BuildScene();
 
         // Edge clamping prevents sampling past the preview image boundary.
-        m_SceneSampler = Renderer::Sampler::Create(context, {
-            .Name = "Material Preview Sampler",
-            .AddressModeU = Renderer::AddressMode::ClampToEdge,
-            .AddressModeV = Renderer::AddressMode::ClampToEdge,
-            .AddressModeW = Renderer::AddressMode::ClampToEdge,
-        });
+        m_SceneSampler = Renderer::Sampler::Create(
+            context, {
+                         .Name = "Material Preview Sampler",
+                         .AddressModeU = Renderer::AddressMode::ClampToEdge,
+                         .AddressModeV = Renderer::AddressMode::ClampToEdge,
+                         .AddressModeW = Renderer::AddressMode::ClampToEdge,
+                     });
         m_SceneTexture = imgui.CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
     }
 
@@ -72,7 +73,8 @@ namespace VengEditor
 
         m_Scene = Scene::Create(*m_Types);
 
-        m_Sphere = Mesh::Create(m_Context, Primitives::Icosphere(0.85f, 4), "Material Preview Sphere");
+        m_Sphere =
+            Mesh::Create(m_Context, Primitives::Icosphere(0.85f, 4), "Material Preview Sphere");
 
         m_SphereEntity = m_Scene->CreateEntity();
         m_Scene->Add<Transform>(m_SphereEntity);

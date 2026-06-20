@@ -17,6 +17,7 @@ namespace Veng::Cook
         [[nodiscard]] AssetType Type() const override { return AssetType::VertexLayout; }
 
         /// @brief Cooks the vertex layout described by `entry` into a binary blob.
-        [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context, const json& entry) const override;
+        [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,
+                                              const json& entry) const override;
     };
 }

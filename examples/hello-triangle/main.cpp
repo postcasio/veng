@@ -41,15 +41,13 @@ struct Spinner
 };
 
 VE_REFLECT(Spinner, 0xAEF00D5EFC2444DAULL)
-    VE_FIELD(SpeedRadiansPerSec, .DisplayName = "Speed", .Tooltip = "Radians per second", .Min = 0.0)
+VE_FIELD(SpeedRadiansPerSec, .DisplayName = "Speed", .Tooltip = "Radians per second", .Min = 0.0)
 VE_REFLECT_END();
 
 class HelloTriangleApp final : public Application
 {
 public:
-    HelloTriangleApp(const ApplicationInfo& info, TypeRegistry& types) : Application(info, types)
-    {
-    }
+    HelloTriangleApp(const ApplicationInfo& info, TypeRegistry& types) : Application(info, types) {}
 
 protected:
     void OnInitialize() override
@@ -69,7 +67,8 @@ protected:
         });
 
         // Executable-relative so the pack resolves wherever the launcher is copied.
-        const VoidResult mountResult = GetAssetManager().Mount(ExecutableDirectory() / "sample.vengpack");
+        const VoidResult mountResult =
+            GetAssetManager().Mount(ExecutableDirectory() / "sample.vengpack");
         VE_ASSERT(mountResult, "{}", mountResult.error());
 
         // Must be resident before Mesh::Create so the primitive generator can record
@@ -87,13 +86,15 @@ protected:
         {
             // Edge-clamped so the "Scene" window's UI::Image never samples past the
             // renderer output.
-            m_SceneSampler = Renderer::Sampler::Create(context, {
-                .Name = "Scene Composite Sampler",
-                .AddressModeU = Renderer::AddressMode::ClampToEdge,
-                .AddressModeV = Renderer::AddressMode::ClampToEdge,
-                .AddressModeW = Renderer::AddressMode::ClampToEdge,
-            });
-            m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
+            m_SceneSampler = Renderer::Sampler::Create(
+                context, {
+                             .Name = "Scene Composite Sampler",
+                             .AddressModeU = Renderer::AddressMode::ClampToEdge,
+                             .AddressModeV = Renderer::AddressMode::ClampToEdge,
+                             .AddressModeW = Renderer::AddressMode::ClampToEdge,
+                         });
+            m_SceneTexture =
+                GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
 
             m_Composite = Renderer::SwapChainCompositePass::Create({
                 .Context = context,
@@ -106,9 +107,7 @@ protected:
             // Swapchain resize invalidates the composite graph's baked extent; SceneRenderer
             // keeps a fixed internal extent so its output stays valid.
             context.AddSwapChainInvalidationCallback([this]
-            {
-                m_CompositeGraph = BuildCompositeGraph();
-            });
+                                                     { m_CompositeGraph = BuildCompositeGraph(); });
         }
 
         m_Scene = Scene::Create(GetTypeRegistry());
@@ -118,11 +117,13 @@ protected:
         VE_ASSERT(prefab.has_value(), "{}", prefab.error().Detail);
 
         const vector<Entity> roots = prefab->Get()->SpawnInto(*m_Scene, GetAssetManager());
-        VE_ASSERT(roots.size() >= 2, "prefab spawned fewer than the expected sphere + receiver-plane roots");
+        VE_ASSERT(roots.size() >= 2,
+                  "prefab spawned fewer than the expected sphere + receiver-plane roots");
 
         // Receiver plane: gives the shadow passes a surface beneath the sphere.
         const Ref<Veng::Mesh> plane = Veng::Mesh::Create(
-            context, Veng::Primitives::Plane(vec2(4.0f), uvec2(1), m_BrickMaterial), "Receiver Plane");
+            context, Veng::Primitives::Plane(vec2(4.0f), uvec2(1), m_BrickMaterial),
+            "Receiver Plane");
 
         // Wire the runtime meshes in code: a prefab cannot reference a runtime resource by id.
         m_Scene->Get<MeshRenderer>(roots[0]).Mesh = GetAssetManager().Adopt(sphere);
@@ -163,19 +164,19 @@ protected:
         // Smoke mode pins a fixed pose for golden comparison; otherwise advance each spinner.
         if (m_SmokeOutput)
         {
-            m_Scene->Each<Transform, Spinner>([](Entity, Transform& transform, Spinner&)
-            {
-                transform.Rotation = glm::angleAxis(SmokeAngle, SpinAxis);
-            });
+            m_Scene->Each<Transform, Spinner>(
+                [](Entity, Transform& transform, Spinner&)
+                { transform.Rotation = glm::angleAxis(SmokeAngle, SpinAxis); });
         }
         else if (!m_PauseSpin)
         {
             // Skipping this non-const Each stops the spatial version, so the broadphase reads `static`.
-            m_Scene->Each<Transform, Spinner>([delta](Entity, Transform& transform, Spinner& spinner)
-            {
-                const quat step = glm::angleAxis(spinner.SpeedRadiansPerSec * delta, SpinAxis);
-                transform.Rotation = glm::normalize(step * transform.Rotation);
-            });
+            m_Scene->Each<Transform, Spinner>(
+                [delta](Entity, Transform& transform, Spinner& spinner)
+                {
+                    const quat step = glm::angleAxis(spinner.SpeedRadiansPerSec * delta, SpinAxis);
+                    transform.Rotation = glm::normalize(step * transform.Rotation);
+                });
         }
 
         // Runs before this frame's commands record, so the image holds the previous frame's contents.
@@ -230,7 +231,8 @@ private:
     void ReconfigureScene()
     {
         m_SceneRenderer->Configure(m_SceneSettings);
-        m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
+        m_SceneTexture =
+            GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
         m_Composite->SetSceneSource(m_SceneRenderer->GetOutput());
     }
 
@@ -240,9 +242,8 @@ private:
         {
             // Entries mirror the DebugView enum in declaration order; combo index == enum value.
             static constexpr std::array<string_view, 11> modeNames{
-                "Final", "Albedo", "Normal", "Depth",
-                "Roughness", "Metallic", "Occlusion",
-                "AO", "Shadows", "Cascades", "Punctual shadows"};
+                "Final",     "Albedo", "Normal",  "Depth",    "Roughness",       "Metallic",
+                "Occlusion", "AO",     "Shadows", "Cascades", "Punctual shadows"};
             i32 mode = static_cast<i32>(m_SceneSettings.Mode);
             if (UI::Combo("View", mode, modeNames))
             {
@@ -263,7 +264,8 @@ private:
             }
 
             i32 cascadeCount = static_cast<i32>(m_SceneSettings.CascadeCount);
-            if (UI::Slider("Cascades##count", cascadeCount, 1, static_cast<i32>(Renderer::MaxCascades)))
+            if (UI::Slider("Cascades##count", cascadeCount, 1,
+                           static_cast<i32>(Renderer::MaxCascades)))
             {
                 m_SceneSettings.CascadeCount = static_cast<u32>(cascadeCount);
                 ReconfigureScene();
@@ -279,7 +281,8 @@ private:
                 ReconfigureScene();
             }
 
-            if (UI::Slider("Split lambda", m_SceneSettings.CascadeSplitLambda, {.Min = 0.0f, .Max = 1.0f}))
+            if (UI::Slider("Split lambda", m_SceneSettings.CascadeSplitLambda,
+                           {.Min = 0.0f, .Max = 1.0f}))
             {
                 ReconfigureScene();
             }
@@ -291,10 +294,11 @@ private:
             }
 
             i32 punctualResolution = static_cast<i32>(m_SceneSettings.PunctualShadowResolution);
-            if (UI::Drag("Punctual shadow resolution", punctualResolution,
-                         {.Speed = 16.0f,
-                          .Min = 256.0f,
-                          .Max = static_cast<f32>(m_SceneRenderer->GetMaxPunctualShadowResolution())}))
+            if (UI::Drag(
+                    "Punctual shadow resolution", punctualResolution,
+                    {.Speed = 16.0f,
+                     .Min = 256.0f,
+                     .Max = static_cast<f32>(m_SceneRenderer->GetMaxPunctualShadowResolution())}))
             {
                 m_SceneSettings.PunctualShadowResolution = static_cast<u32>(punctualResolution);
                 ReconfigureScene();
@@ -315,7 +319,8 @@ private:
 
         if (auto statsWindow = UI::Window("Stats"))
         {
-            UI::Text(fmt::format("{:.1f} fps ({:.2f} ms)", UI::FrameRate(), 1000.0f / UI::FrameRate()));
+            UI::Text(
+                fmt::format("{:.1f} fps ({:.2f} ms)", UI::FrameRate(), 1000.0f / UI::FrameRate()));
 
             // Post-cull, post-material-readiness count over gathered candidates.
             const u32 drawn = m_SceneRenderer->GetLastDrawnCount();
@@ -324,8 +329,7 @@ private:
 
             // Flips live as the pause-spin toggle stops/resumes the per-frame Transform write.
             const bool rebuilt = m_SceneRenderer->DidBroadphaseRebuildLastFrame();
-            UI::Text(fmt::format("Broadphase: {} ({} nodes)",
-                                 rebuilt ? "rebuilt" : "static",
+            UI::Text(fmt::format("Broadphase: {} ({} nodes)", rebuilt ? "rebuilt" : "static",
                                  m_SceneRenderer->GetBroadphaseNodeCount()));
 
             (void)UI::Checkbox("Pause spin", m_PauseSpin);
@@ -349,7 +353,8 @@ private:
         {
             for (u32 channel = 0; channel < 3; channel++)
             {
-                const f32 value = glm::clamp(glm::unpackHalf1x16(halves[pixel * 4 + channel]), 0.0f, 1.0f);
+                const f32 value =
+                    glm::clamp(glm::unpackHalf1x16(halves[pixel * 4 + channel]), 0.0f, 1.0f);
                 out.put(static_cast<char>(value * 255.0f + 0.5f));
             }
         }
@@ -367,7 +372,8 @@ private:
 
     void CompositeToSwapChain(Renderer::CommandBuffer& cmd)
     {
-        m_Composite->Execute(cmd, *m_CompositeGraph, GetRenderContext().GetCurrentSwapChainImageView());
+        m_Composite->Execute(cmd, *m_CompositeGraph,
+                             GetRenderContext().GetCurrentSwapChainImageView());
     }
 
     Unique<Renderer::SceneRenderer> m_SceneRenderer;
@@ -407,24 +413,28 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     // Smoke mode: no window or swapchain, render off-screen and dump — the display-free CI path.
     const bool smoke = std::getenv("HT_SMOKE") != nullptr;
 
-    host->App.RegisterApplication([smoke](TypeRegistry& types)
-    {
-        return Unique<Application>(new HelloTriangleApp(ApplicationInfo{
-            .Name = "Hello Triangle",
-            .InternalRenderExtent = {1280, 720},
-            .WindowInfo = {
-                .Extent = {1280, 720},
-                .Resizable = false,
-                .EventCallback = [](Event&) {},
-                .Title = "veng — Hello Triangle",
-                .CaptureMouse = false,
-            },
-            .Headless = smoke,
-            // Persist the pipeline cache beside the launcher, the same
-            // executable-relative resolution the asset pack uses.
-            .PipelineCachePath = ExecutableDirectory() / "pipeline_cache.bin",
-        }, types));
-    });
+    host->App.RegisterApplication(
+        [smoke](TypeRegistry& types)
+        {
+            return Unique<Application>(new HelloTriangleApp(
+                ApplicationInfo{
+                    .Name = "Hello Triangle",
+                    .InternalRenderExtent = {1280, 720},
+                    .WindowInfo =
+                        {
+                            .Extent = {1280, 720},
+                            .Resizable = false,
+                            .EventCallback = [](Event&) {},
+                            .Title = "veng — Hello Triangle",
+                            .CaptureMouse = false,
+                        },
+                    .Headless = smoke,
+                    // Persist the pipeline cache beside the launcher, the same
+                    // executable-relative resolution the asset pack uses.
+                    .PipelineCachePath = ExecutableDirectory() / "pipeline_cache.bin",
+                },
+                types));
+        });
 }
 
 VE_EXPORT_MODULE_ABI()

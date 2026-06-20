@@ -57,7 +57,8 @@ namespace Veng::Renderer
         Ref<ImageView> SceneSource;
     };
 
-    Unique<SwapChainCompositePass> SwapChainCompositePass::Create(const SwapChainCompositePassInfo& info)
+    Unique<SwapChainCompositePass>
+    SwapChainCompositePass::Create(const SwapChainCompositePassInfo& info)
     {
         return Unique<SwapChainCompositePass>(new SwapChainCompositePass(info));
     }
@@ -68,15 +69,16 @@ namespace Veng::Renderer
         VE_ASSERT(info.SceneSource, "SwapChainCompositePass requires an initial SceneSource");
         m_Impl->SceneSource = info.SceneSource;
 
-        m_Impl->Sampler = Sampler::Create(info.Context, {
-            .Name = "SwapChain Composite Sampler",
-            // ClampToEdge prevents sampling garbage past the swapchain extent.
-            .MagFilter = Filter::Linear,
-            .MinFilter = Filter::Linear,
-            .AddressModeU = AddressMode::ClampToEdge,
-            .AddressModeV = AddressMode::ClampToEdge,
-            .AddressModeW = AddressMode::ClampToEdge,
-        });
+        m_Impl->Sampler = Sampler::Create(
+            info.Context, {
+                              .Name = "SwapChain Composite Sampler",
+                              // ClampToEdge prevents sampling garbage past the swapchain extent.
+                              .MagFilter = Filter::Linear,
+                              .MinFilter = Filter::Linear,
+                              .AddressModeU = AddressMode::ClampToEdge,
+                              .AddressModeV = AddressMode::ClampToEdge,
+                              .AddressModeW = AddressMode::ClampToEdge,
+                          });
 
         const AssetResult<AssetHandle<Shader>> vs = info.Assets.LoadSync<Shader>(FullscreenVertId);
         VE_ASSERT(vs.has_value(), "{}", vs.error().Detail);
@@ -86,28 +88,36 @@ namespace Veng::Renderer
         VE_ASSERT(fs.has_value(), "{}", fs.error().Detail);
         m_Impl->CompositeFS = *fs;
 
-        m_Impl->Layout = PipelineLayout::Create(info.Context, {
-            .Name = "SwapChain Composite Layout",
-            .PushConstantRanges = {
-                PushConstantRange::Of<CompositePushConstants>(ShaderStage::Fragment),
-            },
-        });
+        m_Impl->Layout = PipelineLayout::Create(
+            info.Context,
+            {
+                .Name = "SwapChain Composite Layout",
+                .PushConstantRanges =
+                    {
+                        PushConstantRange::Of<CompositePushConstants>(ShaderStage::Fragment),
+                    },
+            });
 
-        m_Impl->Pipeline = GraphicsPipeline::Create(info.Context, {
-            .Name = "SwapChain Composite Pipeline",
-            .ColorAttachments = {{.Format = info.SwapChainFormat}},
-            .PipelineLayout = m_Impl->Layout,
-            .ShaderStages = {
-                {.Stage = ShaderStage::Vertex, .Module = m_Impl->CompositeVS.Get()->Module},
-                {.Stage = ShaderStage::Fragment, .Module = m_Impl->CompositeFS.Get()->Module},
-            },
-        });
+        m_Impl->Pipeline = GraphicsPipeline::Create(
+            info.Context,
+            {
+                .Name = "SwapChain Composite Pipeline",
+                .ColorAttachments = {{.Format = info.SwapChainFormat}},
+                .PipelineLayout = m_Impl->Layout,
+                .ShaderStages =
+                    {
+                        {.Stage = ShaderStage::Vertex, .Module = m_Impl->CompositeVS.Get()->Module},
+                        {.Stage = ShaderStage::Fragment,
+                         .Module = m_Impl->CompositeFS.Get()->Module},
+                    },
+            });
 
         // View over the ImGui layer's rendered output, blended over the scene.
-        m_Impl->ImGuiView = ImageView::Create(info.Context, {
-            .Name = "SwapChain Composite Layer View",
-            .Image = info.ImGui.GetOutputImage(),
-        });
+        m_Impl->ImGuiView =
+            ImageView::Create(info.Context, {
+                                                .Name = "SwapChain Composite Layer View",
+                                                .Image = info.ImGui.GetOutputImage(),
+                                            });
 
         BindlessRegistry& bindless = info.Context.GetBindlessRegistry();
         m_Impl->ImGuiHandle = bindless.Register(m_Impl->ImGuiView);
@@ -136,7 +146,8 @@ namespace Veng::Renderer
         m_Impl->SceneHandle = bindless.Register(sceneSource);
     }
 
-    Unique<CompiledGraph> SwapChainCompositePass::Compile(RenderGraph& graph, ResourceId swapChainTarget)
+    Unique<CompiledGraph> SwapChainCompositePass::Compile(RenderGraph& graph,
+                                                          ResourceId swapChainTarget)
     {
         m_Impl->SwapId = swapChainTarget;
         m_Impl->SceneId = graph.Import("SwapChainCompositeScene");
@@ -151,21 +162,22 @@ namespace Veng::Renderer
             })
             .Sample(m_Impl->SceneId)
             .Sample(m_Impl->ImGuiId)
-            .Execute([this](PassContext& ctx)
-            {
-                CommandBuffer& cmd = ctx.Cmd();
-                const uvec2 extent = m_Impl->Context.GetSwapChainExtent();
-                cmd.BindPipeline(m_Impl->Pipeline);
-                cmd.SetViewport({0, 0}, extent);
-                cmd.SetScissor({0, 0}, extent);
-                m_Impl->Context.GetBindlessRegistry().Bind(cmd);
-                cmd.PushConstants(CompositePushConstants{
-                    .SceneTexture = m_Impl->SceneHandle.Index,
-                    .ImGuiTexture = m_Impl->ImGuiHandle.Index,
-                    .Sampler = m_Impl->SamplerHandle.Index,
+            .Execute(
+                [this](PassContext& ctx)
+                {
+                    CommandBuffer& cmd = ctx.Cmd();
+                    const uvec2 extent = m_Impl->Context.GetSwapChainExtent();
+                    cmd.BindPipeline(m_Impl->Pipeline);
+                    cmd.SetViewport({0, 0}, extent);
+                    cmd.SetScissor({0, 0}, extent);
+                    m_Impl->Context.GetBindlessRegistry().Bind(cmd);
+                    cmd.PushConstants(CompositePushConstants{
+                        .SceneTexture = m_Impl->SceneHandle.Index,
+                        .ImGuiTexture = m_Impl->ImGuiHandle.Index,
+                        .Sampler = m_Impl->SamplerHandle.Index,
+                    });
+                    cmd.DrawFullscreenTriangle();
                 });
-                cmd.DrawFullscreenTriangle();
-            });
 
         return graph.Compile();
     }

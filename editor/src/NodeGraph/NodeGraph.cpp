@@ -8,11 +8,9 @@
 
 namespace VengEditor
 {
-    NodeGraph::NodeGraph(CanConnectFn canConnect, PinShapeFn pinShape,
-                         PropertySizeFn propertySize)
-        : m_CanConnect(std::move(canConnect))
-        , m_PinShape(std::move(pinShape))
-        , m_PropertySize(std::move(propertySize))
+    NodeGraph::NodeGraph(CanConnectFn canConnect, PinShapeFn pinShape, PropertySizeFn propertySize)
+        : m_CanConnect(std::move(canConnect)), m_PinShape(std::move(pinShape)),
+          m_PropertySize(std::move(propertySize))
     {
         VE_ASSERT(static_cast<bool>(m_CanConnect), "NodeGraph requires a CanConnect predicate");
         VE_ASSERT(static_cast<bool>(m_PinShape), "NodeGraph requires a PinShape callback");
@@ -51,9 +49,8 @@ namespace VengEditor
             return; // stale / non-existent — a no-op
 
         // Drop every link incident to this node.
-        std::erase_if(m_Links, [&](const Link& link) {
-            return link.From.Node == node || link.To.Node == node;
-        });
+        std::erase_if(m_Links, [&](const Link& link)
+                      { return link.From.Node == node || link.To.Node == node; });
 
         std::erase(m_Live, node);
 
@@ -87,8 +84,8 @@ namespace VengEditor
         // Type: Wildcard is compatible with anything; otherwise the domain decides.
         const PinType& fromType = fromShape.Outputs[from.Pin];
         const PinType& toType = toShape.Inputs[to.Pin];
-        const bool wildcard = fromType.Kind == PinType::Kind::Wildcard
-            || toType.Kind == PinType::Kind::Wildcard;
+        const bool wildcard =
+            fromType.Kind == PinType::Kind::Wildcard || toType.Kind == PinType::Kind::Wildcard;
         if (!wildcard && !m_CanConnect(fromType, toType))
             return std::unexpected("Connect: incompatible pin types");
 
@@ -171,7 +168,8 @@ namespace VengEditor
         // same node pair must not double-count).
         Veng::vector<Veng::u32> indegree(m_Live.size(), 0);
 
-        const auto liveIndexOf = [&](NodeId node) -> Veng::usize {
+        const auto liveIndexOf = [&](NodeId node) -> Veng::usize
+        {
             for (Veng::usize i = 0; i < m_Live.size(); ++i)
                 if (m_Live[i] == node)
                     return i;
@@ -220,7 +218,8 @@ namespace VengEditor
             {
                 if (!(link.From.Node == picked))
                     continue;
-                if (std::find(successors.begin(), successors.end(), link.To.Node) == successors.end())
+                if (std::find(successors.begin(), successors.end(), link.To.Node) ==
+                    successors.end())
                     successors.push_back(link.To.Node);
             }
             for (NodeId successor : successors)

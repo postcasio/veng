@@ -22,9 +22,15 @@ namespace Veng::Renderer
         explicit SynchronizationFrame(Context& context);
 
         /// @brief Returns the semaphore signalled by vkAcquireNextImageKHR.
-        [[nodiscard]] Semaphore& GetImageAvailableSemaphore() const { return *m_ImageAvailableSemaphore; }
+        [[nodiscard]] Semaphore& GetImageAvailableSemaphore() const
+        {
+            return *m_ImageAvailableSemaphore;
+        }
         /// @brief Returns the semaphore signalled when rendering is complete.
-        [[nodiscard]] Semaphore& GetRenderFinishedSemaphore() const { return *m_RenderFinishedSemaphore; }
+        [[nodiscard]] Semaphore& GetRenderFinishedSemaphore() const
+        {
+            return *m_RenderFinishedSemaphore;
+        }
         /// @brief Returns the fence waited on before reusing this frame's resources.
         [[nodiscard]] Fence& GetInFlightFence() const { return *m_InFlightFence; }
         /// @brief Returns the primary command buffer for this frame.

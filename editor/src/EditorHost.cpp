@@ -49,9 +49,10 @@ namespace VengEditor
         {
         public:
             TextureEditorFactory(const AssetSourceIndex& index, Renderer::Context& context,
-                                 AssetManager& assets, ImGuiLayer& imgui, VengEditor::CookDriver cook) :
-                m_Index(index), m_Context(context), m_Assets(assets),
-                m_ImGui(imgui), m_Cook(std::move(cook))
+                                 AssetManager& assets, ImGuiLayer& imgui,
+                                 VengEditor::CookDriver cook)
+                : m_Index(index), m_Context(context), m_Assets(assets), m_ImGui(imgui),
+                  m_Cook(std::move(cook))
             {
             }
 
@@ -60,12 +61,13 @@ namespace VengEditor
                 const AssetSourceIndex::Entry* entry = m_Index.Find(id);
                 if (!entry)
                 {
-                    Log::Error("Texture editor: no source manifest entry for asset 0x{:X}", id.Value);
+                    Log::Error("Texture editor: no source manifest entry for asset 0x{:X}",
+                               id.Value);
                     return nullptr;
                 }
 
-                return CreateUnique<TextureEditorPanel>(
-                    id, entry->Source, m_Context, m_Assets, m_ImGui, m_Cook);
+                return CreateUnique<TextureEditorPanel>(id, entry->Source, m_Context, m_Assets,
+                                                        m_ImGui, m_Cook);
             }
 
         private:
@@ -83,9 +85,9 @@ namespace VengEditor
         public:
             MaterialEditorFactory(const AssetSourceIndex& index, Renderer::Context& context,
                                   AssetManager& assets, ImGuiLayer& imgui, EditorRegistry& editors,
-                                  VengEditor::CookDriver cook) :
-                m_Index(index), m_Context(context), m_Assets(assets),
-                m_ImGui(imgui), m_Editors(editors), m_Cook(std::move(cook))
+                                  VengEditor::CookDriver cook)
+                : m_Index(index), m_Context(context), m_Assets(assets), m_ImGui(imgui),
+                  m_Editors(editors), m_Cook(std::move(cook))
             {
             }
 
@@ -94,12 +96,13 @@ namespace VengEditor
                 const AssetSourceIndex::Entry* entry = m_Index.Find(id);
                 if (!entry)
                 {
-                    Log::Error("Material editor: no source manifest entry for asset 0x{:X}", id.Value);
+                    Log::Error("Material editor: no source manifest entry for asset 0x{:X}",
+                               id.Value);
                     return nullptr;
                 }
 
-                return CreateUnique<MaterialEditorPanel>(
-                    id, entry->Source, m_Index, m_Context, m_Assets, m_ImGui, m_Editors, m_Cook);
+                return CreateUnique<MaterialEditorPanel>(id, entry->Source, m_Index, m_Context,
+                                                         m_Assets, m_ImGui, m_Editors, m_Cook);
             }
 
         private:
@@ -149,17 +152,15 @@ namespace VengEditor
             editorModule->Register(host);
 
         auto gameModulePtr = CreateUnique<LoadedModule>(std::move(*gameModule));
-        return Unique<EditorHost>(new EditorHost(info, std::move(registries),
-                                                 std::move(gameModulePtr), std::move(editorModule)));
+        return Unique<EditorHost>(new EditorHost(
+            info, std::move(registries), std::move(gameModulePtr), std::move(editorModule)));
     }
 
     EditorHost::EditorHost(const EditorHostInfo& info, Unique<Registries> registries,
-                           Unique<LoadedModule> gameModule, optional<LoadedModule> editorModule) :
-        Application(info.App, registries->Types),
-        m_Info(info),
-        m_Registries(std::move(registries)),
-        m_GameModule(std::move(gameModule)),
-        m_EditorModule(std::move(editorModule))
+                           Unique<LoadedModule> gameModule, optional<LoadedModule> editorModule)
+        : Application(info.App, registries->Types), m_Info(info),
+          m_Registries(std::move(registries)), m_GameModule(std::move(gameModule)),
+          m_EditorModule(std::move(editorModule))
     {
     }
 
@@ -179,56 +180,66 @@ namespace VengEditor
         VE_ASSERT(mount, "{}", mount.error());
 
         {
-            const AssetResult<AssetHandle<Shader>> vs = GetAssetManager().LoadSync<Shader>(FullscreenVertId);
+            const AssetResult<AssetHandle<Shader>> vs =
+                GetAssetManager().LoadSync<Shader>(FullscreenVertId);
             VE_ASSERT(vs.has_value(), "{}", vs.error().Detail);
-            const AssetResult<AssetHandle<Shader>> fs = GetAssetManager().LoadSync<Shader>(BlitFragId);
+            const AssetResult<AssetHandle<Shader>> fs =
+                GetAssetManager().LoadSync<Shader>(BlitFragId);
             VE_ASSERT(fs.has_value(), "{}", fs.error().Detail);
             m_BlitVS = *vs;
             m_BlitFS = *fs;
 
-            m_BlitLayout = Renderer::PipelineLayout::Create(GetRenderContext(), {
-                .Name = "Editor Blit Layout",
-                .PushConstantRanges = {
-                    Renderer::PushConstantRange::Of<BlitPushConstants>(Renderer::ShaderStage::Fragment),
-                },
-            });
+            m_BlitLayout = Renderer::PipelineLayout::Create(
+                GetRenderContext(), {
+                                        .Name = "Editor Blit Layout",
+                                        .PushConstantRanges =
+                                            {
+                                                Renderer::PushConstantRange::Of<BlitPushConstants>(
+                                                    Renderer::ShaderStage::Fragment),
+                                            },
+                                    });
 
-            m_BlitPipeline = Renderer::GraphicsPipeline::Create(GetRenderContext(), {
-                .Name = "Editor Blit Pipeline",
-                .ColorAttachments = {{.Format = GetRenderContext().GetSwapChainFormat()}},
-                .PipelineLayout = m_BlitLayout,
-                .ShaderStages = {
-                    {.Stage = Renderer::ShaderStage::Vertex, .Module = m_BlitVS.Get()->Module},
-                    {.Stage = Renderer::ShaderStage::Fragment, .Module = m_BlitFS.Get()->Module},
-                },
-            });
+            m_BlitPipeline = Renderer::GraphicsPipeline::Create(
+                GetRenderContext(),
+                {
+                    .Name = "Editor Blit Pipeline",
+                    .ColorAttachments = {{.Format = GetRenderContext().GetSwapChainFormat()}},
+                    .PipelineLayout = m_BlitLayout,
+                    .ShaderStages =
+                        {
+                            {.Stage = Renderer::ShaderStage::Vertex,
+                             .Module = m_BlitVS.Get()->Module},
+                            {.Stage = Renderer::ShaderStage::Fragment,
+                             .Module = m_BlitFS.Get()->Module},
+                        },
+                });
         }
 
-        m_Sampler = Renderer::Sampler::Create(GetRenderContext(), {
-            .Name = "Editor Present Sampler",
-            .AddressModeU = Renderer::AddressMode::ClampToEdge,
-            .AddressModeV = Renderer::AddressMode::ClampToEdge,
-            .AddressModeW = Renderer::AddressMode::ClampToEdge,
-        });
+        m_Sampler = Renderer::Sampler::Create(
+            GetRenderContext(), {
+                                    .Name = "Editor Present Sampler",
+                                    .AddressModeU = Renderer::AddressMode::ClampToEdge,
+                                    .AddressModeV = Renderer::AddressMode::ClampToEdge,
+                                    .AddressModeW = Renderer::AddressMode::ClampToEdge,
+                                });
 
-        m_ImGuiView = Renderer::ImageView::Create(GetRenderContext(), {
-            .Name = "Editor ImGui View",
-            .Image = GetImGuiLayer()->GetOutputImage(),
-        });
+        m_ImGuiView = Renderer::ImageView::Create(GetRenderContext(),
+                                                  {
+                                                      .Name = "Editor ImGui View",
+                                                      .Image = GetImGuiLayer()->GetOutputImage(),
+                                                  });
 
         auto& bindless = GetRenderContext().GetBindlessRegistry();
         m_ImGuiHandle = bindless.Register(m_ImGuiView);
         m_SamplerHandle = bindless.Register(m_Sampler);
 
         m_PresentGraph = BuildPresentGraph();
-        GetRenderContext().AddSwapChainInvalidationCallback([this]
-        {
-            m_PresentGraph = BuildPresentGraph();
-        });
+        GetRenderContext().AddSwapChainInvalidationCallback(
+            [this] { m_PresentGraph = BuildPresentGraph(); });
 
         // Keep a direct handle to drive the viewport's scene render before the panels are drawn.
-        auto viewport = CreateUnique<SceneViewportPanel>(
-            GetRenderContext(), GetAssetManager(), *GetImGuiLayer(), GetTypeRegistry());
+        auto viewport = CreateUnique<SceneViewportPanel>(GetRenderContext(), GetAssetManager(),
+                                                         *GetImGuiLayer(), GetTypeRegistry());
         m_Viewport = viewport.get();
         m_Panels.push_back({std::move(viewport), true});
 
@@ -241,27 +252,29 @@ namespace VengEditor
         // try_emplace no-ops if the game module already registered a factory for these types.
         if (m_Info.AssetManifestPath)
         {
-            auto cookFor = [this] {
+            auto cookFor = [this]
+            {
                 return VengEditor::CookDriver([this](const VengEditor::CookRequest& request,
                                                      function<void(Result<MountHandle>)> onComplete)
-                {
-                    RequestCook(request, std::move(onComplete));
-                });
+                                              { RequestCook(request, std::move(onComplete)); });
             };
 
-            m_Registries->Editor.RegisterAssetEditor(AssetType::Texture,
-                CreateUnique<TextureEditorFactory>(
-                    *m_Sources, GetRenderContext(), GetAssetManager(), *GetImGuiLayer(), cookFor()));
+            m_Registries->Editor.RegisterAssetEditor(
+                AssetType::Texture,
+                CreateUnique<TextureEditorFactory>(*m_Sources, GetRenderContext(),
+                                                   GetAssetManager(), *GetImGuiLayer(), cookFor()));
 
-            m_Registries->Editor.RegisterAssetEditor(AssetType::Material,
-                CreateUnique<MaterialEditorFactory>(
-                    *m_Sources, GetRenderContext(), GetAssetManager(), *GetImGuiLayer(),
-                    m_Registries->Editor, cookFor()));
+            m_Registries->Editor.RegisterAssetEditor(
+                AssetType::Material, CreateUnique<MaterialEditorFactory>(
+                                         *m_Sources, GetRenderContext(), GetAssetManager(),
+                                         *GetImGuiLayer(), m_Registries->Editor, cookFor()));
         }
 
-        m_Panels.push_back({CreateUnique<AssetBrowserPanel>(
-            ExecutableDirectory() / "sample.vengpack", *this), true});
-        auto inspector = CreateUnique<InspectorPanel>(GetAssetManager(), m_Registries->Editor, *m_Sources);
+        m_Panels.push_back(
+            {CreateUnique<AssetBrowserPanel>(ExecutableDirectory() / "sample.vengpack", *this),
+             true});
+        auto inspector =
+            CreateUnique<InspectorPanel>(GetAssetManager(), m_Registries->Editor, *m_Sources);
         m_Inspector = inspector.get();
         m_Panels.push_back({std::move(inspector), true});
         m_Panels.push_back({CreateUnique<ConsolePanel>(), true});
@@ -283,20 +296,21 @@ namespace VengEditor
                 .Clear = Renderer::ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
             })
             .Sample(m_ImGuiId)
-            .Execute([this](Renderer::PassContext& ctx)
-            {
-                Renderer::CommandBuffer& cmd = ctx.Cmd();
-                const uvec2 extent = GetRenderContext().GetSwapChainExtent();
-                cmd.BindPipeline(m_BlitPipeline);
-                cmd.SetViewport({0, 0}, extent);
-                cmd.SetScissor({0, 0}, extent);
-                GetRenderContext().GetBindlessRegistry().Bind(cmd);
-                cmd.PushConstants(BlitPushConstants{
-                    .Texture = m_ImGuiHandle.Index,
-                    .Sampler = m_SamplerHandle.Index,
+            .Execute(
+                [this](Renderer::PassContext& ctx)
+                {
+                    Renderer::CommandBuffer& cmd = ctx.Cmd();
+                    const uvec2 extent = GetRenderContext().GetSwapChainExtent();
+                    cmd.BindPipeline(m_BlitPipeline);
+                    cmd.SetViewport({0, 0}, extent);
+                    cmd.SetScissor({0, 0}, extent);
+                    GetRenderContext().GetBindlessRegistry().Bind(cmd);
+                    cmd.PushConstants(BlitPushConstants{
+                        .Texture = m_ImGuiHandle.Index,
+                        .Sampler = m_SamplerHandle.Index,
+                    });
+                    cmd.DrawFullscreenTriangle();
                 });
-                cmd.DrawFullscreenTriangle();
-            });
 
         return graph.Compile();
     }
@@ -320,20 +334,21 @@ namespace VengEditor
 
         Task<vector<u8>> task = m_Info.Cook(resolved, GetTaskSystem());
 
-        task.Then([this, targetId = request.TargetId, source = request.SourcePath,
-                   onComplete = std::move(onComplete)](Result<vector<u8>> bytes) mutable
-        {
-            if (!bytes)
+        task.Then(
+            [this, targetId = request.TargetId, source = request.SourcePath,
+             onComplete = std::move(onComplete)](Result<vector<u8>> bytes) mutable
             {
-                Log::Error("editor: cook of '{}' failed: {}", source.string(), bytes.error());
-                onComplete(std::unexpected(bytes.error()));
-                return;
-            }
+                if (!bytes)
+                {
+                    Log::Error("editor: cook of '{}' failed: {}", source.string(), bytes.error());
+                    onComplete(std::unexpected(bytes.error()));
+                    return;
+                }
 
-            MountHandle handle = GetAssetManager().MountMemory(
-                std::move(*bytes), fmt::format("cook:{}", targetId.Value));
-            onComplete(std::move(handle));
-        });
+                MountHandle handle = GetAssetManager().MountMemory(
+                    std::move(*bytes), fmt::format("cook:{}", targetId.Value));
+                onComplete(std::move(handle));
+            });
     }
 
     void EditorHost::DrawMenuBar()

@@ -60,68 +60,42 @@ namespace Veng
         void Run(vector<string> arguments);
 
         /// @brief Returns the application window.
-        [[nodiscard]] Window& GetWindow() const
-        {
-            return *m_Window;
-        }
+        [[nodiscard]] Window& GetWindow() const { return *m_Window; }
 
         /// @brief Returns the render context.
-        [[nodiscard]] Renderer::Context& GetRenderContext()
-        {
-            return m_RenderContext;
-        }
+        [[nodiscard]] Renderer::Context& GetRenderContext() { return m_RenderContext; }
 
         /// @brief Returns the task system.
-        [[nodiscard]] TaskSystem& GetTaskSystem()
-        {
-            return *m_TaskSystem;
-        }
+        [[nodiscard]] TaskSystem& GetTaskSystem() { return *m_TaskSystem; }
 
         /// @brief Returns the asset manager.
-        [[nodiscard]] AssetManager& GetAssetManager()
-        {
-            return *m_AssetManager;
-        }
+        [[nodiscard]] AssetManager& GetAssetManager() { return *m_AssetManager; }
 
         /// @brief Returns the host-owned, process-wide registry of reflected types.
         ///
         /// Borrowed: the host constructs it, pre-registers builtins, and calls
         /// VengModuleRegister before passing it here. Must outlive this Application.
-        [[nodiscard]] TypeRegistry& GetTypeRegistry()
-        {
-            return m_TypeRegistry;
-        }
+        [[nodiscard]] TypeRegistry& GetTypeRegistry() { return m_TypeRegistry; }
 
         /// @brief Returns the ImGui layer, or nullptr if the app opted out.
-        [[nodiscard]] ImGuiLayer* GetImGuiLayer() const
-        {
-            return m_ImGuiLayer.get();
-        }
+        [[nodiscard]] ImGuiLayer* GetImGuiLayer() const { return m_ImGuiLayer.get(); }
 
     protected:
         /// @brief Called once after all engine systems are initialized.
-        virtual void OnInitialize()
-        {
-        }
+        virtual void OnInitialize() {}
 
         /// @brief Called once per frame before rendering.
         /// @param delta  Time in seconds since the previous frame.
-        virtual void OnUpdate(f32 delta)
-        {
-        }
+        virtual void OnUpdate(f32 delta) {}
 
         /// @brief Called once per frame to record draw commands.
-        virtual void OnRender()
-        {
-        }
+        virtual void OnRender() {}
 
         /// @brief Called after the main loop exits and the GPU is idle, before context teardown.
         ///
         /// Release every engine resource held by the application here (reset Refs/Uniques,
         /// AssetHandles included) — resources that outlive the context fail on destruction.
-        virtual void OnDispose()
-        {
-        }
+        virtual void OnDispose() {}
 
         /// @brief Signals the run loop to exit after the current frame.
         ///

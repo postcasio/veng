@@ -14,7 +14,9 @@
 
 using namespace Veng;
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "AssetManager::Adopt: runtime primitive mesh becomes a first-class, id-less handle")
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "AssetManager::Adopt: runtime primitive mesh becomes a first-class, id-less handle")
 {
     AssetManager assets(Context, Tasks, Types);
 

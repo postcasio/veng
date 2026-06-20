@@ -8,14 +8,14 @@
 ///
 /// Invoked only from the fatal assert path under VE_DEBUG.
 #if defined(__clang__)
-    #define VE_DEBUG_BREAK() __builtin_debugtrap()
+#define VE_DEBUG_BREAK() __builtin_debugtrap()
 #elif defined(_MSC_VER)
-    #define VE_DEBUG_BREAK() __debugbreak()
+#define VE_DEBUG_BREAK() __debugbreak()
 #elif defined(__GNUC__)
-    #define VE_DEBUG_BREAK() __builtin_trap()
+#define VE_DEBUG_BREAK() __builtin_trap()
 #else
-    #include <cstdlib>
-    #define VE_DEBUG_BREAK() std::abort()
+#include <cstdlib>
+#define VE_DEBUG_BREAK() std::abort()
 #endif
 
 namespace Veng::Detail
@@ -44,12 +44,12 @@ namespace Veng::Detail
 /// failures, return Veng::Result<T> instead (see Result.h).
 /// @param condition  Expression that must be true.
 /// @param ...        fmt-style format string + arguments for the diagnostic message.
-#define VE_ASSERT(condition, ...)                                              \
-    do                                                                         \
-    {                                                                          \
-        if (!(condition))                                                      \
-        {                                                                      \
-            ::Veng::Detail::FatalAssert(__FILE__, __LINE__, #condition,        \
-                                        ::fmt::format(__VA_ARGS__));           \
-        }                                                                      \
+#define VE_ASSERT(condition, ...)                                                                  \
+    do                                                                                             \
+    {                                                                                              \
+        if (!(condition))                                                                          \
+        {                                                                                          \
+            ::Veng::Detail::FatalAssert(__FILE__, __LINE__, #condition,                            \
+                                        ::fmt::format(__VA_ARGS__));                               \
+        }                                                                                          \
     } while (false)

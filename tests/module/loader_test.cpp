@@ -74,7 +74,7 @@ int main()
         if (loaded)
         {
             ApplicationRegistry app;
-            TypeRegistry        types;
+            TypeRegistry types;
             RegisterBuiltinTypes(types);
             VengModuleHost host{.App = app, .Types = types, .Editor = nullptr};
 
@@ -84,7 +84,8 @@ int main()
             loaded->Register(host);
 
             Check(app.HasApplication(), "Application factory registered after Register");
-            Check(types.IsRegistered(TypeIdOf<Probe>()), "game component registered after Register");
+            Check(types.IsRegistered(TypeIdOf<Probe>()),
+                  "game component registered after Register");
 
             if (types.IsRegistered(TypeIdOf<Probe>()))
             {
@@ -111,8 +112,7 @@ int main()
 
     // 3. A nonexistent path is a recoverable Result error.
     {
-        Result<LoadedModule> loaded =
-            ModuleLoader::Load(path{"this-module-does-not-exist.dylib"});
+        Result<LoadedModule> loaded = ModuleLoader::Load(path{"this-module-does-not-exist.dylib"});
         Check(!loaded.has_value(), "nonexistent path is a Result error");
     }
 

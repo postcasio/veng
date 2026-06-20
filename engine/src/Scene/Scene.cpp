@@ -11,14 +11,11 @@ namespace Veng
     {
         // These three pools decide draw candidacy and world bounds; checking compile-time
         // TypeId constants (not a registry lookup) keeps mutation-path overhead minimal.
-        return id == TypeIdOf<Transform>() || id == TypeIdOf<Parent>()
-               || id == TypeIdOf<MeshRenderer>();
+        return id == TypeIdOf<Transform>() || id == TypeIdOf<Parent>() ||
+               id == TypeIdOf<MeshRenderer>();
     }
 
-    Scene::Scene(TypeRegistry& registry) :
-        m_Registry(&registry)
-    {
-    }
+    Scene::Scene(TypeRegistry& registry) : m_Registry(&registry) {}
 
     Scene::~Scene() = default;
 
@@ -221,8 +218,7 @@ namespace Veng
             return *it->second;
         }
 
-        VE_ASSERT(m_Registry->IsRegistered(id),
-                  "component TypeId {:#018x} is not registered", id);
+        VE_ASSERT(m_Registry->IsRegistered(id), "component TypeId {:#018x} is not registered", id);
 
         auto pool = Unique<ComponentPool>(new ComponentPool(m_Registry->Info(id)));
         ComponentPool& ref = *pool;

@@ -8,10 +8,10 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Types.h>
 
-
 namespace Veng::Renderer
 {
-    template <typename V> class VertexBuffer;
+    template <typename V>
+    class VertexBuffer;
     class IndexBuffer;
     class Context;
 
@@ -109,7 +109,8 @@ namespace Veng::Renderer
         /// @brief Creates a command buffer at the given level.
         /// @param context The owning context.
         /// @param level   Primary or secondary (default Primary).
-        static Ref<CommandBuffer> Create(Context& context, CommandBufferLevel level = CommandBufferLevel::Primary)
+        static Ref<CommandBuffer> Create(Context& context,
+                                         CommandBufferLevel level = CommandBufferLevel::Primary)
         {
             return Ref<CommandBuffer>(new CommandBuffer(context, level));
         }
@@ -175,7 +176,8 @@ namespace Veng::Renderer
         void Draw(u32 vertexCount, u32 instanceCount, u32 firstVertex, u32 firstInstance);
 
         /// @brief Records an indexed draw.
-        void DrawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset, u32 firstInstance);
+        void DrawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset,
+                         u32 firstInstance);
 
         /// @brief Records a compute dispatch.
         void Dispatch(u32 groupsX, u32 groupsY, u32 groupsZ);
@@ -252,7 +254,8 @@ namespace Veng::Renderer
     template <typename T>
     void CommandBuffer::PushConstants(const T& value, const u32 offset)
     {
-        static_assert(sizeof(T) <= 128, "Push constant value exceeds the guaranteed minimum block size (128 bytes)");
+        static_assert(sizeof(T) <= 128,
+                      "Push constant value exceeds the guaranteed minimum block size (128 bytes)");
 
         VE_ASSERT(m_LastBoundPipelineLayout, "PushConstants<T>: no pipeline layout is bound");
 
@@ -264,7 +267,8 @@ namespace Veng::Renderer
             if (offset >= range.Offset && offset + sizeof(T) <= range.Offset + range.Size)
             {
                 VE_ASSERT(matchingRange == nullptr,
-                          "PushConstants<T>: [{}, {}) is contained by more than one declared PushConstantRange on '{}'",
+                          "PushConstants<T>: [{}, {}) is contained by more than one declared "
+                          "PushConstantRange on '{}'",
                           offset, offset + sizeof(T), m_LastBoundPipelineLayout->GetName());
 
                 matchingRange = &range;

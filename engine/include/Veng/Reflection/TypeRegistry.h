@@ -54,8 +54,7 @@ namespace Veng
         TypeId Register(string name)
         {
             constexpr TypeId id = VengReflect<T>::Id;
-            static_assert(id != InvalidTypeId,
-                          "VengReflect<T>::Id must be a non-zero authored id");
+            static_assert(id != InvalidTypeId, "VengReflect<T>::Id must be a non-zero authored id");
             return RegisterImpl<T>(id, std::move(name), FieldClass::Struct, {});
         }
 
@@ -67,8 +66,7 @@ namespace Veng
         TypeId Register(string name, FieldClass cls, vector<FieldDescriptor> fields)
         {
             constexpr TypeId id = TypeIdOf<T>();
-            static_assert(id != InvalidTypeId,
-                          "TypeIdOf<T>() must be a non-zero authored id");
+            static_assert(id != InvalidTypeId, "TypeIdOf<T>() must be a non-zero authored id");
             return RegisterImpl<T>(id, std::move(name), cls, std::move(fields));
         }
 
@@ -82,8 +80,7 @@ namespace Veng
         TypeId Register()
         {
             constexpr TypeId id = VengReflect<T>::Id;
-            static_assert(id != InvalidTypeId,
-                          "VengReflect<T>::Id must be a non-zero authored id");
+            static_assert(id != InvalidTypeId, "VengReflect<T>::Id must be a non-zero authored id");
 
             if (m_Types.contains(id))
                 return id;
@@ -117,10 +114,7 @@ namespace Veng
         }
 
         /// @brief Returns true if the given TypeId has been registered.
-        [[nodiscard]] bool IsRegistered(TypeId id) const
-        {
-            return m_Types.contains(id);
-        }
+        [[nodiscard]] bool IsRegistered(TypeId id) const { return m_Types.contains(id); }
 
         /// @brief Returns the number of registered types.
         [[nodiscard]] usize Count() const { return m_Types.size(); }
@@ -138,9 +132,8 @@ namespace Veng
         {
             const auto existing = m_Types.find(id);
             VE_ASSERT(existing == m_Types.end(),
-                      "TypeId collision: '{}' and '{}' both claim TypeId {:#018x}",
-                      name, existing == m_Types.end() ? string{} : existing->second.Name,
-                      id);
+                      "TypeId collision: '{}' and '{}' both claim TypeId {:#018x}", name,
+                      existing == m_Types.end() ? string{} : existing->second.Name, id);
 
             TypeInfo info;
             info.Name = std::move(name);
@@ -149,9 +142,7 @@ namespace Veng
             info.DefaultConstruct = [](void* dst) { ::new (dst) T{}; };
             info.Destruct = [](void* obj) { static_cast<T*>(obj)->~T(); };
             info.MoveConstruct = [](void* dst, void* src)
-            {
-                ::new (dst) T{std::move(*static_cast<T*>(src))};
-            };
+            { ::new (dst) T{std::move(*static_cast<T*>(src))}; };
             info.Id = id;
             info.Class = cls;
             info.Fields = std::move(fields);
@@ -173,13 +164,13 @@ namespace Veng
 /// type that needs an id but carries no fields; a fielded struct uses VE_REFLECT
 /// and a non-struct leaf/enum uses VE_LEAF. The id is an authored 0x…ULL literal
 /// (engine builtins) or a `vengc generate-id` value (game types).
-#define VE_TYPE(Type, TypeIdLiteral)                                            \
-    template <>                                                                 \
-    struct ::Veng::VengReflect<Type>                                           \
-    {                                                                          \
-        static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                  \
-        static constexpr ::Veng::FieldClass Class = ::Veng::FieldClass::Struct;\
-        static ::Veng::string Name() { return #Type; }                         \
-        static ::Veng::vector<::Veng::FieldDescriptor> Fields() { return {}; } \
-        static void RegisterDependencies(::Veng::TypeRegistry&) {}             \
+#define VE_TYPE(Type, TypeIdLiteral)                                                               \
+    template <>                                                                                    \
+    struct ::Veng::VengReflect<Type>                                                               \
+    {                                                                                              \
+        static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                                      \
+        static constexpr ::Veng::FieldClass Class = ::Veng::FieldClass::Struct;                    \
+        static ::Veng::string Name() { return #Type; }                                             \
+        static ::Veng::vector<::Veng::FieldDescriptor> Fields() { return {}; }                     \
+        static void RegisterDependencies(::Veng::TypeRegistry&) {}                                 \
     }

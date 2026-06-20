@@ -34,13 +34,20 @@ namespace Veng::Cook
 
         optional<AssetType> ParseAssetType(const string& name)
         {
-            if (name == "raw")           return AssetType::Raw;
-            if (name == "texture")       return AssetType::Texture;
-            if (name == "mesh")          return AssetType::Mesh;
-            if (name == "shader")        return AssetType::Shader;
-            if (name == "material")      return AssetType::Material;
-            if (name == "vertex_layout") return AssetType::VertexLayout;
-            if (name == "prefab")        return AssetType::Prefab;
+            if (name == "raw")
+                return AssetType::Raw;
+            if (name == "texture")
+                return AssetType::Texture;
+            if (name == "mesh")
+                return AssetType::Mesh;
+            if (name == "shader")
+                return AssetType::Shader;
+            if (name == "material")
+                return AssetType::Material;
+            if (name == "vertex_layout")
+                return AssetType::VertexLayout;
+            if (name == "prefab")
+                return AssetType::Prefab;
 
             return std::nullopt;
         }
@@ -60,18 +67,21 @@ namespace Veng::Cook
             if (pack.is_discarded())
                 return std::unexpected(fmt::format("pack '{}': invalid JSON", packJson.string()));
 
-            if (!pack.is_object() || !pack.contains("version") || !pack["version"].is_number_unsigned())
-                return std::unexpected(fmt::format("pack '{}': missing or invalid 'version'", packJson.string()));
+            if (!pack.is_object() || !pack.contains("version") ||
+                !pack["version"].is_number_unsigned())
+                return std::unexpected(
+                    fmt::format("pack '{}': missing or invalid 'version'", packJson.string()));
 
             const u64 version = pack["version"].get<u64>();
             if (version != 1)
             {
-                return std::unexpected(fmt::format(
-                    "pack '{}': unsupported version {} (expected 1)", packJson.string(), version));
+                return std::unexpected(fmt::format("pack '{}': unsupported version {} (expected 1)",
+                                                   packJson.string(), version));
             }
 
             if (!pack.contains("assets") || !pack["assets"].is_array())
-                return std::unexpected(fmt::format("pack '{}': missing 'assets' array", packJson.string()));
+                return std::unexpected(
+                    fmt::format("pack '{}': missing 'assets' array", packJson.string()));
 
             return pack;
         }
@@ -95,21 +105,21 @@ namespace Veng::Cook
             const json& entry = assets[index];
             if (!entry.is_object())
             {
-                return std::unexpected(fmt::format(
-                    "pack '{}': asset[{}]: entry is not an object", packJson.string(), index));
+                return std::unexpected(fmt::format("pack '{}': asset[{}]: entry is not an object",
+                                                   packJson.string(), index));
             }
 
             if (!entry.contains("id") || !entry["id"].is_number_unsigned())
             {
-                return std::unexpected(fmt::format(
-                    "pack '{}': asset[{}]: missing or invalid 'id'", packJson.string(), index));
+                return std::unexpected(fmt::format("pack '{}': asset[{}]: missing or invalid 'id'",
+                                                   packJson.string(), index));
             }
 
             const u64 id = entry["id"].get<u64>();
             if (id == 0)
             {
-                return std::unexpected(fmt::format(
-                    "pack '{}': asset[{}]: asset id 0 is reserved", packJson.string(), index));
+                return std::unexpected(fmt::format("pack '{}': asset[{}]: asset id 0 is reserved",
+                                                   packJson.string(), index));
             }
 
             if (!entry.contains("type") || !entry["type"].is_string())
@@ -122,8 +132,8 @@ namespace Veng::Cook
             const optional<AssetType> type = ParseAssetType(typeStr);
             if (!type)
             {
-                return std::unexpected(fmt::format(
-                    "pack '{}': asset[{}]: unknown type '{}'", packJson.string(), index, typeStr));
+                return std::unexpected(fmt::format("pack '{}': asset[{}]: unknown type '{}'",
+                                                   packJson.string(), index, typeStr));
             }
 
             string source;
@@ -141,11 +151,12 @@ namespace Veng::Cook
     }
 
     VoidResult WriteDepfile(const path& depfilePath, const path& target,
-        std::span<const path> dependencies)
+                            std::span<const path> dependencies)
     {
         std::ofstream out(depfilePath, std::ios::binary | std::ios::trunc);
         if (!out)
-            return std::unexpected(fmt::format("depfile '{}': failed to open for writing", depfilePath.string()));
+            return std::unexpected(
+                fmt::format("depfile '{}': failed to open for writing", depfilePath.string()));
 
         // GCC/Make escaping: a space or '#' in a filename is backslash-escaped,
         // a '$' is doubled. Path separators (incl. Windows '\\') pass through.
@@ -183,8 +194,8 @@ namespace Veng::Cook
     }
 
     VoidResult Cooker::CookPack(const path& packJson, const path& outArchive,
-        std::span<const path> referencePacks, const TypeRegistry* types,
-        vector<path>* outDependencies) const
+                                std::span<const path> referencePacks, const TypeRegistry* types,
+                                vector<path>* outDependencies) const
     {
         const Result<json> packResult = ReadAndValidatePack(packJson);
         if (!packResult)
@@ -200,12 +211,12 @@ namespace Veng::Cook
             for (usize index = 0; index < assets.size(); ++index)
             {
                 const json& entry = assets[index];
-                if (entry.is_object() && entry.contains("type") && entry["type"].is_string()
-                    && entry["type"].get<string>() == "prefab")
+                if (entry.is_object() && entry.contains("type") && entry["type"].is_string() &&
+                    entry["type"].get<string>() == "prefab")
                 {
-                    return std::unexpected(fmt::format(
-                        "pack '{}': asset[{}]: prefab cooking requires --module",
-                        packJson.string(), index));
+                    return std::unexpected(
+                        fmt::format("pack '{}': asset[{}]: prefab cooking requires --module",
+                                    packJson.string(), index));
                 }
             }
         }
@@ -221,15 +232,16 @@ namespace Veng::Cook
             Result<AssetPack> refPackResult = ParseAssetPack(refPath);
             if (!refPackResult)
             {
-                return std::unexpected(fmt::format(
-                    "pack '{}': reference pack error: {}", packJson.string(), refPackResult.error()));
+                return std::unexpected(fmt::format("pack '{}': reference pack error: {}",
+                                                   packJson.string(), refPackResult.error()));
             }
             refPacks.push_back(std::move(*refPackResult));
         }
 
         // std::set keeps dependencies sorted and de-duplicated.
         std::set<path> dependencies;
-        auto record = [&dependencies](const path& p) { dependencies.insert(NormalizeDependency(p)); };
+        auto record = [&dependencies](const path& p)
+        { dependencies.insert(NormalizeDependency(p)); };
 
         record(packJson);
         for (const path& refPath : referencePacks)
@@ -277,8 +289,8 @@ namespace Veng::Cook
             const VoidResult entryResult = CookEntry(context, assets[index], seenIds, writer);
             if (!entryResult)
             {
-                return std::unexpected(fmt::format(
-                    "pack '{}': asset[{}]: {}", packJson.string(), index, entryResult.error()));
+                return std::unexpected(fmt::format("pack '{}': asset[{}]: {}", packJson.string(),
+                                                   index, entryResult.error()));
             }
         }
 
@@ -298,8 +310,9 @@ namespace Veng::Cook
         return writer.Write(outArchive);
     }
 
-    Result<vector<u8>> Cooker::CookSource(const path& sourcePath, AssetId id,
-        AssetType type, std::span<const path> referencePacks, const TypeRegistry* types) const
+    Result<vector<u8>> Cooker::CookSource(const path& sourcePath, AssetId id, AssetType type,
+                                          std::span<const path> referencePacks,
+                                          const TypeRegistry* types) const
     {
         const auto importerIt = m_Importers.find(type);
         if (importerIt == m_Importers.end())
@@ -315,8 +328,8 @@ namespace Veng::Cook
             Result<AssetPack> refPackResult = ParseAssetPack(refPath);
             if (!refPackResult)
             {
-                return std::unexpected(fmt::format(
-                    "cook '{}': reference pack error: {}", sourcePath.string(), refPackResult.error()));
+                return std::unexpected(fmt::format("cook '{}': reference pack error: {}",
+                                                   sourcePath.string(), refPackResult.error()));
             }
             refPacks.push_back(std::move(*refPackResult));
         }
@@ -356,13 +369,15 @@ namespace Veng::Cook
         const vector<u8> staged = writer.Build();
         const Result<ArchiveReader> reader = ArchiveReader::FromBytes(staged);
         if (!reader)
-            return std::unexpected(fmt::format("cook '{}': {}", sourcePath.string(), reader.error()));
+            return std::unexpected(
+                fmt::format("cook '{}': {}", sourcePath.string(), reader.error()));
 
         writer.SetArchiveDigest(Xxh3_128(reader->TocBytes()));
         return writer.Build();
     }
 
-    VoidResult Cooker::CookEntry(const CookContext& context, const json& entry, std::set<u64>& seenIds, ArchiveWriter& writer) const
+    VoidResult Cooker::CookEntry(const CookContext& context, const json& entry,
+                                 std::set<u64>& seenIds, ArchiveWriter& writer) const
     {
         if (!entry.is_object())
             return std::unexpected("entry is not an object");

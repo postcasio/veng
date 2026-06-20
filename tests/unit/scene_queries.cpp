@@ -18,9 +18,18 @@ using namespace Veng;
 
 namespace
 {
-    struct A { int Value = 0; };
-    struct B { int Value = 0; };
-    struct C { int Value = 0; };
+    struct A
+    {
+        int Value = 0;
+    };
+    struct B
+    {
+        int Value = 0;
+    };
+    struct C
+    {
+        int Value = 0;
+    };
 }
 
 VE_TYPE(A, 0x6D2A1F8C44B07E31ULL);
@@ -79,11 +88,12 @@ TEST_CASE("Each<A> visits exactly the entities holding A, in dense order")
 
     std::vector<Entity> visited;
     std::vector<int> values;
-    scene->Each<A>([&](Entity e, A& a)
-    {
-        visited.push_back(e);
-        values.push_back(a.Value);
-    });
+    scene->Each<A>(
+        [&](Entity e, A& a)
+        {
+            visited.push_back(e);
+            values.push_back(a.Value);
+        });
 
     CHECK(visited.size() == 2);
     CHECK(visited[0] == e0);
@@ -110,11 +120,12 @@ TEST_CASE("Each<A,B> visits only entities holding both")
     scene->Add<B>(both2, B{6});
 
     std::vector<Entity> visited;
-    scene->Each<A, B>([&](Entity e, A& a, B& b)
-    {
-        visited.push_back(e);
-        CHECK(a.Value + 1 == b.Value);
-    });
+    scene->Each<A, B>(
+        [&](Entity e, A& a, B& b)
+        {
+            visited.push_back(e);
+            CHECK(a.Value + 1 == b.Value);
+        });
 
     CHECK(visited.size() == 2);
     CHECK(visited[0] == ab);
@@ -130,15 +141,16 @@ TEST_CASE("Each<A,B,C> visits only entities holding all three")
     const Entity ab = scene->CreateEntity();
     const Entity ac = scene->CreateEntity();
 
-    scene->Add<A>(all); scene->Add<B>(all); scene->Add<C>(all);
-    scene->Add<A>(ab); scene->Add<B>(ab);
-    scene->Add<A>(ac); scene->Add<C>(ac);
+    scene->Add<A>(all);
+    scene->Add<B>(all);
+    scene->Add<C>(all);
+    scene->Add<A>(ab);
+    scene->Add<B>(ab);
+    scene->Add<A>(ac);
+    scene->Add<C>(ac);
 
     std::vector<Entity> visited;
-    scene->Each<A, B, C>([&](Entity e, A&, B&, C&)
-    {
-        visited.push_back(e);
-    });
+    scene->Each<A, B, C>([&](Entity e, A&, B&, C&) { visited.push_back(e); });
 
     CHECK(visited.size() == 1);
     CHECK(visited[0] == all);
@@ -212,8 +224,10 @@ TEST_CASE("View range-for visits the intersection")
 
     const Entity e0 = scene->CreateEntity();
     const Entity e1 = scene->CreateEntity();
-    scene->Add<A>(e0, A{1}); scene->Add<B>(e0, B{2});
-    scene->Add<A>(e1, A{3}); scene->Add<B>(e1, B{4});
+    scene->Add<A>(e0, A{1});
+    scene->Add<B>(e0, B{2});
+    scene->Add<A>(e1, A{3});
+    scene->Add<B>(e1, B{4});
 
     int sum = 0;
     for (auto [e, a, b] : scene->View<A, B>())
@@ -240,7 +254,8 @@ TEST_CASE("View early-out with break stops without visiting the rest")
     int visited = 0;
     for (auto [e, a] : scene->View<A>())
     {
-        (void)e; (void)a;
+        (void)e;
+        (void)a;
         ++visited;
         if (visited == 2)
         {
@@ -258,14 +273,17 @@ TEST_CASE("View skips driver entries missing another component")
     const Entity a0 = scene->CreateEntity();
     const Entity a1 = scene->CreateEntity();
     const Entity a2 = scene->CreateEntity();
-    scene->Add<A>(a0); scene->Add<A>(a1); scene->Add<A>(a2);
+    scene->Add<A>(a0);
+    scene->Add<A>(a1);
+    scene->Add<A>(a2);
     // B only on a1.
     scene->Add<B>(a1);
 
     std::vector<Entity> visited;
     for (auto [e, a, b] : scene->View<A, B>())
     {
-        (void)a; (void)b;
+        (void)a;
+        (void)b;
         visited.push_back(e);
     }
     CHECK(visited.size() == 1);
@@ -323,10 +341,9 @@ TEST_CASE("WorldMatrix composes a 3-deep parent chain")
     // Pure translations compose additively: (10,5,2).
     CHECK(VecApproxEqual(origin, vec3(10.0f, 5.0f, 2.0f)));
 
-    const mat4 expected =
-        LocalMatrix(scene->Get<Transform>(root)) *
-        LocalMatrix(scene->Get<Transform>(mid)) *
-        LocalMatrix(scene->Get<Transform>(leaf));
+    const mat4 expected = LocalMatrix(scene->Get<Transform>(root)) *
+                          LocalMatrix(scene->Get<Transform>(mid)) *
+                          LocalMatrix(scene->Get<Transform>(leaf));
     CHECK(MatrixApproxEqual(world, expected));
 }
 

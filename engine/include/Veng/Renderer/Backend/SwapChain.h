@@ -62,7 +62,8 @@ namespace Veng::Renderer
         [[nodiscard]] u32 GetHeight() const { return m_Height; }
         [[nodiscard]] uvec2 GetExtent() const { return {m_Width, m_Height}; }
         /// @brief Returns the surface extent, clamping to the window framebuffer size if needed.
-        [[nodiscard]] vk::Extent2D GetSurfaceExtent(Window& window, SwapChainSupportDetails& swapChainSupport);
+        [[nodiscard]] vk::Extent2D GetSurfaceExtent(Window& window,
+                                                    SwapChainSupportDetails& swapChainSupport);
         [[nodiscard]] u32 GetMaxImageCount() const { return m_MaxImageCount; }
         [[nodiscard]] u32 GetImageCount() const { return m_ImageCount; }
         [[nodiscard]] u32 GetCurrentImageIndex() const { return m_CurrentImageIndex; }
@@ -83,11 +84,20 @@ namespace Veng::Renderer
         [[nodiscard]] Ref<Image> GetImage(const u32 index) const { return m_Images[index]; }
         [[nodiscard]] Ref<Image> GetCurrentImage() const { return m_Images[m_CurrentImageIndex]; }
 
-        [[nodiscard]] Ref<ImageView> GetImageView(const u32 index) const { return m_ImageViews[index]; }
-        [[nodiscard]] Ref<ImageView> GetCurrentImageView() const { return m_ImageViews[m_CurrentImageIndex]; }
+        [[nodiscard]] Ref<ImageView> GetImageView(const u32 index) const
+        {
+            return m_ImageViews[index];
+        }
+        [[nodiscard]] Ref<ImageView> GetCurrentImageView() const
+        {
+            return m_ImageViews[m_CurrentImageIndex];
+        }
 
         /// @brief Registers a callback fired after the swapchain has been recreated.
-        void AddInvalidationCallback(std::function<void()> func) { m_OnInvalidated.push_back(std::move(func)); }
+        void AddInvalidationCallback(std::function<void()> func)
+        {
+            m_OnInvalidated.push_back(std::move(func));
+        }
 
         /// @brief Fires all registered invalidation callbacks.
         void Invalidated();

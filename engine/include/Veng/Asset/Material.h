@@ -37,7 +37,12 @@ namespace Veng
     struct MaterialField
     {
         /// @brief Distinguishes authored scalar/vector params from bindless handle slots.
-        enum class FieldKind : u32 { Param = 0, TextureHandle = 1, SamplerHandle = 2 };
+        enum class FieldKind : u32
+        {
+            Param = 0,
+            TextureHandle = 1,
+            SamplerHandle = 2
+        };
 
         /// @brief Field name; matched by SetTexture/SetParam.
         string Name;
@@ -109,7 +114,8 @@ namespace Veng
         /// against the renderer's color format; Bind() then only pushes the selector.
         /// @param layout   The reflected pipeline layout (set 0 reserved for bindless).
         /// @param pipeline The built graphics pipeline, or null for PostProcess materials.
-        void Finalize(Ref<Renderer::PipelineLayout> layout, Ref<Renderer::GraphicsPipeline> pipeline);
+        void Finalize(Ref<Renderer::PipelineLayout> layout,
+                      Ref<Renderer::GraphicsPipeline> pipeline);
 
         /// @brief Binds the material's pipeline and pushes its index as the per-draw selector.
         ///
@@ -150,18 +156,30 @@ namespace Veng
         [[nodiscard]] MaterialDomain GetDomain() const { return m_Domain; }
 
         /// @brief Returns the built graphics pipeline, or null for a PostProcess material.
-        [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const { return m_Pipeline; }
+        [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const
+        {
+            return m_Pipeline;
+        }
 
         /// @brief Returns the reflected pipeline layout (set 0 reserved for bindless; selector push range at the domain's offset).
         ///
         /// A PostProcess pass builds its GraphicsPipeline against this layout using the material's shader modules.
-        [[nodiscard]] const Ref<Renderer::PipelineLayout>& GetPipelineLayout() const { return m_PipelineLayout; }
+        [[nodiscard]] const Ref<Renderer::PipelineLayout>& GetPipelineLayout() const
+        {
+            return m_PipelineLayout;
+        }
 
         /// @brief Returns the vertex shader module.
-        [[nodiscard]] const Ref<Renderer::ShaderModule>& GetVertexModule() const { return m_VertexShader.Get()->Module; }
+        [[nodiscard]] const Ref<Renderer::ShaderModule>& GetVertexModule() const
+        {
+            return m_VertexShader.Get()->Module;
+        }
 
         /// @brief Returns the fragment shader module.
-        [[nodiscard]] const Ref<Renderer::ShaderModule>& GetFragmentModule() const { return m_FragmentShader.Get()->Module; }
+        [[nodiscard]] const Ref<Renderer::ShaderModule>& GetFragmentModule() const
+        {
+            return m_FragmentShader.Get()->Module;
+        }
 
         /// @brief Returns the push-constant offset of the per-draw material selector.
         ///
@@ -174,7 +192,10 @@ namespace Veng
         /// Sampled bindlessly (set 0), so they are invisible to the render graph. A caller
         /// drawing with this material must PrepareForAccess(tex->GetView(), Sample) before
         /// the draw so any async-uploaded texture is acquired onto the graphics queue.
-        [[nodiscard]] std::span<const AssetHandle<Texture>> GetTextures() const { return m_Textures; }
+        [[nodiscard]] std::span<const AssetHandle<Texture>> GetTextures() const
+        {
+            return m_Textures;
+        }
 
         /// @brief Returns the reflected field table describing the material's parameter schema.
         ///

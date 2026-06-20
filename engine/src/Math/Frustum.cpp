@@ -31,10 +31,9 @@ namespace Veng
         for (const vec4& plane : frustum.Planes)
         {
             const vec3 normal(plane);
-            const vec3 positive(
-                normal.x >= 0.0f ? box.Max.x : box.Min.x,
-                normal.y >= 0.0f ? box.Max.y : box.Min.y,
-                normal.z >= 0.0f ? box.Max.z : box.Min.z);
+            const vec3 positive(normal.x >= 0.0f ? box.Max.x : box.Min.x,
+                                normal.y >= 0.0f ? box.Max.y : box.Min.y,
+                                normal.z >= 0.0f ? box.Max.z : box.Min.z);
 
             if (glm::dot(normal, positive) + plane.w < 0.0f)
                 return false;

@@ -58,15 +58,15 @@ namespace Veng
 /// or enum the same way — `VE_LEAF(MyEnum, 0x…ULL, FieldClass::Enum)` — with
 /// no engine change. The id is an authored 0x…ULL literal (engine builtins) or
 /// a `vengc generate-id` value (game types).
-#define VE_LEAF(Type, TypeIdLiteral, FieldClassValue)                          \
-    template <>                                                                 \
-    struct ::Veng::VengReflect<Type>                                           \
-    {                                                                          \
-        static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                  \
-        static constexpr ::Veng::FieldClass Class = (FieldClassValue);         \
-        static ::Veng::string Name() { return #Type; }                         \
-        static ::Veng::vector<::Veng::FieldDescriptor> Fields() { return {}; } \
-        static void RegisterDependencies(::Veng::TypeRegistry&) {}             \
+#define VE_LEAF(Type, TypeIdLiteral, FieldClassValue)                                              \
+    template <>                                                                                    \
+    struct ::Veng::VengReflect<Type>                                                               \
+    {                                                                                              \
+        static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                                      \
+        static constexpr ::Veng::FieldClass Class = (FieldClassValue);                             \
+        static ::Veng::string Name() { return #Type; }                                             \
+        static ::Veng::vector<::Veng::FieldDescriptor> Fields() { return {}; }                     \
+        static void RegisterDependencies(::Veng::TypeRegistry&) {}                                 \
     }
 
 // ----- Builtin leaf vocabulary ---------------------------------------------
@@ -79,8 +79,8 @@ namespace Veng
 // the local diagnostic suppression.
 
 #if defined(__clang__) || defined(__GNUC__)
-#    pragma GCC diagnostic push
-#    pragma GCC diagnostic ignored "-Wextra-qualification"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wextra-qualification"
 #endif
 
 namespace Veng
@@ -108,5 +108,5 @@ namespace Veng
 }
 
 #if defined(__clang__) || defined(__GNUC__)
-#    pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
 #endif

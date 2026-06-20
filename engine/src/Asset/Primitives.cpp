@@ -118,7 +118,8 @@ namespace Veng::Primitives
                 const f32 tx = static_cast<f32>(i) / static_cast<f32>(sx);
 
                 data.Vertices.push_back(CanonicalVertex{
-                    .Position = vec3(half.x * (tx * 2.0f - 1.0f), 0.0f, half.y * (tz * 2.0f - 1.0f)),
+                    .Position =
+                        vec3(half.x * (tx * 2.0f - 1.0f), 0.0f, half.y * (tz * 2.0f - 1.0f)),
                     .Normal = vec3(0.0f, 1.0f, 0.0f),
                     .Tangent = vec4(1.0f, 0.0f, 0.0f, 1.0f),
                     .UV = vec2(tx, tz),
@@ -235,20 +236,19 @@ namespace Veng::Primitives
         // corners). Positions/normals/UVs are derived from these at the end.
         const f32 t = (1.0f + std::sqrt(5.0f)) * 0.5f;
         vector<vec3> dirs = {
-            glm::normalize(vec3(-1.0f, t, 0.0f)), glm::normalize(vec3(1.0f, t, 0.0f)),
+            glm::normalize(vec3(-1.0f, t, 0.0f)),  glm::normalize(vec3(1.0f, t, 0.0f)),
             glm::normalize(vec3(-1.0f, -t, 0.0f)), glm::normalize(vec3(1.0f, -t, 0.0f)),
-            glm::normalize(vec3(0.0f, -1.0f, t)), glm::normalize(vec3(0.0f, 1.0f, t)),
+            glm::normalize(vec3(0.0f, -1.0f, t)),  glm::normalize(vec3(0.0f, 1.0f, t)),
             glm::normalize(vec3(0.0f, -1.0f, -t)), glm::normalize(vec3(0.0f, 1.0f, -t)),
-            glm::normalize(vec3(t, 0.0f, -1.0f)), glm::normalize(vec3(t, 0.0f, 1.0f)),
+            glm::normalize(vec3(t, 0.0f, -1.0f)),  glm::normalize(vec3(t, 0.0f, 1.0f)),
             glm::normalize(vec3(-t, 0.0f, -1.0f)), glm::normalize(vec3(-t, 0.0f, 1.0f)),
         };
 
         // The 20 outward-facing (CCW seen from outside) icosahedron triangles.
         vector<uvec3> faces = {
-            {0, 11, 5}, {0, 5, 1}, {0, 1, 7}, {0, 7, 10}, {0, 10, 11},
-            {1, 5, 9}, {5, 11, 4}, {11, 10, 2}, {10, 7, 6}, {7, 1, 8},
-            {3, 9, 4}, {3, 4, 2}, {3, 2, 6}, {3, 6, 8}, {3, 8, 9},
-            {4, 9, 5}, {2, 4, 11}, {6, 2, 10}, {8, 6, 7}, {9, 8, 1},
+            {0, 11, 5},  {0, 5, 1},  {0, 1, 7},  {0, 7, 10}, {0, 10, 11}, {1, 5, 9}, {5, 11, 4},
+            {11, 10, 2}, {10, 7, 6}, {7, 1, 8},  {3, 9, 4},  {3, 4, 2},   {3, 2, 6}, {3, 6, 8},
+            {3, 8, 9},   {4, 9, 5},  {2, 4, 11}, {6, 2, 10}, {8, 6, 7},   {9, 8, 1},
         };
 
         // Each pass splits every triangle into four, inserting a unit-length
@@ -301,7 +301,8 @@ namespace Veng::Primitives
             // East-pointing tangent (increasing longitude); undefined at the
             // poles, where it falls back to +X.
             vec3 tangent = glm::cross(d, vec3(0.0f, 1.0f, 0.0f));
-            tangent = glm::length(tangent) > 1e-6f ? glm::normalize(tangent) : vec3(1.0f, 0.0f, 0.0f);
+            tangent =
+                glm::length(tangent) > 1e-6f ? glm::normalize(tangent) : vec3(1.0f, 0.0f, 0.0f);
             data.Vertices.push_back(CanonicalVertex{
                 .Position = d * radius,
                 .Normal = d,
@@ -338,9 +339,12 @@ namespace Veng::Primitives
             const f32 u2 = data.Vertices[i2].UV.x;
             if (std::max({u0, u1, u2}) - std::min({u0, u1, u2}) > 0.5f)
             {
-                if (u0 < 0.5f) i0 = wrap(i0);
-                if (u1 < 0.5f) i1 = wrap(i1);
-                if (u2 < 0.5f) i2 = wrap(i2);
+                if (u0 < 0.5f)
+                    i0 = wrap(i0);
+                if (u1 < 0.5f)
+                    i1 = wrap(i1);
+                if (u2 < 0.5f)
+                    i2 = wrap(i2);
             }
             data.Indices.push_back(i0);
             data.Indices.push_back(i1);

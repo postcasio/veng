@@ -52,8 +52,10 @@ namespace Veng
 
         const vec3 centroidSize = centroidBounds.Size();
         i32 axis = 0;
-        if (centroidSize.y > centroidSize.x) axis = 1;
-        if (centroidSize.z > centroidSize[axis]) axis = 2;
+        if (centroidSize.y > centroidSize.x)
+            axis = 1;
+        if (centroidSize.z > centroidSize[axis])
+            axis = 2;
 
         const auto centroidAxis = [axis](const Leaf& leaf) { return leaf.Box.Center()[axis]; };
 
@@ -65,7 +67,8 @@ namespace Veng
             // Every centroid coincides on the split axis — the SAH sweep has no
             // separation to score, so split at the median to keep the tree balanced.
             std::nth_element(leaves.begin(), leaves.begin() + median, leaves.end(),
-                [&](const Leaf& a, const Leaf& b) { return centroidAxis(a) < centroidAxis(b); });
+                             [&](const Leaf& a, const Leaf& b)
+                             { return centroidAxis(a) < centroidAxis(b); });
         }
         else
         {
@@ -76,11 +79,12 @@ namespace Veng
             const f32 axisInv = static_cast<f32>(BucketCount) / centroidSize[axis];
 
             AABB bucketBox[BucketCount];
-            i32  bucketCount[BucketCount] = {};
+            i32 bucketCount[BucketCount] = {};
             for (i32 b = 0; b < BucketCount; ++b)
                 bucketBox[b] = AABB::Empty();
 
-            const auto bucketOf = [&](const Leaf& leaf) {
+            const auto bucketOf = [&](const Leaf& leaf)
+            {
                 i32 b = static_cast<i32>((centroidAxis(leaf) - axisMin) * axisInv);
                 return std::clamp(b, 0, BucketCount - 1);
             };
@@ -98,7 +102,7 @@ namespace Veng
             for (i32 split = 1; split < BucketCount; ++split)
             {
                 AABB leftBox = AABB::Empty();
-                i32  leftCount = 0;
+                i32 leftCount = 0;
                 for (i32 b = 0; b < split; ++b)
                 {
                     leftBox.Expand(bucketBox[b]);
@@ -106,7 +110,7 @@ namespace Veng
                 }
 
                 AABB rightBox = AABB::Empty();
-                i32  rightCount = 0;
+                i32 rightCount = 0;
                 for (i32 b = split; b < BucketCount; ++b)
                 {
                     rightBox.Expand(bucketBox[b]);
@@ -116,8 +120,8 @@ namespace Veng
                 if (leftCount == 0 || rightCount == 0)
                     continue;
 
-                const f32 cost = SurfaceArea(leftBox) * static_cast<f32>(leftCount)
-                               + SurfaceArea(rightBox) * static_cast<f32>(rightCount);
+                const f32 cost = SurfaceArea(leftBox) * static_cast<f32>(leftCount) +
+                                 SurfaceArea(rightBox) * static_cast<f32>(rightCount);
                 if (cost < bestCost)
                 {
                     bestCost = cost;
@@ -130,14 +134,16 @@ namespace Veng
                 // Every leaf fell in one bucket despite a nonzero centroid spread
                 // (float binning collapse) — median-split to make progress.
                 std::nth_element(leaves.begin(), leaves.begin() + median, leaves.end(),
-                    [&](const Leaf& a, const Leaf& b) { return centroidAxis(a) < centroidAxis(b); });
+                                 [&](const Leaf& a, const Leaf& b)
+                                 { return centroidAxis(a) < centroidAxis(b); });
             }
             else
             {
                 // The SAH skip of empty-side splits guarantees both groups are
                 // non-empty, so the partition boundary is a valid interior split.
-                const auto boundary = std::partition(leaves.begin(), leaves.end(),
-                    [&](const Leaf& leaf) { return bucketOf(leaf) < bestSplit; });
+                const auto boundary =
+                    std::partition(leaves.begin(), leaves.end(),
+                                   [&](const Leaf& leaf) { return bucketOf(leaf) < bestSplit; });
                 mid = static_cast<usize>(boundary - leaves.begin());
             }
         }

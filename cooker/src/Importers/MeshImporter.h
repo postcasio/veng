@@ -19,6 +19,7 @@ namespace Veng::Cook
         [[nodiscard]] AssetType Type() const override { return AssetType::Mesh; }
 
         /// @brief Cooks the mesh described by `entry` into a binary blob.
-        [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context, const json& entry) const override;
+        [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,
+                                              const json& entry) const override;
     };
 }

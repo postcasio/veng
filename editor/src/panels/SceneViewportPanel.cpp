@@ -35,8 +35,8 @@ namespace VengEditor
     }
 
     SceneViewportPanel::SceneViewportPanel(Renderer::Context& context, AssetManager& assets,
-                                           ImGuiLayer& imgui, TypeRegistry& types) :
-        m_Context(context), m_Assets(assets), m_ImGui(imgui), m_Types(types)
+                                           ImGuiLayer& imgui, TypeRegistry& types)
+        : m_Context(context), m_Assets(assets), m_ImGui(imgui), m_Types(types)
     {
         m_RenderExtent = context.GetInternalRenderExtent();
 
@@ -52,12 +52,13 @@ namespace VengEditor
 
         // Edge clamping prevents sampling past the image boundary when the panel size
         // does not align to a texel.
-        m_SceneSampler = Renderer::Sampler::Create(context, {
-            .Name = "Scene Viewport Sampler",
-            .AddressModeU = Renderer::AddressMode::ClampToEdge,
-            .AddressModeV = Renderer::AddressMode::ClampToEdge,
-            .AddressModeW = Renderer::AddressMode::ClampToEdge,
-        });
+        m_SceneSampler = Renderer::Sampler::Create(
+            context, {
+                         .Name = "Scene Viewport Sampler",
+                         .AddressModeU = Renderer::AddressMode::ClampToEdge,
+                         .AddressModeV = Renderer::AddressMode::ClampToEdge,
+                         .AddressModeW = Renderer::AddressMode::ClampToEdge,
+                     });
         m_SceneTexture = imgui.CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
     }
 
@@ -72,7 +73,8 @@ namespace VengEditor
 
     void SceneViewportPanel::BuildScene()
     {
-        const AssetResult<AssetHandle<Material>> brick = m_Assets.LoadSync<Material>(BrickMaterialId);
+        const AssetResult<AssetHandle<Material>> brick =
+            m_Assets.LoadSync<Material>(BrickMaterialId);
         VE_ASSERT(brick.has_value(), "{}", brick.error().Detail);
         m_BrickMaterial = *brick;
 
@@ -115,7 +117,8 @@ namespace VengEditor
             m_RenderExtent = m_PendingExtent;
             m_SceneRenderer->Resize(m_RenderExtent);
 
-            const f32 aspect = static_cast<f32>(m_RenderExtent.x) / static_cast<f32>(m_RenderExtent.y);
+            const f32 aspect =
+                static_cast<f32>(m_RenderExtent.x) / static_cast<f32>(m_RenderExtent.y);
             m_Camera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
 
             outputInvalidated = true;
@@ -139,26 +142,30 @@ namespace VengEditor
         // Spinner is a game type, not a compile-time symbol in libveng_editor; read
         // its speed reflectively so inspector edits to Spinner.Speed take effect
         // immediately. Entities without Spinner advance at the default rate.
-        m_Scene->Each<Transform>([this, delta](Entity entity, Transform& transform)
-        {
-            f32 speed = 1.0f;
-            m_Scene->ForEachComponent(entity, [this, &speed](TypeId id, void* component)
+        m_Scene->Each<Transform>(
+            [this, delta](Entity entity, Transform& transform)
             {
-                const TypeInfo& info = m_Types.Info(id);
-                for (const FieldDescriptor& field : info.Fields)
-                {
-                    if (field.Class == FieldClass::Scalar
-                        && field.Type == m_Types.IdOf<f32>()
-                        && field.Name == "SpeedRadiansPerSec")
-                    {
-                        speed = *reinterpret_cast<const f32*>(static_cast<u8*>(component) + field.Offset);
-                    }
-                }
-            });
+                f32 speed = 1.0f;
+                m_Scene->ForEachComponent(entity,
+                                          [this, &speed](TypeId id, void* component)
+                                          {
+                                              const TypeInfo& info = m_Types.Info(id);
+                                              for (const FieldDescriptor& field : info.Fields)
+                                              {
+                                                  if (field.Class == FieldClass::Scalar &&
+                                                      field.Type == m_Types.IdOf<f32>() &&
+                                                      field.Name == "SpeedRadiansPerSec")
+                                                  {
+                                                      speed = *reinterpret_cast<const f32*>(
+                                                          static_cast<u8*>(component) +
+                                                          field.Offset);
+                                                  }
+                                              }
+                                          });
 
-            m_SpinAccum[entity.Index] += delta * speed;
-            transform.Rotation = glm::angleAxis(m_SpinAccum[entity.Index], SpinAxis);
-        });
+                m_SpinAccum[entity.Index] += delta * speed;
+                transform.Rotation = glm::angleAxis(m_SpinAccum[entity.Index], SpinAxis);
+            });
 
         const Renderer::SceneView view{.World = *m_Scene, .Camera = m_Camera, .Delta = delta};
         m_SceneRenderer->Execute(cmd, view);
@@ -174,9 +181,8 @@ namespace VengEditor
         // Combo index is the DebugView enum value (declaration order). Change is
         // deferred via m_SettingsDirty so Configure runs before recording, not mid-ImGui.
         static constexpr std::array<string_view, 10> modeNames{
-            "Final", "Albedo", "Normal", "Depth",
-            "Roughness", "Metallic", "Occlusion",
-            "AO", "Shadows", "Cascades"};
+            "Final",    "Albedo",    "Normal", "Depth",   "Roughness",
+            "Metallic", "Occlusion", "AO",     "Shadows", "Cascades"};
         i32 mode = static_cast<i32>(m_Settings.Mode);
         if (UI::Combo("Debug View", mode, modeNames))
         {

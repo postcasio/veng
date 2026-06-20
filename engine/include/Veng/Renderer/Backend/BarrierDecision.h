@@ -80,8 +80,7 @@ namespace Veng::Renderer::Backend
     [[nodiscard]] BarrierDecision DecideBarrier(const SubresourceState& current,
                                                 vk::ImageLayout newLayout,
                                                 vk::PipelineStageFlags dstStage,
-                                                vk::AccessFlags dstAccess,
-                                                u32 transferFamily,
+                                                vk::AccessFlags dstAccess, u32 transferFamily,
                                                 u32 graphicsFamily);
 
     /// @brief Returns the layout/stage/access scope required by the given access kind.

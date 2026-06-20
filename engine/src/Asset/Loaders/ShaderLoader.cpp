@@ -23,21 +23,28 @@ namespace Veng
         {
             switch (value)
             {
-                case static_cast<u32>(Renderer::DescriptorType::CombinedImageSampler): return Renderer::DescriptorType::CombinedImageSampler;
-                case static_cast<u32>(Renderer::DescriptorType::SampledImage): return Renderer::DescriptorType::SampledImage;
-                case static_cast<u32>(Renderer::DescriptorType::StorageImage): return Renderer::DescriptorType::StorageImage;
-                case static_cast<u32>(Renderer::DescriptorType::UniformBuffer): return Renderer::DescriptorType::UniformBuffer;
-                case static_cast<u32>(Renderer::DescriptorType::StorageBuffer): return Renderer::DescriptorType::StorageBuffer;
-                case static_cast<u32>(Renderer::DescriptorType::Sampler): return Renderer::DescriptorType::Sampler;
-                default: return std::nullopt;
+            case static_cast<u32>(Renderer::DescriptorType::CombinedImageSampler):
+                return Renderer::DescriptorType::CombinedImageSampler;
+            case static_cast<u32>(Renderer::DescriptorType::SampledImage):
+                return Renderer::DescriptorType::SampledImage;
+            case static_cast<u32>(Renderer::DescriptorType::StorageImage):
+                return Renderer::DescriptorType::StorageImage;
+            case static_cast<u32>(Renderer::DescriptorType::UniformBuffer):
+                return Renderer::DescriptorType::UniformBuffer;
+            case static_cast<u32>(Renderer::DescriptorType::StorageBuffer):
+                return Renderer::DescriptorType::StorageBuffer;
+            case static_cast<u32>(Renderer::DescriptorType::Sampler):
+                return Renderer::DescriptorType::Sampler;
+            default:
+                return std::nullopt;
             }
         }
 
         optional<Renderer::ShaderStage> BridgeShaderStageMask(u32 value)
         {
-            constexpr u32 KnownStages = static_cast<u32>(Renderer::ShaderStage::Vertex)
-                | static_cast<u32>(Renderer::ShaderStage::Fragment)
-                | static_cast<u32>(Renderer::ShaderStage::Compute);
+            constexpr u32 KnownStages = static_cast<u32>(Renderer::ShaderStage::Vertex) |
+                                        static_cast<u32>(Renderer::ShaderStage::Fragment) |
+                                        static_cast<u32>(Renderer::ShaderStage::Compute);
 
             if (value == 0 || (value & ~KnownStages) != 0)
                 return std::nullopt;
@@ -54,16 +61,20 @@ namespace Veng
 
         AssetLoadError Corrupt(AssetId id, string detail)
         {
-            return AssetLoadError{.Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(detail)};
+            return AssetLoadError{
+                .Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(detail)};
         }
     }
 
-    AssetResult<Detail::LoadJob> ShaderLoader::Load(
-        AssetManager& manager, Renderer::Context& context, TaskSystem& /*tasks*/,
-        TypeRegistry& /*types*/, AssetId id, std::span<const u8> cooked, bool /*async*/) const
+    AssetResult<Detail::LoadJob> ShaderLoader::Load(AssetManager& manager,
+                                                    Renderer::Context& context,
+                                                    TaskSystem& /*tasks*/, TypeRegistry& /*types*/,
+                                                    AssetId id, std::span<const u8> cooked,
+                                                    bool /*async*/) const
     {
         if (cooked.size() < sizeof(CookedShaderHeader))
-            return std::unexpected(Corrupt(id, "shader: cooked blob smaller than CookedShaderHeader"));
+            return std::unexpected(
+                Corrupt(id, "shader: cooked blob smaller than CookedShaderHeader"));
 
         CookedShaderHeader header;
         std::memcpy(&header, cooked.data(), sizeof(header));
@@ -71,7 +82,8 @@ namespace Veng
         usize cursor = sizeof(CookedShaderHeader);
 
         if (cooked.size() < cursor + sizeof(CookedShaderInterfaceHeader))
-            return std::unexpected(Corrupt(id, "shader: cooked blob smaller than CookedShaderInterfaceHeader"));
+            return std::unexpected(
+                Corrupt(id, "shader: cooked blob smaller than CookedShaderInterfaceHeader"));
 
         CookedShaderInterfaceHeader interfaceHeader;
         std::memcpy(&interfaceHeader, cooked.data() + cursor, sizeof(interfaceHeader));
@@ -79,30 +91,36 @@ namespace Veng
 
         Renderer::ShaderInterface shaderInterface;
 
-        const usize bindingBytes = static_cast<usize>(interfaceHeader.BindingCount) * sizeof(CookedDescriptorBinding);
+        const usize bindingBytes =
+            static_cast<usize>(interfaceHeader.BindingCount) * sizeof(CookedDescriptorBinding);
         if (cooked.size() < cursor + bindingBytes)
-            return std::unexpected(Corrupt(id, "shader: cooked blob smaller than descriptor binding table"));
+            return std::unexpected(
+                Corrupt(id, "shader: cooked blob smaller than descriptor binding table"));
 
         shaderInterface.Bindings.reserve(interfaceHeader.BindingCount);
         for (u32 i = 0; i < interfaceHeader.BindingCount; ++i)
         {
             CookedDescriptorBinding binding;
-            std::memcpy(&binding, cooked.data() + cursor + i * sizeof(CookedDescriptorBinding), sizeof(binding));
+            std::memcpy(&binding, cooked.data() + cursor + i * sizeof(CookedDescriptorBinding),
+                        sizeof(binding));
 
             const optional<Renderer::DescriptorType> type = BridgeDescriptorType(binding.Type);
             const optional<Renderer::ShaderStage> stages = BridgeShaderStageMask(binding.StageMask);
             if (!type || !stages)
             {
-                return std::unexpected(Corrupt(id, fmt::format(
-                    "shader: descriptor binding {} has unrecognized type {} or stage mask {}",
-                    i, binding.Type, binding.StageMask)));
+                return std::unexpected(Corrupt(
+                    id,
+                    fmt::format(
+                        "shader: descriptor binding {} has unrecognized type {} or stage mask {}",
+                        i, binding.Type, binding.StageMask)));
             }
 
             if (binding.Set < 1)
             {
-                return std::unexpected(Corrupt(id, fmt::format(
-                    "shader: descriptor binding {} targets set {} (set 0 is reserved for the bindless registry)",
-                    i, binding.Set)));
+                return std::unexpected(
+                    Corrupt(id, fmt::format("shader: descriptor binding {} targets set {} (set 0 "
+                                            "is reserved for the bindless registry)",
+                                            i, binding.Set)));
             }
 
             shaderInterface.Bindings.push_back(Renderer::ShaderBinding{
@@ -116,21 +134,26 @@ namespace Veng
         }
         cursor += bindingBytes;
 
-        const usize pushConstantBytes = static_cast<usize>(interfaceHeader.PushConstantCount) * sizeof(CookedPushConstantBlock);
+        const usize pushConstantBytes =
+            static_cast<usize>(interfaceHeader.PushConstantCount) * sizeof(CookedPushConstantBlock);
         if (cooked.size() < cursor + pushConstantBytes)
-            return std::unexpected(Corrupt(id, "shader: cooked blob smaller than push-constant table"));
+            return std::unexpected(
+                Corrupt(id, "shader: cooked blob smaller than push-constant table"));
 
         shaderInterface.PushConstants.reserve(interfaceHeader.PushConstantCount);
         for (u32 i = 0; i < interfaceHeader.PushConstantCount; ++i)
         {
             CookedPushConstantBlock pushConstant;
-            std::memcpy(&pushConstant, cooked.data() + cursor + i * sizeof(CookedPushConstantBlock), sizeof(pushConstant));
+            std::memcpy(&pushConstant, cooked.data() + cursor + i * sizeof(CookedPushConstantBlock),
+                        sizeof(pushConstant));
 
-            const optional<Renderer::ShaderStage> stages = BridgeShaderStageMask(pushConstant.StageMask);
+            const optional<Renderer::ShaderStage> stages =
+                BridgeShaderStageMask(pushConstant.StageMask);
             if (!stages)
             {
-                return std::unexpected(Corrupt(id, fmt::format(
-                    "shader: push constant {} has unrecognized stage mask {}", i, pushConstant.StageMask)));
+                return std::unexpected(Corrupt(
+                    id, fmt::format("shader: push constant {} has unrecognized stage mask {}", i,
+                                    pushConstant.StageMask)));
             }
 
             shaderInterface.PushConstants.push_back(Renderer::ShaderPushConstant{
@@ -142,16 +165,18 @@ namespace Veng
         }
         cursor += pushConstantBytes;
 
-        shaderInterface.VertexLayoutId = interfaceHeader.VertexLayoutAssetId != 0
-            ? optional<AssetId>(AssetId{interfaceHeader.VertexLayoutAssetId})
-            : std::nullopt;
+        shaderInterface.VertexLayoutId =
+            interfaceHeader.VertexLayoutAssetId != 0
+                ? optional<AssetId>(AssetId{interfaceHeader.VertexLayoutAssetId})
+                : std::nullopt;
 
         const usize expectedInterfaceBytes = cursor - sizeof(CookedShaderHeader);
         if (header.InterfaceBytes != expectedInterfaceBytes)
         {
-            return std::unexpected(Corrupt(id, fmt::format(
-                "shader: InterfaceBytes {} does not match reflected interface size {}",
-                header.InterfaceBytes, expectedInterfaceBytes)));
+            return std::unexpected(Corrupt(
+                id,
+                fmt::format("shader: InterfaceBytes {} does not match reflected interface size {}",
+                            header.InterfaceBytes, expectedInterfaceBytes)));
         }
 
         // A missing vertex layout is a fatal load error — catches a missing or corrupt core pack.
@@ -168,11 +193,12 @@ namespace Veng
 
         const std::span<const u8> spirv = cooked.subspan(cursor, header.SpirvBytes);
 
-        const Ref<Renderer::ShaderModule> shader = Renderer::ShaderModule::Create(context, {
-            .Name = fmt::format("Shader {}", id.Value),
-            .Binary = spirv,
-            .EntryPoint = BridgeName(header.EntryPoint),
-        });
+        const Ref<Renderer::ShaderModule> shader =
+            Renderer::ShaderModule::Create(context, {
+                                                        .Name = fmt::format("Shader {}", id.Value),
+                                                        .Binary = spirv,
+                                                        .EntryPoint = BridgeName(header.EntryPoint),
+                                                    });
 
         const Ref<Veng::Shader> asset = CreateRef<Veng::Shader>(Veng::Shader{
             .Module = shader,

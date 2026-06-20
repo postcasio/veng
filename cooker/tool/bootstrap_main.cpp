@@ -18,8 +18,8 @@ int main(int argc, char** argv)
 
     if (args.size() < 2 || args[0] != "cook")
     {
-        fmt::print(stderr,
-            "usage: veng_cook_bootstrap cook <pack.json> [-o <out.vengpack>] [--reference <pack.json>]... [--depfile <out.d>]\n");
+        fmt::print(stderr, "usage: veng_cook_bootstrap cook <pack.json> [-o <out.vengpack>] "
+                           "[--reference <pack.json>]... [--depfile <out.d>]\n");
         return 1;
     }
 
@@ -85,7 +85,7 @@ int main(int argc, char** argv)
 
     vector<path> dependencies;
     const VoidResult result = cooker.CookPack(*packPath, *outPath, referencePacks, nullptr,
-        depfilePath ? &dependencies : nullptr);
+                                              depfilePath ? &dependencies : nullptr);
     if (!result)
     {
         fmt::print(stderr, "veng_cook_bootstrap: {}\n", result.error());

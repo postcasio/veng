@@ -38,11 +38,14 @@ namespace Veng::Renderer
         /// @param vertexCount  Number of vertex elements to allocate.
         static VertexBuffer Create(Context& context, string_view name, usize vertexCount)
         {
-            return VertexBuffer(Buffer::Create(context, {
-                .Name = string(name),
-                .Size = vertexCount * sizeof(V),
-                .Usage = BufferUsage::Vertex | BufferUsage::TransferDst,
-            }), vertexCount);
+            return VertexBuffer(
+                Buffer::Create(context,
+                               {
+                                   .Name = string(name),
+                                   .Size = vertexCount * sizeof(V),
+                                   .Usage = BufferUsage::Vertex | BufferUsage::TransferDst,
+                               }),
+                vertexCount);
         }
 
         /// @brief Synchronously uploads vertices into the buffer.
@@ -50,8 +53,9 @@ namespace Veng::Renderer
         /// @param firstVertex  Byte-offset destination expressed as a vertex index.
         void UploadSync(std::span<const V> vertices, usize firstVertex = 0) const
         {
-            m_Buffer->UploadSync({reinterpret_cast<const u8*>(vertices.data()), vertices.size_bytes()},
-                                 firstVertex * sizeof(V));
+            m_Buffer->UploadSync(
+                {reinterpret_cast<const u8*>(vertices.data()), vertices.size_bytes()},
+                firstVertex * sizeof(V));
         }
 
         /// @brief Returns the number of vertex elements the buffer was allocated for.
@@ -60,7 +64,9 @@ namespace Veng::Renderer
         [[nodiscard]] const Ref<Buffer>& GetBuffer() const { return m_Buffer; }
 
     private:
-        VertexBuffer(Ref<Buffer> buffer, usize count) : m_Buffer(std::move(buffer)), m_Count(count) {}
+        VertexBuffer(Ref<Buffer> buffer, usize count) : m_Buffer(std::move(buffer)), m_Count(count)
+        {
+        }
 
         /// @brief Underlying GPU buffer.
         Ref<Buffer> m_Buffer;
@@ -82,14 +88,18 @@ namespace Veng::Renderer
         /// @param name        Debug name.
         /// @param indexCount  Number of index elements to allocate.
         /// @param type        Index element width (U16 or U32).
-        static IndexBuffer Create(Context& context, string_view name, usize indexCount, IndexType type = IndexType::U32)
+        static IndexBuffer Create(Context& context, string_view name, usize indexCount,
+                                  IndexType type = IndexType::U32)
         {
             const u64 stride = type == IndexType::U16 ? sizeof(u16) : sizeof(u32);
-            return IndexBuffer(Buffer::Create(context, {
-                .Name = string(name),
-                .Size = indexCount * stride,
-                .Usage = BufferUsage::Index | BufferUsage::TransferDst,
-            }), indexCount, type);
+            return IndexBuffer(
+                Buffer::Create(context,
+                               {
+                                   .Name = string(name),
+                                   .Size = indexCount * stride,
+                                   .Usage = BufferUsage::Index | BufferUsage::TransferDst,
+                               }),
+                indexCount, type);
         }
 
         /// @brief Synchronously uploads u32 indices into a U32 index buffer.
@@ -98,8 +108,9 @@ namespace Veng::Renderer
         {
             VE_ASSERT(m_Type == IndexType::U32,
                       "IndexBuffer '{}' is U16; cannot upload u32 indices", m_Buffer->GetName());
-            m_Buffer->UploadSync({reinterpret_cast<const u8*>(indices.data()), indices.size_bytes()},
-                                 firstIndex * sizeof(u32));
+            m_Buffer->UploadSync(
+                {reinterpret_cast<const u8*>(indices.data()), indices.size_bytes()},
+                firstIndex * sizeof(u32));
         }
 
         /// @brief Synchronously uploads u16 indices into a U16 index buffer.
@@ -108,8 +119,9 @@ namespace Veng::Renderer
         {
             VE_ASSERT(m_Type == IndexType::U16,
                       "IndexBuffer '{}' is U32; cannot upload u16 indices", m_Buffer->GetName());
-            m_Buffer->UploadSync({reinterpret_cast<const u8*>(indices.data()), indices.size_bytes()},
-                                 firstIndex * sizeof(u16));
+            m_Buffer->UploadSync(
+                {reinterpret_cast<const u8*>(indices.data()), indices.size_bytes()},
+                firstIndex * sizeof(u16));
         }
 
         /// @brief Returns the number of index elements the buffer was allocated for.
@@ -120,8 +132,10 @@ namespace Veng::Renderer
         [[nodiscard]] const Ref<Buffer>& GetBuffer() const { return m_Buffer; }
 
     private:
-        IndexBuffer(Ref<Buffer> buffer, usize count, IndexType type) :
-            m_Buffer(std::move(buffer)), m_Count(count), m_Type(type) {}
+        IndexBuffer(Ref<Buffer> buffer, usize count, IndexType type)
+            : m_Buffer(std::move(buffer)), m_Count(count), m_Type(type)
+        {
+        }
 
         /// @brief Underlying GPU buffer.
         Ref<Buffer> m_Buffer;
@@ -149,11 +163,12 @@ namespace Veng::Renderer
         /// @param name     Debug name.
         static UniformBuffer Create(Context& context, string_view name)
         {
-            return UniformBuffer(Buffer::Create(context, {
-                .Name = string(name),
-                .Size = sizeof(T),
-                .Usage = BufferUsage::Uniform | BufferUsage::TransferDst,
-            }));
+            return UniformBuffer(Buffer::Create(
+                context, {
+                             .Name = string(name),
+                             .Size = sizeof(T),
+                             .Usage = BufferUsage::Uniform | BufferUsage::TransferDst,
+                         }));
         }
 
         /// @brief Synchronously uploads value into the buffer.
@@ -180,7 +195,8 @@ namespace Veng::Renderer
     template <typename T>
     class StorageBuffer
     {
-        static_assert(std::is_trivially_copyable_v<T>, "storage element type must be trivially copyable");
+        static_assert(std::is_trivially_copyable_v<T>,
+                      "storage element type must be trivially copyable");
 
     public:
         /// @brief Constructs an empty (null) storage buffer.
@@ -192,11 +208,14 @@ namespace Veng::Renderer
         /// @param elementCount  Number of T elements to allocate.
         static StorageBuffer Create(Context& context, string_view name, usize elementCount)
         {
-            return StorageBuffer(Buffer::Create(context, {
-                .Name = string(name),
-                .Size = elementCount * sizeof(T),
-                .Usage = BufferUsage::Storage | BufferUsage::TransferDst,
-            }), elementCount);
+            return StorageBuffer(
+                Buffer::Create(context,
+                               {
+                                   .Name = string(name),
+                                   .Size = elementCount * sizeof(T),
+                                   .Usage = BufferUsage::Storage | BufferUsage::TransferDst,
+                               }),
+                elementCount);
         }
 
         /// @brief Synchronously uploads elements into the buffer.
@@ -204,8 +223,9 @@ namespace Veng::Renderer
         /// @param firstElement  Byte-offset destination expressed as an element index.
         void UploadSync(std::span<const T> elements, usize firstElement = 0) const
         {
-            m_Buffer->UploadSync({reinterpret_cast<const u8*>(elements.data()), elements.size_bytes()},
-                                 firstElement * sizeof(T));
+            m_Buffer->UploadSync(
+                {reinterpret_cast<const u8*>(elements.data()), elements.size_bytes()},
+                firstElement * sizeof(T));
         }
 
         /// @brief Returns the number of elements the buffer was allocated for.
@@ -214,7 +234,9 @@ namespace Veng::Renderer
         [[nodiscard]] const Ref<Buffer>& GetBuffer() const { return m_Buffer; }
 
     private:
-        StorageBuffer(Ref<Buffer> buffer, usize count) : m_Buffer(std::move(buffer)), m_Count(count) {}
+        StorageBuffer(Ref<Buffer> buffer, usize count) : m_Buffer(std::move(buffer)), m_Count(count)
+        {
+        }
 
         /// @brief Underlying GPU buffer.
         Ref<Buffer> m_Buffer;

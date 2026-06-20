@@ -5,12 +5,15 @@
 #include <Veng/Renderer/Backend/DebugMarkers.h>
 #include <Veng/Renderer/Backend/Natives.h>
 
-
 namespace Veng::Renderer
 {
-    Semaphore::Native& Semaphore::GetNative() const { return *m_Native; }
+    Semaphore::Native& Semaphore::GetNative() const
+    {
+        return *m_Native;
+    }
 
-    Semaphore::Semaphore(Context& context, const string& name) : m_Context(context), m_Name(name), m_Native(CreateUnique<Native>())
+    Semaphore::Semaphore(Context& context, const string& name)
+        : m_Context(context), m_Name(name), m_Native(CreateUnique<Native>())
     {
         constexpr vk::SemaphoreCreateInfo semaphoreCreateInfo{};
 

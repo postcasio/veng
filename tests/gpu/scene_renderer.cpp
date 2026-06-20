@@ -75,81 +75,93 @@ namespace
     vector<u8> SampleThroughBindless(Context& context, AssetManager& assets,
                                      const Ref<ImageView>& output, uvec2 extent)
     {
-        const AssetResult<AssetHandle<Shader>> vertexAsset = assets.LoadSync<Shader>(AssetId{0x1F42});
-        const AssetResult<AssetHandle<Shader>> fragmentAsset = assets.LoadSync<Shader>(AssetId{0x1F44});
+        const AssetResult<AssetHandle<Shader>> vertexAsset =
+            assets.LoadSync<Shader>(AssetId{0x1F42});
+        const AssetResult<AssetHandle<Shader>> fragmentAsset =
+            assets.LoadSync<Shader>(AssetId{0x1F44});
         REQUIRE(vertexAsset.has_value());
         REQUIRE(fragmentAsset.has_value());
 
-        const Ref<PipelineLayout> layout = PipelineLayout::Create(context, {
-            .Name = "Scene Sample Layout",
-            .PushConstantRanges = {
-                PushConstantRange::Of<SamplePushConstants>(ShaderStage::Fragment),
-            },
-        });
+        const Ref<PipelineLayout> layout = PipelineLayout::Create(
+            context, {
+                         .Name = "Scene Sample Layout",
+                         .PushConstantRanges =
+                             {
+                                 PushConstantRange::Of<SamplePushConstants>(ShaderStage::Fragment),
+                             },
+                     });
 
-        const Ref<GraphicsPipeline> pipeline = GraphicsPipeline::Create(context, {
-            .Name = "Scene Sample Pipeline",
-            .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
-            .PipelineLayout = layout,
-            .ShaderStages = {
-                {.Stage = ShaderStage::Vertex, .Module = vertexAsset->Get()->Module},
-                {.Stage = ShaderStage::Fragment, .Module = fragmentAsset->Get()->Module},
-            },
-        });
+        const Ref<GraphicsPipeline> pipeline = GraphicsPipeline::Create(
+            context,
+            {
+                .Name = "Scene Sample Pipeline",
+                .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
+                .PipelineLayout = layout,
+                .ShaderStages =
+                    {
+                        {.Stage = ShaderStage::Vertex, .Module = vertexAsset->Get()->Module},
+                        {.Stage = ShaderStage::Fragment, .Module = fragmentAsset->Get()->Module},
+                    },
+            });
 
-        const Ref<Sampler> sampler = Sampler::Create(context, {
-            .Name = "Scene Sample Sampler",
-            .AddressModeU = AddressMode::ClampToEdge,
-            .AddressModeV = AddressMode::ClampToEdge,
-            .AddressModeW = AddressMode::ClampToEdge,
-        });
+        const Ref<Sampler> sampler =
+            Sampler::Create(context, {
+                                         .Name = "Scene Sample Sampler",
+                                         .AddressModeU = AddressMode::ClampToEdge,
+                                         .AddressModeV = AddressMode::ClampToEdge,
+                                         .AddressModeW = AddressMode::ClampToEdge,
+                                     });
 
-        const Ref<Image> target = Image::Create(context, {
-            .Name = "Scene Sample Output",
-            .Extent = {extent.x, extent.y, 1},
-            .Format = Format::RGBA8Unorm,
-            .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
-        });
-        const Ref<ImageView> targetView = ImageView::Create(context, {.Name = "Scene Sample Output View", .Image = target});
+        const Ref<Image> target = Image::Create(
+            context, {
+                         .Name = "Scene Sample Output",
+                         .Extent = {extent.x, extent.y, 1},
+                         .Format = Format::RGBA8Unorm,
+                         .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                     });
+        const Ref<ImageView> targetView =
+            ImageView::Create(context, {.Name = "Scene Sample Output View", .Image = target});
 
         BindlessRegistry& bindless = context.GetBindlessRegistry();
         const TextureHandle textureHandle = bindless.Register(output);
         const SamplerHandle samplerHandle = bindless.Register(sampler);
 
-        context.ImmediateCommands([&](CommandBuffer& cmd)
-        {
-            RenderGraph graph(context);
-            const ResourceId sourceId = graph.Import("Scene Output");
-            const ResourceId outputId = graph.Import("Sample Output");
+        context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                RenderGraph graph(context);
+                const ResourceId sourceId = graph.Import("Scene Output");
+                const ResourceId outputId = graph.Import("Sample Output");
 
-            graph.AddPass("Sample Scene")
-                .Color({
-                    .Resource = outputId,
-                    .Load = LoadOp::Clear,
-                    .Store = StoreOp::Store,
-                    .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
-                })
-                .Sample(sourceId)
-                .Execute([&](PassContext& ctx)
-                {
-                    CommandBuffer& passCmd = ctx.Cmd();
-                    passCmd.BindPipeline(pipeline);
-                    passCmd.SetViewport({0, 0}, extent);
-                    passCmd.SetScissor({0, 0}, extent);
-                    bindless.Bind(passCmd);
-                    passCmd.PushConstants(SamplePushConstants{
-                        .TextureIndex = textureHandle.Index,
-                        .SamplerIndex = samplerHandle.Index,
-                    });
-                    passCmd.DrawFullscreenTriangle();
-                });
+                graph.AddPass("Sample Scene")
+                    .Color({
+                        .Resource = outputId,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                    })
+                    .Sample(sourceId)
+                    .Execute(
+                        [&](PassContext& ctx)
+                        {
+                            CommandBuffer& passCmd = ctx.Cmd();
+                            passCmd.BindPipeline(pipeline);
+                            passCmd.SetViewport({0, 0}, extent);
+                            passCmd.SetScissor({0, 0}, extent);
+                            bindless.Bind(passCmd);
+                            passCmd.PushConstants(SamplePushConstants{
+                                .TextureIndex = textureHandle.Index,
+                                .SamplerIndex = samplerHandle.Index,
+                            });
+                            passCmd.DrawFullscreenTriangle();
+                        });
 
-            const RenderGraph::ImportBinding bindings[] = {
-                {sourceId, output},
-                {outputId, targetView},
-            };
-            graph.Compile()->Execute(cmd, bindings);
-        });
+                const RenderGraph::ImportBinding bindings[] = {
+                    {sourceId, output},
+                    {outputId, targetView},
+                };
+                graph.Compile()->Execute(cmd, bindings);
+            });
 
         vector<u8> pixels = target->Download();
 
@@ -176,7 +188,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Camera camera;
     camera.SetPerspective(glm::radians(45.0f),
-                          static_cast<f32>(initialExtent.x) / static_cast<f32>(initialExtent.y), 0.1f, 100.0f);
+                          static_cast<f32>(initialExtent.x) / static_cast<f32>(initialExtent.y),
+                          0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
@@ -196,7 +209,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // The g-buffer images allocate at the renderer's extent with the fixed
     // contracted formats and usages.
-    auto CheckGBuffer = [](const Ref<ImageView>& view, uvec2 extent, Format format, ImageUsage usage)
+    auto CheckGBuffer =
+        [](const Ref<ImageView>& view, uvec2 extent, Format format, ImageUsage usage)
     {
         REQUIRE(view != nullptr);
         const Ref<Image>& image = view->GetImage();
@@ -205,19 +219,25 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         CHECK(image->GetFormat() == format);
         CHECK(HasFlag(image->GetUsage(), usage));
     };
-    CheckGBuffer(renderer->GetAlbedoView(), initialExtent, GBuffer::AlbedoFormat, GBuffer::ColorUsage);
-    CheckGBuffer(renderer->GetNormalView(), initialExtent, GBuffer::NormalFormat, GBuffer::ColorUsage);
-    CheckGBuffer(renderer->GetDepthView(), initialExtent, GBuffer::DepthFormat, GBuffer::DepthUsage);
+    CheckGBuffer(renderer->GetAlbedoView(), initialExtent, GBuffer::AlbedoFormat,
+                 GBuffer::ColorUsage);
+    CheckGBuffer(renderer->GetNormalView(), initialExtent, GBuffer::NormalFormat,
+                 GBuffer::ColorUsage);
+    CheckGBuffer(renderer->GetDepthView(), initialExtent, GBuffer::DepthFormat,
+                 GBuffer::DepthUsage);
     const Ref<ImageView> albedoView = renderer->GetAlbedoView();
 
-    Context.ImmediateCommands([&](CommandBuffer& cmd)
-    {
-        renderer->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
-    });
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            renderer->Execute(
+                cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+        });
 
     // It is sampleable: a fullscreen pass reads it through bindless and produces a
     // non-degenerate frame (the forward clear color, opaque).
-    const vector<u8> sampled = SampleThroughBindless(Context, assets, renderer->GetOutput(), initialExtent);
+    const vector<u8> sampled =
+        SampleThroughBindless(Context, assets, renderer->GetOutput(), initialExtent);
     REQUIRE(sampled.size() == static_cast<size_t>(initialExtent.x) * initialExtent.y * 4);
     CHECK(sampled[3] == 255); // alpha: the scene cleared to an opaque color
 
@@ -235,16 +255,22 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Resize also recreates every g-buffer image at the new extent (re-registering
     // their bindless handles); the prior views are stale.
     CHECK(renderer->GetAlbedoView().get() != albedoView.get());
-    CheckGBuffer(renderer->GetAlbedoView(), resizedExtent, GBuffer::AlbedoFormat, GBuffer::ColorUsage);
-    CheckGBuffer(renderer->GetNormalView(), resizedExtent, GBuffer::NormalFormat, GBuffer::ColorUsage);
-    CheckGBuffer(renderer->GetDepthView(), resizedExtent, GBuffer::DepthFormat, GBuffer::DepthUsage);
+    CheckGBuffer(renderer->GetAlbedoView(), resizedExtent, GBuffer::AlbedoFormat,
+                 GBuffer::ColorUsage);
+    CheckGBuffer(renderer->GetNormalView(), resizedExtent, GBuffer::NormalFormat,
+                 GBuffer::ColorUsage);
+    CheckGBuffer(renderer->GetDepthView(), resizedExtent, GBuffer::DepthFormat,
+                 GBuffer::DepthUsage);
 
-    Context.ImmediateCommands([&](CommandBuffer& cmd)
-    {
-        renderer->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
-    });
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            renderer->Execute(
+                cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+        });
 
-    const vector<u8> resampled = SampleThroughBindless(Context, assets, renderer->GetOutput(), resizedExtent);
+    const vector<u8> resampled =
+        SampleThroughBindless(Context, assets, renderer->GetOutput(), resizedExtent);
     REQUIRE(resampled.size() == static_cast<size_t>(resizedExtent.x) * resizedExtent.y * 4);
     CHECK(resampled[3] == 255);
 }
@@ -296,8 +322,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Assets = assets,
         .OutputFormat = Context.GetOutputFormat(),
         .Extent = extent,
-        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = true,
-                     .PunctualShadows = true, .PunctualShadowResolution = punctualRes,
+        .Settings = {.Mode = DebugView::Final,
+                     .Bloom = false,
+                     .Shadows = true,
+                     .PunctualShadows = true,
+                     .PunctualShadowResolution = punctualRes,
                      .AO = false},
     });
 
@@ -313,20 +342,27 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // The frame records cleanly: the lighting pass binds set 1 (bindings 0-4) with
     // both dynamic offsets, samples the zeroed punctual block + cleared atlas, and
     // completes. A descriptor mismatch would fault here / under the validation gate.
-    Context.ImmediateCommands([&](CommandBuffer& cmd)
-    {
-        renderer->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
-    });
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            renderer->Execute(
+                cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+        });
 
     // The SSAO-folded lighting variant is the other pipeline carrying set 1: enabling
     // AO selects it, so this exercises bindings 0-4 on m_SsaoLightingPipeline too.
-    renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .Shadows = true,
-                         .PunctualShadows = true, .PunctualShadowResolution = punctualRes,
+    renderer->Configure({.Mode = DebugView::Final,
+                         .Bloom = false,
+                         .Shadows = true,
+                         .PunctualShadows = true,
+                         .PunctualShadowResolution = punctualRes,
                          .AO = true});
-    Context.ImmediateCommands([&](CommandBuffer& cmd)
-    {
-        renderer->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
-    });
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            renderer->Execute(
+                cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+        });
 
     // Configure recreates the punctual atlas through the retire path — the prior Ref is
     // stale, and the new atlas keeps the same tile sizing.
@@ -377,8 +413,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetView(vec3(0.0f, 0.0f, 6.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
-        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
         // Albedo terminates after the g-buffer — no light/shadow setup needed for a
         // draw-count assertion, and the g-buffer pass (the one this test counts) runs.
         .Settings = {.Mode = DebugView::Albedo},
@@ -386,10 +424,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     auto Render = [&](const Scene& scene)
     {
-        Context.ImmediateCommands([&](CommandBuffer& cmd)
-        {
-            renderer->Execute(cmd, Renderer::SceneView{.World = scene, .Camera = camera, .Delta = 0.0f});
-        });
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = scene, .Camera = camera, .Delta = 0.0f});
+            });
     };
 
     SUBCASE("off-frustum mesh is gathered but not drawn; FrustumCull off draws both")
@@ -416,10 +456,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     SUBCASE("the broadphase tree culls identically to a linear view.Visible scan")
     {
         const Unique<Scene> scene = Scene::Create(Types);
-        AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, 0.0f));     // in view
-        AddCubeAt(*scene, assets, cube, vec3(-1.5f, 0.0f, 0.0f));    // in view
-        AddCubeAt(*scene, assets, cube, vec3(1000.0f, 0.0f, 0.0f));  // off-frustum
-        AddCubeAt(*scene, assets, cube, vec3(0.0f, 1000.0f, 0.0f));  // off-frustum
+        AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, 0.0f));    // in view
+        AddCubeAt(*scene, assets, cube, vec3(-1.5f, 0.0f, 0.0f));   // in view
+        AddCubeAt(*scene, assets, cube, vec3(1000.0f, 0.0f, 0.0f)); // off-frustum
+        AddCubeAt(*scene, assets, cube, vec3(0.0f, 1000.0f, 0.0f)); // off-frustum
 
         renderer->Configure({.Mode = DebugView::Albedo, .FrustumCull = true});
         Render(*scene);
@@ -473,8 +513,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     SUBCASE("a behind-camera mesh is culled")
     {
         const Unique<Scene> scene = Scene::Create(Types);
-        AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, 0.0f));    // in front of the camera
-        AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, 100.0f));  // behind the camera (eye at z=6)
+        AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, 0.0f));   // in front of the camera
+        AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, 100.0f)); // behind the camera (eye at z=6)
 
         renderer->Configure({.Mode = DebugView::Albedo, .FrustumCull = true});
         Render(*scene);
@@ -531,7 +571,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         // The scene bound spans the visible ground plus the off-screen caster high
         // above it — the near-plane extension toward the light is what catches it.
         const Unique<Scene> scene = Scene::Create(Types);
-        const Ref<Mesh> ground = Mesh::Create(Context, Primitives::Plane(vec2(20.0f), uvec2(1)), "Cull Ground");
+        const Ref<Mesh> ground =
+            Mesh::Create(Context, Primitives::Plane(vec2(20.0f), uvec2(1)), "Cull Ground");
         const Entity groundEntity = scene->CreateEntity();
         scene->Add<Transform>(groundEntity);
         scene->Add<MeshRenderer>(groundEntity).Mesh = assets.Adopt(ground);
@@ -542,7 +583,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         // frustum's top plane (off-screen) but on the light-ward side.
         Camera shadowCamera;
         shadowCamera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
-        shadowCamera.SetView(vec3(0.0f, 1.0f, 8.0f), vec3(0.0f, 0.0f, -4.0f), vec3(0.0f, 1.0f, 0.0f));
+        shadowCamera.SetView(vec3(0.0f, 1.0f, 8.0f), vec3(0.0f, 0.0f, -4.0f),
+                             vec3(0.0f, 1.0f, 0.0f));
 
         // The caster is NOT inside the camera frustum (the case that would wrongly
         // drop it if the shadow pass culled by the camera, which it must not).
@@ -561,9 +603,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         // But it IS kept by some cascade frustum — the cascades are fit to the camera
         // slice and extended toward the light, so the high light-ward caster lands in
         // at least one cascade's frustum and survives the shadow pass's cull.
-        const CascadeData cascades = ComputeCascades(
-            shadowCamera, lightTravel, sceneBounds,
-            {.Count = MaxCascades, .Lambda = 0.85f, .Resolution = 1024});
+        const CascadeData cascades =
+            ComputeCascades(shadowCamera, lightTravel, sceneBounds,
+                            {.Count = MaxCascades, .Lambda = 0.85f, .Resolution = 1024});
         bool keptBySomeCascade = false;
         for (u32 k = 0; k < cascades.Count; ++k)
         {
@@ -587,7 +629,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         // A long ground so the cascade fit spans real depth, plus a small mesh far
         // down-range (large view depth → beyond cascade 0's near slice, inside the
         // far cascade's).
-        const Ref<Mesh> ground = Mesh::Create(Context, Primitives::Plane(vec2(120.0f), uvec2(1)), "Indep Ground");
+        const Ref<Mesh> ground =
+            Mesh::Create(Context, Primitives::Plane(vec2(120.0f), uvec2(1)), "Indep Ground");
         const Entity groundEntity = scene->CreateEntity();
         scene->Add<Transform>(groundEntity);
         scene->Add<MeshRenderer>(groundEntity).Mesh = assets.Adopt(ground);
@@ -606,13 +649,14 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                 farBounds = item.WorldBounds;
         REQUIRE_FALSE(farBounds.IsEmpty());
 
-        const CascadeData cascades = ComputeCascades(
-            grazing, lightTravel, sceneBounds,
-            {.Count = MaxCascades, .Lambda = 0.85f, .Resolution = 1024});
+        const CascadeData cascades =
+            ComputeCascades(grazing, lightTravel, sceneBounds,
+                            {.Count = MaxCascades, .Lambda = 0.85f, .Resolution = 1024});
         REQUIRE(cascades.Count >= 2);
 
         const Frustum nearCascade = Frustum::FromViewProjection(cascades.ViewProj[0]);
-        const Frustum farCascade = Frustum::FromViewProjection(cascades.ViewProj[cascades.Count - 1]);
+        const Frustum farCascade =
+            Frustum::FromViewProjection(cascades.ViewProj[cascades.Count - 1]);
 
         // The far-down-range cube lies beyond cascade 0's tight near slice but inside
         // the far cascade's wide slice — culled from one cascade, kept by the other.
@@ -639,8 +683,7 @@ namespace
     {
         const auto* halves = reinterpret_cast<const u16*>(rgba16f.data());
         const usize base = (static_cast<usize>(y) * width + x) * 4;
-        return vec3(glm::unpackHalf1x16(halves[base + 0]),
-                    glm::unpackHalf1x16(halves[base + 1]),
+        return vec3(glm::unpackHalf1x16(halves[base + 0]), glm::unpackHalf1x16(halves[base + 1]),
                     glm::unpackHalf1x16(halves[base + 2]));
     }
 }
@@ -687,7 +730,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const VoidResult mountResult = assets.Mount(outArchive);
     REQUIRE(mountResult.has_value());
 
-    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B}); // 9003
+    const AssetResult<AssetHandle<Material>> material =
+        assets.LoadSync<Material>(AssetId{0x232B}); // 9003
     REQUIRE(material.has_value());
     REQUIRE(material->IsLoaded());
 
@@ -722,10 +766,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Render the scene once and return the downloaded RGBA16F output.
     auto Render = [&]() -> vector<u8>
     {
-        Context.ImmediateCommands([&](CommandBuffer& cmd)
-        {
-            renderer->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
-        });
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
         const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
         REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
         return pixels;
@@ -828,12 +874,15 @@ namespace
     }
 
     // Renders a renderer once over the scene/camera and downloads its RGBA16F output.
-    vector<u8> RenderOutput(Context& context, SceneRenderer& renderer, const Scene& scene, const Camera& camera)
+    vector<u8> RenderOutput(Context& context, SceneRenderer& renderer, const Scene& scene,
+                            const Camera& camera)
     {
-        context.ImmediateCommands([&](CommandBuffer& cmd)
-        {
-            renderer.Execute(cmd, Renderer::SceneView{.World = scene, .Camera = camera, .Delta = 0.0f});
-        });
+        context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer.Execute(
+                    cmd, Renderer::SceneView{.World = scene, .Camera = camera, .Delta = 0.0f});
+            });
         return renderer.GetOutput()->GetImage()->Download();
     }
 }
@@ -845,8 +894,8 @@ namespace
 // the same scene texel reads differently between the two modes (Albedo is the raw
 // g-buffer color; Final is the lit + tonemapped result), so the two renderers do
 // not share state.
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "scene renderer: two renderers (different extents + Modes) interleaved over one scene are independent")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "scene renderer: two renderers (different extents + "
+                                          "Modes) interleaved over one scene are independent")
 {
     RegisterBuiltinTypes(Types);
 
@@ -876,21 +925,27 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     constexpr uvec2 extentB{64, 48};
 
     Camera cameraA;
-    cameraA.SetPerspective(glm::radians(45.0f), static_cast<f32>(extentA.x) / extentA.y, 0.1f, 100.0f);
+    cameraA.SetPerspective(glm::radians(45.0f), static_cast<f32>(extentA.x) / extentA.y, 0.1f,
+                           100.0f);
     cameraA.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     Camera cameraB;
-    cameraB.SetPerspective(glm::radians(45.0f), static_cast<f32>(extentB.x) / extentB.y, 0.1f, 100.0f);
+    cameraB.SetPerspective(glm::radians(45.0f), static_cast<f32>(extentB.x) / extentB.y, 0.1f,
+                           100.0f);
     cameraB.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     const Unique<SceneRenderer> rendererA = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
-        .OutputFormat = Context.GetOutputFormat(), .Extent = extentA,
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extentA,
         .Settings = {.Mode = DebugView::Final, .Bloom = false},
     });
     const Unique<SceneRenderer> rendererB = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
-        .OutputFormat = Context.GetOutputFormat(), .Extent = extentB,
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extentB,
         .Settings = {.Mode = DebugView::Albedo},
     });
 
@@ -902,12 +957,16 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // Interleave A, B, A in one command stream so each renderer's barrier domain is
     // exercised against the other's recording, not in isolation.
-    Context.ImmediateCommands([&](CommandBuffer& cmd)
-    {
-        rendererA->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = cameraA, .Delta = 0.0f});
-        rendererB->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = cameraB, .Delta = 0.0f});
-        rendererA->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = cameraA, .Delta = 0.0f});
-    });
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            rendererA->Execute(
+                cmd, Renderer::SceneView{.World = *scene, .Camera = cameraA, .Delta = 0.0f});
+            rendererB->Execute(
+                cmd, Renderer::SceneView{.World = *scene, .Camera = cameraB, .Delta = 0.0f});
+            rendererA->Execute(
+                cmd, Renderer::SceneView{.World = *scene, .Camera = cameraA, .Delta = 0.0f});
+        });
 
     const vector<u8> pixelsA = rendererA->GetOutput()->GetImage()->Download();
     const vector<u8> pixelsB = rendererB->GetOutput()->GetImage()->Download();
@@ -936,8 +995,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 // output pixels — there is no pass-count introspection. Final (lit + tonemap),
 // Albedo (raw g-buffer color), Normal (decoded world normal), and Depth (greyscale)
 // each produce a distinct center texel for the same cube.
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "scene renderer: Configure(Mode) re-wires the pass set — output pixels change per mode")
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "scene renderer: Configure(Mode) re-wires the pass set — output pixels change per mode")
 {
     RegisterBuiltinTypes(Types);
 
@@ -956,7 +1016,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const Entity lightEntity = scene->CreateEntity();
     scene->Add<Light>(lightEntity) = Light{
-        .Direction = vec3(0.0f, 0.0f, -1.0f), .Color = vec3(1.0f), .Intensity = 1.0f,
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f),
+        .Intensity = 1.0f,
     };
 
     constexpr uvec2 extent{128, 128};
@@ -966,8 +1028,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
-        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
         .Settings = {.Mode = DebugView::Final, .Bloom = false},
     });
 
@@ -998,7 +1062,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Each mode produces a distinct center — the recompile re-wired the pass set.
     auto Differs = [](const vec3 a, const vec3 b) -> bool
     {
-        return std::fabs(a.r - b.r) > 0.02f || std::fabs(a.g - b.g) > 0.02f || std::fabs(a.b - b.b) > 0.02f;
+        return std::fabs(a.r - b.r) > 0.02f || std::fabs(a.g - b.g) > 0.02f ||
+               std::fabs(a.b - b.b) > 0.02f;
     };
     CHECK(Differs(finalCenter, albedoCenter));
     CHECK(Differs(finalCenter, normalCenter));
@@ -1029,7 +1094,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(aoCenter.r == doctest::Approx(aoCenter.g).epsilon(0.02f));
     CHECK(aoCenter.g == doctest::Approx(aoCenter.b).epsilon(0.02f));
 
-    renderer->Configure({.Mode = DebugView::Shadows, .Bloom = false, .Shadows = false, .AO = false});
+    renderer->Configure(
+        {.Mode = DebugView::Shadows, .Bloom = false, .Shadows = false, .AO = false});
     const vec3 shadowCenter = Center();
     CHECK(shadowCenter.r == doctest::Approx(shadowCenter.g).epsilon(0.02f));
     CHECK(shadowCenter.g == doctest::Approx(shadowCenter.b).epsilon(0.02f));
@@ -1056,7 +1122,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
     REQUIRE(material.has_value());
 
-    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Exposure Cube");
+    const Ref<Mesh> cube =
+        Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Exposure Cube");
 
     const Unique<Scene> scene = Scene::Create(Types);
     const Entity entity = scene->CreateEntity();
@@ -1065,7 +1132,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const Entity lightEntity = scene->CreateEntity();
     scene->Add<Light>(lightEntity) = Light{
-        .Direction = vec3(0.0f, 0.0f, -1.0f), .Color = vec3(1.0f), .Intensity = 1.0f,
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f),
+        .Intensity = 1.0f,
     };
 
     constexpr uvec2 extent{128, 128};
@@ -1075,8 +1144,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
-        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
         .Settings = {.Mode = DebugView::Final, .Exposure = 0.25f},
     });
 
@@ -1126,7 +1197,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // half-vector equals the normal, and the specular lobe peaks.
     const Entity lightEntity = scene->CreateEntity();
     scene->Add<Light>(lightEntity) = Light{
-        .Direction = vec3(0.0f, 0.0f, -1.0f), .Color = vec3(1.0f), .Intensity = 1.0f,
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f),
+        .Intensity = 1.0f,
     };
 
     constexpr uvec2 extent{128, 128};
@@ -1136,8 +1209,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
-        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
         .Settings = {.Mode = DebugView::Final, .Bloom = false},
     });
 
@@ -1186,7 +1261,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
     REQUIRE(material.has_value());
 
-    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Multi-Light Cube");
+    const Ref<Mesh> cube =
+        Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Multi-Light Cube");
 
     const Unique<Scene> scene = Scene::Create(Types);
     const Entity entity = scene->CreateEntity();
@@ -1200,8 +1276,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
-        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
         .Settings = {.Mode = DebugView::Final},
     });
 
@@ -1218,7 +1296,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(dirEntity) = Light{
         .Type = LightType::Directional,
         .Direction = vec3(0.0f, 0.0f, -1.0f),
-        .Color = vec3(1.0f), .Intensity = 1.0f,
+        .Color = vec3(1.0f),
+        .Intensity = 1.0f,
     };
     const f32 directionalOnly = CenterLuma();
     CHECK(directionalOnly > 0.0f);
@@ -1230,7 +1309,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Transform>(pointEntity).Position = vec3(0.0f, 0.0f, 2.0f);
     scene->Add<Light>(pointEntity) = Light{
         .Type = LightType::Point,
-        .Color = vec3(1.0f), .Intensity = 8.0f, .Range = 8.0f,
+        .Color = vec3(1.0f),
+        .Intensity = 8.0f,
+        .Range = 8.0f,
     };
     const f32 pointOnly = CenterLuma();
     // The point light reaches the front face via its Transform-derived position.
@@ -1242,7 +1323,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(dir2Entity) = Light{
         .Type = LightType::Directional,
         .Direction = vec3(0.0f, 0.0f, -1.0f),
-        .Color = vec3(1.0f), .Intensity = 1.0f,
+        .Color = vec3(1.0f),
+        .Intensity = 1.0f,
     };
     const f32 bothLights = CenterLuma();
 
@@ -1290,7 +1372,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // specular lobe peaks far above 1.0 in HDR — the bright region bloom acts on.
     const Entity lightEntity = scene->CreateEntity();
     scene->Add<Light>(lightEntity) = Light{
-        .Direction = vec3(0.0f, 0.0f, -1.0f), .Color = vec3(1.0f), .Intensity = 8.0f,
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f),
+        .Intensity = 8.0f,
     };
 
     constexpr uvec2 extent{128, 128};
@@ -1300,8 +1384,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
-        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
         .Settings = {.Mode = DebugView::Final, .Bloom = false},
     });
 
@@ -1318,9 +1404,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             {
                 if (std::abs(dx) < 8 && std::abs(dy) < 8)
                     continue; // skip the saturated core; measure the surrounding halo
-                const vec3 c = DecodeTexel(pixels, extent.x,
-                    static_cast<u32>(static_cast<i32>(cx) + dx),
-                    static_cast<u32>(static_cast<i32>(cy) + dy));
+                const vec3 c =
+                    DecodeTexel(pixels, extent.x, static_cast<u32>(static_cast<i32>(cx) + dx),
+                                static_cast<u32>(static_cast<i32>(cy) + dy));
                 sum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
                 ++count;
             }
@@ -1329,12 +1415,15 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     auto Render = [&](f32 threshold, f32 intensity) -> vector<u8>
     {
-        Context.ImmediateCommands([&](CommandBuffer& cmd)
-        {
-            renderer->Execute(cmd, Renderer::SceneView{
-                .World = *scene, .Camera = camera, .Delta = 0.0f,
-                .BloomThreshold = threshold, .BloomIntensity = intensity});
-        });
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .BloomThreshold = threshold,
+                                                           .BloomIntensity = intensity});
+            });
         const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
         REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
         return pixels;
@@ -1354,8 +1443,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // most of the highlight, so the halo falls back toward the no-bloom level — and
     // NO Configure is called between these two renders. The change is purely the
     // ring-buffered material write the bloom stages read this frame.
-    const f64 haloLowMix = HaloLuma(Render(1.0f, 0.0f));   // intensity 0: bloom adds nothing
-    const f64 haloHighMix = HaloLuma(Render(1.0f, 2.0f));  // intensity 2: bloom adds more
+    const f64 haloLowMix = HaloLuma(Render(1.0f, 0.0f));  // intensity 0: bloom adds nothing
+    const f64 haloHighMix = HaloLuma(Render(1.0f, 2.0f)); // intensity 2: bloom adds more
 
     // Intensity scales the added bloom; 0 → no lift over the surface, 2 → more than 1.
     CHECK(haloHighMix > haloLowMix + 0.01);
@@ -1389,8 +1478,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // A large receiver plane in the XZ plane (world normal +Y) at the origin, and a
     // caster cube floating above its center. Both share the brick material.
-    const Ref<Mesh> plane = Mesh::Create(Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Shadow Plane");
-    const Ref<Mesh> caster = Mesh::Create(Context, Primitives::Cube(1.2f, *material), "Shadow Caster");
+    const Ref<Mesh> plane =
+        Mesh::Create(Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Shadow Plane");
+    const Ref<Mesh> caster =
+        Mesh::Create(Context, Primitives::Cube(1.2f, *material), "Shadow Caster");
 
     const Unique<Scene> scene = Scene::Create(Types);
 
@@ -1408,7 +1499,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Type = LightType::Directional,
         .Direction = vec3(0.0f, -1.0f, 0.0f),
-        .Color = vec3(1.0f), .Intensity = 3.0f,
+        .Color = vec3(1.0f),
+        .Intensity = 3.0f,
     };
 
     constexpr uvec2 extent{128, 128};
@@ -1420,7 +1512,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetView(vec3(0.0f, 5.0f, 5.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
+        .Context = Context,
+        .Assets = assets,
         .OutputFormat = Context.GetOutputFormat(),
         .Extent = extent,
         .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = true},
@@ -1454,7 +1547,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Shadows off recompiles the topology (removing the shadow pass); the same plane
     // texel now receives the light unobstructed.
     renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .Shadows = false});
-    const f32 unshadowedLuma = Luma(RenderOutput(Context, *renderer, *scene, camera), column, shadowRow);
+    const f32 unshadowedLuma =
+        Luma(RenderOutput(Context, *renderer, *scene, camera), column, shadowRow);
 
     // The shadow darkens the receiver: the same texel is measurably dimmer with the
     // caster's shadow than without it.
@@ -1496,8 +1590,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // A sphere resting on a plane: the plane's +Y face is the receiver, the sphere
     // sits just above the origin so its lower hemisphere creases into the plane.
-    const Ref<Mesh> plane = Mesh::Create(Context, Primitives::Plane(vec2(6.0f), uvec2(1), *material), "SSAO Plane");
-    const Ref<Mesh> sphere = Mesh::Create(Context, Primitives::Sphere(0.7f, 24, 32, *material), "SSAO Sphere");
+    const Ref<Mesh> plane =
+        Mesh::Create(Context, Primitives::Plane(vec2(6.0f), uvec2(1), *material), "SSAO Plane");
+    const Ref<Mesh> sphere =
+        Mesh::Create(Context, Primitives::Sphere(0.7f, 24, 32, *material), "SSAO Sphere");
 
     const Unique<Scene> scene = Scene::Create(Types);
 
@@ -1513,7 +1609,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // contact crease (occluded from the ambient hemisphere) is where AO acts.
     const Entity lightEntity = scene->CreateEntity();
     scene->Add<Light>(lightEntity) = Light{
-        .Direction = vec3(0.2f, -1.0f, 0.2f), .Color = vec3(1.0f), .Intensity = 1.0f,
+        .Direction = vec3(0.2f, -1.0f, 0.2f),
+        .Color = vec3(1.0f),
+        .Intensity = 1.0f,
     };
 
     constexpr uvec2 extent{160, 160};
@@ -1525,8 +1623,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetView(vec3(0.0f, 1.6f, 3.2f), vec3(0.0f, 0.4f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
-        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
         .Settings = {.Mode = DebugView::Final, .Bloom = false, .AO = true},
     });
 
@@ -1594,8 +1694,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
     REQUIRE(material.has_value());
 
-    const Ref<Mesh> plane = Mesh::Create(Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Ring Plane");
-    const Ref<Mesh> caster = Mesh::Create(Context, Primitives::Cube(1.2f, *material), "Ring Caster");
+    const Ref<Mesh> plane =
+        Mesh::Create(Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Ring Plane");
+    const Ref<Mesh> caster =
+        Mesh::Create(Context, Primitives::Cube(1.2f, *material), "Ring Caster");
 
     const Unique<Scene> scene = Scene::Create(Types);
 
@@ -1611,7 +1713,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Type = LightType::Directional,
         .Direction = vec3(-1.0f, -1.5f, 0.0f),
-        .Color = vec3(1.0f), .Intensity = 3.0f,
+        .Color = vec3(1.0f),
+        .Intensity = 3.0f,
     };
 
     constexpr uvec2 extent{128, 128};
@@ -1623,7 +1726,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetView(vec3(0.0f, 5.0f, 5.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
+        .Context = Context,
+        .Assets = assets,
         .OutputFormat = Context.GetOutputFormat(),
         .Extent = extent,
         .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = true, .AO = false},
@@ -1641,7 +1745,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         scene->Get<Light>(lightEntity).Direction = lightDir;
 
         CommandBuffer& cmd = Context.BeginFrame();
-        renderer->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+        renderer->Execute(cmd,
+                          Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
         Context.EndFrame();
         Context.WaitIdle();
 
@@ -1669,7 +1774,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         for (u32 x = x0; x < x1; ++x)
         {
             const f32 l = Luma(pixels, x, shadowRow);
-            if (l < bestLuma) { bestLuma = l; best = x; }
+            if (l < bestLuma)
+            {
+                bestLuma = l;
+                best = x;
+            }
         }
         return best;
     };
@@ -1707,8 +1816,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         const vector<u8> pixels = RenderFrame(left ? lightLeft : lightRight);
         const f32 ownShadow = Luma(pixels, left ? leftShadowX : rightShadowX, shadowRow);
         const f32 otherShadow = Luma(pixels, left ? rightShadowX : leftShadowX, shadowRow);
-        CHECK_MESSAGE(ownShadow < otherShadow,
-                      "frame ", frame, ": the current light's shadow texel must be darker "
+        CHECK_MESSAGE(ownShadow < otherShadow, "frame ", frame,
+                      ": the current light's shadow texel must be darker "
                       "than the opposite light's — the ShadowConstants ring is stale");
     }
 
@@ -1745,7 +1854,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // A long receiver plane in the XZ plane, big enough that its visible length spans
     // multiple cascade depth ranges when viewed down its length.
-    const Ref<Mesh> plane = Mesh::Create(Context, Primitives::Plane(vec2(80.0f), uvec2(1), *material), "Cascade Plane");
+    const Ref<Mesh> plane =
+        Mesh::Create(Context, Primitives::Plane(vec2(80.0f), uvec2(1), *material), "Cascade Plane");
 
     const Unique<Scene> scene = Scene::Create(Types);
     const Entity planeEntity = scene->CreateEntity();
@@ -1758,7 +1868,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Type = LightType::Directional,
         .Direction = vec3(0.2f, -1.0f, 0.1f),
-        .Color = vec3(1.0f), .Intensity = 1.0f,
+        .Color = vec3(1.0f),
+        .Intensity = 1.0f,
     };
 
     constexpr uvec2 extent{128, 128};
@@ -1773,7 +1884,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetView(vec3(0.0f, 1.2f, 4.0f), vec3(0.0f, 0.0f, -40.0f), vec3(0.0f, 1.0f, 0.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
+        .Context = Context,
+        .Assets = assets,
         .OutputFormat = Context.GetOutputFormat(),
         .Extent = extent,
         .Settings = {.Mode = DebugView::Cascades, .Bloom = false, .Shadows = true, .AO = false},
@@ -1816,7 +1928,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             }
         int best = -1, bestCount = 0;
         for (int k = 0; k < 4; ++k)
-            if (counts[k] > bestCount) { bestCount = counts[k]; best = k; }
+            if (counts[k] > bestCount)
+            {
+                bestCount = counts[k];
+                best = k;
+            }
         return best;
     };
 
@@ -1833,11 +1949,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(nearCascade >= 0);
     REQUIRE(farCascade >= 0);
 
-    CHECK_MESSAGE(nearCascade == 0,
-                  "the near (lower-frame) region must select cascade 0, got ", nearCascade);
+    CHECK_MESSAGE(nearCascade == 0, "the near (lower-frame) region must select cascade 0, got ",
+                  nearCascade);
     CHECK_MESSAGE(farCascade > nearCascade,
                   "the far (upper-frame) region must select a higher cascade than the "
-                  "near region (near ", nearCascade, ", far ", farCascade, ")");
+                  "near region (near ",
+                  nearCascade, ", far ", farCascade, ")");
 
     std::filesystem::remove(outArchive);
 }
@@ -1862,8 +1979,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // A caster cube and a receiver plane below it, both brick (so the depth pass
     // actually draws their submeshes — a materialless mesh records no DrawIndexed).
-    const Ref<Mesh> plane = Mesh::Create(Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Punctual Plane");
-    const Ref<Mesh> caster = Mesh::Create(Context, Primitives::Cube(1.0f, *material), "Punctual Caster");
+    const Ref<Mesh> plane =
+        Mesh::Create(Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Punctual Plane");
+    const Ref<Mesh> caster =
+        Mesh::Create(Context, Primitives::Cube(1.0f, *material), "Punctual Caster");
 
     const Unique<Scene> scene = Scene::Create(Types);
 
@@ -1882,12 +2001,17 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetView(vec3(0.0f, 4.0f, 5.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
-        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
         // The PunctualShadows arm force-wires the punctual pass and blits its atlas;
         // PunctualShadows = true is the per-light slot selection that fills the records.
-        .Settings = {.Mode = DebugView::PunctualShadows, .Bloom = false, .Shadows = false,
-                     .PunctualShadows = true, .AO = false},
+        .Settings = {.Mode = DebugView::PunctualShadows,
+                     .Bloom = false,
+                     .Shadows = false,
+                     .PunctualShadows = true,
+                     .AO = false},
     });
 
     // The fraction of blit texels that read non-black (shade = 1 - depth > 0): a
@@ -1913,8 +2037,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         scene->Add<Light>(lightEntity) = Light{
             .Type = LightType::Spot,
             .Direction = vec3(0.0f, -1.0f, 0.0f),
-            .Color = vec3(1.0f), .Intensity = 5.0f, .Range = 12.0f,
-            .InnerCone = 0.5f, .OuterCone = 0.8f,
+            .Color = vec3(1.0f),
+            .Intensity = 5.0f,
+            .Range = 12.0f,
+            .InnerCone = 0.5f,
+            .OuterCone = 0.8f,
         };
 
         const vector<u8> pixels = RenderOutput(Context, *renderer, *scene, camera);
@@ -1938,7 +2065,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         scene->Add<Transform>(lightEntity).Position = vec3(0.0f, 3.0f, 0.0f);
         scene->Add<Light>(lightEntity) = Light{
             .Type = LightType::Point,
-            .Color = vec3(1.0f), .Intensity = 8.0f, .Range = 12.0f,
+            .Color = vec3(1.0f),
+            .Intensity = 8.0f,
+            .Range = 12.0f,
         };
 
         const vector<u8> pixels = RenderOutput(Context, *renderer, *scene, camera);
@@ -1979,7 +2108,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
     REQUIRE(material.has_value());
 
-    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.0f, *material), "Punctual Cull Cube");
+    const Ref<Mesh> cube =
+        Mesh::Create(Context, Primitives::Cube(1.0f, *material), "Punctual Cull Cube");
 
     constexpr uvec2 extent{96, 96};
 
@@ -2008,17 +2138,25 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         scene->Add<Light>(lightEntity) = Light{
             .Type = LightType::Spot,
             .Direction = vec3(0.0f, -1.0f, 0.0f),
-            .Color = vec3(1.0f), .Intensity = 5.0f, .Range = 12.0f,
-            .InnerCone = 0.5f, .OuterCone = 0.9f,
+            .Color = vec3(1.0f),
+            .Intensity = 5.0f,
+            .Range = 12.0f,
+            .InnerCone = 0.5f,
+            .OuterCone = 0.9f,
         };
 
         // A small atlas resolution keeps the download cheap; the equality is exact.
         const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-            .Context = Context, .Assets = assets,
-            .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
-            .Settings = {.Mode = DebugView::PunctualShadows, .Bloom = false,
-                         .Shadows = false, .PunctualShadows = true,
-                         .PunctualShadowResolution = 256, .AO = false},
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = extent,
+            .Settings = {.Mode = DebugView::PunctualShadows,
+                         .Bloom = false,
+                         .Shadows = false,
+                         .PunctualShadows = true,
+                         .PunctualShadowResolution = 256,
+                         .AO = false},
         });
 
         // Render through the PunctualShadows debug blit (the renderer output, which is
@@ -2029,10 +2167,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         // this view — so the depth (and thus the blit) must be identical.
         auto RenderBlit = [&](bool cull) -> vector<u8>
         {
-            renderer->Configure({.Mode = DebugView::PunctualShadows, .Bloom = false,
-                                 .Shadows = false, .PunctualShadows = true,
+            renderer->Configure({.Mode = DebugView::PunctualShadows,
+                                 .Bloom = false,
+                                 .Shadows = false,
+                                 .PunctualShadows = true,
                                  .PunctualShadowResolution = 256,
-                                 .AO = false, .FrustumCull = cull});
+                                 .AO = false,
+                                 .FrustumCull = cull});
             return RenderOutput(Context, *renderer, *scene, camera);
         };
 
@@ -2075,8 +2216,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         AABB farBounds = AABB::Empty();
         for (const VisibleMesh& item : gathered)
         {
-            if (item.WorldBounds.Center().x < 30.0f) nearBounds = item.WorldBounds;
-            else                                      farBounds = item.WorldBounds;
+            if (item.WorldBounds.Center().x < 30.0f)
+                nearBounds = item.WorldBounds;
+            else
+                farBounds = item.WorldBounds;
         }
         REQUIRE_FALSE(nearBounds.IsEmpty());
         REQUIRE_FALSE(farBounds.IsEmpty());
@@ -2086,8 +2229,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         for (u32 f = 0; f < CubeFaceCount; ++f)
         {
             const Frustum faceFrustum = Frustum::FromViewProjection(pointView.ViewProj[f]);
-            if (Intersects(faceFrustum, nearBounds)) nearKeptBySomeFace = true;
-            if (Intersects(faceFrustum, farBounds))  farKeptBySomeFace = true;
+            if (Intersects(faceFrustum, nearBounds))
+                nearKeptBySomeFace = true;
+            if (Intersects(faceFrustum, farBounds))
+                farKeptBySomeFace = true;
         }
         CHECK(nearKeptBySomeFace);
         CHECK_FALSE(farKeptBySomeFace);
@@ -2101,23 +2246,32 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         scene->Add<Transform>(lightEntity).Position = vec3(0.0f, 3.0f, 0.0f);
         scene->Add<Light>(lightEntity) = Light{
             .Type = LightType::Point,
-            .Color = vec3(1.0f), .Intensity = 8.0f, .Range = 12.0f,
+            .Color = vec3(1.0f),
+            .Intensity = 8.0f,
+            .Range = 12.0f,
         };
 
         const Unique<SceneRenderer> rendererOwned = SceneRenderer::Create({
-            .Context = Context, .Assets = assets,
-            .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
-            .Settings = {.Mode = DebugView::PunctualShadows, .Bloom = false,
-                         .Shadows = false, .PunctualShadows = true,
-                         .PunctualShadowResolution = 256, .AO = false},
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = extent,
+            .Settings = {.Mode = DebugView::PunctualShadows,
+                         .Bloom = false,
+                         .Shadows = false,
+                         .PunctualShadows = true,
+                         .PunctualShadowResolution = 256,
+                         .AO = false},
         });
 
         auto Render = [&]()
         {
-            Context.ImmediateCommands([&](CommandBuffer& cmd)
-            {
-                rendererOwned->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
-            });
+            Context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    rendererOwned->Execute(
+                        cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+                });
         };
 
         // Frame 1: first Sync against a never-seen version → rebuild.
@@ -2153,8 +2307,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
     REQUIRE(material.has_value());
 
-    const Ref<Mesh> plane = Mesh::Create(Context, Primitives::Plane(vec2(12.0f), uvec2(1), *material), "Spot Floor");
-    const Ref<Mesh> occluder = Mesh::Create(Context, Primitives::Cube(1.5f, *material), "Spot Occluder");
+    const Ref<Mesh> plane =
+        Mesh::Create(Context, Primitives::Plane(vec2(12.0f), uvec2(1), *material), "Spot Floor");
+    const Ref<Mesh> occluder =
+        Mesh::Create(Context, Primitives::Cube(1.5f, *material), "Spot Occluder");
 
     const Unique<Scene> scene = Scene::Create(Types);
 
@@ -2173,8 +2329,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Type = LightType::Spot,
         .Direction = vec3(0.0f, -1.0f, 0.0f),
-        .Color = vec3(1.0f), .Intensity = 14.0f, .Range = 14.0f,
-        .InnerCone = 0.6f, .OuterCone = 0.9f,
+        .Color = vec3(1.0f),
+        .Intensity = 14.0f,
+        .Range = 14.0f,
+        .InnerCone = 0.6f,
+        .OuterCone = 0.9f,
     };
 
     constexpr uvec2 extent{128, 128};
@@ -2186,10 +2345,16 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetView(vec3(0.0f, 9.0f, 0.01f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
-        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
-        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false,
-                     .PunctualShadows = true, .PunctualShadowResolution = 1024, .AO = false},
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final,
+                     .Bloom = false,
+                     .Shadows = false,
+                     .PunctualShadows = true,
+                     .PunctualShadowResolution = 1024,
+                     .AO = false},
     });
 
     auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
@@ -2201,8 +2366,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const vector<u8> shadowed = RenderOutput(Context, *renderer, *scene, camera);
     REQUIRE(shadowed.size() == static_cast<size_t>(extent.x) * extent.y * 8);
 
-    renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .Shadows = false,
-                         .PunctualShadows = false, .PunctualShadowResolution = 1024, .AO = false});
+    renderer->Configure({.Mode = DebugView::Final,
+                         .Bloom = false,
+                         .Shadows = false,
+                         .PunctualShadows = false,
+                         .PunctualShadowResolution = 1024,
+                         .AO = false});
     const vector<u8> unshadowed = RenderOutput(Context, *renderer, *scene, camera);
 
     // Locate the cast shadow on the image-right floor band by the largest on-vs-off
@@ -2210,13 +2379,18 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // (rather than absolute luma) targets the shadow term itself, not the BRDF gradient
     // or the lit occluder silhouette.
     const u32 row = extent.y / 2;
-    auto DarkenDelta = [&](u32 x) -> f32 { return Luma(unshadowed, x, row) - Luma(shadowed, x, row); };
+    auto DarkenDelta = [&](u32 x) -> f32
+    { return Luma(unshadowed, x, row) - Luma(shadowed, x, row); };
     u32 shadowX = extent.x * 9 / 16;
     f32 maxDarken = DarkenDelta(shadowX);
     for (u32 x = extent.x * 9 / 16; x < extent.x - 6; ++x)
     {
         const f32 d = DarkenDelta(x);
-        if (d > maxDarken) { maxDarken = d; shadowX = x; }
+        if (d > maxDarken)
+        {
+            maxDarken = d;
+            shadowX = x;
+        }
     }
 
     // Compare that column lit (shadows off) vs shadowed (shadows on): the occluder
@@ -2255,8 +2429,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
     REQUIRE(material.has_value());
 
-    const Ref<Mesh> floor = Mesh::Create(Context, Primitives::Plane(vec2(16.0f), uvec2(1), *material), "Point Floor");
-    const Ref<Mesh> occluder = Mesh::Create(Context, Primitives::Cube(1.5f, *material), "Point Occluder");
+    const Ref<Mesh> floor =
+        Mesh::Create(Context, Primitives::Plane(vec2(16.0f), uvec2(1), *material), "Point Floor");
+    const Ref<Mesh> occluder =
+        Mesh::Create(Context, Primitives::Cube(1.5f, *material), "Point Occluder");
 
     const Unique<Scene> scene = Scene::Create(Types);
 
@@ -2273,7 +2449,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Transform>(lightEntity).Position = vec3(0.0f, 4.0f, 0.0f);
     scene->Add<Light>(lightEntity) = Light{
         .Type = LightType::Point,
-        .Color = vec3(1.0f), .Intensity = 60.0f, .Range = 16.0f,
+        .Color = vec3(1.0f),
+        .Intensity = 60.0f,
+        .Range = 16.0f,
     };
 
     const Entity occluderEntity = scene->CreateEntity();
@@ -2287,10 +2465,16 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetView(vec3(0.0f, 9.0f, 0.01f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
-        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
-        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false,
-                     .PunctualShadows = true, .PunctualShadowResolution = 1024, .AO = false},
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final,
+                     .Bloom = false,
+                     .Shadows = false,
+                     .PunctualShadows = true,
+                     .PunctualShadowResolution = 1024,
+                     .AO = false},
     });
 
     auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
@@ -2302,8 +2486,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const vector<u8> shadowed = RenderOutput(Context, *renderer, *scene, camera);
     REQUIRE(shadowed.size() == static_cast<size_t>(extent.x) * extent.y * 8);
 
-    renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .Shadows = false,
-                         .PunctualShadows = false, .PunctualShadowResolution = 1024, .AO = false});
+    renderer->Configure({.Mode = DebugView::Final,
+                         .Bloom = false,
+                         .Shadows = false,
+                         .PunctualShadows = false,
+                         .PunctualShadowResolution = 1024,
+                         .AO = false});
     const vector<u8> unshadowed = RenderOutput(Context, *renderer, *scene, camera);
 
     // Locate the shadow on the image-right floor band by the largest on-vs-off
@@ -2311,13 +2499,18 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // the darkening delta (rather than absolute luma) targets the shadow term itself,
     // not the point's falloff gradient or the occluder silhouette.
     const u32 row = extent.y / 2;
-    auto DarkenDelta = [&](u32 x) -> f32 { return Luma(unshadowed, x, row) - Luma(shadowed, x, row); };
+    auto DarkenDelta = [&](u32 x) -> f32
+    { return Luma(unshadowed, x, row) - Luma(shadowed, x, row); };
     u32 shadowX = extent.x * 9 / 16;
     f32 maxDarken = DarkenDelta(shadowX);
     for (u32 x = extent.x * 9 / 16; x < extent.x - 6; ++x)
     {
         const f32 d = DarkenDelta(x);
-        if (d > maxDarken) { maxDarken = d; shadowX = x; }
+        if (d > maxDarken)
+        {
+            maxDarken = d;
+            shadowX = x;
+        }
     }
 
     // The point's -Y cube face captures the downward ray to the occluded floor, so that
@@ -2356,8 +2549,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
     REQUIRE(material.has_value());
 
-    const Ref<Mesh> floor = Mesh::Create(Context, Primitives::Plane(vec2(12.0f), uvec2(1), *material), "Gate Floor");
-    const Ref<Mesh> occluder = Mesh::Create(Context, Primitives::Cube(1.5f, *material), "Gate Occluder");
+    const Ref<Mesh> floor =
+        Mesh::Create(Context, Primitives::Plane(vec2(12.0f), uvec2(1), *material), "Gate Floor");
+    const Ref<Mesh> occluder =
+        Mesh::Create(Context, Primitives::Cube(1.5f, *material), "Gate Occluder");
 
     const Unique<Scene> scene = Scene::Create(Types);
 
@@ -2373,7 +2568,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         scene->Add<Transform>(filler).Position = vec3(-20.0f - static_cast<f32>(i), 5.0f, 0.0f);
         scene->Add<Light>(filler) = Light{
             .Type = LightType::Point,
-            .Color = vec3(0.0f), .Intensity = 0.0f, .Range = 1.0f,
+            .Color = vec3(0.0f),
+            .Intensity = 0.0f,
+            .Range = 1.0f,
         };
     }
 
@@ -2385,8 +2582,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Type = LightType::Spot,
         .Direction = vec3(0.0f, -1.0f, 0.0f),
-        .Color = vec3(1.0f), .Intensity = 14.0f, .Range = 14.0f,
-        .InnerCone = 0.6f, .OuterCone = 0.9f,
+        .Color = vec3(1.0f),
+        .Intensity = 14.0f,
+        .Range = 14.0f,
+        .InnerCone = 0.6f,
+        .OuterCone = 0.9f,
     };
 
     const Entity occluderEntity = scene->CreateEntity();
@@ -2400,10 +2600,16 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetView(vec3(0.0f, 9.0f, 0.01f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f));
 
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-        .Context = Context, .Assets = assets,
-        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
-        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false,
-                     .PunctualShadows = true, .PunctualShadowResolution = 1024, .AO = false},
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final,
+                     .Bloom = false,
+                     .Shadows = false,
+                     .PunctualShadows = true,
+                     .PunctualShadowResolution = 1024,
+                     .AO = false},
     });
 
     auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
@@ -2416,8 +2622,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const vector<u8> shadowsOn = RenderOutput(Context, *renderer, *scene, camera);
     REQUIRE(shadowsOn.size() == static_cast<size_t>(extent.x) * extent.y * 8);
 
-    renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .Shadows = false,
-                         .PunctualShadows = false, .PunctualShadowResolution = 1024, .AO = false});
+    renderer->Configure({.Mode = DebugView::Final,
+                         .Bloom = false,
+                         .Shadows = false,
+                         .PunctualShadows = false,
+                         .PunctualShadowResolution = 1024,
+                         .AO = false});
     const vector<u8> shadowsOff = RenderOutput(Context, *renderer, *scene, camera);
 
     // The floor under the occluder (image-right): the over-budget spot is unshadowed
@@ -2449,11 +2659,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 // load, pipeline built by the pass against its format), set-0 bind, upstream sample
 // (the derived barrier transitions the cleared source for the read), the
 // domain-keyed selector push at offset 0, and the fullscreen draw all work.
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "scene renderer: a PostProcess material samples an upstream target and writes it unchanged")
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "scene renderer: a PostProcess material samples an upstream target and writes it unchanged")
 {
     const path fixtureDir = path(GPU_POSTPROCESS_FIXTURE_DIR);
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_gpu_postprocess.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_gpu_postprocess.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
@@ -2472,36 +2684,41 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Material& mat = *material->Get();
     CHECK(mat.GetDomain() == MaterialDomain::PostProcess);
     CHECK(mat.GetIndex() != MaterialHandle::Invalid);
-    CHECK(mat.GetPipeline() == nullptr);            // built by the pass, not the loader
-    CHECK(mat.GetPipelineLayout() != nullptr);      // built by the loader for both domains
+    CHECK(mat.GetPipeline() == nullptr);       // built by the pass, not the loader
+    CHECK(mat.GetPipelineLayout() != nullptr); // built by the loader for both domains
 
     constexpr uvec2 extent{64, 48};
     constexpr ClearColor sourceColor{0.25f, 0.55f, 0.80f, 1.0f};
 
     // The upstream source the pass samples — cleared to a known color, sampled
     // (so the graph derives its attachment → shader-read barrier).
-    const Ref<Image> sourceImage = Image::Create(Context, {
-        .Name = "PostProcess Source",
-        .Extent = {extent.x, extent.y, 1},
-        .Format = Format::RGBA8Unorm,
-        .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled,
-    });
-    const Ref<ImageView> sourceView = ImageView::Create(Context, {.Name = "PostProcess Source View", .Image = sourceImage});
+    const Ref<Image> sourceImage =
+        Image::Create(Context, {
+                                   .Name = "PostProcess Source",
+                                   .Extent = {extent.x, extent.y, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled,
+                               });
+    const Ref<ImageView> sourceView =
+        ImageView::Create(Context, {.Name = "PostProcess Source View", .Image = sourceImage});
 
-    const Ref<Image> outputImage = Image::Create(Context, {
-        .Name = "PostProcess Output",
-        .Extent = {extent.x, extent.y, 1},
-        .Format = Format::RGBA8Unorm,
-        .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
-    });
-    const Ref<ImageView> outputView = ImageView::Create(Context, {.Name = "PostProcess Output View", .Image = outputImage});
+    const Ref<Image> outputImage =
+        Image::Create(Context, {
+                                   .Name = "PostProcess Output",
+                                   .Extent = {extent.x, extent.y, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    const Ref<ImageView> outputView =
+        ImageView::Create(Context, {.Name = "PostProcess Output View", .Image = outputImage});
 
-    const Ref<Sampler> sampler = Sampler::Create(Context, {
-        .Name = "PostProcess Sampler",
-        .AddressModeU = AddressMode::ClampToEdge,
-        .AddressModeV = AddressMode::ClampToEdge,
-        .AddressModeW = AddressMode::ClampToEdge,
-    });
+    const Ref<Sampler> sampler =
+        Sampler::Create(Context, {
+                                     .Name = "PostProcess Sampler",
+                                     .AddressModeU = AddressMode::ClampToEdge,
+                                     .AddressModeV = AddressMode::ClampToEdge,
+                                     .AddressModeW = AddressMode::ClampToEdge,
+                                 });
 
     BindlessRegistry& bindless = Context.GetBindlessRegistry();
     const TextureHandle sourceHandle = bindless.Register(sourceView);
@@ -2510,47 +2727,47 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Drive one graph: clear the source to the known color, then the postprocess
     // pass samples it and writes the output. The pass declares .Sample(source), so
     // the clear-write → sample-read barrier is derived by the graph.
-    Context.ImmediateCommands([&](CommandBuffer& cmd)
-    {
-        RenderGraph graph(Context);
-        const ResourceId sourceId = graph.Import("PostProcess Source");
-        const ResourceId outputId = graph.Import("PostProcess Output");
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            RenderGraph graph(Context);
+            const ResourceId sourceId = graph.Import("PostProcess Source");
+            const ResourceId outputId = graph.Import("PostProcess Output");
 
-        graph.AddPass("Clear Source")
-            .Color({
-                .Resource = sourceId,
-                .Load = LoadOp::Clear,
-                .Store = StoreOp::Store,
-                .Clear = sourceColor,
-            })
-            .Execute([](PassContext&) {});
+            graph.AddPass("Clear Source")
+                .Color({
+                    .Resource = sourceId,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = sourceColor,
+                })
+                .Execute([](PassContext&) {});
 
-        PostProcessScenePass pass(Context, *material,
-            PostProcessInput{
-                .Source = sourceId,
-                .SourceTexture = sourceHandle,
-                .Sampler = samplerHandle,
-                .TextureField = "Source",
-                .SamplerField = "SourceSampler",
-            },
-            outputId, Format::RGBA8Unorm, extent);
-        pass.Declare(graph, PassIO{});
+            PostProcessScenePass pass(Context, *material,
+                                      PostProcessInput{
+                                          .Source = sourceId,
+                                          .SourceTexture = sourceHandle,
+                                          .Sampler = samplerHandle,
+                                          .TextureField = "Source",
+                                          .SamplerField = "SourceSampler",
+                                      },
+                                      outputId, Format::RGBA8Unorm, extent);
+            pass.Declare(graph, PassIO{});
 
-        const RenderGraph::ImportBinding bindings[] = {
-            {sourceId, sourceView},
-            {outputId, outputView},
-        };
-        graph.Compile()->Execute(cmd, bindings);
-    });
+            const RenderGraph::ImportBinding bindings[] = {
+                {sourceId, sourceView},
+                {outputId, outputView},
+            };
+            graph.Compile()->Execute(cmd, bindings);
+        });
 
     const vector<u8> pixels = outputImage->Download();
     REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 4);
 
     // The center texel reads the source color unchanged (within 8-bit quantization).
     const usize center = (static_cast<usize>(extent.y / 2) * extent.x + extent.x / 2) * 4;
-    auto Approx8 = [](u8 actual, f32 expected) {
-        return std::fabs(static_cast<f32>(actual) / 255.0f - expected) < 0.02f;
-    };
+    auto Approx8 = [](u8 actual, f32 expected)
+    { return std::fabs(static_cast<f32>(actual) / 255.0f - expected) < 0.02f; };
     CHECK(Approx8(pixels[center + 0], sourceColor.R));
     CHECK(Approx8(pixels[center + 1], sourceColor.G));
     CHECK(Approx8(pixels[center + 2], sourceColor.B));

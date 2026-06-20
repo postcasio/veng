@@ -28,9 +28,9 @@ namespace Veng::Renderer
         /// @brief World → light clip-space transform.
         mat4 ViewProj;
         /// @brief Near clip distance.
-        f32  Near = 0.0f;
+        f32 Near = 0.0f;
         /// @brief Far clip distance (equal to the light's range).
-        f32  Far  = 0.0f;
+        f32 Far = 0.0f;
     };
 
     /// @brief A point light's six cube-face shadow views.
@@ -46,7 +46,7 @@ namespace Veng::Renderer
         /// @brief Near clip distance (shared by all six faces).
         f32 Near = 0.0f;
         /// @brief Far clip distance (equal to the light's range).
-        f32 Far  = 0.0f;
+        f32 Far = 0.0f;
     };
 
     /// @brief Compute a spot light's perspective shadow view.
@@ -59,8 +59,8 @@ namespace Veng::Renderer
     /// @param range      Light falloff radius; used as the far plane.
     /// @param outerCone  Outer cone half-angle in radians; must be in (0, π/2).
     /// @pre range > 0, outerCone ∈ (0, π/2) — asserted.
-    [[nodiscard]] SpotShadowView ComputeSpotShadowView(
-        vec3 position, vec3 direction, f32 range, f32 outerCone);
+    [[nodiscard]] SpotShadowView ComputeSpotShadowView(vec3 position, vec3 direction, f32 range,
+                                                       f32 outerCone);
 
     /// @brief Compute a point light's six cube-face shadow views.
     ///

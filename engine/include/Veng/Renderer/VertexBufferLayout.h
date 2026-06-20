@@ -35,16 +35,10 @@ namespace Veng::Renderer
         VertexBufferLayout(const vector<VertexBufferElement>& elements);
 
         /// @brief Returns the ordered list of attribute elements.
-        [[nodiscard]] const vector<VertexBufferElement>& GetElements() const
-        {
-            return m_Elements;
-        }
+        [[nodiscard]] const vector<VertexBufferElement>& GetElements() const { return m_Elements; }
 
         /// @brief Returns the total byte size of one vertex record.
-        [[nodiscard]] u32 GetStride() const
-        {
-            return m_Stride;
-        }
+        [[nodiscard]] u32 GetStride() const { return m_Stride; }
 
         /// @brief Returns the total number of 32-bit scalar components comprising one vertex.
         [[nodiscard]] u32 GetFloatCount() const { return m_FloatCount; }

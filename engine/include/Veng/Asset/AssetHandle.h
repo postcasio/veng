@@ -94,8 +94,8 @@ namespace Veng
         friend class AssetManager;
         friend class WeakAssetHandle<T>;
 
-        AssetHandle(AssetId id, Ref<Detail::AssetCacheEntry> entry) :
-            m_Id(id), m_Entry(std::move(entry))
+        AssetHandle(AssetId id, Ref<Detail::AssetCacheEntry> entry)
+            : m_Id(id), m_Entry(std::move(entry))
         {
         }
 
@@ -144,8 +144,8 @@ namespace Veng
         WeakAssetHandle() = default;
 
         /// @brief Constructs a weak handle from a strong handle.
-        explicit WeakAssetHandle(const AssetHandle<T>& handle) :
-            m_Id(handle.m_Id), m_Entry(handle.m_Entry)
+        explicit WeakAssetHandle(const AssetHandle<T>& handle)
+            : m_Id(handle.m_Id), m_Entry(handle.m_Entry)
         {
         }
 
@@ -187,8 +187,8 @@ namespace Veng
         inline void RehydrateHandleField(void* handlePtr, AssetId id, Ref<AssetCacheEntry> entry)
         {
             std::memcpy(handlePtr, &id, sizeof(id));
-            auto* entrySlot = reinterpret_cast<Ref<AssetCacheEntry>*>(
-                static_cast<u8*>(handlePtr) + AssetHandleEntryOffset);
+            auto* entrySlot = reinterpret_cast<Ref<AssetCacheEntry>*>(static_cast<u8*>(handlePtr) +
+                                                                      AssetHandleEntryOffset);
             *entrySlot = std::move(entry);
         }
     }

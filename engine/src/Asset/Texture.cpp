@@ -12,23 +12,20 @@ namespace Veng
 {
     using namespace Renderer;
 
-    Texture::Texture(Context& context, const TextureInfo& info) :
-        m_Context(context),
-        m_Name(info.Name),
-        m_Extent(info.Extent),
-        m_Format(info.Format)
+    Texture::Texture(Context& context, const TextureInfo& info)
+        : m_Context(context), m_Name(info.Name), m_Extent(info.Extent), m_Format(info.Format)
     {
         m_Image = Image::Create(context, {
-            .Name = m_Name,
-            .Extent = {info.Extent.x, info.Extent.y, 1},
-            .Format = info.Format,
-            .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
-        });
+                                             .Name = m_Name,
+                                             .Extent = {info.Extent.x, info.Extent.y, 1},
+                                             .Format = info.Format,
+                                             .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                                         });
 
         m_View = ImageView::Create(context, {
-            .Name = m_Name + " View",
-            .Image = m_Image,
-        });
+                                                .Name = m_Name + " View",
+                                                .Image = m_Image,
+                                            });
 
         SamplerInfo samplerInfo = info.Sampler;
         samplerInfo.Name = m_Name + " Sampler";
@@ -42,8 +39,8 @@ namespace Veng
         return texture;
     }
 
-    Ref<Texture> Texture::CreateAsync(Context& context, const TextureInfo& info,
-                                      TaskSystem& tasks, Task<void>& outUpload)
+    Ref<Texture> Texture::CreateAsync(Context& context, const TextureInfo& info, TaskSystem& tasks,
+                                      Task<void>& outUpload)
     {
         Ref<Texture> texture(new Texture(context, info));
         outUpload = texture->m_Image->Upload(tasks, info.Pixels);

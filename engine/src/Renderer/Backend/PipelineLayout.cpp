@@ -10,7 +10,10 @@
 namespace Veng::Renderer
 {
     /// @brief Returns the backend-native pipeline layout handle.
-    PipelineLayout::Native& PipelineLayout::GetNative() const { return *m_Native; }
+    PipelineLayout::Native& PipelineLayout::GetNative() const
+    {
+        return *m_Native;
+    }
 
     /// @brief Constructs a Vulkan pipeline layout, prepending the bindless registry's set-0 layout.
     ///
@@ -18,14 +21,15 @@ namespace Veng::Renderer
     /// sets shift to 1+.
     /// @param context  The owning render context.
     /// @param info     Layout configuration including descriptor set layouts and push constant ranges.
-    PipelineLayout::PipelineLayout(Context& context, const PipelineLayoutInfo& info) : m_Context(context), m_Name(info.Name),
-                                                                     m_Native(CreateUnique<Native>()),
-                                                                     m_DescriptorSetLayouts(info.DescriptorSetLayouts),
-                                                                     m_PushConstantRanges(info.PushConstantRanges)
+    PipelineLayout::PipelineLayout(Context& context, const PipelineLayoutInfo& info)
+        : m_Context(context), m_Name(info.Name), m_Native(CreateUnique<Native>()),
+          m_DescriptorSetLayouts(info.DescriptorSetLayouts),
+          m_PushConstantRanges(info.PushConstantRanges)
     {
         vector<vk::DescriptorSetLayout> descriptorSetLayouts;
         descriptorSetLayouts.reserve(m_DescriptorSetLayouts.size() + 1);
-        descriptorSetLayouts.push_back(GetVkDescriptorSetLayout(*context.GetBindlessRegistry().GetSet0Layout()));
+        descriptorSetLayouts.push_back(
+            GetVkDescriptorSetLayout(*context.GetBindlessRegistry().GetSet0Layout()));
 
         for (const auto& descriptorSetLayout : m_DescriptorSetLayouts)
         {
@@ -37,11 +41,9 @@ namespace Veng::Renderer
 
         for (const auto& pushConstantRange : info.PushConstantRanges)
         {
-            pushConstantRanges.push_back({
-                .stageFlags = ToVk(pushConstantRange.Stages),
-                .offset = pushConstantRange.Offset,
-                .size = pushConstantRange.Size
-            });
+            pushConstantRanges.push_back({.stageFlags = ToVk(pushConstantRange.Stages),
+                                          .offset = pushConstantRange.Offset,
+                                          .size = pushConstantRange.Size});
         }
 
         const vk::PipelineLayoutCreateInfo pipelineLayoutCreateInfo{
@@ -51,7 +53,8 @@ namespace Veng::Renderer
             .pPushConstantRanges = pushConstantRanges.data(),
         };
 
-        m_Native->Layout = GetVkDevice(m_Context).createPipelineLayout(pipelineLayoutCreateInfo).value;
+        m_Native->Layout =
+            GetVkDevice(m_Context).createPipelineLayout(pipelineLayoutCreateInfo).value;
 
         DebugMarkers::MarkPipelineLayout(GetVkDevice(m_Context), m_Native->Layout, m_Name);
     }

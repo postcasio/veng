@@ -34,10 +34,12 @@ namespace Veng::Test
         // smoke tests' default.
         explicit GpuContext(string_view applicationName, uvec2 extent = {4, 4})
         {
-            m_Context.Initialize({
-                .ApplicationName = string(applicationName),
-                .InternalRenderExtent = extent,
-            }, nullptr);
+            m_Context.Initialize(
+                {
+                    .ApplicationName = string(applicationName),
+                    .InternalRenderExtent = extent,
+                },
+                nullptr);
         }
 
         ~GpuContext()

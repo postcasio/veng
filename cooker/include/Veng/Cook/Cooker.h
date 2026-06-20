@@ -34,7 +34,7 @@ namespace Veng::Cook
     /// @param target        The build target (left-hand side of the depfile rule).
     /// @param dependencies  Every source path the cook read.
     [[nodiscard]] VoidResult WriteDepfile(const path& depfilePath, const path& target,
-        std::span<const path> dependencies);
+                                          std::span<const path> dependencies);
 
     /// @brief Owns the importer table and turns a pack JSON into a .vengpack archive.
     class Cooker
@@ -58,8 +58,9 @@ namespace Veng::Cook
         /// @param types           Reflected module type registry, or nullptr for non-module cooks.
         /// @param outDependencies If non-null, receives the sorted, de-duplicated dependency list.
         [[nodiscard]] VoidResult CookPack(const path& packJson, const path& outArchive,
-            std::span<const path> referencePacks = {}, const TypeRegistry* types = nullptr,
-            vector<path>* outDependencies = nullptr) const;
+                                          std::span<const path> referencePacks = {},
+                                          const TypeRegistry* types = nullptr,
+                                          vector<path>* outDependencies = nullptr) const;
 
         /// @brief Cooks one source asset and returns a complete single-entry .vengpack as in-memory bytes.
         ///
@@ -73,13 +74,14 @@ namespace Veng::Cook
         /// @param referencePacks Additional packs for cross-asset AssetId resolution.
         /// @param types          Reflected module type registry, or nullptr.
         [[nodiscard]] Result<vector<u8>> CookSource(const path& sourcePath, AssetId id,
-            AssetType type, std::span<const path> referencePacks = {},
-            const TypeRegistry* types = nullptr) const;
+                                                    AssetType type,
+                                                    std::span<const path> referencePacks = {},
+                                                    const TypeRegistry* types = nullptr) const;
 
     private:
         /// @brief Cooks one pack entry JSON into the archive, enforcing id uniqueness.
         [[nodiscard]] VoidResult CookEntry(const CookContext& context, const json& entry,
-            std::set<u64>& seenIds, ArchiveWriter& writer) const;
+                                           std::set<u64>& seenIds, ArchiveWriter& writer) const;
 
         /// @brief Registered importers keyed by AssetType.
         std::unordered_map<AssetType, Unique<AssetImporter>> m_Importers;

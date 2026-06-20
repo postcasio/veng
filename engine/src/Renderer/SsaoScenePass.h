@@ -26,8 +26,8 @@ namespace Veng::Renderer
     {
     public:
         /// @brief Constructs the pass and allocates the AO target at the given extent.
-        SsaoScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
-                      SamplerHandle samplerHandle, uvec2 extent);
+        SsaoScenePass(Context& context, Ref<GraphicsPipeline> pipeline, SamplerHandle samplerHandle,
+                      uvec2 extent);
         ~SsaoScenePass() override;
 
         SsaoScenePass(const SsaoScenePass&) = delete;

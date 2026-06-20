@@ -284,7 +284,8 @@ namespace Veng::Renderer
         /// this raw matrix pushed and the viewport placing it in the record's atlas tile, and culls
         /// against the raw (not tile-remapped) frustum. Only [0, PunctualShadowCount) are valid; a
         /// caller's values are overwritten.
-        std::array<std::array<mat4, CubeFaceCount>, MaxShadowedPunctual> PunctualShadowRawViewProj{};
+        std::array<std::array<mat4, CubeFaceCount>, MaxShadowedPunctual>
+            PunctualShadowRawViewProj{};
 
         /// @brief Resident mesh candidates for this frame; set by the renderer on every Execute.
         ///

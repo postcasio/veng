@@ -59,6 +59,7 @@ namespace Veng::Cook
         /// @param context  Cook context providing the pack directory, asset resolver, and dependency recorder.
         /// @param entry    The pack entry JSON object for this asset.
         /// @return Cooked blob bytes, or an error string.
-        [[nodiscard]] virtual Result<vector<u8>> Cook(const CookContext& context, const json& entry) const = 0;
+        [[nodiscard]] virtual Result<vector<u8>> Cook(const CookContext& context,
+                                                      const json& entry) const = 0;
     };
 }

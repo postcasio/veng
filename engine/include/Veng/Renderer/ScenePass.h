@@ -232,8 +232,8 @@ namespace Veng::Renderer
         /// @param outputFormat  Color format of the output target.
         /// @param extent        Initial render extent; updated via Resize.
         PostProcessScenePass(Context& context, AssetHandle<Material> material,
-                             PostProcessInput input, ResourceId output,
-                             Format outputFormat, uvec2 extent);
+                             PostProcessInput input, ResourceId output, Format outputFormat,
+                             uvec2 extent);
 
         /// @brief Registers a second runtime-bound input sampled alongside the primary.
         ///

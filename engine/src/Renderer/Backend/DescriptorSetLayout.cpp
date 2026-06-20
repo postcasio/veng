@@ -10,10 +10,14 @@
 
 namespace Veng::Renderer
 {
-    DescriptorSetLayout::Native& DescriptorSetLayout::GetNative() const { return *m_Native; }
+    DescriptorSetLayout::Native& DescriptorSetLayout::GetNative() const
+    {
+        return *m_Native;
+    }
 
-    DescriptorSetLayout::DescriptorSetLayout(Context& context, const DescriptorSetLayoutInfo& info) : m_Context(context), m_Name(info.Name),
-        m_Bindings(info.Bindings), m_Native(CreateUnique<Native>())
+    DescriptorSetLayout::DescriptorSetLayout(Context& context, const DescriptorSetLayoutInfo& info)
+        : m_Context(context), m_Name(info.Name), m_Bindings(info.Bindings),
+          m_Native(CreateUnique<Native>())
     {
         for (const auto& binding : m_Bindings)
         {
@@ -33,9 +37,10 @@ namespace Veng::Renderer
             const vk::Sampler* immutable = nullptr;
             if (!binding.ImmutableSamplers.empty())
             {
-                VE_ASSERT(binding.ImmutableSamplers.size() == binding.Count,
-                          "DescriptorSetLayout '{}': binding {} has {} immutable samplers but Count {}",
-                          m_Name, binding.Binding, binding.ImmutableSamplers.size(), binding.Count);
+                VE_ASSERT(
+                    binding.ImmutableSamplers.size() == binding.Count,
+                    "DescriptorSetLayout '{}': binding {} has {} immutable samplers but Count {}",
+                    m_Name, binding.Binding, binding.ImmutableSamplers.size(), binding.Count);
 
                 vector<vk::Sampler>& samplers = immutableSamplers.emplace_back();
                 samplers.reserve(binding.ImmutableSamplers.size());
@@ -68,10 +73,11 @@ namespace Veng::Renderer
         {
             if (binding.Bindless)
             {
-                VE_ASSERT(GetDescriptorTypeInfo(binding.Type).SupportsBindless,
-                          "DescriptorSetLayout '{}': binding {} requests Bindless, but DescriptorType {} "
-                          "does not support UpdateAfterBind on this device",
-                          m_Name, binding.Binding, static_cast<u32>(binding.Type));
+                VE_ASSERT(
+                    GetDescriptorTypeInfo(binding.Type).SupportsBindless,
+                    "DescriptorSetLayout '{}': binding {} requests Bindless, but DescriptorType {} "
+                    "does not support UpdateAfterBind on this device",
+                    m_Name, binding.Binding, static_cast<u32>(binding.Type));
 
                 bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound |
                                        vk::DescriptorBindingFlagBits::eUpdateAfterBind |
@@ -84,21 +90,22 @@ namespace Veng::Renderer
             }
         }
 
-        const vk::DescriptorSetLayoutBindingFlagsCreateInfo descriptorSetLayoutBindingFlagsCreateInfo{
-            .bindingCount = static_cast<u32>(vkBindings.size()),
-            .pBindingFlags = bindingFlags.data(),
-        };
+        const vk::DescriptorSetLayoutBindingFlagsCreateInfo
+            descriptorSetLayoutBindingFlagsCreateInfo{
+                .bindingCount = static_cast<u32>(vkBindings.size()),
+                .pBindingFlags = bindingFlags.data(),
+            };
 
         const vk::DescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo{
             .pNext = &descriptorSetLayoutBindingFlagsCreateInfo,
             .flags = anyBindless ? vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool
-                                  : vk::DescriptorSetLayoutCreateFlags{},
+                                 : vk::DescriptorSetLayoutCreateFlags{},
             .bindingCount = static_cast<u32>(vkBindings.size()),
             .pBindings = vkBindings.data(),
         };
 
-        m_Native->Layout = GetVkDevice(m_Context).createDescriptorSetLayout(
-            descriptorSetLayoutCreateInfo).value;
+        m_Native->Layout =
+            GetVkDevice(m_Context).createDescriptorSetLayout(descriptorSetLayoutCreateInfo).value;
 
         DebugMarkers::MarkDescriptorSetLayout(GetVkDevice(m_Context), m_Native->Layout, m_Name);
     }
@@ -111,16 +118,16 @@ namespace Veng::Renderer
     DescriptorType DescriptorSetLayout::GetBindingType(u32 binding) const
     {
         const auto it = m_BindingsByNumber.find(binding);
-        VE_ASSERT(it != m_BindingsByNumber.end(),
-                  "DescriptorSetLayout '{}' has no binding {}", m_Name, binding);
+        VE_ASSERT(it != m_BindingsByNumber.end(), "DescriptorSetLayout '{}' has no binding {}",
+                  m_Name, binding);
         return it->second.Type;
     }
 
     u32 DescriptorSetLayout::GetBindingCount(u32 binding) const
     {
         const auto it = m_BindingsByNumber.find(binding);
-        VE_ASSERT(it != m_BindingsByNumber.end(),
-                  "DescriptorSetLayout '{}' has no binding {}", m_Name, binding);
+        VE_ASSERT(it != m_BindingsByNumber.end(), "DescriptorSetLayout '{}' has no binding {}",
+                  m_Name, binding);
         return it->second.Count;
     }
 }

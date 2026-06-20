@@ -29,19 +29,13 @@ namespace Veng
         }
 
         /// @brief Sets the view matrix from eye, target, and up vectors.
-        void SetView(vec3 eye, vec3 target, vec3 up)
-        {
-            m_View = glm::lookAt(eye, target, up);
-        }
+        void SetView(vec3 eye, vec3 target, vec3 up) { m_View = glm::lookAt(eye, target, up); }
 
         /// @brief Sets the view matrix from a camera entity's world matrix.
         ///
         /// The view is the inverse of the world matrix: world places the camera,
         /// view brings the world into camera space.
-        void SetViewFromWorld(const mat4& world)
-        {
-            m_View = glm::inverse(world);
-        }
+        void SetViewFromWorld(const mat4& world) { m_View = glm::inverse(world); }
 
         /// @brief Returns the view matrix.
         [[nodiscard]] mat4 View() const { return m_View; }
@@ -88,7 +82,8 @@ namespace Veng
     /// @param camera  The component supplying FovY/Near/Far.
     /// @param aspect  Viewport width divided by height.
     /// @param world   The camera entity's world matrix (from WorldMatrix in Transforms.h).
-    [[nodiscard]] inline Camera MakeCamera(const CameraComponent& camera, f32 aspect, const mat4& world)
+    [[nodiscard]] inline Camera MakeCamera(const CameraComponent& camera, f32 aspect,
+                                           const mat4& world)
     {
         Camera result;
         result.SetPerspective(camera.FovY, aspect, camera.Near, camera.Far);
@@ -98,7 +93,7 @@ namespace Veng
 }
 
 VE_REFLECT(::Veng::CameraComponent, 0x6598EF5F5C0A7B10ULL)
-    VE_FIELD(FovY, .DisplayName = "Field of View", .Min = 0.01)
-    VE_FIELD(Near, .DisplayName = "Near", .Min = 0.001)
-    VE_FIELD(Far, .DisplayName = "Far")
+VE_FIELD(FovY, .DisplayName = "Field of View", .Min = 0.01)
+VE_FIELD(Near, .DisplayName = "Near", .Min = 0.001)
+VE_FIELD(Far, .DisplayName = "Far")
 VE_REFLECT_END();

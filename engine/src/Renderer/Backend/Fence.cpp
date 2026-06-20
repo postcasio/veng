@@ -7,13 +7,16 @@
 
 namespace Veng::Renderer
 {
-    Fence::Native& Fence::GetNative() const { return *m_Native; }
+    Fence::Native& Fence::GetNative() const
+    {
+        return *m_Native;
+    }
 
-    Fence::Fence(Context& context, const string& name, const bool signaled) : m_Context(context), m_Name(name), m_Native(CreateUnique<Native>())
+    Fence::Fence(Context& context, const string& name, const bool signaled)
+        : m_Context(context), m_Name(name), m_Native(CreateUnique<Native>())
     {
         const vk::FenceCreateInfo fenceCreateInfo{
-            .flags = signaled ? vk::FenceCreateFlagBits::eSignaled : vk::FenceCreateFlags{}
-        };
+            .flags = signaled ? vk::FenceCreateFlagBits::eSignaled : vk::FenceCreateFlags{}};
 
         m_Native->Fence = GetVkDevice(m_Context).createFence(fenceCreateInfo).value;
 
@@ -28,7 +31,7 @@ namespace Veng::Renderer
     void Fence::Wait() const
     {
         auto result = GetVkDevice(m_Context).waitForFences(m_Native->Fence, VK_TRUE,
-                                                                      std::numeric_limits<u64>::max());
+                                                           std::numeric_limits<u64>::max());
 
         VK_ASSERT(result, "Failed to wait for fence!");
     }

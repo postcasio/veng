@@ -27,7 +27,8 @@ namespace VengEditor
         // The importer's string vocabulary (TextureImporter.cpp). Kept in lockstep
         // with the enum ordinals declared in the header.
         const char* const FilterNames[] = {"nearest", "linear"};
-        const char* const WrapNames[] = {"repeat", "mirrored_repeat", "clamp_to_edge", "clamp_to_border"};
+        const char* const WrapNames[] = {"repeat", "mirrored_repeat", "clamp_to_edge",
+                                         "clamp_to_border"};
 
         template <typename E>
         optional<E> ParseEnum(const std::string& value, const char* const* names, usize count)
@@ -40,18 +41,19 @@ namespace VengEditor
     }
 
     TextureEditorPanel::TextureEditorPanel(AssetId id, path sourcePath, Renderer::Context& context,
-                                           AssetManager& assets, ImGuiLayer& imgui, CookDriver cook) :
-        m_Id(id), m_SourcePath(std::move(sourcePath)), m_Context(context), m_Assets(assets),
-        m_ImGui(imgui), m_Cook(std::move(cook))
+                                           AssetManager& assets, ImGuiLayer& imgui, CookDriver cook)
+        : m_Id(id), m_SourcePath(std::move(sourcePath)), m_Context(context), m_Assets(assets),
+          m_ImGui(imgui), m_Cook(std::move(cook))
     {
         m_Title = fmt::format("Texture: {}", m_SourcePath.filename().string());
 
-        m_Sampler = Renderer::Sampler::Create(m_Context, {
-            .Name = "Texture Editor Preview Sampler",
-            .AddressModeU = Renderer::AddressMode::ClampToEdge,
-            .AddressModeV = Renderer::AddressMode::ClampToEdge,
-            .AddressModeW = Renderer::AddressMode::ClampToEdge,
-        });
+        m_Sampler = Renderer::Sampler::Create(
+            m_Context, {
+                           .Name = "Texture Editor Preview Sampler",
+                           .AddressModeU = Renderer::AddressMode::ClampToEdge,
+                           .AddressModeV = Renderer::AddressMode::ClampToEdge,
+                           .AddressModeW = Renderer::AddressMode::ClampToEdge,
+                       });
 
         LoadSettings();
         TriggerCook();
@@ -88,13 +90,15 @@ namespace VengEditor
             auto readFilter = [&](const char* key, Filter& out)
             {
                 if (sampler.contains(key) && sampler[key].is_string())
-                    if (auto parsed = ParseEnum<Filter>(sampler[key].get<std::string>(), FilterNames, 2))
+                    if (auto parsed =
+                            ParseEnum<Filter>(sampler[key].get<std::string>(), FilterNames, 2))
                         out = *parsed;
             };
             auto readWrap = [&](const char* key, Wrap& out)
             {
                 if (sampler.contains(key) && sampler[key].is_string())
-                    if (auto parsed = ParseEnum<Wrap>(sampler[key].get<std::string>(), WrapNames, 4))
+                    if (auto parsed =
+                            ParseEnum<Wrap>(sampler[key].get<std::string>(), WrapNames, 4))
                         out = *parsed;
             };
 
@@ -154,20 +158,20 @@ namespace VengEditor
 
         m_Cook({.SourcePath = m_SourcePath, .TargetId = m_Id, .Type = AssetType::Texture},
                [this](Result<MountHandle> mount)
-        {
-            m_Cooking = false;
-            if (!mount)
-            {
-                m_CookError = mount.error();
-                return;
-            }
+               {
+                   m_Cooking = false;
+                   if (!mount)
+                   {
+                       m_CookError = mount.error();
+                       return;
+                   }
 
-            // Replace the mount and re-fetch; OnImGui rebuilds the preview once
-            // the async load lands resident.
-            m_Mount = std::move(*mount);
-            m_Handle = m_Assets.Load<Texture>(m_Id);
-            m_PreviewDirty = true;
-        });
+                   // Replace the mount and re-fetch; OnImGui rebuilds the preview once
+                   // the async load lands resident.
+                   m_Mount = std::move(*mount);
+                   m_Handle = m_Assets.Load<Texture>(m_Id);
+                   m_PreviewDirty = true;
+               });
     }
 
     void TextureEditorPanel::OnImGui()
@@ -206,8 +210,8 @@ namespace VengEditor
         UI::Separator();
 
         static constexpr std::array<string_view, 2> FilterItems{"Nearest", "Linear"};
-        static constexpr std::array<string_view, 4> WrapItems{
-            "Repeat", "Mirrored Repeat", "Clamp To Edge", "Clamp To Border"};
+        static constexpr std::array<string_view, 4> WrapItems{"Repeat", "Mirrored Repeat",
+                                                              "Clamp To Edge", "Clamp To Border"};
 
         bool changed = false;
         changed |= UI::Checkbox("sRGB", m_Settings.Srgb);

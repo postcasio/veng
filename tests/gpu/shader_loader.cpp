@@ -20,7 +20,8 @@
 using namespace Veng;
 using namespace Veng::Renderer;
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "shader loader: cook, mount, LoadSync, validate interface")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "shader loader: cook, mount, LoadSync, validate interface")
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "shader_pack.json";
@@ -70,7 +71,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "shader loader: cook, mount, LoadSync,
 
     // BuildDescriptorSetLayouts: no author bindings (set 0 is the registry's)
     // → empty vector.
-    const vector<Ref<DescriptorSetLayout>> layouts = iface.BuildDescriptorSetLayouts(Context, "ShaderTest");
+    const vector<Ref<DescriptorSetLayout>> layouts =
+        iface.BuildDescriptorSetLayouts(Context, "ShaderTest");
     CHECK(layouts.empty());
 
     // Load the referenced VertexLayout and verify its 4-element layout.

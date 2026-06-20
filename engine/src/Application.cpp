@@ -6,9 +6,8 @@
 
 namespace Veng
 {
-    Application::Application(ApplicationInfo info, TypeRegistry& types) :
-        m_Info(std::move(info)),
-        m_TypeRegistry(types)
+    Application::Application(ApplicationInfo info, TypeRegistry& types)
+        : m_Info(std::move(info)), m_TypeRegistry(types)
     {
     }
 
@@ -19,12 +18,14 @@ namespace Veng
             m_Window = Window::Create(m_Info.WindowInfo);
         }
 
-        m_RenderContext.Initialize({
-            .ApplicationName = m_Info.Name,
-            .EngineName = m_Info.EngineName,
-            .InternalRenderExtent = m_Info.InternalRenderExtent,
-            .PipelineCachePath = m_Info.PipelineCachePath,
-        }, m_Window.get());
+        m_RenderContext.Initialize(
+            {
+                .ApplicationName = m_Info.Name,
+                .EngineName = m_Info.EngineName,
+                .InternalRenderExtent = m_Info.InternalRenderExtent,
+                .PipelineCachePath = m_Info.PipelineCachePath,
+            },
+            m_Window.get());
 
         m_TaskSystem = CreateUnique<TaskSystem>();
 
@@ -48,7 +49,8 @@ namespace Veng
         // A second argument selects the working directory (launcher convention).
         if (arguments.size() > 1)
         {
-            if (std::filesystem::exists(arguments[1]) && std::filesystem::is_directory(arguments[1]))
+            if (std::filesystem::exists(arguments[1]) &&
+                std::filesystem::is_directory(arguments[1]))
             {
                 std::filesystem::current_path(arguments[1]);
             }

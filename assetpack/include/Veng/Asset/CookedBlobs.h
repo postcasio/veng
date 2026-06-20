@@ -173,7 +173,8 @@ namespace Veng
         u64 VertexLayoutAssetId = 0;
     };
     static_assert(sizeof(CookedShaderInterfaceHeader) == 16,
-        "CookedShaderInterfaceHeader must be 16 bytes — guard against padding between the u32 fields and the u64");
+                  "CookedShaderInterfaceHeader must be 16 bytes — guard against padding between "
+                  "the u32 fields and the u64");
 
     /// @brief One descriptor binding reflected from the shader.
     ///

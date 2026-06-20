@@ -27,8 +27,8 @@ namespace VengEditor
     ///
     /// The host shadow-mounts the cooked result and delivers a MountHandle (or
     /// error) back on the main thread.
-    using CookDriver = Veng::function<void(
-        const CookRequest&, Veng::function<void(Veng::Result<Veng::MountHandle>)>)>;
+    using CookDriver = Veng::function<void(const CookRequest&,
+                                           Veng::function<void(Veng::Result<Veng::MountHandle>)>)>;
 
     /// @brief Docked panel for previewing and editing a .tex.json texture source.
     ///
@@ -48,9 +48,19 @@ namespace VengEditor
 
     private:
         /// @brief Sampler filter modes; ordinals match the importer's string vocabulary.
-        enum class Filter : Veng::u32 { Nearest = 0, Linear = 1 };
+        enum class Filter : Veng::u32
+        {
+            Nearest = 0,
+            Linear = 1
+        };
         /// @brief Texture wrap modes; ordinals match the importer's string vocabulary.
-        enum class Wrap : Veng::u32 { Repeat = 0, MirroredRepeat = 1, ClampToEdge = 2, ClampToBorder = 3 };
+        enum class Wrap : Veng::u32
+        {
+            Repeat = 0,
+            MirroredRepeat = 1,
+            ClampToEdge = 2,
+            ClampToBorder = 3
+        };
 
         /// @brief Editable subset of the .tex.json fields.
         struct Settings

@@ -23,11 +23,16 @@ namespace Veng
         {
             switch (value)
             {
-                case static_cast<u32>(Renderer::Format::R32Sfloat): return Renderer::Format::R32Sfloat;
-                case static_cast<u32>(Renderer::Format::RG32Sfloat): return Renderer::Format::RG32Sfloat;
-                case static_cast<u32>(Renderer::Format::RGB32Sfloat): return Renderer::Format::RGB32Sfloat;
-                case static_cast<u32>(Renderer::Format::RGBA32Sfloat): return Renderer::Format::RGBA32Sfloat;
-                default: return std::nullopt;
+            case static_cast<u32>(Renderer::Format::R32Sfloat):
+                return Renderer::Format::R32Sfloat;
+            case static_cast<u32>(Renderer::Format::RG32Sfloat):
+                return Renderer::Format::RG32Sfloat;
+            case static_cast<u32>(Renderer::Format::RGB32Sfloat):
+                return Renderer::Format::RGB32Sfloat;
+            case static_cast<u32>(Renderer::Format::RGBA32Sfloat):
+                return Renderer::Format::RGBA32Sfloat;
+            default:
+                return std::nullopt;
             }
         }
 
@@ -40,25 +45,30 @@ namespace Veng
 
         AssetLoadError Corrupt(AssetId id, string detail)
         {
-            return AssetLoadError{.Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(detail)};
+            return AssetLoadError{
+                .Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(detail)};
         }
     }
 
-    AssetResult<Detail::LoadJob> VertexLayoutLoader::Load(
-        AssetManager& /*manager*/, Renderer::Context& /*context*/, TaskSystem& /*tasks*/,
-        TypeRegistry& /*types*/, AssetId id, std::span<const u8> cooked, bool /*async*/) const
+    AssetResult<Detail::LoadJob>
+    VertexLayoutLoader::Load(AssetManager& /*manager*/, Renderer::Context& /*context*/,
+                             TaskSystem& /*tasks*/, TypeRegistry& /*types*/, AssetId id,
+                             std::span<const u8> cooked, bool /*async*/) const
     {
         if (cooked.size() < sizeof(CookedVertexLayoutHeader))
-            return std::unexpected(Corrupt(id, "vertex_layout: cooked blob smaller than CookedVertexLayoutHeader"));
+            return std::unexpected(
+                Corrupt(id, "vertex_layout: cooked blob smaller than CookedVertexLayoutHeader"));
 
         CookedVertexLayoutHeader header;
         std::memcpy(&header, cooked.data(), sizeof(header));
 
         usize cursor = sizeof(CookedVertexLayoutHeader);
 
-        const usize elementBytes = static_cast<usize>(header.ElementCount) * sizeof(CookedVertexLayoutElement);
+        const usize elementBytes =
+            static_cast<usize>(header.ElementCount) * sizeof(CookedVertexLayoutElement);
         if (cooked.size() < cursor + elementBytes)
-            return std::unexpected(Corrupt(id, "vertex_layout: cooked blob smaller than element table"));
+            return std::unexpected(
+                Corrupt(id, "vertex_layout: cooked blob smaller than element table"));
 
         vector<Renderer::VertexBufferElement> elements;
         elements.reserve(header.ElementCount);
@@ -66,13 +76,15 @@ namespace Veng
         for (u32 i = 0; i < header.ElementCount; ++i)
         {
             CookedVertexLayoutElement element;
-            std::memcpy(&element, cooked.data() + cursor + i * sizeof(CookedVertexLayoutElement), sizeof(element));
+            std::memcpy(&element, cooked.data() + cursor + i * sizeof(CookedVertexLayoutElement),
+                        sizeof(element));
 
             const optional<Renderer::Format> format = BridgeVertexInputFormat(element.Format);
             if (!format)
             {
-                return std::unexpected(Corrupt(id, fmt::format(
-                    "vertex_layout: element {} has unrecognized format {}", i, element.Format)));
+                return std::unexpected(
+                    Corrupt(id, fmt::format("vertex_layout: element {} has unrecognized format {}",
+                                            i, element.Format)));
             }
 
             elements.emplace_back(*format, BridgeName(element.Name));

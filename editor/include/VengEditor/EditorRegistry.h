@@ -79,7 +79,8 @@ namespace Veng
 
         /// @brief Creates an editor panel for an asset, or nullptr when its type has
         /// no registered factory.
-        [[nodiscard]] Unique<VengEditor::EditorPanel> CreateEditorFor(AssetType type, AssetId id) const
+        [[nodiscard]] Unique<VengEditor::EditorPanel> CreateEditorFor(AssetType type,
+                                                                      AssetId id) const
         {
             AssetEditorFactory* factory = AssetEditorFor(type);
             return factory == nullptr ? nullptr : factory->OpenEditor(id);

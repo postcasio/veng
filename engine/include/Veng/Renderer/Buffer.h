@@ -78,7 +78,8 @@ namespace Veng::Renderer
         /// @param data   Bytes to write.
         /// @param offset Byte offset into the buffer (default 0).
         /// @return A Task that completes once the memcpy has run.
-        [[nodiscard]] Task<void> Upload(TaskSystem& tasks, std::span<const u8> data, u64 offset = 0);
+        [[nodiscard]] Task<void> Upload(TaskSystem& tasks, std::span<const u8> data,
+                                        u64 offset = 0);
 
         /// @brief Downloads the full buffer contents to the host, blocking until complete.
         /// @return A byte vector containing a snapshot of the buffer.

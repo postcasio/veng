@@ -216,9 +216,8 @@ TEST_CASE("The const iteration path never bumps the version")
     SUBCASE("const Each<Transform>")
     {
         const u64 before = scene->GetSpatialVersion();
-        constScene.Each<Transform>([](Entity, const Transform& transform) {
-            CHECK(transform.Scale.y == doctest::Approx(1.0f));
-        });
+        constScene.Each<Transform>([](Entity, const Transform& transform)
+                                   { CHECK(transform.Scale.y == doctest::Approx(1.0f)); });
         CHECK(scene->GetSpatialVersion() == before);
     }
 

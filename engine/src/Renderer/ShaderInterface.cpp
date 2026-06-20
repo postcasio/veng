@@ -7,7 +7,6 @@
 
 #include <algorithm>
 
-
 namespace Veng::Renderer
 {
     optional<ShaderBinding> ShaderInterface::FindBinding(std::string_view name) const
@@ -38,7 +37,8 @@ namespace Veng::Renderer
         return ranges;
     }
 
-    vector<Ref<DescriptorSetLayout>> ShaderInterface::BuildDescriptorSetLayouts(Context& context, std::string_view namePrefix) const
+    vector<Ref<DescriptorSetLayout>>
+    ShaderInterface::BuildDescriptorSetLayouts(Context& context, std::string_view namePrefix) const
     {
         if (Bindings.empty())
             return {};
@@ -47,8 +47,9 @@ namespace Veng::Renderer
         for (const ShaderBinding& binding : Bindings)
         {
             VE_ASSERT(binding.Set >= 1,
-                "ShaderInterface::BuildDescriptorSetLayouts: binding '{}' targets set {} — set 0 is reserved for the bindless registry",
-                binding.Name, binding.Set);
+                      "ShaderInterface::BuildDescriptorSetLayouts: binding '{}' targets set {} — "
+                      "set 0 is reserved for the bindless registry",
+                      binding.Name, binding.Set);
             maxSet = std::max(maxSet, binding.Set);
         }
 
@@ -70,13 +71,15 @@ namespace Veng::Renderer
         for (u32 set = 1; set <= maxSet; ++set)
         {
             VE_ASSERT(!bindingsBySet[set - 1].empty(),
-                "ShaderInterface::BuildDescriptorSetLayouts: set {} has no bindings — declared sets must be contiguous starting at 1",
-                set);
+                      "ShaderInterface::BuildDescriptorSetLayouts: set {} has no bindings — "
+                      "declared sets must be contiguous starting at 1",
+                      set);
 
-            layouts.push_back(DescriptorSetLayout::Create(context, DescriptorSetLayoutInfo{
-                .Name = fmt::format("{} Set {}", namePrefix, set),
-                .Bindings = bindingsBySet[set - 1],
-            }));
+            layouts.push_back(DescriptorSetLayout::Create(
+                context, DescriptorSetLayoutInfo{
+                             .Name = fmt::format("{} Set {}", namePrefix, set),
+                             .Bindings = bindingsBySet[set - 1],
+                         }));
         }
 
         return layouts;

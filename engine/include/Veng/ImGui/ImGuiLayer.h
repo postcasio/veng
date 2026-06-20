@@ -41,7 +41,8 @@ namespace Veng
         /// @param info     Font configuration.
         /// @param context  Renderer context owning the device.
         /// @param window   GLFW window ImGui reads input from.
-        static Unique<ImGuiLayer> Create(const ImGuiLayerInfo& info, Renderer::Context& context, Window& window);
+        static Unique<ImGuiLayer> Create(const ImGuiLayerInfo& info, Renderer::Context& context,
+                                         Window& window);
 
         /// @brief Destroys the ImGui layer, shutting down ImGui and the Vulkan backend.
         ~ImGuiLayer();
@@ -64,7 +65,8 @@ namespace Veng
         /// @brief Registers a sampler/image pair with the ImGui Vulkan backend and returns an owning wrapper.
         /// @param sampler    Sampler the texture is accessed through.
         /// @param imageView  Image view to register.
-        Ref<ImGuiTexture> CreateTexture(const Renderer::Sampler& sampler, const Renderer::ImageView& imageView);
+        Ref<ImGuiTexture> CreateTexture(const Renderer::Sampler& sampler,
+                                        const Renderer::ImageView& imageView);
 
         /// @brief Deregisters a texture, deferring the descriptor-set free until in-flight frames retire.
         /// @param texture  Texture previously created with `CreateTexture`.

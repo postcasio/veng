@@ -19,10 +19,14 @@ namespace VengEditor
         // type, decided by the Param node's authored representation.
         Veng::u32 ArityOf(Veng::TypeId type)
         {
-            if (type == TypeIdOf<Veng::f32>()) return 1;
-            if (type == TypeIdOf<Veng::vec2>()) return 2;
-            if (type == TypeIdOf<Veng::vec3>()) return 3;
-            if (type == TypeIdOf<Veng::vec4>()) return 4;
+            if (type == TypeIdOf<Veng::f32>())
+                return 1;
+            if (type == TypeIdOf<Veng::vec2>())
+                return 2;
+            if (type == TypeIdOf<Veng::vec3>())
+                return 3;
+            if (type == TypeIdOf<Veng::vec4>())
+                return 4;
             return 0;
         }
 
@@ -30,11 +34,16 @@ namespace VengEditor
         {
             switch (arity)
             {
-                case 1: return "float";
-                case 2: return "vec2";
-                case 3: return "vec3";
-                case 4: return "vec4";
-                default: return "float";
+            case 1:
+                return "float";
+            case 2:
+                return "vec2";
+            case 3:
+                return "vec3";
+            case 4:
+                return "vec4";
+            default:
+                return "float";
             }
         }
 
@@ -44,10 +53,14 @@ namespace VengEditor
         {
             switch (size)
             {
-                case 8: return TypeIdOf<Veng::vec2>();
-                case 12: return TypeIdOf<Veng::vec3>();
-                case 16: return TypeIdOf<Veng::vec4>();
-                default: return TypeIdOf<Veng::f32>();
+            case 8:
+                return TypeIdOf<Veng::vec2>();
+            case 12:
+                return TypeIdOf<Veng::vec3>();
+            case 16:
+                return TypeIdOf<Veng::vec4>();
+            default:
+                return TypeIdOf<Veng::f32>();
             }
         }
 
@@ -77,17 +90,19 @@ namespace VengEditor
         {
             switch (domain)
             {
-                case Veng::MaterialDomain::Surface: return "surface";
-                case Veng::MaterialDomain::PostProcess: return "postprocess";
+            case Veng::MaterialDomain::Surface:
+                return "surface";
+            case Veng::MaterialDomain::PostProcess:
+                return "postprocess";
             }
             VE_ASSERT(false, "WriteMaterialVmat: unhandled MaterialDomain {}",
                       static_cast<Veng::u32>(domain));
         }
     }
 
-    Veng::Result<Veng::vector<CompiledField>> CompileMaterialGraph(
-        const NodeGraph& graph, const NodeCatalog& catalog,
-        const MaterialShaderInterface& shader, Veng::MaterialDomain domain)
+    Veng::Result<Veng::vector<CompiledField>>
+    CompileMaterialGraph(const NodeGraph& graph, const NodeCatalog& catalog,
+                         const MaterialShaderInterface& shader, Veng::MaterialDomain domain)
     {
         (void)domain; // the domain shapes the output node's sinks, not the bound field set
 
@@ -95,7 +110,8 @@ namespace VengEditor
         const NodeType* param = catalog.Find(ParamTypeName);
         const NodeType* outputType = catalog.Find(MaterialOutputTypeName);
         if (textureSample == nullptr || param == nullptr || outputType == nullptr)
-            return std::unexpected("CompileMaterialGraph: the catalog lacks the material node types");
+            return std::unexpected(
+                "CompileMaterialGraph: the catalog lacks the material node types");
 
         bool outputCount = false;
         for (NodeId node : graph.Nodes())
@@ -103,7 +119,8 @@ namespace VengEditor
             if (graph.GetTypeOf(node) == outputType->Id)
             {
                 if (outputCount)
-                    return std::unexpected("CompileMaterialGraph: more than one MaterialOutput node");
+                    return std::unexpected(
+                        "CompileMaterialGraph: more than one MaterialOutput node");
                 outputCount = true;
             }
         }
@@ -131,52 +148,51 @@ namespace VengEditor
         {
             switch (shaderField.Kind)
             {
-                case Veng::MaterialField::FieldKind::TextureHandle:
-                {
-                    CompiledField texture;
-                    texture.Name = shaderField.Name;
-                    texture.Type = "texture";
-                    if (textureCursor < textureFeeders.size())
-                        texture.TextureId = ReadTextureId(graph, textureFeeders[textureCursor++]);
-                    fields.push_back(std::move(texture));
-                    break;
-                }
-                case Veng::MaterialField::FieldKind::SamplerHandle:
-                {
-                    // A sampler binds the texture it samples; the cooked field carries
-                    // no pairing, so reconstruct it by the <Texture>Sampler convention.
-                    CompiledField sampler;
-                    sampler.Name = shaderField.Name;
-                    sampler.Type = "sampler";
-                    const Veng::string suffix = "Sampler";
-                    if (shaderField.Name.size() > suffix.size() &&
-                        shaderField.Name.compare(shaderField.Name.size() - suffix.size(),
-                                                 suffix.size(), suffix) == 0)
-                        sampler.SamplerTexture =
-                            shaderField.Name.substr(0, shaderField.Name.size() - suffix.size());
-                    fields.push_back(std::move(sampler));
-                    break;
-                }
-                case Veng::MaterialField::FieldKind::Param:
-                {
-                    const Veng::u32 targetArity = ArityOf(ParamFieldType(shaderField.Size));
-                    if (targetArity == 0)
-                        return std::unexpected(
-                            "CompileMaterialGraph: param field '" + shaderField.Name +
-                            "' has an unsupported size");
+            case Veng::MaterialField::FieldKind::TextureHandle:
+            {
+                CompiledField texture;
+                texture.Name = shaderField.Name;
+                texture.Type = "texture";
+                if (textureCursor < textureFeeders.size())
+                    texture.TextureId = ReadTextureId(graph, textureFeeders[textureCursor++]);
+                fields.push_back(std::move(texture));
+                break;
+            }
+            case Veng::MaterialField::FieldKind::SamplerHandle:
+            {
+                // A sampler binds the texture it samples; the cooked field carries
+                // no pairing, so reconstruct it by the <Texture>Sampler convention.
+                CompiledField sampler;
+                sampler.Name = shaderField.Name;
+                sampler.Type = "sampler";
+                const Veng::string suffix = "Sampler";
+                if (shaderField.Name.size() > suffix.size() &&
+                    shaderField.Name.compare(shaderField.Name.size() - suffix.size(), suffix.size(),
+                                             suffix) == 0)
+                    sampler.SamplerTexture =
+                        shaderField.Name.substr(0, shaderField.Name.size() - suffix.size());
+                fields.push_back(std::move(sampler));
+                break;
+            }
+            case Veng::MaterialField::FieldKind::Param:
+            {
+                const Veng::u32 targetArity = ArityOf(ParamFieldType(shaderField.Size));
+                if (targetArity == 0)
+                    return std::unexpected("CompileMaterialGraph: param field '" +
+                                           shaderField.Name + "' has an unsupported size");
 
-                    Veng::f32 value[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-                    if (paramCursor < paramFeeders.size())
-                        ReadParamValue(graph, paramFeeders[paramCursor++], value);
+                Veng::f32 value[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+                if (paramCursor < paramFeeders.size())
+                    ReadParamValue(graph, paramFeeders[paramCursor++], value);
 
-                    CompiledField field;
-                    field.Name = shaderField.Name;
-                    field.Type = VecTypeName(targetArity);
-                    for (Veng::u32 i = 0; i < targetArity; ++i)
-                        field.Values.push_back(value[i]);
-                    fields.push_back(std::move(field));
-                    break;
-                }
+                CompiledField field;
+                field.Name = shaderField.Name;
+                field.Type = VecTypeName(targetArity);
+                for (Veng::u32 i = 0; i < targetArity; ++i)
+                    field.Values.push_back(value[i]);
+                fields.push_back(std::move(field));
+                break;
+            }
             }
         }
 
@@ -235,13 +251,12 @@ namespace VengEditor
     }
 
     NodeGraph BuildGraphFromMaterial(const MaterialShaderInterface& shader,
-                                     const NodeCatalog& catalog,
-                                     const MaterialNodeTypes& types)
+                                     const NodeCatalog& catalog, const MaterialNodeTypes& types)
     {
         NodeGraph graph(
-            MaterialCanConnect,
-            [&catalog](NodeTypeId id) { return catalog.ShapeOf(id); },
-            [&catalog](NodeTypeId id) {
+            MaterialCanConnect, [&catalog](NodeTypeId id) { return catalog.ShapeOf(id); },
+            [&catalog](NodeTypeId id)
+            {
                 const NodeType* type = catalog.Find(id);
                 return type != nullptr ? type->PropertySize : Veng::usize{0};
             });
@@ -261,7 +276,8 @@ namespace VengEditor
         constexpr Veng::f32 RowStride = 160.0f;
         Veng::usize nextSink = 0;
 
-        const auto wireToSink = [&](NodeId feeder, const PinType& outPin) {
+        const auto wireToSink = [&](NodeId feeder, const PinType& outPin)
+        {
             while (nextSink < outputType->Inputs.size())
             {
                 const Veng::u16 sink = static_cast<Veng::u16>(nextSink++);

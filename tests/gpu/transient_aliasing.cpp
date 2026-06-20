@@ -35,8 +35,9 @@ namespace
     }
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "transient aliasing: disjoint same-key transients share one image, reuse serialized")
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "transient aliasing: disjoint same-key transients share one image, reuse serialized")
 {
     RenderGraph graph(Context);
 
@@ -47,12 +48,16 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const ResourceId b = graph.CreateTransient(TransientColor("Transient B"));
 
     graph.AddPass("clear A green")
-        .Color({.Resource = a, .Load = LoadOp::Clear, .Store = StoreOp::Store,
+        .Color({.Resource = a,
+                .Load = LoadOp::Clear,
+                .Store = StoreOp::Store,
                 .Clear = ClearColor{0.0f, 1.0f, 0.0f, 1.0f}})
         .Execute([](PassContext&) {});
 
     graph.AddPass("clear B blue")
-        .Color({.Resource = b, .Load = LoadOp::Clear, .Store = StoreOp::Store,
+        .Color({.Resource = b,
+                .Load = LoadOp::Clear,
+                .Store = StoreOp::Store,
                 .Clear = ClearColor{0.0f, 0.0f, 1.0f, 1.0f}})
         .Execute([](PassContext&) {});
 
@@ -87,9 +92,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const ResourceId b = graph.CreateTransient(TransientColor("Overlap B"));
 
     graph.AddPass("clear both")
-        .Color({.Resource = a, .Load = LoadOp::Clear, .Store = StoreOp::Store,
+        .Color({.Resource = a,
+                .Load = LoadOp::Clear,
+                .Store = StoreOp::Store,
                 .Clear = ClearColor{1.0f, 0.0f, 0.0f, 1.0f}})
-        .Color({.Resource = b, .Load = LoadOp::Clear, .Store = StoreOp::Store,
+        .Color({.Resource = b,
+                .Load = LoadOp::Clear,
+                .Store = StoreOp::Store,
                 .Clear = ClearColor{0.0f, 1.0f, 0.0f, 1.0f}})
         .Execute([](PassContext&) {});
 

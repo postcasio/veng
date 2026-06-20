@@ -39,7 +39,8 @@ namespace
     {
         std::ofstream file(filePath, std::ios::binary | std::ios::trunc);
         REQUIRE(file.is_open());
-        file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        file.write(reinterpret_cast<const char*>(bytes.data()),
+                   static_cast<std::streamsize>(bytes.size()));
     }
 
     // Cook the raw fixture pack to outArchive and return the cooked bytes.
@@ -105,9 +106,9 @@ TEST_CASE("verify: a flipped blob byte fails, naming exactly the affected asset"
     const VerifyReport report = VerifyArchive(tampered);
     CHECK_FALSE(report.OpenError.has_value());
     REQUIRE(report.Assets.size() == 2);
-    CHECK(AssetVerdict(report, AssetId{1001}));        // intact blob still OK
-    CHECK_FALSE(AssetVerdict(report, AssetId{1002}));  // the corrupted one
-    CHECK(report.DigestOk);                            // TOC unchanged
+    CHECK(AssetVerdict(report, AssetId{1001}));       // intact blob still OK
+    CHECK_FALSE(AssetVerdict(report, AssetId{1002})); // the corrupted one
+    CHECK(report.DigestOk);                           // TOC unchanged
     CHECK_FALSE(report.Ok());
 
     CHECK(VerifyArchiveCli(tampered) == 1);
@@ -170,7 +171,8 @@ TEST_CASE("verify: tampering a TOC entry field fails the digest")
 
 TEST_CASE("verify: a wrong-version header is a VersionMismatch reported before hashing")
 {
-    const path archive = std::filesystem::temp_directory_path() / "veng_verify_version_src.vengpack";
+    const path archive =
+        std::filesystem::temp_directory_path() / "veng_verify_version_src.vengpack";
     vector<u8> bytes = CookRawPack(archive);
 
     // Bump the header version to one the reader rejects. Header layout: magic[8],

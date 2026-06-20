@@ -35,9 +35,8 @@ namespace
 
     // The six canonical cube-face forward axes, in CubeFace order.
     constexpr std::array<vec3, CubeFaceCount> FaceAxes = {
-        vec3(1.0f, 0.0f, 0.0f), vec3(-1.0f, 0.0f, 0.0f),
-        vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f),
-        vec3(0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, -1.0f)};
+        vec3(1.0f, 0.0f, 0.0f),  vec3(-1.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f),
+        vec3(0.0f, -1.0f, 0.0f), vec3(0.0f, 0.0f, 1.0f),  vec3(0.0f, 0.0f, -1.0f)};
 }
 
 TEST_CASE("ComputeSpotShadowView: axis point projects to the tile center, z in [0,1]")
@@ -112,8 +111,10 @@ TEST_CASE("ComputeSpotShadowView: straight-down and straight-up spots stay non-d
     const f32 range = 20.0f;
     const f32 outerCone = glm::radians(30.0f);
 
-    const SpotShadowView down = ComputeSpotShadowView(position, vec3(0.0f, -1.0f, 0.0f), range, outerCone);
-    const SpotShadowView up = ComputeSpotShadowView(position, vec3(0.0f, 1.0f, 0.0f), range, outerCone);
+    const SpotShadowView down =
+        ComputeSpotShadowView(position, vec3(0.0f, -1.0f, 0.0f), range, outerCone);
+    const SpotShadowView up =
+        ComputeSpotShadowView(position, vec3(0.0f, 1.0f, 0.0f), range, outerCone);
 
     CHECK(IsFinite(down.ViewProj));
     CHECK(IsFinite(up.ViewProj));

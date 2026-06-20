@@ -23,10 +23,24 @@ namespace
     //   Mismatch — no inputs, one vec4 output (incompatible with an f32 input)
     //   WildOut  — no inputs, one wildcard output
     //   WildIn   — one wildcard input, one f32 output
-    enum Type : Veng::u32 { Source = 1, Passthru, Sink, Mismatch, WildOut, WildIn };
+    enum Type : Veng::u32
+    {
+        Source = 1,
+        Passthru,
+        Sink,
+        Mismatch,
+        WildOut,
+        WildIn
+    };
 
-    PinType ValueOf(Veng::TypeId id) { return PinType{PinType::Kind::Value, id}; }
-    PinType Wildcard() { return PinType{PinType::Kind::Wildcard, Veng::InvalidTypeId}; }
+    PinType ValueOf(Veng::TypeId id)
+    {
+        return PinType{PinType::Kind::Value, id};
+    }
+    PinType Wildcard()
+    {
+        return PinType{PinType::Kind::Wildcard, Veng::InvalidTypeId};
+    }
 
     NodePinShape ShapeFor(NodeTypeId type)
     {
@@ -34,13 +48,20 @@ namespace
         const Veng::TypeId vec4Id = TypeIdOf<Veng::vec4>();
         switch (type.Value)
         {
-        case Source:   return NodePinShape{{}, {ValueOf(f32Id)}};
-        case Passthru: return NodePinShape{{ValueOf(f32Id)}, {ValueOf(f32Id)}};
-        case Sink:     return NodePinShape{{ValueOf(f32Id)}, {}};
-        case Mismatch: return NodePinShape{{}, {ValueOf(vec4Id)}};
-        case WildOut:  return NodePinShape{{}, {Wildcard()}};
-        case WildIn:   return NodePinShape{{Wildcard()}, {ValueOf(f32Id)}};
-        default:       return NodePinShape{};
+        case Source:
+            return NodePinShape{{}, {ValueOf(f32Id)}};
+        case Passthru:
+            return NodePinShape{{ValueOf(f32Id)}, {ValueOf(f32Id)}};
+        case Sink:
+            return NodePinShape{{ValueOf(f32Id)}, {}};
+        case Mismatch:
+            return NodePinShape{{}, {ValueOf(vec4Id)}};
+        case WildOut:
+            return NodePinShape{{}, {Wildcard()}};
+        case WildIn:
+            return NodePinShape{{Wildcard()}, {ValueOf(f32Id)}};
+        default:
+            return NodePinShape{};
         }
     }
 
@@ -48,14 +69,15 @@ namespace
     // match. Wildcard never reaches here (the graph short-circuits it).
     CanConnectFn ExactMatch()
     {
-        return [](const PinType& from, const PinType& to) {
-            return from.Type == to.Type;
-        };
+        return [](const PinType& from, const PinType& to) { return from.Type == to.Type; };
     }
 
     // These topology-core cases carry no node properties; the size hook is a
     // constant zero.
-    Veng::usize NoProperties(NodeTypeId) { return 0; }
+    Veng::usize NoProperties(NodeTypeId)
+    {
+        return 0;
+    }
 
     NodeGraph MakeGraph()
     {
@@ -108,8 +130,7 @@ TEST_CASE("NodeGraph: Connect accepts a valid compatible output->input")
     const NodeId src = graph.AddNode(NodeTypeId{Source});
     const NodeId sink = graph.AddNode(NodeTypeId{Sink});
 
-    const Veng::VoidResult result =
-        graph.Connect(PinRef{src, 0}, PinRef{sink, 0});
+    const Veng::VoidResult result = graph.Connect(PinRef{src, 0}, PinRef{sink, 0});
     CHECK(result.has_value());
     CHECK(graph.Links().size() == 1);
     CHECK(HasLink(graph, src, sink));
@@ -123,8 +144,7 @@ TEST_CASE("NodeGraph: Connect rejects wrong direction")
 
     // src has no input pin (pin 0 is its output); sink has no output pin. Naming
     // sink's pin 0 as From (an output) is out of range -> rejected.
-    const Veng::VoidResult result =
-        graph.Connect(PinRef{sink, 0}, PinRef{src, 0});
+    const Veng::VoidResult result = graph.Connect(PinRef{sink, 0}, PinRef{src, 0});
     CHECK_FALSE(result.has_value());
     CHECK(graph.Links().empty());
 }
@@ -139,8 +159,7 @@ TEST_CASE("NodeGraph: Connect rejects a double-booked input pin")
     CHECK(graph.Connect(PinRef{a, 0}, PinRef{sink, 0}).has_value());
 
     // The single input pin already holds a link; a second is rejected.
-    const Veng::VoidResult second =
-        graph.Connect(PinRef{b, 0}, PinRef{sink, 0});
+    const Veng::VoidResult second = graph.Connect(PinRef{b, 0}, PinRef{sink, 0});
     CHECK_FALSE(second.has_value());
     CHECK(graph.Links().size() == 1);
 
@@ -156,8 +175,7 @@ TEST_CASE("NodeGraph: Connect rejects incompatible types via the domain predicat
     const NodeId mismatch = graph.AddNode(NodeTypeId{Mismatch}); // vec4 output
     const NodeId sink = graph.AddNode(NodeTypeId{Sink});         // f32 input
 
-    const Veng::VoidResult result =
-        graph.Connect(PinRef{mismatch, 0}, PinRef{sink, 0});
+    const Veng::VoidResult result = graph.Connect(PinRef{mismatch, 0}, PinRef{sink, 0});
     CHECK_FALSE(result.has_value());
     CHECK(graph.Links().empty());
 }
@@ -171,14 +189,12 @@ TEST_CASE("NodeGraph: Connect rejects an edge that would introduce a cycle")
     CHECK(graph.Connect(PinRef{a, 0}, PinRef{b, 0}).has_value());
 
     // b -> a would close the a -> b -> a loop.
-    const Veng::VoidResult back =
-        graph.Connect(PinRef{b, 0}, PinRef{a, 0});
+    const Veng::VoidResult back = graph.Connect(PinRef{b, 0}, PinRef{a, 0});
     CHECK_FALSE(back.has_value());
     CHECK(graph.Links().size() == 1);
 
     // A self-loop is also a cycle.
-    const Veng::VoidResult self =
-        graph.Connect(PinRef{a, 0}, PinRef{a, 0});
+    const Veng::VoidResult self = graph.Connect(PinRef{a, 0}, PinRef{a, 0});
     CHECK_FALSE(self.has_value());
 }
 
@@ -227,17 +243,25 @@ TEST_CASE("NodeGraph: TopoOrder is a valid, stable ordering on a diamond")
     // A four-node diamond: top -> left, top -> right, left -> bottom,
     // right -> bottom. top has one output, the middles one input + one output,
     // bottom two inputs.
-    NodeGraph graph(ExactMatch(), [](NodeTypeId type) -> NodePinShape {
-        const Veng::TypeId f32Id = TypeIdOf<Veng::f32>();
-        const PinType v{PinType::Kind::Value, f32Id};
-        switch (type.Value)
+    NodeGraph graph(
+        ExactMatch(),
+        [](NodeTypeId type) -> NodePinShape
         {
-        case 100: return NodePinShape{{}, {v}};       // top: 1 out
-        case 101: return NodePinShape{{v}, {v}};      // middle: 1 in, 1 out
-        case 102: return NodePinShape{{v, v}, {}};    // bottom: 2 in, 0 out
-        default:  return NodePinShape{};
-        }
-    }, NoProperties);
+            const Veng::TypeId f32Id = TypeIdOf<Veng::f32>();
+            const PinType v{PinType::Kind::Value, f32Id};
+            switch (type.Value)
+            {
+            case 100:
+                return NodePinShape{{}, {v}}; // top: 1 out
+            case 101:
+                return NodePinShape{{v}, {v}}; // middle: 1 in, 1 out
+            case 102:
+                return NodePinShape{{v, v}, {}}; // bottom: 2 in, 0 out
+            default:
+                return NodePinShape{};
+            }
+        },
+        NoProperties);
 
     const NodeId top = graph.AddNode(NodeTypeId{100});
     const NodeId left = graph.AddNode(NodeTypeId{101});

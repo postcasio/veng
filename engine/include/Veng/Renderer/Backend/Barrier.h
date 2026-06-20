@@ -20,9 +20,8 @@ namespace Veng::Renderer::Backend
     ///
     /// Reads the source state from the image's tracked per-subresource state and
     /// updates it to reflect the transition.
-    void TransitionImage(CommandBuffer& cmd, Image& image, ImageLayout newLayout,
-                         u32 baseLayer = 0, u32 layerCount = 1,
-                         u32 baseMip = 0, u32 mipCount = 1);
+    void TransitionImage(CommandBuffer& cmd, Image& image, ImageLayout newLayout, u32 baseLayer = 0,
+                         u32 layerCount = 1, u32 baseMip = 0, u32 mipCount = 1);
 
     /// @brief Explicit transition used by the render graph: the caller supplies
     /// the destination layout/stage/access for a declared use.
@@ -30,10 +29,9 @@ namespace Veng::Renderer::Backend
     /// The source side comes from the image's tracked state. No barrier is
     /// emitted for a read-after-read that needs none — the tracked read scope is
     /// widened instead.
-    void TransitionImage(CommandBuffer& cmd, Image& image,
-                         vk::ImageLayout newLayout,
-                         vk::PipelineStageFlags dstStage, vk::AccessFlags dstAccess,
-                         u32 baseLayer, u32 layerCount, u32 baseMip, u32 mipCount);
+    void TransitionImage(CommandBuffer& cmd, Image& image, vk::ImageLayout newLayout,
+                         vk::PipelineStageFlags dstStage, vk::AccessFlags dstAccess, u32 baseLayer,
+                         u32 layerCount, u32 baseMip, u32 mipCount);
 
     /// @brief Marks every subresource of an image as produced on @p producingFamily,
     /// carrying the transfer-timeline value its copy signalled.
@@ -49,6 +47,6 @@ namespace Veng::Renderer::Backend
     /// A no-op when the families match (single-queue collapse). Recorded on the
     /// transfer queue's command buffer; its acquire counterpart is emitted on first
     /// graphics use.
-    void ReleaseImageToGraphicsQueue(CommandBuffer& cmd, Image& image,
-                                     u32 transferFamily, u32 graphicsFamily);
+    void ReleaseImageToGraphicsQueue(CommandBuffer& cmd, Image& image, u32 transferFamily,
+                                     u32 graphicsFamily);
 }

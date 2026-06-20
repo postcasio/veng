@@ -17,7 +17,8 @@
 using namespace Veng;
 using namespace Veng::Renderer;
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "vertex layout loader: cook fixture pack, mount, LoadSync")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "vertex layout loader: cook fixture pack, mount, LoadSync")
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "shader_pack.json";
@@ -48,7 +49,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "vertex layout loader: cook fixture pa
     std::filesystem::remove(outArchive);
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "vertex layout loader: core pack auto-mounted, canonical layout loadable")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "vertex layout loader: core pack auto-mounted, canonical layout loadable")
 {
     // A freshly-constructed AssetManager auto-mounts the embedded core pack.
     // The canonical layout (position/normal/tangent/uv) must be loadable by

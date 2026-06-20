@@ -101,29 +101,29 @@ namespace Veng
 VE_LEAF(::Veng::LightType, 0x6B1D62EF4B5A16ULL, FieldClass::Enum);
 
 VE_REFLECT(::Veng::Name, 0xDA40E8FAC8A6DB84ULL)
-    VE_FIELD(Value, .DisplayName = "Name")
+VE_FIELD(Value, .DisplayName = "Name")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Transform, 0x0AB8E30B2F638555ULL)
-    VE_FIELD(Position, .DisplayName = "Position", .Tooltip = "Local position, parent space")
-    VE_FIELD(Rotation, .DisplayName = "Rotation")
-    VE_FIELD(Scale, .DisplayName = "Scale", .Min = 0.001)
+VE_FIELD(Position, .DisplayName = "Position", .Tooltip = "Local position, parent space")
+VE_FIELD(Rotation, .DisplayName = "Rotation")
+VE_FIELD(Scale, .DisplayName = "Scale", .Min = 0.001)
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Parent, 0x5C9855E287465C5EULL)
-    VE_FIELD(Value, .DisplayName = "Parent", .ReadOnly = true)
+VE_FIELD(Value, .DisplayName = "Parent", .ReadOnly = true)
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::MeshRenderer, 0x3C5CB13E46E0450BULL)
-    VE_FIELD(Mesh, .DisplayName = "Mesh")
+VE_FIELD(Mesh, .DisplayName = "Mesh")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Light, 0xECF6442708DF7C00ULL)
-    VE_FIELD(Type, .DisplayName = "Type")
-    VE_FIELD(Direction, .DisplayName = "Direction")
-    VE_FIELD(Color, .DisplayName = "Color")
-    VE_FIELD(Intensity, .DisplayName = "Intensity", .Min = 0.0)
-    VE_FIELD(Range, .DisplayName = "Range", .Min = 0.0, .Step = 0.1)
-    VE_FIELD(InnerCone, .DisplayName = "Inner Cone", .Min = 0.0, .Max = 3.14159265, .Step = 0.01)
-    VE_FIELD(OuterCone, .DisplayName = "Outer Cone", .Min = 0.0, .Max = 3.14159265, .Step = 0.01)
+VE_FIELD(Type, .DisplayName = "Type")
+VE_FIELD(Direction, .DisplayName = "Direction")
+VE_FIELD(Color, .DisplayName = "Color")
+VE_FIELD(Intensity, .DisplayName = "Intensity", .Min = 0.0)
+VE_FIELD(Range, .DisplayName = "Range", .Min = 0.0, .Step = 0.1)
+VE_FIELD(InnerCone, .DisplayName = "Inner Cone", .Min = 0.0, .Max = 3.14159265, .Step = 0.01)
+VE_FIELD(OuterCone, .DisplayName = "Outer Cone", .Min = 0.0, .Max = 3.14159265, .Step = 0.01)
 VE_REFLECT_END();

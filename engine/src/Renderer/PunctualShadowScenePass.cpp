@@ -44,19 +44,25 @@ namespace Veng::Renderer
         };
     }
 
-    PunctualShadowScenePass::PunctualShadowScenePass(Context& context, AssetManager& assets, u32 resolution)
+    PunctualShadowScenePass::PunctualShadowScenePass(Context& context, AssetManager& assets,
+                                                     u32 resolution)
         : m_Context(context), m_Resolution(resolution)
     {
-        const AssetResult<AssetHandle<Veng::Shader>> vs = assets.LoadSync<Veng::Shader>(ShadowDepthVertId);
-        VE_ASSERT(vs.has_value(), "PunctualShadowScenePass: depth vertex shader load failed: {}", vs.error().Detail);
+        const AssetResult<AssetHandle<Veng::Shader>> vs =
+            assets.LoadSync<Veng::Shader>(ShadowDepthVertId);
+        VE_ASSERT(vs.has_value(), "PunctualShadowScenePass: depth vertex shader load failed: {}",
+                  vs.error().Detail);
         m_VertexShader = *vs;
 
         // Depth-only pipeline: set 0 reserved, one vertex push range for the
         // light-space MVP, no fragment stage, depth write on, no color targets.
-        m_Layout = PipelineLayout::Create(m_Context, {
-            .Name = "PunctualShadowScenePass Layout",
-            .PushConstantRanges = {PushConstantRange::Of<PunctualShadowPushConstants>(ShaderStage::Vertex)},
-        });
+        m_Layout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "PunctualShadowScenePass Layout",
+                .PushConstantRanges = {PushConstantRange::Of<PunctualShadowPushConstants>(
+                    ShaderStage::Vertex)},
+            });
 
         optional<VertexBufferLayout> vertexBufferLayout;
         const Renderer::ShaderInterface& vsInterface = m_VertexShader.Get()->Interface;
@@ -65,25 +71,29 @@ namespace Veng::Renderer
             const AssetResult<AssetHandle<Veng::VertexLayout>> layoutResult =
                 assets.LoadSync<Veng::VertexLayout>(*vsInterface.VertexLayoutId);
             VE_ASSERT(layoutResult.has_value(),
-                      "PunctualShadowScenePass: vertex layout load failed: {}", layoutResult.error().Detail);
+                      "PunctualShadowScenePass: vertex layout load failed: {}",
+                      layoutResult.error().Detail);
             vertexBufferLayout = layoutResult->Get()->GetLayout();
         }
 
-        m_Pipeline = GraphicsPipeline::Create(m_Context, {
-            .Name = "PunctualShadowScenePass Depth Pipeline",
-            .ColorAttachments = {},
-            .DepthAttachmentFormat = PunctualShadowFormat,
-            .VertexBufferLayout = vertexBufferLayout,
-            .PipelineLayout = m_Layout,
-            .ShaderStages = {
-                {.Stage = ShaderStage::Vertex, .Module = m_VertexShader.Get()->Module},
-            },
-            // Front-face culling keeps the caster's back faces in the depth map,
-            // pushing self-shadow acne to the lit side where the slope bias covers it.
-            .CullMode = CullMode::Front,
-            .DepthTestEnable = true,
-            .DepthWriteEnable = true,
-        });
+        m_Pipeline = GraphicsPipeline::Create(
+            m_Context,
+            {
+                .Name = "PunctualShadowScenePass Depth Pipeline",
+                .ColorAttachments = {},
+                .DepthAttachmentFormat = PunctualShadowFormat,
+                .VertexBufferLayout = vertexBufferLayout,
+                .PipelineLayout = m_Layout,
+                .ShaderStages =
+                    {
+                        {.Stage = ShaderStage::Vertex, .Module = m_VertexShader.Get()->Module},
+                    },
+                // Front-face culling keeps the caster's back faces in the depth map,
+                // pushing self-shadow acne to the lit side where the slope bias covers it.
+                .CullMode = CullMode::Front,
+                .DepthTestEnable = true,
+                .DepthWriteEnable = true,
+            });
     }
 
     PunctualShadowScenePass::~PunctualShadowScenePass() = default;
@@ -107,80 +117,83 @@ namespace Veng::Renderer
                 // lighting pass gates on the record's type/slot).
                 .Clear = ClearDepth{1.0f, 0},
             })
-            .Execute([this, resolution](PassContext& inner)
-            {
-                const ScenePassContext ctx = Wrap(inner);
-                CommandBuffer& cmd = ctx.Cmd();
-                const SceneView& view = ctx.View();
-                const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
-
-                cmd.BindPipeline(m_Pipeline);
-                registry.Bind(cmd);
-
-                const auto Draw = [&](const VisibleMesh& item, const mat4& lightViewProj)
+            .Execute(
+                [this, resolution](PassContext& inner)
                 {
-                    const Mesh& mesh = *item.Mesh;
-                    const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
+                    const ScenePassContext ctx = Wrap(inner);
+                    CommandBuffer& cmd = ctx.Cmd();
+                    const SceneView& view = ctx.View();
+                    const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
-                    bool materialsReady = true;
-                    for (const AssetHandle<Material>& material : materials)
-                        materialsReady = materialsReady && material.IsLoaded();
-                    if (!materialsReady)
-                        return;
+                    cmd.BindPipeline(m_Pipeline);
+                    registry.Bind(cmd);
 
-                    cmd.BindVertexBuffer(mesh.GetVertexBuffer());
-                    cmd.BindIndexBuffer(mesh.GetIndexBuffer());
-
-                    cmd.PushConstants(PunctualShadowPushConstants{.MVP = lightViewProj * item.World});
-
-                    for (const SubMesh& subMesh : mesh.GetSubMeshes())
+                    const auto Draw = [&](const VisibleMesh& item, const mat4& lightViewProj)
                     {
-                        if (subMesh.MaterialIndex == SubMesh::NoMaterial)
+                        const Mesh& mesh = *item.Mesh;
+                        const std::span<const AssetHandle<Material>> materials =
+                            mesh.GetMaterials();
+
+                        bool materialsReady = true;
+                        for (const AssetHandle<Material>& material : materials)
+                            materialsReady = materialsReady && material.IsLoaded();
+                        if (!materialsReady)
+                            return;
+
+                        cmd.BindVertexBuffer(mesh.GetVertexBuffer());
+                        cmd.BindIndexBuffer(mesh.GetIndexBuffer());
+
+                        cmd.PushConstants(
+                            PunctualShadowPushConstants{.MVP = lightViewProj * item.World});
+
+                        for (const SubMesh& subMesh : mesh.GetSubMeshes())
+                        {
+                            if (subMesh.MaterialIndex == SubMesh::NoMaterial)
+                                continue;
+                            cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
+                        }
+                    };
+
+                    // Cull against each face's own frustum: off-screen casters within the
+                    // light's range/cone are kept; only what falls outside is dropped.
+                    const u32 count = view.PunctualShadowCount < MaxShadowedPunctual
+                                          ? view.PunctualShadowCount
+                                          : MaxShadowedPunctual;
+                    for (u32 slot = 0; slot < count; ++slot)
+                    {
+                        // Params.x encodes the record type: 2 = spot (one face),
+                        // 1 = point (six faces), 0 = unused slot (skipped).
+                        const f32 type = view.PunctualShadows[slot].Params.x;
+                        if (type < 0.5f)
                             continue;
-                        cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
-                    }
-                };
+                        const u32 faceCount = type > 1.5f ? 1u : CubeFaceCount;
 
-                // Cull against each face's own frustum: off-screen casters within the
-                // light's range/cone are kept; only what falls outside is dropped.
-                const u32 count = view.PunctualShadowCount < MaxShadowedPunctual
-                                      ? view.PunctualShadowCount
-                                      : MaxShadowedPunctual;
-                for (u32 slot = 0; slot < count; ++slot)
-                {
-                    // Params.x encodes the record type: 2 = spot (one face),
-                    // 1 = point (six faces), 0 = unused slot (skipped).
-                    const f32 type = view.PunctualShadows[slot].Params.x;
-                    if (type < 0.5f)
-                        continue;
-                    const u32 faceCount = type > 1.5f ? 1u : CubeFaceCount;
-
-                    for (u32 face = 0; face < faceCount; ++face)
-                    {
-                        const ivec2 tileOffset{
-                            static_cast<i32>(face * resolution),
-                            static_cast<i32>(slot * resolution),
-                        };
-                        cmd.SetViewport(tileOffset, {resolution, resolution});
-                        cmd.SetScissor(tileOffset, {resolution, resolution});
-
-                        const mat4 lightViewProj = view.PunctualShadowRawViewProj[slot][face];
-                        const Frustum lightFrustum = Frustum::FromViewProjection(lightViewProj);
-
-                        if (m_FrustumCull)
+                        for (u32 face = 0; face < faceCount; ++face)
                         {
-                            m_CullScratch.clear();
-                            view.Broadphase->Cull(lightFrustum, m_CullScratch);
-                            for (const u32 idx : m_CullScratch)
-                                Draw(view.Visible[idx], lightViewProj);
-                        }
-                        else
-                        {
-                            for (const VisibleMesh& item : view.Visible)
-                                Draw(item, lightViewProj);
+                            const ivec2 tileOffset{
+                                static_cast<i32>(face * resolution),
+                                static_cast<i32>(slot * resolution),
+                            };
+                            cmd.SetViewport(tileOffset, {resolution, resolution});
+                            cmd.SetScissor(tileOffset, {resolution, resolution});
+
+                            const mat4 lightViewProj = view.PunctualShadowRawViewProj[slot][face];
+                            const Frustum lightFrustum = Frustum::FromViewProjection(lightViewProj);
+
+                            if (m_FrustumCull)
+                            {
+                                m_CullScratch.clear();
+                                view.Broadphase->Cull(lightFrustum, m_CullScratch);
+                                for (const u32 idx : m_CullScratch)
+                                    Draw(view.Visible[idx], lightViewProj);
+                            }
+                            else
+                            {
+                                for (const VisibleMesh& item : view.Visible)
+                                    Draw(item, lightViewProj);
+                            }
                         }
                     }
-                }
-            });
+                });
     }
 }

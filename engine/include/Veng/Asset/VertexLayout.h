@@ -15,7 +15,8 @@ namespace Veng
     struct VertexLayout
     {
         /// @brief The vertex attribute layout.
-        Renderer::VertexBufferLayout Layout = Renderer::VertexBufferLayout(vector<Renderer::VertexBufferElement>{});
+        Renderer::VertexBufferLayout Layout =
+            Renderer::VertexBufferLayout(vector<Renderer::VertexBufferElement>{});
 
         /// @brief Returns the vertex attribute layout.
         [[nodiscard]] const Renderer::VertexBufferLayout& GetLayout() const { return Layout; }

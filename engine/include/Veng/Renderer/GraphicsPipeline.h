@@ -68,7 +68,10 @@ namespace Veng::Renderer
         /// CommandBuffer compares these against the active rendering attachments' formats at
         /// draw time (see CommandBuffer::Draw/DrawIndexed) to turn a silent dynamic-rendering
         /// validation error into a named engine assert.
-        [[nodiscard]] const vector<Format>& GetColorAttachmentFormats() const { return m_ColorAttachmentFormats; }
+        [[nodiscard]] const vector<Format>& GetColorAttachmentFormats() const
+        {
+            return m_ColorAttachmentFormats;
+        }
 
         /// @brief Returns the depth attachment format declared at creation.
         [[nodiscard]] Format GetDepthAttachmentFormat() const { return m_DepthAttachmentFormat; }

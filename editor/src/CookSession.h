@@ -24,7 +24,7 @@ namespace VengEditor
         /// @param request The source asset and target id to cook.
         /// @param tasks   Task system used to schedule the worker.
         /// @return Task resolving to the archive bytes or an error.
-        [[nodiscard]] Veng::Task<Veng::vector<Veng::u8>> Cook(
-            const CookRequest& request, Veng::TaskSystem& tasks);
+        [[nodiscard]] Veng::Task<Veng::vector<Veng::u8>> Cook(const CookRequest& request,
+                                                              Veng::TaskSystem& tasks);
     };
 }

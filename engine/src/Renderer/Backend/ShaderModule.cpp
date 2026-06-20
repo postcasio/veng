@@ -9,7 +9,10 @@
 namespace Veng::Renderer
 {
     /// @brief Returns the backend-native shader module handle.
-    ShaderModule::Native& ShaderModule::GetNative() const { return *m_Native; }
+    ShaderModule::Native& ShaderModule::GetNative() const
+    {
+        return *m_Native;
+    }
 
     /// @brief Loads SPIR-V from a file and creates a shader module.
     /// @param context  The owning render context.
@@ -34,17 +37,18 @@ namespace Veng::Renderer
         file.close();
 
         return Ref<ShaderModule>(new ShaderModule(context, ShaderModuleBinaryInfo{
-            .Name = info.Name,
-            .Binary = buffer,
-            .EntryPoint = info.EntryPoint,
-        }));
+                                                               .Name = info.Name,
+                                                               .Binary = buffer,
+                                                               .EntryPoint = info.EntryPoint,
+                                                           }));
     }
 
     /// @brief Constructs a shader module from pre-loaded SPIR-V binary data.
     /// @param context  The owning render context.
     /// @param info     Binary SPIR-V, entry point, and name.
-    ShaderModule::ShaderModule(Context& context, const ShaderModuleBinaryInfo& info) : m_Context(context), m_Name(info.Name), m_EntryPoint(info.EntryPoint),
-                                                    m_Native(CreateUnique<Native>())
+    ShaderModule::ShaderModule(Context& context, const ShaderModuleBinaryInfo& info)
+        : m_Context(context), m_Name(info.Name), m_EntryPoint(info.EntryPoint),
+          m_Native(CreateUnique<Native>())
     {
         vk::ShaderModuleCreateInfo createInfo{
             .codeSize = info.Binary.size_bytes(),

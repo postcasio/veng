@@ -26,16 +26,16 @@ namespace Veng::UI
         ImGuiSliderFlags DragClampFlags(const DragOptions& options)
         {
             return (options.Min || options.Max) ? ImGuiSliderFlags_AlwaysClamp
-                                                 : ImGuiSliderFlags_None;
+                                                : ImGuiSliderFlags_None;
         }
     }
 
     bool Drag(string_view label, f32& v, DragOptions options)
     {
         const string id = AsCStr(label);
-        return ImGui::DragFloat(id.c_str(), &v, options.Speed,
-                                options.Min.value_or(0.0f), options.Max.value_or(0.0f),
-                                FloatFormat(options), DragClampFlags(options));
+        return ImGui::DragFloat(id.c_str(), &v, options.Speed, options.Min.value_or(0.0f),
+                                options.Max.value_or(0.0f), FloatFormat(options),
+                                DragClampFlags(options));
     }
 
     bool Drag(string_view label, vec2& v, DragOptions options)
@@ -67,8 +67,8 @@ namespace Veng::UI
         const string id = AsCStr(label);
         const i32 min = options.Min ? static_cast<i32>(*options.Min) : 0;
         const i32 max = options.Max ? static_cast<i32>(*options.Max) : 0;
-        return ImGui::DragInt(id.c_str(), &v, options.Speed, min, max,
-                              IntFormat(options), DragClampFlags(options));
+        return ImGui::DragInt(id.c_str(), &v, options.Speed, min, max, IntFormat(options),
+                              DragClampFlags(options));
     }
 
     bool Slider(string_view label, f32& v, SliderOptions options)
@@ -118,10 +118,10 @@ namespace Veng::UI
             return 0;
         };
 
-        const bool entered = ImGui::InputText(
-            id.c_str(), s_Scratch.data(), s_Scratch.size(),
-            ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackResize,
-            resizeCallback, &s_Scratch);
+        const bool entered = ImGui::InputText(id.c_str(), s_Scratch.data(), s_Scratch.size(),
+                                              ImGuiInputTextFlags_EnterReturnsTrue |
+                                                  ImGuiInputTextFlags_CallbackResize,
+                                              resizeCallback, &s_Scratch);
 
         // ImGui::IsItemActive is valid only after the widget is submitted, so the
         // scratch's owning id is updated here, after InputText.
@@ -143,8 +143,8 @@ namespace Veng::UI
         const string id = AsCStr(label);
 
         const string_view preview = (index >= 0 && static_cast<usize>(index) < items.size())
-                                         ? items[static_cast<usize>(index)]
-                                         : string_view{};
+                                        ? items[static_cast<usize>(index)]
+                                        : string_view{};
         const string previewStr(preview);
 
         bool changed = false;

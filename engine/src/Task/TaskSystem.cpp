@@ -22,8 +22,8 @@ namespace Veng
         }
     }
 
-    TaskSystem::TaskSystem(const TaskSystemInfo& info) :
-        m_WorkerCount(DeriveWorkerCount(info.WorkerCount))
+    TaskSystem::TaskSystem(const TaskSystemInfo& info)
+        : m_WorkerCount(DeriveWorkerCount(info.WorkerCount))
     {
         m_Workers.reserve(m_WorkerCount);
         for (u32 i = 0; i < m_WorkerCount; ++i)
@@ -95,17 +95,19 @@ namespace Veng
         tasks.reserve(workers);
         for (u32 i = 0; i < workers; ++i)
         {
-            tasks.push_back(Submit([&] {
-                u32 index;
+            tasks.push_back(Submit(
+                [&]
                 {
-                    std::unique_lock lock(barrierMutex);
-                    index = nextIndex++;
-                    ++arrived;
-                    barrierReady.notify_all();
-                    barrierReady.wait(lock, [&] { return arrived == workers; });
-                }
-                fn(index);
-            }));
+                    u32 index;
+                    {
+                        std::unique_lock lock(barrierMutex);
+                        index = nextIndex++;
+                        ++arrived;
+                        barrierReady.notify_all();
+                        barrierReady.wait(lock, [&] { return arrived == workers; });
+                    }
+                    fn(index);
+                }));
         }
 
         for (Task<void>& task : tasks)

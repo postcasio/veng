@@ -19,7 +19,8 @@
 using namespace Veng;
 using namespace Veng::Renderer;
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "material loader: cook, mount, LoadSync, validate pipeline and bindless slot")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "material loader: cook, mount, LoadSync, validate pipeline and bindless slot")
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "material_pack.json";
@@ -74,11 +75,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "material loader: cook, mount, LoadSyn
     std::filesystem::remove(outArchive);
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "material loader: a handles-only material loads with a zero-size authored block")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "material loader: a handles-only material loads with a zero-size authored block")
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "material_handles_only_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_gpu_material_handles_only.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_gpu_material_handles_only.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);

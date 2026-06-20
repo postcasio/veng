@@ -19,11 +19,11 @@ namespace Veng
     struct VisibleMesh
     {
         /// @brief The entity that owns this drawable.
-        Entity      Owner;
+        Entity Owner;
         /// @brief Entity's world matrix.
-        mat4        World;
+        mat4 World;
         /// @brief World-space AABB of the mesh.
-        AABB        WorldBounds;
+        AABB WorldBounds;
         /// @brief Resident mesh pointer; valid for the gathering Execute only.
         const Mesh* Mesh;
     };

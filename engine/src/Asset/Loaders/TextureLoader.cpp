@@ -21,9 +21,12 @@ namespace Veng
         {
             switch (value)
             {
-                case 2: return Renderer::Format::RGBA8Unorm;
-                case 3: return Renderer::Format::RGBA8Srgb;
-                default: return std::nullopt;
+            case 2:
+                return Renderer::Format::RGBA8Unorm;
+            case 3:
+                return Renderer::Format::RGBA8Srgb;
+            default:
+                return std::nullopt;
             }
         }
 
@@ -31,9 +34,12 @@ namespace Veng
         {
             switch (value)
             {
-                case 0: return Renderer::Filter::Nearest;
-                case 1: return Renderer::Filter::Linear;
-                default: return std::nullopt;
+            case 0:
+                return Renderer::Filter::Nearest;
+            case 1:
+                return Renderer::Filter::Linear;
+            default:
+                return std::nullopt;
             }
         }
 
@@ -41,9 +47,12 @@ namespace Veng
         {
             switch (value)
             {
-                case 0: return Renderer::MipmapMode::Nearest;
-                case 1: return Renderer::MipmapMode::Linear;
-                default: return std::nullopt;
+            case 0:
+                return Renderer::MipmapMode::Nearest;
+            case 1:
+                return Renderer::MipmapMode::Linear;
+            default:
+                return std::nullopt;
             }
         }
 
@@ -51,18 +60,24 @@ namespace Veng
         {
             switch (value)
             {
-                case 0: return Renderer::AddressMode::Repeat;
-                case 1: return Renderer::AddressMode::MirroredRepeat;
-                case 2: return Renderer::AddressMode::ClampToEdge;
-                case 3: return Renderer::AddressMode::ClampToBorder;
-                default: return std::nullopt;
+            case 0:
+                return Renderer::AddressMode::Repeat;
+            case 1:
+                return Renderer::AddressMode::MirroredRepeat;
+            case 2:
+                return Renderer::AddressMode::ClampToEdge;
+            case 3:
+                return Renderer::AddressMode::ClampToBorder;
+            default:
+                return std::nullopt;
             }
         }
     }
 
-    AssetResult<Detail::LoadJob> TextureLoader::Load(
-        AssetManager& /*manager*/, Renderer::Context& context, TaskSystem& tasks,
-        TypeRegistry& /*types*/, AssetId id, std::span<const u8> cooked, bool async) const
+    AssetResult<Detail::LoadJob> TextureLoader::Load(AssetManager& /*manager*/,
+                                                     Renderer::Context& context, TaskSystem& tasks,
+                                                     TypeRegistry& /*types*/, AssetId id,
+                                                     std::span<const u8> cooked, bool async) const
     {
         if (cooked.size() < sizeof(CookedTextureHeader))
         {
@@ -81,7 +96,9 @@ namespace Veng
             return std::unexpected(AssetLoadError{
                 .Kind = AssetError::Corrupt,
                 .Id = id,
-                .Detail = fmt::format("texture: unsupported MipCount {} (only single-mip textures are supported)", header.MipCount),
+                .Detail = fmt::format(
+                    "texture: unsupported MipCount {} (only single-mip textures are supported)",
+                    header.MipCount),
             });
         }
 
@@ -93,7 +110,8 @@ namespace Veng
         const optional<Renderer::AddressMode> addressModeV = BridgeAddressMode(header.AddressModeV);
         const optional<Renderer::AddressMode> addressModeW = BridgeAddressMode(header.AddressModeW);
 
-        if (!format || !minFilter || !magFilter || !mipmapMode || !addressModeU || !addressModeV || !addressModeW)
+        if (!format || !minFilter || !magFilter || !mipmapMode || !addressModeU || !addressModeV ||
+            !addressModeW)
         {
             return std::unexpected(AssetLoadError{
                 .Kind = AssetError::Corrupt,
@@ -117,16 +135,17 @@ namespace Veng
             .Extent = {header.Width, header.Height},
             .Format = *format,
             .Pixels = cooked.subspan(sizeof(header), pixelBytes),
-            .Sampler = {
-                .MagFilter = *magFilter,
-                .MinFilter = *minFilter,
-                .MipmapMode = *mipmapMode,
-                .AddressModeU = *addressModeU,
-                .AddressModeV = *addressModeV,
-                .AddressModeW = *addressModeW,
-                .AnisotropyEnabled = header.AnisotropyEnabled != 0,
-                .MaxAnisotropy = header.MaxAnisotropy,
-            },
+            .Sampler =
+                {
+                    .MagFilter = *magFilter,
+                    .MinFilter = *minFilter,
+                    .MipmapMode = *mipmapMode,
+                    .AddressModeU = *addressModeU,
+                    .AddressModeV = *addressModeV,
+                    .AddressModeW = *addressModeW,
+                    .AnisotropyEnabled = header.AnisotropyEnabled != 0,
+                    .MaxAnisotropy = header.MaxAnisotropy,
+                },
         };
 
         Ref<Veng::Texture> texture;
@@ -143,7 +162,11 @@ namespace Veng
         return Detail::LoadJob{
             .Resource = Detail::RefAny(texture),
             .Dependencies = {},
-            .Finalize = [texture]() -> VoidResult { texture->Finalize(); return {}; },
+            .Finalize = [texture]() -> VoidResult
+            {
+                texture->Finalize();
+                return {};
+            },
         };
     }
 }

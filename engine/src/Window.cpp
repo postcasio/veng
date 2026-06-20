@@ -20,13 +20,9 @@ namespace Veng
         }
     }
 
-    Window::Window(const WindowInfo& info):
-        m_Extent(info.Extent),
-        m_Resizable(info.Resizable),
-        m_EventCallback(info.EventCallback),
-        m_Title(info.Title),
-        m_MouseCaptured(info.CaptureMouse),
-        m_Native(CreateUnique<Native>())
+    Window::Window(const WindowInfo& info)
+        : m_Extent(info.Extent), m_Resizable(info.Resizable), m_EventCallback(info.EventCallback),
+          m_Title(info.Title), m_MouseCaptured(info.CaptureMouse), m_Native(CreateUnique<Native>())
     {
         if (!s_GlfwInitialized)
         {
@@ -47,8 +43,8 @@ namespace Veng
 
         Log::Info("Creating window: {0} ({1}x{2})", m_Title, m_Extent.x, m_Extent.y);
 
-        m_Handle = glfwCreateWindow(static_cast<int>(m_Extent.x), static_cast<int>(m_Extent.y), m_Title.c_str(),
-                                     nullptr, nullptr);
+        m_Handle = glfwCreateWindow(static_cast<int>(m_Extent.x), static_cast<int>(m_Extent.y),
+                                    m_Title.c_str(), nullptr, nullptr);
 
         if (!m_Handle)
         {
@@ -56,26 +52,32 @@ namespace Veng
         }
 
         glfwSetWindowUserPointer(m_Handle, this);
-        glfwSetFramebufferSizeCallback(m_Handle, [](GLFWwindow* glfwWindow, int width, int height)
-        {
-            auto window = static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
+        glfwSetFramebufferSizeCallback(m_Handle,
+                                       [](GLFWwindow* glfwWindow, int width, int height)
+                                       {
+                                           auto window = static_cast<Window*>(
+                                               glfwGetWindowUserPointer(glfwWindow));
 
-            WindowResizeEvent event(width, height);
-            window->m_EventCallback(event);
-        });
+                                           WindowResizeEvent event(width, height);
+                                           window->m_EventCallback(event);
+                                       });
 
-        glfwSetWindowCloseCallback(m_Handle, [](GLFWwindow* glfwWindow)
-        {
-            auto window = static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
-            WindowCloseEvent event;
-            window->m_EventCallback(event);
-        });
+        glfwSetWindowCloseCallback(m_Handle,
+                                   [](GLFWwindow* glfwWindow)
+                                   {
+                                       auto window = static_cast<Window*>(
+                                           glfwGetWindowUserPointer(glfwWindow));
+                                       WindowCloseEvent event;
+                                       window->m_EventCallback(event);
+                                   });
 
-        glfwSetCursorPosCallback(m_Handle, [](GLFWwindow* glfwWindow, f64 xpos, f64 ypos)
-        {
-            auto window = static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
-            window->m_MousePosition = {xpos, ypos};
-        });
+        glfwSetCursorPosCallback(m_Handle,
+                                 [](GLFWwindow* glfwWindow, f64 xpos, f64 ypos)
+                                 {
+                                     auto window =
+                                         static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
+                                     window->m_MousePosition = {xpos, ypos};
+                                 });
 
         {
             int width, height;
@@ -89,7 +91,10 @@ namespace Veng
         }
     }
 
-    Window::Native& Window::GetNative() const { return *m_Native; }
+    Window::Native& Window::GetNative() const
+    {
+        return *m_Native;
+    }
 
     void Window::CreateSurface(const Renderer::Context& context)
     {

@@ -30,13 +30,20 @@ namespace Veng::Cook
         {
             switch (type)
             {
-                case AssetType::Raw:          return "raw";
-                case AssetType::Texture:      return "texture";
-                case AssetType::Mesh:         return "mesh";
-                case AssetType::Shader:       return "shader";
-                case AssetType::Material:     return "material";
-                case AssetType::VertexLayout: return "vertex_layout";
-                case AssetType::Prefab:       return "prefab";
+            case AssetType::Raw:
+                return "raw";
+            case AssetType::Texture:
+                return "texture";
+            case AssetType::Mesh:
+                return "mesh";
+            case AssetType::Shader:
+                return "shader";
+            case AssetType::Material:
+                return "material";
+            case AssetType::VertexLayout:
+                return "vertex_layout";
+            case AssetType::Prefab:
+                return "prefab";
             }
             return "unknown";
         }
@@ -92,8 +99,8 @@ namespace Veng::Cook
         usize mismatches = 0;
         for (const VerifiedAsset& asset : report.Assets)
         {
-            fmt::print("{:<8} {:>5}  0x{:016X}\n",
-                asset.Ok ? "OK" : "MISMATCH", TypeName(asset.Type), asset.Id.Value);
+            fmt::print("{:<8} {:>5}  0x{:016X}\n", asset.Ok ? "OK" : "MISMATCH",
+                       TypeName(asset.Type), asset.Id.Value);
             if (!asset.Ok)
                 ++mismatches;
         }
@@ -106,9 +113,8 @@ namespace Veng::Cook
             return 0;
         }
 
-        fmt::print(stderr, "verify: {} of {} assets mismatched{}\n",
-            mismatches, report.Assets.size(),
-            report.DigestOk ? "" : ", archive digest mismatched");
+        fmt::print(stderr, "verify: {} of {} assets mismatched{}\n", mismatches,
+                   report.Assets.size(), report.DigestOk ? "" : ", archive digest mismatched");
         return 1;
     }
 }

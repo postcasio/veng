@@ -17,12 +17,12 @@ namespace
 {
     void PrintUsage()
     {
-        fmt::print(stderr,
-            "usage:\n"
-            "  vengc cook <pack.json> [-o <out.vengpack>] [--reference <pack.json>]... [--module <lib>] [--depfile <out.d>]\n"
-            "  vengc generate-id [--reference <pack.json>]...\n"
-            "  vengc generate-type-id [--module <lib>]\n"
-            "  vengc verify <archive.vengpack>\n");
+        fmt::print(stderr, "usage:\n"
+                           "  vengc cook <pack.json> [-o <out.vengpack>] [--reference "
+                           "<pack.json>]... [--module <lib>] [--depfile <out.d>]\n"
+                           "  vengc generate-id [--reference <pack.json>]...\n"
+                           "  vengc generate-type-id [--module <lib>]\n"
+                           "  vengc verify <archive.vengpack>\n");
     }
 
     // Prints the loaded type table as a name → TypeId manifest (stdout, not persisted).
@@ -34,7 +34,7 @@ namespace
             infos.push_back(&info);
 
         std::sort(infos.begin(), infos.end(),
-            [](const TypeInfo* a, const TypeInfo* b) { return a->Name < b->Name; });
+                  [](const TypeInfo* a, const TypeInfo* b) { return a->Name < b->Name; });
 
         fmt::print("reflected types ({}):\n", infos.size());
         for (const TypeInfo* info : infos)
@@ -151,7 +151,7 @@ int main(int argc, char** argv)
 
         vector<path> dependencies;
         const VoidResult result = cooker.CookPack(*packPath, *outPath, referencePacks, types,
-            depfilePath ? &dependencies : nullptr);
+                                                  depfilePath ? &dependencies : nullptr);
         if (!result)
         {
             fmt::print(stderr, "vengc: {}\n", result.error());
@@ -249,7 +249,7 @@ int main(int argc, char** argv)
         // Collision-checks against builtins always, plus game types when --module is given.
         // The module image must outlive the registry it populates.
         optional<LoadedModuleTypes> moduleTypes;
-        TypeRegistry  builtins;
+        TypeRegistry builtins;
         TypeRegistry* registry = nullptr;
         if (modulePath)
         {

@@ -25,8 +25,7 @@ namespace Veng::Renderer
     static VKAPI_ATTR VkBool32 VKAPI_CALL
     DebugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                   vk::DebugUtilsMessageTypeFlagsEXT messageType,
-                  const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
-                  void* pUserData)
+                  const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
     {
         // Throwing here would unwind through the Vulkan C ABI, so only log.
         if (messageSeverity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)
@@ -42,13 +41,14 @@ namespace Veng::Renderer
     }
 #endif
 
-    Context::Context() : m_Native(CreateUnique<Native>())
-    {
-    }
+    Context::Context() : m_Native(CreateUnique<Native>()) {}
 
     Context::~Context() = default;
 
-    Context::Native& Context::GetNative() const { return *m_Native; }
+    Context::Native& Context::GetNative() const
+    {
+        return *m_Native;
+    }
 
     vk::PhysicalDevice Context::Native::GetPhysicalDevice()
     {
@@ -76,19 +76,20 @@ namespace Veng::Renderer
         // Headless needs neither a present queue nor an adequate swapchain.
         if (Headless)
         {
-            return indices.IsComplete() && extensionsSupported && supportedFeatures.samplerAnisotropy;
+            return indices.IsComplete() && extensionsSupported &&
+                   supportedFeatures.samplerAnisotropy;
         }
 
         bool swapChainAdequate = false;
         if (extensionsSupported)
         {
             SwapChainSupportDetails swapChainSupport = QuerySwapChainSupport(device);
-            swapChainAdequate = !swapChainSupport.Formats.empty() &&
-                !swapChainSupport.PresentModes.empty();
+            swapChainAdequate =
+                !swapChainSupport.Formats.empty() && !swapChainSupport.PresentModes.empty();
         }
 
-        return indices.IsComplete() && indices.CanPresent() && extensionsSupported && swapChainAdequate &&
-            supportedFeatures.samplerAnisotropy;
+        return indices.IsComplete() && indices.CanPresent() && extensionsSupported &&
+               swapChainAdequate && supportedFeatures.samplerAnisotropy;
     }
 
     void Context::Initialize(const ContextInfo& info, Window* window)
@@ -96,7 +97,8 @@ namespace Veng::Renderer
         const bool headless = (window == nullptr);
         m_Native->Headless = headless;
 
-        Log::Info(headless ? "Initializing Vulkan context (headless)" : "Initializing Vulkan context");
+        Log::Info(headless ? "Initializing Vulkan context (headless)"
+                           : "Initializing Vulkan context");
 
         VULKAN_HPP_DEFAULT_DISPATCHER.init();
 
@@ -111,20 +113,16 @@ namespace Veng::Renderer
         {
             // No surface ⇒ the swapchain device extension isn't needed (or wanted).
             std::erase_if(m_Native->DeviceExtensions, [](const char* extension)
-            {
-                return std::strcmp(extension, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0;
-            });
+                          { return std::strcmp(extension, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0; });
         }
 
         auto extensions = m_Native->GetRequiredExtensions();
 
-        const vk::ApplicationInfo appInfo{
-            .pApplicationName = info.ApplicationName.c_str(),
-            .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
-            .pEngineName = info.EngineName.c_str(),
-            .engineVersion = VK_MAKE_VERSION(1, 0, 0),
-            .apiVersion = VK_API_VERSION_1_3
-        };
+        const vk::ApplicationInfo appInfo{.pApplicationName = info.ApplicationName.c_str(),
+                                          .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
+                                          .pEngineName = info.EngineName.c_str(),
+                                          .engineVersion = VK_MAKE_VERSION(1, 0, 0),
+                                          .apiVersion = VK_API_VERSION_1_3};
 
         vk::InstanceCreateInfo instanceCreateInfo{
             .pApplicationInfo = &appInfo,
@@ -136,13 +134,12 @@ namespace Veng::Renderer
         Log::Info("Enabling validation layers");
         vk::DebugUtilsMessengerCreateInfoEXT debugCreateInfo{
             .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
-            vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-            vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+                               vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+                               vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
             .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-            vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
-            vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
-            .pfnUserCallback = DebugCallback
-        };
+                           vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+                           vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
+            .pfnUserCallback = DebugCallback};
 
         // Turn on synchronization validation so missing/incorrect barriers from
         // the render graph are caught at runtime.
@@ -156,8 +153,7 @@ namespace Veng::Renderer
         };
 
         instanceCreateInfo.pNext = &validationFeatures;
-        instanceCreateInfo.enabledLayerCount =
-            static_cast<u32>(m_Native->ValidationLayers.size());
+        instanceCreateInfo.enabledLayerCount = static_cast<u32>(m_Native->ValidationLayers.size());
         instanceCreateInfo.ppEnabledLayerNames = m_Native->ValidationLayers.data();
 #else
         instanceCreateInfo.pNext = nullptr;
@@ -172,7 +168,8 @@ namespace Veng::Renderer
         VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Native->Instance);
 
 #ifdef VE_ENABLE_VALIDATION_LAYERS
-        m_Native->DebugMessenger = m_Native->Instance.createDebugUtilsMessengerEXT(debugCreateInfo).value;
+        m_Native->DebugMessenger =
+            m_Native->Instance.createDebugUtilsMessengerEXT(debugCreateInfo).value;
 #endif
 
         DebugMarkers::Initialize(m_Native->Instance);
@@ -205,7 +202,8 @@ namespace Veng::Renderer
                 const auto size = static_cast<usize>(file.tellg());
                 initial.resize(size);
                 file.seekg(0);
-                file.read(reinterpret_cast<char*>(initial.data()), static_cast<std::streamsize>(size));
+                file.read(reinterpret_cast<char*>(initial.data()),
+                          static_cast<std::streamsize>(size));
             }
         }
 
@@ -224,12 +222,14 @@ namespace Veng::Renderer
 
         vmaCreateAllocator(&allocatorInfo, &m_Native->Allocator);
 
-        m_Native->GraphicsQueue = m_Native->Device.getQueue(m_Native->QueueFamilies.GraphicsFamily.value(), 0);
+        m_Native->GraphicsQueue =
+            m_Native->Device.getQueue(m_Native->QueueFamilies.GraphicsFamily.value(), 0);
 
         // Transfer queue. On MoltenVK this resolves to the same family (and
         // queue index 0) as graphics, so TransferQueue and GraphicsQueue are the
         // same handle and the submission lock is what keeps them safe.
-        m_Native->TransferQueue = m_Native->Device.getQueue(m_Native->QueueFamilies.TransferFamily.value(), 0);
+        m_Native->TransferQueue =
+            m_Native->Device.getQueue(m_Native->QueueFamilies.TransferFamily.value(), 0);
 
         Log::Info("Queue families: graphics={0}, transfer={1}{2}",
                   m_Native->QueueFamilies.GraphicsFamily.value(),
@@ -240,17 +240,20 @@ namespace Veng::Renderer
 
         if (!headless)
         {
-            m_Native->PresentQueue = m_Native->Device.getQueue(m_Native->QueueFamilies.PresentFamily.value(), 0);
+            m_Native->PresentQueue =
+                m_Native->Device.getQueue(m_Native->QueueFamilies.PresentFamily.value(), 0);
 
-            m_Native->SwapChain = SwapChain::Create(*this, {
-                .MaxImageCount = 2,
-                .Width = window->GetWidth(),
-                .Height = window->GetHeight(),
-                .Format = vk::Format::eR16G16B16A16Sfloat,
-            });
+            m_Native->SwapChain =
+                SwapChain::Create(*this, {
+                                             .MaxImageCount = 2,
+                                             .Width = window->GetWidth(),
+                                             .Height = window->GetHeight(),
+                                             .Format = vk::Format::eR16G16B16A16Sfloat,
+                                         });
 
-            Log::Info("Created {0} swap chain images ({1}x{2})", m_Native->SwapChain->GetImageCount(),
-                      m_Native->SwapChain->GetWidth(), m_Native->SwapChain->GetHeight());
+            Log::Info("Created {0} swap chain images ({1}x{2})",
+                      m_Native->SwapChain->GetImageCount(), m_Native->SwapChain->GetWidth(),
+                      m_Native->SwapChain->GetHeight());
 
             m_RenderExtent = m_Native->SwapChain->GetExtent();
         }
@@ -283,13 +286,12 @@ namespace Veng::Renderer
             poolSizes.push_back({.type = typeInfo.VkType, .descriptorCount = typeInfo.PoolBudget});
         }
 
-        m_Native->DescriptorPool = DescriptorPool::Create(*this, {
-            .Name = "Primary Pool",
-            .MaxSets = 100000,
-            .PoolSizes = poolSizes,
-            .Flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
-            vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind
-        });
+        m_Native->DescriptorPool = DescriptorPool::Create(
+            *this, {.Name = "Primary Pool",
+                    .MaxSets = 100000,
+                    .PoolSizes = poolSizes,
+                    .Flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
+                             vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind});
 
         m_Native->SynchronizationFrames.reserve(m_Native->MaxFramesInFlight);
         for (u32 i = 0; i < m_Native->MaxFramesInFlight; ++i)
@@ -372,7 +374,8 @@ namespace Veng::Renderer
             std::ofstream file(*m_Native->PipelineCachePath, std::ios::binary | std::ios::trunc);
             if (file)
             {
-                file.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+                file.write(reinterpret_cast<const char*>(data.data()),
+                           static_cast<std::streamsize>(data.size()));
             }
             else
             {
@@ -406,13 +409,17 @@ namespace Veng::Renderer
         // Create each pool on the worker that owns it — a VkCommandPool may only be
         // accessed by one thread at a time, and the creating thread is the one that
         // later records uploads. Bodies run concurrently with no shared state.
-        taskSystem.ForEachWorker([this, transferFamily](u32 workerIndex)
-        {
-            m_Native->TransferPools[workerIndex].Pool = m_Native->Device.createCommandPool(vk::CommandPoolCreateInfo{
-                .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-                .queueFamilyIndex = transferFamily,
-            }).value;
-        });
+        taskSystem.ForEachWorker(
+            [this, transferFamily](u32 workerIndex)
+            {
+                m_Native->TransferPools[workerIndex].Pool =
+                    m_Native->Device
+                        .createCommandPool(vk::CommandPoolCreateInfo{
+                            .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+                            .queueFamilyIndex = transferFamily,
+                        })
+                        .value;
+            });
 
         // Allocate command buffers serially: AllocationPoolOverride is shared
         // mutable state and must not be written from concurrent ForEachWorker bodies.
@@ -437,7 +444,8 @@ namespace Veng::Renderer
         return *m_Native->TransferPools[workerIndex].CommandBuffer;
     }
 
-    void Context::Native::LockedSubmit(vk::Queue queue, const vk::SubmitInfo& submitInfo, vk::Fence fence)
+    void Context::Native::LockedSubmit(vk::Queue queue, const vk::SubmitInfo& submitInfo,
+                                       vk::Fence fence)
     {
         std::lock_guard lock(SubmitMutex);
         VK_ASSERT(queue.submit(1, &submitInfo, fence), "failed to submit to queue!");
@@ -466,8 +474,8 @@ namespace Veng::Renderer
     u64 Context::SubmitTransfer(u32 workerIndex, const TimelineSemaphore& timeline)
     {
         VE_ASSERT(workerIndex < m_Native->TransferPools.size(),
-                  "SubmitTransfer: worker index {} out of range ({} transfer pools)",
-                  workerIndex, m_Native->TransferPools.size());
+                  "SubmitTransfer: worker index {} out of range ({} transfer pools)", workerIndex,
+                  m_Native->TransferPools.size());
 
         auto& pool = m_Native->TransferPools[workerIndex];
         pool.CommandBuffer->End();
@@ -507,7 +515,10 @@ namespace Veng::Renderer
         return *m_Native->TransferTimeline;
     }
 
-    bool Context::IsHeadless() const { return m_Native->Headless; }
+    bool Context::IsHeadless() const
+    {
+        return m_Native->Headless;
+    }
 
     const QueueFamilyIndices& Context::GetQueueFamilies() const
     {
@@ -563,7 +574,8 @@ namespace Veng::Renderer
         // Headless has no swapchain image to transition for presentation.
         if (!IsHeadless())
         {
-            Backend::TransitionImage(*commandBuffer, *GetCurrentSwapChainImage(), ImageLayout::PresentSrc);
+            Backend::TransitionImage(*commandBuffer, *GetCurrentSwapChainImage(),
+                                     ImageLayout::PresentSrc);
         }
 
         commandBuffer->End();
@@ -573,20 +585,50 @@ namespace Veng::Renderer
         PresentFrame(frame);
     }
 
-    u32 Context::GetMaxFramesInFlight() const { return m_Native->MaxFramesInFlight; }
-    u32 Context::GetCurrentFrameInFlight() const { return m_Native->CurrentFrameInFlight; }
+    u32 Context::GetMaxFramesInFlight() const
+    {
+        return m_Native->MaxFramesInFlight;
+    }
+    u32 Context::GetCurrentFrameInFlight() const
+    {
+        return m_Native->CurrentFrameInFlight;
+    }
 
     u32 Context::GetMaxImageDimension2D() const
     {
         return m_Native->PhysicalDevice.getProperties().limits.maxImageDimension2D;
     }
 
-    uvec2 Context::GetSwapChainExtent() const { VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)"); return m_Native->SwapChain->GetExtent(); }
-    Format Context::GetSwapChainFormat() const { VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)"); return m_Native->SwapChain->GetFormat(); }
-    Ref<Image> Context::GetCurrentSwapChainImage() const { VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)"); return m_Native->SwapChain->GetCurrentImage(); }
-    Ref<ImageView> Context::GetCurrentSwapChainImageView() const { VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)"); return m_Native->SwapChain->GetCurrentImageView(); }
-    u32 Context::GetSwapChainImageCount() const { VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)"); return m_Native->SwapChain->GetImageCount(); }
-    u32 Context::GetCurrentSwapChainImageIndex() const { VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)"); return m_Native->SwapChain->GetCurrentImageIndex(); }
+    uvec2 Context::GetSwapChainExtent() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetExtent();
+    }
+    Format Context::GetSwapChainFormat() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetFormat();
+    }
+    Ref<Image> Context::GetCurrentSwapChainImage() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetCurrentImage();
+    }
+    Ref<ImageView> Context::GetCurrentSwapChainImageView() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetCurrentImageView();
+    }
+    u32 Context::GetSwapChainImageCount() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetImageCount();
+    }
+    u32 Context::GetCurrentSwapChainImageIndex() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetCurrentImageIndex();
+    }
 
     void Context::AddSwapChainInvalidationCallback(std::function<void()> callback)
     {
@@ -625,7 +667,10 @@ namespace Veng::Renderer
         VK_ASSERT(m_Native->Device.waitIdle(), "failed to wait for device idle!");
     }
 
-    BindlessRegistry& Context::GetBindlessRegistry() const { return *m_Native->Bindless; }
+    BindlessRegistry& Context::GetBindlessRegistry() const
+    {
+        return *m_Native->Bindless;
+    }
 
     void Context::EnqueueBindlessAcquire(const Ref<ImageView>& view)
     {
@@ -641,10 +686,11 @@ namespace Veng::Renderer
             if (!Headless)
             {
                 u32 glfwExtensionCount = 0;
-                const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+                const char** glfwExtensions =
+                    glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
-                RequiredExtensions = vector<const char*>(glfwExtensions,
-                                                           glfwExtensions + glfwExtensionCount);
+                RequiredExtensions =
+                    vector<const char*>(glfwExtensions, glfwExtensions + glfwExtensionCount);
 
                 RequiredExtensions.emplace_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
             }
@@ -710,16 +756,14 @@ namespace Veng::Renderer
         return SwapChainSupportDetails{
             .Capabilities = device.getSurfaceCapabilitiesKHR(Surface).value,
             .Formats = device.getSurfaceFormatsKHR(Surface).value,
-            .PresentModes = device.getSurfacePresentModesKHR(Surface).value
-        };
+            .PresentModes = device.getSurfacePresentModesKHR(Surface).value};
     }
 
     bool Context::Native::CheckDeviceExtensionSupport(vk::PhysicalDevice device) const
     {
         auto availableExtensions = device.enumerateDeviceExtensionProperties(nullptr).value;
 
-        set<string> requiredExtensions(DeviceExtensions.begin(),
-                                       DeviceExtensions.end());
+        set<string> requiredExtensions(DeviceExtensions.begin(), DeviceExtensions.end());
 
         for (const auto& extension : availableExtensions)
         {
@@ -746,38 +790,32 @@ namespace Veng::Renderer
         f32 queuePriority = 1.0f;
         for (u32 queueFamily : uniqueQueueFamilies)
         {
-            vk::DeviceQueueCreateInfo queueCreateInfo{
-                .queueFamilyIndex = queueFamily,
-                .queueCount = 1,
-                .pQueuePriorities = &queuePriority
-            };
+            vk::DeviceQueueCreateInfo queueCreateInfo{.queueFamilyIndex = queueFamily,
+                                                      .queueCount = 1,
+                                                      .pQueuePriorities = &queuePriority};
 
             queueCreateInfos.push_back(queueCreateInfo);
         }
 
-        vk::PhysicalDeviceFeatures deviceFeatures{
-            .sampleRateShading = VK_TRUE,
-            .samplerAnisotropy = VK_TRUE,
-            .shaderSampledImageArrayDynamicIndexing = VK_TRUE
-        };
+        vk::PhysicalDeviceFeatures deviceFeatures{.sampleRateShading = VK_TRUE,
+                                                  .samplerAnisotropy = VK_TRUE,
+                                                  .shaderSampledImageArrayDynamicIndexing =
+                                                      VK_TRUE};
 
         auto deviceExtensions = DeviceExtensions;
 
-        vk::PhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{
-            .dynamicRendering = vk::True
-        };
+        vk::PhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{.dynamicRendering =
+                                                                                vk::True};
 
-        vk::PhysicalDeviceFeatures2 features2{
-            .pNext = &dynamicRenderingFeatures,
-            .features = deviceFeatures
-        };
+        vk::PhysicalDeviceFeatures2 features2{.pNext = &dynamicRenderingFeatures,
+                                              .features = deviceFeatures};
 
         PhysicalDevice.getFeatures2(&features2);
 
         // Timeline semaphores are required for the async-upload sync channel.
         // Fatal-assert if the device lacks support before enabling the feature.
         vk::PhysicalDeviceVulkan12Features supportedVulkan12Features{};
-        vk::PhysicalDeviceFeatures2 supportedFeatures2{ .pNext = &supportedVulkan12Features };
+        vk::PhysicalDeviceFeatures2 supportedFeatures2{.pNext = &supportedVulkan12Features};
         PhysicalDevice.getFeatures2(&supportedFeatures2);
         VE_ASSERT(supportedVulkan12Features.timelineSemaphore,
                   "Physical device does not support timeline semaphores!");
@@ -805,8 +843,7 @@ namespace Veng::Renderer
             .queueCreateInfoCount = static_cast<u32>(queueCreateInfos.size()),
             .pQueueCreateInfos = queueCreateInfos.data(),
             .enabledExtensionCount = static_cast<u32>(deviceExtensions.size()),
-            .ppEnabledExtensionNames = deviceExtensions.data()
-        };
+            .ppEnabledExtensionNames = deviceExtensions.data()};
 
         return PhysicalDevice.createDevice(deviceCreateInfo, nullptr).value;
     }
@@ -849,14 +886,39 @@ namespace Veng::Renderer
         CurrentRetireBin().Images.emplace_back(image, allocation);
     }
 
-    void Context::Native::Retire(vk::ImageView imageView) { std::lock_guard lock(RetireMutex); CurrentRetireBin().ImageViews.push_back(imageView); }
-    void Context::Native::Retire(vk::Sampler sampler) { std::lock_guard lock(RetireMutex); CurrentRetireBin().Samplers.push_back(sampler); }
-    void Context::Native::Retire(vk::ShaderModule shaderModule) { std::lock_guard lock(RetireMutex); CurrentRetireBin().ShaderModules.push_back(shaderModule); }
-    void Context::Native::Retire(vk::Pipeline pipeline) { std::lock_guard lock(RetireMutex); CurrentRetireBin().Pipelines.push_back(pipeline); }
-    void Context::Native::Retire(vk::PipelineLayout pipelineLayout) { std::lock_guard lock(RetireMutex); CurrentRetireBin().PipelineLayouts.push_back(pipelineLayout); }
-    void Context::Native::Retire(vk::DescriptorSet descriptorSet) { std::lock_guard lock(RetireMutex); CurrentRetireBin().DescriptorSets.push_back(descriptorSet); }
+    void Context::Native::Retire(vk::ImageView imageView)
+    {
+        std::lock_guard lock(RetireMutex);
+        CurrentRetireBin().ImageViews.push_back(imageView);
+    }
+    void Context::Native::Retire(vk::Sampler sampler)
+    {
+        std::lock_guard lock(RetireMutex);
+        CurrentRetireBin().Samplers.push_back(sampler);
+    }
+    void Context::Native::Retire(vk::ShaderModule shaderModule)
+    {
+        std::lock_guard lock(RetireMutex);
+        CurrentRetireBin().ShaderModules.push_back(shaderModule);
+    }
+    void Context::Native::Retire(vk::Pipeline pipeline)
+    {
+        std::lock_guard lock(RetireMutex);
+        CurrentRetireBin().Pipelines.push_back(pipeline);
+    }
+    void Context::Native::Retire(vk::PipelineLayout pipelineLayout)
+    {
+        std::lock_guard lock(RetireMutex);
+        CurrentRetireBin().PipelineLayouts.push_back(pipelineLayout);
+    }
+    void Context::Native::Retire(vk::DescriptorSet descriptorSet)
+    {
+        std::lock_guard lock(RetireMutex);
+        CurrentRetireBin().DescriptorSets.push_back(descriptorSet);
+    }
 
-    void Context::Native::RetireOnTransfer(vk::Buffer buffer, VmaAllocation allocation, u64 timelineValue)
+    void Context::Native::RetireOnTransfer(vk::Buffer buffer, VmaAllocation allocation,
+                                           u64 timelineValue)
     {
         std::lock_guard lock(RetireMutex);
         TransferRetireList.emplace_back(buffer, allocation, timelineValue);
@@ -870,16 +932,17 @@ namespace Veng::Renderer
         // RetireOnTransfer cannot append between them and be missed or double-freed.
         const u64 reached = TransferTimeline->GetValue();
 
-        std::erase_if(TransferRetireList, [this, reached](const TransferRetireEntry& entry)
-        {
-            if (entry.TimelineValue > reached)
-            {
-                return false;
-            }
+        std::erase_if(TransferRetireList,
+                      [this, reached](const TransferRetireEntry& entry)
+                      {
+                          if (entry.TimelineValue > reached)
+                          {
+                              return false;
+                          }
 
-            vmaDestroyBuffer(Allocator, entry.Buffer, entry.Allocation);
-            return true;
-        });
+                          vmaDestroyBuffer(Allocator, entry.Buffer, entry.Allocation);
+                          return true;
+                      });
     }
 
     void Context::Native::DrainRetireBin(RetireBin& bin)
@@ -890,8 +953,9 @@ namespace Veng::Renderer
         // first, then views, then the images/buffers backing them. Everything in
         // the bin is already GPU-idle.
         for (auto descriptorSet : bin.DescriptorSets)
-            VK_ASSERT(Device.freeDescriptorSets(DescriptorPool->GetVkDescriptorPool(), descriptorSet),
-                      "failed to free descriptor set!");
+            VK_ASSERT(
+                Device.freeDescriptorSets(DescriptorPool->GetVkDescriptorPool(), descriptorSet),
+                "failed to free descriptor set!");
         for (auto imageView : bin.ImageViews)
             Device.destroyImageView(imageView);
         for (auto& [image, allocation] : bin.Images)
@@ -982,8 +1046,10 @@ namespace Veng::Renderer
             return;
         }
 
-        const auto renderFinishedSemaphore = frame.GetRenderFinishedSemaphore().GetNative().Semaphore;
-        const auto imageAvailableSemaphore = frame.GetImageAvailableSemaphore().GetNative().Semaphore;
+        const auto renderFinishedSemaphore =
+            frame.GetRenderFinishedSemaphore().GetNative().Semaphore;
+        const auto imageAvailableSemaphore =
+            frame.GetImageAvailableSemaphore().GetNative().Semaphore;
 
         // The image-available binary semaphore leads the arrays; timeline waits
         // follow. Its stage must match SwapChain::AcquireWaitStage. The binary
@@ -1009,7 +1075,8 @@ namespace Veng::Renderer
             .pSignalSemaphores = &renderFinishedSemaphore,
         };
 
-        m_Native->LockedSubmit(m_Native->GraphicsQueue, submitInfo, frame.GetInFlightFence().GetNative().Fence);
+        m_Native->LockedSubmit(m_Native->GraphicsQueue, submitInfo,
+                               frame.GetInFlightFence().GetNative().Fence);
     }
 
     void Context::PresentFrame(const SynchronizationFrame& frame)
@@ -1017,7 +1084,8 @@ namespace Veng::Renderer
         // Headless: nothing to present — just advance to the next in-flight frame.
         if (m_Native->Headless)
         {
-            m_Native->CurrentFrameInFlight = (m_Native->CurrentFrameInFlight + 1) % m_Native->MaxFramesInFlight;
+            m_Native->CurrentFrameInFlight =
+                (m_Native->CurrentFrameInFlight + 1) % m_Native->MaxFramesInFlight;
             return;
         }
 
@@ -1025,13 +1093,11 @@ namespace Veng::Renderer
         auto swapChain = m_Native->SwapChain->GetVkSwapChain();
         auto imageIndex = m_Native->SwapChain->GetCurrentImageIndex();
 
-        vk::PresentInfoKHR presentInfo{
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &renderFinishedSemaphore,
-            .swapchainCount = 1,
-            .pSwapchains = &swapChain,
-            .pImageIndices = &imageIndex
-        };
+        vk::PresentInfoKHR presentInfo{.waitSemaphoreCount = 1,
+                                       .pWaitSemaphores = &renderFinishedSemaphore,
+                                       .swapchainCount = 1,
+                                       .pSwapchains = &swapChain,
+                                       .pImageIndices = &imageIndex};
 
         auto result = m_Native->PresentQueue.presentKHR(presentInfo);
 
@@ -1051,17 +1117,16 @@ namespace Veng::Renderer
             VE_ASSERT(false, "failed to present swap chain image!");
         }
 
-        m_Native->CurrentFrameInFlight = (m_Native->CurrentFrameInFlight + 1) % m_Native->MaxFramesInFlight;
+        m_Native->CurrentFrameInFlight =
+            (m_Native->CurrentFrameInFlight + 1) % m_Native->MaxFramesInFlight;
     }
 
     void Context::SubmitImmediateCommands(CommandBuffer& commandBuffer) const
     {
         const auto commandBufferHandle = commandBuffer.GetNative().CommandBuffer;
 
-        const vk::SubmitInfo submitInfo = {
-            .commandBufferCount = 1,
-            .pCommandBuffers = &commandBufferHandle
-        };
+        const vk::SubmitInfo submitInfo = {.commandBufferCount = 1,
+                                           .pCommandBuffers = &commandBufferHandle};
 
         m_Native->LockedSubmit(m_Native->GraphicsQueue, submitInfo, VK_NULL_HANDLE);
 

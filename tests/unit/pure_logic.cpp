@@ -68,8 +68,8 @@ TEST_CASE("VertexBufferLayout computes offsets, stride and float count")
     CHECK(elements[0].Offset == 0);
     CHECK(elements[1].Offset == 8);
 
-    CHECK(layout.GetStride() == 20);      // 8 + 12
-    CHECK(layout.GetFloatCount() == 5);   // 2 + 3
+    CHECK(layout.GetStride() == 20);    // 8 + 12
+    CHECK(layout.GetFloatCount() == 5); // 2 + 3
 }
 
 TEST_CASE("VertexBufferLayout single element")

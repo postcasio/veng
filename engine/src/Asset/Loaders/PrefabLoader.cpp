@@ -19,22 +19,27 @@ namespace Veng
     {
         AssetLoadError Corrupt(AssetId id, string detail)
         {
-            return AssetLoadError{.Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(detail)};
+            return AssetLoadError{
+                .Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(detail)};
         }
 
         // The AssetType an embedded AssetHandle<T> field loads as, keyed by the
         // field's leaf TypeId — the same mapping the cooker validates against.
         optional<AssetType> AssetTypeForHandleField(TypeId fieldType)
         {
-            if (fieldType == TypeIdOf<AssetHandle<Texture>>())  return AssetType::Texture;
-            if (fieldType == TypeIdOf<AssetHandle<Mesh>>())     return AssetType::Mesh;
-            if (fieldType == TypeIdOf<AssetHandle<Material>>()) return AssetType::Material;
+            if (fieldType == TypeIdOf<AssetHandle<Texture>>())
+                return AssetType::Texture;
+            if (fieldType == TypeIdOf<AssetHandle<Mesh>>())
+                return AssetType::Mesh;
+            if (fieldType == TypeIdOf<AssetHandle<Material>>())
+                return AssetType::Material;
             return std::nullopt;
         }
 
         // Load one embedded dependency by id + type, returning its cache entry.
-        AssetResult<Ref<Detail::AssetCacheEntry>> LoadDependency(
-            AssetManager& manager, AssetId parentId, AssetId depId, AssetType type, bool async)
+        AssetResult<Ref<Detail::AssetCacheEntry>> LoadDependency(AssetManager& manager,
+                                                                 AssetId parentId, AssetId depId,
+                                                                 AssetType type, bool async)
         {
             auto load = [&]<class T>() -> AssetResult<Ref<Detail::AssetCacheEntry>>
             {
@@ -44,7 +49,8 @@ namespace Veng
                     if (!AssetManager::EntryOf(handle))
                     {
                         return std::unexpected(AssetLoadError{
-                            .Kind = AssetError::MissingDependency, .Id = depId,
+                            .Kind = AssetError::MissingDependency,
+                            .Id = depId,
                             .Detail = fmt::format("prefab {}: dependency {} did not resolve",
                                                   parentId.Value, depId.Value)});
                     }
@@ -59,13 +65,17 @@ namespace Veng
 
             switch (type)
             {
-                case AssetType::Texture:  return load.operator()<Texture>();
-                case AssetType::Mesh:     return load.operator()<Mesh>();
-                case AssetType::Material: return load.operator()<Material>();
-                default:
-                    return std::unexpected(Corrupt(parentId, fmt::format(
-                        "prefab {}: embedded handle field has unsupported asset type {}",
-                        parentId.Value, static_cast<u32>(type))));
+            case AssetType::Texture:
+                return load.operator()<Texture>();
+            case AssetType::Mesh:
+                return load.operator()<Mesh>();
+            case AssetType::Material:
+                return load.operator()<Material>();
+            default:
+                return std::unexpected(Corrupt(
+                    parentId,
+                    fmt::format("prefab {}: embedded handle field has unsupported asset type {}",
+                                parentId.Value, static_cast<u32>(type))));
             }
         }
 
@@ -104,8 +114,8 @@ namespace Veng
                 }
                 else if (field.Class == FieldClass::Struct)
                 {
-                    const VoidResult nested =
-                        CollectHandleDeps(parentId, fieldPtr, registry.Info(field.Type), registry, out);
+                    const VoidResult nested = CollectHandleDeps(
+                        parentId, fieldPtr, registry.Info(field.Type), registry, out);
                     if (!nested)
                         return nested;
                 }
@@ -114,13 +124,16 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob> PrefabLoader::Load(
-        AssetManager& manager, Renderer::Context& /*context*/, TaskSystem& /*tasks*/,
-        TypeRegistry& types, AssetId id, std::span<const u8> cooked, bool async) const
+    AssetResult<Detail::LoadJob> PrefabLoader::Load(AssetManager& manager,
+                                                    Renderer::Context& /*context*/,
+                                                    TaskSystem& /*tasks*/, TypeRegistry& types,
+                                                    AssetId id, std::span<const u8> cooked,
+                                                    bool async) const
     {
         // ── 1. CookedPrefabHeader ────────────────────────────────────────────
         if (cooked.size() < sizeof(CookedPrefabHeader))
-            return std::unexpected(Corrupt(id, "prefab: cooked blob smaller than CookedPrefabHeader"));
+            return std::unexpected(
+                Corrupt(id, "prefab: cooked blob smaller than CookedPrefabHeader"));
 
         CookedPrefabHeader header;
         std::memcpy(&header, cooked.data(), sizeof(header));
@@ -128,18 +141,19 @@ namespace Veng
         // A stale/foreign blob is a recoverable load failure, not a crash.
         if (header.Version != CookedPrefabVersion)
         {
-            return std::unexpected(Corrupt(id, fmt::format(
-                "prefab: blob version {} does not match expected version {}",
-                header.Version, CookedPrefabVersion)));
+            return std::unexpected(Corrupt(
+                id, fmt::format("prefab: blob version {} does not match expected version {}",
+                                header.Version, CookedPrefabVersion)));
         }
 
-        const usize entityTableBytes = static_cast<usize>(header.EntityCount) * sizeof(CookedPrefabEntity);
+        const usize entityTableBytes =
+            static_cast<usize>(header.EntityCount) * sizeof(CookedPrefabEntity);
         const usize componentTableBytes =
             static_cast<usize>(header.ComponentCount) * sizeof(CookedPrefabComponent);
 
         usize cursor = sizeof(CookedPrefabHeader);
-        if (cooked.size() < cursor + entityTableBytes + componentTableBytes
-                + static_cast<usize>(header.RecordBytes))
+        if (cooked.size() < cursor + entityTableBytes + componentTableBytes +
+                                static_cast<usize>(header.RecordBytes))
         {
             return std::unexpected(Corrupt(id, "prefab: cooked blob truncated"));
         }
@@ -179,13 +193,13 @@ namespace Veng
                 const CookedPrefabComponent& cc = cookedComponents[ce.FirstComponent + c];
 
                 if (static_cast<usize>(cc.RecordOffset) + cc.RecordSize > header.RecordBytes)
-                    return std::unexpected(Corrupt(id, "prefab: component record range out of bounds"));
+                    return std::unexpected(
+                        Corrupt(id, "prefab: component record range out of bounds"));
 
                 Prefab::Component component;
                 component.Type = cc.TypeId;
-                component.Record.assign(
-                    records.begin() + cc.RecordOffset,
-                    records.begin() + cc.RecordOffset + cc.RecordSize);
+                component.Record.assign(records.begin() + cc.RecordOffset,
+                                        records.begin() + cc.RecordOffset + cc.RecordSize);
 
                 // Deserialize the record into a type-erased instance to walk its handle fields.
                 // Skip unregistered types — they have no handle ids to contribute here;
@@ -198,7 +212,8 @@ namespace Veng
 
                     // The untrusted-first parse: a truncated record from a corrupt
                     // cooked blob surfaces as a recoverable Corrupt load failure.
-                    const VoidResult read = ReadFields(component.Record, instance.data(), typeInfo, types);
+                    const VoidResult read =
+                        ReadFields(component.Record, instance.data(), typeInfo, types);
                     if (!read)
                     {
                         typeInfo.Destruct(instance.data());
@@ -225,7 +240,11 @@ namespace Veng
         {
             bool known = false;
             for (const u64 existing : loaded)
-                if (existing == dep.Id) { known = true; break; }
+                if (existing == dep.Id)
+                {
+                    known = true;
+                    break;
+                }
             if (known)
                 continue;
             loaded.push_back(dep.Id);

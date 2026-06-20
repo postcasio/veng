@@ -7,7 +7,6 @@
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
-
 namespace Veng::Renderer
 {
     namespace
@@ -18,18 +17,21 @@ namespace Veng::Renderer
         }
     }
 
-    DescriptorSet::Native& DescriptorSet::GetNative() const { return *m_Native; }
+    DescriptorSet::Native& DescriptorSet::GetNative() const
+    {
+        return *m_Native;
+    }
 
-    DescriptorSet::DescriptorSet(Context& context, const DescriptorSetInfo& info) : m_Context(context), m_Name(info.Name), m_Native(CreateUnique<Native>()),
-                                                                   m_Layout(info.Layout)
+    DescriptorSet::DescriptorSet(Context& context, const DescriptorSetInfo& info)
+        : m_Context(context), m_Name(info.Name), m_Native(CreateUnique<Native>()),
+          m_Layout(info.Layout)
     {
         vector<vk::DescriptorSetLayout> layouts = {info.Layout->GetNative().Layout};
 
         const vk::DescriptorSetAllocateInfo allocateInfo = {
             .descriptorPool = context.GetNative().DescriptorPool->GetVkDescriptorPool(),
             .descriptorSetCount = static_cast<u32>(layouts.size()),
-            .pSetLayouts = layouts.data()
-        };
+            .pSetLayouts = layouts.data()};
 
         m_Native->Set = GetVkDevice(m_Context).allocateDescriptorSets(allocateInfo).value[0];
 
@@ -45,8 +47,8 @@ namespace Veng::Renderer
     {
         const DescriptorType type = m_Layout->GetBindingType(binding);
         VE_ASSERT(type == DescriptorType::CombinedImageSampler,
-                  "DescriptorSet '{}': binding {} is {}, not a combined image sampler",
-                  m_Name, binding, TypeName(type));
+                  "DescriptorSet '{}': binding {} is {}, not a combined image sampler", m_Name,
+                  binding, TypeName(type));
 
         const vk::DescriptorImageInfo imageInfo{
             .sampler = sampler->GetNative().Sampler,
@@ -75,8 +77,8 @@ namespace Veng::Renderer
     {
         const DescriptorType type = m_Layout->GetBindingType(binding);
         VE_ASSERT(type == DescriptorType::SampledImage || type == DescriptorType::StorageImage,
-                  "DescriptorSet '{}': binding {} is {}, not a sampled or storage image",
-                  m_Name, binding, TypeName(type));
+                  "DescriptorSet '{}': binding {} is {}, not a sampled or storage image", m_Name,
+                  binding, TypeName(type));
 
         const vk::ImageLayout imageLayout = type == DescriptorType::StorageImage
                                                 ? vk::ImageLayout::eGeneral
@@ -105,8 +107,8 @@ namespace Veng::Renderer
     {
         const DescriptorType type = m_Layout->GetBindingType(binding);
         VE_ASSERT(type == DescriptorType::Sampler,
-                  "DescriptorSet '{}': binding {} is {}, not a plain sampler",
-                  m_Name, binding, TypeName(type));
+                  "DescriptorSet '{}': binding {} is {}, not a plain sampler", m_Name, binding,
+                  TypeName(type));
 
         const vk::DescriptorImageInfo imageInfo{
             .sampler = sampler->GetNative().Sampler,
@@ -136,7 +138,8 @@ namespace Veng::Renderer
         const DescriptorType type = m_Layout->GetBindingType(binding);
         VE_ASSERT(type == DescriptorType::UniformBuffer || type == DescriptorType::StorageBuffer ||
                       type == DescriptorType::UniformBufferDynamic,
-                  "DescriptorSet '{}': binding {} is {}, not a uniform, storage, or dynamic-uniform buffer",
+                  "DescriptorSet '{}': binding {} is {}, not a uniform, storage, or "
+                  "dynamic-uniform buffer",
                   m_Name, binding, TypeName(type));
 
         const vk::DescriptorBufferInfo bufferInfo{
@@ -164,8 +167,8 @@ namespace Veng::Renderer
     {
         const DescriptorType type = m_Layout->GetBindingType(binding);
         VE_ASSERT(type == DescriptorType::CombinedImageSampler,
-                  "DescriptorSet '{}': binding {} is {}, not a combined image sampler",
-                  m_Name, binding, TypeName(type));
+                  "DescriptorSet '{}': binding {} is {}, not a combined image sampler", m_Name,
+                  binding, TypeName(type));
 
         vector<vk::DescriptorImageInfo> imageInfos;
         imageInfos.reserve(views.size());

@@ -130,7 +130,8 @@ TEST_CASE("AssignTransientSlots: an overlapping pair needs two slots, minimally"
     CHECK(SlotCount(slots) == 2);
 }
 
-TEST_CASE("AssignTransientSlots: a write-only transient (FirstUse == LastUse) shares like any other")
+TEST_CASE(
+    "AssignTransientSlots: a write-only transient (FirstUse == LastUse) shares like any other")
 {
     // A is written but never read (e.g. a DontCare depth buffer): LastUse ==
     // FirstUse. B starts after, same key, so they still share.

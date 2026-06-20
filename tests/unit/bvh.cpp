@@ -99,9 +99,9 @@ namespace
         // the returned id multiset is precisely the input ids, no duplicate, no
         // omission — the "every leaf reachable from root exactly once" invariant.
         const vec3 size = glm::max(root.Size(), vec3(1.0f));
-        const mat4 wide = glm::ortho(root.Min.x - size.x, root.Max.x + size.x,
-                                     root.Min.y - size.y, root.Max.y + size.y,
-                                     -(root.Max.z + size.z), -(root.Min.z - size.z));
+        const mat4 wide =
+            glm::ortho(root.Min.x - size.x, root.Max.x + size.x, root.Min.y - size.y,
+                       root.Max.y + size.y, -(root.Max.z + size.z), -(root.Min.z - size.z));
         // glm::ortho maps a right-handed eye space; feeding world coords with a
         // generous z range keeps every leaf inside. The far/near are negated to
         // span the world z extent under the look-down-(-z) convention.
@@ -136,7 +136,8 @@ TEST_CASE("BVH equivalence: Query == linear tight scan over randomized builds an
     // A bank of frustums each randomized build is queried against — randomized
     // cameras looking from varied eyes at varied targets, plus axis-aligned ortho
     // and degenerate (very narrow / very wide) ones.
-    const auto MakeFrustums = [&]() {
+    const auto MakeFrustums = [&]()
+    {
         vector<Frustum> frustums;
         for (i32 i = 0; i < 12; ++i)
         {
@@ -144,11 +145,12 @@ TEST_CASE("BVH equivalence: Query == linear tight scan over randomized builds an
             const vec3 target(pos(rng), pos(rng), pos(rng));
             if (glm::distance(eye, target) < 1.0f)
                 continue; // a zero look vector is undefined; skip it
-            frustums.push_back(Frustum::FromViewProjection(MakeCameraAt(eye, target).ViewProjection()));
+            frustums.push_back(
+                Frustum::FromViewProjection(MakeCameraAt(eye, target).ViewProjection()));
         }
         // Axis-aligned ortho slab.
-        frustums.push_back(Frustum::FromViewProjection(
-            glm::ortho(-20.0f, 20.0f, -20.0f, 20.0f, 1.0f, 80.0f)));
+        frustums.push_back(
+            Frustum::FromViewProjection(glm::ortho(-20.0f, 20.0f, -20.0f, 20.0f, 1.0f, 80.0f)));
         // Degenerate: a razor-thin perspective and an enormous one.
         frustums.push_back(Frustum::FromViewProjection(
             MakeCameraAt(vec3(0.0f, 0.0f, 60.0f), vec3(0.0f)).ViewProjection()));
@@ -189,31 +191,30 @@ TEST_CASE("BVH all-in / all-out / empty / single")
         CHECK(bvh.GetRootBounds().IsEmpty());
 
         vector<u32> ids;
-        bvh.Query(Frustum::FromViewProjection(
-            glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, 0.0f, 1.0f)), ids);
+        bvh.Query(Frustum::FromViewProjection(glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, 0.0f, 1.0f)),
+                  ids);
         CHECK(ids.empty());
     }
 
     // A clustered set so a single frustum can contain or miss them all.
     vector<BVH::Leaf> leaves;
     for (i32 i = 0; i < 30; ++i)
-        leaves.push_back(BVH::Leaf{BoxAt(vec3(static_cast<f32>(i % 5),
-                                              static_cast<f32>((i / 5) % 5),
-                                              -10.0f), 0.25f),
-                                   static_cast<u32>(i)});
+        leaves.push_back(BVH::Leaf{
+            BoxAt(vec3(static_cast<f32>(i % 5), static_cast<f32>((i / 5) % 5), -10.0f), 0.25f),
+            static_cast<u32>(i)});
     BVH bvh;
     bvh.Build(leaves);
     CheckValidity(bvh, leaves);
 
     // All-in: a wide ortho swallowing the cluster returns every id.
-    const Frustum wide = Frustum::FromViewProjection(
-        glm::ortho(-100.0f, 100.0f, -100.0f, 100.0f, 1.0f, 100.0f));
+    const Frustum wide =
+        Frustum::FromViewProjection(glm::ortho(-100.0f, 100.0f, -100.0f, 100.0f, 1.0f, 100.0f));
     CHECK(SortedQuery(bvh, wide) == LinearScan(leaves, wide));
     CHECK(SortedQuery(bvh, wide).size() == leaves.size());
 
     // All-out: an ortho box far from the cluster returns nothing.
-    const Frustum elsewhere = Frustum::FromViewProjection(
-        glm::ortho(900.0f, 901.0f, 900.0f, 901.0f, 1.0f, 100.0f));
+    const Frustum elsewhere =
+        Frustum::FromViewProjection(glm::ortho(900.0f, 901.0f, 900.0f, 901.0f, 1.0f, 100.0f));
     CHECK(SortedQuery(bvh, elsewhere).empty());
 
     // Single leaf — Query matches the scan whether the box is inside the frustum
@@ -229,8 +230,8 @@ TEST_CASE("BVH all-in / all-out / empty / single")
             MakeCameraAt(vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f)).ViewProjection());
         CHECK(SortedQuery(one, hit) == LinearScan(single, hit));
 
-        const Frustum miss = Frustum::FromViewProjection(
-            glm::ortho(50.0f, 51.0f, 50.0f, 51.0f, 1.0f, 10.0f));
+        const Frustum miss =
+            Frustum::FromViewProjection(glm::ortho(50.0f, 51.0f, 50.0f, 51.0f, 1.0f, 10.0f));
         CHECK(SortedQuery(one, miss) == LinearScan(single, miss));
         CHECK(SortedQuery(one, miss).empty());
     }

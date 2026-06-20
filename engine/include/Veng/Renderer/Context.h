@@ -41,25 +41,16 @@ namespace Veng::Renderer
         ///
         /// Graphics is all a headless context needs; presentation is only required when
         /// there is a surface (see CanPresent).
-        [[nodiscard]] bool IsComplete() const
-        {
-            return GraphicsFamily.has_value();
-        }
+        [[nodiscard]] bool IsComplete() const { return GraphicsFamily.has_value(); }
 
         /// @brief Returns true when a presentation queue family is available.
-        [[nodiscard]] bool CanPresent() const
-        {
-            return PresentFamily.has_value();
-        }
+        [[nodiscard]] bool CanPresent() const { return PresentFamily.has_value(); }
 
         /// @brief Returns true when the transfer family is the graphics family.
         ///
         /// True on MoltenVK and any GPU exposing no transfer-only family. Callers key
         /// cross-queue ownership-transfer decisions off this.
-        [[nodiscard]] bool TransferIsGraphics() const
-        {
-            return TransferFamily == GraphicsFamily;
-        }
+        [[nodiscard]] bool TransferIsGraphics() const { return TransferFamily == GraphicsFamily; }
     };
 
     /// @brief Creation parameters for a render context.

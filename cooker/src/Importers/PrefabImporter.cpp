@@ -26,9 +26,12 @@ namespace Veng::Cook
         // type is none of these is an AssetHandle of an unknown asset type.
         optional<AssetType> AssetTypeForHandleField(TypeId fieldType)
         {
-            if (fieldType == TypeIdOf<AssetHandle<Texture>>())  return AssetType::Texture;
-            if (fieldType == TypeIdOf<AssetHandle<Mesh>>())     return AssetType::Mesh;
-            if (fieldType == TypeIdOf<AssetHandle<Material>>()) return AssetType::Material;
+            if (fieldType == TypeIdOf<AssetHandle<Texture>>())
+                return AssetType::Texture;
+            if (fieldType == TypeIdOf<AssetHandle<Mesh>>())
+                return AssetType::Mesh;
+            if (fieldType == TypeIdOf<AssetHandle<Material>>())
+                return AssetType::Material;
             return std::nullopt;
         }
 
@@ -37,8 +40,8 @@ namespace Veng::Cook
                        const string& typeName, const string& field, const string& reason)
         {
             return fmt::format(
-                "prefab importer: '{}': entity[{}] '{}' component '{}': field '{}': {}",
-                file, entityIndex, entityName, typeName, field, reason);
+                "prefab importer: '{}': entity[{}] '{}' component '{}': field '{}': {}", file,
+                entityIndex, entityName, typeName, field, reason);
         }
 
         // Binds one JSON value into the field at obj+field.Offset, validating it
@@ -61,184 +64,185 @@ namespace Veng::Cook
 
             switch (field.Class)
             {
-                case FieldClass::Scalar:
-                {
-                    if (!value.is_number() && !value.is_boolean())
-                        return err("expected a number or boolean");
+            case FieldClass::Scalar:
+            {
+                if (!value.is_number() && !value.is_boolean())
+                    return err("expected a number or boolean");
 
-                    // Scalars are bool/f32/i32/u32/u64; coerce to the field's
-                    // exact byte width via its leaf TypeId.
-                    const TypeId t = field.Type;
-                    if (t == TypeIdOf<bool>())
-                    {
-                        if (!value.is_boolean() && !value.is_number())
-                            return err("expected a boolean");
-                        const bool v = value.is_boolean() ? value.get<bool>() : (value.get<f64>() != 0.0);
-                        std::memcpy(fieldPtr, &v, sizeof(v));
-                    }
-                    else if (t == TypeIdOf<f32>())
-                    {
-                        const f32 v = value.get<f32>();
-                        std::memcpy(fieldPtr, &v, sizeof(v));
-                    }
-                    else if (t == TypeIdOf<i32>())
-                    {
-                        const i32 v = value.get<i32>();
-                        std::memcpy(fieldPtr, &v, sizeof(v));
-                    }
-                    else if (t == TypeIdOf<u32>())
-                    {
-                        const u32 v = value.get<u32>();
-                        std::memcpy(fieldPtr, &v, sizeof(v));
-                    }
-                    else if (t == TypeIdOf<u64>())
-                    {
-                        const u64 v = value.get<u64>();
-                        std::memcpy(fieldPtr, &v, sizeof(v));
-                    }
-                    else
-                    {
-                        return err("unsupported scalar leaf type");
-                    }
-                    return {};
+                // Scalars are bool/f32/i32/u32/u64; coerce to the field's
+                // exact byte width via its leaf TypeId.
+                const TypeId t = field.Type;
+                if (t == TypeIdOf<bool>())
+                {
+                    if (!value.is_boolean() && !value.is_number())
+                        return err("expected a boolean");
+                    const bool v =
+                        value.is_boolean() ? value.get<bool>() : (value.get<f64>() != 0.0);
+                    std::memcpy(fieldPtr, &v, sizeof(v));
+                }
+                else if (t == TypeIdOf<f32>())
+                {
+                    const f32 v = value.get<f32>();
+                    std::memcpy(fieldPtr, &v, sizeof(v));
+                }
+                else if (t == TypeIdOf<i32>())
+                {
+                    const i32 v = value.get<i32>();
+                    std::memcpy(fieldPtr, &v, sizeof(v));
+                }
+                else if (t == TypeIdOf<u32>())
+                {
+                    const u32 v = value.get<u32>();
+                    std::memcpy(fieldPtr, &v, sizeof(v));
+                }
+                else if (t == TypeIdOf<u64>())
+                {
+                    const u64 v = value.get<u64>();
+                    std::memcpy(fieldPtr, &v, sizeof(v));
+                }
+                else
+                {
+                    return err("unsupported scalar leaf type");
+                }
+                return {};
+            }
+
+            case FieldClass::Vector:
+            case FieldClass::Quaternion:
+            case FieldClass::Matrix:
+            {
+                // All components are f32 in the field type's storage order.
+                // A quat is [x,y,z,w] (glm memory layout), so identity is [0,0,0,1].
+                const usize size = registry.Info(field.Type).Size;
+                const usize arity = size / sizeof(f32);
+
+                if (!value.is_array() || value.size() != arity)
+                {
+                    return err(fmt::format("expected an array of {} numbers", arity));
                 }
 
-                case FieldClass::Vector:
-                case FieldClass::Quaternion:
-                case FieldClass::Matrix:
+                vector<f32> floats;
+                floats.reserve(arity);
+                for (const json& elem : value)
                 {
-                    // All components are f32 in the field type's storage order.
-                    // A quat is [x,y,z,w] (glm memory layout), so identity is [0,0,0,1].
-                    const usize size = registry.Info(field.Type).Size;
-                    const usize arity = size / sizeof(f32);
+                    if (!elem.is_number())
+                        return err("array contains a non-number element");
+                    floats.push_back(elem.get<f32>());
+                }
+                std::memcpy(fieldPtr, floats.data(), arity * sizeof(f32));
+                return {};
+            }
 
-                    if (!value.is_array() || value.size() != arity)
+            case FieldClass::String:
+            {
+                if (!value.is_string())
+                    return err("expected a string");
+                *static_cast<string*>(fieldPtr) = value.get<string>();
+                return {};
+            }
+
+            case FieldClass::AssetHandle:
+            {
+                if (!value.is_number_unsigned())
+                    return err("expected an unsigned integer AssetId");
+
+                const u64 id = value.get<u64>();
+
+                // An invalid (0) id is the "no asset" value — write it through.
+                if (id != 0)
+                {
+                    const optional<AssetType> expected = AssetTypeForHandleField(field.Type);
+                    const optional<ResolvedSource> resolved = resolve(AssetId{.Value = id});
+                    // Resolve only validates ids present in this pack (or a
+                    // --reference pack); a non-resident id is accepted as-is
+                    // (residency is the runtime's job).
+                    if (resolved && expected && resolved->Type != *expected)
                     {
                         return err(fmt::format(
-                            "expected an array of {} numbers", arity));
+                            "asset {} resolves to type {} but the field expects type {}", id,
+                            static_cast<u32>(resolved->Type), static_cast<u32>(*expected)));
                     }
+                }
 
-                    vector<f32> floats;
-                    floats.reserve(arity);
-                    for (const json& elem : value)
-                    {
-                        if (!elem.is_number())
-                            return err("array contains a non-number element");
-                        floats.push_back(elem.get<f32>());
-                    }
-                    std::memcpy(fieldPtr, floats.data(), arity * sizeof(f32));
+                // The handle stores the AssetId at offset 0 (pinned in
+                // AssetHandle.h); write the raw id there.
+                std::memcpy(fieldPtr, &id, sizeof(id));
+                return {};
+            }
+
+            case FieldClass::Enum:
+            {
+                if (!value.is_number_integer())
+                    return err("expected an integer enum value");
+
+                const usize size = registry.Info(field.Type).Size;
+                const i64 raw = value.get<i64>();
+                // Write the low `size` bytes of the integer (host little-endian).
+                u64 bits = static_cast<u64>(raw);
+                std::memcpy(fieldPtr, &bits, size);
+                return {};
+            }
+
+            case FieldClass::Reference:
+            {
+                Entity& entity = *static_cast<Entity*>(fieldPtr);
+
+                // A null reference (JSON null) stays Entity::Null.
+                if (value.is_null())
+                {
+                    entity = Entity::Null;
                     return {};
                 }
 
-                case FieldClass::String:
+                if (!value.is_number_unsigned())
+                    return err("expected an unsigned entity index or null");
+
+                const u64 index = value.get<u64>();
+                if (index >= entityCount)
                 {
-                    if (!value.is_string())
-                        return err("expected a string");
-                    *static_cast<string*>(fieldPtr) = value.get<string>();
-                    return {};
+                    return err(fmt::format(
+                        "entity reference index {} is out of range (prefab has {} entities)", index,
+                        entityCount));
                 }
 
-                case FieldClass::AssetHandle:
+                // The cooked reference stores the prefab-local index in Index,
+                // Generation 0; the loader remaps it to the spawned handle.
+                entity.Index = static_cast<u32>(index);
+                entity.Generation = 0;
+                return {};
+            }
+
+            case FieldClass::Struct:
+            {
+                if (!value.is_object())
+                    return err("expected an object");
+
+                const TypeInfo& nested = registry.Info(field.Type);
+                for (auto it = value.begin(); it != value.end(); ++it)
                 {
-                    if (!value.is_number_unsigned())
-                        return err("expected an unsigned integer AssetId");
-
-                    const u64 id = value.get<u64>();
-
-                    // An invalid (0) id is the "no asset" value — write it through.
-                    if (id != 0)
+                    const FieldDescriptor* match = nullptr;
+                    for (const FieldDescriptor& nestedField : nested.Fields)
                     {
-                        const optional<AssetType> expected = AssetTypeForHandleField(field.Type);
-                        const optional<ResolvedSource> resolved = resolve(AssetId{.Value = id});
-                        // Resolve only validates ids present in this pack (or a
-                        // --reference pack); a non-resident id is accepted as-is
-                        // (residency is the runtime's job).
-                        if (resolved && expected && resolved->Type != *expected)
+                        if (nestedField.Name == it.key())
                         {
-                            return err(fmt::format(
-                                "asset {} resolves to type {} but the field expects type {}",
-                                id, static_cast<u32>(resolved->Type), static_cast<u32>(*expected)));
+                            match = &nestedField;
+                            break;
                         }
                     }
-
-                    // The handle stores the AssetId at offset 0 (pinned in
-                    // AssetHandle.h); write the raw id there.
-                    std::memcpy(fieldPtr, &id, sizeof(id));
-                    return {};
-                }
-
-                case FieldClass::Enum:
-                {
-                    if (!value.is_number_integer())
-                        return err("expected an integer enum value");
-
-                    const usize size = registry.Info(field.Type).Size;
-                    const i64 raw = value.get<i64>();
-                    // Write the low `size` bytes of the integer (host little-endian).
-                    u64 bits = static_cast<u64>(raw);
-                    std::memcpy(fieldPtr, &bits, size);
-                    return {};
-                }
-
-                case FieldClass::Reference:
-                {
-                    Entity& entity = *static_cast<Entity*>(fieldPtr);
-
-                    // A null reference (JSON null) stays Entity::Null.
-                    if (value.is_null())
+                    if (match == nullptr)
                     {
-                        entity = Entity::Null;
-                        return {};
+                        return err(fmt::format("nested field '{}' is not in type '{}'", it.key(),
+                                               nested.Name));
                     }
 
-                    if (!value.is_number_unsigned())
-                        return err("expected an unsigned entity index or null");
-
-                    const u64 index = value.get<u64>();
-                    if (index >= entityCount)
-                    {
-                        return err(fmt::format(
-                            "entity reference index {} is out of range (prefab has {} entities)",
-                            index, entityCount));
-                    }
-
-                    // The cooked reference stores the prefab-local index in Index,
-                    // Generation 0; the loader remaps it to the spawned handle.
-                    entity.Index = static_cast<u32>(index);
-                    entity.Generation = 0;
-                    return {};
+                    const VoidResult bound =
+                        BindField(fieldPtr, *match, it.value(), registry, entityCount, resolve,
+                                  file, entityIndex, entityName, typeName);
+                    if (!bound)
+                        return bound;
                 }
-
-                case FieldClass::Struct:
-                {
-                    if (!value.is_object())
-                        return err("expected an object");
-
-                    const TypeInfo& nested = registry.Info(field.Type);
-                    for (auto it = value.begin(); it != value.end(); ++it)
-                    {
-                        const FieldDescriptor* match = nullptr;
-                        for (const FieldDescriptor& nestedField : nested.Fields)
-                        {
-                            if (nestedField.Name == it.key())
-                            {
-                                match = &nestedField;
-                                break;
-                            }
-                        }
-                        if (match == nullptr)
-                        {
-                            return err(fmt::format(
-                                "nested field '{}' is not in type '{}'", it.key(), nested.Name));
-                        }
-
-                        const VoidResult bound = BindField(fieldPtr, *match, it.value(),
-                            registry, entityCount, resolve, file, entityIndex, entityName, typeName);
-                        if (!bound)
-                            return bound;
-                    }
-                    return {};
-                }
+                return {};
+            }
             }
 
             return err("unhandled field class");
@@ -280,18 +284,17 @@ namespace Veng::Cook
             return std::unexpected(fmt::format("prefab importer: '{}': invalid JSON", file));
 
         if (!prefab.contains("entities") || !prefab["entities"].is_array())
-            return std::unexpected(fmt::format(
-                "prefab importer: '{}': missing or invalid 'entities' array", file));
+            return std::unexpected(
+                fmt::format("prefab importer: '{}': missing or invalid 'entities' array", file));
 
         const json& entities = prefab["entities"];
         const usize entityCount = entities.size();
 
         // Resolve closure (may be unset for a pack with no resolvable references).
         const function<optional<ResolvedSource>(AssetId)> resolve =
-            context.Resolve
-                ? context.Resolve
-                : function<optional<ResolvedSource>(AssetId)>(
-                      [](AssetId) -> optional<ResolvedSource> { return std::nullopt; });
+            context.Resolve ? context.Resolve
+                            : function<optional<ResolvedSource>(AssetId)>(
+                                  [](AssetId) -> optional<ResolvedSource> { return std::nullopt; });
 
         // --- 2. Cook each entity's components ---
 
@@ -361,8 +364,8 @@ namespace Veng::Cook
                     if (!found)
                     {
                         return std::unexpected(fmt::format(
-                            "prefab importer: '{}': entity[{}] '{}': unknown component '{}'",
-                            file, entityIndex, entityName, key));
+                            "prefab importer: '{}': entity[{}] '{}': unknown component '{}'", file,
+                            entityIndex, entityName, key));
                     }
 
                     const TypeInfo& typeInfo = registry.Info(typeId);
@@ -371,10 +374,10 @@ namespace Veng::Cook
 
                     if (!fieldsJson.is_object())
                     {
-                        return std::unexpected(fmt::format(
-                            "prefab importer: '{}': entity[{}] '{}' component '{}': "
-                            "value must be an object of fields",
-                            file, entityIndex, entityName, typeName));
+                        return std::unexpected(
+                            fmt::format("prefab importer: '{}': entity[{}] '{}' component '{}': "
+                                        "value must be an object of fields",
+                                        file, entityIndex, entityName, typeName));
                     }
 
                     // --- 2b. Default-construct a type-erased instance ---
@@ -396,13 +399,15 @@ namespace Veng::Cook
                         }
                         if (match == nullptr)
                         {
-                            bindResult = std::unexpected(Located(file, entityIndex, entityName,
-                                typeName, fieldIt.key(), "field is not in the component's descriptor"));
+                            bindResult = std::unexpected(
+                                Located(file, entityIndex, entityName, typeName, fieldIt.key(),
+                                        "field is not in the component's descriptor"));
                             break;
                         }
 
-                        bindResult = BindField(instance.data(), *match, fieldIt.value(),
-                            registry, entityCount, resolve, file, entityIndex, entityName, typeName);
+                        bindResult = BindField(instance.data(), *match, fieldIt.value(), registry,
+                                               entityCount, resolve, file, entityIndex, entityName,
+                                               typeName);
                         if (!bindResult)
                             break;
                     }
@@ -439,10 +444,8 @@ namespace Veng::Cook
         header.RecordBytes = static_cast<u32>(records.size());
 
         vector<u8> blob;
-        blob.reserve(sizeof(CookedPrefabHeader)
-            + entityTable.size() * sizeof(CookedPrefabEntity)
-            + componentTable.size() * sizeof(CookedPrefabComponent)
-            + records.size());
+        blob.reserve(sizeof(CookedPrefabHeader) + entityTable.size() * sizeof(CookedPrefabEntity) +
+                     componentTable.size() * sizeof(CookedPrefabComponent) + records.size());
 
         Append(blob, header);
         for (const CookedPrefabEntity& e : entityTable)

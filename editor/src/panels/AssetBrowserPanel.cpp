@@ -15,20 +15,27 @@ namespace VengEditor
         {
             switch (type)
             {
-            case AssetType::Raw: return "Raw";
-            case AssetType::Texture: return "Texture";
-            case AssetType::Mesh: return "Mesh";
-            case AssetType::Shader: return "Shader";
-            case AssetType::Material: return "Material";
-            case AssetType::VertexLayout: return "VertexLayout";
-            case AssetType::Prefab: return "Prefab";
+            case AssetType::Raw:
+                return "Raw";
+            case AssetType::Texture:
+                return "Texture";
+            case AssetType::Mesh:
+                return "Mesh";
+            case AssetType::Shader:
+                return "Shader";
+            case AssetType::Material:
+                return "Material";
+            case AssetType::VertexLayout:
+                return "VertexLayout";
+            case AssetType::Prefab:
+                return "Prefab";
             }
             return "Unknown";
         }
     }
 
-    AssetBrowserPanel::AssetBrowserPanel(path packPath, PanelHost& host) :
-        m_PackPath(std::move(packPath)), m_Host(host)
+    AssetBrowserPanel::AssetBrowserPanel(path packPath, PanelHost& host)
+        : m_PackPath(std::move(packPath)), m_Host(host)
     {
     }
 
@@ -60,8 +67,8 @@ namespace VengEditor
             for (const Asset& asset : m_Assets)
             {
                 const bool selected = m_Selected && m_Selected->Value == asset.Id.Value;
-                const string label = fmt::format("0x{:X}  {}  {}",
-                                                 asset.Id.Value, TypeName(asset.Type), asset.Size);
+                const string label =
+                    fmt::format("0x{:X}  {}  {}", asset.Id.Value, TypeName(asset.Type), asset.Size);
 
                 if (UI::Selectable(label, selected))
                 {

@@ -35,17 +35,19 @@ namespace
     // Allocates a single-binding layout + set of `type` and writes `write` into
     // binding 0. Returns the set so it stays alive for the caller's scope.
     template <typename Write>
-    Ref<DescriptorSet> WriteSingleBinding(Context& context, string_view name, DescriptorType type, ShaderStage stages, Write&& write)
+    Ref<DescriptorSet> WriteSingleBinding(Context& context, string_view name, DescriptorType type,
+                                          ShaderStage stages, Write&& write)
     {
-        auto layout = DescriptorSetLayout::Create(context, {
-            .Name = string(name) + " Layout",
-            .Bindings = {{.Binding = 0, .Type = type, .Count = 1, .Stages = stages}},
-        });
+        auto layout = DescriptorSetLayout::Create(
+            context, {
+                         .Name = string(name) + " Layout",
+                         .Bindings = {{.Binding = 0, .Type = type, .Count = 1, .Stages = stages}},
+                     });
 
         auto set = DescriptorSet::Create(context, {
-            .Name = string(name) + " Set",
-            .Layout = layout,
-        });
+                                                      .Name = string(name) + " Set",
+                                                      .Layout = layout,
+                                                  });
 
         write(set);
 
@@ -56,74 +58,70 @@ namespace
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "descriptor write paths: all Write overloads succeed")
 {
     auto sampledImage = Image::Create(Context, {
-        .Name = "Sampled Image",
-        .Extent = {Size, Size, 1},
-        .Format = Format::RGBA8Unorm,
-        .Usage = ImageUsage::Sampled,
-    });
-    auto sampledView = ImageView::Create(Context, {.Name = "Sampled Image View", .Image = sampledImage});
+                                                   .Name = "Sampled Image",
+                                                   .Extent = {Size, Size, 1},
+                                                   .Format = Format::RGBA8Unorm,
+                                                   .Usage = ImageUsage::Sampled,
+                                               });
+    auto sampledView =
+        ImageView::Create(Context, {.Name = "Sampled Image View", .Image = sampledImage});
 
     auto storageImage = Image::Create(Context, {
-        .Name = "Storage Image",
-        .Extent = {Size, Size, 1},
-        .Format = Format::RGBA8Unorm,
-        .Usage = ImageUsage::Storage,
-    });
-    auto storageView = ImageView::Create(Context, {.Name = "Storage Image View", .Image = storageImage});
+                                                   .Name = "Storage Image",
+                                                   .Extent = {Size, Size, 1},
+                                                   .Format = Format::RGBA8Unorm,
+                                                   .Usage = ImageUsage::Storage,
+                                               });
+    auto storageView =
+        ImageView::Create(Context, {.Name = "Storage Image View", .Image = storageImage});
 
     auto sampler = Sampler::Create(Context, {
-        .Name = "Descriptor Test Sampler",
-        .AddressModeU = AddressMode::ClampToEdge,
-        .AddressModeV = AddressMode::ClampToEdge,
-        .AddressModeW = AddressMode::ClampToEdge,
-    });
+                                                .Name = "Descriptor Test Sampler",
+                                                .AddressModeU = AddressMode::ClampToEdge,
+                                                .AddressModeV = AddressMode::ClampToEdge,
+                                                .AddressModeW = AddressMode::ClampToEdge,
+                                            });
 
-    auto uniformBuffer = Buffer::Create(Context, {
-        .Name = "Uniform Buffer",
-        .Size = 64,
-        .Usage = BufferUsage::Uniform | BufferUsage::TransferDst,
-    });
+    auto uniformBuffer =
+        Buffer::Create(Context, {
+                                    .Name = "Uniform Buffer",
+                                    .Size = 64,
+                                    .Usage = BufferUsage::Uniform | BufferUsage::TransferDst,
+                                });
 
-    auto storageBuffer = Buffer::Create(Context, {
-        .Name = "Storage Buffer",
-        .Size = 256,
-        .Usage = BufferUsage::Storage | BufferUsage::TransferDst,
-    });
+    auto storageBuffer =
+        Buffer::Create(Context, {
+                                    .Name = "Storage Buffer",
+                                    .Size = 256,
+                                    .Usage = BufferUsage::Storage | BufferUsage::TransferDst,
+                                });
 
     // CombinedImageSampler
-    auto combinedSet = WriteSingleBinding(Context, "Combined Image Sampler", DescriptorType::CombinedImageSampler,
-        ShaderStage::Fragment, [&](const Ref<DescriptorSet>& set)
-        {
-            set->Write(0, sampledView, sampler);
-        });
+    auto combinedSet =
+        WriteSingleBinding(Context, "Combined Image Sampler", DescriptorType::CombinedImageSampler,
+                           ShaderStage::Fragment, [&](const Ref<DescriptorSet>& set)
+                           { set->Write(0, sampledView, sampler); });
 
     // SampledImage
     auto sampledSet = WriteSingleBinding(Context, "Sampled Image", DescriptorType::SampledImage,
-        ShaderStage::Fragment, [&](const Ref<DescriptorSet>& set)
-        {
-            set->Write(0, sampledView);
-        });
+                                         ShaderStage::Fragment, [&](const Ref<DescriptorSet>& set)
+                                         { set->Write(0, sampledView); });
 
     // StorageImage
-    auto storageImageSet = WriteSingleBinding(Context, "Storage Image", DescriptorType::StorageImage,
-        ShaderStage::Compute, [&](const Ref<DescriptorSet>& set)
-        {
-            set->Write(0, storageView);
-        });
+    auto storageImageSet = WriteSingleBinding(
+        Context, "Storage Image", DescriptorType::StorageImage, ShaderStage::Compute,
+        [&](const Ref<DescriptorSet>& set) { set->Write(0, storageView); });
 
     // UniformBuffer
-    auto uniformSet = WriteSingleBinding(Context, "Uniform Buffer", DescriptorType::UniformBuffer,
-        ShaderStage::Vertex | ShaderStage::Fragment, [&](const Ref<DescriptorSet>& set)
-        {
-            set->Write(0, uniformBuffer);
-        });
+    auto uniformSet =
+        WriteSingleBinding(Context, "Uniform Buffer", DescriptorType::UniformBuffer,
+                           ShaderStage::Vertex | ShaderStage::Fragment,
+                           [&](const Ref<DescriptorSet>& set) { set->Write(0, uniformBuffer); });
 
     // StorageBuffer
-    auto storageBufferSet = WriteSingleBinding(Context, "Storage Buffer", DescriptorType::StorageBuffer,
-        ShaderStage::Compute, [&](const Ref<DescriptorSet>& set)
-        {
-            set->Write(0, storageBuffer);
-        });
+    auto storageBufferSet = WriteSingleBinding(
+        Context, "Storage Buffer", DescriptorType::StorageBuffer, ShaderStage::Compute,
+        [&](const Ref<DescriptorSet>& set) { set->Write(0, storageBuffer); });
 
     // Reaching here without an abort means every Write overload succeeded.
     CHECK(combinedSet != nullptr);

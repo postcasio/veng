@@ -58,18 +58,20 @@ namespace Veng::Cook
 
         std::ifstream sourceFile(sourcePath, std::ios::binary);
         if (!sourceFile)
-            return std::unexpected(fmt::format("texture importer: failed to open '{}'", sourcePath.string()));
+            return std::unexpected(
+                fmt::format("texture importer: failed to open '{}'", sourcePath.string()));
 
         std::ostringstream contentStream;
         contentStream << sourceFile.rdbuf();
         const json texJson = json::parse(contentStream.str(), nullptr, false);
         if (texJson.is_discarded() || !texJson.is_object())
-            return std::unexpected(fmt::format("texture importer: '{}': invalid JSON", sourcePath.string()));
+            return std::unexpected(
+                fmt::format("texture importer: '{}': invalid JSON", sourcePath.string()));
 
         if (!texJson.contains("image") || !texJson["image"].is_string())
         {
-            return std::unexpected(fmt::format(
-                "texture importer: '{}': missing or invalid 'image'", sourcePath.string()));
+            return std::unexpected(fmt::format("texture importer: '{}': missing or invalid 'image'",
+                                               sourcePath.string()));
         }
 
         if (texJson.contains("generate_mips") && texJson["generate_mips"].is_boolean() &&
@@ -80,7 +82,8 @@ namespace Veng::Cook
                 sourcePath.string()));
         }
 
-        const bool srgb = texJson.contains("srgb") && texJson["srgb"].is_boolean() && texJson["srgb"].get<bool>();
+        const bool srgb =
+            texJson.contains("srgb") && texJson["srgb"].is_boolean() && texJson["srgb"].get<bool>();
 
         const path imagePath = sourcePath.parent_path() / texJson["image"].get<string>();
         context.RecordDependency(imagePath);
@@ -91,8 +94,9 @@ namespace Veng::Cook
         stbi_uc* pixels = stbi_load(imagePath.string().c_str(), &width, &height, &channels, 4);
         if (!pixels)
         {
-            return std::unexpected(fmt::format("texture importer: '{}': failed to load image '{}': {}",
-                sourcePath.string(), imagePath.string(), stbi_failure_reason()));
+            return std::unexpected(
+                fmt::format("texture importer: '{}': failed to load image '{}': {}",
+                            sourcePath.string(), imagePath.string(), stbi_failure_reason()));
         }
 
         const usize pixelBytes = static_cast<usize>(width) * static_cast<usize>(height) * 4;
@@ -108,12 +112,12 @@ namespace Veng::Cook
 
         // Sampler defaults mirror Veng::Renderer::SamplerInfo's defaults
         // (Renderer/Sampler.h).
-        header.MinFilter = 1;       // Linear
-        header.MagFilter = 1;       // Linear
-        header.MipmapMode = 1;      // Linear
-        header.AddressModeU = 0;    // Repeat
-        header.AddressModeV = 0;    // Repeat
-        header.AddressModeW = 0;    // Repeat
+        header.MinFilter = 1;    // Linear
+        header.MagFilter = 1;    // Linear
+        header.MipmapMode = 1;   // Linear
+        header.AddressModeU = 0; // Repeat
+        header.AddressModeV = 0; // Repeat
+        header.AddressModeW = 0; // Repeat
         header.AnisotropyEnabled = 1;
         header.MaxAnisotropy = 8.0f;
 
@@ -132,8 +136,9 @@ namespace Veng::Cook
                 const optional<u32> parsed = parser(value);
                 if (!parsed)
                 {
-                    return std::unexpected(fmt::format(
-                        "texture importer: '{}': invalid sampler.{} '{}'", sourcePath.string(), key, value));
+                    return std::unexpected(
+                        fmt::format("texture importer: '{}': invalid sampler.{} '{}'",
+                                    sourcePath.string(), key, value));
                 }
 
                 return *parsed;

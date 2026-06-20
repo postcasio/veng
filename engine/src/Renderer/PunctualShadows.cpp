@@ -68,13 +68,11 @@ namespace Veng::Renderer
         // construction, so the six fixed faces cover every direction with no
         // near-vertical degeneracy and need no stable-up swap.
         constexpr std::array<vec3, CubeFaceCount> Forwards = {
-            vec3(1.0f, 0.0f, 0.0f), vec3(-1.0f, 0.0f, 0.0f),
-            vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f),
-            vec3(0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, -1.0f)};
+            vec3(1.0f, 0.0f, 0.0f),  vec3(-1.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f),
+            vec3(0.0f, -1.0f, 0.0f), vec3(0.0f, 0.0f, 1.0f),  vec3(0.0f, 0.0f, -1.0f)};
         constexpr std::array<vec3, CubeFaceCount> Ups = {
-            vec3(0.0f, -1.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f),
-            vec3(0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, -1.0f),
-            vec3(0.0f, -1.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f)};
+            vec3(0.0f, -1.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f), vec3(0.0f, 0.0f, 1.0f),
+            vec3(0.0f, 0.0f, -1.0f), vec3(0.0f, -1.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f)};
 
         mat4 proj = glm::perspectiveZO(std::numbers::pi_v<f32> / 2.0f, 1.0f, near, far);
         proj[1][1] *= -1.0f; // Vulkan clip space has Y pointing down.

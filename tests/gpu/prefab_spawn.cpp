@@ -42,7 +42,7 @@ namespace
 }
 
 VE_REFLECT(Link, 0x7A9C1E55B0334401ULL)
-    VE_FIELD(Target)
+VE_FIELD(Target)
 VE_REFLECT_END();
 
 namespace
@@ -97,8 +97,8 @@ TEST_CASE_FIXTURE(PrefabFixture, "Roots are entities with no in-prefab Parent, i
     // idx 0 root "a", idx 1 child of 0 "b", idx 2 root "c".
     vector<Prefab::PrefabEntity> entities;
     entities.push_back({{MakeComponent(Types, Name{"a"})}});
-    entities.push_back({{MakeComponent(Types, Name{"b"}),
-                         MakeComponent(Types, Parent{Entity{0, 0}})}});
+    entities.push_back(
+        {{MakeComponent(Types, Name{"b"}), MakeComponent(Types, Parent{Entity{0, 0}})}});
     entities.push_back({{MakeComponent(Types, Name{"c"})}});
 
     const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
@@ -122,7 +122,8 @@ TEST_CASE_FIXTURE(PrefabFixture, "Roots are entities with no in-prefab Parent, i
     CHECK(sawChild);
 }
 
-TEST_CASE_FIXTURE(PrefabFixture, "Intra-prefab entity references remap to the freshly spawned handles")
+TEST_CASE_FIXTURE(PrefabFixture,
+                  "Intra-prefab entity references remap to the freshly spawned handles")
 {
     // idx 0 links to idx 1; both are roots (no Parent), returned in order.
     vector<Prefab::PrefabEntity> entities;
@@ -216,8 +217,8 @@ namespace
         // The malformed record: recordCount=1, then a field name length of 64 with
         // no name bytes following — ReadFieldsInner's "truncated field name" guard.
         vector<u8> record;
-        PushU32(record, 1);   // one field record
-        PushU32(record, 64);  // name length far past the record's end
+        PushU32(record, 1);  // one field record
+        PushU32(record, 64); // name length far past the record's end
 
         CookedPrefabHeader header;
         header.Version = CookedPrefabVersion;
@@ -226,9 +227,9 @@ namespace
         header.RecordBytes = static_cast<u32>(record.size());
 
         const CookedPrefabEntity entity{.FirstComponent = 0, .ComponentCount = 1};
-        const CookedPrefabComponent component{
-            .TypeId = componentTypeId, .RecordOffset = 0,
-            .RecordSize = static_cast<u32>(record.size())};
+        const CookedPrefabComponent component{.TypeId = componentTypeId,
+                                              .RecordOffset = 0,
+                                              .RecordSize = static_cast<u32>(record.size())};
 
         vector<u8> blob;
         PushPod(blob, header);
@@ -239,7 +240,8 @@ namespace
     }
 }
 
-TEST_CASE_FIXTURE(PrefabFixture, "A truncated cooked prefab record loads as AssetError::Corrupt, not an abort")
+TEST_CASE_FIXTURE(PrefabFixture,
+                  "A truncated cooked prefab record loads as AssetError::Corrupt, not an abort")
 {
     const AssetId prefabId{0x5111A2C033B47ED9ULL};
 

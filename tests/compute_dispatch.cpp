@@ -76,70 +76,84 @@ int main()
         const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
         VE_ASSERT(mountResult, "mount test shader pack: {}", mountResult.error());
 
-        auto sourceImage = Image::Create(context, {
-            .Name = "Compute Source",
-            .Extent = {size, size, 1},
-            .Format = Format::RGBA8Unorm,
-            .Usage = ImageUsage::ColorAttachment | ImageUsage::Storage,
-        });
+        auto sourceImage =
+            Image::Create(context, {
+                                       .Name = "Compute Source",
+                                       .Extent = {size, size, 1},
+                                       .Format = Format::RGBA8Unorm,
+                                       .Usage = ImageUsage::ColorAttachment | ImageUsage::Storage,
+                                   });
 
         auto sourceView = ImageView::Create(context, {
-            .Name = "Compute Source View",
-            .Image = sourceImage,
-        });
+                                                         .Name = "Compute Source View",
+                                                         .Image = sourceImage,
+                                                     });
 
-        auto derivedImage = Image::Create(context, {
-            .Name = "Compute Derived",
-            .Extent = {size, size, 1},
-            .Format = Format::RGBA8Unorm,
-            .Usage = ImageUsage::Storage | ImageUsage::Sampled,
-        });
+        auto derivedImage =
+            Image::Create(context, {
+                                       .Name = "Compute Derived",
+                                       .Extent = {size, size, 1},
+                                       .Format = Format::RGBA8Unorm,
+                                       .Usage = ImageUsage::Storage | ImageUsage::Sampled,
+                                   });
 
         auto derivedView = ImageView::Create(context, {
-            .Name = "Compute Derived View",
-            .Image = derivedImage,
-        });
+                                                          .Name = "Compute Derived View",
+                                                          .Image = derivedImage,
+                                                      });
 
-        auto outputImage = Image::Create(context, {
-            .Name = "Compute Output",
-            .Extent = {size, size, 1},
-            .Format = Format::RGBA8Unorm,
-            .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
-        });
+        auto outputImage = Image::Create(
+            context, {
+                         .Name = "Compute Output",
+                         .Extent = {size, size, 1},
+                         .Format = Format::RGBA8Unorm,
+                         .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                     });
 
         auto outputView = ImageView::Create(context, {
-            .Name = "Compute Output View",
-            .Image = outputImage,
-        });
+                                                         .Name = "Compute Output View",
+                                                         .Image = outputImage,
+                                                     });
 
         // --- Compute pipeline: reads `source`, writes `derived`. ---
 
         const auto computeShaderAsset = assets.LoadSync<Shader>(AssetId{0x1F41});
         VE_ASSERT(computeShaderAsset, "load invert.comp: {}", computeShaderAsset.error().Detail);
 
-        auto computeSetLayout = DescriptorSetLayout::Create(context, {
-            .Name = "Compute Set Layout",
-            .Bindings = {
-                {.Binding = 0, .Type = DescriptorType::StorageImage, .Count = 1, .Stages = ShaderStage::Compute},
-                {.Binding = 1, .Type = DescriptorType::StorageImage, .Count = 1, .Stages = ShaderStage::Compute},
-            },
-        });
+        auto computeSetLayout =
+            DescriptorSetLayout::Create(context, {
+                                                     .Name = "Compute Set Layout",
+                                                     .Bindings =
+                                                         {
+                                                             {.Binding = 0,
+                                                              .Type = DescriptorType::StorageImage,
+                                                              .Count = 1,
+                                                              .Stages = ShaderStage::Compute},
+                                                             {.Binding = 1,
+                                                              .Type = DescriptorType::StorageImage,
+                                                              .Count = 1,
+                                                              .Stages = ShaderStage::Compute},
+                                                         },
+                                                 });
 
-        auto computeLayout = PipelineLayout::Create(context, {
-            .Name = "Compute Layout",
-            .DescriptorSetLayouts = {computeSetLayout},
-        });
+        auto computeLayout =
+            PipelineLayout::Create(context, {
+                                                .Name = "Compute Layout",
+                                                .DescriptorSetLayouts = {computeSetLayout},
+                                            });
 
-        auto computePipeline = ComputePipeline::Create(context, {
-            .Name = "Invert Pipeline",
-            .PipelineLayout = computeLayout,
-            .ShaderStage = {.Stage = ShaderStage::Compute, .Module = computeShaderAsset->Get()->Module},
-        });
+        auto computePipeline = ComputePipeline::Create(
+            context, {
+                         .Name = "Invert Pipeline",
+                         .PipelineLayout = computeLayout,
+                         .ShaderStage = {.Stage = ShaderStage::Compute,
+                                         .Module = computeShaderAsset->Get()->Module},
+                     });
 
         auto computeSet = DescriptorSet::Create(context, {
-            .Name = "Compute Set",
-            .Layout = computeSetLayout,
-        });
+                                                             .Name = "Compute Set",
+                                                             .Layout = computeSetLayout,
+                                                         });
 
         computeSet->Write(0, sourceView);
         computeSet->Write(1, derivedView);
@@ -152,101 +166,116 @@ int main()
         const auto fragmentShaderAsset = assets.LoadSync<Shader>(AssetId{0x1F43});
         VE_ASSERT(fragmentShaderAsset, "load sample.frag: {}", fragmentShaderAsset.error().Detail);
 
-        auto sampleSetLayout = DescriptorSetLayout::Create(context, {
-            .Name = "Sample Set Layout",
-            .Bindings = {
-                {.Binding = 0, .Type = DescriptorType::CombinedImageSampler, .Count = 1, .Stages = ShaderStage::Fragment},
-            },
-        });
+        auto sampleSetLayout = DescriptorSetLayout::Create(
+            context, {
+                         .Name = "Sample Set Layout",
+                         .Bindings =
+                             {
+                                 {.Binding = 0,
+                                  .Type = DescriptorType::CombinedImageSampler,
+                                  .Count = 1,
+                                  .Stages = ShaderStage::Fragment},
+                             },
+                     });
 
-        auto sampleLayout = PipelineLayout::Create(context, {
-            .Name = "Sample Layout",
-            .DescriptorSetLayouts = {sampleSetLayout},
-        });
+        auto sampleLayout =
+            PipelineLayout::Create(context, {
+                                                .Name = "Sample Layout",
+                                                .DescriptorSetLayouts = {sampleSetLayout},
+                                            });
 
-        auto samplePipeline = GraphicsPipeline::Create(context, {
-            .Name = "Sample Pipeline",
-            .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
-            .PipelineLayout = sampleLayout,
-            .ShaderStages = {
-                {.Stage = ShaderStage::Vertex, .Module = vertexShaderAsset->Get()->Module},
-                {.Stage = ShaderStage::Fragment, .Module = fragmentShaderAsset->Get()->Module},
-            },
-        });
+        auto samplePipeline = GraphicsPipeline::Create(
+            context,
+            {
+                .Name = "Sample Pipeline",
+                .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
+                .PipelineLayout = sampleLayout,
+                .ShaderStages =
+                    {
+                        {.Stage = ShaderStage::Vertex, .Module = vertexShaderAsset->Get()->Module},
+                        {.Stage = ShaderStage::Fragment,
+                         .Module = fragmentShaderAsset->Get()->Module},
+                    },
+            });
 
         auto sampler = Sampler::Create(context, {
-            .Name = "Compute Test Sampler",
-            .AddressModeU = AddressMode::ClampToEdge,
-            .AddressModeV = AddressMode::ClampToEdge,
-            .AddressModeW = AddressMode::ClampToEdge,
-        });
+                                                    .Name = "Compute Test Sampler",
+                                                    .AddressModeU = AddressMode::ClampToEdge,
+                                                    .AddressModeV = AddressMode::ClampToEdge,
+                                                    .AddressModeW = AddressMode::ClampToEdge,
+                                                });
 
         auto sampleSet = DescriptorSet::Create(context, {
-            .Name = "Sample Set",
-            .Layout = sampleSetLayout,
-        });
+                                                            .Name = "Sample Set",
+                                                            .Layout = sampleSetLayout,
+                                                        });
 
         sampleSet->Write(0, derivedView, sampler);
 
         // --- The three-pass graph. ---
 
-        context.ImmediateCommands([&](CommandBuffer& cmd)
-        {
-            RenderGraph graph(context);
+        context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                RenderGraph graph(context);
 
-            const ResourceId sourceId = graph.Import("Source");
-            const ResourceId derivedId = graph.Import("Derived");
-            const ResourceId outputId = graph.Import("Output");
+                const ResourceId sourceId = graph.Import("Source");
+                const ResourceId derivedId = graph.Import("Derived");
+                const ResourceId outputId = graph.Import("Output");
 
-            graph.AddPass("Clear Source")
-                .Color({
-                    .Resource = sourceId,
-                    .Load = LoadOp::Clear,
-                    .Store = StoreOp::Store,
-                    .Clear = ClearColor{0.2f, 0.4f, 0.6f, 1.0f},
-                })
-                .Execute([](PassContext&) {});
+                graph.AddPass("Clear Source")
+                    .Color({
+                        .Resource = sourceId,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{0.2f, 0.4f, 0.6f, 1.0f},
+                    })
+                    .Execute([](PassContext&) {});
 
-            graph.AddComputePass("Invert")
-                .StorageRead(sourceId)
-                .StorageWrite(derivedId)
-                .Execute([&](PassContext& ctx)
-                {
-                    CommandBuffer& cmd = ctx.Cmd();
-                    cmd.BindPipeline(computePipeline);
-                    cmd.BindDescriptorSets({
-                        .Sets = {computeSet},
-                        .FirstSet = 1, // set 0 is reserved for the bindless registry
-                        .PipelineBindPoint = PipelineBindPoint::Compute,
-                    });
-                    cmd.Dispatch(size, size, 1);
-                });
+                graph.AddComputePass("Invert")
+                    .StorageRead(sourceId)
+                    .StorageWrite(derivedId)
+                    .Execute(
+                        [&](PassContext& ctx)
+                        {
+                            CommandBuffer& cmd = ctx.Cmd();
+                            cmd.BindPipeline(computePipeline);
+                            cmd.BindDescriptorSets({
+                                .Sets = {computeSet},
+                                .FirstSet = 1, // set 0 is reserved for the bindless registry
+                                .PipelineBindPoint = PipelineBindPoint::Compute,
+                            });
+                            cmd.Dispatch(size, size, 1);
+                        });
 
-            graph.AddPass("Sample Derived")
-                .Color({
-                    .Resource = outputId,
-                    .Load = LoadOp::Clear,
-                    .Store = StoreOp::Store,
-                    .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
-                })
-                .Sample(derivedId)
-                .Execute([&](PassContext& ctx)
-                {
-                    CommandBuffer& cmd = ctx.Cmd();
-                    cmd.BindPipeline(samplePipeline);
-                    cmd.SetViewport({0, 0}, {size, size});
-                    cmd.SetScissor({0, 0}, {size, size});
-                    cmd.BindDescriptorSets({.Sets = {sampleSet}, .FirstSet = 1}); // set 0 is reserved for the bindless registry
-                    cmd.DrawFullscreenTriangle();
-                });
+                graph.AddPass("Sample Derived")
+                    .Color({
+                        .Resource = outputId,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                    })
+                    .Sample(derivedId)
+                    .Execute(
+                        [&](PassContext& ctx)
+                        {
+                            CommandBuffer& cmd = ctx.Cmd();
+                            cmd.BindPipeline(samplePipeline);
+                            cmd.SetViewport({0, 0}, {size, size});
+                            cmd.SetScissor({0, 0}, {size, size});
+                            cmd.BindDescriptorSets(
+                                {.Sets = {sampleSet},
+                                 .FirstSet = 1}); // set 0 is reserved for the bindless registry
+                            cmd.DrawFullscreenTriangle();
+                        });
 
-            const RenderGraph::ImportBinding bindings[] = {
-                {sourceId, sourceView},
-                {derivedId, derivedView},
-                {outputId, outputView},
-            };
-            graph.Compile()->Execute(cmd, bindings);
-        });
+                const RenderGraph::ImportBinding bindings[] = {
+                    {sourceId, sourceView},
+                    {derivedId, derivedView},
+                    {outputId, outputView},
+                };
+                graph.Compile()->Execute(cmd, bindings);
+            });
 
         const vector<u8> pixels = outputImage->Download();
 

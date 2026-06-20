@@ -60,7 +60,12 @@ TEST_CASE("Leaf TypeIds and FieldClasses are stable and correct")
 
 namespace
 {
-    enum class Team : u32 { Red = 1, Blue = 7, Green = 42 };
+    enum class Team : u32
+    {
+        Red = 1,
+        Blue = 7,
+        Green = 42
+    };
 
     struct Inner
     {
@@ -110,35 +115,35 @@ namespace
 VE_LEAF(Team, 0x11AA22BB33CC44DDULL, Veng::FieldClass::Enum);
 
 VE_REFLECT(Inner, 0x7700110022003300ULL)
-    VE_FIELD(A, .DisplayName = "Amplitude")
-    VE_FIELD(B)
+VE_FIELD(A, .DisplayName = "Amplitude")
+VE_FIELD(B)
 VE_REFLECT_END();
 
 VE_REFLECT(Outer, 0x7700110022003301ULL)
-    VE_FIELD(Nested)
-    VE_FIELD(Offset, .DisplayName = "Offset")
+VE_FIELD(Nested)
+VE_FIELD(Offset, .DisplayName = "Offset")
 VE_REFLECT_END();
 
 VE_REFLECT(WithAsset, 0x7700110022003302ULL)
-    VE_FIELD(Mesh)
+VE_FIELD(Mesh)
 VE_REFLECT_END();
 
 VE_REFLECT(WithEnum, 0x7700110022003303ULL)
-    VE_FIELD(Side)
+VE_FIELD(Side)
 VE_REFLECT_END();
 
 VE_REFLECT(WithReference, 0x7700110022003304ULL)
-    VE_FIELD(Target)
+VE_FIELD(Target)
 VE_REFLECT_END();
 
 VE_REFLECT(PlainData, 0x7700110022003305ULL)
-    VE_FIELD(X, .Min = -1.0, .Max = 1.0)
-    VE_FIELD(Label)
+VE_FIELD(X, .Min = -1.0, .Max = 1.0)
+VE_FIELD(Label)
 VE_REFLECT_END();
 
 VE_REFLECT(Labeled, 0x7700110022003306ULL)
-    VE_FIELD(A)
-    VE_FIELD(Note)
+VE_FIELD(A)
+VE_FIELD(Note)
 VE_REFLECT_END();
 
 // ---- VE_REFLECT shape ------------------------------------------------------
@@ -169,7 +174,7 @@ TEST_CASE("DisplayName defaults to Name when omitted")
     REQUIRE(fields.size() == 2);
     CHECK(fields[0].DisplayName == "Amplitude"); // explicit
     CHECK(fields[1].Name == "B");
-    CHECK(fields[1].DisplayName == "B");         // defaulted
+    CHECK(fields[1].DisplayName == "B"); // defaulted
 }
 
 TEST_CASE("Descriptor offset round-trips against the typed member")
@@ -558,8 +563,8 @@ TEST_CASE("Truncated string length prefix returns an error")
     // declaring a 100-char string, but no string bytes follow. The String guard
     // catches the overrun.
     vector<u8> bytes;
-    PushU32(bytes, 1);   // record count
-    PushU32(bytes, 5);   // name length
+    PushU32(bytes, 1); // record count
+    PushU32(bytes, 5); // name length
     bytes.insert(bytes.end(), {'V', 'a', 'l', 'u', 'e'});
     PushU32(bytes, 4);   // value length (just the inner length prefix)
     PushU32(bytes, 100); // inner string length — overruns the record
@@ -576,11 +581,11 @@ TEST_CASE("Truncated asset id returns an error")
 
     // A Mesh AssetHandle field whose value region is fewer than the 8 id bytes.
     vector<u8> bytes;
-    PushU32(bytes, 1);   // record count
-    PushU32(bytes, 4);   // name length
+    PushU32(bytes, 1); // record count
+    PushU32(bytes, 4); // name length
     bytes.insert(bytes.end(), {'M', 'e', 's', 'h'});
-    PushU32(bytes, 4);   // value length — only four bytes where eight are needed
-    PushU32(bytes, 0);   // four payload bytes
+    PushU32(bytes, 4); // value length — only four bytes where eight are needed
+    PushU32(bytes, 0); // four payload bytes
 
     WithAsset dst;
     const VoidResult result = ReadFields(bytes, &dst, info, registry);
@@ -594,8 +599,8 @@ TEST_CASE("Truncated field name returns an error")
 
     // A record whose declared name length runs past the buffer.
     vector<u8> bytes;
-    PushU32(bytes, 1);    // record count
-    PushU32(bytes, 64);   // name length — far past the remaining bytes
+    PushU32(bytes, 1);  // record count
+    PushU32(bytes, 64); // name length — far past the remaining bytes
     bytes.insert(bytes.end(), {'A'});
 
     Inner dst;
@@ -612,8 +617,8 @@ TEST_CASE("A valid round-trip returns a value")
     WriteFields(bytes, &src, registry.Info(registry.IdOf<PlainData>()), registry);
 
     PlainData dst;
-    const VoidResult result = ReadFields(bytes, &dst,
-                                         registry.Info(registry.IdOf<PlainData>()), registry);
+    const VoidResult result =
+        ReadFields(bytes, &dst, registry.Info(registry.IdOf<PlainData>()), registry);
     REQUIRE(result);
     CHECK(dst.X == doctest::Approx(0.75f));
     CHECK(dst.Label == "tag");

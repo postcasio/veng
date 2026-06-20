@@ -62,9 +62,18 @@ namespace
 {
     // ECS death-case fixtures: a component type, plus two distinct types that
     // deliberately claim the same TypeId to exercise the collision assert.
-    struct DeathPosition { f32 X = 0.0f; };
-    struct CollideA { int Value = 0; };
-    struct CollideB { float Value = 0.0f; };
+    struct DeathPosition
+    {
+        f32 X = 0.0f;
+    };
+    struct CollideA
+    {
+        int Value = 0;
+    };
+    struct CollideB
+    {
+        float Value = 0.0f;
+    };
 }
 
 VE_TYPE(DeathPosition, 0x45680D614D2A8FE4ULL);
@@ -105,9 +114,7 @@ namespace
     void InstallStderrSink()
     {
         Log::SetSink([](Log::Level, std::string_view message)
-        {
-            fmt::print(stderr, "{}\n", message);
-        });
+                     { fmt::print(stderr, "{}\n", message); });
     }
 
     // -- Pure-logic death cases (no device) ----------------------------------
@@ -248,10 +255,12 @@ namespace
             std::_Exit(SkipExitCode);
 
         Context context;
-        context.Initialize({
-            .ApplicationName = "Death Test",
-            .InternalRenderExtent = {4, 4},
-        }, nullptr);
+        context.Initialize(
+            {
+                .ApplicationName = "Death Test",
+                .InternalRenderExtent = {4, 4},
+            },
+            nullptr);
 
         body(context);
 
@@ -262,64 +271,70 @@ namespace
 
     void RunBufferUploadOverrun()
     {
-        InGpuContext([](Context& context)
-        {
-            const auto buffer = Buffer::Create(context, {
-                .Name = "overrun",
-                .Size = 16,
-                .Usage = BufferUsage::TransferDst,
+        InGpuContext(
+            [](Context& context)
+            {
+                const auto buffer = Buffer::Create(context, {
+                                                                .Name = "overrun",
+                                                                .Size = 16,
+                                                                .Usage = BufferUsage::TransferDst,
+                                                            });
+                const u8 data[32] = {};
+                buffer->UploadSync({data, sizeof(data)}); // offset 0 + 32 > 16
             });
-            const u8 data[32] = {};
-            buffer->UploadSync({data, sizeof(data)}); // offset 0 + 32 > 16
-        });
     }
 
     void RunIndexU16IntoU32()
     {
-        InGpuContext([](Context& context)
-        {
-            const auto index = IndexBuffer::Create(context, "indices", 4, IndexType::U32);
-            const u16 values[4] = {};
-            index.UploadSync(std::span<const u16>(values)); // buffer is U32
-        });
+        InGpuContext(
+            [](Context& context)
+            {
+                const auto index = IndexBuffer::Create(context, "indices", 4, IndexType::U32);
+                const u16 values[4] = {};
+                index.UploadSync(std::span<const u16>(values)); // buffer is U32
+            });
     }
 
     void RunIndexU32IntoU16()
     {
-        InGpuContext([](Context& context)
-        {
-            const auto index = IndexBuffer::Create(context, "indices", 4, IndexType::U16);
-            const u32 values[4] = {};
-            index.UploadSync(std::span<const u32>(values)); // buffer is U16
-        });
+        InGpuContext(
+            [](Context& context)
+            {
+                const auto index = IndexBuffer::Create(context, "indices", 4, IndexType::U16);
+                const u32 values[4] = {};
+                index.UploadSync(std::span<const u32>(values)); // buffer is U16
+            });
     }
 
     void RunDescriptorTypeMismatch()
     {
-        InGpuContext([](Context& context)
-        {
-            const auto layout = DescriptorSetLayout::Create(context, {
-                .Name = "mismatch-layout",
-                .Bindings = {{
-                    .Binding = 0,
-                    .Type = DescriptorType::UniformBuffer,
-                    .Count = 1,
-                    .Stages = ShaderStage::Fragment,
-                }},
-            });
-            const auto set = DescriptorSet::Create(context, {.Name = "mismatch-set", .Layout = layout});
+        InGpuContext(
+            [](Context& context)
+            {
+                const auto layout = DescriptorSetLayout::Create(
+                    context, {
+                                 .Name = "mismatch-layout",
+                                 .Bindings = {{
+                                     .Binding = 0,
+                                     .Type = DescriptorType::UniformBuffer,
+                                     .Count = 1,
+                                     .Stages = ShaderStage::Fragment,
+                                 }},
+                             });
+                const auto set =
+                    DescriptorSet::Create(context, {.Name = "mismatch-set", .Layout = layout});
 
-            const auto image = Image::Create(context, {
-                .Name = "img",
-                .Extent = {4, 4, 1},
-                .Format = Format::RGBA8Unorm,
-                .Usage = ImageUsage::Sampled,
-            });
-            const auto view = ImageView::Create(context, {.Name = "iv", .Image = image});
+                const auto image = Image::Create(context, {
+                                                              .Name = "img",
+                                                              .Extent = {4, 4, 1},
+                                                              .Format = Format::RGBA8Unorm,
+                                                              .Usage = ImageUsage::Sampled,
+                                                          });
+                const auto view = ImageView::Create(context, {.Name = "iv", .Image = image});
 
-            // Binding 0 is a UniformBuffer; the image Write asserts the type.
-            set->Write(0, view);
-        });
+                // Binding 0 is a UniformBuffer; the image Write asserts the type.
+                set->Write(0, view);
+            });
     }
 }
 
@@ -339,23 +354,39 @@ int main(int argc, char** argv)
     const std::string_view name = argv[1];
 
     // Pure-logic
-    if (name == "sentinel") RunSentinel();
-    else if (name == "vertex_format_unknown") RunVertexFormatUnknown();
-    else if (name == "tovk_unmapped") RunToVkUnmapped();
-    else if (name == "assert_message") RunAssertMessage();
-    else if (name == "scene_get_stale_entity") RunSceneGetStaleEntity();
-    else if (name == "scene_get_missing_component") RunSceneGetMissingComponent();
-    else if (name == "type_id_collision") RunTypeIdCollision();
-    else if (name == "transform_parent_cycle") RunTransformParentCycle();
-    else if (name == "transform_parent_dead") RunTransformParentDead();
-    else if (name == "spot_shadow_range_nonpositive") RunSpotShadowRangeNonPositive();
-    else if (name == "spot_shadow_cone_out_of_range") RunSpotShadowConeOutOfRange();
-    else if (name == "point_shadow_range_nonpositive") RunPointShadowRangeNonPositive();
+    if (name == "sentinel")
+        RunSentinel();
+    else if (name == "vertex_format_unknown")
+        RunVertexFormatUnknown();
+    else if (name == "tovk_unmapped")
+        RunToVkUnmapped();
+    else if (name == "assert_message")
+        RunAssertMessage();
+    else if (name == "scene_get_stale_entity")
+        RunSceneGetStaleEntity();
+    else if (name == "scene_get_missing_component")
+        RunSceneGetMissingComponent();
+    else if (name == "type_id_collision")
+        RunTypeIdCollision();
+    else if (name == "transform_parent_cycle")
+        RunTransformParentCycle();
+    else if (name == "transform_parent_dead")
+        RunTransformParentDead();
+    else if (name == "spot_shadow_range_nonpositive")
+        RunSpotShadowRangeNonPositive();
+    else if (name == "spot_shadow_cone_out_of_range")
+        RunSpotShadowConeOutOfRange();
+    else if (name == "point_shadow_range_nonpositive")
+        RunPointShadowRangeNonPositive();
     // GPU-coupled
-    else if (name == "buffer_upload_overrun") RunBufferUploadOverrun();
-    else if (name == "index_u16_into_u32") RunIndexU16IntoU32();
-    else if (name == "index_u32_into_u16") RunIndexU32IntoU16();
-    else if (name == "descriptor_type_mismatch") RunDescriptorTypeMismatch();
+    else if (name == "buffer_upload_overrun")
+        RunBufferUploadOverrun();
+    else if (name == "index_u16_into_u32")
+        RunIndexU16IntoU32();
+    else if (name == "index_u32_into_u16")
+        RunIndexU32IntoU16();
+    else if (name == "descriptor_type_mismatch")
+        RunDescriptorTypeMismatch();
     else
         fmt::print(stderr, "death harness: unknown case '{}'\n", name);
 

@@ -20,7 +20,8 @@
 using namespace Veng;
 using namespace Veng::Renderer;
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "mesh loader: cook, mount, LoadSync, validate layout + submeshes")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "mesh loader: cook, mount, LoadSync, validate layout + submeshes")
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "mesh_pack.json";

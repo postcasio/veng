@@ -45,7 +45,8 @@ namespace
 TEST_CASE("ComputeCascades: SplitFar is strictly increasing and ends at far")
 {
     const Camera camera = MakeTestCamera(0.1f, 100.0f);
-    const CascadeData data = ComputeCascades(camera, vec3(0.3f, -1.0f, 0.2f), AABB::Empty(), CascadeSettings{});
+    const CascadeData data =
+        ComputeCascades(camera, vec3(0.3f, -1.0f, 0.2f), AABB::Empty(), CascadeSettings{});
 
     CHECK(data.Count == 4);
     CHECK(data.SplitFar[0] > camera.GetNear());
@@ -61,10 +62,12 @@ TEST_CASE("ComputeCascades: Count clamps to [1, MaxCascades]")
 {
     const Camera camera = MakeTestCamera();
 
-    const CascadeData zero = ComputeCascades(camera, vec3(0.0f, -1.0f, 0.0f), AABB::Empty(), CascadeSettings{.Count = 0});
+    const CascadeData zero = ComputeCascades(camera, vec3(0.0f, -1.0f, 0.0f), AABB::Empty(),
+                                             CascadeSettings{.Count = 0});
     CHECK(zero.Count == 1);
 
-    const CascadeData over = ComputeCascades(camera, vec3(0.0f, -1.0f, 0.0f), AABB::Empty(), CascadeSettings{.Count = 16});
+    const CascadeData over = ComputeCascades(camera, vec3(0.0f, -1.0f, 0.0f), AABB::Empty(),
+                                             CascadeSettings{.Count = 16});
     CHECK(over.Count == MaxCascades);
 }
 
@@ -77,8 +80,9 @@ TEST_CASE("ComputeCascades: Lambda endpoints reproduce uniform and logarithmic s
 
     const CascadeData uniform = ComputeCascades(camera, vec3(0.0f, -1.0f, 0.0f), AABB::Empty(),
                                                 CascadeSettings{.Count = count, .Lambda = 0.0f});
-    const CascadeData logarithmic = ComputeCascades(camera, vec3(0.0f, -1.0f, 0.0f), AABB::Empty(),
-                                                    CascadeSettings{.Count = count, .Lambda = 1.0f});
+    const CascadeData logarithmic =
+        ComputeCascades(camera, vec3(0.0f, -1.0f, 0.0f), AABB::Empty(),
+                        CascadeSettings{.Count = count, .Lambda = 1.0f});
 
     for (u32 i = 1; i <= count; ++i)
     {
@@ -97,11 +101,13 @@ TEST_CASE("ComputeCascades: interior slice points project inside their cascade")
     const Camera camera = MakeTestCamera(0.1f, 100.0f);
     const f32 near = camera.GetNear();
     const f32 far = camera.GetFar();
-    const CascadeData data = ComputeCascades(camera, vec3(0.3f, -1.0f, 0.2f), AABB::Empty(), CascadeSettings{});
+    const CascadeData data =
+        ComputeCascades(camera, vec3(0.3f, -1.0f, 0.2f), AABB::Empty(), CascadeSettings{});
 
     const mat4 invViewProj = glm::inverse(camera.ViewProjection());
 
-    auto worldPointAtViewDepth = [&](f32 viewDepth) {
+    auto worldPointAtViewDepth = [&](f32 viewDepth)
+    {
         // Interpolate a center-of-screen world point between the near and far
         // frustum centers by the view-depth fraction (linear in view depth).
         const f32 fraction = (viewDepth - near) / (far - near);
@@ -112,12 +118,12 @@ TEST_CASE("ComputeCascades: interior slice points project inside their cascade")
         return nearPoint + (farPoint - nearPoint) * fraction;
     };
 
-    auto inClip = [](const vec4& clip) {
+    auto inClip = [](const vec4& clip)
+    {
         const vec3 ndc = vec3(clip) / clip.w;
         const f32 eps = 1e-3f;
-        return ndc.x >= -1.0f - eps && ndc.x <= 1.0f + eps &&
-               ndc.y >= -1.0f - eps && ndc.y <= 1.0f + eps &&
-               ndc.z >= -eps && ndc.z <= 1.0f + eps;
+        return ndc.x >= -1.0f - eps && ndc.x <= 1.0f + eps && ndc.y >= -1.0f - eps &&
+               ndc.y <= 1.0f + eps && ndc.z >= -eps && ndc.z <= 1.0f + eps;
     };
 
     // An interior point of cascade 0 (~50% through its depth range).
@@ -137,7 +143,8 @@ TEST_CASE("ComputeCascades: interior slice points project inside their cascade")
 TEST_CASE("ComputeCascades: straight-down light yields finite matrices")
 {
     const Camera camera = MakeTestCamera();
-    const CascadeData data = ComputeCascades(camera, vec3(0.0f, -1.0f, 0.0f), AABB::Empty(), CascadeSettings{});
+    const CascadeData data =
+        ComputeCascades(camera, vec3(0.0f, -1.0f, 0.0f), AABB::Empty(), CascadeSettings{});
 
     for (u32 k = 0; k < data.Count; ++k)
     {
@@ -222,8 +229,10 @@ TEST_CASE("ComputeCascades: scene bound extends the near plane, leaving XY untou
     {
         for (int c = 0; c < 4; ++c)
         {
-            CHECK(withBounds.ViewProj[k][c][0] == doctest::Approx(noBounds.ViewProj[k][c][0]).epsilon(1e-5));
-            CHECK(withBounds.ViewProj[k][c][1] == doctest::Approx(noBounds.ViewProj[k][c][1]).epsilon(1e-5));
+            CHECK(withBounds.ViewProj[k][c][0] ==
+                  doctest::Approx(noBounds.ViewProj[k][c][0]).epsilon(1e-5));
+            CHECK(withBounds.ViewProj[k][c][1] ==
+                  doctest::Approx(noBounds.ViewProj[k][c][1]).epsilon(1e-5));
         }
     }
 

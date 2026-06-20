@@ -366,9 +366,8 @@ namespace Veng
 
     public:
         /// @brief Constructs the view and picks the smallest pool as the iteration driver.
-        explicit SceneView(SceneRef& scene) :
-            m_Scene(&scene),
-            m_Ids{scene.m_Registry->template IdOf<std::remove_const_t<Ts>>()...}
+        explicit SceneView(SceneRef& scene)
+            : m_Scene(&scene), m_Ids{scene.m_Registry->template IdOf<std::remove_const_t<Ts>>()...}
         {
             // Drive from the smallest pool; a missing pool (count 0) yields an
             // empty range.
@@ -392,9 +391,7 @@ namespace Veng
         {
         public:
             /// @brief Constructs and skips to the first matching entity.
-            Iterator(const SceneView* view, usize index) :
-                m_View(view),
-                m_Index(index)
+            Iterator(const SceneView* view, usize index) : m_View(view), m_Index(index)
             {
                 SkipToMatch();
             }
@@ -422,8 +419,7 @@ namespace Veng
             // landing on the next full match (or on m_Count, the end).
             void SkipToMatch()
             {
-                while (m_Index < m_View->m_Count
-                       && !m_View->Matches(m_View->m_Dense[m_Index]))
+                while (m_Index < m_View->m_Count && !m_View->Matches(m_View->m_Dense[m_Index]))
                 {
                     ++m_Index;
                 }

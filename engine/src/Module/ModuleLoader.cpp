@@ -26,11 +26,11 @@ namespace Veng
             }
 
             LPSTR buffer = nullptr;
-            const DWORD length = FormatMessageA(
-                FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-                    FORMAT_MESSAGE_IGNORE_INSERTS,
-                nullptr, code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                reinterpret_cast<LPSTR>(&buffer), 0, nullptr);
+            const DWORD length =
+                FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                                   FORMAT_MESSAGE_IGNORE_INSERTS,
+                               nullptr, code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                               reinterpret_cast<LPSTR>(&buffer), 0, nullptr);
 
             string message = (buffer && length) ? string(buffer, length) : "unknown error";
             if (buffer)
@@ -100,21 +100,20 @@ namespace Veng
         HMODULE handle = LoadLibraryW(modulePath.c_str());
         if (!handle)
         {
-            return std::unexpected(
-                fmt::format("failed to load module '{}': {}", modulePath.string(),
-                            LastLoaderError()));
+            return std::unexpected(fmt::format("failed to load module '{}': {}",
+                                               modulePath.string(), LastLoaderError()));
         }
 
-        auto versionSymbol = reinterpret_cast<VersionFn>(
-            GetProcAddress(handle, "VengModuleAbiVersion"));
+        auto versionSymbol =
+            reinterpret_cast<VersionFn>(GetProcAddress(handle, "VengModuleAbiVersion"));
 #else
         void* handle = dlopen(modulePath.c_str(), RTLD_NOW | RTLD_LOCAL);
         if (!handle)
         {
             const char* error = dlerror();
-            return std::unexpected(
-                fmt::format("failed to load module '{}': {}", modulePath.string(),
-                            error ? error : "unknown error"));
+            return std::unexpected(fmt::format("failed to load module '{}': {}",
+                                               modulePath.string(),
+                                               error ? error : "unknown error"));
         }
 
         auto versionSymbol = reinterpret_cast<VersionFn>(dlsym(handle, "VengModuleAbiVersion"));

@@ -17,14 +17,9 @@ namespace Veng
     std::array<vec3, 8> AABB::Corners() const
     {
         return {
-            vec3(Min.x, Min.y, Min.z),
-            vec3(Max.x, Min.y, Min.z),
-            vec3(Min.x, Max.y, Min.z),
-            vec3(Max.x, Max.y, Min.z),
-            vec3(Min.x, Min.y, Max.z),
-            vec3(Max.x, Min.y, Max.z),
-            vec3(Min.x, Max.y, Max.z),
-            vec3(Max.x, Max.y, Max.z),
+            vec3(Min.x, Min.y, Min.z), vec3(Max.x, Min.y, Min.z), vec3(Min.x, Max.y, Min.z),
+            vec3(Max.x, Max.y, Min.z), vec3(Min.x, Min.y, Max.z), vec3(Max.x, Min.y, Max.z),
+            vec3(Min.x, Max.y, Max.z), vec3(Max.x, Max.y, Max.z),
         };
     }
 

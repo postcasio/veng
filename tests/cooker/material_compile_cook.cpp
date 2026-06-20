@@ -39,8 +39,16 @@ namespace
     Veng::vector<Field> BrickFields()
     {
         return {
-            Field{.Name = "Albedo", .Offset = 0, .Size = 4, .Kind = Kind::TextureHandle, .TextureId = 2001},
-            Field{.Name = "AlbedoSampler", .Offset = 4, .Size = 4, .Kind = Kind::SamplerHandle, .TextureId = 2001},
+            Field{.Name = "Albedo",
+                  .Offset = 0,
+                  .Size = 4,
+                  .Kind = Kind::TextureHandle,
+                  .TextureId = 2001},
+            Field{.Name = "AlbedoSampler",
+                  .Offset = 4,
+                  .Size = 4,
+                  .Kind = Kind::SamplerHandle,
+                  .TextureId = 2001},
             Field{.Name = "Factors", .Offset = 0, .Size = 16, .Kind = Kind::Param},
         };
     }
@@ -111,7 +119,8 @@ TEST_CASE("Cooker: a compiled material graph cooks through the real MaterialImpo
 
     // --- 3. Cook through the real importer + validate the cooked blob ---
 
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_material_compiled.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_compiled.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
@@ -142,9 +151,12 @@ TEST_CASE("Cooker: a compiled material graph cooks through the real MaterialImpo
     for (u32 i = 0; i < header.FieldCount; ++i)
     {
         const std::string_view name(fieldTable[i].Name);
-        if (name == "Albedo") albedo = &fieldTable[i];
-        else if (name == "AlbedoSampler") sampler = &fieldTable[i];
-        else if (name == "Factors") params = &fieldTable[i];
+        if (name == "Albedo")
+            albedo = &fieldTable[i];
+        else if (name == "AlbedoSampler")
+            sampler = &fieldTable[i];
+        else if (name == "Factors")
+            params = &fieldTable[i];
     }
     REQUIRE(albedo != nullptr);
     REQUIRE(sampler != nullptr);
@@ -154,12 +166,11 @@ TEST_CASE("Cooker: a compiled material graph cooks through the real MaterialImpo
     CHECK(albedo->TextureId == 2001ULL);
     CHECK(sampler->Kind == 2u); // sampler handle, paired to Albedo's texture
     CHECK(sampler->TextureId == 2001ULL);
-    CHECK(params->Kind == 0u);  // authored param
+    CHECK(params->Kind == 0u); // authored param
 
     // The param block carries the four f32s the graph compiled, at Factors' offset.
-    const u8* block = entry->Blob.data()
-        + sizeof(CookedMaterialHeader)
-        + header.FieldCount * sizeof(CookedMaterialField);
+    const u8* block = entry->Blob.data() + sizeof(CookedMaterialHeader) +
+                      header.FieldCount * sizeof(CookedMaterialField);
     f32 cookedFactors[4];
     std::memcpy(cookedFactors, block + params->Offset, sizeof(cookedFactors));
     CHECK(cookedFactors[0] == doctest::Approx(1.0f));

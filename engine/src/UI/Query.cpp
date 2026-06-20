@@ -12,9 +12,12 @@ namespace Veng::UI
         {
             switch (button)
             {
-                case MouseButton::Left: return ImGuiMouseButton_Left;
-                case MouseButton::Right: return ImGuiMouseButton_Right;
-                case MouseButton::Middle: return ImGuiMouseButton_Middle;
+            case MouseButton::Left:
+                return ImGuiMouseButton_Left;
+            case MouseButton::Right:
+                return ImGuiMouseButton_Right;
+            case MouseButton::Middle:
+                return ImGuiMouseButton_Middle;
             }
             VE_ASSERT(false, "Unmapped UI::MouseButton");
         }
@@ -23,8 +26,10 @@ namespace Veng::UI
         {
             switch (key)
             {
-                case Key::Delete: return ImGuiKey_Delete;
-                case Key::Backspace: return ImGuiKey_Backspace;
+            case Key::Delete:
+                return ImGuiKey_Delete;
+            case Key::Backspace:
+                return ImGuiKey_Backspace;
             }
             VE_ASSERT(false, "Unmapped UI::Key");
         }

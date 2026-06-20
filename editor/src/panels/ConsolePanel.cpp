@@ -8,14 +8,15 @@ namespace VengEditor
 
     ConsolePanel::ConsolePanel()
     {
-        Log::SetSink([this](Log::Level level, std::string_view message)
-        {
-            if (m_Entries.size() >= MaxEntries)
-                m_Entries.erase(m_Entries.begin());
+        Log::SetSink(
+            [this](Log::Level level, std::string_view message)
+            {
+                if (m_Entries.size() >= MaxEntries)
+                    m_Entries.erase(m_Entries.begin());
 
-            m_Entries.push_back({.Level = level, .Message = string(message)});
-            m_ScrollToBottom = true;
-        });
+                m_Entries.push_back({.Level = level, .Message = string(message)});
+                m_ScrollToBottom = true;
+            });
     }
 
     ConsolePanel::~ConsolePanel()
@@ -37,9 +38,14 @@ namespace VengEditor
                 vec4 color{0.8f, 0.8f, 0.8f, 1.0f};
                 switch (entry.Level)
                 {
-                case Log::Level::Warn: color = {1.0f, 0.8f, 0.2f, 1.0f}; break;
-                case Log::Level::Error: color = {1.0f, 0.3f, 0.3f, 1.0f}; break;
-                case Log::Level::Info: break;
+                case Log::Level::Warn:
+                    color = {1.0f, 0.8f, 0.2f, 1.0f};
+                    break;
+                case Log::Level::Error:
+                    color = {1.0f, 0.3f, 0.3f, 1.0f};
+                    break;
+                case Log::Level::Info:
+                    break;
                 }
 
                 UI::TextColored(color, entry.Message);

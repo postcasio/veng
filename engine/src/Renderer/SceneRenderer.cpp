@@ -97,7 +97,8 @@ namespace Veng::Renderer
             vec4 Column2;
         };
 
-        static_assert(sizeof(NormalMatrixPush) == 48, "NormalMatrix push must be a column-major float3x3 (48 bytes)");
+        static_assert(sizeof(NormalMatrixPush) == 48,
+                      "NormalMatrix push must be a column-major float3x3 (48 bytes)");
 
         // The deferred-lighting fragment push block: g-buffer bindless slots,
         // view-constants index, and light buffer base + live count.
@@ -137,10 +138,10 @@ namespace Veng::Renderer
         // std430-compatible, matching the shader's GpuLight byte-for-byte.
         struct GpuLight
         {
-            vec4 PositionRange;   // xyz world position, w range
-            vec4 DirectionType;   // xyz travel direction, w LightType
-            vec4 ColorIntensity;  // rgb linear color, a intensity
-            vec4 Cone;            // x cos(inner), y cos(outer), z shadow slot (-1 unshadowed), w pad
+            vec4 PositionRange;  // xyz world position, w range
+            vec4 DirectionType;  // xyz travel direction, w LightType
+            vec4 ColorIntensity; // rgb linear color, a intensity
+            vec4 Cone;           // x cos(inner), y cos(outer), z shadow slot (-1 unshadowed), w pad
         };
 
         static_assert(sizeof(GpuLight) == BindlessRegistry::LightStride,
@@ -167,7 +168,7 @@ namespace Veng::Renderer
         {
             mat4 CascadeViewProj[MaxCascades]; // 256 — tile-remap baked in (for the sample)
             vec4 CascadeSplits;                // 16  — per-cascade view-space far distance
-            vec4 ShadowParams;                 // 16  — x 1/tileRes, y blend-band, z count, w enabled
+            vec4 ShadowParams; // 16  — x 1/tileRes, y blend-band, z count, w enabled
         };
 
         static_assert(sizeof(ShadowConstantsBlock) == 288,
@@ -178,7 +179,7 @@ namespace Veng::Renderer
         struct PunctualShadowBlock
         {
             PunctualShadowRecord Records[MaxShadowedPunctual];
-            vec4                 AtlasParams; // x 1/tileRes (per-tile texel size), yzw pad
+            vec4 AtlasParams; // x 1/tileRes (per-tile texel size), yzw pad
         };
 
         static_assert(sizeof(PunctualShadowBlock) == MaxShadowedPunctual * 416 + 16,
@@ -251,8 +252,7 @@ namespace Veng::Renderer
         class GBufferScenePass final : public ScenePass
         {
         public:
-            GBufferScenePass(Context& context, uvec2 extent)
-                : m_Context(context), m_Extent(extent)
+            GBufferScenePass(Context& context, uvec2 extent) : m_Context(context), m_Extent(extent)
             {
             }
 
@@ -298,10 +298,7 @@ namespace Veng::Renderer
                         .Store = StoreOp::Store,
                         .Clear = ClearDepth{1.0f, 0},
                     })
-                    .Execute([this](PassContext& inner)
-                    {
-                        Record(Wrap(inner));
-                    });
+                    .Execute([this](PassContext& inner) { Record(Wrap(inner)); });
             }
 
         private:
@@ -399,12 +396,14 @@ namespace Veng::Renderer
             ///                         current region via a bind-time dynamic offset.
             /// @param writeToOutput    When true, writes directly to the output target (cascade-debug
             ///                         terminal arm); otherwise writes the HDR target.
-            DeferredLightingScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent, bool useSsao,
-                                      Ref<DescriptorSet> shadowSet, u32 shadowRingStride, u32 punctualRingStride,
+            DeferredLightingScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
+                                      uvec2 extent, bool useSsao, Ref<DescriptorSet> shadowSet,
+                                      u32 shadowRingStride, u32 punctualRingStride,
                                       bool writeToOutput = false)
-                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent), m_UseSsao(useSsao),
-                  m_ShadowSet(std::move(shadowSet)), m_ShadowRingStride(shadowRingStride),
-                  m_PunctualRingStride(punctualRingStride), m_WriteToOutput(writeToOutput)
+                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent),
+                  m_UseSsao(useSsao), m_ShadowSet(std::move(shadowSet)),
+                  m_ShadowRingStride(shadowRingStride), m_PunctualRingStride(punctualRingStride),
+                  m_WriteToOutput(writeToOutput)
             {
             }
 
@@ -424,7 +423,8 @@ namespace Veng::Renderer
                 const u32 punctualRingStride = m_PunctualRingStride;
 
                 RenderGraph::PassBuilder builder = graph.AddPass("Deferred Lighting");
-                builder.Color({
+                builder
+                    .Color({
                         .Resource = m_WriteToOutput ? io.Output : io.Hdr,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
@@ -447,7 +447,10 @@ namespace Veng::Renderer
                 if (useSsao)
                     builder.Sample(io.Ssao);
 
-                builder.Execute([this, albedoHandle, normalHandle, ormHandle, depthHandle, ssaoHandle, samplerHandle, useSsao, shadowSet, shadowRingStride, punctualRingStride](PassContext& inner)
+                builder.Execute(
+                    [this, albedoHandle, normalHandle, ormHandle, depthHandle, ssaoHandle,
+                     samplerHandle, useSsao, shadowSet, shadowRingStride,
+                     punctualRingStride](PassContext& inner)
                     {
                         const ScenePassContext ctx = Wrap(inner);
                         CommandBuffer& cmd = ctx.Cmd();
@@ -466,7 +469,8 @@ namespace Veng::Renderer
                             .Sets = {shadowSet},
                             .FirstSet = 1,
                             .PipelineBindPoint = PipelineBindPoint::Graphics,
-                            .DynamicOffsets = {frameSlot * shadowRingStride, frameSlot * punctualRingStride},
+                            .DynamicOffsets = {frameSlot * shadowRingStride,
+                                               frameSlot * punctualRingStride},
                         });
 
                         if (useSsao)
@@ -517,10 +521,18 @@ namespace Veng::Renderer
         public:
             // Which target this blit reads from PassIO. The shadow atlases are off
             // bindless and handled by ShadowBlitScenePass, not this class.
-            enum class Source { Albedo, Normal, Depth, Ao };
+            enum class Source
+            {
+                Albedo,
+                Normal,
+                Depth,
+                Ao
+            };
 
-            FullscreenBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent, Source source)
-                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent), m_Source(source)
+            FullscreenBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent,
+                                    Source source)
+                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent),
+                  m_Source(source)
             {
             }
 
@@ -540,19 +552,20 @@ namespace Veng::Renderer
                         .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
                     })
                     .Sample(sourceId)
-                    .Execute([this, textureHandle, samplerHandle](PassContext& inner)
-                    {
-                        CommandBuffer& cmd = inner.Cmd();
-                        cmd.BindPipeline(m_Pipeline);
-                        cmd.SetViewport({0, 0}, m_Extent);
-                        cmd.SetScissor({0, 0}, m_Extent);
-                        m_Context.GetBindlessRegistry().Bind(cmd);
-                        cmd.PushConstants(BlitPushConstants{
-                            .Texture = textureHandle.Index,
-                            .Sampler = samplerHandle.Index,
+                    .Execute(
+                        [this, textureHandle, samplerHandle](PassContext& inner)
+                        {
+                            CommandBuffer& cmd = inner.Cmd();
+                            cmd.BindPipeline(m_Pipeline);
+                            cmd.SetViewport({0, 0}, m_Extent);
+                            cmd.SetScissor({0, 0}, m_Extent);
+                            m_Context.GetBindlessRegistry().Bind(cmd);
+                            cmd.PushConstants(BlitPushConstants{
+                                .Texture = textureHandle.Index,
+                                .Sampler = samplerHandle.Index,
+                            });
+                            cmd.DrawFullscreenTriangle();
                         });
-                        cmd.DrawFullscreenTriangle();
-                    });
             }
 
         private:
@@ -560,10 +573,14 @@ namespace Veng::Renderer
             {
                 switch (m_Source)
                 {
-                    case Source::Albedo: return io.GBufferAlbedo;
-                    case Source::Normal: return io.GBufferNormal;
-                    case Source::Depth:  return io.GBufferDepth;
-                    case Source::Ao:     return io.Ssao;
+                case Source::Albedo:
+                    return io.GBufferAlbedo;
+                case Source::Normal:
+                    return io.GBufferNormal;
+                case Source::Depth:
+                    return io.GBufferDepth;
+                case Source::Ao:
+                    return io.Ssao;
                 }
                 VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
             }
@@ -572,10 +589,14 @@ namespace Veng::Renderer
             {
                 switch (m_Source)
                 {
-                    case Source::Albedo: return io.AlbedoHandle;
-                    case Source::Normal: return io.NormalHandle;
-                    case Source::Depth:  return io.DepthHandle;
-                    case Source::Ao:     return io.SsaoHandle;
+                case Source::Albedo:
+                    return io.AlbedoHandle;
+                case Source::Normal:
+                    return io.NormalHandle;
+                case Source::Depth:
+                    return io.DepthHandle;
+                case Source::Ao:
+                    return io.SsaoHandle;
                 }
                 VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
             }
@@ -590,8 +611,10 @@ namespace Veng::Renderer
         class OrmBlitScenePass final : public ScenePass
         {
         public:
-            OrmBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent, u32 channel)
-                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent), m_Channel(channel)
+            OrmBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent,
+                             u32 channel)
+                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent),
+                  m_Channel(channel)
             {
             }
 
@@ -612,20 +635,21 @@ namespace Veng::Renderer
                         .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
                     })
                     .Sample(ormId)
-                    .Execute([this, ormHandle, samplerHandle, channel](PassContext& inner)
-                    {
-                        CommandBuffer& cmd = inner.Cmd();
-                        cmd.BindPipeline(m_Pipeline);
-                        cmd.SetViewport({0, 0}, m_Extent);
-                        cmd.SetScissor({0, 0}, m_Extent);
-                        m_Context.GetBindlessRegistry().Bind(cmd);
-                        cmd.PushConstants(OrmBlitPushConstants{
-                            .Texture = ormHandle.Index,
-                            .Sampler = samplerHandle.Index,
-                            .Channel = channel,
+                    .Execute(
+                        [this, ormHandle, samplerHandle, channel](PassContext& inner)
+                        {
+                            CommandBuffer& cmd = inner.Cmd();
+                            cmd.BindPipeline(m_Pipeline);
+                            cmd.SetViewport({0, 0}, m_Extent);
+                            cmd.SetScissor({0, 0}, m_Extent);
+                            m_Context.GetBindlessRegistry().Bind(cmd);
+                            cmd.PushConstants(OrmBlitPushConstants{
+                                .Texture = ormHandle.Index,
+                                .Sampler = samplerHandle.Index,
+                                .Channel = channel,
+                            });
+                            cmd.DrawFullscreenTriangle();
                         });
-                        cmd.DrawFullscreenTriangle();
-                    });
             }
 
         private:
@@ -643,7 +667,11 @@ namespace Veng::Renderer
             // Which atlas to visualize: Directional reads io.ShadowMap,
             // Punctual reads io.PunctualShadowMap. The renderer writes the matching
             // atlas view into binding 0 before Rebuild.
-            enum class Source { Directional, Punctual };
+            enum class Source
+            {
+                Directional,
+                Punctual
+            };
 
             ShadowBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent,
                                 Ref<DescriptorSet> shadowSet, Source source)
@@ -668,20 +696,21 @@ namespace Veng::Renderer
                         .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
                     })
                     .Sample(sampleId)
-                    .Execute([this, shadowSet](PassContext& inner)
-                    {
-                        CommandBuffer& cmd = inner.Cmd();
-                        cmd.BindPipeline(m_Pipeline);
-                        cmd.SetViewport({0, 0}, m_Extent);
-                        cmd.SetScissor({0, 0}, m_Extent);
-                        m_Context.GetBindlessRegistry().Bind(cmd);
-                        cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                            .Sets = {shadowSet},
-                            .FirstSet = 1,
-                            .PipelineBindPoint = PipelineBindPoint::Graphics,
+                    .Execute(
+                        [this, shadowSet](PassContext& inner)
+                        {
+                            CommandBuffer& cmd = inner.Cmd();
+                            cmd.BindPipeline(m_Pipeline);
+                            cmd.SetViewport({0, 0}, m_Extent);
+                            cmd.SetScissor({0, 0}, m_Extent);
+                            m_Context.GetBindlessRegistry().Bind(cmd);
+                            cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                                .Sets = {shadowSet},
+                                .FirstSet = 1,
+                                .PipelineBindPoint = PipelineBindPoint::Graphics,
+                            });
+                            cmd.DrawFullscreenTriangle();
                         });
-                        cmd.DrawFullscreenTriangle();
-                    });
             }
 
         private:
@@ -693,9 +722,9 @@ namespace Veng::Renderer
         };
     }
 
-    PostProcessScenePass::PostProcessScenePass(
-        Context& context, AssetHandle<Material> material, PostProcessInput input,
-        ResourceId output, Format outputFormat, uvec2 extent)
+    PostProcessScenePass::PostProcessScenePass(Context& context, AssetHandle<Material> material,
+                                               PostProcessInput input, ResourceId output,
+                                               Format outputFormat, uvec2 extent)
         : m_Context(context), m_Material(std::move(material)), m_Input(std::move(input)),
           m_Output(output), m_OutputFormat(outputFormat), m_Extent(extent)
     {
@@ -708,19 +737,23 @@ namespace Veng::Renderer
 
         const Material& material = *m_Material.Get();
         VE_ASSERT(material.GetDomain() == MaterialDomain::PostProcess,
-                  "PostProcessScenePass: material '{}' is not a PostProcess material", material.GetName());
+                  "PostProcessScenePass: material '{}' is not a PostProcess material",
+                  material.GetName());
 
         // The layout (set 0 reserved, selector push range) comes from the material loader;
         // only this color-format-dependent GraphicsPipeline is the pass's to create.
-        m_Pipeline = GraphicsPipeline::Create(m_Context, {
-            .Name = fmt::format("PostProcess Pipeline ({})", material.GetName()),
-            .ColorAttachments = {{.Format = m_OutputFormat}},
-            .PipelineLayout = material.GetPipelineLayout(),
-            .ShaderStages = {
-                {.Stage = ShaderStage::Vertex,   .Module = material.GetVertexModule()},
-                {.Stage = ShaderStage::Fragment, .Module = material.GetFragmentModule()},
-            },
-        });
+        m_Pipeline = GraphicsPipeline::Create(
+            m_Context,
+            {
+                .Name = fmt::format("PostProcess Pipeline ({})", material.GetName()),
+                .ColorAttachments = {{.Format = m_OutputFormat}},
+                .PipelineLayout = material.GetPipelineLayout(),
+                .ShaderStages =
+                    {
+                        {.Stage = ShaderStage::Vertex, .Module = material.GetVertexModule()},
+                        {.Stage = ShaderStage::Fragment, .Module = material.GetFragmentModule()},
+                    },
+            });
     }
 
     void PostProcessScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
@@ -735,7 +768,8 @@ namespace Veng::Renderer
         // A two-source pass (bloom composite) declares .Sample on both ids for the
         // graph-derived barriers; single-source passes declare only the primary input.
         RenderGraph::PassBuilder builder = graph.AddPass("PostProcess");
-        builder.Color({
+        builder
+            .Color({
                 .Resource = m_Output,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
@@ -745,10 +779,11 @@ namespace Veng::Renderer
         if (hasExtra)
             builder.Sample(extra.Source);
 
-        builder.Execute([this, input, extra, hasExtra](PassContext& inner)
+        builder.Execute(
+            [this, input, extra, hasExtra](PassContext& inner)
             {
                 CommandBuffer& cmd = inner.Cmd();
-                        // AssetHandle::Get is const; cast away to write the per-frame handle fields.
+                // AssetHandle::Get is const; cast away to write the per-frame handle fields.
                 Material& material = const_cast<Material&>(*m_Material.Get());
 
                 // Write the live upstream bindless slots; must precede Material::Bind
@@ -783,12 +818,8 @@ namespace Veng::Renderer
     }
 
     SceneRenderer::SceneRenderer(const SceneRendererInfo& info)
-        : m_Context(info.Context),
-          m_Assets(info.Assets),
-          m_OutputFormat(info.OutputFormat),
-          m_Extent(info.Extent),
-          m_Settings(info.Settings),
-          m_Internal(CreateUnique<Internal>())
+        : m_Context(info.Context), m_Assets(info.Assets), m_OutputFormat(info.OutputFormat),
+          m_Extent(info.Extent), m_Settings(info.Settings), m_Internal(CreateUnique<Internal>())
     {
         ClampShadowResolutions();
         CreateShadowSystem();
@@ -821,79 +852,104 @@ namespace Veng::Renderer
     {
         auto LoadShader = [this](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
         {
-            const AssetResult<AssetHandle<Veng::Shader>> result = m_Assets.LoadSync<Veng::Shader>(id);
-            VE_ASSERT(result.has_value(), "SceneRenderer: {} shader load failed: {}", what, result.error().Detail);
+            const AssetResult<AssetHandle<Veng::Shader>> result =
+                m_Assets.LoadSync<Veng::Shader>(id);
+            VE_ASSERT(result.has_value(), "SceneRenderer: {} shader load failed: {}", what,
+                      result.error().Detail);
             return *result;
         };
 
         const AssetHandle<Veng::Shader> vs = LoadShader(FullscreenVertId, "fullscreen vertex");
-        const AssetHandle<Veng::Shader> lightingFs = LoadShader(DeferredLightingFragId, "deferred-lighting fragment");
-        const AssetHandle<Veng::Shader> ssaoLightingFs = LoadShader(DeferredLightingSsaoFragId, "deferred-lighting SSAO fragment");
-        const AssetHandle<Veng::Shader> cascadeDebugFs = LoadShader(DeferredLightingCascadesFragId, "deferred-lighting cascade-debug fragment");
+        const AssetHandle<Veng::Shader> lightingFs =
+            LoadShader(DeferredLightingFragId, "deferred-lighting fragment");
+        const AssetHandle<Veng::Shader> ssaoLightingFs =
+            LoadShader(DeferredLightingSsaoFragId, "deferred-lighting SSAO fragment");
+        const AssetHandle<Veng::Shader> cascadeDebugFs =
+            LoadShader(DeferredLightingCascadesFragId, "deferred-lighting cascade-debug fragment");
         const AssetHandle<Veng::Shader> ssaoFs = LoadShader(SsaoFragId, "SSAO fragment");
-        const AssetHandle<Veng::Shader> albedoBlitFs = LoadShader(AlbedoBlitFragId, "albedo-blit fragment");
-        const AssetHandle<Veng::Shader> normalBlitFs = LoadShader(NormalBlitFragId, "normal-blit fragment");
-        const AssetHandle<Veng::Shader> depthBlitFs = LoadShader(DepthBlitFragId, "depth-blit fragment");
+        const AssetHandle<Veng::Shader> albedoBlitFs =
+            LoadShader(AlbedoBlitFragId, "albedo-blit fragment");
+        const AssetHandle<Veng::Shader> normalBlitFs =
+            LoadShader(NormalBlitFragId, "normal-blit fragment");
+        const AssetHandle<Veng::Shader> depthBlitFs =
+            LoadShader(DepthBlitFragId, "depth-blit fragment");
         const AssetHandle<Veng::Shader> ormBlitFs = LoadShader(OrmBlitFragId, "ORM-blit fragment");
         const AssetHandle<Veng::Shader> aoBlitFs = LoadShader(AoBlitFragId, "AO-blit fragment");
-        const AssetHandle<Veng::Shader> shadowBlitFs = LoadShader(ShadowBlitFragId, "shadow-blit fragment");
+        const AssetHandle<Veng::Shader> shadowBlitFs =
+            LoadShader(ShadowBlitFragId, "shadow-blit fragment");
 
         // Builds a fullscreen pipeline (shared vertex stage) over a layout, naming the
         // color-target format the pass writes.
         auto MakePipeline = [&](const char* name, const Ref<PipelineLayout>& layout,
-                                const AssetHandle<Veng::Shader>& fs, const Format format) -> Ref<GraphicsPipeline>
+                                const AssetHandle<Veng::Shader>& fs,
+                                const Format format) -> Ref<GraphicsPipeline>
         {
-            return GraphicsPipeline::Create(m_Context, {
-                .Name = name,
-                .ColorAttachments = {{.Format = format}},
-                .PipelineLayout = layout,
-                .ShaderStages = {
-                    {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
-                    {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
-                },
-            });
+            return GraphicsPipeline::Create(
+                m_Context, {
+                               .Name = name,
+                               .ColorAttachments = {{.Format = format}},
+                               .PipelineLayout = layout,
+                               .ShaderStages =
+                                   {
+                                       {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
+                                       {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
+                                   },
+                           });
         };
 
         // Both lighting layouts carry set 1 (the shadow system: atlas + immutable
         // comparison sampler + ShadowConstants dynamic uniform). Set 0 is the reserved
         // registry slot prepended by PipelineLayout, so set 1 is at descriptor-set index 1.
-        m_LightingLayout = PipelineLayout::Create(m_Context, {
-            .Name = "SceneRenderer Lighting Layout",
-            .DescriptorSetLayouts = {m_ShadowSetLayout},
-            .PushConstantRanges = {PushConstantRange::Of<LightingPushConstants>(ShaderStage::Fragment)},
-        });
-        m_LightingPipeline = MakePipeline("SceneRenderer Deferred Lighting Pipeline", m_LightingLayout, lightingFs, HdrFormat);
+        m_LightingLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Lighting Layout",
+                           .DescriptorSetLayouts = {m_ShadowSetLayout},
+                           .PushConstantRanges = {PushConstantRange::Of<LightingPushConstants>(
+                               ShaderStage::Fragment)},
+                       });
+        m_LightingPipeline = MakePipeline("SceneRenderer Deferred Lighting Pipeline",
+                                          m_LightingLayout, lightingFs, HdrFormat);
 
         // SSAO-enabled lighting variant: wider push block (adds the AO slot) and
         // the AO-fold fragment shader. Same set-1 shadow layout.
-        m_SsaoLightingLayout = PipelineLayout::Create(m_Context, {
-            .Name = "SceneRenderer SSAO Lighting Layout",
-            .DescriptorSetLayouts = {m_ShadowSetLayout},
-            .PushConstantRanges = {PushConstantRange::Of<SsaoLightingPushConstants>(ShaderStage::Fragment)},
-        });
-        m_SsaoLightingPipeline = MakePipeline("SceneRenderer Deferred Lighting SSAO Pipeline", m_SsaoLightingLayout, ssaoLightingFs, HdrFormat);
+        m_SsaoLightingLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer SSAO Lighting Layout",
+                           .DescriptorSetLayouts = {m_ShadowSetLayout},
+                           .PushConstantRanges = {PushConstantRange::Of<SsaoLightingPushConstants>(
+                               ShaderStage::Fragment)},
+                       });
+        m_SsaoLightingPipeline = MakePipeline("SceneRenderer Deferred Lighting SSAO Pipeline",
+                                              m_SsaoLightingLayout, ssaoLightingFs, HdrFormat);
 
         // Cascade-debug variant reuses the plain lighting layout but writes the output
         // format directly — a terminal debug arm with no tonemap tail.
-        m_CascadeDebugPipeline = MakePipeline("SceneRenderer Cascade Debug Pipeline", m_LightingLayout, cascadeDebugFs, m_OutputFormat);
+        m_CascadeDebugPipeline = MakePipeline("SceneRenderer Cascade Debug Pipeline",
+                                              m_LightingLayout, cascadeDebugFs, m_OutputFormat);
 
         // Push block is eight u32s (g-buffer slots + extent); Size = 32 matches SsaoPushConstants.
-        m_SsaoLayout = PipelineLayout::Create(m_Context, {
-            .Name = "SceneRenderer SSAO Layout",
-            .PushConstantRanges = {PushConstantRange{.Offset = 0, .Size = 32, .Stages = ShaderStage::Fragment}},
-        });
-        m_SsaoPipeline = MakePipeline("SceneRenderer SSAO Pipeline", m_SsaoLayout, ssaoFs, SsaoFormat);
+        m_SsaoLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer SSAO Layout",
+                           .PushConstantRanges = {PushConstantRange{
+                               .Offset = 0, .Size = 32, .Stages = ShaderStage::Fragment}},
+                       });
+        m_SsaoPipeline =
+            MakePipeline("SceneRenderer SSAO Pipeline", m_SsaoLayout, ssaoFs, SsaoFormat);
 
         // Loaded resident so the PostProcessScenePass builds its pipeline against the output format.
-        const AssetResult<AssetHandle<Material>> tonemap = m_Assets.LoadSync<Material>(TonemapMaterialId);
-        VE_ASSERT(tonemap.has_value(), "SceneRenderer: tonemap material load failed: {}", tonemap.error().Detail);
+        const AssetResult<AssetHandle<Material>> tonemap =
+            m_Assets.LoadSync<Material>(TonemapMaterialId);
+        VE_ASSERT(tonemap.has_value(), "SceneRenderer: tonemap material load failed: {}",
+                  tonemap.error().Detail);
         m_TonemapMaterial = *tonemap;
 
         // Bloom materials loaded resident for the same reason (pipeline against HdrFormat).
         auto LoadMaterial = [this](const AssetId id, const char* what) -> AssetHandle<Material>
         {
             const AssetResult<AssetHandle<Material>> result = m_Assets.LoadSync<Material>(id);
-            VE_ASSERT(result.has_value(), "SceneRenderer: {} material load failed: {}", what, result.error().Detail);
+            VE_ASSERT(result.has_value(), "SceneRenderer: {} material load failed: {}", what,
+                      result.error().Detail);
             return *result;
         };
         m_BloomBrightMaterial = LoadMaterial(BloomBrightMaterialId, "bloom bright-pass");
@@ -903,46 +959,60 @@ namespace Veng::Renderer
 
         // The g-buffer debug blits share the BlitPushConstants layout; only the
         // fragment shader differs.
-        const PushConstantRange blitRange = PushConstantRange::Of<BlitPushConstants>(ShaderStage::Fragment);
+        const PushConstantRange blitRange =
+            PushConstantRange::Of<BlitPushConstants>(ShaderStage::Fragment);
 
-        m_AlbedoBlitLayout = PipelineLayout::Create(m_Context, {
-            .Name = "SceneRenderer Albedo Blit Layout",
-            .PushConstantRanges = {blitRange},
-        });
-        m_AlbedoBlitPipeline = MakePipeline("SceneRenderer Albedo Blit Pipeline", m_AlbedoBlitLayout, albedoBlitFs, m_OutputFormat);
+        m_AlbedoBlitLayout =
+            PipelineLayout::Create(m_Context, {
+                                                  .Name = "SceneRenderer Albedo Blit Layout",
+                                                  .PushConstantRanges = {blitRange},
+                                              });
+        m_AlbedoBlitPipeline = MakePipeline("SceneRenderer Albedo Blit Pipeline",
+                                            m_AlbedoBlitLayout, albedoBlitFs, m_OutputFormat);
 
-        m_NormalBlitLayout = PipelineLayout::Create(m_Context, {
-            .Name = "SceneRenderer Normal Blit Layout",
-            .PushConstantRanges = {blitRange},
-        });
-        m_NormalBlitPipeline = MakePipeline("SceneRenderer Normal Blit Pipeline", m_NormalBlitLayout, normalBlitFs, m_OutputFormat);
+        m_NormalBlitLayout =
+            PipelineLayout::Create(m_Context, {
+                                                  .Name = "SceneRenderer Normal Blit Layout",
+                                                  .PushConstantRanges = {blitRange},
+                                              });
+        m_NormalBlitPipeline = MakePipeline("SceneRenderer Normal Blit Pipeline",
+                                            m_NormalBlitLayout, normalBlitFs, m_OutputFormat);
 
-        m_DepthBlitLayout = PipelineLayout::Create(m_Context, {
-            .Name = "SceneRenderer Depth Blit Layout",
-            .PushConstantRanges = {blitRange},
-        });
-        m_DepthBlitPipeline = MakePipeline("SceneRenderer Depth Blit Pipeline", m_DepthBlitLayout, depthBlitFs, m_OutputFormat);
+        m_DepthBlitLayout =
+            PipelineLayout::Create(m_Context, {
+                                                  .Name = "SceneRenderer Depth Blit Layout",
+                                                  .PushConstantRanges = {blitRange},
+                                              });
+        m_DepthBlitPipeline = MakePipeline("SceneRenderer Depth Blit Pipeline", m_DepthBlitLayout,
+                                           depthBlitFs, m_OutputFormat);
 
         // AO blit: same push shape as the g-buffer blits.
-        m_AoBlitLayout = PipelineLayout::Create(m_Context, {
-            .Name = "SceneRenderer AO Blit Layout",
-            .PushConstantRanges = {blitRange},
-        });
-        m_AoBlitPipeline = MakePipeline("SceneRenderer AO Blit Pipeline", m_AoBlitLayout, aoBlitFs, m_OutputFormat);
+        m_AoBlitLayout =
+            PipelineLayout::Create(m_Context, {
+                                                  .Name = "SceneRenderer AO Blit Layout",
+                                                  .PushConstantRanges = {blitRange},
+                                              });
+        m_AoBlitPipeline = MakePipeline("SceneRenderer AO Blit Pipeline", m_AoBlitLayout, aoBlitFs,
+                                        m_OutputFormat);
 
         // Shadow blit reads raw depth through a dedicated set 1, not bindless,
         // so its layout carries that set and no push block.
-        m_ShadowBlitLayout = PipelineLayout::Create(m_Context, {
-            .Name = "SceneRenderer Shadow Blit Layout",
-            .DescriptorSetLayouts = {m_ShadowBlitSetLayout},
-        });
-        m_ShadowBlitPipeline = MakePipeline("SceneRenderer Shadow Blit Pipeline", m_ShadowBlitLayout, shadowBlitFs, m_OutputFormat);
+        m_ShadowBlitLayout =
+            PipelineLayout::Create(m_Context, {
+                                                  .Name = "SceneRenderer Shadow Blit Layout",
+                                                  .DescriptorSetLayouts = {m_ShadowBlitSetLayout},
+                                              });
+        m_ShadowBlitPipeline = MakePipeline("SceneRenderer Shadow Blit Pipeline",
+                                            m_ShadowBlitLayout, shadowBlitFs, m_OutputFormat);
 
-        m_OrmBlitLayout = PipelineLayout::Create(m_Context, {
-            .Name = "SceneRenderer ORM Blit Layout",
-            .PushConstantRanges = {PushConstantRange::Of<OrmBlitPushConstants>(ShaderStage::Fragment)},
-        });
-        m_OrmBlitPipeline = MakePipeline("SceneRenderer ORM Blit Pipeline", m_OrmBlitLayout, ormBlitFs, m_OutputFormat);
+        m_OrmBlitLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer ORM Blit Layout",
+                           .PushConstantRanges = {PushConstantRange::Of<OrmBlitPushConstants>(
+                               ShaderStage::Fragment)},
+                       });
+        m_OrmBlitPipeline = MakePipeline("SceneRenderer ORM Blit Pipeline", m_OrmBlitLayout,
+                                         ormBlitFs, m_OutputFormat);
     }
 
     void SceneRenderer::CreateShadowSystem()
@@ -952,19 +1022,20 @@ namespace Veng::Renderer
         // Immutable comparison sampler for hardware SampleCmp: LESS-or-equal, linear
         // filter for the hardware 2×2 PCF. The MoltenVK argument-buffer restriction
         // applies only to set-0 bindless arrays; a dedicated set 1 sampler is fine.
-        m_ComparisonSampler = Sampler::Create(m_Context, {
-            .Name = "SceneRenderer Shadow Comparison Sampler",
-            .MagFilter = Filter::Linear,
-            .MinFilter = Filter::Linear,
-            .MipmapMode = MipmapMode::Nearest,
-            .AddressModeU = AddressMode::ClampToEdge,
-            .AddressModeV = AddressMode::ClampToEdge,
-            .AddressModeW = AddressMode::ClampToEdge,
-            .AnisotropyEnabled = false,
-            .CompareEnable = true,
-            .CompareOp = CompareOp::LessOrEqual,
-            .BorderColor = BorderColor::OpaqueWhite,
-        });
+        m_ComparisonSampler =
+            Sampler::Create(m_Context, {
+                                           .Name = "SceneRenderer Shadow Comparison Sampler",
+                                           .MagFilter = Filter::Linear,
+                                           .MinFilter = Filter::Linear,
+                                           .MipmapMode = MipmapMode::Nearest,
+                                           .AddressModeU = AddressMode::ClampToEdge,
+                                           .AddressModeV = AddressMode::ClampToEdge,
+                                           .AddressModeW = AddressMode::ClampToEdge,
+                                           .AnisotropyEnabled = false,
+                                           .CompareEnable = true,
+                                           .CompareOp = CompareOp::LessOrEqual,
+                                           .BorderColor = BorderColor::OpaqueWhite,
+                                       });
 
         // Set 1 — the shadow system:
         //   0: directional cascade atlas (SampledImage)
@@ -974,95 +1045,128 @@ namespace Veng::Renderer
         //   4: punctual shadow atlas (SampledImage)
         // The comparison sampler is shared across cascade and punctual tiles; binding 1
         // is immutable, so descriptor writes supply only bindings 0, 4 and buffers 2, 3.
-        m_ShadowSetLayout = DescriptorSetLayout::Create(m_Context, {
-            .Name = "SceneRenderer Shadow Set Layout",
-            .Bindings = {
-                {.Binding = 0, .Type = DescriptorType::SampledImage, .Count = 1, .Stages = ShaderStage::Fragment},
-                {.Binding = 1, .Type = DescriptorType::Sampler, .Count = 1, .Stages = ShaderStage::Fragment,
-                 .ImmutableSamplers = {m_ComparisonSampler}},
-                {.Binding = 2, .Type = DescriptorType::UniformBufferDynamic, .Count = 1, .Stages = ShaderStage::Fragment},
-                {.Binding = 3, .Type = DescriptorType::UniformBufferDynamic, .Count = 1, .Stages = ShaderStage::Fragment},
-                {.Binding = 4, .Type = DescriptorType::SampledImage, .Count = 1, .Stages = ShaderStage::Fragment},
-            },
-        });
+        m_ShadowSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Shadow Set Layout",
+                           .Bindings =
+                               {
+                                   {.Binding = 0,
+                                    .Type = DescriptorType::SampledImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Fragment},
+                                   {.Binding = 1,
+                                    .Type = DescriptorType::Sampler,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Fragment,
+                                    .ImmutableSamplers = {m_ComparisonSampler}},
+                                   {.Binding = 2,
+                                    .Type = DescriptorType::UniformBufferDynamic,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Fragment},
+                                   {.Binding = 3,
+                                    .Type = DescriptorType::UniformBufferDynamic,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Fragment},
+                                   {.Binding = 4,
+                                    .Type = DescriptorType::SampledImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Fragment},
+                               },
+                       });
         m_ShadowSet = DescriptorSet::Create(m_Context, {
-            .Name = "SceneRenderer Shadow Set",
-            .Layout = m_ShadowSetLayout,
-        });
+                                                           .Name = "SceneRenderer Shadow Set",
+                                                           .Layout = m_ShadowSetLayout,
+                                                       });
 
         // Debug shadow-blit set: atlas (binding 0) + ordinary sampler (binding 1) for raw depth.
-        m_ShadowBlitSetLayout = DescriptorSetLayout::Create(m_Context, {
-            .Name = "SceneRenderer Shadow Blit Set Layout",
-            .Bindings = {
-                {.Binding = 0, .Type = DescriptorType::SampledImage, .Count = 1, .Stages = ShaderStage::Fragment},
-                {.Binding = 1, .Type = DescriptorType::Sampler, .Count = 1, .Stages = ShaderStage::Fragment},
-            },
-        });
-        m_ShadowBlitSet = DescriptorSet::Create(m_Context, {
-            .Name = "SceneRenderer Shadow Blit Set",
-            .Layout = m_ShadowBlitSetLayout,
-        });
+        m_ShadowBlitSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Shadow Blit Set Layout",
+                           .Bindings =
+                               {
+                                   {.Binding = 0,
+                                    .Type = DescriptorType::SampledImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Fragment},
+                                   {.Binding = 1,
+                                    .Type = DescriptorType::Sampler,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Fragment},
+                               },
+                       });
+        m_ShadowBlitSet =
+            DescriptorSet::Create(m_Context, {
+                                                 .Name = "SceneRenderer Shadow Blit Set",
+                                                 .Layout = m_ShadowBlitSetLayout,
+                                             });
         // Ordinary clamp sampler for raw-depth debug reads; the descriptor set retains it.
-        const Ref<Sampler> blitSampler = Sampler::Create(m_Context, {
-            .Name = "SceneRenderer Shadow Blit Sampler",
-            .MagFilter = Filter::Nearest,
-            .MinFilter = Filter::Nearest,
-            .MipmapMode = MipmapMode::Nearest,
-            .AddressModeU = AddressMode::ClampToEdge,
-            .AddressModeV = AddressMode::ClampToEdge,
-            .AddressModeW = AddressMode::ClampToEdge,
-            .AnisotropyEnabled = false,
-        });
+        const Ref<Sampler> blitSampler =
+            Sampler::Create(m_Context, {
+                                           .Name = "SceneRenderer Shadow Blit Sampler",
+                                           .MagFilter = Filter::Nearest,
+                                           .MinFilter = Filter::Nearest,
+                                           .MipmapMode = MipmapMode::Nearest,
+                                           .AddressModeU = AddressMode::ClampToEdge,
+                                           .AddressModeV = AddressMode::ClampToEdge,
+                                           .AddressModeW = AddressMode::ClampToEdge,
+                                           .AnisotropyEnabled = false,
+                                       });
         m_ShadowBlitSet->Write(1, blitSampler);
 
         // 1×1 D32 dummy atlas cleared to depth = 1 (full visibility), bound when no
         // shadow pass is wired so the layout is always satisfied. Transitioned to
         // ShaderReadOnly immediately so the lighting pass samples a valid layout even
         // when it does not declare .Sample on it.
-        m_DummyShadowImage = Image::Create(m_Context, {
-            .Name = "SceneRenderer Dummy Shadow",
-            .Extent = {1, 1, 1},
-            .Format = Format::D32Sfloat,
-            .Usage = ImageUsage::DepthAttachment | ImageUsage::Sampled,
-        });
-        m_DummyShadowView = ImageView::Create(m_Context, {
-            .Name = "SceneRenderer Dummy Shadow View",
-            .Image = m_DummyShadowImage,
-        });
-        m_Context.ImmediateCommands([&](CommandBuffer& cmd)
-        {
-            RenderGraph graph(m_Context);
-            const ResourceId target = graph.Import("Dummy Shadow");
-            graph.AddPass("Clear Dummy Shadow")
-                .Depth({
-                    .Resource = target,
-                    .Load = LoadOp::Clear,
-                    .Store = StoreOp::Store,
-                    .Clear = ClearDepth{1.0f, 0},
-                })
-                .Execute([](PassContext&) {});
-            const RenderGraph::ImportBinding binding{target, m_DummyShadowView};
-            graph.Compile()->Execute(cmd, {&binding, 1});
-            cmd.PrepareForAccess(m_DummyShadowView, AccessKind::Sample);
-        });
+        m_DummyShadowImage =
+            Image::Create(m_Context, {
+                                         .Name = "SceneRenderer Dummy Shadow",
+                                         .Extent = {1, 1, 1},
+                                         .Format = Format::D32Sfloat,
+                                         .Usage = ImageUsage::DepthAttachment | ImageUsage::Sampled,
+                                     });
+        m_DummyShadowView =
+            ImageView::Create(m_Context, {
+                                             .Name = "SceneRenderer Dummy Shadow View",
+                                             .Image = m_DummyShadowImage,
+                                         });
+        m_Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                RenderGraph graph(m_Context);
+                const ResourceId target = graph.Import("Dummy Shadow");
+                graph.AddPass("Clear Dummy Shadow")
+                    .Depth({
+                        .Resource = target,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearDepth{1.0f, 0},
+                    })
+                    .Execute([](PassContext&) {});
+                const RenderGraph::ImportBinding binding{target, m_DummyShadowView};
+                graph.Compile()->Execute(cmd, {&binding, 1});
+                cmd.PrepareForAccess(m_DummyShadowView, AccessKind::Sample);
+            });
 
         // ShadowConstants ring: framesInFlight regions, each aligned to
         // minUniformBufferOffsetAlignment. Dynamic offset at bind time = frame * stride.
-        const u64 minAlign = GetVkPhysicalDevice(m_Context).getProperties()
-                                 .limits.minUniformBufferOffsetAlignment;
+        const u64 minAlign =
+            GetVkPhysicalDevice(m_Context).getProperties().limits.minUniformBufferOffsetAlignment;
         const u64 blockSize = sizeof(ShadowConstantsBlock);
         const u64 alignment = minAlign == 0 ? 1 : minAlign;
-        m_ShadowRingStride = static_cast<u32>(((blockSize + alignment - 1) / alignment) * alignment);
+        m_ShadowRingStride =
+            static_cast<u32>(((blockSize + alignment - 1) / alignment) * alignment);
         VE_ASSERT(m_ShadowRingStride % alignment == 0,
-                  "ShadowConstants ring stride {} is not a multiple of minUniformBufferOffsetAlignment {}",
+                  "ShadowConstants ring stride {} is not a multiple of "
+                  "minUniformBufferOffsetAlignment {}",
                   m_ShadowRingStride, alignment);
 
-        m_ShadowConstantsBuffer = Buffer::Create(m_Context, {
-            .Name = "SceneRenderer ShadowConstants",
-            .Size = static_cast<u64>(m_ShadowRingStride) * m_FramesInFlight,
-            .Usage = BufferUsage::Uniform,
-            .HostMapped = true,
-        });
+        m_ShadowConstantsBuffer = Buffer::Create(
+            m_Context, {
+                           .Name = "SceneRenderer ShadowConstants",
+                           .Size = static_cast<u64>(m_ShadowRingStride) * m_FramesInFlight,
+                           .Usage = BufferUsage::Uniform,
+                           .HostMapped = true,
+                       });
 
         // Zero all regions: w = 0 in ShadowParams means shadows disabled.
         std::memset(m_ShadowConstantsBuffer->GetMappedData(), 0,
@@ -1073,17 +1177,20 @@ namespace Veng::Renderer
         // PunctualShadowBlock ring: same alignment and frame*stride dynamic offset as
         // the ShadowConstants ring.
         const u64 punctualBlockSize = sizeof(PunctualShadowBlock);
-        m_PunctualRingStride = static_cast<u32>(((punctualBlockSize + alignment - 1) / alignment) * alignment);
+        m_PunctualRingStride =
+            static_cast<u32>(((punctualBlockSize + alignment - 1) / alignment) * alignment);
         VE_ASSERT(m_PunctualRingStride % alignment == 0,
-                  "PunctualShadowBlock ring stride {} is not a multiple of minUniformBufferOffsetAlignment {}",
+                  "PunctualShadowBlock ring stride {} is not a multiple of "
+                  "minUniformBufferOffsetAlignment {}",
                   m_PunctualRingStride, alignment);
 
-        m_PunctualShadowBuffer = Buffer::Create(m_Context, {
-            .Name = "SceneRenderer PunctualShadows",
-            .Size = static_cast<u64>(m_PunctualRingStride) * m_FramesInFlight,
-            .Usage = BufferUsage::Uniform,
-            .HostMapped = true,
-        });
+        m_PunctualShadowBuffer = Buffer::Create(
+            m_Context, {
+                           .Name = "SceneRenderer PunctualShadows",
+                           .Size = static_cast<u64>(m_PunctualRingStride) * m_FramesInFlight,
+                           .Usage = BufferUsage::Uniform,
+                           .HostMapped = true,
+                       });
 
         // Zero all regions: Params.x type = 0 means "no map", so all lights read full visibility.
         std::memset(m_PunctualShadowBuffer->GetMappedData(), 0,
@@ -1093,7 +1200,8 @@ namespace Veng::Renderer
 
         CreatePunctualShadowAtlas(); // allocates, clears, and writes binding 4
 
-        WriteShadowAtlasBinding(m_DummyShadowView); // Rebuild overwrites binding 0 when shadows are on
+        WriteShadowAtlasBinding(
+            m_DummyShadowView); // Rebuild overwrites binding 0 when shadows are on
     }
 
     void SceneRenderer::CreatePunctualShadowAtlas()
@@ -1102,35 +1210,38 @@ namespace Veng::Renderer
         const u32 res = m_Settings.PunctualShadowResolution;
         const uvec2 atlasExtent{PunctualAtlasColumns * res, PunctualAtlasRows * res};
 
-        m_PunctualShadowImage = Image::Create(m_Context, {
-            .Name = "SceneRenderer Punctual Shadow Atlas",
-            .Extent = {atlasExtent.x, atlasExtent.y, 1},
-            .Format = Format::D32Sfloat,
-            .Usage = ImageUsage::DepthAttachment | ImageUsage::Sampled,
-        });
-        m_PunctualShadowView = ImageView::Create(m_Context, {
-            .Name = "SceneRenderer Punctual Shadow Atlas View",
-            .Image = m_PunctualShadowImage,
-        });
+        m_PunctualShadowImage =
+            Image::Create(m_Context, {
+                                         .Name = "SceneRenderer Punctual Shadow Atlas",
+                                         .Extent = {atlasExtent.x, atlasExtent.y, 1},
+                                         .Format = Format::D32Sfloat,
+                                         .Usage = ImageUsage::DepthAttachment | ImageUsage::Sampled,
+                                     });
+        m_PunctualShadowView =
+            ImageView::Create(m_Context, {
+                                             .Name = "SceneRenderer Punctual Shadow Atlas View",
+                                             .Image = m_PunctualShadowImage,
+                                         });
 
         // Clear to depth = 1 (full visibility) and transition to ShaderReadOnly so
         // binding 4 is in a valid sampleable layout before the punctual pass runs.
-        m_Context.ImmediateCommands([&](CommandBuffer& cmd)
-        {
-            RenderGraph graph(m_Context);
-            const ResourceId target = graph.Import("Clear Punctual Atlas");
-            graph.AddPass("Clear Punctual Shadow Atlas")
-                .Depth({
-                    .Resource = target,
-                    .Load = LoadOp::Clear,
-                    .Store = StoreOp::Store,
-                    .Clear = ClearDepth{1.0f, 0},
-                })
-                .Execute([](PassContext&) {});
-            const RenderGraph::ImportBinding binding{target, m_PunctualShadowView};
-            graph.Compile()->Execute(cmd, {&binding, 1});
-            cmd.PrepareForAccess(m_PunctualShadowView, AccessKind::Sample);
-        });
+        m_Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                RenderGraph graph(m_Context);
+                const ResourceId target = graph.Import("Clear Punctual Atlas");
+                graph.AddPass("Clear Punctual Shadow Atlas")
+                    .Depth({
+                        .Resource = target,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearDepth{1.0f, 0},
+                    })
+                    .Execute([](PassContext&) {});
+                const RenderGraph::ImportBinding binding{target, m_PunctualShadowView};
+                graph.Compile()->Execute(cmd, {&binding, 1});
+                cmd.PrepareForAccess(m_PunctualShadowView, AccessKind::Sample);
+            });
 
         m_ShadowSet->Write(4, m_PunctualShadowView);
     }
@@ -1145,17 +1256,19 @@ namespace Veng::Renderer
     {
         // TransferSrc for the smoke path Download(); Sampled for the composite consumer.
         // Single-copy: the consumer samples GetOutput() in the same frame it is written.
-        m_OutputImage = Image::Create(m_Context, {
-            .Name = "SceneRenderer Output",
-            .Extent = {m_Extent.x, m_Extent.y, 1},
-            .Format = m_OutputFormat,
-            .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled | ImageUsage::TransferSrc,
-        });
+        m_OutputImage =
+            Image::Create(m_Context, {
+                                         .Name = "SceneRenderer Output",
+                                         .Extent = {m_Extent.x, m_Extent.y, 1},
+                                         .Format = m_OutputFormat,
+                                         .Usage = ImageUsage::ColorAttachment |
+                                                  ImageUsage::Sampled | ImageUsage::TransferSrc,
+                                     });
 
         m_OutputView = ImageView::Create(m_Context, {
-            .Name = "SceneRenderer Output View",
-            .Image = m_OutputImage,
-        });
+                                                        .Name = "SceneRenderer Output View",
+                                                        .Image = m_OutputImage,
+                                                    });
     }
 
     void SceneRenderer::CreateGBuffer()
@@ -1169,45 +1282,49 @@ namespace Veng::Renderer
         bindless.Release(m_DepthHandle);
 
         m_AlbedoImage = Image::Create(m_Context, {
-            .Name = "SceneRenderer GBuffer Albedo",
-            .Extent = {m_Extent.x, m_Extent.y, 1},
-            .Format = GBuffer::AlbedoFormat,
-            .Usage = GBuffer::ColorUsage,
-        });
-        m_AlbedoView = ImageView::Create(m_Context, {.Name = "SceneRenderer GBuffer Albedo View", .Image = m_AlbedoImage});
+                                                     .Name = "SceneRenderer GBuffer Albedo",
+                                                     .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                     .Format = GBuffer::AlbedoFormat,
+                                                     .Usage = GBuffer::ColorUsage,
+                                                 });
+        m_AlbedoView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer GBuffer Albedo View", .Image = m_AlbedoImage});
 
         m_NormalImage = Image::Create(m_Context, {
-            .Name = "SceneRenderer GBuffer Normal",
-            .Extent = {m_Extent.x, m_Extent.y, 1},
-            .Format = GBuffer::NormalFormat,
-            .Usage = GBuffer::ColorUsage,
-        });
-        m_NormalView = ImageView::Create(m_Context, {.Name = "SceneRenderer GBuffer Normal View", .Image = m_NormalImage});
+                                                     .Name = "SceneRenderer GBuffer Normal",
+                                                     .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                     .Format = GBuffer::NormalFormat,
+                                                     .Usage = GBuffer::ColorUsage,
+                                                 });
+        m_NormalView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer GBuffer Normal View", .Image = m_NormalImage});
 
         m_OrmImage = Image::Create(m_Context, {
-            .Name = "SceneRenderer GBuffer ORM",
-            .Extent = {m_Extent.x, m_Extent.y, 1},
-            .Format = GBuffer::ORMFormat,
-            .Usage = GBuffer::ColorUsage,
-        });
-        m_OrmView = ImageView::Create(m_Context, {.Name = "SceneRenderer GBuffer ORM View", .Image = m_OrmImage});
+                                                  .Name = "SceneRenderer GBuffer ORM",
+                                                  .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                  .Format = GBuffer::ORMFormat,
+                                                  .Usage = GBuffer::ColorUsage,
+                                              });
+        m_OrmView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer GBuffer ORM View", .Image = m_OrmImage});
 
         m_DepthImage = Image::Create(m_Context, {
-            .Name = "SceneRenderer GBuffer Depth",
-            .Extent = {m_Extent.x, m_Extent.y, 1},
-            .Format = GBuffer::DepthFormat,
-            .Usage = GBuffer::DepthUsage,
-        });
-        m_DepthView = ImageView::Create(m_Context, {.Name = "SceneRenderer GBuffer Depth View", .Image = m_DepthImage});
+                                                    .Name = "SceneRenderer GBuffer Depth",
+                                                    .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                    .Format = GBuffer::DepthFormat,
+                                                    .Usage = GBuffer::DepthUsage,
+                                                });
+        m_DepthView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer GBuffer Depth View", .Image = m_DepthImage});
 
         if (!m_Sampler)
         {
             m_Sampler = Sampler::Create(m_Context, {
-                .Name = "SceneRenderer GBuffer Sampler",
-                .AddressModeU = AddressMode::ClampToEdge,
-                .AddressModeV = AddressMode::ClampToEdge,
-                .AddressModeW = AddressMode::ClampToEdge,
-            });
+                                                       .Name = "SceneRenderer GBuffer Sampler",
+                                                       .AddressModeU = AddressMode::ClampToEdge,
+                                                       .AddressModeV = AddressMode::ClampToEdge,
+                                                       .AddressModeW = AddressMode::ClampToEdge,
+                                                   });
             m_SamplerHandle = bindless.Register(m_Sampler);
         }
 
@@ -1223,12 +1340,13 @@ namespace Veng::Renderer
         bindless.Release(m_HdrHandle);
 
         m_HdrImage = Image::Create(m_Context, {
-            .Name = "SceneRenderer HDR",
-            .Extent = {m_Extent.x, m_Extent.y, 1},
-            .Format = HdrFormat,
-            .Usage = HdrUsage,
-        });
-        m_HdrView = ImageView::Create(m_Context, {.Name = "SceneRenderer HDR View", .Image = m_HdrImage});
+                                                  .Name = "SceneRenderer HDR",
+                                                  .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                  .Format = HdrFormat,
+                                                  .Usage = HdrUsage,
+                                              });
+        m_HdrView =
+            ImageView::Create(m_Context, {.Name = "SceneRenderer HDR View", .Image = m_HdrImage});
 
         m_HdrHandle = bindless.Register(m_HdrView);
     }
@@ -1245,11 +1363,11 @@ namespace Veng::Renderer
         auto MakeTarget = [this](const char* name) -> std::pair<Ref<Image>, Ref<ImageView>>
         {
             Ref<Image> image = Image::Create(m_Context, {
-                .Name = name,
-                .Extent = {m_Extent.x, m_Extent.y, 1},
-                .Format = HdrFormat,
-                .Usage = HdrUsage,
-            });
+                                                            .Name = name,
+                                                            .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                            .Format = HdrFormat,
+                                                            .Usage = HdrUsage,
+                                                        });
             Ref<ImageView> view = ImageView::Create(m_Context, {.Name = name, .Image = image});
             return {std::move(image), std::move(view)};
         };
@@ -1280,11 +1398,13 @@ namespace Veng::Renderer
         const bool debugCascades = m_Settings.Mode == DebugView::Cascades;
         const bool debugPunctual = m_Settings.Mode == DebugView::PunctualShadows;
 
-        const bool shadowActive = (m_Settings.Mode == DebugView::Final && m_Settings.Shadows) || debugShadow || debugCascades;
+        const bool shadowActive = (m_Settings.Mode == DebugView::Final && m_Settings.Shadows) ||
+                                  debugShadow || debugCascades;
         m_ShadowActive = shadowActive;
         m_ShadowPass = nullptr;
 
-        const bool punctualShadowActive = (m_Settings.Mode == DebugView::Final && m_Settings.PunctualShadows) || debugPunctual;
+        const bool punctualShadowActive =
+            (m_Settings.Mode == DebugView::Final && m_Settings.PunctualShadows) || debugPunctual;
         m_PunctualShadowActive = punctualShadowActive;
         m_PunctualShadowPass = nullptr;
 
@@ -1364,8 +1484,8 @@ namespace Veng::Renderer
         // Created before the tail switch so ssaoHandle is set when the Final arm reads it.
         if (ssaoActive)
         {
-            auto ssaoPass = CreateUnique<SsaoScenePass>(
-                m_Context, m_SsaoPipeline, m_SamplerHandle, m_Extent);
+            auto ssaoPass =
+                CreateUnique<SsaoScenePass>(m_Context, m_SsaoPipeline, m_SamplerHandle, m_Extent);
             m_SsaoPass = ssaoPass.get();
             ssaoHandle = ssaoPass->GetAoHandle();
             m_Passes.push_back(std::move(ssaoPass));
@@ -1373,137 +1493,139 @@ namespace Veng::Renderer
 
         switch (m_Settings.Mode)
         {
-            case DebugView::Final:
+        case DebugView::Final:
+        {
+            m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
+                m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
+                ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride));
+
+            // Tonemap source: bloom composite when bloom is on, raw HDR otherwise.
+            ResourceId tonemapSourceId = m_HdrId;
+            TextureHandle tonemapSourceHandle = m_HdrHandle;
+
+            if (bloomActive)
             {
-                m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
-                    m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent, ssaoFold,
-                    m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride));
+                // Bright-pass: HDR → Bright.
+                m_Passes.push_back(
+                    CreateUnique<PostProcessScenePass>(m_Context, m_BloomBrightMaterial,
+                                                       PostProcessInput{
+                                                           .Source = m_HdrId,
+                                                           .SourceTexture = m_HdrHandle,
+                                                           .Sampler = m_SamplerHandle,
+                                                           .TextureField = "Hdr",
+                                                           .SamplerField = "HdrSampler",
+                                                       },
+                                                       m_BloomBrightId, HdrFormat, m_Extent));
 
-                // Tonemap source: bloom composite when bloom is on, raw HDR otherwise.
-                ResourceId tonemapSourceId = m_HdrId;
-                TextureHandle tonemapSourceHandle = m_HdrHandle;
+                // Blur horizontal: Bright → BlurH.
+                m_Passes.push_back(
+                    CreateUnique<PostProcessScenePass>(m_Context, m_BloomBlurHMaterial,
+                                                       PostProcessInput{
+                                                           .Source = m_BloomBrightId,
+                                                           .SourceTexture = m_BloomBrightHandle,
+                                                           .Sampler = m_SamplerHandle,
+                                                           .TextureField = "Source",
+                                                           .SamplerField = "SourceSampler",
+                                                       },
+                                                       m_BloomBlurHId, HdrFormat, m_Extent));
 
-                if (bloomActive)
-                {
-                    // Bright-pass: HDR → Bright.
-                    m_Passes.push_back(CreateUnique<PostProcessScenePass>(
-                        m_Context, m_BloomBrightMaterial,
-                        PostProcessInput{
-                            .Source = m_HdrId,
-                            .SourceTexture = m_HdrHandle,
-                            .Sampler = m_SamplerHandle,
-                            .TextureField = "Hdr",
-                            .SamplerField = "HdrSampler",
-                        },
-                        m_BloomBrightId, HdrFormat, m_Extent));
+                // Blur vertical: BlurH → BlurV.
+                m_Passes.push_back(
+                    CreateUnique<PostProcessScenePass>(m_Context, m_BloomBlurVMaterial,
+                                                       PostProcessInput{
+                                                           .Source = m_BloomBlurHId,
+                                                           .SourceTexture = m_BloomBlurHHandle,
+                                                           .Sampler = m_SamplerHandle,
+                                                           .TextureField = "Source",
+                                                           .SamplerField = "SourceSampler",
+                                                       },
+                                                       m_BloomBlurVId, HdrFormat, m_Extent));
 
-                    // Blur horizontal: Bright → BlurH.
-                    m_Passes.push_back(CreateUnique<PostProcessScenePass>(
-                        m_Context, m_BloomBlurHMaterial,
-                        PostProcessInput{
-                            .Source = m_BloomBrightId,
-                            .SourceTexture = m_BloomBrightHandle,
-                            .Sampler = m_SamplerHandle,
-                            .TextureField = "Source",
-                            .SamplerField = "SourceSampler",
-                        },
-                        m_BloomBlurHId, HdrFormat, m_Extent));
+                // Composite: HDR + BlurV*Intensity → Result, sampling two inputs.
+                auto composite =
+                    CreateUnique<PostProcessScenePass>(m_Context, m_BloomCompositeMaterial,
+                                                       PostProcessInput{
+                                                           .Source = m_HdrId,
+                                                           .SourceTexture = m_HdrHandle,
+                                                           .Sampler = m_SamplerHandle,
+                                                           .TextureField = "Hdr",
+                                                           .SamplerField = "HdrSampler",
+                                                       },
+                                                       m_BloomResultId, HdrFormat, m_Extent);
+                composite->SetExtraInput(PostProcessExtraInput{
+                    .Source = m_BloomBlurVId,
+                    .Texture = m_BloomBlurVHandle,
+                    .Sampler = m_SamplerHandle,
+                    .TextureField = "Bloom",
+                    .SamplerField = "BloomSampler",
+                });
+                m_Passes.push_back(std::move(composite));
 
-                    // Blur vertical: BlurH → BlurV.
-                    m_Passes.push_back(CreateUnique<PostProcessScenePass>(
-                        m_Context, m_BloomBlurVMaterial,
-                        PostProcessInput{
-                            .Source = m_BloomBlurHId,
-                            .SourceTexture = m_BloomBlurHHandle,
-                            .Sampler = m_SamplerHandle,
-                            .TextureField = "Source",
-                            .SamplerField = "SourceSampler",
-                        },
-                        m_BloomBlurVId, HdrFormat, m_Extent));
-
-                    // Composite: HDR + BlurV*Intensity → Result, sampling two inputs.
-                    auto composite = CreateUnique<PostProcessScenePass>(
-                        m_Context, m_BloomCompositeMaterial,
-                        PostProcessInput{
-                            .Source = m_HdrId,
-                            .SourceTexture = m_HdrHandle,
-                            .Sampler = m_SamplerHandle,
-                            .TextureField = "Hdr",
-                            .SamplerField = "HdrSampler",
-                        },
-                        m_BloomResultId, HdrFormat, m_Extent);
-                    composite->SetExtraInput(PostProcessExtraInput{
-                        .Source = m_BloomBlurVId,
-                        .Texture = m_BloomBlurVHandle,
-                        .Sampler = m_SamplerHandle,
-                        .TextureField = "Bloom",
-                        .SamplerField = "BloomSampler",
-                    });
-                    m_Passes.push_back(std::move(composite));
-
-                    tonemapSourceId = m_BloomResultId;
-                    tonemapSourceHandle = m_BloomResultHandle;
-                }
-
-                m_Passes.push_back(CreateUnique<PostProcessScenePass>(
-                    m_Context, m_TonemapMaterial,
-                    PostProcessInput{
-                        .Source = tonemapSourceId,
-                        .SourceTexture = tonemapSourceHandle,
-                        .Sampler = m_SamplerHandle,
-                        .TextureField = "Hdr",
-                        .SamplerField = "HdrSampler",
-                    },
-                    m_OutputId, m_OutputFormat, m_Extent));
-                break;
+                tonemapSourceId = m_BloomResultId;
+                tonemapSourceHandle = m_BloomResultHandle;
             }
-            case DebugView::Albedo:
-                m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                    m_Context, m_AlbedoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Albedo));
-                break;
-            case DebugView::Normal:
-                m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                    m_Context, m_NormalBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Normal));
-                break;
-            case DebugView::Depth:
-                m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                    m_Context, m_DepthBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Depth));
-                break;
-            case DebugView::Occlusion:
-                m_Passes.push_back(CreateUnique<OrmBlitScenePass>(
-                    m_Context, m_OrmBlitPipeline, m_Extent, /*channel=*/0));
-                break;
-            case DebugView::Roughness:
-                m_Passes.push_back(CreateUnique<OrmBlitScenePass>(
-                    m_Context, m_OrmBlitPipeline, m_Extent, /*channel=*/1));
-                break;
-            case DebugView::Metallic:
-                m_Passes.push_back(CreateUnique<OrmBlitScenePass>(
-                    m_Context, m_OrmBlitPipeline, m_Extent, /*channel=*/2));
-                break;
-            case DebugView::AO:
-                m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                    m_Context, m_AoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Ao));
-                break;
-            case DebugView::Shadows:
-                // Reads the cascade atlas through the dedicated set (raw depth), not bindless.
-                m_Passes.push_back(CreateUnique<ShadowBlitScenePass>(
-                    m_Context, m_ShadowBlitPipeline, m_Extent, m_ShadowBlitSet,
-                    ShadowBlitScenePass::Source::Directional));
-                break;
-            case DebugView::PunctualShadows:
-                // Reads the punctual atlas through the dedicated set; binding 0 is
-                // rewritten below after the pass set is chosen.
-                m_Passes.push_back(CreateUnique<ShadowBlitScenePass>(
-                    m_Context, m_ShadowBlitPipeline, m_Extent, m_ShadowBlitSet,
-                    ShadowBlitScenePass::Source::Punctual));
-                break;
-            case DebugView::Cascades:
-                // Tints fragments by cascade selection and writes the output directly (no tonemap tail).
-                m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
-                    m_Context, m_CascadeDebugPipeline, m_Extent, /*useSsao=*/false,
-                    m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride, /*writeToOutput=*/true));
-                break;
+
+            m_Passes.push_back(
+                CreateUnique<PostProcessScenePass>(m_Context, m_TonemapMaterial,
+                                                   PostProcessInput{
+                                                       .Source = tonemapSourceId,
+                                                       .SourceTexture = tonemapSourceHandle,
+                                                       .Sampler = m_SamplerHandle,
+                                                       .TextureField = "Hdr",
+                                                       .SamplerField = "HdrSampler",
+                                                   },
+                                                   m_OutputId, m_OutputFormat, m_Extent));
+            break;
+        }
+        case DebugView::Albedo:
+            m_Passes.push_back(
+                CreateUnique<FullscreenBlitScenePass>(m_Context, m_AlbedoBlitPipeline, m_Extent,
+                                                      FullscreenBlitScenePass::Source::Albedo));
+            break;
+        case DebugView::Normal:
+            m_Passes.push_back(
+                CreateUnique<FullscreenBlitScenePass>(m_Context, m_NormalBlitPipeline, m_Extent,
+                                                      FullscreenBlitScenePass::Source::Normal));
+            break;
+        case DebugView::Depth:
+            m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
+                m_Context, m_DepthBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Depth));
+            break;
+        case DebugView::Occlusion:
+            m_Passes.push_back(CreateUnique<OrmBlitScenePass>(m_Context, m_OrmBlitPipeline,
+                                                              m_Extent, /*channel=*/0));
+            break;
+        case DebugView::Roughness:
+            m_Passes.push_back(CreateUnique<OrmBlitScenePass>(m_Context, m_OrmBlitPipeline,
+                                                              m_Extent, /*channel=*/1));
+            break;
+        case DebugView::Metallic:
+            m_Passes.push_back(CreateUnique<OrmBlitScenePass>(m_Context, m_OrmBlitPipeline,
+                                                              m_Extent, /*channel=*/2));
+            break;
+        case DebugView::AO:
+            m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
+                m_Context, m_AoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Ao));
+            break;
+        case DebugView::Shadows:
+            // Reads the cascade atlas through the dedicated set (raw depth), not bindless.
+            m_Passes.push_back(CreateUnique<ShadowBlitScenePass>(
+                m_Context, m_ShadowBlitPipeline, m_Extent, m_ShadowBlitSet,
+                ShadowBlitScenePass::Source::Directional));
+            break;
+        case DebugView::PunctualShadows:
+            // Reads the punctual atlas through the dedicated set; binding 0 is
+            // rewritten below after the pass set is chosen.
+            m_Passes.push_back(CreateUnique<ShadowBlitScenePass>(
+                m_Context, m_ShadowBlitPipeline, m_Extent, m_ShadowBlitSet,
+                ShadowBlitScenePass::Source::Punctual));
+            break;
+        case DebugView::Cascades:
+            // Tints fragments by cascade selection and writes the output directly (no tonemap tail).
+            m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
+                m_Context, m_CascadeDebugPipeline, m_Extent, /*useSsao=*/false, m_ShadowSet,
+                m_ShadowRingStride, m_PunctualRingStride, /*writeToOutput=*/true));
+            break;
         }
 
         // Point binding 0 at the punctual atlas for the debug blit (overwrites the
@@ -1590,14 +1712,17 @@ namespace Veng::Renderer
     {
         // Per-frame param writes land in the ring-buffered block's current region (no stall).
         if (m_TonemapMaterial.IsLoaded())
-            const_cast<Material&>(*m_TonemapMaterial.Get()).SetParam("Exposure", m_Settings.Exposure);
+            const_cast<Material&>(*m_TonemapMaterial.Get())
+                .SetParam("Exposure", m_Settings.Exposure);
 
         if (m_BloomActive)
         {
             if (m_BloomBrightMaterial.IsLoaded())
-                const_cast<Material&>(*m_BloomBrightMaterial.Get()).SetParam("Threshold", view.BloomThreshold);
+                const_cast<Material&>(*m_BloomBrightMaterial.Get())
+                    .SetParam("Threshold", view.BloomThreshold);
             if (m_BloomCompositeMaterial.IsLoaded())
-                const_cast<Material&>(*m_BloomCompositeMaterial.Get()).SetParam("Intensity", view.BloomIntensity);
+                const_cast<Material&>(*m_BloomCompositeMaterial.Get())
+                    .SetParam("Intensity", view.BloomIntensity);
         }
 
         // The first MaxShadowedPunctual point/spot lights are assigned a shadow slot
@@ -1646,8 +1771,8 @@ namespace Veng::Renderer
                 const f32 punctualBias = std::clamp(worldPerTexel * 0.5f, 0.0005f, 0.01f);
                 if (light.Type == LightType::Spot)
                 {
-                    const SpotShadowView spotView =
-                        ComputeSpotShadowView(worldPos, light.Direction, light.Range, light.OuterCone);
+                    const SpotShadowView spotView = ComputeSpotShadowView(
+                        worldPos, light.Direction, light.Range, light.OuterCone);
                     // A spot uses face 0 only. Record carries the tile-remapped matrix
                     // for the lighting pass; the raw array carries the un-remapped one
                     // for the depth pass and per-view frustum cull.
@@ -1660,7 +1785,8 @@ namespace Veng::Renderer
                     const PointShadowView pointView = ComputePointShadowView(worldPos, light.Range);
                     for (u32 f = 0; f < CubeFaceCount; ++f)
                     {
-                        record.ViewProj[f] = ComposePunctualTileRemap(pointView.ViewProj[f], slot, f);
+                        record.ViewProj[f] =
+                            ComposePunctualTileRemap(pointView.ViewProj[f], slot, f);
                         punctualRawViewProj[slot][f] = pointView.ViewProj[f];
                     }
                     record.Params = vec4(1.0f, pointView.Near, pointView.Far, punctualBias);
@@ -1695,10 +1821,10 @@ namespace Veng::Renderer
 
         // sceneBounds extends only the per-cascade light-axis near plane (off-screen casters);
         // the cascade XY extent comes from the camera frustum slice.
-        const CascadeData cascades = ComputeCascades(
-            view.Camera, directionalTravel, sceneBounds,
-            {.Count = m_Settings.CascadeCount, .Lambda = m_Settings.CascadeSplitLambda,
-             .Resolution = m_Settings.ShadowResolution});
+        const CascadeData cascades = ComputeCascades(view.Camera, directionalTravel, sceneBounds,
+                                                     {.Count = m_Settings.CascadeCount,
+                                                      .Lambda = m_Settings.CascadeSplitLambda,
+                                                      .Resolution = m_Settings.ShadowResolution});
 
         // Thread the raw (non-tile-remapped) cascade matrices to the shadow pass,
         // which renders each cascade with its viewport placing it in the atlas tile.
@@ -1744,11 +1870,9 @@ namespace Veng::Renderer
         const f32 firstSplit = cascades.Count > 0 ? cascades.SplitFar[0] : 0.0f;
         const f32 blendBand = firstSplit * 0.1f;
 
-        shadowConstants.ShadowParams = vec4(
-            1.0f / static_cast<f32>(m_Settings.ShadowResolution),
-            blendBand,
-            static_cast<f32>(cascades.Count),
-            shadowEnabled ? 1.0f : 0.0f);
+        shadowConstants.ShadowParams =
+            vec4(1.0f / static_cast<f32>(m_Settings.ShadowResolution), blendBand,
+                 static_cast<f32>(cascades.Count), shadowEnabled ? 1.0f : 0.0f);
 
         // Write only the current frame's region (not yet submitted; safe).
         // The bind selects it via dynamic offset frame * stride.
@@ -1765,12 +1889,8 @@ namespace Veng::Renderer
 
         // Bloom and SSAO imports are appended only when active (they are only declared then).
         vector<RenderGraph::ImportBinding> bindings = {
-            {m_AlbedoId, m_AlbedoView},
-            {m_NormalId, m_NormalView},
-            {m_OrmId, m_OrmView},
-            {m_DepthId, m_DepthView},
-            {m_HdrId, m_HdrView},
-            {m_OutputId, m_OutputView},
+            {m_AlbedoId, m_AlbedoView}, {m_NormalId, m_NormalView}, {m_OrmId, m_OrmView},
+            {m_DepthId, m_DepthView},   {m_HdrId, m_HdrView},       {m_OutputId, m_OutputView},
         };
         if (m_ShadowActive && m_ShadowPass)
             bindings.push_back({m_ShadowId, m_ShadowPass->GetShadowView()});
@@ -1788,17 +1908,53 @@ namespace Veng::Renderer
         m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
     }
 
-    Ref<ImageView> SceneRenderer::GetOutput() const { return m_OutputView; }
+    Ref<ImageView> SceneRenderer::GetOutput() const
+    {
+        return m_OutputView;
+    }
 
-    u32 SceneRenderer::GetLastVisibleCount() const { return static_cast<u32>(m_Broadphase.GetCandidates().size()); }
-    u32 SceneRenderer::GetLastDrawnCount() const { return m_GBufferDrawnCount ? *m_GBufferDrawnCount : 0; }
-    bool SceneRenderer::DidBroadphaseRebuildLastFrame() const { return m_Broadphase.DidRebuildLastSync(); }
-    u32 SceneRenderer::GetBroadphaseNodeCount() const { return m_Broadphase.GetNodeCount(); }
-    Ref<ImageView> SceneRenderer::GetAlbedoView() const { return m_AlbedoView; }
-    Ref<ImageView> SceneRenderer::GetNormalView() const { return m_NormalView; }
-    Ref<ImageView> SceneRenderer::GetOrmView() const { return m_OrmView; }
-    Ref<ImageView> SceneRenderer::GetDepthView() const { return m_DepthView; }
-    Ref<ImageView> SceneRenderer::GetHdrView() const { return m_HdrView; }
-    Ref<ImageView> SceneRenderer::GetBloomResultView() const { return m_BloomResultView; }
-    Ref<ImageView> SceneRenderer::GetPunctualShadowView() const { return m_PunctualShadowView; }
+    u32 SceneRenderer::GetLastVisibleCount() const
+    {
+        return static_cast<u32>(m_Broadphase.GetCandidates().size());
+    }
+    u32 SceneRenderer::GetLastDrawnCount() const
+    {
+        return m_GBufferDrawnCount ? *m_GBufferDrawnCount : 0;
+    }
+    bool SceneRenderer::DidBroadphaseRebuildLastFrame() const
+    {
+        return m_Broadphase.DidRebuildLastSync();
+    }
+    u32 SceneRenderer::GetBroadphaseNodeCount() const
+    {
+        return m_Broadphase.GetNodeCount();
+    }
+    Ref<ImageView> SceneRenderer::GetAlbedoView() const
+    {
+        return m_AlbedoView;
+    }
+    Ref<ImageView> SceneRenderer::GetNormalView() const
+    {
+        return m_NormalView;
+    }
+    Ref<ImageView> SceneRenderer::GetOrmView() const
+    {
+        return m_OrmView;
+    }
+    Ref<ImageView> SceneRenderer::GetDepthView() const
+    {
+        return m_DepthView;
+    }
+    Ref<ImageView> SceneRenderer::GetHdrView() const
+    {
+        return m_HdrView;
+    }
+    Ref<ImageView> SceneRenderer::GetBloomResultView() const
+    {
+        return m_BloomResultView;
+    }
+    Ref<ImageView> SceneRenderer::GetPunctualShadowView() const
+    {
+        return m_PunctualShadowView;
+    }
 }

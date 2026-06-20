@@ -11,10 +11,10 @@
 
 namespace Veng::Renderer::Backend
 {
-    void TransitionImage(CommandBuffer& cmd, Image& image,
-                         const vk::ImageLayout newLayout,
+    void TransitionImage(CommandBuffer& cmd, Image& image, const vk::ImageLayout newLayout,
                          const vk::PipelineStageFlags dstStage, const vk::AccessFlags dstAccess,
-                         const u32 baseLayer, const u32 layerCount, const u32 baseMip, const u32 mipCount)
+                         const u32 baseLayer, const u32 layerCount, const u32 baseMip,
+                         const u32 mipCount)
     {
         auto& native = image.GetNative();
 
@@ -22,7 +22,8 @@ namespace Veng::Renderer::Backend
         // graph declares cover a uniform-state range. The hazard rule lives in
         // DecideBarrier (Backend/BarrierDecision.h).
         const auto& tracked = native.At(baseLayer, baseMip);
-        const SubresourceState current{tracked.Layout, tracked.Stage, tracked.Access, tracked.ProducingFamily};
+        const SubresourceState current{tracked.Layout, tracked.Stage, tracked.Access,
+                                       tracked.ProducingFamily};
 
         Context& context = image.GetContext();
         const QueueFamilyIndices& families = context.GetQueueFamilies();
@@ -35,8 +36,8 @@ namespace Veng::Renderer::Backend
         // (MoltenVK) it degenerates to the ordinary same-queue transition. Either
         // way, a transfer-produced subresource carries a pending transfer-timeline
         // value the frame submit must wait — folded in below.
-        const BarrierDecision decision = DecideBarrier(current, newLayout, dstStage, dstAccess,
-                                                       transferFamily, graphicsFamily);
+        const BarrierDecision decision =
+            DecideBarrier(current, newLayout, dstStage, dstAccess, transferFamily, graphicsFamily);
 
         // First graphics use of an async-uploaded subresource: fold its
         // transfer-timeline value into the next frame submit so the sample waits
@@ -49,7 +50,8 @@ namespace Veng::Renderer::Backend
 
         if (consumesTransfer)
         {
-            context.AddFrameTransferWait(context.GetTransferTimeline(), tracked.PendingTransferValue);
+            context.AddFrameTransferWait(context.GetTransferTimeline(),
+                                         tracked.PendingTransferValue);
         }
 
         if (decision.NeedsBarrier)
@@ -62,15 +64,19 @@ namespace Veng::Renderer::Backend
                 .srcQueueFamilyIndex = decision.SrcQueueFamilyIndex,
                 .dstQueueFamilyIndex = decision.DstQueueFamilyIndex,
                 .image = native.Image,
-                .subresourceRange = {
-                    Utils::GetAspectFlags(ToVk(image.GetFormat())),
-                    baseMip, mipCount, baseLayer, layerCount,
-                },
+                .subresourceRange =
+                    {
+                        Utils::GetAspectFlags(ToVk(image.GetFormat())),
+                        baseMip,
+                        mipCount,
+                        baseLayer,
+                        layerCount,
+                    },
             };
 
-            cmd.GetNative().CommandBuffer.pipelineBarrier(
-                decision.Src.Stage, decision.Dst.Stage,
-                vk::DependencyFlags{}, 0, nullptr, 0, nullptr, 1, &barrier);
+            cmd.GetNative().CommandBuffer.pipelineBarrier(decision.Src.Stage, decision.Dst.Stage,
+                                                          vk::DependencyFlags{}, 0, nullptr, 0,
+                                                          nullptr, 1, &barrier);
         }
 
         // Update tracked state across the range: a barrier resets it to the desired
@@ -92,13 +98,12 @@ namespace Veng::Renderer::Backend
     }
 
     void TransitionImage(CommandBuffer& cmd, Image& image, const ImageLayout newLayout,
-                         const u32 baseLayer, const u32 layerCount, const u32 baseMip, const u32 mipCount)
+                         const u32 baseLayer, const u32 layerCount, const u32 baseMip,
+                         const u32 mipCount)
     {
         const auto vkLayout = ToVk(newLayout);
-        TransitionImage(cmd, image, vkLayout,
-                        Utils::GetDestinationStageMask(vkLayout),
-                        Utils::GetAccessMask(vkLayout),
-                        baseLayer, layerCount, baseMip, mipCount);
+        TransitionImage(cmd, image, vkLayout, Utils::GetDestinationStageMask(vkLayout),
+                        Utils::GetAccessMask(vkLayout), baseLayer, layerCount, baseMip, mipCount);
     }
 
     void MarkProducedOn(Image& image, const u32 producingFamily, const u64 transferValue)
@@ -113,8 +118,8 @@ namespace Veng::Renderer::Backend
             }
     }
 
-    void ReleaseImageToGraphicsQueue(CommandBuffer& cmd, Image& image,
-                                     const u32 transferFamily, const u32 graphicsFamily)
+    void ReleaseImageToGraphicsQueue(CommandBuffer& cmd, Image& image, const u32 transferFamily,
+                                     const u32 graphicsFamily)
     {
         // The single-queue collapse needs no ownership move; the acquire half is
         // likewise skipped (DecideBarrier collapses both indices to IGNORED).
@@ -139,10 +144,14 @@ namespace Veng::Renderer::Backend
             .srcQueueFamilyIndex = transferFamily,
             .dstQueueFamilyIndex = graphicsFamily,
             .image = native.Image,
-            .subresourceRange = {
-                Utils::GetAspectFlags(ToVk(image.GetFormat())),
-                0, native.MipLevels, 0, native.Layers,
-            },
+            .subresourceRange =
+                {
+                    Utils::GetAspectFlags(ToVk(image.GetFormat())),
+                    0,
+                    native.MipLevels,
+                    0,
+                    native.Layers,
+                },
         };
 
         cmd.GetNative().CommandBuffer.pipelineBarrier(

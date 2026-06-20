@@ -162,7 +162,10 @@ namespace Veng::UI
         ScopedMenuBar& operator=(const ScopedMenuBar&) = delete;
 
         /// @brief Move constructor; invalidates the source so its destructor is a no-op.
-        ScopedMenuBar(ScopedMenuBar&& other) noexcept : m_Open(other.m_Open) { other.m_Live = false; }
+        ScopedMenuBar(ScopedMenuBar&& other) noexcept : m_Open(other.m_Open)
+        {
+            other.m_Live = false;
+        }
         ScopedMenuBar& operator=(ScopedMenuBar&&) = delete;
 
         /// @brief Returns true when the menu bar body should be drawn.

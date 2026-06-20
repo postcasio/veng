@@ -26,22 +26,25 @@ namespace VengEditor
             Veng::AssetHandle<Veng::Texture> Texture;
         };
 
-        PinType ValuePin(Veng::TypeId id) { return PinType{PinType::Kind::Value, id}; }
+        PinType ValuePin(Veng::TypeId id)
+        {
+            return PinType{PinType::Kind::Value, id};
+        }
     }
 
     Veng::vector<DomainOutputPin> DomainOutputContract(Veng::MaterialDomain domain)
     {
         switch (domain)
         {
-            case Veng::MaterialDomain::PostProcess:
-                return {
-                    DomainOutputPin{OutputColorPin, ValuePin(TypeIdOf<Veng::vec4>())},
-                };
-            case Veng::MaterialDomain::Surface:
-                return {
-                    DomainOutputPin{OutputAlbedoPin, ValuePin(TypeIdOf<Veng::vec4>())},
-                    DomainOutputPin{OutputNormalPin, ValuePin(TypeIdOf<Veng::vec3>())},
-                };
+        case Veng::MaterialDomain::PostProcess:
+            return {
+                DomainOutputPin{OutputColorPin, ValuePin(TypeIdOf<Veng::vec4>())},
+            };
+        case Veng::MaterialDomain::Surface:
+            return {
+                DomainOutputPin{OutputAlbedoPin, ValuePin(TypeIdOf<Veng::vec4>())},
+                DomainOutputPin{OutputNormalPin, ValuePin(TypeIdOf<Veng::vec3>())},
+            };
         }
         VE_ASSERT(false, "DomainOutputContract: unhandled MaterialDomain {}",
                   static_cast<Veng::u32>(domain));
@@ -125,8 +128,8 @@ namespace VengEditor
         const Veng::TypeId vec4Type = TypeIdOf<Veng::vec4>();
 
         // f32 → vecN: splat the scalar across the destination's components.
-        if (from.Type == f32Type
-            && (to.Type == vec2Type || to.Type == vec3Type || to.Type == vec4Type))
+        if (from.Type == f32Type &&
+            (to.Type == vec2Type || to.Type == vec3Type || to.Type == vec4Type))
             return true;
 
         // vec4 → vec3 / vec2: truncate the trailing components.

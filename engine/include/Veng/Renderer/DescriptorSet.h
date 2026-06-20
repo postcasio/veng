@@ -9,8 +9,10 @@
 namespace Veng::Renderer
 {
     class Context;
-    template <typename T> class UniformBuffer;
-    template <typename T> class StorageBuffer;
+    template <typename T>
+    class UniformBuffer;
+    template <typename T>
+    class StorageBuffer;
 
     /// @brief Creation parameters for a descriptor set.
     struct DescriptorSetInfo

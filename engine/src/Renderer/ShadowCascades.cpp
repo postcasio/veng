@@ -27,8 +27,8 @@ namespace Veng::Renderer
             // [0, 1] for Vulkan clip space.
             std::array<vec3, 4> frustumNear{};
             std::array<vec3, 4> frustumFar{};
-            const std::array<vec2, 4> ndcXY = {
-                vec2(-1.0f, -1.0f), vec2(1.0f, -1.0f), vec2(1.0f, 1.0f), vec2(-1.0f, 1.0f)};
+            const std::array<vec2, 4> ndcXY = {vec2(-1.0f, -1.0f), vec2(1.0f, -1.0f),
+                                               vec2(1.0f, 1.0f), vec2(-1.0f, 1.0f)};
 
             for (usize i = 0; i < 4; ++i)
             {
@@ -57,13 +57,13 @@ namespace Veng::Renderer
         }
     }
 
-    CascadeData ComputeCascades(
-        const Camera& camera, vec3 lightDir, const AABB& sceneBounds,
-        const CascadeSettings& settings)
+    CascadeData ComputeCascades(const Camera& camera, vec3 lightDir, const AABB& sceneBounds,
+                                const CascadeSettings& settings)
     {
         const f32 near = camera.GetNear();
         const f32 far = camera.GetFar();
-        VE_ASSERT(far > near && near > 0.0f, "ComputeCascades needs far > near > 0 (got near={}, far={})", near, far);
+        VE_ASSERT(far > near && near > 0.0f,
+                  "ComputeCascades needs far > near > 0 (got near={}, far={})", near, far);
 
         CascadeData data{};
         data.Count = std::clamp(settings.Count, 1u, MaxCascades);
@@ -93,7 +93,8 @@ namespace Veng::Renderer
 
             const f32 nearFraction = (splits[k] - near) / (far - near);
             const f32 farFraction = (splits[k + 1] - near) / (far - near);
-            const std::array<vec3, 8> corners = SliceCorners(invViewProj, nearFraction, farFraction);
+            const std::array<vec3, 8> corners =
+                SliceCorners(invViewProj, nearFraction, farFraction);
 
             // Bounding sphere of the slice corners: center is the centroid, radius
             // the max distance to it. A sphere is rotation-invariant, so the
@@ -125,8 +126,10 @@ namespace Veng::Renderer
             // the box's depth midpoint (light view looks down -Z, so the eye at
             // +radius pull-back puts the center at z = -radius).
             const vec4 centerLight = lightView * vec4(center, 1.0f);
-            f32 left = std::floor((centerLight.x - radius) / worldUnitsPerTexel) * worldUnitsPerTexel;
-            f32 bottom = std::floor((centerLight.y - radius) / worldUnitsPerTexel) * worldUnitsPerTexel;
+            f32 left =
+                std::floor((centerLight.x - radius) / worldUnitsPerTexel) * worldUnitsPerTexel;
+            f32 bottom =
+                std::floor((centerLight.y - radius) / worldUnitsPerTexel) * worldUnitsPerTexel;
             f32 right = left + 2.0f * radius;
             f32 top = bottom + 2.0f * radius;
 
@@ -141,7 +144,7 @@ namespace Veng::Renderer
             // glm::orthoZO takes positive distances in front of the eye; light view
             // looks down -Z, so a light-space z of -d is a front distance of d. The
             // deeper edge (more-negative z) is the larger front distance.
-            f32 nearDistance = -(centerLight.z + radius); // front distance to the near edge
+            f32 nearDistance = -(centerLight.z + radius);      // front distance to the near edge
             const f32 farDistance = -(centerLight.z - radius); // front distance to the far edge
 
             // Extend the near plane toward the light via the scene bound so casters

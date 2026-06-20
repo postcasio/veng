@@ -145,7 +145,8 @@ namespace Veng::Renderer
         /// Call once per pipeline bind, not per draw.
         /// @param cmd       The command buffer to record the bind into.
         /// @param bindPoint The pipeline bind point (default Graphics).
-        void Bind(CommandBuffer& cmd, PipelineBindPoint bindPoint = PipelineBindPoint::Graphics) const;
+        void Bind(CommandBuffer& cmd,
+                  PipelineBindPoint bindPoint = PipelineBindPoint::Graphics) const;
 
         /// @brief The base material index of the current frame-in-flight's region in the
         /// ring-buffered material buffer: currentFrameInFlight * MaxMaterials.

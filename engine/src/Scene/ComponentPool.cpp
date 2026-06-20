@@ -4,11 +4,9 @@
 
 namespace Veng
 {
-    Scene::ComponentPool::ComponentPool(const TypeInfo& info) :
-        m_Info(info)
+    Scene::ComponentPool::ComponentPool(const TypeInfo& info) : m_Info(info)
     {
-        VE_ASSERT(m_Info.Size > 0,
-                  "Component type '{}' has zero size", m_Info.Name);
+        VE_ASSERT(m_Info.Size > 0, "Component type '{}' has zero size", m_Info.Name);
     }
 
     Scene::ComponentPool::~ComponentPool()
@@ -26,8 +24,7 @@ namespace Veng
 
     void* Scene::ComponentPool::Add(Entity entity)
     {
-        VE_ASSERT(!Contains(entity),
-                  "entity already has a '{}' component", m_Info.Name);
+        VE_ASSERT(!Contains(entity), "entity already has a '{}' component", m_Info.Name);
 
         if (entity.Index >= m_Sparse.size())
         {
@@ -86,8 +83,7 @@ namespace Veng
             return false;
         }
         const u32 dense = m_Sparse[entity.Index];
-        return dense != Tombstone && dense < m_Dense.size()
-            && m_Dense[dense] == entity;
+        return dense != Tombstone && dense < m_Dense.size() && m_Dense[dense] == entity;
     }
 
     void* Scene::ComponentPool::TryGet(Entity entity)

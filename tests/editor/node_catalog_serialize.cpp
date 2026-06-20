@@ -24,7 +24,10 @@ using Veng::TypeIdOf;
 
 namespace
 {
-    PinType ValueOf(Veng::TypeId id) { return PinType{PinType::Kind::Value, id}; }
+    PinType ValueOf(Veng::TypeId id)
+    {
+        return PinType{PinType::Kind::Value, id};
+    }
 
     // A node type carrying one vec4 property "Value".
     struct ValueProps
@@ -100,17 +103,19 @@ namespace
 
         NodeGraph MakeGraph() const
         {
-            return NodeGraph(
-                [](const PinType& from, const PinType& to) { return from.Type == to.Type; },
-                [this](NodeTypeId id) { return Catalog.ShapeOf(id); },
-                [this](NodeTypeId id) {
-                    const NodeType* type = Catalog.Find(id);
-                    return type ? type->PropertySize : Veng::usize{0};
-                });
+            return NodeGraph([](const PinType& from, const PinType& to)
+                             { return from.Type == to.Type; },
+                             [this](NodeTypeId id) { return Catalog.ShapeOf(id); },
+                             [this](NodeTypeId id)
+                             {
+                                 const NodeType* type = Catalog.Find(id);
+                                 return type ? type->PropertySize : Veng::usize{0};
+                             });
         }
     };
 
-    Veng::vec4 ReadValueProperty(const NodeGraph& graph, NodeId node, const Veng::FieldDescriptor& field)
+    Veng::vec4 ReadValueProperty(const NodeGraph& graph, NodeId node,
+                                 const Veng::FieldDescriptor& field)
     {
         const std::span<const std::byte> bytes = graph.PropertyBytes(node);
         Veng::vec4 out{};
@@ -118,7 +123,8 @@ namespace
         return out;
     }
 
-    Veng::u64 ReadAssetIdProperty(const NodeGraph& graph, NodeId node, const Veng::FieldDescriptor& field)
+    Veng::u64 ReadAssetIdProperty(const NodeGraph& graph, NodeId node,
+                                  const Veng::FieldDescriptor& field)
     {
         const std::span<const std::byte> bytes = graph.PropertyBytes(node);
         Veng::u64 id = 0;
@@ -178,8 +184,10 @@ TEST_CASE("NodeGraphSerialize: nodes, links, positions, and a vec4 property roun
     NodeId loadedOutput{};
     for (NodeId n : loaded.Nodes())
     {
-        if (loaded.GetTypeOf(n) == fx.Param) loadedParam = n;
-        if (loaded.GetTypeOf(n) == fx.Output) loadedOutput = n;
+        if (loaded.GetTypeOf(n) == fx.Param)
+            loadedParam = n;
+        if (loaded.GetTypeOf(n) == fx.Output)
+            loadedOutput = n;
     }
     REQUIRE(loaded.IsValid(loadedParam));
     REQUIRE(loaded.IsValid(loadedOutput));
@@ -194,7 +202,8 @@ TEST_CASE("NodeGraphSerialize: nodes, links, positions, and a vec4 property roun
     CHECK(link.To.Node == loadedOutput);
 }
 
-TEST_CASE("NodeGraphSerialize: an AssetHandle property persists and rehydrates; invalid is no asset")
+TEST_CASE(
+    "NodeGraphSerialize: an AssetHandle property persists and rehydrates; invalid is no asset")
 {
     Fixture fx;
     const Veng::FieldDescriptor texture = TextureField();

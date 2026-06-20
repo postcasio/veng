@@ -24,7 +24,8 @@ namespace Veng::Renderer
     }
 
     /// @brief Selects mailbox present mode if available, falling back to FIFO.
-    static vk::PresentModeKHR GetPresentMode(const vector<vk::PresentModeKHR>& availablePresentModes)
+    static vk::PresentModeKHR
+    GetPresentMode(const vector<vk::PresentModeKHR>& availablePresentModes)
     {
         for (const auto& availablePresentMode : availablePresentModes)
         {
@@ -62,15 +63,11 @@ namespace Veng::Renderer
             .imageColorSpace = m_ColorSpace,
             .imageExtent = {m_Width, m_Height},
             .imageArrayLayers = 1,
-            .imageUsage = vk::ImageUsageFlagBits::eColorAttachment
-        };
+            .imageUsage = vk::ImageUsageFlagBits::eColorAttachment};
 
         QueueFamilyIndices indices = contextNative.FindQueueFamilies(contextNative.PhysicalDevice);
 
-        u32 queueFamilyIndices[] = {
-            indices.GraphicsFamily.value(),
-            indices.PresentFamily.value()
-        };
+        u32 queueFamilyIndices[] = {indices.GraphicsFamily.value(), indices.PresentFamily.value()};
 
         if (indices.GraphicsFamily != indices.PresentFamily)
         {
@@ -106,14 +103,15 @@ namespace Veng::Renderer
             auto native = CreateUnique<Image::Native>();
             native->Image = image;
 
-            m_Images.emplace_back(Ref<Image>(new Image(m_Context, ImageInfo{
-                                                    .Name = fmt::format("SwapChain Image [{}]", m_Images.size()),
-                                                    .Extent = uvec3{m_Width, m_Height, 1u},
-                                                    .MipLevels = 1,
-                                                    .Format = FromVk(m_Format),
-                                                    .Type = ImageType::Type2D,
-                                                    .Usage = ImageUsage::ColorAttachment
-                                                }, std::move(native))));
+            m_Images.emplace_back(Ref<Image>(
+                new Image(m_Context,
+                          ImageInfo{.Name = fmt::format("SwapChain Image [{}]", m_Images.size()),
+                                    .Extent = uvec3{m_Width, m_Height, 1u},
+                                    .MipLevels = 1,
+                                    .Format = FromVk(m_Format),
+                                    .Type = ImageType::Type2D,
+                                    .Usage = ImageUsage::ColorAttachment},
+                          std::move(native))));
 
             // Swapchain images come from vkAcquireNextImageKHR, whose
             // image-available semaphore is waited at AcquireWaitStage on submit.
@@ -124,20 +122,18 @@ namespace Veng::Renderer
             // semaphore wait — a WRITE_AFTER_READ hazard on first use).
             m_Images.back()->GetNative().At(0, 0).Stage = AcquireWaitStage;
 
-            m_ImageViews.emplace_back(ImageView::Create(m_Context, ImageViewInfo{
-                .Name = fmt::format("SwapChain ImageView [{}]", m_ImageViews.size()),
-                .Image = m_Images.back(),
-            }));
+            m_ImageViews.emplace_back(ImageView::Create(
+                m_Context, ImageViewInfo{
+                               .Name = fmt::format("SwapChain ImageView [{}]", m_ImageViews.size()),
+                               .Image = m_Images.back(),
+                           }));
         }
     }
 
-    SwapChain::SwapChain(Context& context, const SwapChainInfo& info) :
-        m_Context(context),
-        m_Width(info.Width),
-        m_Height(info.Height),
-        m_MaxImageCount(info.MaxImageCount),
-        m_Format(info.Format),
-        m_ColorSpace(GetColorSpace(info.Format))
+    SwapChain::SwapChain(Context& context, const SwapChainInfo& info)
+        : m_Context(context), m_Width(info.Width), m_Height(info.Height),
+          m_MaxImageCount(info.MaxImageCount), m_Format(info.Format),
+          m_ColorSpace(GetColorSpace(info.Format))
     {
         Initialize();
     }
@@ -169,12 +165,12 @@ namespace Veng::Renderer
         Initialize();
     }
 
-    vk::Extent2D SwapChain::GetSurfaceExtent(Window& window, SwapChainSupportDetails& swapChainSupport)
+    vk::Extent2D SwapChain::GetSurfaceExtent(Window& window,
+                                             SwapChainSupportDetails& swapChainSupport)
     {
         auto capabilities = swapChainSupport.Capabilities;
 
-        if (capabilities.currentExtent.width !=
-            std::numeric_limits<u32>::max())
+        if (capabilities.currentExtent.width != std::numeric_limits<u32>::max())
         {
             return capabilities.currentExtent;
         }
@@ -182,9 +178,8 @@ namespace Veng::Renderer
         {
             vk::Extent2D actualExtent = {window.GetWidth(), window.GetHeight()};
 
-            actualExtent.width =
-                std::clamp(actualExtent.width, capabilities.minImageExtent.width,
-                           capabilities.maxImageExtent.width);
+            actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width,
+                                            capabilities.maxImageExtent.width);
             actualExtent.height =
                 std::clamp(actualExtent.height, capabilities.minImageExtent.height,
                            capabilities.maxImageExtent.height);
@@ -201,7 +196,7 @@ namespace Veng::Renderer
     vk::Result SwapChain::AcquireNextImage(Semaphore& semaphore)
     {
         return GetVkDevice(m_Context).acquireNextImageKHR(m_VkSwapChain, UINT64_MAX,
-                                                                     semaphore.GetNative().Semaphore, VK_NULL_HANDLE,
-                                                                     &m_CurrentImageIndex);
+                                                          semaphore.GetNative().Semaphore,
+                                                          VK_NULL_HANDLE, &m_CurrentImageIndex);
     }
 }

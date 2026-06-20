@@ -43,18 +43,16 @@ namespace Veng::Renderer
         optional<path> PipelineCachePath;
         VmaAllocator Allocator = nullptr;
 
-        const vector<const char*> ValidationLayers = vector<const char*>({"VK_LAYER_KHRONOS_validation"});
+        const vector<const char*> ValidationLayers =
+            vector<const char*>({"VK_LAYER_KHRONOS_validation"});
         /// @brief Device extensions to enable.
         ///
         /// Mutable: the swapchain extension is dropped in headless mode (no
         /// window/surface), so this is finalized during Initialize().
-        vector<const char*> DeviceExtensions = vector<const char*>({
-            VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-            VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
-            VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME,
-            VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
-            VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME
-        });
+        vector<const char*> DeviceExtensions = vector<const char*>(
+            {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
+             VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME,
+             VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME});
         vector<const char*> RequiredExtensions;
 
         /// @brief When true, no window, surface, or swapchain — off-screen rendering only.
@@ -204,7 +202,8 @@ namespace Veng::Renderer
         vk::PhysicalDevice GetPhysicalDevice();
         bool IsDeviceSuitable(vk::PhysicalDevice device);
         QueueFamilyIndices& FindQueueFamilies(vk::PhysicalDevice device);
-        [[nodiscard]] SwapChainSupportDetails QuerySwapChainSupport(vk::PhysicalDevice device) const;
+        [[nodiscard]] SwapChainSupportDetails
+        QuerySwapChainSupport(vk::PhysicalDevice device) const;
         [[nodiscard]] bool CheckDeviceExtensionSupport(vk::PhysicalDevice device) const;
         vk::Device CreateDevice();
 

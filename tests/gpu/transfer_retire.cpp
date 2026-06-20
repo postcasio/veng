@@ -30,14 +30,15 @@ namespace
     Ref<Buffer> MakeScratch(Context& context)
     {
         return Buffer::Create(context, {
-            .Name = "Transfer Scratch",
-            .Size = 256,
-            .Usage = BufferUsage::TransferSrc,
-        });
+                                           .Name = "Transfer Scratch",
+                                           .Size = 256,
+                                           .Usage = BufferUsage::TransferSrc,
+                                       });
     }
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "ReleaseBuffer nulls the wrapper so its destructor is a no-op")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ReleaseBuffer nulls the wrapper so its destructor is a no-op")
 {
     auto buffer = MakeScratch(Context);
 

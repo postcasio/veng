@@ -9,12 +9,16 @@
 namespace Veng::Renderer
 {
     /// @brief Returns the backend-native sampler handle.
-    Sampler::Native& Sampler::GetNative() const { return *m_Native; }
+    Sampler::Native& Sampler::GetNative() const
+    {
+        return *m_Native;
+    }
 
     /// @brief Creates a Vulkan sampler from the given configuration.
     /// @param context  The owning render context.
     /// @param info     Sampler parameters (filtering, addressing, LOD, anisotropy, comparison, etc.).
-    Sampler::Sampler(Context& context, const SamplerInfo& info) : m_Context(context), m_Name(info.Name), m_Native(CreateUnique<Native>())
+    Sampler::Sampler(Context& context, const SamplerInfo& info)
+        : m_Context(context), m_Name(info.Name), m_Native(CreateUnique<Native>())
     {
         const vk::SamplerCreateInfo samplerCreateInfo{
             .magFilter = ToVk(info.MagFilter),

@@ -119,7 +119,8 @@ namespace Veng
         template <typename T>
         AssetResult<AssetHandle<T>> LoadSync(AssetId id)
         {
-            const AssetResult<Ref<Detail::AssetCacheEntry>> entry = LoadSyncUntyped(AssetTypeTrait<T>::Type, id);
+            const AssetResult<Ref<Detail::AssetCacheEntry>> entry =
+                LoadSyncUntyped(AssetTypeTrait<T>::Type, id);
             if (!entry)
                 return std::unexpected(entry.error());
 
@@ -235,12 +236,14 @@ namespace Veng
         };
 
         [[nodiscard]] Ref<Detail::AssetCacheEntry> LoadUntyped(AssetType type, AssetId id);
-        [[nodiscard]] AssetResult<Ref<Detail::AssetCacheEntry>> LoadSyncUntyped(AssetType type, AssetId id);
+        [[nodiscard]] AssetResult<Ref<Detail::AssetCacheEntry>> LoadSyncUntyped(AssetType type,
+                                                                                AssetId id);
 
         /// @brief Resolves an id to a loader and cooked blob, validating type against the archive entry.
         ///
         /// Shared by the async and sync load paths.
-        [[nodiscard]] AssetResult<std::pair<AssetLoader*, ArchiveEntry>> Resolve(AssetType type, AssetId id);
+        [[nodiscard]] AssetResult<std::pair<AssetLoader*, ArchiveEntry>> Resolve(AssetType type,
+                                                                                 AssetId id);
 
         [[nodiscard]] optional<ArchiveEntry> Find(AssetId id) const;
 

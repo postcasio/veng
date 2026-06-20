@@ -72,7 +72,8 @@ namespace Veng::Renderer
         case vk::ImageLayout::eUndefined:
             return {};
         case vk::ImageLayout::eColorAttachmentOptimal:
-            return vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eColorAttachmentRead;
+            return vk::AccessFlagBits::eColorAttachmentWrite |
+                   vk::AccessFlagBits::eColorAttachmentRead;
         case vk::ImageLayout::eDepthStencilAttachmentOptimal:
             return vk::AccessFlagBits::eDepthStencilAttachmentWrite;
         case vk::ImageLayout::eDepthStencilReadOnlyOptimal:
@@ -102,17 +103,28 @@ namespace Veng::Renderer
     {
         switch (imageLayout)
         {
-        case vk::ImageLayout::eUndefined: return vk::PipelineStageFlagBits::eTopOfPipe;
-        case vk::ImageLayout::eDepthReadOnlyOptimal: return vk::PipelineStageFlagBits::eEarlyFragmentTests;
-        case vk::ImageLayout::eDepthStencilReadOnlyOptimal: return vk::PipelineStageFlagBits::eEarlyFragmentTests;
-        case vk::ImageLayout::eStencilReadOnlyOptimal: return vk::PipelineStageFlagBits::eLateFragmentTests;
-        case vk::ImageLayout::eShaderReadOnlyOptimal: return vk::PipelineStageFlagBits::eFragmentShader;
-        case vk::ImageLayout::eTransferSrcOptimal: return vk::PipelineStageFlagBits::eTransfer;
-        case vk::ImageLayout::eTransferDstOptimal: return vk::PipelineStageFlagBits::eTransfer;
-        case vk::ImageLayout::eColorAttachmentOptimal: return vk::PipelineStageFlagBits::eColorAttachmentOutput;
-        case vk::ImageLayout::eDepthAttachmentOptimal: return vk::PipelineStageFlagBits::eEarlyFragmentTests;
-        case vk::ImageLayout::eDepthStencilAttachmentOptimal: return vk::PipelineStageFlagBits::eEarlyFragmentTests;
-        case vk::ImageLayout::eStencilAttachmentOptimal: return vk::PipelineStageFlagBits::eLateFragmentTests;
+        case vk::ImageLayout::eUndefined:
+            return vk::PipelineStageFlagBits::eTopOfPipe;
+        case vk::ImageLayout::eDepthReadOnlyOptimal:
+            return vk::PipelineStageFlagBits::eEarlyFragmentTests;
+        case vk::ImageLayout::eDepthStencilReadOnlyOptimal:
+            return vk::PipelineStageFlagBits::eEarlyFragmentTests;
+        case vk::ImageLayout::eStencilReadOnlyOptimal:
+            return vk::PipelineStageFlagBits::eLateFragmentTests;
+        case vk::ImageLayout::eShaderReadOnlyOptimal:
+            return vk::PipelineStageFlagBits::eFragmentShader;
+        case vk::ImageLayout::eTransferSrcOptimal:
+            return vk::PipelineStageFlagBits::eTransfer;
+        case vk::ImageLayout::eTransferDstOptimal:
+            return vk::PipelineStageFlagBits::eTransfer;
+        case vk::ImageLayout::eColorAttachmentOptimal:
+            return vk::PipelineStageFlagBits::eColorAttachmentOutput;
+        case vk::ImageLayout::eDepthAttachmentOptimal:
+            return vk::PipelineStageFlagBits::eEarlyFragmentTests;
+        case vk::ImageLayout::eDepthStencilAttachmentOptimal:
+            return vk::PipelineStageFlagBits::eEarlyFragmentTests;
+        case vk::ImageLayout::eStencilAttachmentOptimal:
+            return vk::PipelineStageFlagBits::eLateFragmentTests;
         case vk::ImageLayout::ePresentSrcKHR:
             // Present isn't a pipeline stage; use AllCommands as a conservative barrier endpoint.
             return vk::PipelineStageFlagBits::eAllCommands;

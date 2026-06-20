@@ -40,9 +40,12 @@ namespace Veng::UI
         {
             switch (id)
             {
-                case StyleColorId::Text: return ImGuiCol_Text;
-                case StyleColorId::Button: return ImGuiCol_Button;
-                case StyleColorId::FrameBg: return ImGuiCol_FrameBg;
+            case StyleColorId::Text:
+                return ImGuiCol_Text;
+            case StyleColorId::Button:
+                return ImGuiCol_Button;
+            case StyleColorId::FrameBg:
+                return ImGuiCol_FrameBg;
             }
             VE_ASSERT(false, "unmapped StyleColorId {}", static_cast<u32>(id));
         }
@@ -51,9 +54,12 @@ namespace Veng::UI
         {
             switch (id)
             {
-                case StyleVarId::WindowPadding: return ImGuiStyleVar_WindowPadding;
-                case StyleVarId::FramePadding: return ImGuiStyleVar_FramePadding;
-                case StyleVarId::ItemSpacing: return ImGuiStyleVar_ItemSpacing;
+            case StyleVarId::WindowPadding:
+                return ImGuiStyleVar_WindowPadding;
+            case StyleVarId::FramePadding:
+                return ImGuiStyleVar_FramePadding;
+            case StyleVarId::ItemSpacing:
+                return ImGuiStyleVar_ItemSpacing;
             }
             VE_ASSERT(false, "unmapped StyleVarId {}", static_cast<u32>(id));
         }
@@ -134,8 +140,8 @@ namespace Veng::UI
     ScopedChild Child(string_view id, vec2 size, WindowFlags flags)
     {
         const string label = AsCStr(id);
-        return ScopedChild(ImGui::BeginChild(label.c_str(), size,
-                                             ImGuiChildFlags_None, ToImGui(flags)));
+        return ScopedChild(
+            ImGui::BeginChild(label.c_str(), size, ImGuiChildFlags_None, ToImGui(flags)));
     }
 
     ScopedTree TreeNode(string_view label, TreeFlags flags)

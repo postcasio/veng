@@ -16,13 +16,20 @@ namespace VengEditor
         // Maps the manifest "type" string to an AssetType (Cooker.h schema).
         optional<AssetType> ParseAssetType(const std::string& name)
         {
-            if (name == "raw") return AssetType::Raw;
-            if (name == "texture") return AssetType::Texture;
-            if (name == "mesh") return AssetType::Mesh;
-            if (name == "shader") return AssetType::Shader;
-            if (name == "material") return AssetType::Material;
-            if (name == "vertex_layout") return AssetType::VertexLayout;
-            if (name == "prefab") return AssetType::Prefab;
+            if (name == "raw")
+                return AssetType::Raw;
+            if (name == "texture")
+                return AssetType::Texture;
+            if (name == "mesh")
+                return AssetType::Mesh;
+            if (name == "shader")
+                return AssetType::Shader;
+            if (name == "material")
+                return AssetType::Material;
+            if (name == "vertex_layout")
+                return AssetType::VertexLayout;
+            if (name == "prefab")
+                return AssetType::Prefab;
             return std::nullopt;
         }
     }

@@ -22,7 +22,12 @@ namespace VengEditor
         // closed and registry-free.
         struct LeafLayout
         {
-            enum class Repr : Veng::u8 { F32, I32, U32 };
+            enum class Repr : Veng::u8
+            {
+                F32,
+                I32,
+                U32
+            };
             Repr Component = Repr::F32;
             Veng::usize Count = 0; // component count; 0 = not a numeric leaf
         };
@@ -30,13 +35,20 @@ namespace VengEditor
         LeafLayout NumericLayoutOf(Veng::TypeId type)
         {
             using Veng::TypeIdOf;
-            if (type == TypeIdOf<Veng::f32>()) return {LeafLayout::Repr::F32, 1};
-            if (type == TypeIdOf<Veng::i32>()) return {LeafLayout::Repr::I32, 1};
-            if (type == TypeIdOf<Veng::u32>()) return {LeafLayout::Repr::U32, 1};
-            if (type == TypeIdOf<Veng::vec2>()) return {LeafLayout::Repr::F32, 2};
-            if (type == TypeIdOf<Veng::vec3>()) return {LeafLayout::Repr::F32, 3};
-            if (type == TypeIdOf<Veng::vec4>()) return {LeafLayout::Repr::F32, 4};
-            if (type == TypeIdOf<Veng::quat>()) return {LeafLayout::Repr::F32, 4};
+            if (type == TypeIdOf<Veng::f32>())
+                return {LeafLayout::Repr::F32, 1};
+            if (type == TypeIdOf<Veng::i32>())
+                return {LeafLayout::Repr::I32, 1};
+            if (type == TypeIdOf<Veng::u32>())
+                return {LeafLayout::Repr::U32, 1};
+            if (type == TypeIdOf<Veng::vec2>())
+                return {LeafLayout::Repr::F32, 2};
+            if (type == TypeIdOf<Veng::vec3>())
+                return {LeafLayout::Repr::F32, 3};
+            if (type == TypeIdOf<Veng::vec4>())
+                return {LeafLayout::Repr::F32, 4};
+            if (type == TypeIdOf<Veng::quat>())
+                return {LeafLayout::Repr::F32, 4};
             return {};
         }
 
@@ -44,9 +56,12 @@ namespace VengEditor
         {
             switch (repr)
             {
-                case LeafLayout::Repr::F32: return sizeof(Veng::f32);
-                case LeafLayout::Repr::I32: return sizeof(Veng::i32);
-                case LeafLayout::Repr::U32: return sizeof(Veng::u32);
+            case LeafLayout::Repr::F32:
+                return sizeof(Veng::f32);
+            case LeafLayout::Repr::I32:
+                return sizeof(Veng::i32);
+            case LeafLayout::Repr::U32:
+                return sizeof(Veng::u32);
             }
             return 0;
         }
@@ -56,24 +71,24 @@ namespace VengEditor
         {
             switch (repr)
             {
-                case LeafLayout::Repr::F32:
-                {
-                    Veng::f32 v = 0.0f;
-                    std::memcpy(&v, p, sizeof(v));
-                    return v;
-                }
-                case LeafLayout::Repr::I32:
-                {
-                    Veng::i32 v = 0;
-                    std::memcpy(&v, p, sizeof(v));
-                    return v;
-                }
-                case LeafLayout::Repr::U32:
-                {
-                    Veng::u32 v = 0;
-                    std::memcpy(&v, p, sizeof(v));
-                    return v;
-                }
+            case LeafLayout::Repr::F32:
+            {
+                Veng::f32 v = 0.0f;
+                std::memcpy(&v, p, sizeof(v));
+                return v;
+            }
+            case LeafLayout::Repr::I32:
+            {
+                Veng::i32 v = 0;
+                std::memcpy(&v, p, sizeof(v));
+                return v;
+            }
+            case LeafLayout::Repr::U32:
+            {
+                Veng::u32 v = 0;
+                std::memcpy(&v, p, sizeof(v));
+                return v;
+            }
             }
             return nullptr;
         }
@@ -82,24 +97,24 @@ namespace VengEditor
         {
             switch (repr)
             {
-                case LeafLayout::Repr::F32:
-                {
-                    Veng::f32 v = value.is_number() ? value.get<Veng::f32>() : 0.0f;
-                    std::memcpy(p, &v, sizeof(v));
-                    break;
-                }
-                case LeafLayout::Repr::I32:
-                {
-                    Veng::i32 v = value.is_number() ? value.get<Veng::i32>() : 0;
-                    std::memcpy(p, &v, sizeof(v));
-                    break;
-                }
-                case LeafLayout::Repr::U32:
-                {
-                    Veng::u32 v = value.is_number() ? value.get<Veng::u32>() : 0u;
-                    std::memcpy(p, &v, sizeof(v));
-                    break;
-                }
+            case LeafLayout::Repr::F32:
+            {
+                Veng::f32 v = value.is_number() ? value.get<Veng::f32>() : 0.0f;
+                std::memcpy(p, &v, sizeof(v));
+                break;
+            }
+            case LeafLayout::Repr::I32:
+            {
+                Veng::i32 v = value.is_number() ? value.get<Veng::i32>() : 0;
+                std::memcpy(p, &v, sizeof(v));
+                break;
+            }
+            case LeafLayout::Repr::U32:
+            {
+                Veng::u32 v = value.is_number() ? value.get<Veng::u32>() : 0u;
+                std::memcpy(p, &v, sizeof(v));
+                break;
+            }
             }
         }
 
@@ -108,43 +123,46 @@ namespace VengEditor
         {
             switch (field.Class)
             {
-                case Veng::FieldClass::Scalar:
-                {
-                    const LeafLayout layout = NumericLayoutOf(field.Type);
-                    VE_ASSERT(layout.Count == 1, "node property '{}': unsupported scalar type", field.Name);
-                    return ComponentToJson(fieldPtr, layout.Component);
-                }
-                case Veng::FieldClass::Vector:
-                case Veng::FieldClass::Quaternion:
-                {
-                    const LeafLayout layout = NumericLayoutOf(field.Type);
-                    VE_ASSERT(layout.Count > 0, "node property '{}': unsupported vector type", field.Name);
-                    const Veng::usize size = ComponentSize(layout.Component);
-                    Json array = Json::array();
-                    for (Veng::usize i = 0; i < layout.Count; ++i)
-                        array.push_back(ComponentToJson(fieldPtr + i * size, layout.Component));
-                    return array;
-                }
-                case Veng::FieldClass::Enum:
-                {
-                    // The enum's underlying integer; serialized as a number.
-                    Veng::i32 v = 0;
-                    std::memcpy(&v, fieldPtr, sizeof(v));
-                    return v;
-                }
-                case Veng::FieldClass::AssetHandle:
-                {
-                    // The leading u64 AssetId; an invalid (zero) id serializes as
-                    // null — "no asset".
-                    Veng::u64 id = 0;
-                    std::memcpy(&id, fieldPtr, sizeof(id));
-                    if (id == 0)
-                        return nullptr;
-                    return id;
-                }
-                default:
-                    VE_ASSERT(false, "node property '{}': FieldClass not permitted on a node", field.Name);
+            case Veng::FieldClass::Scalar:
+            {
+                const LeafLayout layout = NumericLayoutOf(field.Type);
+                VE_ASSERT(layout.Count == 1, "node property '{}': unsupported scalar type",
+                          field.Name);
+                return ComponentToJson(fieldPtr, layout.Component);
+            }
+            case Veng::FieldClass::Vector:
+            case Veng::FieldClass::Quaternion:
+            {
+                const LeafLayout layout = NumericLayoutOf(field.Type);
+                VE_ASSERT(layout.Count > 0, "node property '{}': unsupported vector type",
+                          field.Name);
+                const Veng::usize size = ComponentSize(layout.Component);
+                Json array = Json::array();
+                for (Veng::usize i = 0; i < layout.Count; ++i)
+                    array.push_back(ComponentToJson(fieldPtr + i * size, layout.Component));
+                return array;
+            }
+            case Veng::FieldClass::Enum:
+            {
+                // The enum's underlying integer; serialized as a number.
+                Veng::i32 v = 0;
+                std::memcpy(&v, fieldPtr, sizeof(v));
+                return v;
+            }
+            case Veng::FieldClass::AssetHandle:
+            {
+                // The leading u64 AssetId; an invalid (zero) id serializes as
+                // null — "no asset".
+                Veng::u64 id = 0;
+                std::memcpy(&id, fieldPtr, sizeof(id));
+                if (id == 0)
                     return nullptr;
+                return id;
+            }
+            default:
+                VE_ASSERT(false, "node property '{}': FieldClass not permitted on a node",
+                          field.Name);
+                return nullptr;
             }
         }
 
@@ -155,41 +173,41 @@ namespace VengEditor
         {
             switch (field.Class)
             {
-                case Veng::FieldClass::Scalar:
-                {
-                    const LeafLayout layout = NumericLayoutOf(field.Type);
-                    if (layout.Count == 1)
-                        JsonToComponent(value, fieldPtr, layout.Component);
+            case Veng::FieldClass::Scalar:
+            {
+                const LeafLayout layout = NumericLayoutOf(field.Type);
+                if (layout.Count == 1)
+                    JsonToComponent(value, fieldPtr, layout.Component);
+                break;
+            }
+            case Veng::FieldClass::Vector:
+            case Veng::FieldClass::Quaternion:
+            {
+                const LeafLayout layout = NumericLayoutOf(field.Type);
+                if (layout.Count == 0 || !value.is_array())
                     break;
-                }
-                case Veng::FieldClass::Vector:
-                case Veng::FieldClass::Quaternion:
-                {
-                    const LeafLayout layout = NumericLayoutOf(field.Type);
-                    if (layout.Count == 0 || !value.is_array())
-                        break;
-                    const Veng::usize size = ComponentSize(layout.Component);
-                    const Veng::usize count = std::min<Veng::usize>(layout.Count, value.size());
-                    for (Veng::usize i = 0; i < count; ++i)
-                        JsonToComponent(value[i], fieldPtr + i * size, layout.Component);
-                    break;
-                }
-                case Veng::FieldClass::Enum:
-                {
-                    Veng::i32 v = value.is_number() ? value.get<Veng::i32>() : 0;
-                    std::memcpy(fieldPtr, &v, sizeof(v));
-                    break;
-                }
-                case Veng::FieldClass::AssetHandle:
-                {
-                    // null/non-number leaves id zero ("no asset"); rehydration to a live
-                    // handle is the panel's job.
-                    Veng::u64 id = value.is_number_unsigned() ? value.get<Veng::u64>() : 0;
-                    std::memcpy(fieldPtr, &id, sizeof(id));
-                    break;
-                }
-                default:
-                    break;
+                const Veng::usize size = ComponentSize(layout.Component);
+                const Veng::usize count = std::min<Veng::usize>(layout.Count, value.size());
+                for (Veng::usize i = 0; i < count; ++i)
+                    JsonToComponent(value[i], fieldPtr + i * size, layout.Component);
+                break;
+            }
+            case Veng::FieldClass::Enum:
+            {
+                Veng::i32 v = value.is_number() ? value.get<Veng::i32>() : 0;
+                std::memcpy(fieldPtr, &v, sizeof(v));
+                break;
+            }
+            case Veng::FieldClass::AssetHandle:
+            {
+                // null/non-number leaves id zero ("no asset"); rehydration to a live
+                // handle is the panel's job.
+                Veng::u64 id = value.is_number_unsigned() ? value.get<Veng::u64>() : 0;
+                std::memcpy(fieldPtr, &id, sizeof(id));
+                break;
+            }
+            default:
+                break;
             }
         }
 
@@ -198,19 +216,19 @@ namespace VengEditor
         {
             switch (field.Class)
             {
-                case Veng::FieldClass::Scalar:
-                case Veng::FieldClass::Vector:
-                case Veng::FieldClass::Quaternion:
-                {
-                    const LeafLayout layout = NumericLayoutOf(field.Type);
-                    return layout.Count * ComponentSize(layout.Component);
-                }
-                case Veng::FieldClass::Enum:
-                    return sizeof(Veng::i32);
-                case Veng::FieldClass::AssetHandle:
-                    return sizeof(Veng::u64);
-                default:
-                    return 0;
+            case Veng::FieldClass::Scalar:
+            case Veng::FieldClass::Vector:
+            case Veng::FieldClass::Quaternion:
+            {
+                const LeafLayout layout = NumericLayoutOf(field.Type);
+                return layout.Count * ComponentSize(layout.Component);
+            }
+            case Veng::FieldClass::Enum:
+                return sizeof(Veng::i32);
+            case Veng::FieldClass::AssetHandle:
+                return sizeof(Veng::u64);
+            default:
+                return 0;
             }
         }
 
@@ -243,7 +261,8 @@ namespace VengEditor
         for (NodeId node : graph.Nodes())
             order.push_back(node);
 
-        const auto serialIndexOf = [&](NodeId node) -> Veng::usize {
+        const auto serialIndexOf = [&](NodeId node) -> Veng::usize
+        {
             for (Veng::usize i = 0; i < order.size(); ++i)
                 if (order[i] == node)
                     return i;
@@ -282,8 +301,8 @@ namespace VengEditor
             const NodeType* toType = catalog.Find(graph.GetTypeOf(link.To.Node));
             VE_ASSERT(fromType != nullptr && toType != nullptr,
                       "WriteNodeGraph: a link endpoint has an unknown type");
-            VE_ASSERT(link.From.Pin < fromType->Outputs.size()
-                          && link.To.Pin < toType->Inputs.size(),
+            VE_ASSERT(link.From.Pin < fromType->Outputs.size() &&
+                          link.To.Pin < toType->Inputs.size(),
                       "WriteNodeGraph: a link names an out-of-range pin");
 
             Json entry = Json::object();
@@ -344,8 +363,8 @@ namespace VengEditor
                 spawned.back() = node;
                 spawnedTypes.back() = type;
 
-                if (entry.contains("position") && entry["position"].is_array()
-                    && entry["position"].size() == 2)
+                if (entry.contains("position") && entry["position"].is_array() &&
+                    entry["position"].size() == 2)
                 {
                     const Json& p = entry["position"];
                     dest.MoveNode(node, Veng::vec2{p[0].get<Veng::f32>(), p[1].get<Veng::f32>()});
@@ -374,8 +393,9 @@ namespace VengEditor
         {
             for (const Json& entry : in["links"])
             {
-                if (!entry.is_object() || !entry.contains("from_node") || !entry.contains("to_node")
-                    || !entry.contains("from_pin") || !entry.contains("to_pin"))
+                if (!entry.is_object() || !entry.contains("from_node") ||
+                    !entry.contains("to_node") || !entry.contains("from_pin") ||
+                    !entry.contains("to_pin"))
                 {
                     Veng::Log::Warn("ReadNodeGraph: dropping a malformed link entry");
                     continue;
@@ -393,8 +413,8 @@ namespace VengEditor
                 const NodeId toNode = spawned[toIdx];
                 const NodeType* fromType = spawnedTypes[fromIdx];
                 const NodeType* toType = spawnedTypes[toIdx];
-                if (!dest.IsValid(fromNode) || !dest.IsValid(toNode)
-                    || fromType == nullptr || toType == nullptr)
+                if (!dest.IsValid(fromNode) || !dest.IsValid(toNode) || fromType == nullptr ||
+                    toType == nullptr)
                 {
                     // An endpoint node was dropped (unknown type) — its links go too.
                     Veng::Log::Warn("ReadNodeGraph: dropping a link to a dropped node");
@@ -403,8 +423,8 @@ namespace VengEditor
 
                 const Veng::string fromPin = entry["from_pin"].get<Veng::string>();
                 const Veng::string toPin = entry["to_pin"].get<Veng::string>();
-                if (FindPin(fromType->Outputs, fromPin) == nullptr
-                    || FindPin(toType->Inputs, toPin) == nullptr)
+                if (FindPin(fromType->Outputs, fromPin) == nullptr ||
+                    FindPin(toType->Inputs, toPin) == nullptr)
                 {
                     Veng::Log::Warn("ReadNodeGraph: dropping a link naming an unknown pin");
                     continue;

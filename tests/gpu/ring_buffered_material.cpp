@@ -49,22 +49,26 @@ namespace
                                                  const Ref<ShaderModule>& vertexModule,
                                                  const Ref<ShaderModule>& fragmentModule)
     {
-        outLayout = PipelineLayout::Create(context, {
-            .Name = "Material Param Layout",
-            .PushConstantRanges = {
-                PushConstantRange::Of<MaterialPush>(ShaderStage::Fragment),
-            },
-        });
+        outLayout = PipelineLayout::Create(
+            context, {
+                         .Name = "Material Param Layout",
+                         .PushConstantRanges =
+                             {
+                                 PushConstantRange::Of<MaterialPush>(ShaderStage::Fragment),
+                             },
+                     });
 
-        return GraphicsPipeline::Create(context, {
-            .Name = "Material Param Pipeline",
-            .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
-            .PipelineLayout = outLayout,
-            .ShaderStages = {
-                {.Stage = ShaderStage::Vertex, .Module = vertexModule},
-                {.Stage = ShaderStage::Fragment, .Module = fragmentModule},
-            },
-        });
+        return GraphicsPipeline::Create(
+            context, {
+                         .Name = "Material Param Pipeline",
+                         .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
+                         .PipelineLayout = outLayout,
+                         .ShaderStages =
+                             {
+                                 {.Stage = ShaderStage::Vertex, .Module = vertexModule},
+                                 {.Stage = ShaderStage::Fragment, .Module = fragmentModule},
+                             },
+                     });
     }
 
     // A block whose first 16 bytes hold one float4 the test shader reads.
@@ -93,19 +97,20 @@ namespace
                 .Store = StoreOp::Store,
                 .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
             })
-            .Execute([&](PassContext& ctx)
-            {
-                CommandBuffer& passCmd = ctx.Cmd();
-                passCmd.BindPipeline(pipeline);
-                passCmd.SetViewport({0, 0}, {Size, Size});
-                passCmd.SetScissor({0, 0}, {Size, Size});
-                bindless.Bind(passCmd);
-                // Fold the current frame's region base into the selector so the
-                // shader's index * stride load reads this frame's region.
-                passCmd.PushConstants(MaterialPush{
-                    .MaterialIndex = bindless.GetCurrentFrameBase() + material.Index});
-                passCmd.DrawFullscreenTriangle();
-            });
+            .Execute(
+                [&](PassContext& ctx)
+                {
+                    CommandBuffer& passCmd = ctx.Cmd();
+                    passCmd.BindPipeline(pipeline);
+                    passCmd.SetViewport({0, 0}, {Size, Size});
+                    passCmd.SetScissor({0, 0}, {Size, Size});
+                    bindless.Bind(passCmd);
+                    // Fold the current frame's region base into the selector so the
+                    // shader's index * stride load reads this frame's region.
+                    passCmd.PushConstants(MaterialPush{
+                        .MaterialIndex = bindless.GetCurrentFrameBase() + material.Index});
+                    passCmd.DrawFullscreenTriangle();
+                });
 
         const RenderGraph::ImportBinding bindings[] = {{outputId, outputView}};
         graph.Compile()->Execute(cmd, bindings);
@@ -140,27 +145,26 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(fragmentAsset.has_value());
 
     Ref<PipelineLayout> layout;
-    auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module, fragmentAsset->Get()->Module);
+    auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
+                                           fragmentAsset->Get()->Module);
 
-    auto outputImage = Image::Create(Context, {
-        .Name = "Ring Output",
-        .Extent = {Size, Size, 1},
-        .Format = Format::RGBA8Unorm,
-        .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
-    });
-    auto outputView = ImageView::Create(Context, {.Name = "Ring Output View", .Image = outputImage});
+    auto outputImage =
+        Image::Create(Context, {
+                                   .Name = "Ring Output",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    auto outputView =
+        ImageView::Create(Context, {.Name = "Ring Output View", .Image = outputImage});
 
     auto& bindless = Context.GetBindlessRegistry();
 
     // A distinct value per frame, spanning more than framesInFlight frames so a
     // stale region from a prior in-flight frame would be caught as a wrong pixel.
     const std::array<vec4, 6> perFrame = {
-        vec4{0.2f, 0.0f, 0.0f, 1.0f},
-        vec4{0.4f, 0.0f, 0.0f, 1.0f},
-        vec4{0.6f, 0.0f, 0.0f, 1.0f},
-        vec4{0.8f, 0.0f, 0.0f, 1.0f},
-        vec4{0.1f, 0.0f, 0.0f, 1.0f},
-        vec4{0.9f, 0.0f, 0.0f, 1.0f},
+        vec4{0.2f, 0.0f, 0.0f, 1.0f}, vec4{0.4f, 0.0f, 0.0f, 1.0f}, vec4{0.6f, 0.0f, 0.0f, 1.0f},
+        vec4{0.8f, 0.0f, 0.0f, 1.0f}, vec4{0.1f, 0.0f, 0.0f, 1.0f}, vec4{0.9f, 0.0f, 0.0f, 1.0f},
     };
 
     const auto initial = MakeBlock(perFrame[0]);
@@ -183,8 +187,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     bindless.Release(material);
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "ring-buffered material: a write-once material is stable across the in-flight window")
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "ring-buffered material: a write-once material is stable across the in-flight window")
 {
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
@@ -195,15 +200,18 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(fragmentAsset.has_value());
 
     Ref<PipelineLayout> layout;
-    auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module, fragmentAsset->Get()->Module);
+    auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
+                                           fragmentAsset->Get()->Module);
 
-    auto outputImage = Image::Create(Context, {
-        .Name = "Ring Output Stable",
-        .Extent = {Size, Size, 1},
-        .Format = Format::RGBA8Unorm,
-        .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
-    });
-    auto outputView = ImageView::Create(Context, {.Name = "Ring Output Stable View", .Image = outputImage});
+    auto outputImage =
+        Image::Create(Context, {
+                                   .Name = "Ring Output Stable",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    auto outputView =
+        ImageView::Create(Context, {.Name = "Ring Output Stable View", .Image = outputImage});
 
     auto& bindless = Context.GetBindlessRegistry();
 

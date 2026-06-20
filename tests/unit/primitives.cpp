@@ -62,7 +62,8 @@ namespace
 
             const vec3 tangentXyz(v.Tangent);
             CHECK(glm::length(tangentXyz) == doctest::Approx(1.0f).epsilon(0.001f));
-            CHECK(std::abs(glm::dot(tangentXyz, v.Normal)) == doctest::Approx(0.0f).epsilon(0.001f));
+            CHECK(std::abs(glm::dot(tangentXyz, v.Normal)) ==
+                  doctest::Approx(0.0f).epsilon(0.001f));
             CHECK(std::abs(v.Tangent.w) == doctest::Approx(1.0f));
         }
     }
@@ -208,7 +209,8 @@ TEST_CASE("Icosphere: triangle count is 20 * 4^subdivisions")
     for (u32 subdivisions = 0; subdivisions <= 3; ++subdivisions)
     {
         const MeshData data = Primitives::Icosphere(0.5f, subdivisions);
-        const usize triangles = static_cast<usize>(20) * (static_cast<usize>(1) << (2 * subdivisions));
+        const usize triangles =
+            static_cast<usize>(20) * (static_cast<usize>(1) << (2 * subdivisions));
         CHECK(data.Indices.size() == triangles * 3);
     }
 }

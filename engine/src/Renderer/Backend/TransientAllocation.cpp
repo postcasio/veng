@@ -38,9 +38,7 @@ namespace Veng::Renderer::Backend
         vector<u32> order(lifetimes.size());
         std::iota(order.begin(), order.end(), 0u);
         std::ranges::stable_sort(order, [&](const u32 a, const u32 b)
-        {
-            return lifetimes[a].FirstUse < lifetimes[b].FirstUse;
-        });
+                                 { return lifetimes[a].FirstUse < lifetimes[b].FirstUse; });
 
         vector<Slot> slots;
         vector<u32> assignment(lifetimes.size());
@@ -53,10 +51,9 @@ namespace Veng::Renderer::Backend
                 if (slots[s].Key != keys[t])
                     continue;
 
-                const bool collides = std::ranges::any_of(slots[s].Members, [&](const u32 m)
-                {
-                    return Overlaps(lifetimes[m], lifetimes[t]);
-                });
+                const bool collides =
+                    std::ranges::any_of(slots[s].Members, [&](const u32 m)
+                                        { return Overlaps(lifetimes[m], lifetimes[t]); });
                 if (collides)
                     continue;
 

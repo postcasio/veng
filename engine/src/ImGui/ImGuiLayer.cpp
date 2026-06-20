@@ -30,31 +30,30 @@ namespace Veng
         u32 FramesRemaining;
     };
 
-    Unique<ImGuiLayer> ImGuiLayer::Create(const ImGuiLayerInfo& info, Context& context, Window& window)
+    Unique<ImGuiLayer> ImGuiLayer::Create(const ImGuiLayerInfo& info, Context& context,
+                                          Window& window)
     {
         return Unique<ImGuiLayer>(new ImGuiLayer(info, context, window));
     }
 
-    ImGuiLayer::ImGuiLayer(const ImGuiLayerInfo& info, Context& context, Window& window) : m_Context(context)
+    ImGuiLayer::ImGuiLayer(const ImGuiLayerInfo& info, Context& context, Window& window)
+        : m_Context(context)
     {
         using namespace Renderer;
 
-        m_DescriptorPool = DescriptorPool::Create(m_Context, {
-            .Name = "ImGui Descriptor Pool",
-            .MaxSets = 100000,
-            .PoolSizes = {
-                {
-                    .type = vk::DescriptorType::eUniformBuffer,
-                    .descriptorCount = 100000,
-                },
-                {
-                    .type = vk::DescriptorType::eCombinedImageSampler,
-                    .descriptorCount = 100000,
-                }
-            },
-            .Flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
-            vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind
-        });
+        m_DescriptorPool = DescriptorPool::Create(
+            m_Context, {.Name = "ImGui Descriptor Pool",
+                        .MaxSets = 100000,
+                        .PoolSizes = {{
+                                          .type = vk::DescriptorType::eUniformBuffer,
+                                          .descriptorCount = 100000,
+                                      },
+                                      {
+                                          .type = vk::DescriptorType::eCombinedImageSampler,
+                                          .descriptorCount = 100000,
+                                      }},
+                        .Flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
+                                 vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind});
 
         CreateResources();
 
@@ -95,10 +94,11 @@ namespace Veng
             .DescriptorPool = m_DescriptorPool->GetVkDescriptorPool(),
             .MinImageCount = context.GetSwapChainImageCount(),
             .ImageCount = context.GetSwapChainImageCount(),
-            .PipelineInfoMain = {
-                .MSAASamples = VK_SAMPLE_COUNT_1_BIT,
-                .PipelineRenderingCreateInfo = pipelineRenderingCreateInfo,
-            },
+            .PipelineInfoMain =
+                {
+                    .MSAASamples = VK_SAMPLE_COUNT_1_BIT,
+                    .PipelineRenderingCreateInfo = pipelineRenderingCreateInfo,
+                },
             .UseDynamicRendering = true,
         };
 
@@ -214,19 +214,21 @@ namespace Veng
             config.GlyphOffset = ImVec2(0, 5.0f);
             config.GlyphMinAdvanceX = 20.0f;
             static constexpr ImWchar icon_ranges[] = {ICON_MIN_MD, ICON_MAX_16_MD, 0};
-            io.Fonts->AddFontFromFileTTF(info.IconFontPath->string().c_str(), 20.0f, &config, icon_ranges);
+            io.Fonts->AddFontFromFileTTF(info.IconFontPath->string().c_str(), 20.0f, &config,
+                                         icon_ranges);
         }
 
         // Swap-chain recreation changes the render extent; recreate the offscreen image to match.
-        m_Context.AddSwapChainInvalidationCallback([this]
-        {
-            DisposeResources();
-            CreateResources();
+        m_Context.AddSwapChainInvalidationCallback(
+            [this]
+            {
+                DisposeResources();
+                CreateResources();
 #ifdef VE_VIEWPORTS
-            const uvec2 extent = m_Context.GetRenderExtent();
-            ImGui::GetMainViewport()->Size = vec2(extent);
+                const uvec2 extent = m_Context.GetRenderExtent();
+                ImGui::GetMainViewport()->Size = vec2(extent);
 #endif
-        });
+            });
     }
 
     ImGuiLayer::~ImGuiLayer()
@@ -253,20 +255,19 @@ namespace Veng
 
         const uvec2 extent = m_Context.GetRenderExtent();
 
-        m_Image = Image::Create(m_Context, {
-            .Name = "ImGui Image",
-            .Extent = {extent.x, extent.y, 1},
-            .MipLevels = 1,
-            .Layers = 1,
-            .Format = Format::RGBA16Sfloat,
-            .Type = ImageType::Type2D,
-            .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled
-        });
+        m_Image =
+            Image::Create(m_Context, {.Name = "ImGui Image",
+                                      .Extent = {extent.x, extent.y, 1},
+                                      .MipLevels = 1,
+                                      .Layers = 1,
+                                      .Format = Format::RGBA16Sfloat,
+                                      .Type = ImageType::Type2D,
+                                      .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled});
 
         m_ImageView = ImageView::Create(m_Context, {
-            .Name = "ImGui Image View",
-            .Image = m_Image,
-        });
+                                                       .Name = "ImGui Image View",
+                                                       .Image = m_Image,
+                                                   });
     }
 
     void ImGuiLayer::DisposeResources()
@@ -280,16 +281,17 @@ namespace Veng
         // The free runs outside the erase_if predicate: a hardened STL may evaluate
         // the predicate more than once per element, which would free the same set twice.
         vector<vk::DescriptorSet> setsToFree;
-        std::erase_if(m_PendingTextureRemovals, [&setsToFree](PendingTextureRemoval& removal)
-        {
-            if (removal.FramesRemaining == 0)
-            {
-                setsToFree.push_back(removal.Set);
-                return true;
-            }
-            --removal.FramesRemaining;
-            return false;
-        });
+        std::erase_if(m_PendingTextureRemovals,
+                      [&setsToFree](PendingTextureRemoval& removal)
+                      {
+                          if (removal.FramesRemaining == 0)
+                          {
+                              setsToFree.push_back(removal.Set);
+                              return true;
+                          }
+                          --removal.FramesRemaining;
+                          return false;
+                      });
         for (vk::DescriptorSet set : setsToFree)
             ImGui_ImplVulkan_RemoveTexture(set);
 
@@ -315,14 +317,12 @@ namespace Veng
 
         commandBuffer.BeginRendering({
             .Extent = m_Context.GetRenderExtent(),
-            .ColorAttachments = {
-                {
-                    .ImageView = m_ImageView,
-                    .LoadOp = LoadOp::Clear,
-                    .StoreOp = StoreOp::Store,
-                    .ClearValue = ClearColor{1.0f, 0.0f, 0.0f, 0.0f},
-                }
-            },
+            .ColorAttachments = {{
+                .ImageView = m_ImageView,
+                .LoadOp = LoadOp::Clear,
+                .StoreOp = StoreOp::Store,
+                .ClearValue = ClearColor{1.0f, 0.0f, 0.0f, 0.0f},
+            }},
         });
 
         ImGui::Render();
@@ -338,13 +338,13 @@ namespace Veng
         Backend::TransitionImage(commandBuffer, *m_Image, ImageLayout::ShaderReadOnly);
     }
 
-    Ref<ImGuiTexture> ImGuiLayer::CreateTexture(const Renderer::Sampler& sampler, const Renderer::ImageView& imageView)
+    Ref<ImGuiTexture> ImGuiLayer::CreateTexture(const Renderer::Sampler& sampler,
+                                                const Renderer::ImageView& imageView)
     {
         auto native = CreateUnique<ImGuiTexture::Native>();
 
         native->Set = ImGui_ImplVulkan_AddTexture(
-            GetVkSampler(sampler),
-            GetVkImageView(imageView),
+            GetVkSampler(sampler), GetVkImageView(imageView),
             static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal));
 
         return Ref<ImGuiTexture>(new ImGuiTexture(std::move(native), *this));
@@ -355,6 +355,7 @@ namespace Veng
         // The drain runs in BeginFrame before this frame's fence is waited, so the
         // count must cover the frame in flight at queueing time plus the subsequent
         // MaxFramesInFlight cycles — hence MaxFramesInFlight + 1.
-        m_PendingTextureRemovals.push_back({texture.GetNative().Set, m_Context.GetMaxFramesInFlight() + 1});
+        m_PendingTextureRemovals.push_back(
+            {texture.GetNative().Set, m_Context.GetMaxFramesInFlight() + 1});
     }
 }

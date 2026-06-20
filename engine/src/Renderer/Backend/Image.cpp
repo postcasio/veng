@@ -15,7 +15,10 @@
 namespace Veng::Renderer
 {
     /// @brief Returns the backend-native image handle.
-    Image::Native& Image::GetNative() const { return *m_Native; }
+    Image::Native& Image::GetNative() const
+    {
+        return *m_Native;
+    }
 
     /// @brief Constructs an Image wrapping an externally-owned Vulkan image (e.g. a swapchain image).
     ///
@@ -23,17 +26,10 @@ namespace Veng::Renderer
     /// @param context  The owning render context.
     /// @param info     Image metadata (extent, format, usage, etc.).
     /// @param native   Backend native struct containing the pre-existing VkImage handle.
-    Image::Image(Context& context, const ImageInfo& info, Unique<Native> native) :
-        m_Context(context),
-        m_Name(info.Name),
-        m_Extent(info.Extent),
-        m_MipLevels(info.MipLevels),
-        m_Layers(info.Layers),
-        m_Format(info.Format),
-        m_Type(info.Type),
-        m_Usage(info.Usage),
-        m_Managed(false),
-        m_Native(std::move(native))
+    Image::Image(Context& context, const ImageInfo& info, Unique<Native> native)
+        : m_Context(context), m_Name(info.Name), m_Extent(info.Extent), m_MipLevels(info.MipLevels),
+          m_Layers(info.Layers), m_Format(info.Format), m_Type(info.Type), m_Usage(info.Usage),
+          m_Managed(false), m_Native(std::move(native))
     {
         m_Native->InitStates(m_Layers, m_MipLevels);
 
@@ -45,17 +41,10 @@ namespace Veng::Renderer
     /// The destructor defers destruction of the VkImage and its allocation until the GPU is done with it.
     /// @param context  The owning render context.
     /// @param info     Image configuration.
-    Image::Image(Context& context, const ImageInfo& info) :
-        m_Context(context),
-        m_Name(info.Name),
-        m_Extent(info.Extent),
-        m_MipLevels(info.MipLevels),
-        m_Layers(info.Layers),
-        m_Format(info.Format),
-        m_Type(info.Type),
-        m_Usage(info.Usage),
-        m_Managed(true),
-        m_Native(CreateUnique<Native>())
+    Image::Image(Context& context, const ImageInfo& info)
+        : m_Context(context), m_Name(info.Name), m_Extent(info.Extent), m_MipLevels(info.MipLevels),
+          m_Layers(info.Layers), m_Format(info.Format), m_Type(info.Type), m_Usage(info.Usage),
+          m_Managed(true), m_Native(CreateUnique<Native>())
     {
         m_Native->InitStates(m_Layers, m_MipLevels);
 
@@ -78,8 +67,7 @@ namespace Veng::Renderer
             .tiling = static_cast<VkImageTiling>(vk::ImageTiling::eOptimal),
             .usage = static_cast<VkImageUsageFlags>(ToVk(m_Usage)),
             .sharingMode = static_cast<VkSharingMode>(vk::SharingMode::eExclusive),
-            .initialLayout = static_cast<VkImageLayout>(vk::ImageLayout::eUndefined)
-        };
+            .initialLayout = static_cast<VkImageLayout>(vk::ImageLayout::eUndefined)};
 
         VmaAllocationCreateInfo allocationCreateInfo{
             .usage = VMA_MEMORY_USAGE_AUTO,
@@ -89,20 +77,14 @@ namespace Veng::Renderer
 
         VkImage image;
 
-        VK_RAW_ASSERT(vmaCreateImage(
-                          GetVmaAllocator(m_Context),
-                          &imageCreateInfo,
-                          &allocationCreateInfo,
-                          &image,
-                          &m_Native->Allocation,
-                          &m_Native->AllocationInfo), fmt::format("Failed to create image {}", m_Name));
+        VK_RAW_ASSERT(vmaCreateImage(GetVmaAllocator(m_Context), &imageCreateInfo,
+                                     &allocationCreateInfo, &image, &m_Native->Allocation,
+                                     &m_Native->AllocationInfo),
+                      fmt::format("Failed to create image {}", m_Name));
 
         m_Native->Image = image;
 
-        vmaSetAllocationName(
-            GetVmaAllocator(m_Context),
-            m_Native->Allocation,
-            m_Name.c_str());
+        vmaSetAllocationName(GetVmaAllocator(m_Context), m_Native->Allocation, m_Name.c_str());
 
         DebugMarkers::MarkImage(GetVkDevice(m_Context), m_Native->Image, m_Name);
     }
@@ -116,7 +98,6 @@ namespace Veng::Renderer
         }
     }
 
-
     /// @brief Records blit commands to downsample each mip level from the previous one.
     ///
     /// Transitions each source mip to TransferSrc, blits to the next, then transitions to ShaderReadOnly.
@@ -129,26 +110,30 @@ namespace Veng::Renderer
 
         for (u32 i = 1; i < m_MipLevels; i++)
         {
-            Backend::TransitionImage(commandBuffer, *this, ImageLayout::TransferSrc, 0, 1, i - 1, 1);
+            Backend::TransitionImage(commandBuffer, *this, ImageLayout::TransferSrc, 0, 1, i - 1,
+                                     1);
 
-            commandBuffer.BlitImage({
-                .SourceImage = shared_from_this(),
-                .DestinationImage = shared_from_this(),
-                .SourceMipLevel = i - 1,
-                .DestinationMipLevel = i,
-                .SourceOffset = {0, 0, 0},
-                .DestinationOffset = {0, 0, 0},
-                .SourceExtent = {mipWidth, mipHeight, 1},
-                .DestinationExtent = {mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1}
-            });
+            commandBuffer.BlitImage({.SourceImage = shared_from_this(),
+                                     .DestinationImage = shared_from_this(),
+                                     .SourceMipLevel = i - 1,
+                                     .DestinationMipLevel = i,
+                                     .SourceOffset = {0, 0, 0},
+                                     .DestinationOffset = {0, 0, 0},
+                                     .SourceExtent = {mipWidth, mipHeight, 1},
+                                     .DestinationExtent = {mipWidth > 1 ? mipWidth / 2 : 1,
+                                                           mipHeight > 1 ? mipHeight / 2 : 1, 1}});
 
-            Backend::TransitionImage(commandBuffer, *this, ImageLayout::ShaderReadOnly, 0, 1, i - 1, 1);
+            Backend::TransitionImage(commandBuffer, *this, ImageLayout::ShaderReadOnly, 0, 1, i - 1,
+                                     1);
 
-            if (mipWidth > 1) mipWidth /= 2;
-            if (mipHeight > 1) mipHeight /= 2;
+            if (mipWidth > 1)
+                mipWidth /= 2;
+            if (mipHeight > 1)
+                mipHeight /= 2;
         }
 
-        Backend::TransitionImage(commandBuffer, *this, ImageLayout::ShaderReadOnly, 0, 1, m_MipLevels - 1, 1);
+        Backend::TransitionImage(commandBuffer, *this, ImageLayout::ShaderReadOnly, 0, 1,
+                                 m_MipLevels - 1, 1);
     }
 
     /// @brief Uploads pixel data synchronously via a staging buffer, blocking until complete.
@@ -159,17 +144,18 @@ namespace Veng::Renderer
     void Image::UploadSync(std::span<const u8> span)
     {
         auto stagingBuffer = Buffer::Create(m_Context, {
-            .Name = m_Name + " (Upload)",
-            .Size = span.size(),
-            .Usage = BufferUsage::TransferSrc,
-        });
+                                                           .Name = m_Name + " (Upload)",
+                                                           .Size = span.size(),
+                                                           .Usage = BufferUsage::TransferSrc,
+                                                       });
 
         stagingBuffer->UploadSync(span);
 
         auto commandBuffer = CommandBuffer::Create(m_Context);
 
         commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
-        Backend::TransitionImage(*commandBuffer, *this, ImageLayout::TransferDst, 0, m_Layers, 0, m_MipLevels);
+        Backend::TransitionImage(*commandBuffer, *this, ImageLayout::TransferDst, 0, m_Layers, 0,
+                                 m_MipLevels);
         commandBuffer->CopyBufferToImage(stagingBuffer, shared_from_this());
 
         if (m_MipLevels > 1)
@@ -178,7 +164,8 @@ namespace Veng::Renderer
         }
         else
         {
-            Backend::TransitionImage(*commandBuffer, *this, ImageLayout::ShaderReadOnly, 0, m_Layers, 0, 1);
+            Backend::TransitionImage(*commandBuffer, *this, ImageLayout::ShaderReadOnly, 0,
+                                     m_Layers, 0, 1);
         }
 
         commandBuffer->End();
@@ -200,40 +187,45 @@ namespace Veng::Renderer
         Ref<Image> self = shared_from_this();
         vector<u8> bytes(data.begin(), data.end());
 
-        return tasks.Submit([self = std::move(self), bytes = std::move(bytes)]
-        {
-            Context& context = self->m_Context;
-            const u32 workerIndex = TaskSystem::GetCurrentWorkerIndex();
+        return tasks.Submit(
+            [self = std::move(self), bytes = std::move(bytes)]
+            {
+                Context& context = self->m_Context;
+                const u32 workerIndex = TaskSystem::GetCurrentWorkerIndex();
 
-            const QueueFamilyIndices& families = context.GetQueueFamilies();
-            const u32 transferFamily = families.TransferFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
-            const u32 graphicsFamily = families.GraphicsFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
+                const QueueFamilyIndices& families = context.GetQueueFamilies();
+                const u32 transferFamily =
+                    families.TransferFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
+                const u32 graphicsFamily =
+                    families.GraphicsFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
 
-            // Command-pool allocation is not thread-safe, so the copy records onto
-            // this worker's own transfer command buffer.
-            auto staging = Buffer::Create(context, {
-                .Name = self->m_Name + " (Upload)",
-                .Size = bytes.size(),
-                .Usage = BufferUsage::TransferSrc,
+                // Command-pool allocation is not thread-safe, so the copy records onto
+                // this worker's own transfer command buffer.
+                auto staging = Buffer::Create(context, {
+                                                           .Name = self->m_Name + " (Upload)",
+                                                           .Size = bytes.size(),
+                                                           .Usage = BufferUsage::TransferSrc,
+                                                       });
+                staging->UploadSync(bytes);
+
+                CommandBuffer& cmd = context.BeginTransferRecording(workerIndex);
+
+                Backend::TransitionImage(cmd, *self, ImageLayout::TransferDst, 0, self->m_Layers, 0,
+                                         self->m_MipLevels);
+                cmd.CopyBufferToImage(staging, self);
+
+                Backend::ReleaseImageToGraphicsQueue(cmd, *self, transferFamily, graphicsFamily);
+
+                const u64 value =
+                    context.SubmitTransfer(workerIndex, context.GetTransferTimeline());
+
+                Backend::MarkProducedOn(*self, transferFamily, value);
+
+                // The staging buffer must live until the transfer timeline value it signalled;
+                // letting Buffer::~Buffer run would queue it on the per-frame graphics fence, not the transfer fence.
+                const ReleasedBuffer released = ReleaseBuffer(*staging);
+                context.GetNative().RetireOnTransfer(released.Buffer, released.Allocation, value);
             });
-            staging->UploadSync(bytes);
-
-            CommandBuffer& cmd = context.BeginTransferRecording(workerIndex);
-
-            Backend::TransitionImage(cmd, *self, ImageLayout::TransferDst, 0, self->m_Layers, 0, self->m_MipLevels);
-            cmd.CopyBufferToImage(staging, self);
-
-            Backend::ReleaseImageToGraphicsQueue(cmd, *self, transferFamily, graphicsFamily);
-
-            const u64 value = context.SubmitTransfer(workerIndex, context.GetTransferTimeline());
-
-            Backend::MarkProducedOn(*self, transferFamily, value);
-
-            // The staging buffer must live until the transfer timeline value it signalled;
-            // letting Buffer::~Buffer run would queue it on the per-frame graphics fence, not the transfer fence.
-            const ReleasedBuffer released = ReleaseBuffer(*staging);
-            context.GetNative().RetireOnTransfer(released.Buffer, released.Allocation, value);
-        });
     }
 
     /// @brief Downloads image pixels to CPU memory synchronously, restoring the original layout.
@@ -242,11 +234,12 @@ namespace Veng::Renderer
     /// @return Raw pixel bytes in the image's format, row-major.
     vector<u8> Image::Download()
     {
-        auto buffer = Buffer::Create(m_Context, {
-            .Name = m_Name + " (Download)",
-            .Size = m_Extent.x * m_Extent.y * vk::blockSize(ToVk(m_Format)),
-            .Usage = BufferUsage::TransferDst,
-        });
+        auto buffer = Buffer::Create(
+            m_Context, {
+                           .Name = m_Name + " (Download)",
+                           .Size = m_Extent.x * m_Extent.y * vk::blockSize(ToVk(m_Format)),
+                           .Usage = BufferUsage::TransferDst,
+                       });
 
         const ImageLayout originalLayout = FromVk(m_Native->At(0, 0).Layout);
 

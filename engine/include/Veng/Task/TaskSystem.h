@@ -106,9 +106,8 @@ namespace Veng
     private:
         friend class TaskSystem;
 
-        Task(TaskSystem& system, Ref<Detail::TaskState<T>> state) :
-            m_System(&system),
-            m_State(std::move(state))
+        Task(TaskSystem& system, Ref<Detail::TaskState<T>> state)
+            : m_System(&system), m_State(std::move(state))
         {
         }
 
@@ -189,7 +188,8 @@ namespace Veng
 
         /// @brief Called by a worker on job completion: stores the result, wakes Get(), and hands off any Then.
         template <typename T>
-        void Finish(Detail::TaskState<T>& state, Result<typename Detail::TaskState<T>::Payload> result)
+        void Finish(Detail::TaskState<T>& state,
+                    Result<typename Detail::TaskState<T>::Payload> result)
         {
             function<void()> continuation;
             {
@@ -199,9 +199,8 @@ namespace Veng
 
                 if (state.Continuation)
                 {
-                    continuation = [fn = std::move(state.Continuation), value = *state.Value]() mutable {
-                        fn(std::move(value));
-                    };
+                    continuation = [fn = std::move(state.Continuation),
+                                    value = *state.Value]() mutable { fn(std::move(value)); };
                     state.Continuation = nullptr;
                 }
             }
@@ -262,8 +261,8 @@ namespace Veng
             // Result already landed: hand a ready copy straight to the pump.
             Result<Payload> value = *state->Value;
             lock.unlock();
-            m_System->EnqueueMainThread(
-                [fn = std::move(fn), value = std::move(value)]() mutable { fn(std::move(value)); });
+            m_System->EnqueueMainThread([fn = std::move(fn), value = std::move(value)]() mutable
+                                        { fn(std::move(value)); });
             return;
         }
 
@@ -286,10 +285,12 @@ namespace Veng
             {
                 std::lock_guard lock(m_QueueMutex);
                 ++m_ActiveJobs;
-                m_Queue.emplace_back([this, state, fn = std::forward<Fn>(fn)]() mutable {
-                    Result<Payload> result = fn();
-                    Finish(*state, std::move(result));
-                });
+                m_Queue.emplace_back(
+                    [this, state, fn = std::forward<Fn>(fn)]() mutable
+                    {
+                        Result<Payload> result = fn();
+                        Finish(*state, std::move(result));
+                    });
             }
             m_WorkAvailable.notify_one();
             return Task<Payload>(*this, std::move(state));
@@ -302,10 +303,12 @@ namespace Veng
             {
                 std::lock_guard lock(m_QueueMutex);
                 ++m_ActiveJobs;
-                m_Queue.emplace_back([this, state, fn = std::forward<Fn>(fn)]() mutable {
-                    fn();
-                    Finish(*state, Result<std::monostate>(std::monostate{}));
-                });
+                m_Queue.emplace_back(
+                    [this, state, fn = std::forward<Fn>(fn)]() mutable
+                    {
+                        fn();
+                        Finish(*state, Result<std::monostate>(std::monostate{}));
+                    });
             }
             m_WorkAvailable.notify_one();
             return Task<void>(*this, std::move(state));
@@ -318,10 +321,12 @@ namespace Veng
             {
                 std::lock_guard lock(m_QueueMutex);
                 ++m_ActiveJobs;
-                m_Queue.emplace_back([this, state, fn = std::forward<Fn>(fn)]() mutable {
-                    Result<Returned> result = fn();
-                    Finish(*state, std::move(result));
-                });
+                m_Queue.emplace_back(
+                    [this, state, fn = std::forward<Fn>(fn)]() mutable
+                    {
+                        Result<Returned> result = fn();
+                        Finish(*state, std::move(result));
+                    });
             }
             m_WorkAvailable.notify_one();
             return Task<Returned>(*this, std::move(state));

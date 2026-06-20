@@ -3,7 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/Material.h>
-#include <Veng/Asset/Mesh.h>   // MeshData, CanonicalVertex
+#include <Veng/Asset/Mesh.h> // MeshData, CanonicalVertex
 
 /// @brief Runtime primitive mesh generators.
 ///
@@ -23,15 +23,13 @@ namespace Veng::Primitives
     /// @brief Flat XZ-plane quad (+Y normal) centered at the origin, tessellated into `subdivisions` quads per axis.
     ///
     /// UVs span [0,1] across the plane. Minimum 1 subdivision per axis.
-    [[nodiscard]] MeshData Plane(vec2 size = vec2(1.0f),
-                                 uvec2 subdivisions = uvec2(1),
+    [[nodiscard]] MeshData Plane(vec2 size = vec2(1.0f), uvec2 subdivisions = uvec2(1),
                                  AssetHandle<Material> material = {});
 
     /// @brief UV sphere of `radius` with `rings` latitude bands and `segments` longitude bands (min 3 each).
     ///
     /// Smooth normals; UVs are (longitude, latitude). One submesh.
-    [[nodiscard]] MeshData Sphere(f32 radius = 0.5f,
-                                  u32 rings = 16, u32 segments = 32,
+    [[nodiscard]] MeshData Sphere(f32 radius = 0.5f, u32 rings = 16, u32 segments = 32,
                                   AssetHandle<Material> material = {});
 
     /// @brief Geodesic sphere of `radius` from a subdivided icosahedron.

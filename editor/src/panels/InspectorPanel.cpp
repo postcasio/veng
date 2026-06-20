@@ -14,8 +14,8 @@ namespace VengEditor
     using namespace Veng;
 
     InspectorPanel::InspectorPanel(AssetManager& assets, EditorRegistry& editors,
-                                   const AssetSourceIndex& sources) :
-        m_Assets(assets), m_Editors(editors), m_Sources(sources)
+                                   const AssetSourceIndex& sources)
+        : m_Assets(assets), m_Editors(editors), m_Sources(sources)
     {
     }
 
@@ -30,21 +30,24 @@ namespace VengEditor
         TypeRegistry& types = m_Scene->GetTypeRegistry();
         const Entity entity = *m_Selected;
 
-        m_Scene->ForEachComponent(entity, [&](TypeId id, void* component)
-        {
-            const TypeInfo& info = types.Info(id);
+        m_Scene->ForEachComponent(
+            entity,
+            [&](TypeId id, void* component)
+            {
+                const TypeInfo& info = types.Info(id);
 
-            // A stable per-type id keeps headers from collapsing into one another
-            // when two components share a display name.
-            auto scope = UI::PushId(fmt::format("{}", id));
-            if (UI::CollapsingHeader(info.Name, UI::TreeFlags::DefaultOpen))
-                DrawFields(component, info);
-        });
+                // A stable per-type id keeps headers from collapsing into one another
+                // when two components share a display name.
+                auto scope = UI::PushId(fmt::format("{}", id));
+                if (UI::CollapsingHeader(info.Name, UI::TreeFlags::DefaultOpen))
+                    DrawFields(component, info);
+            });
     }
 
     void InspectorPanel::DrawFields(void* base, const TypeInfo& type)
     {
-        const FieldWidgetContext ctx{.Assets = m_Assets, .Sources = m_Sources, .Editors = m_Editors};
+        const FieldWidgetContext ctx{
+            .Assets = m_Assets, .Sources = m_Sources, .Editors = m_Editors};
         for (const FieldDescriptor& field : type.Fields)
         {
             if (field.Hidden)

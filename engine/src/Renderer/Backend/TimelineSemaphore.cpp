@@ -7,23 +7,23 @@
 
 namespace Veng::Renderer
 {
-    TimelineSemaphore::Native& TimelineSemaphore::GetNative() const { return *m_Native; }
+    TimelineSemaphore::Native& TimelineSemaphore::GetNative() const
+    {
+        return *m_Native;
+    }
 
     TimelineSemaphore::TimelineSemaphore(Context& context, const u64 initialValue)
         : m_Context(context), m_Native(CreateUnique<Native>())
     {
         const vk::SemaphoreTypeCreateInfo typeCreateInfo{
-            .semaphoreType = vk::SemaphoreType::eTimeline,
-            .initialValue = initialValue
-        };
+            .semaphoreType = vk::SemaphoreType::eTimeline, .initialValue = initialValue};
 
-        const vk::SemaphoreCreateInfo semaphoreCreateInfo{
-            .pNext = &typeCreateInfo
-        };
+        const vk::SemaphoreCreateInfo semaphoreCreateInfo{.pNext = &typeCreateInfo};
 
         m_Native->Semaphore = GetVkDevice(m_Context).createSemaphore(semaphoreCreateInfo).value;
 
-        DebugMarkers::MarkSemaphore(GetVkDevice(m_Context), m_Native->Semaphore, "Timeline Semaphore");
+        DebugMarkers::MarkSemaphore(GetVkDevice(m_Context), m_Native->Semaphore,
+                                    "Timeline Semaphore");
     }
 
     TimelineSemaphore::~TimelineSemaphore()
@@ -33,21 +33,16 @@ namespace Veng::Renderer
 
     void TimelineSemaphore::Signal(const u64 value)
     {
-        const vk::SemaphoreSignalInfo signalInfo{
-            .semaphore = m_Native->Semaphore,
-            .value = value
-        };
+        const vk::SemaphoreSignalInfo signalInfo{.semaphore = m_Native->Semaphore, .value = value};
 
-        VK_ASSERT(GetVkDevice(m_Context).signalSemaphore(signalInfo), "Failed to signal timeline semaphore!");
+        VK_ASSERT(GetVkDevice(m_Context).signalSemaphore(signalInfo),
+                  "Failed to signal timeline semaphore!");
     }
 
     void TimelineSemaphore::Wait(const u64 value) const
     {
         const vk::SemaphoreWaitInfo waitInfo{
-            .semaphoreCount = 1,
-            .pSemaphores = &m_Native->Semaphore,
-            .pValues = &value
-        };
+            .semaphoreCount = 1, .pSemaphores = &m_Native->Semaphore, .pValues = &value};
 
         VK_ASSERT(GetVkDevice(m_Context).waitSemaphores(waitInfo, std::numeric_limits<u64>::max()),
                   "Failed to wait on timeline semaphore!");

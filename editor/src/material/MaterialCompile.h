@@ -43,9 +43,9 @@ namespace VengEditor
     /// The domain shapes the MaterialOutput's sink pins, not the bound field set.
     /// @return Error when the graph has no MaterialOutput node or a param field has
     ///         an unsupported size.
-    [[nodiscard]] Veng::Result<Veng::vector<CompiledField>> CompileMaterialGraph(
-        const NodeGraph& graph, const NodeCatalog& catalog,
-        const MaterialShaderInterface& shader, Veng::MaterialDomain domain);
+    [[nodiscard]] Veng::Result<Veng::vector<CompiledField>>
+    CompileMaterialGraph(const NodeGraph& graph, const NodeCatalog& catalog,
+                         const MaterialShaderInterface& shader, Veng::MaterialDomain domain);
 
     /// @brief Serializes a compiled field list into a .vmat JSON document string.
     ///

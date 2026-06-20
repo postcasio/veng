@@ -61,7 +61,7 @@ namespace Veng
             sorted.push_back(&entry);
 
         std::sort(sorted.begin(), sorted.end(),
-            [](const Entry* a, const Entry* b) { return a->Id.Value < b->Id.Value; });
+                  [](const Entry* a, const Entry* b) { return a->Id.Value < b->Id.Value; });
 
         OnDiskHeader header{};
         std::memcpy(header.Magic, ArchiveMagic, sizeof(ArchiveMagic));
@@ -115,11 +115,14 @@ namespace Veng
 
         std::ofstream file(filePath, std::ios::binary | std::ios::trunc);
         if (!file)
-            return std::unexpected(fmt::format("ArchiveWriter::Write: failed to open '{}' for writing", filePath.string()));
+            return std::unexpected(fmt::format(
+                "ArchiveWriter::Write: failed to open '{}' for writing", filePath.string()));
 
-        file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        file.write(reinterpret_cast<const char*>(bytes.data()),
+                   static_cast<std::streamsize>(bytes.size()));
         if (!file)
-            return std::unexpected(fmt::format("ArchiveWriter::Write: failed writing to '{}'", filePath.string()));
+            return std::unexpected(
+                fmt::format("ArchiveWriter::Write: failed writing to '{}'", filePath.string()));
 
         return {};
     }
@@ -137,14 +140,15 @@ namespace Veng
 
         if (header.Version != ArchiveFormatVersion)
         {
-            return std::unexpected(fmt::format(
-                "ArchiveReader::FromBytes: version mismatch (expected {}, got {})",
-                ArchiveFormatVersion, header.Version));
+            return std::unexpected(
+                fmt::format("ArchiveReader::FromBytes: version mismatch (expected {}, got {})",
+                            ArchiveFormatVersion, header.Version));
         }
 
         const usize tocBytes = static_cast<usize>(header.Count) * sizeof(OnDiskTocEntry);
         if (bytes.size() < sizeof(OnDiskHeader) + tocBytes)
-            return std::unexpected("ArchiveReader::FromBytes: buffer too small for table of contents");
+            return std::unexpected(
+                "ArchiveReader::FromBytes: buffer too small for table of contents");
 
         ArchiveReader reader;
         reader.m_Storage.assign(bytes.begin(), bytes.end());
@@ -161,12 +165,16 @@ namespace Veng
         for (u32 i = 0; i < header.Count; ++i)
         {
             OnDiskTocEntry onDisk;
-            std::memcpy(&onDisk, reader.m_Storage.data() + sizeof(OnDiskHeader) + static_cast<usize>(i) * sizeof(OnDiskTocEntry), sizeof(onDisk));
+            std::memcpy(&onDisk,
+                        reader.m_Storage.data() + sizeof(OnDiskHeader) +
+                            static_cast<usize>(i) * sizeof(OnDiskTocEntry),
+                        sizeof(onDisk));
 
-            if (onDisk.Offset > reader.m_Storage.size() - blobRegionStart
-                || onDisk.Size > reader.m_Storage.size() - blobRegionStart - onDisk.Offset)
+            if (onDisk.Offset > reader.m_Storage.size() - blobRegionStart ||
+                onDisk.Size > reader.m_Storage.size() - blobRegionStart - onDisk.Offset)
             {
-                return std::unexpected("ArchiveReader::FromBytes: TOC entry blob range out of bounds");
+                return std::unexpected(
+                    "ArchiveReader::FromBytes: TOC entry blob range out of bounds");
             }
 
             const AssetId id{.Value = onDisk.Id};
@@ -196,19 +204,22 @@ namespace Veng
     {
         std::ifstream file(filePath, std::ios::binary);
         if (!file)
-            return std::unexpected(fmt::format("ArchiveReader::Open: failed to open '{}'", filePath.string()));
+            return std::unexpected(
+                fmt::format("ArchiveReader::Open: failed to open '{}'", filePath.string()));
 
         file.seekg(0, std::ios::end);
         const std::streamoff size = file.tellg();
         if (size < 0)
-            return std::unexpected(fmt::format("ArchiveReader::Open: failed to determine size of '{}'", filePath.string()));
+            return std::unexpected(fmt::format(
+                "ArchiveReader::Open: failed to determine size of '{}'", filePath.string()));
 
         file.seekg(0, std::ios::beg);
 
         vector<u8> bytes(static_cast<usize>(size));
         file.read(reinterpret_cast<char*>(bytes.data()), size);
         if (!file)
-            return std::unexpected(fmt::format("ArchiveReader::Open: failed reading '{}'", filePath.string()));
+            return std::unexpected(
+                fmt::format("ArchiveReader::Open: failed reading '{}'", filePath.string()));
 
         return FromBytes(bytes);
     }
@@ -216,7 +227,8 @@ namespace Veng
     optional<ArchiveEntry> ArchiveReader::Find(AssetId id) const
     {
         const auto it = std::lower_bound(m_Toc.begin(), m_Toc.end(), id,
-            [](const InternalTocEntry& entry, AssetId value) { return entry.Id.Value < value.Value; });
+                                         [](const InternalTocEntry& entry, AssetId value)
+                                         { return entry.Id.Value < value.Value; });
 
         if (it == m_Toc.end() || it->Id.Value != id.Value)
             return std::nullopt;

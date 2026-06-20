@@ -25,11 +25,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "buffer roundtrip: whole-buffer upload
 {
     constexpr u64 size = 64;
 
-    auto buffer = Buffer::Create(Context, {
-        .Name = "Roundtrip Buffer",
-        .Size = size,
-        .Usage = BufferUsage::TransferSrc | BufferUsage::TransferDst,
-    });
+    auto buffer =
+        Buffer::Create(Context, {
+                                    .Name = "Roundtrip Buffer",
+                                    .Size = size,
+                                    .Usage = BufferUsage::TransferSrc | BufferUsage::TransferDst,
+                                });
 
     // Whole-buffer upload/download identity: 0, 1, 2, ... 63.
     std::array<u8, size> source{};
@@ -48,15 +49,17 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "buffer roundtrip: whole-buffer upload
     }
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "buffer roundtrip: offset upload lands at the right place")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "buffer roundtrip: offset upload lands at the right place")
 {
     constexpr u64 size = 64;
 
-    auto buffer = Buffer::Create(Context, {
-        .Name = "Roundtrip Buffer",
-        .Size = size,
-        .Usage = BufferUsage::TransferSrc | BufferUsage::TransferDst,
-    });
+    auto buffer =
+        Buffer::Create(Context, {
+                                    .Name = "Roundtrip Buffer",
+                                    .Size = size,
+                                    .Usage = BufferUsage::TransferSrc | BufferUsage::TransferDst,
+                                });
 
     std::array<u8, size> source{};
     std::iota(source.begin(), source.end(), u8{0});
@@ -76,9 +79,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "buffer roundtrip: offset upload lands
 
     for (u64 i = 0; i < size; i++)
     {
-        const u8 expected = (i >= offset && i < offset + patch.size())
-            ? patch[i - offset]
-            : source[i];
+        const u8 expected =
+            (i >= offset && i < offset + patch.size()) ? patch[i - offset] : source[i];
 
         CAPTURE(i);
         CHECK(afterPatch[i] == expected);

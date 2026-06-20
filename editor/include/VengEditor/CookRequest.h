@@ -41,6 +41,6 @@ namespace VengEditor
     /// Runs the cook off the render thread on the supplied TaskSystem and returns a
     /// Task carrying the in-memory archive bytes (a single-entry .vengpack) or an
     /// error string. The continuation receives Result<vector<u8>>.
-    using CookBackend = Veng::function<
-        Veng::Task<Veng::vector<Veng::u8>>(const CookRequest&, Veng::TaskSystem&)>;
+    using CookBackend =
+        Veng::function<Veng::Task<Veng::vector<Veng::u8>>(const CookRequest&, Veng::TaskSystem&)>;
 }

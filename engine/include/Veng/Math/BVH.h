@@ -38,10 +38,10 @@ namespace Veng
         void Query(const Frustum& frustum, vector<u32>& out) const;
 
         /// @brief Returns the number of leaf nodes.
-        [[nodiscard]] u32  GetLeafCount() const { return m_LeafCount; }
+        [[nodiscard]] u32 GetLeafCount() const { return m_LeafCount; }
 
         /// @brief Returns the total number of nodes (internal + leaf).
-        [[nodiscard]] u32  GetNodeCount() const { return static_cast<u32>(m_Nodes.size()); }
+        [[nodiscard]] u32 GetNodeCount() const { return static_cast<u32>(m_Nodes.size()); }
 
         /// @brief Returns the root height; 0 when the tree is empty or has one leaf.
         [[nodiscard]] i32 GetHeight() const;
@@ -71,7 +71,7 @@ namespace Veng
         /// @brief Flat pool of all nodes, indexed by i32; order is build-time push_back order.
         vector<Node> m_Nodes;
         /// @brief Index of the root node; `NullNode` when the tree is empty.
-        i32 m_Root      = NullNode;
+        i32 m_Root = NullNode;
         /// @brief Number of leaf nodes in the tree.
         u32 m_LeafCount = 0;
     };

@@ -8,7 +8,7 @@ namespace Veng::Cook
     const AssetPackEntry* AssetPack::FindById(AssetId id) const
     {
         const auto it = std::find_if(Entries.begin(), Entries.end(),
-            [id](const AssetPackEntry& e) { return e.Id == id; });
+                                     [id](const AssetPackEntry& e) { return e.Id == id; });
         return it != Entries.end() ? &*it : nullptr;
     }
 

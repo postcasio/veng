@@ -51,7 +51,8 @@ namespace Veng::Renderer
         /// @param context The owning context.
         /// @param info    Creation parameters.
         /// @return A shared reference to the new layout.
-        static Ref<DescriptorSetLayout> Create(Context& context, const DescriptorSetLayoutInfo& info)
+        static Ref<DescriptorSetLayout> Create(Context& context,
+                                               const DescriptorSetLayoutInfo& info)
         {
             return Ref<DescriptorSetLayout>(new DescriptorSetLayout(context, info));
         }

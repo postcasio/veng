@@ -99,6 +99,7 @@ namespace Veng::Renderer
         /// vector if this interface declares no bindings.
         /// @param context     Context for Vulkan descriptor-set-layout creation.
         /// @param namePrefix  Prefix prepended to each layout's debug name.
-        [[nodiscard]] vector<Ref<DescriptorSetLayout>> BuildDescriptorSetLayouts(Context& context, std::string_view namePrefix) const;
+        [[nodiscard]] vector<Ref<DescriptorSetLayout>>
+        BuildDescriptorSetLayouts(Context& context, std::string_view namePrefix) const;
     };
 }

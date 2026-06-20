@@ -47,5 +47,8 @@ extern "C"
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.
-#define VE_EXPORT_MODULE_ABI() \
-    extern "C" VE_MODULE_EXPORT Veng::u32 VengModuleAbiVersion() { return VENG_MODULE_ABI_VERSION; }
+#define VE_EXPORT_MODULE_ABI()                                                                     \
+    extern "C" VE_MODULE_EXPORT Veng::u32 VengModuleAbiVersion()                                   \
+    {                                                                                              \
+        return VENG_MODULE_ABI_VERSION;                                                            \
+    }

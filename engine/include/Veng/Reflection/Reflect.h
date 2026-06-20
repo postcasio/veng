@@ -81,43 +81,42 @@ namespace Veng::Detail
 /// @brief Opens VengReflect\<T\>: names the owning type and starts the shared Describe body.
 ///
 /// Both public entry points (Fields / RegisterDependencies) call into it.
-#define VE_REFLECT(Type, TypeIdLiteral)                                         \
-    template <>                                                                 \
-    struct ::Veng::VengReflect<Type>                                            \
-    {                                                                           \
-        using Owner = Type;                                                     \
-        static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                   \
-        static ::Veng::string Name() { return #Type; }                          \
-        static constexpr ::Veng::FieldClass Class = ::Veng::FieldClass::Struct; \
-        template <class Sink>                                                   \
-        static void Describe([[maybe_unused]] Sink& sink)                       \
+#define VE_REFLECT(Type, TypeIdLiteral)                                                            \
+    template <>                                                                                    \
+    struct ::Veng::VengReflect<Type>                                                               \
+    {                                                                                              \
+        using Owner = Type;                                                                        \
+        static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                                      \
+        static ::Veng::string Name() { return #Type; }                                             \
+        static constexpr ::Veng::FieldClass Class = ::Veng::FieldClass::Struct;                    \
+        template <class Sink>                                                                      \
+        static void Describe([[maybe_unused]] Sink& sink)                                          \
         {
 
 /// @brief Declares one field record within a VE_REFLECT block.
 ///
 /// Type and Class are compile-time constants read off the field type's trait;
 /// the trailing … are optional designated-initialiser editor metadata.
-#define VE_FIELD(Member, ...)                                                   \
-            sink.template Field_<Owner, decltype(Owner::Member)>(               \
-                ::Veng::FieldDescriptor{                                        \
-                    .Name = #Member,                                            \
-                    .Type = ::Veng::TypeIdOf<decltype(Owner::Member)>(),       \
-                    .Class = ::Veng::FieldClassOf<decltype(Owner::Member)>(),   \
-                    .Offset = offsetof(Owner, Member),                         \
-                    __VA_ARGS__ });
+#define VE_FIELD(Member, ...)                                                                      \
+    sink.template Field_<Owner, decltype(Owner::Member)>(                                          \
+        ::Veng::FieldDescriptor{.Name = #Member,                                                   \
+                                .Type = ::Veng::TypeIdOf<decltype(Owner::Member)>(),               \
+                                .Class = ::Veng::FieldClassOf<decltype(Owner::Member)>(),          \
+                                .Offset = offsetof(Owner, Member),                                 \
+                                __VA_ARGS__});
 
 /// @brief Closes a VE_REFLECT block and emits Fields() / RegisterDependencies().
-#define VE_REFLECT_END()                                                        \
-        }                                                                       \
-        static ::Veng::vector<::Veng::FieldDescriptor> Fields()                 \
-        {                                                                       \
-            ::Veng::Detail::FieldCollector collector;                           \
-            Describe(collector);                                                \
-            return std::move(collector.Fields);                                 \
-        }                                                                       \
-        static void RegisterDependencies(::Veng::TypeRegistry& registry)        \
-        {                                                                       \
-            ::Veng::Detail::DependencyRegistrar registrar{registry};            \
-            Describe(registrar);                                                \
-        }                                                                       \
+#define VE_REFLECT_END()                                                                           \
+    }                                                                                              \
+    static ::Veng::vector<::Veng::FieldDescriptor> Fields()                                        \
+    {                                                                                              \
+        ::Veng::Detail::FieldCollector collector;                                                  \
+        Describe(collector);                                                                       \
+        return std::move(collector.Fields);                                                        \
+    }                                                                                              \
+    static void RegisterDependencies(::Veng::TypeRegistry& registry)                               \
+    {                                                                                              \
+        ::Veng::Detail::DependencyRegistrar registrar{registry};                                   \
+        Describe(registrar);                                                                       \
+    }                                                                                              \
     }

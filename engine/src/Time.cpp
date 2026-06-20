@@ -31,6 +31,7 @@ namespace Veng
 
     f32 Time::Now()
     {
-        return std::chrono::duration<f32>(std::chrono::high_resolution_clock::now() - s_StartTime).count();
+        return std::chrono::duration<f32>(std::chrono::high_resolution_clock::now() - s_StartTime)
+            .count();
     }
 }

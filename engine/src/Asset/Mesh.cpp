@@ -44,8 +44,7 @@ namespace Veng
         const u32 vertexCount = static_cast<u32>(data.Vertices.size());
         for (const u32 index : data.Indices)
         {
-            VE_ASSERT(index < vertexCount,
-                      "Mesh::Create: '{}' index {} out of range ({} vertices)",
+            VE_ASSERT(index < vertexCount, "Mesh::Create: '{}' index {} out of range ({} vertices)",
                       name, index, vertexCount);
         }
 
@@ -71,15 +70,17 @@ namespace Veng
             subMeshes = data.SubMeshes;
         }
 
-        const Ref<Buffer> vertexBuffer = Buffer::Create(context, {
-            .Name = name + " Vertices",
-            .Size = data.Vertices.size() * sizeof(CanonicalVertex),
-            .Usage = BufferUsage::Vertex | BufferUsage::TransferDst,
-        });
+        const Ref<Buffer> vertexBuffer =
+            Buffer::Create(context, {
+                                        .Name = name + " Vertices",
+                                        .Size = data.Vertices.size() * sizeof(CanonicalVertex),
+                                        .Usage = BufferUsage::Vertex | BufferUsage::TransferDst,
+                                    });
         vertexBuffer->UploadSync({reinterpret_cast<const u8*>(data.Vertices.data()),
                                   data.Vertices.size() * sizeof(CanonicalVertex)});
 
-        IndexBuffer indexBuffer = IndexBuffer::Create(context, name + " Indices", data.Indices.size());
+        IndexBuffer indexBuffer =
+            IndexBuffer::Create(context, name + " Indices", data.Indices.size());
         indexBuffer.UploadSync(std::span<const u32>(data.Indices));
 
         return Mesh::Create(MeshInfo{

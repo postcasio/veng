@@ -438,22 +438,25 @@ namespace Veng::Renderer
 /// @brief Defines bitwise |, &, |= operators and HasFlag for a scoped flags enum.
 ///
 /// Values are stored and compared via the underlying integer type.
-#define VE_ENUM_FLAGS(E)                                                                   \
-    inline constexpr E operator|(E a, E b)                                                 \
-    {                                                                                      \
-        return static_cast<E>(static_cast<std::underlying_type_t<E>>(a) |                  \
-                              static_cast<std::underlying_type_t<E>>(b));                  \
-    }                                                                                      \
-    inline constexpr E operator&(E a, E b)                                                 \
-    {                                                                                      \
-        return static_cast<E>(static_cast<std::underlying_type_t<E>>(a) &                  \
-                              static_cast<std::underlying_type_t<E>>(b));                  \
-    }                                                                                      \
-    inline constexpr E& operator|=(E& a, E b) { return a = a | b; }                        \
-    inline constexpr bool HasFlag(E value, E flag)                                         \
-    {                                                                                      \
-        return (static_cast<std::underlying_type_t<E>>(value) &                            \
-                static_cast<std::underlying_type_t<E>>(flag)) != 0;                        \
+#define VE_ENUM_FLAGS(E)                                                                           \
+    inline constexpr E operator|(E a, E b)                                                         \
+    {                                                                                              \
+        return static_cast<E>(static_cast<std::underlying_type_t<E>>(a) |                          \
+                              static_cast<std::underlying_type_t<E>>(b));                          \
+    }                                                                                              \
+    inline constexpr E operator&(E a, E b)                                                         \
+    {                                                                                              \
+        return static_cast<E>(static_cast<std::underlying_type_t<E>>(a) &                          \
+                              static_cast<std::underlying_type_t<E>>(b));                          \
+    }                                                                                              \
+    inline constexpr E& operator|=(E& a, E b)                                                      \
+    {                                                                                              \
+        return a = a | b;                                                                          \
+    }                                                                                              \
+    inline constexpr bool HasFlag(E value, E flag)                                                 \
+    {                                                                                              \
+        return (static_cast<std::underlying_type_t<E>>(value) &                                    \
+                static_cast<std::underlying_type_t<E>>(flag)) != 0;                                \
     }
 
 namespace Veng::Renderer

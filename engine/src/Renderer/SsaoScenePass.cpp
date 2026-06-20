@@ -35,8 +35,8 @@ namespace Veng::Renderer
 
     SsaoScenePass::SsaoScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
                                  SamplerHandle samplerHandle, uvec2 extent)
-        : m_Context(context), m_Pipeline(std::move(pipeline)),
-          m_SamplerHandle(samplerHandle), m_Extent(extent)
+        : m_Context(context), m_Pipeline(std::move(pipeline)), m_SamplerHandle(samplerHandle),
+          m_Extent(extent)
     {
         CreateTarget();
     }
@@ -53,12 +53,13 @@ namespace Veng::Renderer
         bindless.Release(m_AoHandle);
 
         m_AoImage = Image::Create(m_Context, {
-            .Name = "SceneRenderer SSAO",
-            .Extent = {m_Extent.x, m_Extent.y, 1},
-            .Format = AoFormat,
-            .Usage = AoUsage,
-        });
-        m_AoView = ImageView::Create(m_Context, {.Name = "SceneRenderer SSAO View", .Image = m_AoImage});
+                                                 .Name = "SceneRenderer SSAO",
+                                                 .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                 .Format = AoFormat,
+                                                 .Usage = AoUsage,
+                                             });
+        m_AoView =
+            ImageView::Create(m_Context, {.Name = "SceneRenderer SSAO View", .Image = m_AoImage});
 
         m_AoHandle = bindless.Register(m_AoView);
     }
@@ -86,28 +87,32 @@ namespace Veng::Renderer
                 .Resource = io.Ssao,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
-                .Clear = ClearColor{1.0f, 1.0f, 1.0f, 1.0f}, // 1 = unoccluded, the default for texels the kernel does not touch
+                .Clear =
+                    ClearColor{
+                        1.0f, 1.0f, 1.0f,
+                        1.0f}, // 1 = unoccluded, the default for texels the kernel does not touch
             })
             .Sample(io.GBufferNormal)
             .Sample(io.GBufferDepth)
-            .Execute([this, normalHandle, depthHandle, samplerHandle, extent](PassContext& inner)
-            {
-                CommandBuffer& cmd = inner.Cmd();
-                const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+            .Execute(
+                [this, normalHandle, depthHandle, samplerHandle, extent](PassContext& inner)
+                {
+                    CommandBuffer& cmd = inner.Cmd();
+                    const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
-                cmd.BindPipeline(m_Pipeline);
-                cmd.SetViewport({0, 0}, extent);
-                cmd.SetScissor({0, 0}, extent);
-                registry.Bind(cmd);
-                cmd.PushConstants(SsaoPushConstants{
-                    .NormalTexture = normalHandle.Index,
-                    .DepthTexture = depthHandle.Index,
-                    .Sampler = samplerHandle.Index,
-                    .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
-                    .ExtentX = extent.x,
-                    .ExtentY = extent.y,
+                    cmd.BindPipeline(m_Pipeline);
+                    cmd.SetViewport({0, 0}, extent);
+                    cmd.SetScissor({0, 0}, extent);
+                    registry.Bind(cmd);
+                    cmd.PushConstants(SsaoPushConstants{
+                        .NormalTexture = normalHandle.Index,
+                        .DepthTexture = depthHandle.Index,
+                        .Sampler = samplerHandle.Index,
+                        .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
+                        .ExtentX = extent.x,
+                        .ExtentY = extent.y,
+                    });
+                    cmd.DrawFullscreenTriangle();
                 });
-                cmd.DrawFullscreenTriangle();
-            });
     }
 }

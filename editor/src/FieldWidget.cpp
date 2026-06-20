@@ -20,9 +20,12 @@ namespace VengEditor
 
     optional<AssetType> AssetTypeOfHandle(TypeId type)
     {
-        if (type == TypeIdOf<AssetHandle<Texture>>()) return AssetType::Texture;
-        if (type == TypeIdOf<AssetHandle<Mesh>>()) return AssetType::Mesh;
-        if (type == TypeIdOf<AssetHandle<Material>>()) return AssetType::Material;
+        if (type == TypeIdOf<AssetHandle<Texture>>())
+            return AssetType::Texture;
+        if (type == TypeIdOf<AssetHandle<Mesh>>())
+            return AssetType::Mesh;
+        if (type == TypeIdOf<AssetHandle<Material>>())
+            return AssetType::Material;
         return std::nullopt;
     }
 
@@ -83,7 +86,8 @@ namespace VengEditor
         }
     }
 
-    void DrawFieldWidget(void* fieldPtr, const FieldDescriptor& field, const FieldWidgetContext& ctx)
+    void DrawFieldWidget(void* fieldPtr, const FieldDescriptor& field,
+                         const FieldWidgetContext& ctx)
     {
         if (field.Hidden)
             return;
@@ -102,9 +106,12 @@ namespace VengEditor
         // Drag speed and clamp range come from the field's optional editor metadata;
         // absent metadata leaves the DragOptions defaults (0.01f speed, unclamped).
         UI::DragOptions drag;
-        if (field.Step) drag.Speed = static_cast<f32>(*field.Step);
-        if (field.Min) drag.Min = static_cast<f32>(*field.Min);
-        if (field.Max) drag.Max = static_cast<f32>(*field.Max);
+        if (field.Step)
+            drag.Speed = static_cast<f32>(*field.Step);
+        if (field.Min)
+            drag.Min = static_cast<f32>(*field.Min);
+        if (field.Max)
+            drag.Max = static_cast<f32>(*field.Max);
 
         switch (field.Class)
         {
@@ -122,7 +129,7 @@ namespace VengEditor
             {
                 // u32 has no Drag overload; edit through a signed view clamped to 0+.
                 i32 value = static_cast<i32>(*static_cast<u32*>(fieldPtr));
-                if (UI::Drag(label, value, UI::DragOptions{ .Min = 0.0f }))
+                if (UI::Drag(label, value, UI::DragOptions{.Min = 0.0f}))
                     *static_cast<u32*>(fieldPtr) = static_cast<u32>(value < 0 ? 0 : value);
             }
             else if (field.Type == TypeIdOf<bool>())
@@ -150,7 +157,7 @@ namespace VengEditor
             quat& q = *static_cast<quat*>(fieldPtr);
             vec3 euler = glm::degrees(glm::eulerAngles(q));
             const string eulerLabel = label + " (Euler °)";
-            if (UI::Drag(eulerLabel, euler, UI::DragOptions{ .Speed = 0.5f }))
+            if (UI::Drag(eulerLabel, euler, UI::DragOptions{.Speed = 0.5f}))
                 q = quat(glm::radians(euler));
             break;
         }
@@ -180,8 +187,8 @@ namespace VengEditor
             if (auto t = UI::TreeNode(label, UI::TreeFlags::SpanAvailWidth))
             {
                 for (int row = 0; row < 4; ++row)
-                    UI::Text(fmt::format("{: .3f}  {: .3f}  {: .3f}  {: .3f}",
-                                         m[0][row], m[1][row], m[2][row], m[3][row]));
+                    UI::Text(fmt::format("{: .3f}  {: .3f}  {: .3f}  {: .3f}", m[0][row], m[1][row],
+                                         m[2][row], m[3][row]));
             }
             break;
         }

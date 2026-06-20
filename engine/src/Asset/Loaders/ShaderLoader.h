@@ -17,8 +17,10 @@ namespace Veng
         [[nodiscard]] AssetType Type() const override { return AssetType::Shader; }
 
         /// @brief Decodes the cooked shader blob into a LoadJob producing a resident Veng::Shader.
-        [[nodiscard]] AssetResult<Detail::LoadJob> Load(
-            AssetManager& manager, Renderer::Context& context, TaskSystem& tasks,
-            TypeRegistry& types, AssetId id, std::span<const u8> cooked, bool async) const override;
+        [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,
+                                                        Renderer::Context& context,
+                                                        TaskSystem& tasks, TypeRegistry& types,
+                                                        AssetId id, std::span<const u8> cooked,
+                                                        bool async) const override;
     };
 }

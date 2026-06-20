@@ -5,10 +5,13 @@
 
 namespace Veng
 {
-    ImGuiTexture::Native& ImGuiTexture::GetNative() const { return *m_Native; }
+    ImGuiTexture::Native& ImGuiTexture::GetNative() const
+    {
+        return *m_Native;
+    }
 
-    ImGuiTexture::ImGuiTexture(Unique<Native> native, ImGuiLayer& layer) :
-        m_Native(std::move(native)), m_Layer(layer)
+    ImGuiTexture::ImGuiTexture(Unique<Native> native, ImGuiLayer& layer)
+        : m_Native(std::move(native)), m_Layer(layer)
     {
     }
 

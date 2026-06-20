@@ -60,7 +60,11 @@ namespace VengEditor
     struct PinType
     {
         /// @brief Discriminator for Value vs. Wildcard pins.
-        enum class Kind : Veng::u8 { Value, Wildcard };
+        enum class Kind : Veng::u8
+        {
+            Value,
+            Wildcard
+        };
 
         /// @brief Whether this pin is typed or wildcard.
         Kind Kind = Kind::Value;
@@ -121,8 +125,7 @@ namespace VengEditor
         /// @param canConnect  Predicate for type-compatibility between pins.
         /// @param pinShape    Returns the input/output pin shape for a node type.
         /// @param propertySize Returns the property buffer size for a node type.
-        NodeGraph(CanConnectFn canConnect, PinShapeFn pinShape,
-                  PropertySizeFn propertySize);
+        NodeGraph(CanConnectFn canConnect, PinShapeFn pinShape, PropertySizeFn propertySize);
 
         /// @brief Adds a node of the given type and returns its id.
         NodeId AddNode(NodeTypeId type);

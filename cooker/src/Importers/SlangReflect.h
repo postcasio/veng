@@ -49,8 +49,9 @@ namespace Veng::Cook
     /// @param slangSource Path to the .slang source file.
     /// @param structName  Name of the struct to reflect.
     /// @param optional    If true, a missing struct is not an error.
-    [[nodiscard]] Result<ReflectedStruct> ReflectStructLayout(
-        const path& slangSource, std::string_view structName, bool optional = false);
+    [[nodiscard]] Result<ReflectedStruct> ReflectStructLayout(const path& slangSource,
+                                                              std::string_view structName,
+                                                              bool optional = false);
 
     /// @brief One fragment render target reflected from an entry point's result:
     /// the SV_TargetN index and its scalar/vector component count.
@@ -76,6 +77,6 @@ namespace Veng::Cook
     /// semantic. Targets are returned sorted by TargetIndex.
     /// @param slangSource Path to the .slang source file.
     /// @param entry       Name of the fragment entry point to reflect.
-    [[nodiscard]] Result<vector<ReflectedFragmentOutput>> ReflectFragmentOutputs(
-        const path& slangSource, std::string_view entry);
+    [[nodiscard]] Result<vector<ReflectedFragmentOutput>>
+    ReflectFragmentOutputs(const path& slangSource, std::string_view entry);
 }

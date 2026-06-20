@@ -3,10 +3,19 @@
 #include <Veng/Veng.h>
 
 /// @brief Injects the static/virtual type-identity boilerplate into an Event subclass.
-#define EVENT(type)                                                             \
-    static EventType GetStaticType() { return EventType::type; }                \
-    virtual EventType GetEventType() const override { return GetStaticType(); } \
-    virtual const char *GetName() const override { return #type; }
+#define EVENT(type)                                                                                \
+    static EventType GetStaticType()                                                               \
+    {                                                                                              \
+        return EventType::type;                                                                    \
+    }                                                                                              \
+    virtual EventType GetEventType() const override                                                \
+    {                                                                                              \
+        return GetStaticType();                                                                    \
+    }                                                                                              \
+    virtual const char* GetName() const override                                                   \
+    {                                                                                              \
+        return #type;                                                                              \
+    }
 
 namespace Veng
 {
@@ -48,10 +57,7 @@ namespace Veng
     {
     public:
         /// @brief Constructs a dispatcher bound to the given event.
-        EventDispatcher(Event& event)
-            : m_Event(event)
-        {
-        }
+        EventDispatcher(Event& event) : m_Event(event) {}
 
         /// @brief Calls func with the event cast to T if its type matches; returns true on match.
         /// @tparam T  Concrete event type to dispatch.

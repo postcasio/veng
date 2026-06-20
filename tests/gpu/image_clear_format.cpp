@@ -29,21 +29,22 @@ namespace
     // Clears `view` (size x extent x 1) through a one-pass render graph.
     void ClearImage(Context& context, const Ref<ImageView>& view, const ClearColor& clear)
     {
-        context.ImmediateCommands([&](CommandBuffer& cmd)
-        {
-            RenderGraph graph(context);
-            const ResourceId target = graph.Import("Target");
-            graph.AddPass("clear")
-                .Color({
-                    .Resource = target,
-                    .Load = LoadOp::Clear,
-                    .Store = StoreOp::Store,
-                    .Clear = clear,
-                })
-                .Execute([](PassContext&) {});
-            const RenderGraph::ImportBinding binding{target, view};
-            graph.Compile()->Execute(cmd, {&binding, 1});
-        });
+        context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                RenderGraph graph(context);
+                const ResourceId target = graph.Import("Target");
+                graph.AddPass("clear")
+                    .Color({
+                        .Resource = target,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = clear,
+                    })
+                    .Execute([](PassContext&) {});
+                const RenderGraph::ImportBinding binding{target, view};
+                graph.Compile()->Execute(cmd, {&binding, 1});
+            });
     }
 }
 
@@ -52,12 +53,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "image clear: 64x32 RGBA8Unorm cleared
     // Exactly representable in RGBA8Unorm: green, fully opaque.
     constexpr std::array<u8, 4> expected = {0, 255, 0, 255};
 
-    auto image = Image::Create(Context, {
-        .Name = "Clear Target RGBA8",
-        .Extent = {Width, Height, 1},
-        .Format = Format::RGBA8Unorm,
-        .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
-    });
+    auto image =
+        Image::Create(Context, {
+                                   .Name = "Clear Target RGBA8",
+                                   .Extent = {Width, Height, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
 
     auto view = ImageView::Create(Context, {.Name = "Clear Target RGBA8 View", .Image = image});
 
@@ -73,12 +75,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "image clear: 64x32 R8Unorm cleared to
 {
     constexpr u8 expected = 255;
 
-    auto image = Image::Create(Context, {
-        .Name = "Clear Target R8",
-        .Extent = {Width, Height, 1},
-        .Format = Format::R8Unorm,
-        .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
-    });
+    auto image =
+        Image::Create(Context, {
+                                   .Name = "Clear Target R8",
+                                   .Extent = {Width, Height, 1},
+                                   .Format = Format::R8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
 
     auto view = ImageView::Create(Context, {.Name = "Clear Target R8 View", .Image = image});
 

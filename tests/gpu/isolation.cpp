@@ -29,11 +29,12 @@ namespace
 
     void RoundTrip(Context& context, u8 fillStart)
     {
-        auto buffer = Buffer::Create(context, {
-            .Name = string(Name),
-            .Size = Size,
-            .Usage = BufferUsage::TransferSrc | BufferUsage::TransferDst,
-        });
+        auto buffer = Buffer::Create(
+            context, {
+                         .Name = string(Name),
+                         .Size = Size,
+                         .Usage = BufferUsage::TransferSrc | BufferUsage::TransferDst,
+                     });
 
         std::array<u8, Size> source{};
         std::iota(source.begin(), source.end(), fillStart);
@@ -52,12 +53,14 @@ namespace
     }
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "isolation: first case creates and verifies a fresh-context buffer")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "isolation: first case creates and verifies a fresh-context buffer")
 {
     RoundTrip(Context, /* fillStart = */ 0);
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "isolation: second case, same name/size, on its own fresh context")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "isolation: second case, same name/size, on its own fresh context")
 {
     RoundTrip(Context, /* fillStart = */ 128);
 }

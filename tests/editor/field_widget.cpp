@@ -36,9 +36,11 @@ namespace
 
 TEST_CASE("FieldWidget: AssetTypeOfHandle maps handle leaf types to asset types")
 {
-    CHECK(AssetTypeOfHandle(TypeIdOf<Veng::AssetHandle<Veng::Texture>>()) == Veng::AssetType::Texture);
+    CHECK(AssetTypeOfHandle(TypeIdOf<Veng::AssetHandle<Veng::Texture>>()) ==
+          Veng::AssetType::Texture);
     CHECK(AssetTypeOfHandle(TypeIdOf<Veng::AssetHandle<Veng::Mesh>>()) == Veng::AssetType::Mesh);
-    CHECK(AssetTypeOfHandle(TypeIdOf<Veng::AssetHandle<Veng::Material>>()) == Veng::AssetType::Material);
+    CHECK(AssetTypeOfHandle(TypeIdOf<Veng::AssetHandle<Veng::Material>>()) ==
+          Veng::AssetType::Material);
 
     // A non-handle leaf has no asset type.
     CHECK_FALSE(AssetTypeOfHandle(TypeIdOf<Veng::f32>()).has_value());
@@ -73,12 +75,19 @@ TEST_CASE("FieldWidget: a field walk skips hidden fields and addresses by offset
     // The entity inspector's field walk: iterate non-hidden descriptors, address
     // each by base + Offset. The extraction preserves this ordering/filtering.
     const Veng::vector<Veng::FieldDescriptor> fields = {
-        {.Name = "Texture", .Type = TypeIdOf<Veng::AssetHandle<Veng::Texture>>(),
-         .Class = Veng::FieldClass::AssetHandle, .Offset = offsetof(Props, Texture)},
-        {.Name = "Scale", .Type = TypeIdOf<Veng::f32>(),
-         .Class = Veng::FieldClass::Scalar, .Offset = offsetof(Props, Scale), .Hidden = true},
-        {.Name = "Tint", .Type = TypeIdOf<Veng::vec4>(),
-         .Class = Veng::FieldClass::Vector, .Offset = offsetof(Props, Tint)},
+        {.Name = "Texture",
+         .Type = TypeIdOf<Veng::AssetHandle<Veng::Texture>>(),
+         .Class = Veng::FieldClass::AssetHandle,
+         .Offset = offsetof(Props, Texture)},
+        {.Name = "Scale",
+         .Type = TypeIdOf<Veng::f32>(),
+         .Class = Veng::FieldClass::Scalar,
+         .Offset = offsetof(Props, Scale),
+         .Hidden = true},
+        {.Name = "Tint",
+         .Type = TypeIdOf<Veng::vec4>(),
+         .Class = Veng::FieldClass::Vector,
+         .Offset = offsetof(Props, Tint)},
     };
 
     Props props;

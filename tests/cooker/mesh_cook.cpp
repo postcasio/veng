@@ -55,7 +55,8 @@ TEST_CASE("Cooker: cooks a mesh pack into a CookedMeshHeader + buffers + submesh
     for (u32 i = 0; i < header.AttributeCount; ++i)
     {
         CookedVertexAttribute attribute{};
-        std::memcpy(&attribute, entry->Blob.data() + cursor + i * sizeof(CookedVertexAttribute), sizeof(attribute));
+        std::memcpy(&attribute, entry->Blob.data() + cursor + i * sizeof(CookedVertexAttribute),
+                    sizeof(attribute));
         CHECK(attribute.Format == expectedFormats[i]);
         CHECK(attribute.Offset == expectedOffsets[i]);
     }

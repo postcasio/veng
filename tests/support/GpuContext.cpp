@@ -18,9 +18,8 @@ namespace Veng::Test
             {
                 if (pixels[p + c] != expected[c])
                 {
-                    std::fprintf(stderr,
-                                  "FAIL: pixel %zu channel %u = %u, expected %u\n",
-                                  p / 4, c, pixels[p + c], expected[c]);
+                    std::fprintf(stderr, "FAIL: pixel %zu channel %u = %u, expected %u\n", p / 4, c,
+                                 pixels[p + c], expected[c]);
                     return false;
                 }
             }

@@ -6,33 +6,31 @@ namespace Veng::Renderer::Backend
 {
     bool IsWriteAccess(const vk::AccessFlags access)
     {
-        constexpr auto writes =
-            vk::AccessFlagBits::eColorAttachmentWrite |
-            vk::AccessFlagBits::eDepthStencilAttachmentWrite |
-            vk::AccessFlagBits::eShaderWrite |
-            vk::AccessFlagBits::eTransferWrite |
-            vk::AccessFlagBits::eHostWrite |
-            vk::AccessFlagBits::eMemoryWrite;
+        constexpr auto writes = vk::AccessFlagBits::eColorAttachmentWrite |
+                                vk::AccessFlagBits::eDepthStencilAttachmentWrite |
+                                vk::AccessFlagBits::eShaderWrite |
+                                vk::AccessFlagBits::eTransferWrite |
+                                vk::AccessFlagBits::eHostWrite | vk::AccessFlagBits::eMemoryWrite;
         return static_cast<bool>(access & writes);
     }
 
-    BarrierDecision DecideBarrier(const SubresourceState& current,
-                                  const vk::ImageLayout newLayout,
+    BarrierDecision DecideBarrier(const SubresourceState& current, const vk::ImageLayout newLayout,
                                   const vk::PipelineStageFlags dstStage,
-                                  const vk::AccessFlags dstAccess,
-                                  const u32 transferFamily,
+                                  const vk::AccessFlags dstAccess, const u32 transferFamily,
                                   const u32 graphicsFamily)
     {
         // An acquire is needed only when the subresource was produced on the
         // transfer family and the two families are genuinely distinct. The
         // single-queue collapse (transfer == graphics) leaves both indices
         // IGNORED — an ordinary same-queue transition with no ownership move.
-        const bool acquire = current.ProducingFamily == transferFamily && transferFamily != graphicsFamily;
+        const bool acquire =
+            current.ProducingFamily == transferFamily && transferFamily != graphicsFamily;
         const u32 srcFamily = acquire ? transferFamily : VK_QUEUE_FAMILY_IGNORED;
         const u32 dstFamily = acquire ? graphicsFamily : VK_QUEUE_FAMILY_IGNORED;
 
         const bool layoutChange = current.Layout != newLayout;
-        const bool hazard = layoutChange || IsWriteAccess(current.Access) || IsWriteAccess(dstAccess);
+        const bool hazard =
+            layoutChange || IsWriteAccess(current.Access) || IsWriteAccess(dstAccess);
 
         if (!hazard && !acquire)
         {
@@ -67,13 +65,16 @@ namespace Veng::Renderer::Backend
             return {
                 vk::ImageLayout::eColorAttachmentOptimal,
                 vk::PipelineStageFlagBits::eColorAttachmentOutput,
-                vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eColorAttachmentRead,
+                vk::AccessFlagBits::eColorAttachmentWrite |
+                    vk::AccessFlagBits::eColorAttachmentRead,
             };
         case Kind::DepthAttachment:
             return {
                 vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eLateFragmentTests,
-                vk::AccessFlagBits::eDepthStencilAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentRead,
+                vk::PipelineStageFlagBits::eEarlyFragmentTests |
+                    vk::PipelineStageFlagBits::eLateFragmentTests,
+                vk::AccessFlagBits::eDepthStencilAttachmentWrite |
+                    vk::AccessFlagBits::eDepthStencilAttachmentRead,
             };
         case Kind::Sample:
             return {

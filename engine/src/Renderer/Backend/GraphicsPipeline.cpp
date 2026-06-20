@@ -9,11 +9,14 @@
 
 namespace Veng::Renderer
 {
-    GraphicsPipeline::Native& GraphicsPipeline::GetNative() const { return *m_Native; }
+    GraphicsPipeline::Native& GraphicsPipeline::GetNative() const
+    {
+        return *m_Native;
+    }
 
-    GraphicsPipeline::GraphicsPipeline(Context& context, const GraphicsPipelineInfo& info) : m_Context(context), m_Name(info.Name),
-        m_Native(CreateUnique<Native>()), m_PipelineLayout(info.PipelineLayout),
-        m_DepthAttachmentFormat(info.DepthAttachmentFormat)
+    GraphicsPipeline::GraphicsPipeline(Context& context, const GraphicsPipelineInfo& info)
+        : m_Context(context), m_Name(info.Name), m_Native(CreateUnique<Native>()),
+          m_PipelineLayout(info.PipelineLayout), m_DepthAttachmentFormat(info.DepthAttachmentFormat)
     {
         vector<vk::Format> colorAttachmentFormats;
         colorAttachmentFormats.reserve(info.ColorAttachments.size());
@@ -39,11 +42,9 @@ namespace Veng::Renderer
 
         for (const auto& shaderStage : info.ShaderStages)
         {
-            shaderStages.push_back({
-                .stage = ToVkBit(shaderStage.Stage),
-                .module = shaderStage.Module->GetNative().Module,
-                .pName = shaderStage.Module->GetEntryPoint().c_str()
-            });
+            shaderStages.push_back({.stage = ToVkBit(shaderStage.Stage),
+                                    .module = shaderStage.Module->GetNative().Module,
+                                    .pName = shaderStage.Module->GetEntryPoint().c_str()});
         }
 
         vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
@@ -85,27 +86,18 @@ namespace Veng::Renderer
         }
         else
         {
-            vertexInputInfo = {
-                .vertexBindingDescriptionCount = 0,
-                .pVertexBindingDescriptions = nullptr,
-                .vertexAttributeDescriptionCount = 0,
-                .pVertexAttributeDescriptions = nullptr
-            };
+            vertexInputInfo = {.vertexBindingDescriptionCount = 0,
+                               .pVertexBindingDescriptions = nullptr,
+                               .vertexAttributeDescriptionCount = 0,
+                               .pVertexAttributeDescriptions = nullptr};
         }
 
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
-            .topology = vk::PrimitiveTopology::eTriangleList,
-            .primitiveRestartEnable = VK_FALSE
-        };
+            .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = VK_FALSE};
 
-        vk::PipelineTessellationStateCreateInfo tessellationState{
-            .patchControlPoints = 0
-        };
+        vk::PipelineTessellationStateCreateInfo tessellationState{.patchControlPoints = 0};
 
-        vk::PipelineViewportStateCreateInfo viewportState{
-            .viewportCount = 1,
-            .scissorCount = 1
-        };
+        vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1, .scissorCount = 1};
 
         vk::PipelineRasterizationStateCreateInfo rasterizerState = {
             .depthClampEnable = vk::False,
@@ -118,9 +110,7 @@ namespace Veng::Renderer
         };
 
         vk::PipelineMultisampleStateCreateInfo multisampleState = {
-            .rasterizationSamples = vk::SampleCountFlagBits::e1,
-            .sampleShadingEnable = vk::False
-        };
+            .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False};
 
         vk::PipelineDepthStencilStateCreateInfo depthStencilState = {
             .depthTestEnable = VK_BOOL(info.DepthTestEnable),
@@ -131,8 +121,7 @@ namespace Veng::Renderer
             .front = {},
             .back = {},
             .minDepthBounds = 0.0f,
-            .maxDepthBounds = 1.0f
-        };
+            .maxDepthBounds = 1.0f};
 
         vector<vk::PipelineColorBlendAttachmentState> blendAttachments;
         blendAttachments.reserve(info.ColorAttachments.size());
@@ -147,18 +136,20 @@ namespace Veng::Renderer
             .logicOp = vk::LogicOp::eCopy,
             .attachmentCount = static_cast<u32>(blendAttachments.size()),
             .pAttachments = blendAttachments.data(),
-            .blendConstants = {{0, 0, 0, 0,}},
+            .blendConstants = {{
+                0,
+                0,
+                0,
+                0,
+            }},
         };
 
-        vector<vk::DynamicState> dynamicStates = {
-            vk::DynamicState::eViewport,
-            vk::DynamicState::eScissor
-        };
+        vector<vk::DynamicState> dynamicStates = {vk::DynamicState::eViewport,
+                                                  vk::DynamicState::eScissor};
 
         vk::PipelineDynamicStateCreateInfo dynamicState = {
             .dynamicStateCount = static_cast<u32>(dynamicStates.size()),
-            .pDynamicStates = dynamicStates.data()
-        };
+            .pDynamicStates = dynamicStates.data()};
 
         const vk::GraphicsPipelineCreateInfo pipelineInfo = {
             .pNext = &pipelineRenderingCreateInfo,
@@ -180,7 +171,10 @@ namespace Veng::Renderer
             .basePipelineIndex = 0,
         };
 
-        m_Native->Pipeline = GetVkDevice(m_Context).createGraphicsPipeline(GetVkPipelineCache(m_Context), pipelineInfo).value;
+        m_Native->Pipeline =
+            GetVkDevice(m_Context)
+                .createGraphicsPipeline(GetVkPipelineCache(m_Context), pipelineInfo)
+                .value;
 
         DebugMarkers::MarkPipeline(GetVkDevice(m_Context), m_Native->Pipeline, m_Name);
     }

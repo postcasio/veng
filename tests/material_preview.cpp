@@ -84,10 +84,12 @@ int main()
     });
 
     Context context;
-    context.Initialize({
-        .ApplicationName = "Material Preview Test",
-        .InternalRenderExtent = {640, 480},
-    }, window.get());
+    context.Initialize(
+        {
+            .ApplicationName = "Material Preview Test",
+            .InternalRenderExtent = {640, 480},
+        },
+        window.get());
 
     // The AssetManager takes a TaskSystem by reference; this test loads through the
     // blocking LoadSync (UploadSync) path, so no transfer pools are wired up
@@ -105,7 +107,8 @@ int main()
         // Cook the brick fixture pack in-process and mount it over the auto-mounted
         // core pack.
         const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
-        const path outArchive = std::filesystem::temp_directory_path() / "veng_material_preview.vengpack";
+        const path outArchive =
+            std::filesystem::temp_directory_path() / "veng_material_preview.vengpack";
 
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);
@@ -128,9 +131,10 @@ int main()
         // two-renderer handoff the validation gate must exercise. Disjoint targets,
         // each bracketing its own output.
         constexpr uvec2 viewportExtent{320, 240};
-        const Ref<Mesh> viewportSphere =
-            Mesh::Create(context, Primitives::Icosphere(0.85f, 4, brick.has_value() ? *brick : AssetHandle<Material>{}),
-                         "Viewport Sphere");
+        const Ref<Mesh> viewportSphere = Mesh::Create(
+            context,
+            Primitives::Icosphere(0.85f, 4, brick.has_value() ? *brick : AssetHandle<Material>{}),
+            "Viewport Sphere");
 
         const Unique<Scene> viewportScene = Scene::Create(types);
         const Entity viewportEntity = viewportScene->CreateEntity();
@@ -146,7 +150,8 @@ int main()
 
         Camera viewportCamera;
         viewportCamera.SetPerspective(glm::radians(45.0f),
-                                      static_cast<f32>(viewportExtent.x) / viewportExtent.y, 0.1f, 100.0f);
+                                      static_cast<f32>(viewportExtent.x) / viewportExtent.y, 0.1f,
+                                      100.0f);
         viewportCamera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
         const Unique<SceneRenderer> viewport = SceneRenderer::Create({
@@ -163,13 +168,16 @@ int main()
 
         // Record both renderers in one command stream, each bracketing its own
         // output with PrepareForAccess(Sample) — the two-renderer interaction.
-        context.ImmediateCommands([&](CommandBuffer& cmd)
-        {
-            viewport->Execute(cmd, Renderer::SceneView{.World = *viewportScene, .Camera = viewportCamera, .Delta = 0.0f});
-            cmd.PrepareForAccess(viewport->GetOutput(), AccessKind::Sample);
+        context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                viewport->Execute(cmd, Renderer::SceneView{.World = *viewportScene,
+                                                           .Camera = viewportCamera,
+                                                           .Delta = 0.0f});
+                cmd.PrepareForAccess(viewport->GetOutput(), AccessKind::Sample);
 
-            preview.Render(cmd);
-        });
+                preview.Render(cmd);
+            });
 
         // The preview is sized to the requested 256² extent and exposes a non-null
         // ImGuiTexture.
@@ -181,14 +189,12 @@ int main()
         constexpr uvec2 resized{192, 192};
         preview.Resize(resized);
 
-        context.ImmediateCommands([&](CommandBuffer& cmd)
-        {
-            preview.Render(cmd);
-        });
+        context.ImmediateCommands([&](CommandBuffer& cmd) { preview.Render(cmd); });
 
         Check(preview.GetExtent() == resized, "preview extent updated on Resize");
         Check(preview.GetTexture()->GetTextureId() != 0, "preview texture id valid after Resize");
-        Check(preview.GetTexture()->GetTextureId() != before, "preview texture id is fresh after Resize");
+        Check(preview.GetTexture()->GetTextureId() != before,
+              "preview texture id is fresh after Resize");
 
         std::filesystem::remove(outArchive);
     }

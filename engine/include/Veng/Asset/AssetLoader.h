@@ -69,8 +69,8 @@ namespace Veng
         /// @param id       The asset being loaded.
         /// @param cooked   The cooked blob bytes from the archive.
         /// @param async    True to record uploads asynchronously; false for the blocking sync path.
-        [[nodiscard]] virtual AssetResult<Detail::LoadJob> Load(
-            AssetManager& manager, Renderer::Context& context, TaskSystem& tasks,
-            TypeRegistry& types, AssetId id, std::span<const u8> cooked, bool async) const = 0;
+        [[nodiscard]] virtual AssetResult<Detail::LoadJob>
+        Load(AssetManager& manager, Renderer::Context& context, TaskSystem& tasks,
+             TypeRegistry& types, AssetId id, std::span<const u8> cooked, bool async) const = 0;
     };
 }

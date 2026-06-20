@@ -43,34 +43,36 @@ int main()
 
     int status = 0;
     {
-        auto image = Image::Create(context, {
-            .Name = "Headless Target",
-            .Extent = {size, size, 1},
-            .Format = Format::RGBA8Unorm,
-            .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
-        });
+        auto image = Image::Create(
+            context, {
+                         .Name = "Headless Target",
+                         .Extent = {size, size, 1},
+                         .Format = Format::RGBA8Unorm,
+                         .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                     });
 
         auto view = ImageView::Create(context, {
-            .Name = "Headless Target View",
-            .Image = image,
-        });
+                                                   .Name = "Headless Target View",
+                                                   .Image = image,
+                                               });
 
         // Clear the image through a render-graph pass (no window, no swapchain).
-        context.ImmediateCommands([&](CommandBuffer& cmd)
-        {
-            RenderGraph graph(context);
-            const ResourceId target = graph.Import("Target");
-            graph.AddPass("clear")
-                .Color({
-                    .Resource = target,
-                    .Load = LoadOp::Clear,
-                    .Store = StoreOp::Store,
-                    .Clear = ClearColor{1.0f, 0.0f, 0.0f, 1.0f},
-                })
-                .Execute([](PassContext&) {});
-            const RenderGraph::ImportBinding binding{target, view};
-            graph.Compile()->Execute(cmd, {&binding, 1});
-        });
+        context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                RenderGraph graph(context);
+                const ResourceId target = graph.Import("Target");
+                graph.AddPass("clear")
+                    .Color({
+                        .Resource = target,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{1.0f, 0.0f, 0.0f, 1.0f},
+                    })
+                    .Execute([](PassContext&) {});
+                const RenderGraph::ImportBinding binding{target, view};
+                graph.Compile()->Execute(cmd, {&binding, 1});
+            });
 
         const vector<u8> pixels = image->Download();
 

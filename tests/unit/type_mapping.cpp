@@ -30,7 +30,10 @@ namespace
     // Underlying-value set, for asserting a scalar ToVk produces distinct
     // outputs across an enum (a duplicated switch arm would collapse two).
     template <typename Vk>
-    auto Underlying(Vk v) { return static_cast<std::underlying_type_t<Vk>>(v); }
+    auto Underlying(Vk v)
+    {
+        return static_cast<std::underlying_type_t<Vk>>(v);
+    }
 }
 
 // --- Round-trip enums (have a FromVk inverse) -------------------------------
@@ -38,17 +41,18 @@ namespace
 TEST_CASE("Format round-trips through ToVk/FromVk")
 {
     constexpr std::array formats = {
-        Format::Undefined, Format::R8Unorm, Format::RGBA8Unorm, Format::RGBA8Srgb,
-        Format::BGRA8Srgb, Format::R16Sfloat, Format::RGBA16Sfloat, Format::R32Sfloat,
-        Format::RG32Sfloat, Format::RGB32Sfloat, Format::RGBA32Sfloat, Format::D16Unorm,
-        Format::D32Sfloat, Format::S8Uint, Format::D16UnormS8Uint, Format::D24UnormS8Uint,
-        Format::D32SfloatS8Uint, Format::X8D24UnormPack32,
+        Format::Undefined,      Format::R8Unorm,         Format::RGBA8Unorm,
+        Format::RGBA8Srgb,      Format::BGRA8Srgb,       Format::R16Sfloat,
+        Format::RGBA16Sfloat,   Format::R32Sfloat,       Format::RG32Sfloat,
+        Format::RGB32Sfloat,    Format::RGBA32Sfloat,    Format::D16Unorm,
+        Format::D32Sfloat,      Format::S8Uint,          Format::D16UnormS8Uint,
+        Format::D24UnormS8Uint, Format::D32SfloatS8Uint, Format::X8D24UnormPack32,
     };
 
     std::set<std::underlying_type_t<vk::Format>> distinct;
     for (Format f : formats)
     {
-        CHECK(FromVk(ToVk(f)) == f);     // asymmetric edit to one direction fails here
+        CHECK(FromVk(ToVk(f)) == f); // asymmetric edit to one direction fails here
         distinct.insert(Underlying(ToVk(f)));
     }
     CHECK(distinct.size() == formats.size()); // no two engine formats collide in vk
@@ -61,9 +65,9 @@ TEST_CASE("Format round-trips through ToVk/FromVk")
 TEST_CASE("ImageLayout round-trips through ToVk/FromVk")
 {
     constexpr std::array layouts = {
-        ImageLayout::Undefined, ImageLayout::General, ImageLayout::ColorAttachment,
+        ImageLayout::Undefined,       ImageLayout::General,        ImageLayout::ColorAttachment,
         ImageLayout::DepthAttachment, ImageLayout::ShaderReadOnly, ImageLayout::TransferSrc,
-        ImageLayout::TransferDst, ImageLayout::PresentSrc,
+        ImageLayout::TransferDst,     ImageLayout::PresentSrc,
     };
 
     std::set<std::underlying_type_t<vk::ImageLayout>> distinct;
@@ -85,18 +89,20 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
     {
         constexpr std::array v = {ImageType::Type1D, ImageType::Type2D, ImageType::Type3D};
         std::set<std::underlying_type_t<vk::ImageType>> s;
-        for (auto e : v) s.insert(Underlying(ToVk(e)));
+        for (auto e : v)
+            s.insert(Underlying(ToVk(e)));
         CHECK(s.size() == v.size());
         CHECK(ToVk(ImageType::Type2D) == vk::ImageType::e2D);
     }
     {
         constexpr std::array v = {
-            ImageViewType::Type1D, ImageViewType::Type2D, ImageViewType::Type3D,
-            ImageViewType::Cube, ImageViewType::Array1D, ImageViewType::Array2D,
+            ImageViewType::Type1D,    ImageViewType::Type2D,  ImageViewType::Type3D,
+            ImageViewType::Cube,      ImageViewType::Array1D, ImageViewType::Array2D,
             ImageViewType::CubeArray,
         };
         std::set<std::underlying_type_t<vk::ImageViewType>> s;
-        for (auto e : v) s.insert(Underlying(ToVk(e)));
+        for (auto e : v)
+            s.insert(Underlying(ToVk(e)));
         CHECK(s.size() == v.size());
         CHECK(ToVk(ImageViewType::CubeArray) == vk::ImageViewType::eCubeArray);
     }
@@ -106,11 +112,13 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
     }
     {
         constexpr std::array v = {
-            CompareOp::Never, CompareOp::Less, CompareOp::Equal, CompareOp::LessOrEqual,
-            CompareOp::Greater, CompareOp::NotEqual, CompareOp::GreaterOrEqual, CompareOp::Always,
+            CompareOp::Never,          CompareOp::Less,    CompareOp::Equal,
+            CompareOp::LessOrEqual,    CompareOp::Greater, CompareOp::NotEqual,
+            CompareOp::GreaterOrEqual, CompareOp::Always,
         };
         std::set<std::underlying_type_t<vk::CompareOp>> s;
-        for (auto e : v) s.insert(Underlying(ToVk(e)));
+        for (auto e : v)
+            s.insert(Underlying(ToVk(e)));
         CHECK(s.size() == v.size());
         CHECK(ToVk(CompareOp::LessOrEqual) == vk::CompareOp::eLessOrEqual);
     }
@@ -126,11 +134,14 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
     }
     {
         constexpr std::array v = {
-            AddressMode::Repeat, AddressMode::MirroredRepeat,
-            AddressMode::ClampToEdge, AddressMode::ClampToBorder,
+            AddressMode::Repeat,
+            AddressMode::MirroredRepeat,
+            AddressMode::ClampToEdge,
+            AddressMode::ClampToBorder,
         };
         std::set<std::underlying_type_t<vk::SamplerAddressMode>> s;
-        for (auto e : v) s.insert(Underlying(ToVk(e)));
+        for (auto e : v)
+            s.insert(Underlying(ToVk(e)));
         CHECK(s.size() == v.size());
         CHECK(ToVk(AddressMode::ClampToEdge) == vk::SamplerAddressMode::eClampToEdge);
     }
@@ -145,22 +156,25 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
     {
         constexpr std::array v = {
             DescriptorType::CombinedImageSampler, DescriptorType::SampledImage,
-            DescriptorType::StorageImage, DescriptorType::UniformBuffer,
+            DescriptorType::StorageImage,         DescriptorType::UniformBuffer,
             DescriptorType::StorageBuffer,
         };
         std::set<std::underlying_type_t<vk::DescriptorType>> s;
-        for (auto e : v) s.insert(Underlying(ToVk(e)));
+        for (auto e : v)
+            s.insert(Underlying(ToVk(e)));
         CHECK(s.size() == v.size());
         CHECK(ToVk(DescriptorType::StorageImage) == vk::DescriptorType::eStorageImage);
     }
     {
         constexpr std::array v = {
-            BlendFactor::Zero, BlendFactor::One, BlendFactor::SrcColor,
-            BlendFactor::OneMinusSrcColor, BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha,
+            BlendFactor::Zero,     BlendFactor::One,
+            BlendFactor::SrcColor, BlendFactor::OneMinusSrcColor,
+            BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha,
             BlendFactor::DstAlpha, BlendFactor::OneMinusDstAlpha,
         };
         std::set<std::underlying_type_t<vk::BlendFactor>> s;
-        for (auto e : v) s.insert(Underlying(ToVk(e)));
+        for (auto e : v)
+            s.insert(Underlying(ToVk(e)));
         CHECK(s.size() == v.size());
         CHECK(ToVk(BlendFactor::SrcAlpha) == vk::BlendFactor::eSrcAlpha);
     }
@@ -169,7 +183,8 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
             BlendOp::Add, BlendOp::Subtract, BlendOp::ReverseSubtract, BlendOp::Min, BlendOp::Max,
         };
         std::set<std::underlying_type_t<vk::BlendOp>> s;
-        for (auto e : v) s.insert(Underlying(ToVk(e)));
+        for (auto e : v)
+            s.insert(Underlying(ToVk(e)));
         CHECK(s.size() == v.size());
         CHECK(ToVk(BlendOp::ReverseSubtract) == vk::BlendOp::eReverseSubtract);
     }
@@ -187,7 +202,8 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
         // CullMode maps to a Flags wrapper; check the bits directly.
         CHECK(ToVk(CullMode::None) == vk::CullModeFlags{vk::CullModeFlagBits::eNone});
         CHECK(ToVk(CullMode::Back) == vk::CullModeFlags{vk::CullModeFlagBits::eBack});
-        CHECK(ToVk(CullMode::FrontAndBack) == vk::CullModeFlags{vk::CullModeFlagBits::eFrontAndBack});
+        CHECK(ToVk(CullMode::FrontAndBack) ==
+              vk::CullModeFlags{vk::CullModeFlagBits::eFrontAndBack});
     }
 }
 
@@ -202,7 +218,8 @@ TEST_CASE("ImageUsage flags combine")
     CHECK((combined & vk::ImageUsageFlagBits::eSampled));
     CHECK((combined & vk::ImageUsageFlagBits::eColorAttachment));
     CHECK_FALSE((combined & vk::ImageUsageFlagBits::eStorage));
-    CHECK(combined == (vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eColorAttachment));
+    CHECK(combined ==
+          (vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eColorAttachment));
 }
 
 TEST_CASE("BufferUsage flags combine")
@@ -210,7 +227,8 @@ TEST_CASE("BufferUsage flags combine")
     CHECK(ToVk(BufferUsage::Vertex) == vk::BufferUsageFlagBits::eVertexBuffer);
 
     const vk::BufferUsageFlags combined = ToVk(BufferUsage::Index | BufferUsage::TransferDst);
-    CHECK(combined == (vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst));
+    CHECK(combined ==
+          (vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst));
 }
 
 TEST_CASE("ShaderStage flags combine, with the All shortcut")
@@ -242,8 +260,9 @@ TEST_CASE("BlendState composite mapper")
     CHECK(alpha.srcAlphaBlendFactor == vk::BlendFactor::eOne);
     CHECK(alpha.dstAlphaBlendFactor == vk::BlendFactor::eOneMinusSrcAlpha);
     // Full RGBA write mask regardless of blend settings.
-    CHECK(alpha.colorWriteMask == (vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                                   vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA));
+    CHECK(alpha.colorWriteMask ==
+          (vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+           vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA));
 }
 
 TEST_CASE("ClearValue composite mapper")

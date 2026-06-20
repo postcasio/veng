@@ -61,7 +61,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "typed buffer roundtrip: VertexBuffer<
     CHECK(std::memcmp(downloaded.data(), source.data(), downloaded.size()) == 0);
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "typed buffer roundtrip: StorageBuffer<Particle> with firstElement offset")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "typed buffer roundtrip: StorageBuffer<Particle> with firstElement offset")
 {
     constexpr usize count = 4;
 

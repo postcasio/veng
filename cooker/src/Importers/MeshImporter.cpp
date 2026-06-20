@@ -57,18 +57,20 @@ namespace Veng::Cook
 
         std::ifstream sourceFile(sourcePath, std::ios::binary);
         if (!sourceFile)
-            return std::unexpected(fmt::format("mesh importer: failed to open '{}'", sourcePath.string()));
+            return std::unexpected(
+                fmt::format("mesh importer: failed to open '{}'", sourcePath.string()));
 
         std::ostringstream contentStream;
         contentStream << sourceFile.rdbuf();
         const json meshJson = json::parse(contentStream.str(), nullptr, false);
         if (meshJson.is_discarded() || !meshJson.is_object())
-            return std::unexpected(fmt::format("mesh importer: '{}': invalid JSON", sourcePath.string()));
+            return std::unexpected(
+                fmt::format("mesh importer: '{}': invalid JSON", sourcePath.string()));
 
         if (!meshJson.contains("model") || !meshJson["model"].is_string())
         {
-            return std::unexpected(fmt::format(
-                "mesh importer: '{}': missing or invalid 'model'", sourcePath.string()));
+            return std::unexpected(fmt::format("mesh importer: '{}': missing or invalid 'model'",
+                                               sourcePath.string()));
         }
 
         const path modelPath = sourcePath.parent_path() / meshJson["model"].get<string>();
@@ -77,12 +79,12 @@ namespace Veng::Cook
         // Import settings -> assimp post-process flags. Defaults: generate normals +
         // tangents, join identical verts.
         const json import = meshJson.contains("import") && meshJson["import"].is_object()
-            ? meshJson["import"]
-            : json::object();
+                                ? meshJson["import"]
+                                : json::object();
 
         const f32 scale = import.contains("scale") && import["scale"].is_number()
-            ? import["scale"].get<f32>()
-            : 1.0f;
+                              ? import["scale"].get<f32>()
+                              : 1.0f;
 
         unsigned int flags = aiProcess_Triangulate;
         if (ImportFlag(import, "join_identical_vertices", true))
@@ -96,19 +98,22 @@ namespace Veng::Cook
 
         Assimp::Importer importer;
         const aiScene* scene = importer.ReadFile(modelPath.string(), flags);
-        if (scene == nullptr || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) != 0 || scene->mRootNode == nullptr)
+        if (scene == nullptr || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) != 0 ||
+            scene->mRootNode == nullptr)
         {
-            return std::unexpected(fmt::format("mesh importer: '{}': assimp failed to import '{}': {}",
-                sourcePath.string(), modelPath.string(), importer.GetErrorString()));
+            return std::unexpected(
+                fmt::format("mesh importer: '{}': assimp failed to import '{}': {}",
+                            sourcePath.string(), modelPath.string(), importer.GetErrorString()));
         }
 
         if (scene->mNumMeshes == 0)
-            return std::unexpected(fmt::format("mesh importer: '{}': no meshes in '{}'", sourcePath.string(), modelPath.string()));
+            return std::unexpected(fmt::format("mesh importer: '{}': no meshes in '{}'",
+                                               sourcePath.string(), modelPath.string()));
 
         // Per-submesh material overrides: { "<submesh index>": <AssetId u64> }.
         const json materials = meshJson.contains("materials") && meshJson["materials"].is_object()
-            ? meshJson["materials"]
-            : json::object();
+                                   ? meshJson["materials"]
+                                   : json::object();
 
         // Flatten every assimp mesh into one interleaved vertex buffer + one u32
         // index buffer; each assimp mesh becomes one CookedSubMesh.
@@ -211,7 +216,8 @@ namespace Veng::Cook
         const usize vertexBytes = vertices.size() * sizeof(CanonicalVertex);
         const usize indexBytes = indices.size() * sizeof(u32);
 
-        vector<u8> blob(sizeof(CookedMeshHeader) + attributeBytes + subMeshBytes + vertexBytes + indexBytes);
+        vector<u8> blob(sizeof(CookedMeshHeader) + attributeBytes + subMeshBytes + vertexBytes +
+                        indexBytes);
         usize cursor = 0;
         std::memcpy(blob.data() + cursor, &header, sizeof(header));
         cursor += sizeof(header);

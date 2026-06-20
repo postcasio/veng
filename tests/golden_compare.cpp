@@ -30,7 +30,8 @@ namespace
         out.Pixels = stbi_load(path, &out.Width, &out.Height, &channels, 3);
         if (!out.Pixels)
         {
-            std::fprintf(stderr, "golden_compare: failed to load '%s': %s\n", path, stbi_failure_reason());
+            std::fprintf(stderr, "golden_compare: failed to load '%s': %s\n", path,
+                         stbi_failure_reason());
             return false;
         }
         return true;
@@ -41,7 +42,9 @@ int main(int argc, char** argv)
 {
     if (argc < 3)
     {
-        std::fprintf(stderr, "usage: %s <actual> <golden> [maxChannelDelta] [maxMismatchFraction]\n", argv[0]);
+        std::fprintf(stderr,
+                     "usage: %s <actual> <golden> [maxChannelDelta] [maxMismatchFraction]\n",
+                     argv[0]);
         return 1;
     }
 
@@ -83,12 +86,15 @@ int main(int argc, char** argv)
 
     const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
 
-    std::printf("golden_compare: %ld/%ld pixels exceed delta %d (%.4f%%, limit %.4f%%); worst channel delta %d\n",
-                mismatched, pixelCount, maxChannelDelta, fraction * 100.0, maxMismatchFraction * 100.0, worstDelta);
+    std::printf("golden_compare: %ld/%ld pixels exceed delta %d (%.4f%%, limit %.4f%%); worst "
+                "channel delta %d\n",
+                mismatched, pixelCount, maxChannelDelta, fraction * 100.0,
+                maxMismatchFraction * 100.0, worstDelta);
 
     if (fraction > maxMismatchFraction)
     {
-        std::fprintf(stderr, "golden_compare: FAIL — capture differs from golden beyond tolerance\n");
+        std::fprintf(stderr,
+                     "golden_compare: FAIL — capture differs from golden beyond tolerance\n");
         return 1;
     }
 

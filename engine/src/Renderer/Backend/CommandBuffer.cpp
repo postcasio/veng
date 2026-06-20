@@ -10,20 +10,22 @@
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Native.h>
 
-
 namespace Veng::Renderer
 {
-    CommandBuffer::Native& CommandBuffer::GetNative() const { return *m_Native; }
+    CommandBuffer::Native& CommandBuffer::GetNative() const
+    {
+        return *m_Native;
+    }
 
-    CommandBuffer::CommandBuffer(Context& context, const CommandBufferLevel level) :
-        m_Context(context), m_Level(level), m_Native(CreateUnique<Native>())
+    CommandBuffer::CommandBuffer(Context& context, const CommandBufferLevel level)
+        : m_Context(context), m_Level(level), m_Native(CreateUnique<Native>())
     {
         // Allocation normally comes from the shared graphics pool. The transfer
         // setup sets AllocationPoolOverride so a worker's transfer command buffer
         // is allocated from that worker's own (single-thread) transfer pool.
         const vk::CommandPool pool = m_Context.GetNative().AllocationPoolOverride
-            ? m_Context.GetNative().AllocationPoolOverride
-            : m_Context.GetNative().CommandPool->GetVkCommandPool();
+                                         ? m_Context.GetNative().AllocationPoolOverride
+                                         : m_Context.GetNative().CommandPool->GetVkCommandPool();
 
         const vk::CommandBufferAllocateInfo allocInfo{
             .commandPool = pool,
@@ -42,21 +44,20 @@ namespace Veng::Renderer
 
     void CommandBuffer::Begin(CommandBufferUsage flags)
     {
-        VK_ASSERT(m_Native->CommandBuffer.begin({
-            .flags = ToVk(flags)
-        }), "failed to begin command buffer!");
+        VK_ASSERT(m_Native->CommandBuffer.begin({.flags = ToVk(flags)}),
+                  "failed to begin command buffer!");
     }
 
-    static vk::RenderingAttachmentInfo BeginRendering_CreateAttachment(const RenderingAttachmentInfo& info)
+    static vk::RenderingAttachmentInfo
+    BeginRendering_CreateAttachment(const RenderingAttachmentInfo& info)
     {
-        return {
-            .imageView = info.ImageView->GetNative().ImageView,
-            .imageLayout = Utils::GetFormatAttachmentImageLayout(ToVk(info.ImageView->GetFormat())),
-            .resolveMode = vk::ResolveModeFlagBits::eNone,
-            .loadOp = ToVk(info.LoadOp),
-            .storeOp = ToVk(info.StoreOp),
-            .clearValue = ToVk(info.ClearValue)
-        };
+        return {.imageView = info.ImageView->GetNative().ImageView,
+                .imageLayout =
+                    Utils::GetFormatAttachmentImageLayout(ToVk(info.ImageView->GetFormat())),
+                .resolveMode = vk::ResolveModeFlagBits::eNone,
+                .loadOp = ToVk(info.LoadOp),
+                .storeOp = ToVk(info.StoreOp),
+                .clearValue = ToVk(info.ClearValue)};
     }
 
     // Draw-time pipeline/attachment format validation: a dynamic-rendering
@@ -66,24 +67,29 @@ namespace Veng::Renderer
     // only when both the active rendering attachments and a bound graphics
     // pipeline's formats are known, so manual/non-graph draws without this info
     // never false-trip.
-    static void ValidateBoundPipelineAttachmentFormats(
-        const vector<Format>& activeColorFormats, const Format activeDepthFormat,
-        const vector<Format>& pipelineColorFormats, const Format pipelineDepthFormat)
+    static void ValidateBoundPipelineAttachmentFormats(const vector<Format>& activeColorFormats,
+                                                       const Format activeDepthFormat,
+                                                       const vector<Format>& pipelineColorFormats,
+                                                       const Format pipelineDepthFormat)
     {
-        VE_ASSERT(pipelineColorFormats.size() == activeColorFormats.size(),
-                  "CommandBuffer::Draw: bound pipeline declares {} color attachment(s) but {} are active",
-                  pipelineColorFormats.size(), activeColorFormats.size());
+        VE_ASSERT(
+            pipelineColorFormats.size() == activeColorFormats.size(),
+            "CommandBuffer::Draw: bound pipeline declares {} color attachment(s) but {} are active",
+            pipelineColorFormats.size(), activeColorFormats.size());
 
         for (usize i = 0; i < pipelineColorFormats.size(); i++)
         {
-            VE_ASSERT(pipelineColorFormats[i] == activeColorFormats[i],
-                      "CommandBuffer::Draw: color attachment {} format mismatch — pipeline declares {}, "
-                      "render target is {}",
-                      i, static_cast<u32>(pipelineColorFormats[i]), static_cast<u32>(activeColorFormats[i]));
+            VE_ASSERT(
+                pipelineColorFormats[i] == activeColorFormats[i],
+                "CommandBuffer::Draw: color attachment {} format mismatch — pipeline declares {}, "
+                "render target is {}",
+                i, static_cast<u32>(pipelineColorFormats[i]),
+                static_cast<u32>(activeColorFormats[i]));
         }
 
         VE_ASSERT(pipelineDepthFormat == activeDepthFormat,
-                  "CommandBuffer::Draw: depth attachment format mismatch — pipeline declares {}, render target is {}",
+                  "CommandBuffer::Draw: depth attachment format mismatch — pipeline declares {}, "
+                  "render target is {}",
                   static_cast<u32>(pipelineDepthFormat), static_cast<u32>(activeDepthFormat));
     }
 
@@ -100,8 +106,8 @@ namespace Veng::Renderer
         }
 
         m_ActiveDepthAttachmentFormat = info.DepthAttachment.has_value()
-            ? info.DepthAttachment->ImageView->GetFormat()
-            : Format::Undefined;
+                                            ? info.DepthAttachment->ImageView->GetFormat()
+                                            : Format::Undefined;
 
         m_HasActiveRenderingInfo = true;
 
@@ -153,8 +159,9 @@ namespace Veng::Renderer
 
     void CommandBuffer::PushConstants(const PushConstantsInfo& info)
     {
-        m_Native->CommandBuffer.pushConstants(m_LastBoundPipelineLayout->GetNative().Layout, ToVk(info.StageFlags), info.Offset,
-                                        info.Size, info.Data);
+        m_Native->CommandBuffer.pushConstants(m_LastBoundPipelineLayout->GetNative().Layout,
+                                              ToVk(info.StageFlags), info.Offset, info.Size,
+                                              info.Data);
     }
 
     void CommandBuffer::BindDescriptorSets(const DescriptorSetBindInfo& info)
@@ -167,17 +174,18 @@ namespace Veng::Renderer
             descriptorSets.push_back(descriptorSet->GetNative().Set);
         }
 
-        m_Native->CommandBuffer.bindDescriptorSets(ToVk(info.PipelineBindPoint), m_LastBoundPipelineLayout->GetNative().Layout,
-                                             info.FirstSet, descriptorSets, info.DynamicOffsets);
+        m_Native->CommandBuffer.bindDescriptorSets(
+            ToVk(info.PipelineBindPoint), m_LastBoundPipelineLayout->GetNative().Layout,
+            info.FirstSet, descriptorSets, info.DynamicOffsets);
     }
 
     void CommandBuffer::DrawFullscreenTriangle()
     {
         if (m_HasActiveRenderingInfo && m_HasBoundGraphicsPipelineFormats)
         {
-            ValidateBoundPipelineAttachmentFormats(m_ActiveColorAttachmentFormats, m_ActiveDepthAttachmentFormat,
-                                                    m_BoundPipelineColorAttachmentFormats,
-                                                    m_BoundPipelineDepthAttachmentFormat);
+            ValidateBoundPipelineAttachmentFormats(
+                m_ActiveColorAttachmentFormats, m_ActiveDepthAttachmentFormat,
+                m_BoundPipelineColorAttachmentFormats, m_BoundPipelineDepthAttachmentFormat);
         }
 
         m_Native->CommandBuffer.draw(3, 1, 0, 0);
@@ -188,25 +196,27 @@ namespace Veng::Renderer
     {
         if (m_HasActiveRenderingInfo && m_HasBoundGraphicsPipelineFormats)
         {
-            ValidateBoundPipelineAttachmentFormats(m_ActiveColorAttachmentFormats, m_ActiveDepthAttachmentFormat,
-                                                    m_BoundPipelineColorAttachmentFormats,
-                                                    m_BoundPipelineDepthAttachmentFormat);
+            ValidateBoundPipelineAttachmentFormats(
+                m_ActiveColorAttachmentFormats, m_ActiveDepthAttachmentFormat,
+                m_BoundPipelineColorAttachmentFormats, m_BoundPipelineDepthAttachmentFormat);
         }
 
         m_Native->CommandBuffer.draw(vertexCount, instanceCount, firstVertex, firstInstance);
     }
 
-    void CommandBuffer::DrawIndexed(const u32 indexCount, const u32 instanceCount, const u32 firstIndex,
-                                    const i32 vertexOffset, const u32 firstInstance)
+    void CommandBuffer::DrawIndexed(const u32 indexCount, const u32 instanceCount,
+                                    const u32 firstIndex, const i32 vertexOffset,
+                                    const u32 firstInstance)
     {
         if (m_HasActiveRenderingInfo && m_HasBoundGraphicsPipelineFormats)
         {
-            ValidateBoundPipelineAttachmentFormats(m_ActiveColorAttachmentFormats, m_ActiveDepthAttachmentFormat,
-                                                    m_BoundPipelineColorAttachmentFormats,
-                                                    m_BoundPipelineDepthAttachmentFormat);
+            ValidateBoundPipelineAttachmentFormats(
+                m_ActiveColorAttachmentFormats, m_ActiveDepthAttachmentFormat,
+                m_BoundPipelineColorAttachmentFormats, m_BoundPipelineDepthAttachmentFormat);
         }
 
-        m_Native->CommandBuffer.drawIndexed(indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+        m_Native->CommandBuffer.drawIndexed(indexCount, instanceCount, firstIndex, vertexOffset,
+                                            firstInstance);
     }
 
     void CommandBuffer::Dispatch(const u32 groupsX, const u32 groupsY, const u32 groupsZ)
@@ -216,7 +226,8 @@ namespace Veng::Renderer
 
     void CommandBuffer::BindPipeline(const Ref<GraphicsPipeline>& pipeline)
     {
-        m_Native->CommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetNative().Pipeline);
+        m_Native->CommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics,
+                                             pipeline->GetNative().Pipeline);
         m_LastBoundPipelineLayout = pipeline->GetPipelineLayout();
 
         // Capture the declared attachment formats for draw-time validation
@@ -229,7 +240,8 @@ namespace Veng::Renderer
 
     void CommandBuffer::BindPipeline(const Ref<ComputePipeline>& pipeline)
     {
-        m_Native->CommandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline->GetNative().Pipeline);
+        m_Native->CommandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute,
+                                             pipeline->GetNative().Pipeline);
         m_LastBoundPipelineLayout = pipeline->GetPipelineLayout();
 
         // A compute pipeline has no rendering attachments; clear any previously
@@ -242,19 +254,16 @@ namespace Veng::Renderer
 
     void CommandBuffer::SetScissor(const ivec2 offset, const uvec2 extent)
     {
-        m_Native->CommandBuffer.setScissor(0, {vk::Rect2D{{offset.x, offset.y}, {extent.x, extent.y}}});
+        m_Native->CommandBuffer.setScissor(
+            0, {vk::Rect2D{{offset.x, offset.y}, {extent.x, extent.y}}});
     }
 
     void CommandBuffer::SetViewport(const ivec2 offset, const uvec2 extent)
     {
-        m_Native->CommandBuffer.setViewport(0, {
-                                          vk::Viewport{
-                                              static_cast<f32>(offset.x), static_cast<f32>(offset.y),
-                                              static_cast<f32>(extent.x), static_cast<f32>(extent.y), 0.0f, 1.0f
-                                          }
-                                      });
+        m_Native->CommandBuffer.setViewport(
+            0, {vk::Viewport{static_cast<f32>(offset.x), static_cast<f32>(offset.y),
+                             static_cast<f32>(extent.x), static_cast<f32>(extent.y), 0.0f, 1.0f}});
     }
-
 
     void CommandBuffer::End()
     {
@@ -284,22 +293,16 @@ namespace Veng::Renderer
             .bufferOffset = 0,
             .bufferRowLength = 0,
             .bufferImageHeight = 0,
-            .imageSubresource = {
-                .aspectMask = Utils::GetAspectFlags(ToVk(image->GetFormat())),
-                .mipLevel = 0,
-                .baseArrayLayer = 0,
-                .layerCount = image->GetLayers()
-            },
+            .imageSubresource = {.aspectMask = Utils::GetAspectFlags(ToVk(image->GetFormat())),
+                                 .mipLevel = 0,
+                                 .baseArrayLayer = 0,
+                                 .layerCount = image->GetLayers()},
             .imageOffset = {0, 0, 0},
-            .imageExtent = {extent.x, extent.y, extent.z}
-        };
+            .imageExtent = {extent.x, extent.y, extent.z}};
 
-        m_Native->CommandBuffer.copyBufferToImage(
-            buffer->GetNative().Buffer,
-            image->GetNative().Image,
-            vk::ImageLayout::eTransferDstOptimal,
-            1,
-            &region);
+        m_Native->CommandBuffer.copyBufferToImage(buffer->GetNative().Buffer,
+                                                  image->GetNative().Image,
+                                                  vk::ImageLayout::eTransferDstOptimal, 1, &region);
     }
 
     void CommandBuffer::CopyImageToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer)
@@ -310,18 +313,16 @@ namespace Veng::Renderer
             .bufferOffset = 0,
             .bufferRowLength = 0,
             .bufferImageHeight = 0,
-            .imageSubresource = {
-                .aspectMask = Utils::GetAspectFlags(ToVk(image->GetFormat())),
-                .mipLevel = 0,
-                .baseArrayLayer = 0,
-                .layerCount = 1
-            },
+            .imageSubresource = {.aspectMask = Utils::GetAspectFlags(ToVk(image->GetFormat())),
+                                 .mipLevel = 0,
+                                 .baseArrayLayer = 0,
+                                 .layerCount = 1},
             .imageOffset = {0, 0, 0},
-            .imageExtent = {extent.x, extent.y, extent.z}
-        };
+            .imageExtent = {extent.x, extent.y, extent.z}};
 
-        m_Native->CommandBuffer.copyImageToBuffer(image->GetNative().Image, vk::ImageLayout::eTransferSrcOptimal,
-                                            buffer->GetNative().Buffer, 1, &region);
+        m_Native->CommandBuffer.copyImageToBuffer(image->GetNative().Image,
+                                                  vk::ImageLayout::eTransferSrcOptimal,
+                                                  buffer->GetNative().Buffer, 1, &region);
     }
 
     void CommandBuffer::BlitImage(const BlitImageInfo& info)
@@ -329,35 +330,28 @@ namespace Veng::Renderer
         vk::Offset3D sourceOffset = {info.SourceOffset.x, info.SourceOffset.y, info.SourceOffset.z};
         vk::Offset3D sourceExtent = {info.SourceExtent.x, info.SourceExtent.y, info.SourceExtent.z};
 
-        vk::Offset3D destinationOffset = {info.DestinationOffset.x, info.DestinationOffset.y, info.DestinationOffset.z};
-        vk::Offset3D destinationExtent = {info.DestinationExtent.x, info.DestinationExtent.y, info.DestinationExtent.z};
+        vk::Offset3D destinationOffset = {info.DestinationOffset.x, info.DestinationOffset.y,
+                                          info.DestinationOffset.z};
+        vk::Offset3D destinationExtent = {info.DestinationExtent.x, info.DestinationExtent.y,
+                                          info.DestinationExtent.z};
 
-        vk::ImageBlit blitInfo{
-            .srcSubresource = {
-                .aspectMask = Utils::GetAspectFlags(ToVk(info.SourceImage->GetFormat())),
-                .mipLevel = info.SourceMipLevel,
-                .baseArrayLayer = 0,
-                .layerCount = 1
-            },
-            .srcOffsets = {{sourceOffset, sourceExtent}},
-            .dstSubresource = {
-                .aspectMask = Utils::GetAspectFlags(ToVk(info.DestinationImage->GetFormat())),
-                .mipLevel = info.DestinationMipLevel,
-                .baseArrayLayer = 0,
-                .layerCount = 1
-            },
-            .dstOffsets = {{destinationOffset, destinationExtent}}
-        };
+        vk::ImageBlit blitInfo{.srcSubresource = {.aspectMask = Utils::GetAspectFlags(
+                                                      ToVk(info.SourceImage->GetFormat())),
+                                                  .mipLevel = info.SourceMipLevel,
+                                                  .baseArrayLayer = 0,
+                                                  .layerCount = 1},
+                               .srcOffsets = {{sourceOffset, sourceExtent}},
+                               .dstSubresource = {.aspectMask = Utils::GetAspectFlags(
+                                                      ToVk(info.DestinationImage->GetFormat())),
+                                                  .mipLevel = info.DestinationMipLevel,
+                                                  .baseArrayLayer = 0,
+                                                  .layerCount = 1},
+                               .dstOffsets = {{destinationOffset, destinationExtent}}};
 
         m_Native->CommandBuffer.blitImage(
-            info.SourceImage->GetNative().Image,
-            vk::ImageLayout::eTransferSrcOptimal,
-            info.DestinationImage->GetNative().Image,
-            vk::ImageLayout::eTransferDstOptimal,
-            1,
-            &blitInfo,
-            vk::Filter::eLinear
-        );
+            info.SourceImage->GetNative().Image, vk::ImageLayout::eTransferSrcOptimal,
+            info.DestinationImage->GetNative().Image, vk::ImageLayout::eTransferDstOptimal, 1,
+            &blitInfo, vk::Filter::eLinear);
     }
 
     void CommandBuffer::PrepareForAccess(const Ref<ImageView>& view, const AccessKind kind)
@@ -368,10 +362,8 @@ namespace Veng::Renderer
         // same use then correctly sees no hazard.
         const auto scope = Backend::ScopeFor(kind);
 
-        Backend::TransitionImage(
-            *this, *view->GetImage(),
-            scope.Layout, scope.Stage, scope.Access,
-            view->GetBaseArrayLayer(), view->GetArrayLayers(),
-            view->GetBaseMipLevel(), view->GetMipLevels());
+        Backend::TransitionImage(*this, *view->GetImage(), scope.Layout, scope.Stage, scope.Access,
+                                 view->GetBaseArrayLayer(), view->GetArrayLayers(),
+                                 view->GetBaseMipLevel(), view->GetMipLevels());
     }
 }

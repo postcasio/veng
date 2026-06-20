@@ -10,32 +10,31 @@
 namespace Veng::Renderer
 {
     /// @brief Returns the backend-native image view handle.
-    ImageView::Native& ImageView::GetNative() const { return *m_Native; }
+    ImageView::Native& ImageView::GetNative() const
+    {
+        return *m_Native;
+    }
 
     /// @brief Creates a Vulkan image view over the specified image subresource range.
     /// @param context  The owning render context.
     /// @param info     View configuration including the source image, view type, and mip/layer range.
-    ImageView::ImageView(Context& context, const ImageViewInfo& info) : m_Context(context), m_Name(info.Name), m_Format(info.Image->GetFormat()),
-                                                      m_BaseMipLevel(info.BaseMipLevel), m_MipLevels(info.MipLevels),
-                                                      m_BaseArrayLayer(info.BaseArrayLayer), m_ArrayLayers(info.ArrayLayers),
-                                                      m_Native(CreateUnique<Native>()), m_Image(info.Image)
+    ImageView::ImageView(Context& context, const ImageViewInfo& info)
+        : m_Context(context), m_Name(info.Name), m_Format(info.Image->GetFormat()),
+          m_BaseMipLevel(info.BaseMipLevel), m_MipLevels(info.MipLevels),
+          m_BaseArrayLayer(info.BaseArrayLayer), m_ArrayLayers(info.ArrayLayers),
+          m_Native(CreateUnique<Native>()), m_Image(info.Image)
     {
         const vk::ImageViewCreateInfo createInfo{
             .image = info.Image->GetNative().Image,
             .viewType = ToVk(info.ViewType),
             .format = ToVk(info.Image->GetFormat()),
-            .components = {
-                vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity,
-                vk::ComponentSwizzle::eIdentity
-            },
-            .subresourceRange = {
-                .aspectMask = Utils::GetAspectFlags(ToVk(info.Image->GetFormat())),
-                .baseMipLevel = info.BaseMipLevel,
-                .levelCount = info.MipLevels,
-                .baseArrayLayer = info.BaseArrayLayer,
-                .layerCount = info.ArrayLayers
-            }
-        };
+            .components = {vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity,
+                           vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity},
+            .subresourceRange = {.aspectMask = Utils::GetAspectFlags(ToVk(info.Image->GetFormat())),
+                                 .baseMipLevel = info.BaseMipLevel,
+                                 .levelCount = info.MipLevels,
+                                 .baseArrayLayer = info.BaseArrayLayer,
+                                 .layerCount = info.ArrayLayers}};
 
         m_Native->ImageView = GetVkDevice(m_Context).createImageView(createInfo).value;
 

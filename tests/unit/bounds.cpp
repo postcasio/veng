@@ -26,7 +26,8 @@ namespace
 {
     bool VecApprox(const vec3& a, const vec3& b, f32 eps = 1e-4f)
     {
-        return std::abs(a.x - b.x) <= eps && std::abs(a.y - b.y) <= eps && std::abs(a.z - b.z) <= eps;
+        return std::abs(a.x - b.x) <= eps && std::abs(a.y - b.y) <= eps &&
+               std::abs(a.z - b.z) <= eps;
     }
 }
 
@@ -121,12 +122,14 @@ TEST_CASE("Mesh::ComputeBounds: typed and raw forms agree, empty for no vertices
 
 TEST_CASE("Primitive bounds: Cube/Sphere/Plane")
 {
-    const AABB cube = Mesh::ComputeBounds(std::span<const CanonicalVertex>(Primitives::Cube(1.0f).Vertices));
+    const AABB cube =
+        Mesh::ComputeBounds(std::span<const CanonicalVertex>(Primitives::Cube(1.0f).Vertices));
     CHECK(VecApprox(cube.Min, vec3(-0.5f)));
     CHECK(VecApprox(cube.Max, vec3(0.5f)));
 
     const f32 radius = 0.75f;
-    const AABB sphere = Mesh::ComputeBounds(std::span<const CanonicalVertex>(Primitives::Sphere(radius, 16, 24).Vertices));
+    const AABB sphere = Mesh::ComputeBounds(
+        std::span<const CanonicalVertex>(Primitives::Sphere(radius, 16, 24).Vertices));
     CHECK(sphere.Min.x == doctest::Approx(-radius).epsilon(0.001f));
     CHECK(sphere.Max.x == doctest::Approx(+radius).epsilon(0.001f));
     CHECK(sphere.Min.y == doctest::Approx(-radius).epsilon(0.001f));
@@ -136,7 +139,8 @@ TEST_CASE("Primitive bounds: Cube/Sphere/Plane")
 
     // Plane is flat on Y; its bound is degenerate (zero extent) on that axis.
     const vec2 size(3.0f, 5.0f);
-    const AABB plane = Mesh::ComputeBounds(std::span<const CanonicalVertex>(Primitives::Plane(size).Vertices));
+    const AABB plane =
+        Mesh::ComputeBounds(std::span<const CanonicalVertex>(Primitives::Plane(size).Vertices));
     CHECK(plane.Min.y == doctest::Approx(0.0f));
     CHECK(plane.Max.y == doctest::Approx(0.0f));
     CHECK(plane.Min.x == doctest::Approx(-size.x * 0.5f));

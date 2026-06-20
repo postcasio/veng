@@ -8,9 +8,12 @@ namespace Veng::Log
     {
         switch (lvl)
         {
-        case Level::Info: return "INFO";
-        case Level::Warn: return "WARN";
-        case Level::Error: return "ERROR";
+        case Level::Info:
+            return "INFO";
+        case Level::Warn:
+            return "WARN";
+        case Level::Error:
+            return "ERROR";
         }
         return "INFO";
     }

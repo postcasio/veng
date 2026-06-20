@@ -9,7 +9,7 @@
 // VULKAN_HPP_ASSERT_ON_RESULT, which we point at the fatal-assert path below.
 // Both macros must be defined before <vulkan/vulkan.hpp> is first included.
 #define VULKAN_HPP_NO_EXCEPTIONS
-#define VULKAN_HPP_ASSERT_ON_RESULT(expr) \
+#define VULKAN_HPP_ASSERT_ON_RESULT(expr)                                                          \
     VE_ASSERT((expr), "vulkan.hpp call returned a non-success vk::Result")
 
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
@@ -21,27 +21,30 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
-
 #include <Veng/Renderer/Backend/VulkanMemoryAllocator.h>
 
 #define VK_RAW_ASSERT(f, msg)                                                                      \
-    do {                                                                                           \
+    do                                                                                             \
+    {                                                                                              \
         VkResult res = (f);                                                                        \
         if (res != VK_SUCCESS)                                                                     \
         {                                                                                          \
-            ::Veng::Detail::FatalAssert(__FILE__, __LINE__, #f,                                    \
+            ::Veng::Detail::FatalAssert(                                                           \
+                __FILE__, __LINE__, #f,                                                            \
                 ::fmt::format("Vulkan call failed with {}: {}", string_VkResult(res), msg));       \
         }                                                                                          \
     } while (false)
 
 #define VK_ASSERT(f, msg)                                                                          \
-    do {                                                                                           \
+    do                                                                                             \
+    {                                                                                              \
         vk::Result res = (f);                                                                      \
         if (res != vk::Result::eSuccess)                                                           \
         {                                                                                          \
             ::Veng::Detail::FatalAssert(__FILE__, __LINE__, #f,                                    \
-                ::fmt::format("Vulkan call failed with {}: {}",                                    \
-                              string_VkResult(static_cast<VkResult>(res)), msg));                  \
+                                        ::fmt::format("Vulkan call failed with {}: {}",            \
+                                                      string_VkResult(static_cast<VkResult>(res)), \
+                                                      msg));                                       \
         }                                                                                          \
     } while (false)
 

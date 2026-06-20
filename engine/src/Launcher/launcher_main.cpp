@@ -21,7 +21,7 @@ int main(const int argc, char** argv)
     }
 
     Veng::ApplicationRegistry apps;
-    Veng::TypeRegistry        types;
+    Veng::TypeRegistry types;
 
     // Builtins must be present before the module registers its types (game components may reference them).
     Veng::RegisterBuiltinTypes(types);

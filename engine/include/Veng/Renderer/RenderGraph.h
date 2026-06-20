@@ -290,8 +290,7 @@ namespace Veng::Renderer
         /// @param cmd      Command buffer to record into.
         /// @param imports  Concrete views for each declared import this frame.
         /// @param userData Opaque value forwarded to PassContext::UserData.
-        void Execute(CommandBuffer& cmd,
-                     std::span<const RenderGraph::ImportBinding> imports = {},
+        void Execute(CommandBuffer& cmd, std::span<const RenderGraph::ImportBinding> imports = {},
                      void* userData = nullptr);
 
         /// @brief Returns the concrete image a transient was allocated to at compile.

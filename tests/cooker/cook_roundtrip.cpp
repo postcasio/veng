@@ -32,7 +32,8 @@ TEST_CASE("Cooker: cooks a raw-only pack into an archive ArchiveReader accepts")
 {
     const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
     const path packJson = fixtureDir / "raw_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_roundtrip.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_roundtrip.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
@@ -76,7 +77,8 @@ TEST_CASE("Cooker: unknown asset type is a located cook error")
 {
     const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
     const path packJson = fixtureDir / "unknown_type_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_unknown_type.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_unknown_type.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);

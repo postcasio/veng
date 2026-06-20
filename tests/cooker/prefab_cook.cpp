@@ -49,7 +49,7 @@ namespace
     // Cooks a prefab pack with the prefab importer + the reflected registry, and
     // returns the prefab blob bytes (or the located error).
     Result<vector<u8>> CookPrefab(const path& packJson, const TypeRegistry* types,
-        std::span<const path> refs, AssetId prefabId)
+                                  std::span<const path> refs, AssetId prefabId)
     {
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
@@ -115,7 +115,7 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
 
     const Result<vector<u8>> blobResult = CookPrefab(packJson, &types, refs, AssetId{9001});
     REQUIRE_MESSAGE(blobResult.has_value(),
-        "cook failed: ", blobResult ? string{} : blobResult.error());
+                    "cook failed: ", blobResult ? string{} : blobResult.error());
 
     const vector<u8>& blob = *blobResult;
     REQUIRE(blob.size() >= sizeof(CookedPrefabHeader));
@@ -130,8 +130,7 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
 
     const u8* cursor = blob.data() + sizeof(CookedPrefabHeader);
 
-    const CookedPrefabEntity* entityTable =
-        reinterpret_cast<const CookedPrefabEntity*>(cursor);
+    const CookedPrefabEntity* entityTable = reinterpret_cast<const CookedPrefabEntity*>(cursor);
     cursor += header.EntityCount * sizeof(CookedPrefabEntity);
 
     const CookedPrefabComponent* componentTable =
@@ -156,10 +155,8 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
         return nullptr;
     };
 
-    const CookedPrefabComponent* transform =
-        findComponent(0, 4, TypeIdOf<Transform>());
-    const CookedPrefabComponent* meshRenderer =
-        findComponent(0, 4, TypeIdOf<MeshRenderer>());
+    const CookedPrefabComponent* transform = findComponent(0, 4, TypeIdOf<Transform>());
+    const CookedPrefabComponent* meshRenderer = findComponent(0, 4, TypeIdOf<MeshRenderer>());
     const CookedPrefabComponent* spinner = findComponent(0, 4, SpinnerTypeId);
     REQUIRE(transform != nullptr);
     REQUIRE(meshRenderer != nullptr);
@@ -168,7 +165,7 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
     // --- Round-trip Transform via ReadFields ---
     Transform decodedTransform;
     ReadFields(std::span<const u8>(records + transform->RecordOffset, transform->RecordSize),
-        &decodedTransform, types.Info(TypeIdOf<Transform>()), types);
+               &decodedTransform, types.Info(TypeIdOf<Transform>()), types);
     CHECK(decodedTransform.Position == vec3(1, 2, 3));
     // The quat JSON array is storage order [x,y,z,w]; [0,0,0,1] is the identity.
     CHECK(decodedTransform.Rotation == quat(1, 0, 0, 0)); // glm quat(w,x,y,z) — identity
@@ -177,23 +174,22 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
     // --- Round-trip MeshRenderer's AssetHandle id (offset 0 = AssetId) ---
     MeshRenderer decodedRenderer;
     ReadFields(std::span<const u8>(records + meshRenderer->RecordOffset, meshRenderer->RecordSize),
-        &decodedRenderer, types.Info(TypeIdOf<MeshRenderer>()), types);
+               &decodedRenderer, types.Info(TypeIdOf<MeshRenderer>()), types);
     CHECK(decodedRenderer.Mesh.Id().Value == 8001ULL);
 
     // --- Round-trip Spinner via a mirror (the cooker has no compile-time type) ---
     SpinnerMirror decodedSpinner;
     ReadFields(std::span<const u8>(records + spinner->RecordOffset, spinner->RecordSize),
-        &decodedSpinner, types.Info(SpinnerTypeId), types);
+               &decodedSpinner, types.Info(SpinnerTypeId), types);
     CHECK(decodedSpinner.SpeedRadiansPerSec == doctest::Approx(1.5f));
 
     // --- Child's Parent reference cooks to {Index = 0 (prefab-local), Generation = 0} ---
-    const CookedPrefabComponent* parent =
-        findComponent(entityTable[1].FirstComponent, entityTable[1].ComponentCount,
-            TypeIdOf<Parent>());
+    const CookedPrefabComponent* parent = findComponent(
+        entityTable[1].FirstComponent, entityTable[1].ComponentCount, TypeIdOf<Parent>());
     REQUIRE(parent != nullptr);
     Parent decodedParent;
     ReadFields(std::span<const u8>(records + parent->RecordOffset, parent->RecordSize),
-        &decodedParent, types.Info(TypeIdOf<Parent>()), types);
+               &decodedParent, types.Info(TypeIdOf<Parent>()), types);
     CHECK(decodedParent.Value.Index == 0u);
     CHECK(decodedParent.Value.Generation == 0u);
 }
@@ -280,12 +276,12 @@ TEST_CASE("prefab cook: an omitted field keeps its default value")
 
     const CookedPrefabComponent* component = reinterpret_cast<const CookedPrefabComponent*>(
         blob.data() + sizeof(CookedPrefabHeader) + sizeof(CookedPrefabEntity));
-    const u8* records = blob.data() + sizeof(CookedPrefabHeader)
-        + sizeof(CookedPrefabEntity) + sizeof(CookedPrefabComponent);
+    const u8* records = blob.data() + sizeof(CookedPrefabHeader) + sizeof(CookedPrefabEntity) +
+                        sizeof(CookedPrefabComponent);
 
     Transform decoded;
     ReadFields(std::span<const u8>(records + component->RecordOffset, component->RecordSize),
-        &decoded, types.Info(TypeIdOf<Transform>()), types);
+               &decoded, types.Info(TypeIdOf<Transform>()), types);
     CHECK(decoded.Position == vec3(5, 6, 7));
     CHECK(decoded.Scale == vec3(1, 1, 1)); // the default survived
 }
@@ -321,12 +317,12 @@ TEST_CASE("prefab cook: a null entity reference stays Entity::Null")
     const vector<u8>& blob = *blobResult;
     const CookedPrefabComponent* component = reinterpret_cast<const CookedPrefabComponent*>(
         blob.data() + sizeof(CookedPrefabHeader) + sizeof(CookedPrefabEntity));
-    const u8* records = blob.data() + sizeof(CookedPrefabHeader)
-        + sizeof(CookedPrefabEntity) + sizeof(CookedPrefabComponent);
+    const u8* records = blob.data() + sizeof(CookedPrefabHeader) + sizeof(CookedPrefabEntity) +
+                        sizeof(CookedPrefabComponent);
 
     Parent decoded;
     ReadFields(std::span<const u8>(records + component->RecordOffset, component->RecordSize),
-        &decoded, types.Info(TypeIdOf<Parent>()), types);
+               &decoded, types.Info(TypeIdOf<Parent>()), types);
     CHECK(decoded.Value == Entity::Null);
 }
 
@@ -380,8 +376,7 @@ TEST_CASE("prefab cook: a non-resident AssetHandle id is accepted as-is")
     const path packJson = WriteInlinePrefab("prefab_handle_nonresident", components);
 
     const Result<vector<u8>> blob = CookPrefab(packJson, &module.Types, {}, AssetId{4242});
-    REQUIRE_MESSAGE(blob.has_value(),
-        "cook failed: ", blob ? string{} : blob.error());
+    REQUIRE_MESSAGE(blob.has_value(), "cook failed: ", blob ? string{} : blob.error());
 }
 
 TEST_CASE("prefab cook: cooking a prefab with no --module is the requires-module error")

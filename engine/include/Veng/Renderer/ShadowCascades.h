@@ -55,9 +55,9 @@ namespace Veng::Renderer
     /// @param sceneBounds  World-space scene bound; may be empty.
     /// @param settings     Split count, lambda, and tile resolution.
     /// @return Per-cascade matrices and view-space split distances.
-    [[nodiscard]] CascadeData ComputeCascades(
-        const Camera& camera, vec3 lightDir, const AABB& sceneBounds,
-        const CascadeSettings& settings);
+    [[nodiscard]] CascadeData ComputeCascades(const Camera& camera, vec3 lightDir,
+                                              const AABB& sceneBounds,
+                                              const CascadeSettings& settings);
 
     /// @brief Tile layout of the directional shadow atlas for a given cascade count.
     ///
@@ -78,7 +78,8 @@ namespace Veng::Renderer
     /// @param cascadeCount  Requested cascade count; clamped to [1, MaxCascades].
     [[nodiscard]] inline ShadowAtlasGrid ComputeShadowAtlasGrid(u32 cascadeCount)
     {
-        const u32 count = cascadeCount < 1 ? 1 : (cascadeCount > MaxCascades ? MaxCascades : cascadeCount);
+        const u32 count =
+            cascadeCount < 1 ? 1 : (cascadeCount > MaxCascades ? MaxCascades : cascadeCount);
         const u32 columns = count < 2 ? count : 2;
         const u32 rows = (count + 1) / 2;
         return {columns, rows};

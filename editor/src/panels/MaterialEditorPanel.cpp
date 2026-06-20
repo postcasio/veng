@@ -46,24 +46,38 @@ namespace VengEditor
         constexpr int NodeIdShift = 12;
         constexpr int OutputBit = 1 << 11;
 
-        int NodeImId(NodeId node) { return static_cast<int>(node.Index) + 1; }
+        int NodeImId(NodeId node)
+        {
+            return static_cast<int>(node.Index) + 1;
+        }
 
         int AttrId(NodeId node, u16 pin, bool isOutput)
         {
-            return (NodeImId(node) << NodeIdShift) | (isOutput ? OutputBit : 0) | static_cast<int>(pin);
+            return (NodeImId(node) << NodeIdShift) | (isOutput ? OutputBit : 0) |
+                   static_cast<int>(pin);
         }
 
-        u16 PinOf(int attr) { return static_cast<u16>(attr & (OutputBit - 1)); }
-        bool IsOutputAttr(int attr) { return (attr & OutputBit) != 0; }
-        u32 NodeIndexOf(int attr) { return static_cast<u32>((attr >> NodeIdShift) - 1); }
+        u16 PinOf(int attr)
+        {
+            return static_cast<u16>(attr & (OutputBit - 1));
+        }
+        bool IsOutputAttr(int attr)
+        {
+            return (attr & OutputBit) != 0;
+        }
+        u32 NodeIndexOf(int attr)
+        {
+            return static_cast<u32>((attr >> NodeIdShift) - 1);
+        }
     }
 
     MaterialEditorPanel::MaterialEditorPanel(AssetId id, path sourcePath,
-                                             const AssetSourceIndex& sources, Renderer::Context& context,
-                                             AssetManager& assets, ImGuiLayer& imgui,
-                                             EditorRegistry& editors, CookDriver cook) :
-        m_Id(id), m_SourcePath(std::move(sourcePath)), m_Sources(sources), m_Context(context),
-        m_Assets(assets), m_ImGui(imgui), m_Editors(editors), m_Cook(std::move(cook))
+                                             const AssetSourceIndex& sources,
+                                             Renderer::Context& context, AssetManager& assets,
+                                             ImGuiLayer& imgui, EditorRegistry& editors,
+                                             CookDriver cook)
+        : m_Id(id), m_SourcePath(std::move(sourcePath)), m_Sources(sources), m_Context(context),
+          m_Assets(assets), m_ImGui(imgui), m_Editors(editors), m_Cook(std::move(cook))
     {
         m_Title = fmt::format("Material: {}", m_SourcePath.filename().string());
 
@@ -98,7 +112,8 @@ namespace VengEditor
         if (!loaded)
         {
             m_CookError = loaded.error().Detail;
-            Log::Error("Material editor: failed to load 0x{:X}: {}", m_Id.Value, loaded.error().Detail);
+            Log::Error("Material editor: failed to load 0x{:X}: {}", m_Id.Value,
+                       loaded.error().Detail);
             return false;
         }
 
@@ -165,9 +180,9 @@ namespace VengEditor
         if (haveBlock)
         {
             m_Graph = CreateUnique<NodeGraph>(
-                MaterialCanConnect,
-                [this](NodeTypeId nid) { return m_Catalog.ShapeOf(nid); },
-                [this](NodeTypeId nid) {
+                MaterialCanConnect, [this](NodeTypeId nid) { return m_Catalog.ShapeOf(nid); },
+                [this](NodeTypeId nid)
+                {
                     const NodeType* type = m_Catalog.Find(nid);
                     return type != nullptr ? type->PropertySize : usize{0};
                 });
@@ -183,7 +198,8 @@ namespace VengEditor
             else if (outcome == NodeGraphReadOutcome::Malformed)
             {
                 // A malformed block falls back to a synthesized graph.
-                m_Graph = CreateUnique<NodeGraph>(BuildGraphFromMaterial(iface, m_Catalog, m_Types));
+                m_Graph =
+                    CreateUnique<NodeGraph>(BuildGraphFromMaterial(iface, m_Catalog, m_Types));
             }
         }
         else
@@ -279,21 +295,21 @@ namespace VengEditor
 
         m_Cook({.SourcePath = m_TempPath, .TargetId = m_Id, .Type = AssetType::Material},
                [this](Result<MountHandle> mount)
-        {
-            m_Cooking = false;
-            if (!mount)
-            {
-                m_CookError = mount.error();
-                Log::Error("Material editor: cook failed: {}", mount.error());
-                return;
-            }
+               {
+                   m_Cooking = false;
+                   if (!mount)
+                   {
+                       m_CookError = mount.error();
+                       Log::Error("Material editor: cook failed: {}", mount.error());
+                       return;
+                   }
 
-            // Replace the mount and re-fetch; OnImGui swaps the handle into the
-            // preview once the async load lands resident.
-            m_Mount = std::move(*mount);
-            m_Handle = m_Assets.Load<Material>(m_Id);
-            m_MaterialDirty = true;
-        });
+                   // Replace the mount and re-fetch; OnImGui swaps the handle into the
+                   // preview once the async load lands resident.
+                   m_Mount = std::move(*mount);
+                   m_Handle = m_Assets.Load<Material>(m_Id);
+                   m_MaterialDirty = true;
+               });
     }
 
     void MaterialEditorPanel::OnRender(Renderer::CommandBuffer& cmd)
@@ -358,8 +374,7 @@ namespace VengEditor
         for (usize i = 0; i < links.size(); ++i)
         {
             const Link& link = links[i];
-            ImNodes::Link(static_cast<int>(i),
-                          AttrId(link.From.Node, link.From.Pin, true),
+            ImNodes::Link(static_cast<int>(i), AttrId(link.From.Node, link.From.Pin, true),
                           AttrId(link.To.Node, link.To.Pin, false));
         }
 
@@ -371,7 +386,8 @@ namespace VengEditor
 
         // Decode a NodeId from a node imnodes id by scanning the live set (the
         // index is unique among live nodes).
-        const auto nodeFromIndex = [&](u32 index) -> NodeId {
+        const auto nodeFromIndex = [&](u32 index) -> NodeId
+        {
             for (NodeId n : m_Graph->Nodes())
                 if (n.Index == index)
                     return n;
@@ -485,7 +501,8 @@ namespace VengEditor
         const std::span<const std::byte> bytes = m_Graph->PropertyBytes(node);
         vector<std::byte> scratch(bytes.begin(), bytes.end());
 
-        const FieldWidgetContext ctx{.Assets = m_Assets, .Sources = m_Sources, .Editors = m_Editors};
+        const FieldWidgetContext ctx{
+            .Assets = m_Assets, .Sources = m_Sources, .Editors = m_Editors};
 
         {
             auto disabled = UI::Disabled(m_ReadOnly);
@@ -504,9 +521,8 @@ namespace VengEditor
         for (usize i = 0; i < type->Properties.size(); ++i)
         {
             const FieldDescriptor& field = type->Properties[i];
-            const usize end = (i + 1 < type->Properties.size())
-                                  ? type->Properties[i + 1].Offset
-                                  : scratch.size();
+            const usize end =
+                (i + 1 < type->Properties.size()) ? type->Properties[i + 1].Offset : scratch.size();
             const usize size = end - field.Offset;
             m_Graph->SetProperty(node, field,
                                  std::span<const std::byte>(scratch.data() + field.Offset, size));

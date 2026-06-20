@@ -29,7 +29,8 @@ namespace
     {
         const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
         const path packJson = fixtureDir / "shader_pack.json";
-        const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_shader.vengpack";
+        const path outArchive =
+            std::filesystem::temp_directory_path() / "veng_cooker_shader.vengpack";
 
         Cooker cooker;
         RegisterBuiltinImporters(cooker);

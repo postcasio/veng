@@ -81,7 +81,8 @@ namespace Veng::Renderer
         return *this;
     }
 
-    RenderGraph::PassBuilder& RenderGraph::PassBuilder::Execute(function<void(PassContext&)> execute)
+    RenderGraph::PassBuilder&
+    RenderGraph::PassBuilder::Execute(function<void(PassContext&)> execute)
     {
         m_Pass.Execute = std::move(execute);
         return *this;
@@ -141,8 +142,8 @@ namespace Veng::Renderer
         {
             bool IsImport = false;
             string Name;
-            Ref<Image> Image;     // transient only
-            Ref<ImageView> View;  // transient only
+            Ref<Image> Image;    // transient only
+            Ref<ImageView> View; // transient only
         };
 
         // A baked transition: destination scope derived by ScopeFor at compile.
@@ -203,7 +204,7 @@ namespace Veng::Renderer
         // on the prior content's last read through the same DecideBarrier hazard rule.
         // No aliasing-specific barrier is required.
         {
-                // Resource-table slots that are transients, in table order,
+            // Resource-table slots that are transients, in table order,
             // with their live ranges and size classes.
             vector<u32> transientSlots;
             vector<Backend::TransientLifetime> lifetimes;
@@ -261,16 +262,17 @@ namespace Veng::Renderer
                 if (slotImages[slot] == nullptr)
                 {
                     const TransientDesc& desc = m_Resources[transientSlots[ti]].Desc;
-                    slotImages[slot] = Image::Create(m_Context, {
-                        .Name = desc.Name,
-                        .Extent = {desc.Extent.x, desc.Extent.y, 1},
-                        .Format = desc.Format,
-                        .Usage = desc.Usage,
-                    });
+                    slotImages[slot] =
+                        Image::Create(m_Context, {
+                                                     .Name = desc.Name,
+                                                     .Extent = {desc.Extent.x, desc.Extent.y, 1},
+                                                     .Format = desc.Format,
+                                                     .Usage = desc.Usage,
+                                                 });
                     slotViews[slot] = ImageView::Create(m_Context, {
-                        .Name = desc.Name + " View",
-                        .Image = slotImages[slot],
-                    });
+                                                                       .Name = desc.Name + " View",
+                                                                       .Image = slotImages[slot],
+                                                                   });
                 }
 
                 CompiledGraph::Native::Resource& resource = native->Resources[transientSlots[ti]];
@@ -313,15 +315,18 @@ namespace Veng::Renderer
                     if (access.Kind == AccessKind::ColorAttachment)
                         VE_ASSERT(HasFlag(source.Desc.Usage, ImageUsage::ColorAttachment),
                                   "RenderGraph::Compile: transient '{}' is a color attachment "
-                                  "but lacks ImageUsage::ColorAttachment", source.Name);
+                                  "but lacks ImageUsage::ColorAttachment",
+                                  source.Name);
                     else if (access.Kind == AccessKind::DepthAttachment)
                         VE_ASSERT(HasFlag(source.Desc.Usage, ImageUsage::DepthAttachment),
                                   "RenderGraph::Compile: transient '{}' is a depth attachment "
-                                  "but lacks ImageUsage::DepthAttachment", source.Name);
+                                  "but lacks ImageUsage::DepthAttachment",
+                                  source.Name);
                     else if (access.Kind == AccessKind::Sample)
                         VE_ASSERT(HasFlag(source.Desc.Usage, ImageUsage::Sampled),
                                   "RenderGraph::Compile: transient '{}' is sampled "
-                                  "but lacks ImageUsage::Sampled", source.Name);
+                                  "but lacks ImageUsage::Sampled",
+                                  source.Name);
                 }
 
                 const auto scope = ScopeFor(access.Kind);
@@ -393,8 +398,7 @@ namespace Veng::Renderer
             }
 
             VE_ASSERT(resolved[i] != nullptr,
-                      "CompiledGraph::Execute: import '{}' has no supplied binding",
-                      resource.Name);
+                      "CompiledGraph::Execute: import '{}' has no supplied binding", resource.Name);
         }
 
         for (const Native::Pass& pass : native.Passes)
@@ -406,11 +410,10 @@ namespace Veng::Renderer
             {
                 const Ref<ImageView>& view = resolved[transition.Slot];
 
-                Backend::TransitionImage(
-                    cmd, *view->GetImage(),
-                    transition.Dst.Layout, transition.Dst.Stage, transition.Dst.Access,
-                    view->GetBaseArrayLayer(), view->GetArrayLayers(),
-                    view->GetBaseMipLevel(), view->GetMipLevels());
+                Backend::TransitionImage(cmd, *view->GetImage(), transition.Dst.Layout,
+                                         transition.Dst.Stage, transition.Dst.Access,
+                                         view->GetBaseArrayLayer(), view->GetArrayLayers(),
+                                         view->GetBaseMipLevel(), view->GetMipLevels());
             }
 
             // 2. Graphics passes begin dynamic rendering from baked attachments;
@@ -443,9 +446,8 @@ namespace Veng::Renderer
                         VE_ASSERT(attachmentExtent == info.Extent,
                                   "CompiledGraph::Execute: attachment '{}' extent {}x{} "
                                   "disagrees with the pass extent {}x{}",
-                                  view->GetImage()->GetName(),
-                                  attachmentExtent.x, attachmentExtent.y,
-                                  info.Extent.x, info.Extent.y);
+                                  view->GetImage()->GetName(), attachmentExtent.x,
+                                  attachmentExtent.y, info.Extent.x, info.Extent.y);
                     }
 
                     const RenderingAttachmentInfo info2{

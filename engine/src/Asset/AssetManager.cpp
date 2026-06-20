@@ -28,13 +28,20 @@ namespace Veng
         {
             switch (type)
             {
-                case AssetType::Raw: return "Raw";
-                case AssetType::Texture: return "Texture";
-                case AssetType::Mesh: return "Mesh";
-                case AssetType::Shader: return "Shader";
-                case AssetType::Material: return "Material";
-                case AssetType::VertexLayout: return "VertexLayout";
-                case AssetType::Prefab: return "Prefab";
+            case AssetType::Raw:
+                return "Raw";
+            case AssetType::Texture:
+                return "Texture";
+            case AssetType::Mesh:
+                return "Mesh";
+            case AssetType::Shader:
+                return "Shader";
+            case AssetType::Material:
+                return "Material";
+            case AssetType::VertexLayout:
+                return "VertexLayout";
+            case AssetType::Prefab:
+                return "Prefab";
             }
 
             VE_ASSERT(false, "AssetManager: unhandled AssetType {}", static_cast<u32>(type));
@@ -42,10 +49,8 @@ namespace Veng
     }
 
     AssetManager::AssetManager(Renderer::Context& context, TaskSystem& tasks, TypeRegistry& types,
-                               const AssetManagerInfo& /*info*/) :
-        m_Context(context),
-        m_Tasks(tasks),
-        m_Types(types)
+                               const AssetManagerInfo& /*info*/)
+        : m_Context(context), m_Tasks(tasks), m_Types(types)
     {
         RegisterLoader(CreateUnique<RawAssetLoader>());
         RegisterLoader(CreateUnique<TextureLoader>());
@@ -59,7 +64,8 @@ namespace Veng
         const VoidResult coreMount = MountBytes(
             path("<core>"),
             std::span<const u8>(g_CoreLayoutPack, static_cast<usize>(g_CoreLayoutPackSize)));
-        VE_ASSERT(coreMount.has_value(), "AssetManager: failed to mount embedded core pack: {}", coreMount.error());
+        VE_ASSERT(coreMount.has_value(), "AssetManager: failed to mount embedded core pack: {}",
+                  coreMount.error());
 #endif
     }
 
@@ -99,7 +105,8 @@ namespace Veng
 
     void AssetManager::Unmount(const path& archive)
     {
-        std::erase_if(m_Mounts, [&archive](const MountedArchive& mount) { return mount.Path == archive; });
+        std::erase_if(m_Mounts,
+                      [&archive](const MountedArchive& mount) { return mount.Path == archive; });
     }
 
     void AssetManager::CollectGarbage()
@@ -120,9 +127,8 @@ namespace Veng
         Release();
     }
 
-    MountHandle::MountHandle(MountHandle&& other) noexcept :
-        m_Manager(other.m_Manager),
-        m_Token(other.m_Token)
+    MountHandle::MountHandle(MountHandle&& other) noexcept
+        : m_Manager(other.m_Manager), m_Token(other.m_Token)
     {
         other.m_Manager = nullptr;
         other.m_Token = 0;
@@ -154,7 +160,8 @@ namespace Veng
     MountHandle AssetManager::MountMemory(vector<u8> archiveBytes, string debugName)
     {
         Result<ArchiveReader> reader = ArchiveReader::FromBytes(archiveBytes);
-        VE_ASSERT(reader.has_value(), "AssetManager::MountMemory: '{}': {}", debugName, reader.error());
+        VE_ASSERT(reader.has_value(), "AssetManager::MountMemory: '{}': {}", debugName,
+                  reader.error());
 
         const u64 token = m_NextMemoryToken++;
         m_MemoryMounts.push_back(MemoryMount{
@@ -168,7 +175,8 @@ namespace Veng
 
     void AssetManager::UnmountMemory(u64 token)
     {
-        std::erase_if(m_MemoryMounts, [token](const MemoryMount& mount) { return mount.Token == token; });
+        std::erase_if(m_MemoryMounts,
+                      [token](const MemoryMount& mount) { return mount.Token == token; });
     }
 
     optional<ArchiveEntry> AssetManager::Find(AssetId id) const
@@ -190,7 +198,8 @@ namespace Veng
         return std::nullopt;
     }
 
-    AssetResult<std::pair<AssetLoader*, ArchiveEntry>> AssetManager::Resolve(AssetType type, AssetId id)
+    AssetResult<std::pair<AssetLoader*, ArchiveEntry>> AssetManager::Resolve(AssetType type,
+                                                                             AssetId id)
     {
         const optional<ArchiveEntry> found = Find(id);
         if (!found)
@@ -207,8 +216,8 @@ namespace Veng
             return std::unexpected(AssetLoadError{
                 .Kind = AssetError::WrongType,
                 .Id = id,
-                .Detail = fmt::format("asset {} is a {}, not {}", id.Value,
-                    ToString(found->Type), ToString(type)),
+                .Detail = fmt::format("asset {} is a {}, not {}", id.Value, ToString(found->Type),
+                                      ToString(type)),
             });
         }
 
@@ -233,8 +242,8 @@ namespace Veng
         if (const auto it = m_Cache.find(id); it != m_Cache.end())
         {
             VE_ASSERT(it->second->Type == type,
-                "AssetManager::Load: asset {} is cached as {}, not {}", id.Value,
-                ToString(it->second->Type), ToString(type));
+                      "AssetManager::Load: asset {} is cached as {}, not {}", id.Value,
+                      ToString(it->second->Type), ToString(type));
             return it->second;
         }
 
@@ -249,7 +258,8 @@ namespace Veng
         const ArchiveEntry& archiveEntry = resolved->second;
 
         // The blob lives in the mounted archive reader's storage, so the span outlives the call.
-        AssetResult<Detail::LoadJob> job = loader->Load(*this, m_Context, m_Tasks, m_Types, id, archiveEntry.Blob, true);
+        AssetResult<Detail::LoadJob> job =
+            loader->Load(*this, m_Context, m_Tasks, m_Types, id, archiveEntry.Blob, true);
         if (!job)
         {
             Log::Error("AssetManager::Load: {}", job.error().Detail);
@@ -257,11 +267,12 @@ namespace Veng
         }
 
         // Create the entry pending (null Resource) and return it; the PendingLoad holds the resource until Finalize swaps it in.
-        Ref<Detail::AssetCacheEntry> entry = CreateRef<Detail::AssetCacheEntry>(Detail::AssetCacheEntry{
-            .Id = id,
-            .Type = type,
-            .Resource = nullptr,
-        });
+        Ref<Detail::AssetCacheEntry> entry =
+            CreateRef<Detail::AssetCacheEntry>(Detail::AssetCacheEntry{
+                .Id = id,
+                .Type = type,
+                .Resource = nullptr,
+            });
         m_Cache[id] = entry;
 
         if (job->Finalize)
@@ -333,7 +344,8 @@ namespace Veng
         }
     }
 
-    AssetResult<Ref<Detail::AssetCacheEntry>> AssetManager::LoadSyncUntyped(AssetType type, AssetId id)
+    AssetResult<Ref<Detail::AssetCacheEntry>> AssetManager::LoadSyncUntyped(AssetType type,
+                                                                            AssetId id)
     {
         if (const auto it = m_Cache.find(id); it != m_Cache.end())
         {
@@ -343,7 +355,7 @@ namespace Veng
                     .Kind = AssetError::WrongType,
                     .Id = id,
                     .Detail = fmt::format("asset {} is cached as {}, not {}", id.Value,
-                        ToString(it->second->Type), ToString(type)),
+                                          ToString(it->second->Type), ToString(type)),
                 });
             }
 
@@ -373,7 +385,8 @@ namespace Veng
         AssetLoader* loader = resolved->first;
         const ArchiveEntry& archiveEntry = resolved->second;
 
-        AssetResult<Detail::LoadJob> job = loader->Load(*this, m_Context, m_Tasks, m_Types, id, archiveEntry.Blob, false);
+        AssetResult<Detail::LoadJob> job =
+            loader->Load(*this, m_Context, m_Tasks, m_Types, id, archiveEntry.Blob, false);
         if (!job)
             return std::unexpected(job.error());
 
@@ -394,11 +407,12 @@ namespace Veng
             }
         }
 
-        Ref<Detail::AssetCacheEntry> entry = CreateRef<Detail::AssetCacheEntry>(Detail::AssetCacheEntry{
-            .Id = id,
-            .Type = type,
-            .Resource = std::move(job->Resource),
-        });
+        Ref<Detail::AssetCacheEntry> entry =
+            CreateRef<Detail::AssetCacheEntry>(Detail::AssetCacheEntry{
+                .Id = id,
+                .Type = type,
+                .Resource = std::move(job->Resource),
+            });
 
         m_Cache[id] = entry;
         return entry;

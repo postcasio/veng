@@ -12,11 +12,7 @@ namespace Veng
         /// @brief Constructs the event with the new window dimensions.
         /// @param width   New width in pixels.
         /// @param height  New height in pixels.
-        WindowResizeEvent(u32 width, u32 height) :
-            m_Width(width),
-            m_Height(height)
-        {
-        }
+        WindowResizeEvent(u32 width, u32 height) : m_Width(width), m_Height(height) {}
 
         /// @brief Injects this event's type-identity members (see the EVENT macro).
         EVENT(WindowResize);

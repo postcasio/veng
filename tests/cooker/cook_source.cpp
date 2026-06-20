@@ -79,8 +79,7 @@ TEST_CASE("Cooker: CookSource resolves a material's shaders and textures against
 
     SUBCASE("without it the unresolved shader is a located error")
     {
-        const Result<vector<u8>> bytes =
-            cooker.CookSource(source, targetId, AssetType::Material);
+        const Result<vector<u8>> bytes = cooker.CookSource(source, targetId, AssetType::Material);
         CHECK_FALSE(bytes.has_value());
     }
 }

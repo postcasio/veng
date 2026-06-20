@@ -43,8 +43,9 @@ TEST_CASE("Cooker: cooks a vertex_layout asset and produces correct blob")
     std::memcpy(&layoutHeader, entry->Blob.data(), sizeof(layoutHeader));
     CHECK(layoutHeader.ElementCount == 4);
 
-    REQUIRE(entry->Blob.size() >= sizeof(CookedVertexLayoutHeader) +
-            layoutHeader.ElementCount * sizeof(CookedVertexLayoutElement));
+    REQUIRE(entry->Blob.size() >=
+            sizeof(CookedVertexLayoutHeader) +
+                layoutHeader.ElementCount * sizeof(CookedVertexLayoutElement));
 
     // Formats: RGB32Sfloat=9, RG32Sfloat=8 (Renderer::Format underlying values).
     const u32 expectedFormats[] = {9, 9, 9, 8};
@@ -70,7 +71,8 @@ TEST_CASE("Cooker: cooking a shader with mismatched vertex inputs fails")
     // mesh.vert.slang which reflects 4 inputs. The cooker must reject this.
     const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
     const path packJson = fixtureDir / "shader_mismatch_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_mismatch.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_mismatch.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);

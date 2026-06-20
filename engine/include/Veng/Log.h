@@ -9,7 +9,12 @@
 namespace Veng::Log
 {
     /// @brief Severity levels for log messages.
-    enum class Level { Info, Warn, Error };
+    enum class Level
+    {
+        Info,
+        Warn,
+        Error
+    };
 
     /// @brief Callback that receives a log level and the pre-formatted message body.
     ///
@@ -32,7 +37,7 @@ namespace Veng::Log
 
     /// @brief Logs a formatted Info message. Only enabled when at least one argument is provided.
     template <typename... Args>
-        requires (sizeof...(Args) > 0)
+        requires(sizeof...(Args) > 0)
     inline void Info(fmt::format_string<Args...> fmtStr, Args&&... args)
     {
         auto msg = fmt::format(fmtStr, std::forward<Args>(args)...);
@@ -41,7 +46,7 @@ namespace Veng::Log
 
     /// @brief Logs a formatted Warn message. Only enabled when at least one argument is provided.
     template <typename... Args>
-        requires (sizeof...(Args) > 0)
+        requires(sizeof...(Args) > 0)
     inline void Warn(fmt::format_string<Args...> fmtStr, Args&&... args)
     {
         auto msg = fmt::format(fmtStr, std::forward<Args>(args)...);
@@ -50,7 +55,7 @@ namespace Veng::Log
 
     /// @brief Logs a formatted Error message. Only enabled when at least one argument is provided.
     template <typename... Args>
-        requires (sizeof...(Args) > 0)
+        requires(sizeof...(Args) > 0)
     inline void Error(fmt::format_string<Args...> fmtStr, Args&&... args)
     {
         auto msg = fmt::format(fmtStr, std::forward<Args>(args)...);
@@ -58,9 +63,18 @@ namespace Veng::Log
     }
 
     /// @brief Logs a pre-formatted Info message.
-    inline void Info(std::string_view msg) { LogMessage(Level::Info, msg); }
+    inline void Info(std::string_view msg)
+    {
+        LogMessage(Level::Info, msg);
+    }
     /// @brief Logs a pre-formatted Warn message.
-    inline void Warn(std::string_view msg) { LogMessage(Level::Warn, msg); }
+    inline void Warn(std::string_view msg)
+    {
+        LogMessage(Level::Warn, msg);
+    }
     /// @brief Logs a pre-formatted Error message.
-    inline void Error(std::string_view msg) { LogMessage(Level::Error, msg); }
+    inline void Error(std::string_view msg)
+    {
+        LogMessage(Level::Error, msg);
+    }
 }

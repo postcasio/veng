@@ -38,28 +38,34 @@ namespace
     };
 
     Ref<GraphicsPipeline> CreateSamplePipeline(Context& context, Ref<PipelineLayout>& outLayout,
-                                               const Ref<ShaderModule>& vertexModule, const Ref<ShaderModule>& fragmentModule)
+                                               const Ref<ShaderModule>& vertexModule,
+                                               const Ref<ShaderModule>& fragmentModule)
     {
-        outLayout = PipelineLayout::Create(context, {
-            .Name = "Texture Loader Sample Layout",
-            .PushConstantRanges = {
-                PushConstantRange::Of<SamplePushConstants>(ShaderStage::Fragment),
-            },
-        });
+        outLayout = PipelineLayout::Create(
+            context, {
+                         .Name = "Texture Loader Sample Layout",
+                         .PushConstantRanges =
+                             {
+                                 PushConstantRange::Of<SamplePushConstants>(ShaderStage::Fragment),
+                             },
+                     });
 
-        return GraphicsPipeline::Create(context, {
-            .Name = "Texture Loader Sample Pipeline",
-            .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
-            .PipelineLayout = outLayout,
-            .ShaderStages = {
-                {.Stage = ShaderStage::Vertex, .Module = vertexModule},
-                {.Stage = ShaderStage::Fragment, .Module = fragmentModule},
-            },
-        });
+        return GraphicsPipeline::Create(
+            context, {
+                         .Name = "Texture Loader Sample Pipeline",
+                         .ColorAttachments = {{.Format = Format::RGBA8Unorm}},
+                         .PipelineLayout = outLayout,
+                         .ShaderStages =
+                             {
+                                 {.Stage = ShaderStage::Vertex, .Module = vertexModule},
+                                 {.Stage = ShaderStage::Fragment, .Module = fragmentModule},
+                             },
+                     });
     }
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync, and sample bindlessly")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "texture loader: cook, mount, LoadSync, and sample bindlessly")
 {
     // Exactly representable in RGBA8Unorm: the fixture's solid 4x4 color.
     constexpr std::array<u8, 4> expected = {200, 80, 40, 255};
@@ -89,57 +95,64 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
     CHECK(texture.GetHandle().IsValid());
     CHECK(texture.GetSamplerHandle().IsValid());
 
-    auto outputImage = Image::Create(Context, {
-        .Name = "Texture Loader Output",
-        .Extent = {Size, Size, 1},
-        .Format = Format::RGBA8Unorm,
-        .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
-    });
-    auto outputView = ImageView::Create(Context, {.Name = "Texture Loader Output View", .Image = outputImage});
+    auto outputImage =
+        Image::Create(Context, {
+                                   .Name = "Texture Loader Output",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    auto outputView =
+        ImageView::Create(Context, {.Name = "Texture Loader Output View", .Image = outputImage});
 
     AssetManager shaderAssets(Context, Tasks, Types);
     const VoidResult shaderMountResult = shaderAssets.Mount(path(TEST_SHADER_PACK));
     REQUIRE(shaderMountResult.has_value());
 
-    const AssetResult<AssetHandle<Shader>> vertexAsset = shaderAssets.LoadSync<Shader>(AssetId{0x1F42});
-    const AssetResult<AssetHandle<Shader>> fragmentAsset = shaderAssets.LoadSync<Shader>(AssetId{0x1F44});
+    const AssetResult<AssetHandle<Shader>> vertexAsset =
+        shaderAssets.LoadSync<Shader>(AssetId{0x1F42});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset =
+        shaderAssets.LoadSync<Shader>(AssetId{0x1F44});
     REQUIRE(vertexAsset.has_value());
     REQUIRE(fragmentAsset.has_value());
 
     Ref<PipelineLayout> layout;
-    auto pipeline = CreateSamplePipeline(Context, layout, vertexAsset->Get()->Module, fragmentAsset->Get()->Module);
+    auto pipeline = CreateSamplePipeline(Context, layout, vertexAsset->Get()->Module,
+                                         fragmentAsset->Get()->Module);
 
     auto& bindless = Context.GetBindlessRegistry();
 
-    Context.ImmediateCommands([&](CommandBuffer& cmd)
-    {
-        RenderGraph graph(Context);
-        const ResourceId outputId = graph.Import("Output");
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            RenderGraph graph(Context);
+            const ResourceId outputId = graph.Import("Output");
 
-        graph.AddPass("Sample Loaded Texture")
-            .Color({
-                .Resource = outputId,
-                .Load = LoadOp::Clear,
-                .Store = StoreOp::Store,
-                .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
-            })
-            .Execute([&](PassContext& ctx)
-            {
-                CommandBuffer& cmd = ctx.Cmd();
-                cmd.BindPipeline(pipeline);
-                cmd.SetViewport({0, 0}, {Size, Size});
-                cmd.SetScissor({0, 0}, {Size, Size});
-                bindless.Bind(cmd);
-                cmd.PushConstants(SamplePushConstants{
-                    .TextureIndex = texture.GetHandle().Index,
-                    .SamplerIndex = texture.GetSamplerHandle().Index,
-                });
-                cmd.DrawFullscreenTriangle();
-            });
+            graph.AddPass("Sample Loaded Texture")
+                .Color({
+                    .Resource = outputId,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                })
+                .Execute(
+                    [&](PassContext& ctx)
+                    {
+                        CommandBuffer& cmd = ctx.Cmd();
+                        cmd.BindPipeline(pipeline);
+                        cmd.SetViewport({0, 0}, {Size, Size});
+                        cmd.SetScissor({0, 0}, {Size, Size});
+                        bindless.Bind(cmd);
+                        cmd.PushConstants(SamplePushConstants{
+                            .TextureIndex = texture.GetHandle().Index,
+                            .SamplerIndex = texture.GetSamplerHandle().Index,
+                        });
+                        cmd.DrawFullscreenTriangle();
+                    });
 
-        const RenderGraph::ImportBinding binding{outputId, outputView};
-        graph.Compile()->Execute(cmd, {&binding, 1});
-    });
+            const RenderGraph::ImportBinding binding{outputId, outputView};
+            graph.Compile()->Execute(cmd, {&binding, 1});
+        });
 
     const vector<u8> pixels = outputImage->Download();
 
@@ -149,11 +162,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: cook, mount, LoadSync
     std::filesystem::remove(outArchive);
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "texture loader: async Load returns pending, becomes resident after a pump")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "texture loader: async Load returns pending, becomes resident after a pump")
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "texture_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_gpu_texture_async.vengpack";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_gpu_texture_async.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);

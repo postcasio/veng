@@ -110,18 +110,15 @@ namespace Veng
         static constexpr AssetId CanonicalLayoutId{0x4DC267CE63429B6CULL};
 
         /// @brief Creates a Mesh directly from a MeshInfo (GPU buffers already uploaded).
-        static Ref<Mesh> Create(const MeshInfo& info)
-        {
-            return Ref<Mesh>(new Mesh(info));
-        }
+        static Ref<Mesh> Create(const MeshInfo& info) { return Ref<Mesh>(new Mesh(info)); }
 
         /// @brief Uploads CPU-side geometry into a resident GPU Mesh in the canonical layout.
         ///
         /// Carries data.Materials onto the mesh. An empty SubMeshes list synthesizes one
         /// unassigned submesh over the whole index range. Uses the blocking UploadSync path,
         /// so the returned Mesh is immediately ready to draw.
-        [[nodiscard]] static Ref<Mesh> Create(
-            Renderer::Context& context, const MeshData& data, const string& name);
+        [[nodiscard]] static Ref<Mesh> Create(Renderer::Context& context, const MeshData& data,
+                                              const string& name);
 
         /// @brief Returns the fixed canonical vertex layout (position/normal/tangent/uv, 48-byte stride).
         ///
@@ -152,7 +149,10 @@ namespace Veng
         [[nodiscard]] const string& GetName() const { return m_Name; }
 
         /// @brief Returns the GPU vertex buffer.
-        [[nodiscard]] const Ref<Renderer::Buffer>& GetVertexBuffer() const { return m_VertexBuffer; }
+        [[nodiscard]] const Ref<Renderer::Buffer>& GetVertexBuffer() const
+        {
+            return m_VertexBuffer;
+        }
 
         /// @brief Returns the GPU index buffer.
         [[nodiscard]] const Renderer::IndexBuffer& GetIndexBuffer() const { return m_IndexBuffer; }
@@ -161,16 +161,25 @@ namespace Veng
         [[nodiscard]] const Renderer::VertexBufferLayout& GetLayout() const { return m_Layout; }
 
         /// @brief Returns the index type (always u32 for cooked meshes).
-        [[nodiscard]] Renderer::IndexType GetIndexType() const { return m_IndexBuffer.GetIndexType(); }
+        [[nodiscard]] Renderer::IndexType GetIndexType() const
+        {
+            return m_IndexBuffer.GetIndexType();
+        }
 
         /// @brief Returns the total number of indices across all submeshes.
-        [[nodiscard]] u32 GetIndexCount() const { return static_cast<u32>(m_IndexBuffer.GetIndexCount()); }
+        [[nodiscard]] u32 GetIndexCount() const
+        {
+            return static_cast<u32>(m_IndexBuffer.GetIndexCount());
+        }
 
         /// @brief Returns the submesh draw ranges.
         [[nodiscard]] std::span<const SubMesh> GetSubMeshes() const { return m_SubMeshes; }
 
         /// @brief Returns the mesh's resident material instances.
-        [[nodiscard]] std::span<const AssetHandle<Material>> GetMaterials() const { return m_Materials; }
+        [[nodiscard]] std::span<const AssetHandle<Material>> GetMaterials() const
+        {
+            return m_Materials;
+        }
 
         /// @brief Returns the mesh's local/object-space bound.
         ///
@@ -178,14 +187,10 @@ namespace Veng
         [[nodiscard]] const AABB& GetBounds() const { return m_Bounds; }
 
     private:
-        explicit Mesh(const MeshInfo& info) :
-            m_Name(info.Name),
-            m_VertexBuffer(info.VertexBuffer),
-            m_IndexBuffer(info.IndexBuffer),
-            m_Layout(info.Layout),
-            m_SubMeshes(info.SubMeshes),
-            m_Materials(info.Materials),
-            m_Bounds(info.Bounds)
+        explicit Mesh(const MeshInfo& info)
+            : m_Name(info.Name), m_VertexBuffer(info.VertexBuffer), m_IndexBuffer(info.IndexBuffer),
+              m_Layout(info.Layout), m_SubMeshes(info.SubMeshes), m_Materials(info.Materials),
+              m_Bounds(info.Bounds)
         {
         }
 

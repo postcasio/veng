@@ -13,7 +13,8 @@
 using namespace Veng;
 using namespace Veng::Renderer;
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "timeline semaphore: host signal then wait returns immediately")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "timeline semaphore: host signal then wait returns immediately")
 {
     auto timeline = TimelineSemaphore::Create(Context);
 
@@ -25,7 +26,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "timeline semaphore: host signal then 
     CHECK(timeline->GetValue() == 7);
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "timeline semaphore: GetValue reflects latest host signal")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "timeline semaphore: GetValue reflects latest host signal")
 {
     auto timeline = TimelineSemaphore::Create(Context, 3);
 
@@ -36,7 +38,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "timeline semaphore: GetValue reflects
     CHECK(timeline->GetValue() == 42);
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "timeline semaphore: signalling increasing values advances the counter")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "timeline semaphore: signalling increasing values advances the counter")
 {
     auto timeline = TimelineSemaphore::Create(Context);
 

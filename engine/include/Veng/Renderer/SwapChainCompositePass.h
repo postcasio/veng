@@ -86,7 +86,8 @@ namespace Veng::Renderer
         /// @param cmd             Command buffer to record into.
         /// @param graph           The compiled graph returned by Compile.
         /// @param swapChainView   The swapchain image view for this frame.
-        void Execute(CommandBuffer& cmd, CompiledGraph& graph, const Ref<ImageView>& swapChainView) const;
+        void Execute(CommandBuffer& cmd, CompiledGraph& graph,
+                     const Ref<ImageView>& swapChainView) const;
 
     private:
         explicit SwapChainCompositePass(const SwapChainCompositePassInfo& info);
