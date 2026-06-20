@@ -1840,6 +1840,292 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// Punctual shadow producer — presence. A spot (and, in a second subcase, a point)
+// light over a brick caster renders a non-zero, non-uniform depth into the punctual
+// atlas: the DebugView::PunctualShadows blit (raw depth, 1 - depth greyscale) shows a
+// gradient, not the flat black a cleared (depth = 1) atlas would. This pins the
+// producer — the punctual pass writes a real, non-empty map — independent of any
+// consumer reading it.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: the punctual shadow pass renders a non-uniform depth "
+                  "into the atlas (PunctualShadows blit shows a gradient)")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_punctual_presence.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    // A caster cube and a receiver plane below it, both brick (so the depth pass
+    // actually draws their submeshes — a materialless mesh records no DrawIndexed).
+    const Ref<Mesh> plane = Mesh::Create(Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Punctual Plane");
+    const Ref<Mesh> caster = Mesh::Create(Context, Primitives::Cube(1.0f, *material), "Punctual Caster");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity planeEntity = scene->CreateEntity();
+    scene->Add<Transform>(planeEntity);
+    scene->Add<MeshRenderer>(planeEntity).Mesh = assets.Adopt(plane);
+
+    const Entity casterEntity = scene->CreateEntity();
+    scene->Add<Transform>(casterEntity).Position = vec3(0.0f, 1.5f, 0.0f);
+    scene->Add<MeshRenderer>(casterEntity).Mesh = assets.Adopt(caster);
+
+    constexpr uvec2 extent{128, 128};
+
+    Camera camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 4.0f, 5.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        // The PunctualShadows arm force-wires the punctual pass and blits its atlas.
+        .Settings = {.Mode = DebugView::PunctualShadows, .Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    // The fraction of blit texels that read non-black (shade = 1 - depth > 0): a
+    // cleared atlas (all depth 1) blits to all-black, so any meaningful fraction of
+    // lit texels means a caster wrote real depth into a tile.
+    auto LitFraction = [&](const vector<u8>& pixels) -> f64
+    {
+        u32 lit = 0;
+        for (u32 y = 0; y < extent.y; ++y)
+            for (u32 x = 0; x < extent.x; ++x)
+            {
+                const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+                if (c.r > 0.01f)
+                    ++lit;
+            }
+        return static_cast<f64>(lit) / (static_cast<f64>(extent.x) * extent.y);
+    };
+
+    SUBCASE("a spot light writes a depth gradient into its tile")
+    {
+        const Entity lightEntity = scene->CreateEntity();
+        scene->Add<Transform>(lightEntity).Position = vec3(0.0f, 4.0f, 0.0f);
+        scene->Add<Light>(lightEntity) = Light{
+            .Type = LightType::Spot,
+            .Direction = vec3(0.0f, -1.0f, 0.0f),
+            .Color = vec3(1.0f), .Intensity = 5.0f, .Range = 12.0f,
+            .InnerCone = 0.5f, .OuterCone = 0.8f,
+        };
+
+        const vector<u8> pixels = RenderOutput(Context, *renderer, *scene, camera);
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+
+        // A real, non-uniform map: some texels are lit (a caster wrote depth < 1) but
+        // not all (the tile beyond the caster, and the empty tiles, stay at the clear).
+        // The spot fills only its single tile (1/24 of the atlas), so the lit fraction
+        // is small but distinctly above the all-black a cleared atlas would blit.
+        const f64 frac = LitFraction(pixels);
+        CHECK(frac > 0.0005);
+        CHECK(frac < 0.95);
+    }
+
+    SUBCASE("a point light writes depth into its six faces")
+    {
+        // The point light sits above the caster (which sits above the plane), so the
+        // caster and plane fall within range (12) and beyond the near plane — the cube
+        // surrounds the scene and several of its six faces capture real depth.
+        const Entity lightEntity = scene->CreateEntity();
+        scene->Add<Transform>(lightEntity).Position = vec3(0.0f, 3.0f, 0.0f);
+        scene->Add<Light>(lightEntity) = Light{
+            .Type = LightType::Point,
+            .Color = vec3(1.0f), .Intensity = 8.0f, .Range = 12.0f,
+        };
+
+        const vector<u8> pixels = RenderOutput(Context, *renderer, *scene, camera);
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+
+        // Several of the point's six face tiles capture caster/plane depth — a clearly
+        // non-trivial lit fraction across the atlas.
+        const f64 frac = LitFraction(pixels);
+        CHECK(frac > 0.005);
+        CHECK(frac < 0.95);
+    }
+
+    std::filesystem::remove(outArchive);
+}
+
+// Punctual shadow producer — per-view cull equivalence + one Sync, many queries.
+// With FrustumCull on, each shadow view culls its casters through the broadphase
+// against that view's RAW (non-tile-remapped) light frustum. The byte-identical
+// golden cannot cover the cull (a wrongly-culled caster is a missing shadow, not a
+// moved pixel), so this pins two properties:
+//   (1) the rendered punctual atlas is byte-identical with FrustumCull on vs off —
+//       the cull drops only non-casters (conservative), so the depth is identical;
+//   (2) each view's RAW frustum, scanned linearly over the gathered candidates with
+//       Intersects, keeps exactly the in-light-volume set — the device-free mirror of
+//       the facility the pass culls with, the same shape the cascade test uses.
+// A third subcase pins "one Sync, many queries": a static frame with a point light
+// (six face queries) does NOT re-sync the tree — DidBroadphaseRebuildLastFrame() is
+// false past the first frame even with the punctual pass active.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: the punctual pass culls each view by its raw light "
+                  "frustum (byte-identical on/off) and shares one broadphase Sync")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_punctual_cull.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.0f, *material), "Punctual Cull Cube");
+
+    constexpr uvec2 extent{96, 96};
+
+    Camera camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 2.0f, 6.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    auto MakeScene = [&]() -> Unique<Scene>
+    {
+        Unique<Scene> scene = Scene::Create(Types);
+        // A caster near the light and a far cube well outside any light's range —
+        // dropped by the per-view cull, never written into a tile.
+        AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, 0.0f));
+        AddCubeAt(*scene, assets, cube, vec3(60.0f, 0.0f, 0.0f));
+        return scene;
+    };
+
+    SUBCASE("the punctual atlas is byte-identical with FrustumCull on vs off")
+    {
+        const Unique<Scene> scene = MakeScene();
+
+        // A spot light over the near caster, range bounded so the far cube is outside
+        // its frustum (and thus a cull candidate that must change no depth).
+        const Entity lightEntity = scene->CreateEntity();
+        scene->Add<Transform>(lightEntity).Position = vec3(0.0f, 4.0f, 0.0f);
+        scene->Add<Light>(lightEntity) = Light{
+            .Type = LightType::Spot,
+            .Direction = vec3(0.0f, -1.0f, 0.0f),
+            .Color = vec3(1.0f), .Intensity = 5.0f, .Range = 12.0f,
+            .InnerCone = 0.5f, .OuterCone = 0.9f,
+        };
+
+        // A small atlas resolution keeps the download cheap; the equality is exact.
+        const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+            .Context = Context, .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+            .Settings = {.Mode = DebugView::PunctualShadows, .Bloom = false,
+                         .Shadows = false, .PunctualShadowResolution = 256, .AO = false},
+        });
+
+        // Render through the PunctualShadows debug blit (the renderer output, which is
+        // downloadable — the atlas itself is a producer→consumer target with no
+        // TransferSrc). The blit is a deterministic function of the stored atlas depth,
+        // so a byte-identical blit output proves a byte-identical atlas. With culling on
+        // then off, the cull drops only the out-of-frustum far cube — a non-caster for
+        // this view — so the depth (and thus the blit) must be identical.
+        auto RenderBlit = [&](bool cull) -> vector<u8>
+        {
+            renderer->Configure({.Mode = DebugView::PunctualShadows, .Bloom = false,
+                                 .Shadows = false, .PunctualShadowResolution = 256,
+                                 .AO = false, .FrustumCull = cull});
+            return RenderOutput(Context, *renderer, *scene, camera);
+        };
+
+        const vector<u8> culled = RenderBlit(true);
+        const vector<u8> unculled = RenderBlit(false);
+        REQUIRE(culled.size() == unculled.size());
+        CHECK(culled == unculled);
+    }
+
+    SUBCASE("each view's raw frustum keeps exactly the in-light-volume casters")
+    {
+        const Unique<Scene> scene = MakeScene();
+
+        AABB sceneBounds = AABB::Empty();
+        vector<VisibleMesh> gathered;
+        GatherMeshes(*scene, gathered, sceneBounds);
+        REQUIRE(gathered.size() == 2);
+
+        // A spot at the origin-above, range 12: the near caster is inside its frustum,
+        // the far cube (60 units away, beyond Range) is outside it — the exact split
+        // the per-view broadphase cull makes, recomputed device-free with the same
+        // Plan-01 view math and Frustum/Intersects the pass uses.
+        const SpotShadowView spotView =
+            ComputeSpotShadowView(vec3(0.0f, 4.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f), 12.0f, 0.9f);
+        const Frustum spotFrustum = Frustum::FromViewProjection(spotView.ViewProj);
+
+        u32 kept = 0;
+        for (const VisibleMesh& item : gathered)
+            if (Intersects(spotFrustum, item.WorldBounds))
+                ++kept;
+        // Only the near caster survives; the far cube is dropped (outside the cone/range).
+        CHECK(kept == 1);
+
+        // A point light's six faces together cover all directions, so the near caster
+        // (3 units below the light, within range and beyond the near plane) lands in at
+        // least one face frustum while the far cube (60 units away, beyond range) lands
+        // in none.
+        const PointShadowView pointView = ComputePointShadowView(vec3(0.0f, 3.0f, 0.0f), 12.0f);
+        AABB nearBounds = AABB::Empty();
+        AABB farBounds = AABB::Empty();
+        for (const VisibleMesh& item : gathered)
+        {
+            if (item.WorldBounds.Center().x < 30.0f) nearBounds = item.WorldBounds;
+            else                                      farBounds = item.WorldBounds;
+        }
+        REQUIRE_FALSE(nearBounds.IsEmpty());
+        REQUIRE_FALSE(farBounds.IsEmpty());
+
+        bool nearKeptBySomeFace = false;
+        bool farKeptBySomeFace = false;
+        for (u32 f = 0; f < CubeFaceCount; ++f)
+        {
+            const Frustum faceFrustum = Frustum::FromViewProjection(pointView.ViewProj[f]);
+            if (Intersects(faceFrustum, nearBounds)) nearKeptBySomeFace = true;
+            if (Intersects(faceFrustum, farBounds))  farKeptBySomeFace = true;
+        }
+        CHECK(nearKeptBySomeFace);
+        CHECK_FALSE(farKeptBySomeFace);
+    }
+
+    SUBCASE("a point light's six face queries share one Sync — no re-sync on a static frame")
+    {
+        const Unique<Scene> scene = MakeScene();
+
+        const Entity lightEntity = scene->CreateEntity();
+        scene->Add<Transform>(lightEntity).Position = vec3(0.0f, 3.0f, 0.0f);
+        scene->Add<Light>(lightEntity) = Light{
+            .Type = LightType::Point,
+            .Color = vec3(1.0f), .Intensity = 8.0f, .Range = 12.0f,
+        };
+
+        const Unique<SceneRenderer> rendererOwned = SceneRenderer::Create({
+            .Context = Context, .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+            .Settings = {.Mode = DebugView::PunctualShadows, .Bloom = false,
+                         .Shadows = false, .PunctualShadowResolution = 256, .AO = false},
+        });
+
+        auto Render = [&]()
+        {
+            Context.ImmediateCommands([&](CommandBuffer& cmd)
+            {
+                rendererOwned->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+        };
+
+        // Frame 1: first Sync against a never-seen version → rebuild.
+        Render();
+        CHECK(rendererOwned->DidBroadphaseRebuildLastFrame());
+
+        // Frame 2: nothing moved. The punctual pass issues six face queries against the
+        // SAME synced tree — it does not re-sync — so no rebuild on a static frame.
+        Render();
+        CHECK_FALSE(rendererOwned->DidBroadphaseRebuildLastFrame());
+    }
+
+    std::filesystem::remove(outArchive);
+}
+
 #ifdef GPU_POSTPROCESS_FIXTURE_DIR
 
 // The PostProcess fullscreen-material proof. An identity PostProcess material —

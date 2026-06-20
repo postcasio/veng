@@ -115,6 +115,15 @@ namespace Veng::Renderer
         // there from the declared .Sample), so no separate layout field is needed.
         Ref<ImageView> ShadowView;
 
+        // The punctual shadow atlas the PunctualShadowScenePass writes (depth) and the
+        // lighting pass samples. The id is invalid when the punctual shadow pass is
+        // compiled out; the lighting pass declares its .Sample only when the id is
+        // valid, so the graph derives the DepthAttachment → ShaderReadOnly transition.
+        // The atlas is renderer-owned (set 1 binding 4, off bindless), so the punctual
+        // pass writes the view threaded in PunctualShadowView, not a pass-owned one.
+        ResourceId PunctualShadowMap;
+        Ref<ImageView> PunctualShadowView;
+
         // The imported output id the terminal pass writes.
         ResourceId Output;
     };

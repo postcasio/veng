@@ -2,6 +2,7 @@
 #include <Veng/Renderer/ScenePass.h>
 
 #include "ShadowScenePass.h"
+#include "PunctualShadowScenePass.h"
 #include "SsaoScenePass.h"
 
 #include <array>
@@ -509,6 +510,14 @@ namespace Veng::Renderer
                 if (io.ShadowMap.IsValid())
                     builder.Sample(io.ShadowMap);
 
+                // Declaring the punctual atlas sampled (when the punctual shadow pass is
+                // wired) lets the graph derive its depth-attachment → shader-read barrier
+                // and order the punctual depth write before this read. The atlas reaches
+                // the lighting pass through set 1 binding 4, off bindless; the barrier
+                // declaration here is separate from that binding.
+                if (io.PunctualShadowMap.IsValid())
+                    builder.Sample(io.PunctualShadowMap);
+
                 if (useSsao)
                     builder.Sample(io.Ssao);
 
@@ -716,17 +725,25 @@ namespace Veng::Renderer
             u32 m_Channel;
         };
 
-        // The directional-shadow-atlas debug blit. The atlas is off bindless, so it
-        // reaches this blit through a dedicated set-1 descriptor set (binding 0 the
-        // atlas, binding 1 an ordinary — NOT comparison — sampler, so the blit reads
-        // raw stored depth). It declares .Sample(io.ShadowMap) for the graph-derived
-        // depth-attachment → shader-read barrier, then binds set 0 (the reserved
-        // registry slot) and set 1 (the debug shadow set) and draws fullscreen.
+        // A shadow-atlas debug blit. A shadow atlas is off bindless, so it reaches this
+        // blit through a dedicated set-1 descriptor set (binding 0 the atlas, binding 1
+        // an ordinary — NOT comparison — sampler, so the blit reads raw stored depth).
+        // It declares .Sample on the atlas's import id (the directional ShadowMap or the
+        // punctual PunctualShadowMap, named by the constructor) for the graph-derived
+        // depth-attachment → shader-read barrier, then binds set 0 (the reserved registry
+        // slot) and set 1 (the debug shadow set) and draws fullscreen.
         class ShadowBlitScenePass final : public ScenePass
         {
         public:
-            ShadowBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent, Ref<DescriptorSet> shadowSet)
-                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent), m_ShadowSet(std::move(shadowSet))
+            // The atlas to visualize: Directional samples io.ShadowMap, Punctual samples
+            // io.PunctualShadowMap. The renderer writes the matching atlas view into the
+            // set's binding 0 before compile, so the blit reads the wired atlas's depth.
+            enum class Source { Directional, Punctual };
+
+            ShadowBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent,
+                                Ref<DescriptorSet> shadowSet, Source source)
+                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent),
+                  m_ShadowSet(std::move(shadowSet)), m_Source(source)
             {
             }
 
@@ -735,6 +752,8 @@ namespace Veng::Renderer
             void Declare(RenderGraph& graph, const PassIO& io) override
             {
                 const Ref<DescriptorSet> shadowSet = m_ShadowSet;
+                const ResourceId sampleId =
+                    m_Source == Source::Punctual ? io.PunctualShadowMap : io.ShadowMap;
 
                 graph.AddPass("Shadow Debug Blit")
                     .Color({
@@ -743,7 +762,7 @@ namespace Veng::Renderer
                         .Store = StoreOp::Store,
                         .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
                     })
-                    .Sample(io.ShadowMap)
+                    .Sample(sampleId)
                     .Execute([this, shadowSet](PassContext& inner)
                     {
                         CommandBuffer& cmd = inner.Cmd();
@@ -765,6 +784,7 @@ namespace Veng::Renderer
             Ref<GraphicsPipeline> m_Pipeline;
             uvec2 m_Extent;
             Ref<DescriptorSet> m_ShadowSet;
+            Source m_Source;
         };
     }
 
@@ -1428,6 +1448,10 @@ namespace Veng::Renderer
         // constants (matrices/splits/count) are written and enabled this frame.
         const bool debugCascades = m_Settings.Mode == DebugView::Cascades;
 
+        // The PunctualShadows debug arm visualizes the punctual atlas, so it force-wires
+        // the punctual shadow pass to produce the map regardless of Settings.Shadows.
+        const bool debugPunctual = m_Settings.Mode == DebugView::PunctualShadows;
+
         // The shadow pass runs in the Final mode (with Settings.Shadows) and is
         // force-wired by the Shadows/Cascades debug arms. When active it contributes a
         // depth-only pass ahead of the lighting pass and its import is declared and
@@ -1435,6 +1459,14 @@ namespace Veng::Renderer
         const bool shadowActive = (m_Settings.Mode == DebugView::Final && m_Settings.Shadows) || debugShadow || debugCascades;
         m_ShadowActive = shadowActive;
         m_ShadowPass = nullptr;
+
+        // The punctual shadow pass runs in the Final mode (gated by Settings.Shadows,
+        // the shadow-budget gate) and is force-wired by the PunctualShadows debug arm.
+        // When active it contributes a depth-only pass ahead of the lighting pass writing
+        // the renderer-owned punctual atlas; its import is declared and bound only then.
+        const bool punctualShadowActive = (m_Settings.Mode == DebugView::Final && m_Settings.Shadows) || debugPunctual;
+        m_PunctualShadowActive = punctualShadowActive;
+        m_PunctualShadowPass = nullptr;
 
         // The SSAO pass runs in the Final mode (with Settings.AO) and is force-wired by
         // the AO debug arm. In the Final mode it inserts the fullscreen AO pass before
@@ -1464,6 +1496,11 @@ namespace Veng::Renderer
             shadowId = graph.Import("SceneRenderer ShadowMap");
         m_ShadowId = shadowId;
 
+        ResourceId punctualShadowId{};
+        if (punctualShadowActive)
+            punctualShadowId = graph.Import("SceneRenderer PunctualShadowMap");
+        m_PunctualShadowId = punctualShadowId;
+
         if (bloomActive)
         {
             m_BloomBrightId = graph.Import("SceneRenderer Bloom Bright");
@@ -1491,6 +1528,18 @@ namespace Veng::Renderer
             m_ShadowPass = shadowPass.get();
             shadowAtlasView = shadowPass->GetShadowView();
             m_Passes.push_back(std::move(shadowPass));
+        }
+
+        // The punctual shadow pass is also first when active — it writes the punctual
+        // atlas the lighting pass samples, so the graph orders the depth write before
+        // the read. The atlas itself is renderer-owned (set 1 binding 4); the pass
+        // receives its view through PassIO and writes the punctualShadowId import.
+        if (punctualShadowActive)
+        {
+            auto punctualPass = CreateUnique<PunctualShadowScenePass>(
+                m_Context, m_Assets, m_Settings.PunctualShadowResolution);
+            m_PunctualShadowPass = punctualPass.get();
+            m_Passes.push_back(std::move(punctualPass));
         }
 
         // Bindings 0-1 of set 1 are written once per recompile: the wired pass's
@@ -1632,10 +1681,20 @@ namespace Veng::Renderer
                     m_Context, m_AoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Ao));
                 break;
             case DebugView::Shadows:
-                // The shadow pass was force-wired above; the blit reads its atlas
+                // The shadow pass was force-wired above; the blit reads its cascade atlas
                 // through the dedicated bound-view set (raw depth), not bindless.
                 m_Passes.push_back(CreateUnique<ShadowBlitScenePass>(
-                    m_Context, m_ShadowBlitPipeline, m_Extent, m_ShadowBlitSet));
+                    m_Context, m_ShadowBlitPipeline, m_Extent, m_ShadowBlitSet,
+                    ShadowBlitScenePass::Source::Directional));
+                break;
+            case DebugView::PunctualShadows:
+                // The punctual shadow pass was force-wired above; the blit reads its
+                // atlas through the dedicated bound-view set (raw depth, ordinary
+                // sampler), not bindless. The punctual atlas is bound into the blit
+                // set's binding 0 below, after the pass set is chosen.
+                m_Passes.push_back(CreateUnique<ShadowBlitScenePass>(
+                    m_Context, m_ShadowBlitPipeline, m_Extent, m_ShadowBlitSet,
+                    ShadowBlitScenePass::Source::Punctual));
                 break;
             case DebugView::Cascades:
                 // The shadow pass was force-wired above so the cascade constants are
@@ -1647,6 +1706,12 @@ namespace Veng::Renderer
                     m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride, /*writeToOutput=*/true));
                 break;
         }
+
+        // The PunctualShadows debug arm visualizes the punctual atlas, so the blit set's
+        // binding 0 points at the punctual atlas instead of the cascade atlas this
+        // recompile; WriteShadowAtlasBinding wrote the cascade/dummy atlas there above.
+        if (debugPunctual)
+            m_ShadowBlitSet->Write(0, m_PunctualShadowView);
 
         const PassIO io{
             .GBufferAlbedo = albedoId,
@@ -1664,6 +1729,8 @@ namespace Veng::Renderer
             .SamplerHandle = m_SamplerHandle,
             .ShadowMap = shadowId,
             .ShadowView = shadowAtlasView,
+            .PunctualShadowMap = punctualShadowId,
+            .PunctualShadowView = m_PunctualShadowView,
             .Output = m_OutputId,
         };
 
@@ -1730,6 +1797,12 @@ namespace Veng::Renderer
         std::array<GpuLight, SceneView::MaxLights> packedLights{};
         PunctualShadowBlock punctualBlock{};
         std::array<PunctualShadowRecord, MaxShadowedPunctual> punctualRecords{};
+        // The RAW (non-tile-remapped) per-record/per-face matrices the punctual depth
+        // pass renders with (and culls against); the records carry the tile-remapped
+        // matrices the lighting pass samples. Render-with-raw + per-tile-viewport,
+        // sample-with-remapped: the two agree because the viewport maps NDC to the same
+        // tile the remap maps world points to, mirroring the cascade render/sample split.
+        std::array<std::array<mat4, CubeFaceCount>, MaxShadowedPunctual> punctualRawViewProj{};
         u32 lightCount = 0;
         u32 punctualCount = 0;
         bool haveDirectional = false;
@@ -1771,15 +1844,21 @@ namespace Veng::Renderer
                 {
                     const SpotShadowView spotView =
                         ComputeSpotShadowView(worldPos, light.Direction, light.Range, light.OuterCone);
-                    // A spot uses face 0; the remaining faces stay identity (unused).
+                    // A spot uses face 0; the remaining faces stay identity (unused). The
+                    // record carries the tile-remapped matrix (the lighting sample), the
+                    // raw channel the un-remapped one (the depth render + per-view cull).
                     record.ViewProj[0] = ComposePunctualTileRemap(spotView.ViewProj, slot, 0);
+                    punctualRawViewProj[slot][0] = spotView.ViewProj;
                     record.Params = vec4(2.0f, spotView.Near, spotView.Far, PunctualBias);
                 }
                 else
                 {
                     const PointShadowView pointView = ComputePointShadowView(worldPos, light.Range);
                     for (u32 f = 0; f < CubeFaceCount; ++f)
+                    {
                         record.ViewProj[f] = ComposePunctualTileRemap(pointView.ViewProj[f], slot, f);
+                        punctualRawViewProj[slot][f] = pointView.ViewProj[f];
+                    }
                     record.Params = vec4(1.0f, pointView.Near, pointView.Far, PunctualBias);
                 }
                 record.PositionRange = vec4(worldPos, light.Range);
@@ -1828,6 +1907,7 @@ namespace Veng::Renderer
         resolvedView.CascadeCount = cascades.Count;
         resolvedView.PunctualShadows = punctualRecords;
         resolvedView.PunctualShadowCount = punctualCount;
+        resolvedView.PunctualShadowRawViewProj = punctualRawViewProj;
         resolvedView.Visible = m_Broadphase.GetCandidates();
         resolvedView.Broadphase = &m_Broadphase;
 
@@ -1903,6 +1983,10 @@ namespace Veng::Renderer
         };
         if (m_ShadowActive && m_ShadowPass)
             bindings.push_back({m_ShadowId, m_ShadowPass->GetShadowView()});
+        // The punctual atlas import binds the renderer-owned atlas view the punctual
+        // pass writes (the pass does not own it — it is the set-1 binding-4 resource).
+        if (m_PunctualShadowActive && m_PunctualShadowPass)
+            bindings.push_back({m_PunctualShadowId, m_PunctualShadowView});
         if (m_BloomActive)
         {
             bindings.push_back({m_BloomBrightId, m_BloomBrightView});

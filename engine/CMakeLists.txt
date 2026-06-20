@@ -47,6 +47,7 @@ add_library(veng SHARED
         src/Renderer/ShadowCascades.cpp
         src/Renderer/PunctualShadows.cpp
         src/Renderer/ShadowScenePass.cpp
+        src/Renderer/PunctualShadowScenePass.cpp
         src/Renderer/SsaoScenePass.cpp
         src/Renderer/ShaderInterface.cpp
         src/Renderer/Backend/Barrier.cpp

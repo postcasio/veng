@@ -38,6 +38,7 @@ namespace Veng::Renderer
     class CommandBuffer;
     class ScenePass;
     class ShadowScenePass;
+    class PunctualShadowScenePass;
     class Image;
     class Sampler;
     class Buffer;
@@ -83,6 +84,8 @@ namespace Veng::Renderer
     // Cascades tints each fragment by the shadow cascade its view-space depth selects
     // (0 red, 1 green, 2 blue, 3 yellow), force-wiring the shadow pass so the cascade
     // constants are present — pinning cascade selection, not just shadow presence.
+    // PunctualShadows blits the punctual shadow atlas (raw depth, through an ordinary
+    // sampler), force-wiring the punctual shadow pass so its produced map is present.
     enum class DebugView : u8
     {
         Final,
@@ -91,6 +94,7 @@ namespace Veng::Renderer
         AO,
         Shadows,
         Cascades,
+        PunctualShadows,
     };
 
     // Topology/sizing knobs. A change here is a Configure → recompile: a knob that
@@ -220,6 +224,16 @@ namespace Veng::Renderer
         // records are valid. A caller's values are overwritten by the renderer each Execute.
         std::array<PunctualShadowRecord, MaxShadowedPunctual> PunctualShadows{};
         u32 PunctualShadowCount = 0;
+
+        // The RAW (non-tile-remapped) per-record/per-face world → light-clip transforms
+        // this frame, parallel to PunctualShadows and computed by the renderer on every
+        // Execute (a spot fills [slot][0], a point [slot][0..5]). The punctual shadow
+        // pass renders each view with this raw matrix pushed and the viewport placing it
+        // in the record's atlas tile, and culls against the raw matrix's frustum — the
+        // light's own, not the tile-remapped one. The lighting pass instead samples the
+        // tile-remapped PunctualShadows[slot].ViewProj. Only [0, PunctualShadowCount) are
+        // valid; a caller's values are overwritten by the renderer each Execute.
+        std::array<std::array<mat4, CubeFaceCount>, MaxShadowedPunctual> PunctualShadowRawViewProj{};
 
         // The frame's resident mesh candidates, set by the renderer on every Execute
         // from the broadphase's cached candidate list. The g-buffer pass culls this
@@ -580,6 +594,14 @@ namespace Veng::Renderer
         // PassIO and to bind the shadow import per Execute. The pass outlives the
         // raw pointer (m_Passes is cleared and rebuilt together).
         ShadowScenePass* m_ShadowPass = nullptr;
+
+        // Whether the last Rebuild wired the punctual shadow pass (Final mode +
+        // Settings.Shadows, or the PunctualShadows debug arm). Execute binds the
+        // punctual atlas import only then. The pass renders the renderer-owned punctual
+        // atlas (m_PunctualShadowView), so the renderer binds m_PunctualShadowId to it.
+        bool m_PunctualShadowActive = false;
+        ResourceId m_PunctualShadowId;
+        PunctualShadowScenePass* m_PunctualShadowPass = nullptr;
 
         // Whether the last Rebuild wired the SSAO pass (Final mode + Settings.AO).
         // Execute binds the AO import only then. m_SsaoPass is a non-owning pointer
