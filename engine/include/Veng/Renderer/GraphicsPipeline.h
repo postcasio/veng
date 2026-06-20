@@ -22,6 +22,14 @@ namespace Veng::Renderer
         Format StencilAttachmentFormat = Format::Undefined;
         /// @brief Vertex input layout (nullopt for pipelines with no vertex buffer).
         optional<VertexBufferLayout> VertexBufferLayout;
+        /// @brief Adds an instance-rate uint candidate-id attribute on binding 1.
+        ///
+        /// When true, a second vertex binding (binding 1, input rate per-instance) supplies one
+        /// uint per instance — the per-draw candidate id the surface vertex stage reads at the
+        /// draw's firstInstance to index its DrawData record. Its attribute location follows the
+        /// per-vertex attributes of VertexBufferLayout. The caller binds the id buffer to binding 1;
+        /// both the CPU direct draw and the GPU indirect command carry the id this way.
+        bool InstanceCandidateId = false;
         /// @brief Descriptor set and push-constant layout.
         Ref<PipelineLayout> PipelineLayout;
         /// @brief Shader stages (vertex, fragment, etc.).

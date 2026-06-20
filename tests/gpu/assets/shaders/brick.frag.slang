@@ -11,12 +11,13 @@ struct VSOutput
     float4 sv_position : SV_Position;
     float2 v_UV : TEXCOORD0;
     float3 v_WorldNormal : NORMAL;
+    nointerpolation uint v_MaterialIndex : TEXCOORD1;  // per-draw material selector from the vertex stage
 };
 
 [shader("fragment")]
 GBufferOutput fsMain(VSOutput input)
 {
-    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
+    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);
 
     float4 baseColor = g_Textures[NonUniformResourceIndex(p.BaseColor)].Sample(
         g_Samplers[NonUniformResourceIndex(p.BaseColorSampler)], input.v_UV);

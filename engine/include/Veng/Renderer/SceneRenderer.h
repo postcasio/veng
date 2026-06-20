@@ -129,6 +129,24 @@ namespace Veng::Renderer
     /// on/off or re-wire the pass set live here; per-frame values belong on SceneView.
     struct SceneRendererSettings
     {
+        /// @brief Selects whether culling and draw submission run CPU-side or GPU-driven.
+        ///
+        /// CPU is the BVH frustum descent plus direct per-submesh DrawIndexed calls — the
+        /// default and the fallback where multiDrawIndirect / drawIndirectFirstInstance is
+        /// unavailable. GPU keeps the same BVH frustum descent (the upload source) but runs
+        /// the hi-Z occlusion test in a compute pass that writes each indirect command's
+        /// instanceCount, then issues the survivors through vkCmdDrawIndexedIndirect. Both
+        /// modes drive the same buffer-indexed surface shader — they differ only in
+        /// submission and in who writes instanceCount. Nested to avoid the name collision
+        /// with Renderer::CullMode (the rasterizer face-cull mode).
+        enum class CullMode : u8
+        {
+            /// @brief BVH frustum descent + direct per-submesh DrawIndexed.
+            CPU,
+            /// @brief BVH frustum descent + GPU hi-Z occlusion + vkCmdDrawIndexedIndirect.
+            GPU,
+        };
+
         /// @brief Selects which result the renderer produces; re-wires the pass set on change.
         DebugView Mode = DebugView::Final;
 
@@ -202,6 +220,20 @@ namespace Veng::Renderer
         /// record every resident mesh. A toggle drives a recompile (the same passes
         /// record fewer draws), so it still invalidates GetOutput() like any Configure.
         bool FrustumCull = true;
+
+        /// @brief Selects CPU direct draws or the GPU-driven occlusion-cull → indirect-draw path.
+        ///
+        /// GPU is honored only where Context::IsGpuDrivenCullingSupported() is true; otherwise
+        /// the renderer falls back to the CPU path. A change recompiles (the GPU path is a
+        /// different pass topology).
+        CullMode Cull = CullMode::CPU;
+
+        /// @brief Whether the GPU path runs the hi-Z occlusion test (GPU mode only).
+        ///
+        /// When off, the GPU path issues every camera-frustum survivor (frustum-only). When on,
+        /// the cull compute pass drops the provably-occluded against the previous-frame pyramid.
+        /// Ignored under CullMode::CPU. A history-invalid frame is frustum-only regardless.
+        bool Occlusion = true;
     };
 
     /// @brief Construction parameters for SceneRenderer.
@@ -379,6 +411,28 @@ namespace Veng::Renderer
         /// Zero before the first Execute.
         [[nodiscard]] u32 GetLastDrawnCount() const;
 
+        /// @brief Returns the cull mode actually in effect, after the device-support fallback.
+        ///
+        /// Equals Settings.Cull when CullMode::GPU is requested and
+        /// Context::IsGpuDrivenCullingSupported() is true; otherwise CullMode::CPU. Reflects the
+        /// last Configure/Create.
+        [[nodiscard]] SceneRendererSettings::CullMode GetActiveCullMode() const;
+
+        /// @brief Returns the GPU cull's survivor count read back from the previous Execute.
+        ///
+        /// Under CullMode::GPU this is the number of candidates whose instanceCount the cull wrote
+        /// 1 (the draws the indirect submission actually issued), read back one frame late so it
+        /// never gates the draw. Zero under CullMode::CPU and before the second GPU Execute.
+        [[nodiscard]] u32 GetLastGpuSurvivorCount() const;
+
+        /// @brief Reads back the GPU cull's per-candidate instanceCount verdicts from the last Execute.
+        ///
+        /// One entry per camera-frustum survivor candidate (in dispatch order), each 1 (drawn) or 0
+        /// (occluded), downloaded from the indirect command buffer. Blocks on a device read; exposed
+        /// for the GPU↔CPU set-equivalence test. Empty under CullMode::CPU.
+        /// @return The per-candidate instanceCount verdicts, or empty if no GPU Execute has run.
+        [[nodiscard]] vector<u32> ReadbackGpuSurvivorFlags() const;
+
         /// @brief Returns true if the broadphase rebuilt its tree during the most recent Execute.
         ///
         /// False on a fully static frame (the scene's spatial version was unchanged).
@@ -510,6 +564,30 @@ namespace Veng::Renderer
         void WriteShadowAtlasBinding(const Ref<ImageView>& atlasView);
         /// @brief Rebuilds the pass set from Settings.Mode and recompiles the RenderGraph.
         void Rebuild();
+
+        /// @brief Sets m_ActiveCull from Settings.Cull and the device-support fallback.
+        ///
+        /// CullMode::GPU survives only where Context::IsGpuDrivenCullingSupported() is true;
+        /// otherwise it degrades to CullMode::CPU. Called at Create and on every Configure.
+        void ResolveActiveCullMode();
+
+        /// @brief Declares the GPU occlusion-cull compute pass into the graph (GPU mode only).
+        ///
+        /// Reads the previous-frame hi-Z and the uploaded candidates, writes each indirect
+        /// command's instanceCount (StorageBufferWrite on the indirect import), and the survivor
+        /// count. Declared before the geometry pass so the graph derives the
+        /// StorageBufferWrite → IndirectRead barrier.
+        /// @param graph  The renderer's internal graph being rebuilt.
+        void DeclareCullPass(RenderGraph& graph);
+
+        /// @brief Fills the per-draw DrawData buffer (and, under GPU mode, the candidate buffer + groups) for this Execute.
+        ///
+        /// Computes the camera-frustum survivors, writes the current frame's DrawData region, and
+        /// builds the geometry pass's submission plan (m_Internal->Plan). The geometry pass reads
+        /// the plan at record time.
+        /// @param view                The frame's scene view (broadphase already synced).
+        /// @param viewConstantsIndex  This frame's view-constants ring region.
+        void PrepareDraws(const SceneView& view, u32 viewConstantsIndex);
 
         /// @brief Vulkan context for all resource creation.
         Context& m_Context;
@@ -803,12 +881,100 @@ namespace Veng::Renderer
         /// A static scene does not rebuild the tree.
         SceneBroadphase m_Broadphase;
 
-        /// @brief Non-owning pointer to the g-buffer pass's drawn-mesh counter.
+        /// @brief Per-submesh frustum-survivor count from the last Execute (the drawn count).
         ///
-        /// Set on every Rebuild (the pass owns the u32 through m_Passes). Null before the
-        /// first Rebuild. Raw pointer rather than a typed back-reference because
-        /// GBufferScenePass is a .cpp-local type.
-        const u32* m_GBufferDrawnCount = nullptr;
+        /// Set by PrepareDraws each Execute: the number of per-submesh candidates the camera
+        /// frustum kept (a materialless or not-yet-resident survivor still counts, matching the
+        /// per-submesh cull result the draw-count fixtures assert on). Zero before the first Execute.
+        u32 m_LastDrawnCount = 0;
+
+        /// @brief Allocates the per-draw and GPU-cull buffers + their descriptor sets.
+        ///
+        /// Sized to MaxCullCandidates × frames-in-flight. The per-draw DrawData SSBO is used by
+        /// both cull modes (the buffer-indexed surface draw); the candidate/indirect/count buffers
+        /// and the cull compute pipeline are used only under CullMode::GPU. Called once at Create.
+        void CreateCullResources();
+
+        /// @brief Maximum per-submesh candidates a frame's per-draw / cull buffers hold.
+        ///
+        /// The fixed candidate maximum (decision 2): the indirect buffer covers this many slots,
+        /// culled ones no-op. A frame exceeding it is clamped (the overflow submeshes are not
+        /// drawn), asserted in a debug build.
+        static constexpr u32 MaxCullCandidates = 4096;
+
+        /// @brief Per-draw DrawData SSBO (set used by the surface pipeline's set 1, binding 0).
+        ///
+        /// Host-visible, ring-buffered for frames-in-flight (MaxCullCandidates records per region);
+        /// the surface vertex stage reads its record by the candidate id folded with the pushed
+        /// FrameBase. Drives both cull modes' buffer-indexed draw.
+        Ref<Buffer> m_DrawDataBuffer;
+        /// @brief Set 1 for the surface pipeline: binding 0 the DrawData SSBO.
+        Ref<DescriptorSetLayout> m_DrawDataSetLayout;
+        /// @brief Descriptor set bound at set 1 for every surface draw.
+        Ref<DescriptorSet> m_DrawDataSet;
+
+        /// @brief Identity candidate-id buffer bound to vertex binding 1 (instance rate).
+        ///
+        /// Element k holds k, so a draw's firstInstance = candidateId fetches candidateId as the
+        /// instance attribute (the per-draw DrawData index). Created once; shared by both cull
+        /// modes' draws. MaxCullCandidates elements.
+        Ref<Buffer> m_CandidateIdBuffer;
+
+        /// @brief Cull compute pipeline (occlusion test → instanceCount), GPU mode only.
+        Ref<class ComputePipeline> m_CullPipeline;
+        /// @brief Layout for m_CullPipeline: set 1 (hi-Z, candidates, commands, count) + push block.
+        Ref<class PipelineLayout> m_CullLayout;
+        /// @brief Set-1 layout for the cull pass.
+        Ref<DescriptorSetLayout> m_CullSetLayout;
+        /// @brief Descriptor set for the cull pass, written on CreateCullResources / CreateGBuffer.
+        Ref<DescriptorSet> m_CullSet;
+
+        /// @brief Uploaded camera-frustum survivors (world bounds + draw args), GPU mode only.
+        ///
+        /// Host-visible, ring-buffered; one CullCandidate record per survivor this frame.
+        Ref<Buffer> m_CullCandidateBuffer;
+        /// @brief Indirect command buffer the cull writes and the geometry pass reads.
+        ///
+        /// Device-local, Storage | Indirect | TransferSrc, ring-buffered. The compute pass writes
+        /// each VkDrawIndexedIndirectCommand's instanceCount; the geometry pass issues it.
+        Ref<Buffer> m_IndirectBuffer;
+        /// @brief GPU survivor-count buffer the cull atomically increments, read back for the stat.
+        ///
+        /// Host-visible, Storage | TransferSrc, ring-buffered; one u32 per frame region, zeroed
+        /// before the cull dispatch and read one frame late.
+        Ref<Buffer> m_CullCountBuffer;
+        /// @brief Imported buffer id for the indirect command buffer in the internal graph.
+        ResourceId m_IndirectId;
+
+        /// @brief Previous-frame camera world->clip the cull pass screen-bounds candidates with.
+        ///
+        /// The pyramid is last frame's depth, so the cull must project with last frame's matrix.
+        mat4 m_CullPrevViewProj{1.0f};
+        /// @brief mip-0 pixel extent of the hi-Z pyramid the cull samples.
+        uvec2 m_CullHiZExtent{};
+        /// @brief Candidate count, region base, count-buffer slot, and history flag the cull dispatch reads.
+        ///
+        /// Filled by PrepareDraws each GPU Execute and read by the cull pass at record time.
+        u32 m_CullCandidateCount = 0;
+        /// @brief Candidate/command region base (currentFrame * MaxCullCandidates).
+        u32 m_CullFrameBase = 0;
+        /// @brief This frame's slot in the survivor-count buffer.
+        u32 m_CullCountIndex = 0;
+        /// @brief 1 when the previous-frame pyramid is valid to occlude against, else 0 (frustum-only).
+        u32 m_CullHistoryValid = 0;
+        /// @brief Reused per-frame frustum-survivor candidate ids (broadphase Cull scratch).
+        vector<u32> m_CullScratch;
+
+        /// @brief The cull mode in effect after the device-support fallback (CPU if GPU unsupported).
+        SceneRendererSettings::CullMode m_ActiveCull = SceneRendererSettings::CullMode::CPU;
+        /// @brief Survivor count read back from the previous GPU Execute (the debug stat).
+        mutable u32 m_LastGpuSurvivorCount = 0;
+        /// @brief Number of candidate slots the GPU cull wrote this Execute (for the readback span).
+        u32 m_GpuCandidateCount = 0;
+        /// @brief The frame-in-flight region the previous GPU Execute wrote, for the count/flag readback.
+        u32 m_GpuReadbackRegion = 0;
+        /// @brief True once a GPU Execute has filled a region to read back.
+        bool m_GpuReadbackValid = false;
 
         /// @brief Imported resource ids re-declared on every Rebuild.
         ///

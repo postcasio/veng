@@ -68,6 +68,9 @@ namespace Veng::Renderer
         // The hi-Z max-Z reduction compute shader.
         constexpr AssetId HiZReduceCompId{0xCB20C4EF8A20ADBCULL};
 
+        // The GPU occlusion-cull → indirect-draw compute shader.
+        constexpr AssetId OcclusionCullCompId{0x5FE19B500FD44B52ULL};
+
         // The core bloom PostProcess materials.
         constexpr AssetId BloomBrightMaterialId{0xB1C79EF4EAC3F697ULL};
         constexpr AssetId BloomBlurHMaterialId{0x7061083E93A8D7FFULL};
@@ -96,26 +99,74 @@ namespace Veng::Renderer
             uvec2 SourceExtent;
         };
 
-        // The shared push-constant block both g-buffer stages use: MVP at offset 0,
-        // MaterialIndex at offset 64 (pushed by Material::Bind), NormalMatrix at
-        // offset 80. NormalMatrix is a column-major float3x3 — three columns padded
-        // to 16 bytes each (std140/Slang column-major layout).
-        struct MeshPushConstants
+        // The surface push block (vertex stage), matching material.slang PushConstants:
+        // FrameBase folds the ring-buffered DrawData region into the candidate id; the
+        // view-constants index selects the per-frame set-0 view block the vertex stage
+        // multiplies by. Both cull modes push the same block.
+        struct SurfacePush
         {
-            mat4 MVP;
+            u32 FrameBase;
+            u32 ViewConstantsIndex;
         };
 
-        constexpr u32 NormalMatrixPushOffset = 80;
-
-        struct NormalMatrixPush
+        // Per-draw record indexed by the candidate id; std430-identical to the shader's
+        // DrawData. World is the model matrix; the three NormalColumns carry the
+        // inverse-transpose of its upper 3×3; MaterialIndex is the frame-folded selector.
+        struct GpuDrawData
         {
-            vec4 Column0;
-            vec4 Column1;
-            vec4 Column2;
+            mat4 World;
+            vec4 NormalColumn0;
+            vec4 NormalColumn1;
+            vec4 NormalColumn2;
+            u32 MaterialIndex;
+            u32 Pad0;
+            u32 Pad1;
+            u32 Pad2;
         };
 
-        static_assert(sizeof(NormalMatrixPush) == 48,
-                      "NormalMatrix push must be a column-major float3x3 (48 bytes)");
+        static_assert(sizeof(GpuDrawData) == 128,
+                      "GpuDrawData must match the shader DrawData (128 bytes)");
+
+        // One uploaded camera-frustum survivor; std430-identical to the cull shader's
+        // CullCandidate: world AABB plus the indexed-draw args its command needs.
+        struct GpuCullCandidate
+        {
+            vec4 BoundsMin;
+            vec4 BoundsMax;
+            u32 IndexCount;
+            u32 FirstIndex;
+            i32 VertexOffset;
+            u32 FirstInstance;
+        };
+
+        static_assert(sizeof(GpuCullCandidate) == 48,
+                      "GpuCullCandidate must match the shader CullCandidate (48 bytes)");
+
+        // VkDrawIndexedIndirectCommand laid out by hand (20 bytes), the stride the
+        // indirect geometry pass issues over.
+        struct DrawIndexedIndirectCommand
+        {
+            u32 IndexCount;
+            u32 InstanceCount;
+            u32 FirstIndex;
+            i32 VertexOffset;
+            u32 FirstInstance;
+        };
+
+        static_assert(sizeof(DrawIndexedIndirectCommand) == 20,
+                      "DrawIndexedIndirectCommand must match VkDrawIndexedIndirectCommand");
+
+        // The cull compute push block, matching occlusion_cull.comp PushConstants.
+        struct OcclusionCullPush
+        {
+            mat4 PrevViewProj;
+            uvec2 HiZBaseExtent;
+            u32 CandidateCount;
+            u32 HistoryValid;
+            f32 DepthBias;
+            u32 FrameBase;
+            u32 CountIndex;
+        };
 
         // The deferred-lighting fragment push block: g-buffer bindless slots,
         // view-constants index, and light buffer base + live count.
@@ -266,28 +317,64 @@ namespace Veng::Renderer
             u32 Channel;
         };
 
+        // One per-candidate draw the geometry pass records, in candidate-slot order.
+        // The candidate id (== the slot) reaches the surface vertex stage via the
+        // instance attribute fetched at firstInstance; its DrawData record holds the
+        // world/normal/material. CPU mode issues a DrawIndexed per slot; GPU mode issues
+        // one DrawIndexedIndirect over a mesh group's contiguous command run.
+        struct DrawSlot
+        {
+            const Mesh* SourceMesh;
+            u32 IndexCount;
+            u32 FirstIndex;
+            i32 VertexOffset;
+            u32 CandidateId; // == the per-draw DrawData slot and the command firstInstance
+        };
+
+        // A contiguous run of candidate slots sharing one source mesh, so the mesh's
+        // vertex/index buffers bind once. CPU mode draws each slot; GPU mode issues one
+        // vkCmdDrawIndexedIndirect over the run's commands (the culled slots no-op).
+        struct DrawGroup
+        {
+            const Mesh* SourceMesh;
+            u32 FirstSlot;
+            u32 SlotCount;
+        };
+
+        // The per-frame submission plan SceneRenderer fills before each graph replay and
+        // the geometry pass reads at record time. Held in SceneRenderer::Internal.
+        struct GBufferDrawPlan
+        {
+            SceneRendererSettings::CullMode Cull = SceneRendererSettings::CullMode::CPU;
+            SurfacePush Push;
+            Ref<DescriptorSet> DrawDataSet;
+            Ref<Buffer> CandidateIdBuffer;
+            Ref<Buffer> IndirectBuffer;   // GPU mode only
+            u32 IndirectRegionOffset = 0; // byte offset of this frame's command region (GPU)
+            // One loaded surface material whose pipeline is bound for the whole pass — every
+            // surface material shares the surface pipeline shape, so binding any one suffices.
+            // Borrowed: the mesh's resident AssetHandle keeps it alive for this frame.
+            const Material* PipelineMaterial = nullptr;
+            vector<DrawSlot> Slots;
+            vector<DrawGroup> Groups;
+        };
+
         class GBufferScenePass final : public ScenePass
         {
         public:
-            GBufferScenePass(Context& context, uvec2 extent) : m_Context(context), m_Extent(extent)
+            GBufferScenePass(Context& context, uvec2 extent, const GBufferDrawPlan* plan,
+                             SceneRendererSettings::CullMode cull, ResourceId indirectId)
+                : m_Context(context), m_Extent(extent), m_Plan(plan), m_Cull(cull),
+                  m_IndirectId(indirectId)
             {
-            }
-
-            void Configure(const SceneRendererSettings& settings) override
-            {
-                m_FrustumCull = settings.FrustumCull;
             }
 
             void Resize(const uvec2 extent) override { m_Extent = extent; }
 
-            // Pointer to the per-frame draw counter (meshes actually recorded after cull
-            // and material-readiness skip). The renderer stores it once per Rebuild and
-            // reads it through GetLastDrawnCount; the pass owns the u32.
-            [[nodiscard]] const u32* GetLastDrawnPointer() const { return &m_LastDrawn; }
-
             void Declare(RenderGraph& graph, const PassIO& io) override
             {
-                graph.AddPass("Scene GBuffer")
+                RenderGraph::PassBuilder builder = graph.AddPass("Scene GBuffer");
+                builder
                     .Color({
                         .Resource = io.GBufferAlbedo,
                         .Load = LoadOp::Clear,
@@ -314,105 +401,93 @@ namespace Veng::Renderer
                         // Stored: the lighting pass reads depth as a texture.
                         .Store = StoreOp::Store,
                         .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
-                    })
-                    .Execute([this](PassContext& inner) { Record(Wrap(inner)); });
+                    });
+
+                // GPU mode reads the cull-written commands as indirect args; declaring the
+                // read drives the graph-derived StorageBufferWrite → IndirectRead barrier.
+                if (m_Cull == SceneRendererSettings::CullMode::GPU)
+                {
+                    builder.IndirectRead(m_IndirectId);
+                }
+
+                builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
             }
 
         private:
             void Record(const ScenePassContext& ctx) const
             {
                 CommandBuffer& cmd = ctx.Cmd();
-                const SceneView& view = ctx.View();
+                const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+                const GBufferDrawPlan& plan = *m_Plan;
 
                 cmd.SetViewport({0, 0}, m_Extent);
                 cmd.SetScissor({0, 0}, m_Extent);
 
-                const mat4 viewProjection = view.Camera.ViewProjection();
-                const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
-
-                const Frustum cameraFrustum = Frustum::FromViewProjection(viewProjection);
-
-                m_LastDrawn = 0;
-
-                // Track the last-bound mesh to skip a redundant vertex/index bind: the
-                // candidate list is in GatherMeshes order, so a mesh's submeshes are contiguous.
-                const Mesh* lastBound = nullptr;
-
-                const auto DrawSubMesh = [&](const VisibleMesh& item, u32 subMeshIndex)
+                if (plan.Slots.empty())
                 {
-                    const Mesh& mesh = *item.Mesh;
-                    const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
-
-                    const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
-                    if (subMesh.MaterialIndex == SubMesh::NoMaterial)
-                    {
-                        return;
-                    }
-                    if (!materials[subMesh.MaterialIndex].IsLoaded())
-                    {
-                        return;
-                    }
-
-                    if (lastBound != &mesh)
-                    {
-                        cmd.BindVertexBuffer(mesh.GetVertexBuffer());
-                        cmd.BindIndexBuffer(mesh.GetIndexBuffer());
-                        lastBound = &mesh;
-                    }
-
-                    const mat4 mvp = viewProjection * item.World;
-
-                    // Inverse-transpose of the model upper 3×3, correct under non-uniform
-                    // scale. Packed column-major into three 16-byte-aligned columns.
-                    const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
-                    const NormalMatrixPush normalPush{
-                        .Column0 = vec4(normalMatrix[0], 0.0f),
-                        .Column1 = vec4(normalMatrix[1], 0.0f),
-                        .Column2 = vec4(normalMatrix[2], 0.0f),
-                    };
-
-                    // Pipeline must be bound before registry.Bind: Bind uses the currently-bound layout.
-                    materials[subMesh.MaterialIndex].Get()->Bind(cmd);
-                    registry.Bind(cmd);
-                    cmd.PushConstants(MeshPushConstants{.MVP = mvp});
-                    cmd.PushConstants(normalPush, NormalMatrixPushOffset);
-
-                    cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
-                };
-
-                const std::span<const SubMeshCandidate> candidates =
-                    view.Broadphase->GetSubMeshCandidates();
-
-                // m_LastDrawn counts surviving submesh candidates (the per-submesh cull
-                // result), so it observes a dropped submesh of an on-screen mesh.
-                if (m_FrustumCull)
-                {
-                    m_CullScratch.clear();
-                    view.Broadphase->Cull(cameraFrustum, m_CullScratch);
-                    for (const u32 id : m_CullScratch)
-                    {
-                        const SubMeshCandidate& c = candidates[id];
-                        DrawSubMesh(view.Visible[c.MeshCandidate], c.SubMeshIndex);
-                        ++m_LastDrawn;
-                    }
+                    return;
                 }
-                else
+
+                // One surface pipeline drives every submesh; bind it, set 0 (bindless), and
+                // set 1 (the per-draw DrawData SSBO) once, then push the frame selector. The
+                // pipeline is shared across materials (all surface materials reuse the core
+                // surface.vert + the deferred g-buffer formats), so binding any one surface
+                // material binds the pipeline for the whole pass (Surface pushes no selector).
+                plan.PipelineMaterial->Bind(cmd);
+                registry.Bind(cmd);
+
+                cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                    .Sets = {plan.DrawDataSet},
+                    .FirstSet = 1,
+                    .PipelineBindPoint = PipelineBindPoint::Graphics,
+                });
+                cmd.PushConstants(plan.Push);
+
+                // The instance-rate candidate-id buffer (binding 1) is bound once; each draw's
+                // firstInstance selects the candidate id, fetched as the instance attribute.
+                cmd.GetNative().CommandBuffer.bindVertexBuffers(
+                    1, GetVkBuffer(*plan.CandidateIdBuffer), {0});
+
+                const Mesh* lastBound = nullptr;
+                for (const DrawGroup& group : plan.Groups)
                 {
-                    for (const SubMeshCandidate& c : candidates)
+                    if (lastBound != group.SourceMesh)
                     {
-                        DrawSubMesh(view.Visible[c.MeshCandidate], c.SubMeshIndex);
-                        ++m_LastDrawn;
+                        cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
+                        cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
+                        lastBound = group.SourceMesh;
+                    }
+
+                    if (plan.Cull == SceneRendererSettings::CullMode::GPU)
+                    {
+                        // One indirect draw over the group's contiguous command run; culled
+                        // slots carry instanceCount 0 and no-op (no GPU-sourced count —
+                        // MoltenVK lacks drawIndirectCount).
+                        const u64 offset =
+                            plan.IndirectRegionOffset +
+                            static_cast<u64>(group.FirstSlot) * sizeof(DrawIndexedIndirectCommand);
+                        cmd.DrawIndexedIndirect(plan.IndirectBuffer, offset, group.SlotCount,
+                                                sizeof(DrawIndexedIndirectCommand));
+                    }
+                    else
+                    {
+                        // CPU mode issues a direct DrawIndexed per surviving slot, the candidate
+                        // id carried as firstInstance (the same instance-attribute path).
+                        for (u32 s = 0; s < group.SlotCount; ++s)
+                        {
+                            const DrawSlot& slot = plan.Slots[group.FirstSlot + s];
+                            cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex, slot.VertexOffset,
+                                            slot.CandidateId);
+                        }
                     }
                 }
             }
 
             Context& m_Context;
             uvec2 m_Extent;
-            bool m_FrustumCull = true;
-            /// @brief Reset and incremented per Record; mutable because Record is const.
-            mutable u32 m_LastDrawn = 0;
-            /// @brief Frustum-query scratch (per-submesh candidate ids); reused across frames.
-            mutable vector<u32> m_CullScratch;
+            const GBufferDrawPlan* m_Plan = nullptr;
+            SceneRendererSettings::CullMode m_Cull = SceneRendererSettings::CullMode::CPU;
+            ResourceId m_IndirectId;
         };
 
         // Declaring .Sample on each g-buffer id drives the graph-derived attachment →
@@ -853,6 +928,9 @@ namespace Veng::Renderer
     struct SceneRenderer::Internal
     {
         Unique<CompiledGraph> Graph;
+        // The per-frame geometry submission plan PrepareDraws fills before each replay and
+        // the geometry pass reads at record time (the pass holds a pointer to it).
+        GBufferDrawPlan Plan;
     };
 
     Unique<SceneRenderer> SceneRenderer::Create(const SceneRendererInfo& info)
@@ -865,11 +943,13 @@ namespace Veng::Renderer
           m_Extent(info.Extent), m_Settings(info.Settings), m_Internal(CreateUnique<Internal>())
     {
         ClampShadowResolutions();
+        ResolveActiveCullMode();
         CreateShadowSystem();
         CreatePipelines();
 
         CreateOutput();
         CreateGBuffer();
+        CreateCullResources();
         CreateHdr();
         CreateBloom();
         Rebuild();
@@ -1476,6 +1556,146 @@ namespace Veng::Renderer
         // The freshly created pyramid carries no last-frame depth; the next Execute must
         // skip occlusion rather than test against an undefined/stale chain.
         m_HiZHistoryReset = true;
+
+        // The cull set samples the pyramid through binding 0; rewrite it whenever the
+        // pyramid is recreated (Resize/Configure). Skipped on the first CreateHiZ, before
+        // CreateCullResources has made the set.
+        if (m_CullSet)
+        {
+            m_CullSet->Write(0, m_HiZSampleView);
+        }
+    }
+
+    void SceneRenderer::CreateCullResources()
+    {
+        // The per-draw DrawData SSBO drives both cull modes' buffer-indexed draw. Host-visible,
+        // ring-buffered for frames-in-flight; the surface vertex stage indexes it by the pushed
+        // FrameBase folded with the candidate id.
+        const u64 drawDataRegion = static_cast<u64>(MaxCullCandidates) * sizeof(GpuDrawData);
+        m_DrawDataBuffer = Buffer::Create(m_Context, {
+                                                         .Name = "SceneRenderer DrawData",
+                                                         .Size = drawDataRegion * m_FramesInFlight,
+                                                         .Usage = BufferUsage::Storage,
+                                                         .HostMapped = true,
+                                                     });
+
+        // Stage flags must match the surface pipeline's reflected set-1 layout exactly for
+        // descriptor-set compatibility. The shared material header declares g_DrawData in
+        // both stages (the fragment includes it even though only the vertex stage reads it),
+        // so the cooker reflects it Vertex | Fragment — match that here.
+        m_DrawDataSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer DrawData Set Layout",
+                           .Bindings = {{.Binding = 0,
+                                         .Type = DescriptorType::StorageBuffer,
+                                         .Count = 1,
+                                         .Stages = ShaderStage::Vertex | ShaderStage::Fragment}},
+                       });
+        m_DrawDataSet = DescriptorSet::Create(m_Context, {
+                                                             .Name = "SceneRenderer DrawData Set",
+                                                             .Layout = m_DrawDataSetLayout,
+                                                         });
+        m_DrawDataSet->Write(0, m_DrawDataBuffer);
+
+        // The identity candidate-id buffer bound to vertex binding 1 (instance rate): element k
+        // holds k, so a draw's firstInstance = candidateId fetches candidateId as the attribute.
+        vector<u32> identity(MaxCullCandidates);
+        for (u32 i = 0; i < MaxCullCandidates; ++i)
+        {
+            identity[i] = i;
+        }
+        m_CandidateIdBuffer =
+            Buffer::Create(m_Context, {
+                                          .Name = "SceneRenderer Candidate Ids",
+                                          .Size = identity.size() * sizeof(u32),
+                                          .Usage = BufferUsage::Vertex | BufferUsage::TransferDst,
+                                      });
+        m_CandidateIdBuffer->UploadSync(std::span<const u8>(
+            reinterpret_cast<const u8*>(identity.data()), identity.size() * sizeof(u32)));
+
+        // The GPU cull path's buffers + pipeline build only where the device supports it.
+        if (!m_Context.IsGpuDrivenCullingSupported())
+        {
+            return;
+        }
+
+        const u64 candidateRegion = static_cast<u64>(MaxCullCandidates) * sizeof(GpuCullCandidate);
+        m_CullCandidateBuffer =
+            Buffer::Create(m_Context, {
+                                          .Name = "SceneRenderer Cull Candidates",
+                                          .Size = candidateRegion * m_FramesInFlight,
+                                          .Usage = BufferUsage::Storage,
+                                          .HostMapped = true,
+                                      });
+
+        const u64 indirectRegion =
+            static_cast<u64>(MaxCullCandidates) * sizeof(DrawIndexedIndirectCommand);
+        m_IndirectBuffer =
+            Buffer::Create(m_Context, {
+                                          .Name = "SceneRenderer Indirect Commands",
+                                          .Size = indirectRegion * m_FramesInFlight,
+                                          .Usage = BufferUsage::Storage | BufferUsage::Indirect,
+                                      });
+
+        m_CullCountBuffer =
+            Buffer::Create(m_Context, {
+                                          .Name = "SceneRenderer Cull Count",
+                                          .Size = static_cast<u64>(m_FramesInFlight) * sizeof(u32),
+                                          .Usage = BufferUsage::Storage | BufferUsage::TransferSrc,
+                                          .HostMapped = true,
+                                      });
+
+        const AssetResult<AssetHandle<Veng::Shader>> cullCs =
+            m_Assets.LoadSync<Veng::Shader>(OcclusionCullCompId);
+        VE_ASSERT(cullCs.has_value(), "SceneRenderer: occlusion-cull compute load failed: {}",
+                  cullCs.error().Detail);
+
+        m_CullSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Cull Set Layout",
+                           .Bindings =
+                               {
+                                   {.Binding = 0,
+                                    .Type = DescriptorType::SampledImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                                   {.Binding = 1,
+                                    .Type = DescriptorType::StorageBuffer,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                                   {.Binding = 2,
+                                    .Type = DescriptorType::StorageBuffer,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                                   {.Binding = 3,
+                                    .Type = DescriptorType::StorageBuffer,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                               },
+                       });
+        m_CullLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Cull Layout",
+                           .DescriptorSetLayouts = {m_CullSetLayout},
+                           .PushConstantRanges = {PushConstantRange::Of<OcclusionCullPush>(
+                               ShaderStage::Compute)},
+                       });
+        m_CullPipeline = ComputePipeline::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer Cull Pipeline",
+                .PipelineLayout = m_CullLayout,
+                .ShaderStage = {.Stage = ShaderStage::Compute, .Module = cullCs->Get()->Module},
+            });
+
+        m_CullSet = DescriptorSet::Create(m_Context, {
+                                                         .Name = "SceneRenderer Cull Set",
+                                                         .Layout = m_CullSetLayout,
+                                                     });
+        m_CullSet->Write(0, m_HiZSampleView);
+        m_CullSet->Write(1, m_CullCandidateBuffer);
+        m_CullSet->Write(2, m_IndirectBuffer);
+        m_CullSet->Write(3, m_CullCountBuffer);
     }
 
     void SceneRenderer::CreateHdr()
@@ -1600,7 +1820,6 @@ namespace Veng::Renderer
         }
 
         m_Passes.clear();
-        m_GBufferDrawnCount = nullptr;
 
         // The shadow pass runs first when active so the graph orders its write before
         // the lighting read.
@@ -1627,8 +1846,17 @@ namespace Veng::Renderer
         // Update binding 0 to the wired atlas, or the dummy when shadows are off.
         WriteShadowAtlasBinding(shadowActive ? shadowAtlasView : m_DummyShadowView);
 
-        auto gbufferPass = CreateUnique<GBufferScenePass>(m_Context, m_Extent);
-        m_GBufferDrawnCount = gbufferPass->GetLastDrawnPointer();
+        // The GPU cull arm imports the indirect command buffer so the cull compute pass
+        // (StorageBufferWrite) and the geometry pass (IndirectRead) share it through the
+        // graph-derived buffer barrier.
+        m_IndirectId = ResourceId{};
+        if (m_ActiveCull == SceneRendererSettings::CullMode::GPU)
+        {
+            m_IndirectId = graph.ImportBuffer("SceneRenderer Indirect Commands");
+        }
+
+        auto gbufferPass = CreateUnique<GBufferScenePass>(m_Context, m_Extent, &m_Internal->Plan,
+                                                          m_ActiveCull, m_IndirectId);
         m_Passes.push_back(std::move(gbufferPass));
 
         // Created before the tail switch so ssaoHandle is set when the Final arm reads it.
@@ -1806,6 +2034,20 @@ namespace Veng::Renderer
             .Output = m_OutputId,
         };
 
+        // Import the hi-Z chain once: the GPU cull samples last frame's pyramid (declared
+        // .Sample below for the graph-derived transition into ShaderReadOnly before the cull)
+        // and the reduction at the tail writes this frame's pyramid into the same slots.
+        m_HiZChainId =
+            graph.ImportImageMips("SceneRenderer HiZ", static_cast<u32>(m_HiZMips.size()));
+
+        // The GPU cull compute pass must precede the geometry pass: it writes the
+        // indirect commands the geometry pass reads. Declared before the pass loop so it
+        // is earlier in the graph's declaration (execution) order than the g-buffer pass.
+        if (m_ActiveCull == SceneRendererSettings::CullMode::GPU)
+        {
+            DeclareCullPass(graph);
+        }
+
         for (const Unique<ScenePass>& pass : m_Passes)
         {
             pass->Configure(m_Settings);
@@ -1824,7 +2066,6 @@ namespace Veng::Renderer
     void SceneRenderer::DeclareHiZReduction(RenderGraph& graph)
     {
         const u32 mipCount = static_cast<u32>(m_HiZMips.size());
-        m_HiZChainId = graph.ImportImageMips("SceneRenderer HiZ", mipCount);
 
         // One compute dispatch per mip. Dispatch k reads mip k's source and writes mip
         // k; the per-mip graph surface derives the read-after-write barrier between
@@ -1878,6 +2119,212 @@ namespace Veng::Renderer
         }
     }
 
+    void SceneRenderer::ResolveActiveCullMode()
+    {
+        m_ActiveCull = (m_Settings.Cull == SceneRendererSettings::CullMode::GPU &&
+                        m_Context.IsGpuDrivenCullingSupported())
+                           ? SceneRendererSettings::CullMode::GPU
+                           : SceneRendererSettings::CullMode::CPU;
+    }
+
+    void SceneRenderer::DeclareCullPass(RenderGraph& graph)
+    {
+        // StorageBufferWrite on the indirect import drives the graph-derived
+        // StorageBufferWrite → IndirectRead barrier feeding the geometry pass.
+        RenderGraph::PassBuilder builder = graph.AddComputePass("Scene GPU Cull");
+        builder.StorageBufferWrite(m_IndirectId);
+
+        // The cull samples last frame's hi-Z pyramid (through m_CullSet, off the graph's
+        // descriptor binding). Declaring .Sample on each mip drives the graph-derived
+        // transition into ShaderReadOnly before the cull — the pyramid is a cross-frame
+        // renderer-owned resource the graph would otherwise leave in its prior layout.
+        for (u32 level = 0; level < m_HiZMips.size(); ++level)
+        {
+            builder.Sample(m_HiZChainId.Level(level));
+        }
+
+        builder.Execute(
+            [this](PassContext& inner)
+            {
+                const GBufferDrawPlan& plan = m_Internal->Plan;
+                if (plan.Cull != SceneRendererSettings::CullMode::GPU || plan.Slots.empty())
+                {
+                    return;
+                }
+
+                CommandBuffer& cmd = inner.Cmd();
+                cmd.BindPipeline(m_CullPipeline);
+                cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                    .Sets = {m_CullSet},
+                    .FirstSet = 1, // set 0 is reserved for the bindless registry
+                    .PipelineBindPoint = PipelineBindPoint::Compute,
+                });
+                cmd.PushConstants(OcclusionCullPush{
+                    .PrevViewProj = m_CullPrevViewProj,
+                    .HiZBaseExtent = m_CullHiZExtent,
+                    .CandidateCount = m_CullCandidateCount,
+                    .HistoryValid = m_CullHistoryValid,
+                    // Small bias absorbing reduction quantization; a tie draws.
+                    .DepthBias = 0.001f,
+                    .FrameBase = m_CullFrameBase,
+                    .CountIndex = m_CullCountIndex,
+                });
+                cmd.Dispatch((m_CullCandidateCount + 63) / 64, 1, 1);
+            });
+    }
+
+    void SceneRenderer::PrepareDraws(const SceneView& view, const u32 viewConstantsIndex)
+    {
+        GBufferDrawPlan& plan = m_Internal->Plan;
+        plan.Cull = m_ActiveCull;
+        plan.DrawDataSet = m_DrawDataSet;
+        plan.CandidateIdBuffer = m_CandidateIdBuffer;
+        plan.IndirectBuffer = m_IndirectBuffer;
+        plan.PipelineMaterial = nullptr;
+        plan.Slots.clear();
+        plan.Groups.clear();
+
+        const u32 frameIndex = m_Context.GetBindlessRegistry().GetCurrentViewConstantsIndex();
+        const u32 frameBase = frameIndex * MaxCullCandidates;
+        plan.Push = SurfacePush{.FrameBase = frameBase, .ViewConstantsIndex = viewConstantsIndex};
+        plan.IndirectRegionOffset =
+            frameIndex * MaxCullCandidates * static_cast<u32>(sizeof(DrawIndexedIndirectCommand));
+
+        const std::span<const SubMeshCandidate> candidates =
+            view.Broadphase->GetSubMeshCandidates();
+
+        // The camera-frustum survivors, in ascending Cull-id order; the upload source for
+        // both modes (the GPU compute adds only occlusion, never re-running the frustum).
+        m_CullScratch.clear();
+        if (m_Settings.FrustumCull)
+        {
+            const Frustum cameraFrustum = Frustum::FromViewProjection(view.Camera.ViewProjection());
+            view.Broadphase->Cull(cameraFrustum, m_CullScratch);
+        }
+        else
+        {
+            m_CullScratch.reserve(candidates.size());
+            for (u32 i = 0; i < candidates.size(); ++i)
+            {
+                m_CullScratch.push_back(i);
+            }
+        }
+
+        // The drawn count is the frustum-survivor count (a materialless or not-yet-resident
+        // submesh still survived the cull, even though it adds no draw slot below) — the
+        // per-submesh cull result the draw-count fixtures assert on.
+        m_LastDrawnCount = static_cast<u32>(m_CullScratch.size());
+
+        auto* drawData = static_cast<GpuDrawData*>(m_DrawDataBuffer->GetMappedData());
+        GpuCullCandidate* cullData =
+            m_CullCandidateBuffer
+                ? static_cast<GpuCullCandidate*>(m_CullCandidateBuffer->GetMappedData()) +
+                      static_cast<usize>(frameBase)
+                : nullptr;
+
+        // Fill one slot per survivor whose submesh has a loaded material (a materialless or
+        // not-yet-resident submesh is skipped, matching the direct draw it replaces). The slot
+        // index is the dense candidate id the instance attribute carries.
+        for (const u32 id : m_CullScratch)
+        {
+            const SubMeshCandidate& candidate = candidates[id];
+            const VisibleMesh& item = view.Visible[candidate.MeshCandidate];
+            const Mesh& mesh = *item.Mesh;
+            const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
+            const SubMesh& subMesh = mesh.GetSubMeshes()[candidate.SubMeshIndex];
+
+            if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
+                !materials[subMesh.MaterialIndex].IsLoaded())
+            {
+                continue;
+            }
+
+            const u32 slot = static_cast<u32>(plan.Slots.size());
+            if (slot >= MaxCullCandidates)
+            {
+                VE_ASSERT(false,
+                          "SceneRenderer: per-frame candidate count exceeds MaxCullCandidates {}",
+                          MaxCullCandidates);
+                break;
+            }
+
+            const Material& material = *materials[subMesh.MaterialIndex].Get();
+            if (!plan.PipelineMaterial)
+            {
+                plan.PipelineMaterial = materials[subMesh.MaterialIndex].Get();
+            }
+
+            // Per-draw record: world matrix, the normal matrix's three columns (inverse-
+            // transpose of the upper 3×3, correct under non-uniform scale), and the
+            // frame-folded material selector.
+            const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
+            drawData[frameBase + slot] = GpuDrawData{
+                .World = item.World,
+                .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
+                .NormalColumn1 = vec4(normalMatrix[1], 0.0f),
+                .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
+                .MaterialIndex = material.GetMaterialSelector(),
+            };
+
+            if (cullData != nullptr)
+            {
+                const AABB& bounds = item.WorldBounds;
+                cullData[slot] = GpuCullCandidate{
+                    .BoundsMin = vec4(bounds.Min, 0.0f),
+                    .BoundsMax = vec4(bounds.Max, 0.0f),
+                    .IndexCount = subMesh.IndexCount,
+                    .FirstIndex = subMesh.IndexOffset,
+                    .VertexOffset = 0,
+                    .FirstInstance = slot,
+                };
+            }
+
+            plan.Slots.push_back(DrawSlot{
+                .SourceMesh = &mesh,
+                .IndexCount = subMesh.IndexCount,
+                .FirstIndex = subMesh.IndexOffset,
+                .VertexOffset = 0,
+                .CandidateId = slot,
+            });
+        }
+
+        // Group contiguous slots that share a source mesh so the mesh's buffers bind once.
+        for (u32 s = 0; s < plan.Slots.size();)
+        {
+            const Mesh* mesh = plan.Slots[s].SourceMesh;
+            u32 count = 0;
+            while (s + count < plan.Slots.size() && plan.Slots[s + count].SourceMesh == mesh)
+            {
+                ++count;
+            }
+            plan.Groups.push_back(
+                DrawGroup{.SourceMesh = mesh, .FirstSlot = s, .SlotCount = count});
+            s += count;
+        }
+
+        // The GPU cull dispatch reads the candidate region this frame; zero its survivor
+        // count so the next-frame readback reflects only this dispatch. The push members the
+        // cull pass reads are set here (per-frame), not in the recompile-time declaration.
+        if (m_ActiveCull == SceneRendererSettings::CullMode::GPU)
+        {
+            const u32 count = static_cast<u32>(plan.Slots.size());
+            m_CullCandidateCount = count;
+            m_CullFrameBase = frameBase;
+            m_CullCountIndex = frameIndex;
+            m_CullPrevViewProj = m_PreviousViewProj;
+            m_CullHiZExtent = m_Extent;
+            m_CullHistoryValid = (m_Settings.Occlusion && m_HiZHistoryValid) ? 1u : 0u;
+
+            auto* counts = static_cast<u32*>(m_CullCountBuffer->GetMappedData());
+            counts[frameIndex] = 0;
+
+            // Record the region the readback reads one frame late.
+            m_GpuCandidateCount = count;
+            m_GpuReadbackRegion = frameIndex;
+            m_GpuReadbackValid = true;
+        }
+    }
+
     void SceneRenderer::Resize(const uvec2 extent)
     {
         m_Extent = extent;
@@ -1918,6 +2365,7 @@ namespace Veng::Renderer
     {
         m_Settings = settings;
         ClampShadowResolutions();
+        ResolveActiveCullMode();
         CreatePunctualShadowAtlas();
         Rebuild();
     }
@@ -2129,6 +2577,18 @@ namespace Veng::Renderer
                         static_cast<usize>(frameIndex) * m_PunctualRingStride,
                     &punctualBlock, sizeof(PunctualShadowBlock));
 
+        // Read the GPU survivor count the previous Execute wrote into this frame's region
+        // before PrepareDraws zeroes it again — the host-visible count is one frame late, so
+        // it never gates this frame's draw. Only meaningful under the GPU path.
+        if (m_ActiveCull == SceneRendererSettings::CullMode::GPU && m_CullCountBuffer)
+        {
+            const auto* counts = static_cast<const u32*>(m_CullCountBuffer->GetMappedData());
+            m_LastGpuSurvivorCount = counts[frameIndex];
+        }
+
+        // Fill the per-draw DrawData buffer + (GPU) the candidate buffer and submission plan.
+        PrepareDraws(resolvedView, frameIndex);
+
         // Bloom and SSAO imports are appended only when active (they are only declared then).
         vector<RenderGraph::ImportBinding> bindings = {
             {m_AlbedoId, m_AlbedoView}, {m_NormalId, m_NormalView}, {m_OrmId, m_OrmView},
@@ -2158,6 +2618,12 @@ namespace Veng::Renderer
         {
             bindings.push_back({m_HiZChainId.Level(level), m_HiZMips[level]});
         }
+        // The GPU cull arm shares the indirect command buffer between the cull pass and the
+        // geometry pass through this import (the same buffer the cull set binding 2 writes).
+        if (m_ActiveCull == SceneRendererSettings::CullMode::GPU)
+        {
+            bindings.push_back({.Id = m_IndirectId, .Buffer = m_IndirectBuffer});
+        }
         m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
 
         // Capture this frame's camera + matrix for next frame's history comparison and
@@ -2179,9 +2645,37 @@ namespace Veng::Renderer
     {
         return static_cast<u32>(m_Broadphase.GetSubMeshCandidates().size());
     }
+    SceneRendererSettings::CullMode SceneRenderer::GetActiveCullMode() const
+    {
+        return m_ActiveCull;
+    }
+    u32 SceneRenderer::GetLastGpuSurvivorCount() const
+    {
+        return m_LastGpuSurvivorCount;
+    }
+    vector<u32> SceneRenderer::ReadbackGpuSurvivorFlags() const
+    {
+        if (!m_GpuReadbackValid || m_GpuCandidateCount == 0 || !m_IndirectBuffer)
+        {
+            return {};
+        }
+
+        // Download the full indirect buffer and pull each candidate command's instanceCount
+        // from this frame's region; 1 = drawn, 0 = occluded.
+        const vector<u8> bytes = m_IndirectBuffer->Download();
+        const auto* commands = reinterpret_cast<const DrawIndexedIndirectCommand*>(bytes.data());
+        const u32 base = m_GpuReadbackRegion * MaxCullCandidates;
+
+        vector<u32> flags(m_GpuCandidateCount);
+        for (u32 i = 0; i < m_GpuCandidateCount; ++i)
+        {
+            flags[i] = commands[base + i].InstanceCount;
+        }
+        return flags;
+    }
     u32 SceneRenderer::GetLastDrawnCount() const
     {
-        return m_GBufferDrawnCount ? *m_GBufferDrawnCount : 0;
+        return m_LastDrawnCount;
     }
     bool SceneRenderer::DidBroadphaseRebuildLastFrame() const
     {

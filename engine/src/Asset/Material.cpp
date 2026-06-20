@@ -101,11 +101,23 @@ namespace Veng
             cmd.BindPipeline(m_Pipeline);
         }
 
-        // Fold the current frame's region base into the pushed selector so the
-        // shader's index * MaterialParamStride load lands in this frame's copy of
-        // the ring-buffered material buffer.
-        const u32 selector = m_Context.GetBindlessRegistry().GetCurrentFrameBase() + m_Handle.Index;
-        cmd.PushConstants(selector, m_SelectorOffset);
+        // A Surface material reads its index from the per-draw DrawData SSBO (the
+        // geometry pass writes GetMaterialSelector() into each record), so it pushes
+        // nothing. A PostProcess material pushes the frame-folded selector at offset 0.
+        if (m_SelectorOffset == NoSelectorPush)
+        {
+            return;
+        }
+
+        cmd.PushConstants(GetMaterialSelector(), m_SelectorOffset);
+    }
+
+    u32 Material::GetMaterialSelector() const
+    {
+        // Fold the current frame's region base into the selector so the shader's
+        // index * MaterialParamStride load lands in this frame's copy of the
+        // ring-buffered material buffer.
+        return m_Context.GetBindlessRegistry().GetCurrentFrameBase() + m_Handle.Index;
     }
 
     const MaterialField* Material::FindField(std::string_view name) const

@@ -45,6 +45,38 @@ MaterialParams LoadMaterialParams(uint index)
     return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
 }
 
+// Per-draw record indexed by the candidate id, std430-identical to the engine's
+// DrawData (Veng/Renderer/SceneRenderer's GpuDrawData). The geometry pass uploads
+// one record per per-submesh candidate into a ring-buffered SSBO; the vertex stage
+// reads its record by the candidate id carried in the instance-rate attribute,
+// replacing the per-draw MVP / NormalMatrix / MaterialIndex push constants. Both
+// CullMode::CPU (a direct DrawIndexed per submesh) and CullMode::GPU (one
+// DrawIndexedIndirect per mesh group) drive the same buffer, differing only in
+// submission and in who writes the indirect command's instanceCount.
+struct DrawData
+{
+    float4x4 World;          // per-instance model matrix (replaces the MVP push)
+    float4   NormalColumn0;  // inverse-transpose of World's upper 3x3, column 0 (xyz; w pad)
+    float4   NormalColumn1;  // column 1
+    float4   NormalColumn2;  // column 2
+    uint     MaterialIndex;  // GetCurrentFrameBase()-folded material selector
+    uint     Pad0;
+    uint     Pad1;
+    uint     Pad2;
+};
+
+// The per-draw data SSBO (set 1, binding 0). Off the set-0 bindless registry — a
+// closed producer→consumer per-frame buffer needs no global registration, and a
+// dedicated set sidesteps the set-0 storage-buffer argument-buffer path on MoltenVK.
+// Ring-buffered for frames-in-flight; the current frame's region base is folded into
+// the candidate id by the pushed FrameBase, exactly as the material block selector is.
+[[vk::binding(0, 1)]] StructuredBuffer<DrawData> g_DrawData;
+
+DrawData LoadDrawData(uint candidateId)
+{
+    return g_DrawData[g_PC.FrameBase + candidateId];
+}
+
 // The deferred opaque g-buffer outputs the material fragment stage writes. The
 // metallic-roughness channel set, funnelled through one struct: albedo into G0
 // (sRGB target, the sampler decodes to linear on read), the world-space normal
@@ -56,22 +88,17 @@ struct GBufferOutput
     float4 ORM    : SV_Target2;  // R occlusion, G roughness, B metallic, A emissive strength
 };
 
-// One shared push-constant block, used by both stages. The vertex stage reads
-// MVP (offset 0) and NormalMatrix (offset 80, the inverse-transpose of the
-// model's upper 3x3 that carries the normal to world space); the fragment stage
-// reads MaterialIndex (the per-draw selector Material::Bind pushes at offset 64
-// = sizeof(float4x4)). MaterialIndex sits between MVP and NormalMatrix, padded
-// to NormalMatrix's 16-byte alignment. The block is exactly 128 bytes — the
-// guaranteed-minimum push-constant size. Matrices are column-major (the cooker
-// compiles Slang column-major), matching the glm matrices veng pushes verbatim.
+// The shared surface push block, used by the vertex stage only. FrameBase folds the
+// ring-buffered draw-data region into the candidate id (the current frame's region
+// base); ViewConstantsIndex selects the per-frame set-0 view-constants region the
+// vertex stage multiplies by. Both replace the former per-draw MVP / NormalMatrix /
+// MaterialIndex pushes — the per-draw values now live in g_DrawData, indexed by the
+// candidate id. Matrices are column-major (the cooker compiles Slang column-major),
+// matching the glm matrices veng uploads verbatim.
 struct PushConstants
 {
-    float4x4 MVP;          // offset 0
-    uint MaterialIndex;    // offset 64
-    uint Pad0;             // offset 68 — three scalar pads (4-byte aligned, no
-    uint Pad1;             // offset 72   vector alignment bump) carry the cursor
-    uint Pad2;             // offset 76   to NormalMatrix's 16-byte boundary at 80
-    float3x3 NormalMatrix; // offset 80 (48 bytes) — ends at 128
+    uint FrameBase;          // current frame's g_DrawData region base
+    uint ViewConstantsIndex; // current frame's view-constants region
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;

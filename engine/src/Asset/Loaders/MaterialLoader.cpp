@@ -22,12 +22,11 @@ namespace Veng
 {
     namespace
     {
-        // The push-constant offset of the per-draw materialIndex selector, keyed
-        // on domain. A Surface push block is MVP (offset 0, 64 bytes) then the
-        // selector, so the selector sits at 64. A PostProcess shader has no
-        // geometry block, so its selector sits at 0 — a 4-byte push range, no dead
-        // MVP padding. The pipeline-layout guard checks the domain's offset.
-        constexpr u32 SurfaceSelectorPushOffset = 64;
+        // The push-constant offset of the per-draw materialIndex selector, keyed on
+        // domain. A PostProcess shader pushes its selector at offset 0 — a 4-byte
+        // push range. A Surface material reads its material index from the per-draw
+        // DrawData SSBO (indexed by the candidate id), not a push, so it carries the
+        // Material::NoSelectorPush sentinel and pushes nothing.
         constexpr u32 PostProcessSelectorPushOffset = 0;
 
         u32 SelectorPushOffsetFor(MaterialDomain domain)
@@ -35,7 +34,7 @@ namespace Veng
             switch (domain)
             {
             case MaterialDomain::Surface:
-                return SurfaceSelectorPushOffset;
+                return Material::NoSelectorPush;
             case MaterialDomain::PostProcess:
                 return PostProcessSelectorPushOffset;
             }
@@ -72,21 +71,41 @@ namespace Veng
             const Renderer::ShaderInterface& vsInterface = vsAsset.Interface;
             const Renderer::ShaderInterface& fsInterface = fsAsset.Interface;
 
+            // PipelineLayout::Create prepends the bindless set-0 layout itself, so the
+            // author-declared sets start at index 0 here and land at set 1+ in the layout.
             vector<Ref<Renderer::DescriptorSetLayout>> descLayouts;
-            descLayouts.push_back(context.GetBindlessRegistry().GetSet0Layout());
             {
-                const vector<Ref<Renderer::DescriptorSetLayout>> fsLayouts =
-                    fsInterface.BuildDescriptorSetLayouts(context,
-                                                          fmt::format("Material{}", id.Value));
-                for (auto& l : fsLayouts)
+                // Merge the vertex and fragment reflected bindings into one interface,
+                // unioning by (Set, Binding) and OR-ing the stages — a binding both stages
+                // declare (the per-draw DrawData SSBO the surface vertex stage reads, also
+                // pulled into the fragment's reflection through the shared header) must be a
+                // single set-1 layout, not two clashing sets. Then build the set layouts once.
+                Renderer::ShaderInterface merged;
+                merged.Bindings = vsInterface.Bindings;
+                for (const Renderer::ShaderBinding& incoming : fsInterface.Bindings)
                 {
-                    descLayouts.push_back(l);
+                    Renderer::ShaderBinding* existing = nullptr;
+                    for (Renderer::ShaderBinding& b : merged.Bindings)
+                    {
+                        if (b.Set == incoming.Set && b.Binding == incoming.Binding)
+                        {
+                            existing = &b;
+                            break;
+                        }
+                    }
+                    if (existing != nullptr)
+                    {
+                        existing->Stages = existing->Stages | incoming.Stages;
+                    }
+                    else
+                    {
+                        merged.Bindings.push_back(incoming);
+                    }
                 }
 
-                const vector<Ref<Renderer::DescriptorSetLayout>> vsLayouts =
-                    vsInterface.BuildDescriptorSetLayouts(context,
-                                                          fmt::format("Material{}", id.Value));
-                for (auto& l : vsLayouts)
+                const vector<Ref<Renderer::DescriptorSetLayout>> setLayouts =
+                    merged.BuildDescriptorSetLayouts(context, fmt::format("Material{}", id.Value));
+                for (auto& l : setLayouts)
                 {
                     descLayouts.push_back(l);
                 }
@@ -118,24 +137,29 @@ namespace Veng
                 mergeRange(r);
             }
 
-            // The selector must be covered by a declared push range, at the
-            // domain's offset (Surface → 64, PostProcess → 0).
+            // A PostProcess material's selector must be covered by a declared push range
+            // at offset 0. A Surface material pushes no selector (it reads its index from
+            // the per-draw DrawData SSBO), so there is nothing to check.
             const u32 selectorOffset = SelectorPushOffsetFor(domain);
-            bool selectorCovered = false;
-            for (const auto& r : mergedRanges)
+            if (selectorOffset != Material::NoSelectorPush)
             {
-                if (r.Offset <= selectorOffset && r.Offset + r.Size >= selectorOffset + sizeof(u32))
+                bool selectorCovered = false;
+                for (const auto& r : mergedRanges)
                 {
-                    selectorCovered = true;
-                    break;
+                    if (r.Offset <= selectorOffset &&
+                        r.Offset + r.Size >= selectorOffset + sizeof(u32))
+                    {
+                        selectorCovered = true;
+                        break;
+                    }
                 }
-            }
-            if (!selectorCovered)
-            {
-                return std::unexpected(
-                    fmt::format("material: no merged push-constant range covers [{}+4) — "
-                                "the shader does not declare the expected materialIndex selector",
-                                selectorOffset));
+                if (!selectorCovered)
+                {
+                    return std::unexpected(fmt::format(
+                        "material: no merged push-constant range covers [{}+4) — "
+                        "the shader does not declare the expected materialIndex selector",
+                        selectorOffset));
+                }
             }
 
             return Renderer::PipelineLayout::Create(
@@ -184,6 +208,9 @@ namespace Veng
                         },
                     .DepthAttachmentFormat = Renderer::GBuffer::DepthFormat,
                     .VertexBufferLayout = vertexBufferLayout,
+                    // The surface vertex stage reads the per-draw candidate id as an
+                    // instance-rate attribute on binding 1 (fetched at firstInstance).
+                    .InstanceCandidateId = true,
                     .PipelineLayout = layout,
                     .ShaderStages =
                         {
