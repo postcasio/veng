@@ -27,11 +27,17 @@ namespace Veng::Cook
         optional<AssetType> AssetTypeForHandleField(TypeId fieldType)
         {
             if (fieldType == TypeIdOf<AssetHandle<Texture>>())
+            {
                 return AssetType::Texture;
+            }
             if (fieldType == TypeIdOf<AssetHandle<Mesh>>())
+            {
                 return AssetType::Mesh;
+            }
             if (fieldType == TypeIdOf<AssetHandle<Material>>())
+            {
                 return AssetType::Material;
+            }
             return std::nullopt;
         }
 
@@ -67,7 +73,9 @@ namespace Veng::Cook
             case FieldClass::Scalar:
             {
                 if (!value.is_number() && !value.is_boolean())
+                {
                     return err("expected a number or boolean");
+                }
 
                 // Scalars are bool/f32/i32/u32/u64; coerce to the field's
                 // exact byte width via its leaf TypeId.
@@ -75,7 +83,9 @@ namespace Veng::Cook
                 if (t == TypeIdOf<bool>())
                 {
                     if (!value.is_boolean() && !value.is_number())
+                    {
                         return err("expected a boolean");
+                    }
                     const bool v =
                         value.is_boolean() ? value.get<bool>() : (value.get<f64>() != 0.0);
                     std::memcpy(fieldPtr, &v, sizeof(v));
@@ -126,7 +136,9 @@ namespace Veng::Cook
                 for (const json& elem : value)
                 {
                     if (!elem.is_number())
+                    {
                         return err("array contains a non-number element");
+                    }
                     floats.push_back(elem.get<f32>());
                 }
                 std::memcpy(fieldPtr, floats.data(), arity * sizeof(f32));
@@ -136,7 +148,9 @@ namespace Veng::Cook
             case FieldClass::String:
             {
                 if (!value.is_string())
+                {
                     return err("expected a string");
+                }
                 *static_cast<string*>(fieldPtr) = value.get<string>();
                 return {};
             }
@@ -144,7 +158,9 @@ namespace Veng::Cook
             case FieldClass::AssetHandle:
             {
                 if (!value.is_number_unsigned())
+                {
                     return err("expected an unsigned integer AssetId");
+                }
 
                 const u64 id = value.get<u64>();
 
@@ -173,7 +189,9 @@ namespace Veng::Cook
             case FieldClass::Enum:
             {
                 if (!value.is_number_integer())
+                {
                     return err("expected an integer enum value");
+                }
 
                 const usize size = registry.Info(field.Type).Size;
                 const i64 raw = value.get<i64>();
@@ -195,7 +213,9 @@ namespace Veng::Cook
                 }
 
                 if (!value.is_number_unsigned())
+                {
                     return err("expected an unsigned entity index or null");
+                }
 
                 const u64 index = value.get<u64>();
                 if (index >= entityCount)
@@ -215,7 +235,9 @@ namespace Veng::Cook
             case FieldClass::Struct:
             {
                 if (!value.is_object())
+                {
                     return err("expected an object");
+                }
 
                 const TypeInfo& nested = registry.Info(field.Type);
                 for (auto it = value.begin(); it != value.end(); ++it)
@@ -239,7 +261,9 @@ namespace Veng::Cook
                         BindField(fieldPtr, *match, it.value(), registry, entityCount, resolve,
                                   file, entityIndex, entityName, typeName);
                     if (!bound)
+                    {
                         return bound;
+                    }
                 }
                 return {};
             }
@@ -261,31 +285,41 @@ namespace Veng::Cook
         // --- 0. The reflected registry (--module) is required ---
 
         if (context.Types == nullptr)
+        {
             return std::unexpected("prefab cooking requires --module");
+        }
 
         const TypeRegistry& registry = *context.Types;
 
         // --- 1. Read + parse the external *.prefab.json ---
 
         if (!entry.contains("source") || !entry["source"].is_string())
+        {
             return std::unexpected("prefab importer: missing or invalid 'source'");
+        }
 
         const path prefabPath = context.PackDir / entry["source"].get<string>();
         const string file = prefabPath.string();
 
-        std::ifstream prefabFile(prefabPath, std::ios::binary);
+        const std::ifstream prefabFile(prefabPath, std::ios::binary);
         if (!prefabFile)
+        {
             return std::unexpected(fmt::format("prefab importer: failed to open '{}'", file));
+        }
 
         std::ostringstream prefabStream;
         prefabStream << prefabFile.rdbuf();
         const json prefab = json::parse(prefabStream.str(), nullptr, false);
         if (prefab.is_discarded() || !prefab.is_object())
+        {
             return std::unexpected(fmt::format("prefab importer: '{}': invalid JSON", file));
+        }
 
         if (!prefab.contains("entities") || !prefab["entities"].is_array())
+        {
             return std::unexpected(
                 fmt::format("prefab importer: '{}': missing or invalid 'entities' array", file));
+        }
 
         const json& entities = prefab["entities"];
         const usize entityCount = entities.size();
@@ -314,7 +348,9 @@ namespace Veng::Cook
 
             string entityName = "<unnamed>";
             if (entityJson.contains("name") && entityJson["name"].is_string())
+            {
                 entityName = entityJson["name"].get<string>();
+            }
 
             CookedPrefabEntity cookedEntity{};
             cookedEntity.FirstComponent = static_cast<u32>(componentTable.size());
@@ -370,7 +406,9 @@ namespace Veng::Cook
 
                     const TypeInfo& typeInfo = registry.Info(typeId);
                     if (typeName.empty())
+                    {
                         typeName = typeInfo.Name;
+                    }
 
                     if (!fieldsJson.is_object())
                     {
@@ -409,7 +447,9 @@ namespace Veng::Cook
                                                entityCount, resolve, file, entityIndex, entityName,
                                                typeName);
                         if (!bindResult)
+                        {
                             break;
+                        }
                     }
 
                     // --- 2d. Serialize via WriteFields, destruct the instance ---
@@ -428,7 +468,9 @@ namespace Veng::Cook
                     typeInfo.Destruct(instance.data());
 
                     if (!bindResult)
+                    {
                         return std::unexpected(bindResult.error());
+                    }
                 }
             }
 
@@ -449,9 +491,13 @@ namespace Veng::Cook
 
         Append(blob, header);
         for (const CookedPrefabEntity& e : entityTable)
+        {
             Append(blob, e);
+        }
         for (const CookedPrefabComponent& c : componentTable)
+        {
             Append(blob, c);
+        }
         blob.insert(blob.end(), records.begin(), records.end());
 
         return blob;

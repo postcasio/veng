@@ -24,7 +24,7 @@ namespace Veng
         [[nodiscard]] static AABB Empty()
         {
             constexpr f32 inf = std::numeric_limits<f32>::infinity();
-            return AABB{vec3(inf), vec3(-inf)};
+            return AABB{.Min = vec3(inf), .Max = vec3(-inf)};
         }
 
         /// @brief Returns true when any axis has Min > Max — the Empty() box and any box never grown.

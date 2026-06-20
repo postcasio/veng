@@ -25,7 +25,7 @@ namespace
 {
     AABB BoxAt(const vec3& center, f32 halfExtent)
     {
-        return AABB{center - vec3(halfExtent), center + vec3(halfExtent)};
+        return AABB{.Min = center - vec3(halfExtent), .Max = center + vec3(halfExtent)};
     }
 
     // The exact set Query must reproduce: every leaf whose tight box passes the
@@ -34,9 +34,13 @@ namespace
     {
         vector<u32> ids;
         for (const BVH::Leaf& leaf : leaves)
+        {
             if (Intersects(frustum, leaf.Box))
+            {
                 ids.push_back(leaf.Id);
-        std::sort(ids.begin(), ids.end());
+            }
+        }
+        std::ranges::sort(ids);
         return ids;
     }
 
@@ -44,7 +48,7 @@ namespace
     {
         vector<u32> ids;
         bvh.Query(frustum, ids);
-        std::sort(ids.begin(), ids.end());
+        std::ranges::sort(ids);
         return ids;
     }
 
@@ -75,7 +79,9 @@ namespace
         // children's, transitively the whole set).
         AABB expected = AABB::Empty();
         for (const BVH::Leaf& leaf : leaves)
+        {
             expected.Expand(leaf.Box);
+        }
         const AABB root = bvh.GetRootBounds();
         CHECK(root.Min.x <= doctest::Approx(expected.Min.x));
         CHECK(root.Min.y <= doctest::Approx(expected.Min.y));
@@ -88,7 +94,9 @@ namespace
         // bounded by N - 1 (a fully-degenerate chain).
         const i32 height = bvh.GetHeight();
         if (leaves.size() == 1)
+        {
             CHECK(height == 0);
+        }
         else
         {
             CHECK(height >= 1);
@@ -107,12 +115,14 @@ namespace
         // span the world z extent under the look-down-(-z) convention.
         vector<u32> reached;
         bvh.Query(Frustum::FromViewProjection(wide), reached);
-        std::sort(reached.begin(), reached.end());
+        std::ranges::sort(reached);
 
         vector<u32> all;
         for (const BVH::Leaf& leaf : leaves)
+        {
             all.push_back(leaf.Id);
-        std::sort(all.begin(), all.end());
+        }
+        std::ranges::sort(all);
 
         CHECK(reached == all); // each leaf exactly once — no dup, no drop
     }
@@ -144,7 +154,9 @@ TEST_CASE("BVH equivalence: Query == linear tight scan over randomized builds an
             const vec3 eye(pos(rng), pos(rng), pos(rng));
             const vec3 target(pos(rng), pos(rng), pos(rng));
             if (glm::distance(eye, target) < 1.0f)
+            {
                 continue; // a zero look vector is undefined; skip it
+            }
             frustums.push_back(
                 Frustum::FromViewProjection(MakeCameraAt(eye, target).ViewProjection()));
         }
@@ -167,15 +179,19 @@ TEST_CASE("BVH equivalence: Query == linear tight scan over randomized builds an
         vector<BVH::Leaf> leaves;
         leaves.reserve(static_cast<usize>(count));
         for (i32 i = 0; i < count; ++i)
-            leaves.push_back(BVH::Leaf{BoxAt(vec3(pos(rng), pos(rng), pos(rng)), half(rng)),
-                                       static_cast<u32>(i)});
+        {
+            leaves.push_back(BVH::Leaf{.Box = BoxAt(vec3(pos(rng), pos(rng), pos(rng)), half(rng)),
+                                       .Id = static_cast<u32>(i)});
+        }
 
         BVH bvh;
         bvh.Build(leaves);
         CheckValidity(bvh, leaves);
 
         for (const Frustum& frustum : MakeFrustums())
+        {
             CHECK(SortedQuery(bvh, frustum) == LinearScan(leaves, frustum));
+        }
     }
 }
 
@@ -199,9 +215,12 @@ TEST_CASE("BVH all-in / all-out / empty / single")
     // A clustered set so a single frustum can contain or miss them all.
     vector<BVH::Leaf> leaves;
     for (i32 i = 0; i < 30; ++i)
+    {
         leaves.push_back(BVH::Leaf{
-            BoxAt(vec3(static_cast<f32>(i % 5), static_cast<f32>((i / 5) % 5), -10.0f), 0.25f),
-            static_cast<u32>(i)});
+            .Box =
+                BoxAt(vec3(static_cast<f32>(i % 5), static_cast<f32>((i / 5) % 5), -10.0f), 0.25f),
+            .Id = static_cast<u32>(i)});
+    }
     BVH bvh;
     bvh.Build(leaves);
     CheckValidity(bvh, leaves);
@@ -221,7 +240,8 @@ TEST_CASE("BVH all-in / all-out / empty / single")
     // or just outside it (the boundary either way).
     {
         BVH one;
-        const vector<BVH::Leaf> single{BVH::Leaf{BoxAt(vec3(0.0f, 0.0f, -10.0f), 0.5f), 7u}};
+        const vector<BVH::Leaf> single{
+            BVH::Leaf{.Box = BoxAt(vec3(0.0f, 0.0f, -10.0f), 0.5f), .Id = 7u}};
         one.Build(single);
         CheckValidity(one, single);
         CHECK(one.GetHeight() == 0);
@@ -243,13 +263,15 @@ TEST_CASE("BVH balance: height stays within a small factor of log2(leaf count)")
     std::uniform_real_distribution<f32> pos(-200.0f, 200.0f);
     std::uniform_real_distribution<f32> half(0.1f, 2.0f);
 
-    for (i32 count : {64, 256, 1024, 4096})
+    for (const i32 count : {64, 256, 1024, 4096})
     {
         vector<BVH::Leaf> leaves;
         leaves.reserve(static_cast<usize>(count));
         for (i32 i = 0; i < count; ++i)
-            leaves.push_back(BVH::Leaf{BoxAt(vec3(pos(rng), pos(rng), pos(rng)), half(rng)),
-                                       static_cast<u32>(i)});
+        {
+            leaves.push_back(BVH::Leaf{.Box = BoxAt(vec3(pos(rng), pos(rng), pos(rng)), half(rng)),
+                                       .Id = static_cast<u32>(i)});
+        }
 
         BVH bvh;
         bvh.Build(leaves);

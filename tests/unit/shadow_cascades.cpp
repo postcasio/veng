@@ -218,7 +218,7 @@ TEST_CASE("ComputeCascades: scene bound extends the near plane, leaving XY untou
 
     // A scene bound tall along the light axis (a tower of casters above the
     // ground) extends the cascade near plane toward the light.
-    const AABB sceneBounds{vec3(-20.0f, -1.0f, -20.0f), vec3(20.0f, 30.0f, 20.0f)};
+    const AABB sceneBounds{.Min = vec3(-20.0f, -1.0f, -20.0f), .Max = vec3(20.0f, 30.0f, 20.0f)};
 
     const CascadeData withBounds = ComputeCascades(camera, lightDir, sceneBounds, settings);
     const CascadeData noBounds = ComputeCascades(camera, lightDir, AABB::Empty(), settings);

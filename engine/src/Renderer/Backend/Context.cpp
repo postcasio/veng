@@ -67,11 +67,11 @@ namespace Veng::Renderer
 
     bool Context::Native::IsDeviceSuitable(vk::PhysicalDevice device)
     {
-        QueueFamilyIndices indices = FindQueueFamilies(device);
+        const QueueFamilyIndices indices = FindQueueFamilies(device);
 
         auto supportedFeatures = device.getFeatures();
 
-        bool extensionsSupported = CheckDeviceExtensionSupport(device);
+        const bool extensionsSupported = CheckDeviceExtensionSupport(device);
 
         // Headless needs neither a present queue nor an adequate swapchain.
         if (Headless)
@@ -83,7 +83,7 @@ namespace Veng::Renderer
         bool swapChainAdequate = false;
         if (extensionsSupported)
         {
-            SwapChainSupportDetails swapChainSupport = QuerySwapChainSupport(device);
+            const SwapChainSupportDetails swapChainSupport = QuerySwapChainSupport(device);
             swapChainAdequate =
                 !swapChainSupport.Formats.empty() && !swapChainSupport.PresentModes.empty();
         }
@@ -207,13 +207,13 @@ namespace Veng::Renderer
             }
         }
 
-        vk::PipelineCacheCreateInfo cacheInfo{
+        const vk::PipelineCacheCreateInfo cacheInfo{
             .initialDataSize = initial.size(),
             .pInitialData = initial.empty() ? nullptr : initial.data(),
         };
         m_Native->PipelineCache = m_Native->Device.createPipelineCache(cacheInfo).value;
 
-        VmaAllocatorCreateInfo allocatorInfo{
+        const VmaAllocatorCreateInfo allocatorInfo{
             .physicalDevice = m_Native->PhysicalDevice,
             .device = m_Native->Device,
             .instance = m_Native->Instance,
@@ -447,7 +447,7 @@ namespace Veng::Renderer
     void Context::Native::LockedSubmit(vk::Queue queue, const vk::SubmitInfo& submitInfo,
                                        vk::Fence fence)
     {
-        std::lock_guard lock(SubmitMutex);
+        const std::scoped_lock lock(SubmitMutex);
         VK_ASSERT(queue.submit(1, &submitInfo, fence), "failed to submit to queue!");
     }
 
@@ -486,7 +486,7 @@ namespace Veng::Renderer
         // Allocate the value, build the signal-info, and submit all under one lock:
         // a timeline must signal strictly increasing values, so value allocation and
         // submit must be atomic — two workers racing could submit a lower value second.
-        std::lock_guard lock(m_Native->SubmitMutex);
+        const std::scoped_lock lock(m_Native->SubmitMutex);
 
         const u64 value = ++m_Native->TransferTimelineValue;
 
@@ -787,20 +787,20 @@ namespace Veng::Renderer
         // dedicated transfer family on a discrete GPU.
         uniqueQueueFamilies.insert(indices.TransferFamily.value());
 
-        f32 queuePriority = 1.0f;
-        for (u32 queueFamily : uniqueQueueFamilies)
+        const f32 queuePriority = 1.0f;
+        for (const u32 queueFamily : uniqueQueueFamilies)
         {
-            vk::DeviceQueueCreateInfo queueCreateInfo{.queueFamilyIndex = queueFamily,
-                                                      .queueCount = 1,
-                                                      .pQueuePriorities = &queuePriority};
+            const vk::DeviceQueueCreateInfo queueCreateInfo{.queueFamilyIndex = queueFamily,
+                                                            .queueCount = 1,
+                                                            .pQueuePriorities = &queuePriority};
 
             queueCreateInfos.push_back(queueCreateInfo);
         }
 
-        vk::PhysicalDeviceFeatures deviceFeatures{.sampleRateShading = VK_TRUE,
-                                                  .samplerAnisotropy = VK_TRUE,
-                                                  .shaderSampledImageArrayDynamicIndexing =
-                                                      VK_TRUE};
+        const vk::PhysicalDeviceFeatures deviceFeatures{.sampleRateShading = VK_TRUE,
+                                                        .samplerAnisotropy = VK_TRUE,
+                                                        .shaderSampledImageArrayDynamicIndexing =
+                                                            VK_TRUE};
 
         auto deviceExtensions = DeviceExtensions;
 
@@ -838,7 +838,7 @@ namespace Veng::Renderer
             .shaderOutputLayer = vk::True,
         };
 
-        vk::DeviceCreateInfo deviceCreateInfo{
+        const vk::DeviceCreateInfo deviceCreateInfo{
             .pNext = &vulkan12Features,
             .queueCreateInfoCount = static_cast<u32>(queueCreateInfos.size()),
             .pQueueCreateInfos = queueCreateInfos.data(),
@@ -876,57 +876,57 @@ namespace Veng::Renderer
     // the bin vectors' reallocation, or the transfer-list drain.
     void Context::Native::Retire(vk::Buffer buffer, VmaAllocation allocation)
     {
-        std::lock_guard lock(RetireMutex);
+        const std::scoped_lock lock(RetireMutex);
         CurrentRetireBin().Buffers.emplace_back(buffer, allocation);
     }
 
     void Context::Native::Retire(vk::Image image, VmaAllocation allocation)
     {
-        std::lock_guard lock(RetireMutex);
+        const std::scoped_lock lock(RetireMutex);
         CurrentRetireBin().Images.emplace_back(image, allocation);
     }
 
     void Context::Native::Retire(vk::ImageView imageView)
     {
-        std::lock_guard lock(RetireMutex);
+        const std::scoped_lock lock(RetireMutex);
         CurrentRetireBin().ImageViews.push_back(imageView);
     }
     void Context::Native::Retire(vk::Sampler sampler)
     {
-        std::lock_guard lock(RetireMutex);
+        const std::scoped_lock lock(RetireMutex);
         CurrentRetireBin().Samplers.push_back(sampler);
     }
     void Context::Native::Retire(vk::ShaderModule shaderModule)
     {
-        std::lock_guard lock(RetireMutex);
+        const std::scoped_lock lock(RetireMutex);
         CurrentRetireBin().ShaderModules.push_back(shaderModule);
     }
     void Context::Native::Retire(vk::Pipeline pipeline)
     {
-        std::lock_guard lock(RetireMutex);
+        const std::scoped_lock lock(RetireMutex);
         CurrentRetireBin().Pipelines.push_back(pipeline);
     }
     void Context::Native::Retire(vk::PipelineLayout pipelineLayout)
     {
-        std::lock_guard lock(RetireMutex);
+        const std::scoped_lock lock(RetireMutex);
         CurrentRetireBin().PipelineLayouts.push_back(pipelineLayout);
     }
     void Context::Native::Retire(vk::DescriptorSet descriptorSet)
     {
-        std::lock_guard lock(RetireMutex);
+        const std::scoped_lock lock(RetireMutex);
         CurrentRetireBin().DescriptorSets.push_back(descriptorSet);
     }
 
     void Context::Native::RetireOnTransfer(vk::Buffer buffer, VmaAllocation allocation,
                                            u64 timelineValue)
     {
-        std::lock_guard lock(RetireMutex);
+        const std::scoped_lock lock(RetireMutex);
         TransferRetireList.emplace_back(buffer, allocation, timelineValue);
     }
 
     void Context::Native::DrainTransferRetireList()
     {
-        std::lock_guard lock(RetireMutex);
+        const std::scoped_lock lock(RetireMutex);
 
         // Hold the lock across the GetValue() read and the erase so a concurrent
         // RetireOnTransfer cannot append between them and be missed or double-freed.
@@ -947,29 +947,45 @@ namespace Veng::Renderer
 
     void Context::Native::DrainRetireBin(RetireBin& bin)
     {
-        std::lock_guard lock(RetireMutex);
+        const std::scoped_lock lock(RetireMutex);
 
         // Destroy dependents before the objects they reference: descriptor sets
         // first, then views, then the images/buffers backing them. Everything in
         // the bin is already GPU-idle.
         for (auto descriptorSet : bin.DescriptorSets)
+        {
             VK_ASSERT(
                 Device.freeDescriptorSets(DescriptorPool->GetVkDescriptorPool(), descriptorSet),
                 "failed to free descriptor set!");
+        }
         for (auto imageView : bin.ImageViews)
+        {
             Device.destroyImageView(imageView);
+        }
         for (auto& [image, allocation] : bin.Images)
+        {
             vmaDestroyImage(Allocator, image, allocation);
+        }
         for (auto& [buffer, allocation] : bin.Buffers)
+        {
             vmaDestroyBuffer(Allocator, buffer, allocation);
+        }
         for (auto pipeline : bin.Pipelines)
+        {
             Device.destroyPipeline(pipeline);
+        }
         for (auto pipelineLayout : bin.PipelineLayouts)
+        {
             Device.destroyPipelineLayout(pipelineLayout);
+        }
         for (auto sampler : bin.Samplers)
+        {
             Device.destroySampler(sampler);
+        }
         for (auto shaderModule : bin.ShaderModules)
+        {
             Device.destroyShaderModule(shaderModule);
+        }
 
         bin = {};
     }
@@ -977,12 +993,14 @@ namespace Veng::Renderer
     void Context::Native::DrainAllRetireBins()
     {
         for (auto& bin : RetireBins)
+        {
             DrainRetireBin(bin);
+        }
     }
 
     void Context::AddFrameTransferWait(const TimelineSemaphore& timeline, const u64 value)
     {
-        std::lock_guard lock(m_Native->SubmitMutex);
+        const std::scoped_lock lock(m_Native->SubmitMutex);
         m_Native->PendingFrameTransferWaits.emplace_back(timeline.GetNative().Semaphore, value);
     }
 
@@ -997,12 +1015,12 @@ namespace Veng::Renderer
         vector<vk::PipelineStageFlags> waitStages;
         vector<u64> waitValues;
         {
-            std::lock_guard lock(m_Native->SubmitMutex);
+            const std::scoped_lock lock(m_Native->SubmitMutex);
             for (const auto& [semaphore, value] : m_Native->PendingFrameTransferWaits)
             {
                 waitSemaphores.push_back(semaphore);
                 // Sample an async-uploaded resource at the fragment-shader stage.
-                waitStages.push_back(vk::PipelineStageFlagBits::eFragmentShader);
+                waitStages.emplace_back(vk::PipelineStageFlagBits::eFragmentShader);
                 waitValues.push_back(value);
             }
             m_Native->PendingFrameTransferWaits.clear();
@@ -1093,11 +1111,11 @@ namespace Veng::Renderer
         auto swapChain = m_Native->SwapChain->GetVkSwapChain();
         auto imageIndex = m_Native->SwapChain->GetCurrentImageIndex();
 
-        vk::PresentInfoKHR presentInfo{.waitSemaphoreCount = 1,
-                                       .pWaitSemaphores = &renderFinishedSemaphore,
-                                       .swapchainCount = 1,
-                                       .pSwapchains = &swapChain,
-                                       .pImageIndices = &imageIndex};
+        const vk::PresentInfoKHR presentInfo{.waitSemaphoreCount = 1,
+                                             .pWaitSemaphores = &renderFinishedSemaphore,
+                                             .swapchainCount = 1,
+                                             .pSwapchains = &swapChain,
+                                             .pImageIndices = &imageIndex};
 
         auto result = m_Native->PresentQueue.presentKHR(presentInfo);
 

@@ -30,7 +30,7 @@ namespace Veng
         bool operator==(const Entity&) const = default;
     };
 
-    inline const Entity Entity::Null = Entity{Entity::InvalidIndex, 0};
+    inline const Entity Entity::Null = Entity{.Index = Entity::InvalidIndex, .Generation = 0};
 }
 
 /// @brief std::hash specialization for Veng::Entity, keyed on the slot index.

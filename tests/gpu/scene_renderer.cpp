@@ -138,7 +138,7 @@ namespace
                         .Resource = outputId,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
-                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
                     })
                     .Sample(sourceId)
                     .Execute(
@@ -157,8 +157,8 @@ namespace
                         });
 
                 const RenderGraph::ImportBinding bindings[] = {
-                    {sourceId, output},
-                    {outputId, targetView},
+                    {.Id = sourceId, .View = output},
+                    {.Id = outputId, .View = targetView},
                 };
                 graph.Compile()->Execute(cmd, bindings);
             });
@@ -474,8 +474,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         const Frustum cameraFrustum = Frustum::FromViewProjection(camera.ViewProjection());
         u32 linearKept = 0;
         for (const VisibleMesh& item : gathered)
+        {
             if (Intersects(cameraFrustum, item.WorldBounds))
+            {
                 ++linearKept;
+            }
+        }
 
         CHECK(renderer->GetLastVisibleCount() == 4);
         CHECK(renderer->GetLastDrawnCount() == linearKept);
@@ -595,8 +599,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         REQUIRE(gathered.size() == 2);
         AABB casterBounds = AABB::Empty();
         for (const VisibleMesh& item : gathered)
+        {
             if (item.Owner == casterEntity)
+            {
                 casterBounds = item.WorldBounds;
+            }
+        }
         REQUIRE_FALSE(casterBounds.IsEmpty());
         CHECK_FALSE(Intersects(cameraFrustum, casterBounds));
 
@@ -611,7 +619,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         {
             const Frustum cascadeFrustum = Frustum::FromViewProjection(cascades.ViewProj[k]);
             if (Intersects(cascadeFrustum, casterBounds))
+            {
                 keptBySomeCascade = true;
+            }
         }
         CHECK(keptBySomeCascade);
     }
@@ -645,8 +655,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         GatherMeshes(*scene, gathered, sceneBounds);
         AABB farBounds = AABB::Empty();
         for (const VisibleMesh& item : gathered)
+        {
             if (item.Owner == farEntity)
+            {
                 farBounds = item.WorldBounds;
+            }
+        }
         REQUIRE_FALSE(farBounds.IsEmpty());
 
         const CascadeData cascades =
@@ -781,11 +795,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         f64 sum = 0.0;
         for (u32 y = 0; y < extent.y; ++y)
+        {
             for (u32 x = 0; x < extent.x; ++x)
             {
                 const vec3 c = DecodeTexel(pixels, extent.x, x, y);
                 sum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
             }
+        }
         return sum / (static_cast<f64>(extent.x) * extent.y);
     };
 
@@ -1223,7 +1239,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
     };
 
-    Material& mat = const_cast<Material&>(*material->Get());
+    auto& mat = const_cast<Material&>(*material->Get());
 
     // Rough dielectric: roughness 1, metallic 0 — broad, weak specular.
     mat.SetParam("RoughnessFactor", 1.0f);
@@ -1357,7 +1373,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // A smooth metal: a tight, strong specular peak at the aligned N=L=V geometry,
     // driving the center HDR luminance well past the bloom threshold.
-    Material& mat = const_cast<Material&>(*material->Get());
+    auto& mat = const_cast<Material&>(*material->Get());
     mat.SetParam("RoughnessFactor", 0.08f);
     mat.SetParam("MetallicFactor", 1.0f);
 
@@ -1400,16 +1416,20 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         f64 sum = 0.0;
         u32 count = 0;
         for (i32 dy = -24; dy <= 24; ++dy)
+        {
             for (i32 dx = -24; dx <= 24; ++dx)
             {
                 if (std::abs(dx) < 8 && std::abs(dy) < 8)
+                {
                     continue; // skip the saturated core; measure the surrounding halo
+                }
                 const vec3 c =
                     DecodeTexel(pixels, extent.x, static_cast<u32>(static_cast<i32>(cx) + dx),
                                 static_cast<u32>(static_cast<i32>(cy) + dy));
                 sum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
                 ++count;
             }
+        }
         return sum / count;
     };
 
@@ -1584,7 +1604,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // A flat dielectric so the ambient term (which SSAO modulates) is a meaningful
     // fraction of the shading at the contact crease.
-    Material& mat = const_cast<Material&>(*material->Get());
+    auto& mat = const_cast<Material&>(*material->Get());
     mat.SetParam("RoughnessFactor", 1.0f);
     mat.SetParam("MetallicFactor", 0.0f);
 
@@ -1641,12 +1661,14 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         f64 sum = 0.0;
         u32 count = 0;
         for (u32 y = y0; y < y1; ++y)
+        {
             for (u32 x = x0; x < x1; ++x)
             {
                 const vec3 c = DecodeTexel(pixels, extent.x, x, y);
                 sum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
                 ++count;
             }
+        }
         return sum / count;
     };
 
@@ -1901,16 +1923,26 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         const vec3 c = DecodeTexel(pixels, extent.x, x, y);
         if (c.r + c.g + c.b < 0.2f)
+        {
             return -1; // background / unlit
+        }
         // Yellow: red and green both high, blue low.
         if (c.r > 0.6f && c.g > 0.6f && c.b < 0.5f)
+        {
             return 3;
+        }
         if (c.r > c.g && c.r > c.b)
+        {
             return 0; // red
+        }
         if (c.g > c.r && c.g > c.b)
+        {
             return 1; // green
+        }
         if (c.b > c.r && c.b > c.g)
+        {
             return 2; // blue
+        }
         return -1;
     };
 
@@ -1920,19 +1952,25 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         int counts[4] = {0, 0, 0, 0};
         for (u32 y = y0; y < y1; ++y)
+        {
             for (u32 x = extent.x / 4; x < extent.x * 3 / 4; ++x)
             {
                 const int k = CascadeOf(x, y);
                 if (k >= 0 && k < 4)
+                {
                     ++counts[k];
+                }
             }
+        }
         int best = -1, bestCount = 0;
         for (int k = 0; k < 4; ++k)
+        {
             if (counts[k] > bestCount)
             {
                 bestCount = counts[k];
                 best = k;
             }
+        }
         return best;
     };
 
@@ -2021,12 +2059,16 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         u32 lit = 0;
         for (u32 y = 0; y < extent.y; ++y)
+        {
             for (u32 x = 0; x < extent.x; ++x)
             {
                 const vec3 c = DecodeTexel(pixels, extent.x, x, y);
                 if (c.r > 0.01f)
+                {
                     ++lit;
+                }
             }
+        }
         return static_cast<f64>(lit) / (static_cast<f64>(extent.x) * extent.y);
     };
 
@@ -2202,8 +2244,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
         u32 kept = 0;
         for (const VisibleMesh& item : gathered)
+        {
             if (Intersects(spotFrustum, item.WorldBounds))
+            {
                 ++kept;
+            }
+        }
         // Only the near caster survives; the far cube is dropped (outside the cone/range).
         CHECK(kept == 1);
 
@@ -2217,9 +2263,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         for (const VisibleMesh& item : gathered)
         {
             if (item.WorldBounds.Center().x < 30.0f)
+            {
                 nearBounds = item.WorldBounds;
+            }
             else
+            {
                 farBounds = item.WorldBounds;
+            }
         }
         REQUIRE_FALSE(nearBounds.IsEmpty());
         REQUIRE_FALSE(farBounds.IsEmpty());
@@ -2230,9 +2280,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         {
             const Frustum faceFrustum = Frustum::FromViewProjection(pointView.ViewProj[f]);
             if (Intersects(faceFrustum, nearBounds))
+            {
                 nearKeptBySomeFace = true;
+            }
             if (Intersects(faceFrustum, farBounds))
+            {
                 farKeptBySomeFace = true;
+            }
         }
         CHECK(nearKeptBySomeFace);
         CHECK_FALSE(farKeptBySomeFace);
@@ -2639,7 +2693,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         const f32 on = Luma(shadowsOn, x, row);
         const f32 off = Luma(shadowsOff, x, row);
         if (off > 0.05f)
+        {
             anyLit = true;
+        }
         CHECK(std::abs(on - off) < 0.01f);
     }
     REQUIRE(anyLit);
@@ -2688,7 +2744,7 @@ TEST_CASE_FIXTURE(
     CHECK(mat.GetPipelineLayout() != nullptr); // built by the loader for both domains
 
     constexpr uvec2 extent{64, 48};
-    constexpr ClearColor sourceColor{0.25f, 0.55f, 0.80f, 1.0f};
+    constexpr ClearColor sourceColor{.R = 0.25f, .G = 0.55f, .B = 0.80f, .A = 1.0f};
 
     // The upstream source the pass samples — cleared to a known color, sampled
     // (so the graph derives its attachment → shader-read barrier).
@@ -2755,8 +2811,8 @@ TEST_CASE_FIXTURE(
             pass.Declare(graph, PassIO{});
 
             const RenderGraph::ImportBinding bindings[] = {
-                {sourceId, sourceView},
-                {outputId, outputView},
+                {.Id = sourceId, .View = sourceView},
+                {.Id = outputId, .View = outputView},
             };
             graph.Compile()->Execute(cmd, bindings);
         });

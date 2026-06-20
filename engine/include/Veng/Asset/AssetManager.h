@@ -107,7 +107,9 @@ namespace Veng
         {
             const Ref<Detail::AssetCacheEntry> entry = LoadUntyped(AssetTypeTrait<T>::Type, id);
             if (!entry)
+            {
                 return AssetHandle<T>();
+            }
 
             return AssetHandle<T>(id, entry);
         }
@@ -122,7 +124,9 @@ namespace Veng
             const AssetResult<Ref<Detail::AssetCacheEntry>> entry =
                 LoadSyncUntyped(AssetTypeTrait<T>::Type, id);
             if (!entry)
+            {
                 return std::unexpected(entry.error());
+            }
 
             return AssetHandle<T>(id, *entry);
         }
@@ -173,7 +177,9 @@ namespace Veng
         {
             const auto it = m_Cache.find(id);
             if (it == m_Cache.end() || it->second->Type != AssetTypeTrait<T>::Type)
+            {
                 return std::nullopt;
+            }
 
             return AssetHandle<T>(id, it->second);
         }

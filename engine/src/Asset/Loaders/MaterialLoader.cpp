@@ -79,13 +79,17 @@ namespace Veng
                     fsInterface.BuildDescriptorSetLayouts(context,
                                                           fmt::format("Material{}", id.Value));
                 for (auto& l : fsLayouts)
+                {
                     descLayouts.push_back(l);
+                }
 
                 const vector<Ref<Renderer::DescriptorSetLayout>> vsLayouts =
                     vsInterface.BuildDescriptorSetLayouts(context,
                                                           fmt::format("Material{}", id.Value));
                 for (auto& l : vsLayouts)
+                {
                     descLayouts.push_back(l);
+                }
             }
 
             // Merge push-constant ranges with identical (Offset, Size) by OR-ing Stages.
@@ -106,9 +110,13 @@ namespace Veng
             };
 
             for (const auto& r : vsInterface.BuildPushConstantRanges())
+            {
                 mergeRange(r);
+            }
             for (const auto& r : fsInterface.BuildPushConstantRanges())
+            {
                 mergeRange(r);
+            }
 
             // The selector must be covered by a declared push range, at the
             // domain's offset (Surface → 64, PostProcess → 0).
@@ -154,7 +162,9 @@ namespace Veng
                 const AssetResult<AssetHandle<Veng::VertexLayout>> layoutResult =
                     manager.LoadSync<Veng::VertexLayout>(*vsInterface.VertexLayoutId);
                 if (!layoutResult)
+                {
                     return std::unexpected(layoutResult.error().Detail);
+                }
 
                 vertexBufferLayout = layoutResult->Get()->GetLayout();
             }
@@ -195,8 +205,10 @@ namespace Veng
     {
         // ── 1. CookedMaterialHeader ──────────────────────────────────────────
         if (cooked.size() < sizeof(CookedMaterialHeader))
+        {
             return std::unexpected(
                 Corrupt(id, "material: cooked blob smaller than CookedMaterialHeader"));
+        }
 
         CookedMaterialHeader header;
         std::memcpy(&header, cooked.data(), sizeof(header));
@@ -217,7 +229,7 @@ namespace Veng
         // outputs against the domain's contract, so the runtime asserts range and trusts it.
         VE_ASSERT(header.Domain <= static_cast<u32>(MaterialDomain::PostProcess),
                   "material: header Domain {} is out of range for MaterialDomain", header.Domain);
-        const MaterialDomain domain = static_cast<MaterialDomain>(header.Domain);
+        const auto domain = static_cast<MaterialDomain>(header.Domain);
 
         // The single block must fit the registry's per-material param stride.
         if (header.BlockBytes > Renderer::BindlessRegistry::MaterialParamStride)
@@ -232,8 +244,10 @@ namespace Veng
         const usize fieldBytes =
             static_cast<usize>(header.FieldCount) * sizeof(CookedMaterialField);
         if (cooked.size() < cursor + fieldBytes)
+        {
             return std::unexpected(
                 Corrupt(id, "material: cooked blob smaller than CookedMaterialField table"));
+        }
 
         vector<CookedMaterialField> cookedFields(header.FieldCount);
         for (u32 i = 0; i < header.FieldCount; ++i)
@@ -245,11 +259,15 @@ namespace Veng
 
         // ── 3. The single param block ────────────────────────────────────────
         if (cooked.size() < cursor + header.BlockBytes)
+        {
             return std::unexpected(Corrupt(id, "material: cooked blob smaller than param block"));
+        }
 
         vector<std::byte> block(header.BlockBytes);
         if (header.BlockBytes > 0)
+        {
             std::memcpy(block.data(), cooked.data() + cursor, header.BlockBytes);
+        }
         cursor += header.BlockBytes;
 
         // ── 4. Fan out shader sub-loads ──────────────────────────────────────
@@ -276,11 +294,15 @@ namespace Veng
 
         const AssetResult<AssetHandle<Veng::Shader>> vsResult = loadShader(header.VertexShaderId);
         if (!vsResult)
+        {
             return std::unexpected(vsResult.error());
+        }
 
         const AssetResult<AssetHandle<Veng::Shader>> fsResult = loadShader(header.FragmentShaderId);
         if (!fsResult)
+        {
             return std::unexpected(fsResult.error());
+        }
 
         const AssetHandle<Veng::Shader> vsHandle = *vsResult;
         const AssetHandle<Veng::Shader> fsHandle = *fsResult;
@@ -380,7 +402,9 @@ namespace Veng
                         const AssetResult<AssetHandle<Veng::Texture>> texResult =
                             manager.LoadSync<Veng::Texture>(AssetId{cf.TextureId});
                         if (!texResult)
+                        {
                             return std::unexpected(texResult.error());
+                        }
                         texHandle = *texResult;
                     }
 
@@ -425,7 +449,9 @@ namespace Veng
                 Result<Ref<Renderer::PipelineLayout>> layout =
                     BuildPipelineLayout(context, id, domain, *vsHandle.Get(), *fsHandle.Get());
                 if (!layout)
+                {
                     return std::unexpected(layout.error());
+                }
 
                 Ref<Renderer::GraphicsPipeline> pipeline;
                 if (domain == MaterialDomain::Surface)
@@ -433,7 +459,9 @@ namespace Veng
                     Result<Ref<Renderer::GraphicsPipeline>> built = BuildSurfacePipeline(
                         manager, context, id, *layout, *vsHandle.Get(), *fsHandle.Get());
                     if (!built)
+                    {
                         return std::unexpected(built.error());
+                    }
                     pipeline = std::move(*built);
                 }
 

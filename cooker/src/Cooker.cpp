@@ -21,7 +21,9 @@ namespace Veng::Cook
             std::error_code ec;
             const path canonical = std::filesystem::weakly_canonical(p, ec);
             if (ec || canonical.empty())
+            {
                 return p.lexically_normal();
+            }
             return canonical;
         }
 
@@ -35,19 +37,33 @@ namespace Veng::Cook
         optional<AssetType> ParseAssetType(const string& name)
         {
             if (name == "raw")
+            {
                 return AssetType::Raw;
+            }
             if (name == "texture")
+            {
                 return AssetType::Texture;
+            }
             if (name == "mesh")
+            {
                 return AssetType::Mesh;
+            }
             if (name == "shader")
+            {
                 return AssetType::Shader;
+            }
             if (name == "material")
+            {
                 return AssetType::Material;
+            }
             if (name == "vertex_layout")
+            {
                 return AssetType::VertexLayout;
+            }
             if (name == "prefab")
+            {
                 return AssetType::Prefab;
+            }
 
             return std::nullopt;
         }
@@ -55,9 +71,11 @@ namespace Veng::Cook
         // Parses and validates the common pack JSON preamble. On error returns a located message.
         Result<json> ReadAndValidatePack(const path& packJson)
         {
-            std::ifstream file(packJson, std::ios::binary);
+            const std::ifstream file(packJson, std::ios::binary);
             if (!file)
+            {
                 return std::unexpected(fmt::format("pack '{}': failed to open", packJson.string()));
+            }
 
             std::ostringstream contentStream;
             contentStream << file.rdbuf();
@@ -65,12 +83,16 @@ namespace Veng::Cook
 
             const json pack = json::parse(content, nullptr, false);
             if (pack.is_discarded())
+            {
                 return std::unexpected(fmt::format("pack '{}': invalid JSON", packJson.string()));
+            }
 
             if (!pack.is_object() || !pack.contains("version") ||
                 !pack["version"].is_number_unsigned())
+            {
                 return std::unexpected(
                     fmt::format("pack '{}': missing or invalid 'version'", packJson.string()));
+            }
 
             const u64 version = pack["version"].get<u64>();
             if (version != 1)
@@ -80,8 +102,10 @@ namespace Veng::Cook
             }
 
             if (!pack.contains("assets") || !pack["assets"].is_array())
+            {
                 return std::unexpected(
                     fmt::format("pack '{}': missing 'assets' array", packJson.string()));
+            }
 
             return pack;
         }
@@ -91,7 +115,9 @@ namespace Veng::Cook
     {
         const Result<json> packResult = ReadAndValidatePack(packJson);
         if (!packResult)
+        {
             return std::unexpected(packResult.error());
+        }
 
         const json& pack = *packResult;
         const json& assets = pack["assets"];
@@ -138,7 +164,9 @@ namespace Veng::Cook
 
             string source;
             if (entry.contains("source") && entry["source"].is_string())
+            {
                 source = entry["source"].get<string>();
+            }
 
             result.Entries.push_back(AssetPackEntry{
                 .Id = AssetId{.Value = id},
@@ -155,8 +183,10 @@ namespace Veng::Cook
     {
         std::ofstream out(depfilePath, std::ios::binary | std::ios::trunc);
         if (!out)
+        {
             return std::unexpected(
                 fmt::format("depfile '{}': failed to open for writing", depfilePath.string()));
+        }
 
         // GCC/Make escaping: a space or '#' in a filename is backslash-escaped,
         // a '$' is doubled. Path separators (incl. Windows '\\') pass through.
@@ -168,9 +198,13 @@ namespace Veng::Cook
             for (const char c : raw)
             {
                 if (c == ' ' || c == '#')
+                {
                     escaped.push_back('\\');
+                }
                 else if (c == '$')
+                {
                     escaped.push_back('$');
+                }
                 escaped.push_back(c);
             }
             return escaped;
@@ -178,11 +212,15 @@ namespace Veng::Cook
 
         out << escape(target) << ':';
         for (const path& dep : dependencies)
+        {
             out << " \\\n  " << escape(dep);
+        }
         out << '\n';
 
         if (!out)
+        {
             return std::unexpected(fmt::format("depfile '{}': write failed", depfilePath.string()));
+        }
 
         return {};
     }
@@ -199,7 +237,9 @@ namespace Veng::Cook
     {
         const Result<json> packResult = ReadAndValidatePack(packJson);
         if (!packResult)
+        {
             return std::unexpected(packResult.error());
+        }
 
         const json& pack = *packResult;
 
@@ -223,7 +263,9 @@ namespace Veng::Cook
 
         const Result<AssetPack> mainPackResult = ParseAssetPack(packJson);
         if (!mainPackResult)
+        {
             return std::unexpected(mainPackResult.error());
+        }
 
         vector<AssetPack> refPacks;
         refPacks.reserve(referencePacks.size());
@@ -245,7 +287,9 @@ namespace Veng::Cook
 
         record(packJson);
         for (const path& refPath : referencePacks)
+        {
             record(refPath);
+        }
 
         // Resolve searches the main pack first, then reference packs in order.
         const AssetPack& mainPack = *mainPackResult;
@@ -254,7 +298,9 @@ namespace Veng::Cook
             if (const AssetPackEntry* e = mainPack.FindById(id))
             {
                 if (e->Source.empty())
+                {
                     return std::nullopt;
+                }
                 const path absolute = mainPack.Dir / e->Source;
                 record(absolute);
                 return ResolvedSource{.AbsolutePath = absolute, .Type = e->Type};
@@ -264,7 +310,9 @@ namespace Veng::Cook
                 if (const AssetPackEntry* e = ref.FindById(id))
                 {
                     if (e->Source.empty())
+                    {
                         return std::nullopt;
+                    }
                     const path absolute = ref.Dir / e->Source;
                     record(absolute);
                     return ResolvedSource{.AbsolutePath = absolute, .Type = e->Type};
@@ -300,12 +348,16 @@ namespace Veng::Cook
         const vector<u8> staged = writer.Build();
         const Result<ArchiveReader> reader = ArchiveReader::FromBytes(staged);
         if (!reader)
+        {
             return std::unexpected(fmt::format("pack '{}': {}", packJson.string(), reader.error()));
+        }
 
         writer.SetArchiveDigest(Xxh3_128(reader->TocBytes()));
 
         if (outDependencies)
+        {
             outDependencies->assign(dependencies.begin(), dependencies.end());
+        }
 
         return writer.Write(outArchive);
     }
@@ -341,7 +393,9 @@ namespace Veng::Cook
                 if (const AssetPackEntry* e = ref.FindById(resolveId))
                 {
                     if (e->Source.empty())
+                    {
                         return std::nullopt;
+                    }
                     return ResolvedSource{.AbsolutePath = ref.Dir / e->Source, .Type = e->Type};
                 }
             }
@@ -361,7 +415,9 @@ namespace Veng::Cook
 
         const Result<vector<u8>> blob = importerIt->second->Cook(context, entry);
         if (!blob)
+        {
             return std::unexpected(fmt::format("cook '{}': {}", sourcePath.string(), blob.error()));
+        }
 
         ArchiveWriter writer;
         writer.Add(id, type, *blob, Xxh3_128(*blob));
@@ -369,8 +425,10 @@ namespace Veng::Cook
         const vector<u8> staged = writer.Build();
         const Result<ArchiveReader> reader = ArchiveReader::FromBytes(staged);
         if (!reader)
+        {
             return std::unexpected(
                 fmt::format("cook '{}': {}", sourcePath.string(), reader.error()));
+        }
 
         writer.SetArchiveDigest(Xxh3_128(reader->TocBytes()));
         return writer.Build();
@@ -380,37 +438,55 @@ namespace Veng::Cook
                                  std::set<u64>& seenIds, ArchiveWriter& writer) const
     {
         if (!entry.is_object())
+        {
             return std::unexpected("entry is not an object");
+        }
 
         if (!entry.contains("id") || !entry["id"].is_number_unsigned())
+        {
             return std::unexpected("missing or invalid 'id' (expected a non-zero u64)");
+        }
 
         const u64 id = entry["id"].get<u64>();
         if (id == 0)
+        {
             return std::unexpected("asset id 0 is reserved (invalid AssetId)");
+        }
 
         if (!seenIds.insert(id).second)
+        {
             return std::unexpected(fmt::format("asset id {} duplicated", id));
+        }
 
         if (!entry.contains("type") || !entry["type"].is_string())
+        {
             return std::unexpected("missing or invalid 'type'");
+        }
 
         const string typeStr = entry["type"].get<string>();
         const optional<AssetType> type = ParseAssetType(typeStr);
         if (!type)
+        {
             return std::unexpected(fmt::format("unknown type '{}'", typeStr));
+        }
 
         const auto importerIt = m_Importers.find(*type);
         if (importerIt == m_Importers.end())
+        {
             return std::unexpected(fmt::format("no importer registered for type '{}'", typeStr));
+        }
 
         // Record the per-asset JSON source; importers record their binary payloads.
         if (entry.contains("source") && entry["source"].is_string())
+        {
             context.RecordDependency(context.PackDir / entry["source"].get<string>());
+        }
 
         const Result<vector<u8>> blob = importerIt->second->Cook(context, entry);
         if (!blob)
+        {
             return std::unexpected(blob.error());
+        }
 
         writer.Add(AssetId{.Value = id}, *type, *blob, Xxh3_128(*blob));
         return {};

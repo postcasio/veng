@@ -62,7 +62,7 @@ namespace Veng::Renderer
         {
             vk::ImageLayout Layout = vk::ImageLayout::eUndefined;
             vk::PipelineStageFlags Stage = vk::PipelineStageFlagBits::eTopOfPipe;
-            vk::AccessFlags Access{};
+            vk::AccessFlags Access;
 
             /// @brief The queue family that last produced this subresource
             /// (see Backend::SubresourceState::ProducingFamily).

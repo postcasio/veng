@@ -38,7 +38,7 @@ TEST_CASE("Result<T> carries an error string")
 
 TEST_CASE("VoidResult success and error paths")
 {
-    VoidResult ok;
+    const VoidResult ok;
     CHECK(ok.has_value());
     CHECK(static_cast<bool>(ok));
 

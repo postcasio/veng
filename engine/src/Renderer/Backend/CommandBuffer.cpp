@@ -136,7 +136,10 @@ namespace Veng::Renderer
         }
 
         const auto renderingInfo = vk::RenderingInfo{
-            .renderArea = {info.Offset.x, info.Offset.y, info.Extent.x, info.Extent.y},
+            .renderArea = {.offset.x = info.Offset.x,
+                           .offset.y = info.Offset.y,
+                           .extent.width = info.Extent.x,
+                           .extent.height = info.Extent.y},
             .layerCount = info.LayerCount,
             .viewMask = info.ViewMask,
             .colorAttachmentCount = static_cast<u32>(colorAttachments.size()),
@@ -255,14 +258,18 @@ namespace Veng::Renderer
     void CommandBuffer::SetScissor(const ivec2 offset, const uvec2 extent)
     {
         m_Native->CommandBuffer.setScissor(
-            0, {vk::Rect2D{{offset.x, offset.y}, {extent.x, extent.y}}});
+            0, {vk::Rect2D{.offset = {.x = offset.x, .y = offset.y},
+                           .extent = {.width = extent.x, .height = extent.y}}});
     }
 
     void CommandBuffer::SetViewport(const ivec2 offset, const uvec2 extent)
     {
-        m_Native->CommandBuffer.setViewport(
-            0, {vk::Viewport{static_cast<f32>(offset.x), static_cast<f32>(offset.y),
-                             static_cast<f32>(extent.x), static_cast<f32>(extent.y), 0.0f, 1.0f}});
+        m_Native->CommandBuffer.setViewport(0, {vk::Viewport{.x = static_cast<f32>(offset.x),
+                                                             .y = static_cast<f32>(offset.y),
+                                                             .width = static_cast<f32>(extent.x),
+                                                             .height = static_cast<f32>(extent.y),
+                                                             .minDepth = 0.0f,
+                                                             .maxDepth = 1.0f}});
     }
 
     void CommandBuffer::End()
@@ -297,8 +304,8 @@ namespace Veng::Renderer
                                  .mipLevel = 0,
                                  .baseArrayLayer = 0,
                                  .layerCount = image->GetLayers()},
-            .imageOffset = {0, 0, 0},
-            .imageExtent = {extent.x, extent.y, extent.z}};
+            .imageOffset = {.x = 0, .y = 0, .z = 0},
+            .imageExtent = {.width = extent.x, .height = extent.y, .depth = extent.z}};
 
         m_Native->CommandBuffer.copyBufferToImage(buffer->GetNative().Buffer,
                                                   image->GetNative().Image,
@@ -317,8 +324,8 @@ namespace Veng::Renderer
                                  .mipLevel = 0,
                                  .baseArrayLayer = 0,
                                  .layerCount = 1},
-            .imageOffset = {0, 0, 0},
-            .imageExtent = {extent.x, extent.y, extent.z}};
+            .imageOffset = {.x = 0, .y = 0, .z = 0},
+            .imageExtent = {.width = extent.x, .height = extent.y, .depth = extent.z}};
 
         m_Native->CommandBuffer.copyImageToBuffer(image->GetNative().Image,
                                                   vk::ImageLayout::eTransferSrcOptimal,
@@ -327,26 +334,31 @@ namespace Veng::Renderer
 
     void CommandBuffer::BlitImage(const BlitImageInfo& info)
     {
-        vk::Offset3D sourceOffset = {info.SourceOffset.x, info.SourceOffset.y, info.SourceOffset.z};
-        vk::Offset3D sourceExtent = {info.SourceExtent.x, info.SourceExtent.y, info.SourceExtent.z};
+        vk::Offset3D sourceOffset = {
+            .x = info.SourceOffset.x, .y = info.SourceOffset.y, .z = info.SourceOffset.z};
+        vk::Offset3D sourceExtent = {
+            .x = info.SourceExtent.x, .y = info.SourceExtent.y, .z = info.SourceExtent.z};
 
-        vk::Offset3D destinationOffset = {info.DestinationOffset.x, info.DestinationOffset.y,
-                                          info.DestinationOffset.z};
-        vk::Offset3D destinationExtent = {info.DestinationExtent.x, info.DestinationExtent.y,
-                                          info.DestinationExtent.z};
+        vk::Offset3D destinationOffset = {.x = info.DestinationOffset.x,
+                                          .y = info.DestinationOffset.y,
+                                          .z = info.DestinationOffset.z};
+        vk::Offset3D destinationExtent = {.x = info.DestinationExtent.x,
+                                          .y = info.DestinationExtent.y,
+                                          .z = info.DestinationExtent.z};
 
-        vk::ImageBlit blitInfo{.srcSubresource = {.aspectMask = Utils::GetAspectFlags(
-                                                      ToVk(info.SourceImage->GetFormat())),
-                                                  .mipLevel = info.SourceMipLevel,
-                                                  .baseArrayLayer = 0,
-                                                  .layerCount = 1},
-                               .srcOffsets = {{sourceOffset, sourceExtent}},
-                               .dstSubresource = {.aspectMask = Utils::GetAspectFlags(
-                                                      ToVk(info.DestinationImage->GetFormat())),
-                                                  .mipLevel = info.DestinationMipLevel,
-                                                  .baseArrayLayer = 0,
-                                                  .layerCount = 1},
-                               .dstOffsets = {{destinationOffset, destinationExtent}}};
+        const vk::ImageBlit blitInfo{
+            .srcSubresource = {.aspectMask =
+                                   Utils::GetAspectFlags(ToVk(info.SourceImage->GetFormat())),
+                               .mipLevel = info.SourceMipLevel,
+                               .baseArrayLayer = 0,
+                               .layerCount = 1},
+            .srcOffsets = {{sourceOffset, sourceExtent}},
+            .dstSubresource = {.aspectMask =
+                                   Utils::GetAspectFlags(ToVk(info.DestinationImage->GetFormat())),
+                               .mipLevel = info.DestinationMipLevel,
+                               .baseArrayLayer = 0,
+                               .layerCount = 1},
+            .dstOffsets = {{destinationOffset, destinationExtent}}};
 
         m_Native->CommandBuffer.blitImage(
             info.SourceImage->GetNative().Image, vk::ImageLayout::eTransferSrcOptimal,

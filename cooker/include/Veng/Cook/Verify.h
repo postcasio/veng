@@ -45,12 +45,20 @@ namespace Veng::Cook
         [[nodiscard]] bool Ok() const
         {
             if (OpenError)
+            {
                 return false;
+            }
             if (!DigestOk)
+            {
                 return false;
+            }
             for (const VerifiedAsset& asset : Assets)
+            {
                 if (!asset.Ok)
+                {
                     return false;
+                }
+            }
             return true;
         }
     };

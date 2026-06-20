@@ -39,7 +39,9 @@ namespace
 
         const VoidResult cookResult = cooker.CookPack(packJson, outArchive);
         if (!cookResult.has_value())
+        {
             return std::unexpected(cookResult.error());
+        }
 
         return ArchiveReader::Open(outArchive);
     }
@@ -77,7 +79,7 @@ TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
 
     // --- Field table: only the 3 declared fields, pads omitted ---
 
-    const CookedMaterialField* fieldTable = reinterpret_cast<const CookedMaterialField*>(
+    const auto* fieldTable = reinterpret_cast<const CookedMaterialField*>(
         entry->Blob.data() + sizeof(CookedMaterialHeader));
 
     // Field 0: Albedo — Kind 1 (texture handle), engine offset 0, Size 4, TextureId 2001
@@ -107,7 +109,9 @@ TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
         entry->Blob.data() + sizeof(CookedMaterialHeader) + 3 * sizeof(CookedMaterialField);
 
     for (usize i = 0; i < 16; ++i)
+    {
         CHECK(block[i] == 0u);
+    }
 
     // --- Factors: four f32s at the block offset 16 ---
 
@@ -187,7 +191,7 @@ TEST_CASE("Cooker: an authored param beyond Factors cooks into the authored bloc
     CHECK(header.Version == CookedMaterialVersion);
     CHECK(header.BlockBytes >= 36); // handles (16) + Factors (16) + Roughness (4)
 
-    const CookedMaterialField* fieldTable = reinterpret_cast<const CookedMaterialField*>(
+    const auto* fieldTable = reinterpret_cast<const CookedMaterialField*>(
         entry->Blob.data() + sizeof(CookedMaterialHeader));
 
     // Find the Roughness field: a Kind 0 authored param.
@@ -196,9 +200,13 @@ TEST_CASE("Cooker: an authored param beyond Factors cooks into the authored bloc
     for (u32 i = 0; i < header.FieldCount; ++i)
     {
         if (std::string_view(fieldTable[i].Name) == "Roughness")
+        {
             roughness = &fieldTable[i];
+        }
         if (std::string_view(fieldTable[i].Name) == "Factors")
+        {
             factors = &fieldTable[i];
+        }
     }
     REQUIRE(roughness != nullptr);
     REQUIRE(factors != nullptr);
@@ -236,10 +244,12 @@ TEST_CASE("Cooker: a handles-only material cooks with a zero-size authored block
     CHECK(header.Version == CookedMaterialVersion);
     CHECK(header.BlockBytes == 16); // four handle uints
 
-    const CookedMaterialField* fieldTable = reinterpret_cast<const CookedMaterialField*>(
+    const auto* fieldTable = reinterpret_cast<const CookedMaterialField*>(
         entry->Blob.data() + sizeof(CookedMaterialHeader));
     for (u32 i = 0; i < header.FieldCount; ++i)
+    {
         CHECK(fieldTable[i].Kind != 0u); // every field is a handle field
+    }
 
     std::filesystem::remove(outArchive);
 }
@@ -266,10 +276,12 @@ TEST_CASE("Cooker: a params-only material cooks with no handle fields")
     CHECK(header.FieldCount == 2);  // Factors + Strength, no handles
     CHECK(header.BlockBytes >= 20); // Factors (16) + Strength (4)
 
-    const CookedMaterialField* fieldTable = reinterpret_cast<const CookedMaterialField*>(
+    const auto* fieldTable = reinterpret_cast<const CookedMaterialField*>(
         entry->Blob.data() + sizeof(CookedMaterialHeader));
     for (u32 i = 0; i < header.FieldCount; ++i)
+    {
         CHECK(fieldTable[i].Kind == 0u); // every field is a param, no handle field
+    }
 
     std::filesystem::remove(outArchive);
 }
@@ -294,12 +306,16 @@ TEST_CASE("Cooker: a multi-handle material cooks with two handle fields")
     CHECK(header.Version == CookedMaterialVersion);
     CHECK(header.FieldCount == 2);
 
-    const CookedMaterialField* fieldTable = reinterpret_cast<const CookedMaterialField*>(
+    const auto* fieldTable = reinterpret_cast<const CookedMaterialField*>(
         entry->Blob.data() + sizeof(CookedMaterialHeader));
     u32 handleFields = 0;
     for (u32 i = 0; i < header.FieldCount; ++i)
+    {
         if (fieldTable[i].Kind != 0u)
+        {
             ++handleFields;
+        }
+    }
     CHECK(handleFields == 2u);
 
     std::filesystem::remove(outArchive);

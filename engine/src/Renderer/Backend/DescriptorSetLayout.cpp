@@ -45,7 +45,9 @@ namespace Veng::Renderer
                 vector<vk::Sampler>& samplers = immutableSamplers.emplace_back();
                 samplers.reserve(binding.ImmutableSamplers.size());
                 for (const Ref<Sampler>& sampler : binding.ImmutableSamplers)
+                {
                     samplers.push_back(sampler->GetNative().Sampler);
+                }
                 immutable = samplers.data();
             }
             else
@@ -86,7 +88,7 @@ namespace Veng::Renderer
             }
             else
             {
-                bindingFlags.push_back({});
+                bindingFlags.emplace_back();
             }
         }
 

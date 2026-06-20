@@ -29,7 +29,9 @@ namespace Veng::Test
 
         VkInstance instance = VK_NULL_HANDLE;
         if (vkCreateInstance(&info, nullptr, &instance) != VK_SUCCESS)
+        {
             return false;
+        }
 
         vkDestroyInstance(instance, nullptr);
         return true;

@@ -21,11 +21,17 @@ namespace VengEditor
     optional<AssetType> AssetTypeOfHandle(TypeId type)
     {
         if (type == TypeIdOf<AssetHandle<Texture>>())
+        {
             return AssetType::Texture;
+        }
         if (type == TypeIdOf<AssetHandle<Mesh>>())
+        {
             return AssetType::Mesh;
+        }
         if (type == TypeIdOf<AssetHandle<Material>>())
+        {
             return AssetType::Material;
+        }
         return std::nullopt;
     }
 
@@ -49,9 +55,13 @@ namespace VengEditor
             {
                 // No enumeration for this handle type — fall back to the id label.
                 if (currentId == 0)
+                {
                     UI::Label(label, "(none)");
+                }
                 else
+                {
                     UI::Label(label, fmt::format("0x{:X}", currentId));
+                }
                 return;
             }
 
@@ -62,7 +72,9 @@ namespace VengEditor
             labels.reserve(candidates.size() + 1);
             labels.emplace_back("(none)");
             for (const AssetId candidate : candidates)
+            {
                 labels.push_back(fmt::format("0x{:X}", candidate.Value));
+            }
 
             vector<string_view> items(labels.begin(), labels.end());
 
@@ -79,9 +91,13 @@ namespace VengEditor
             if (UI::Combo(label, index, items))
             {
                 if (index == 0)
+                {
                     ApplyAssetPick(fieldPtr, AssetId{});
+                }
                 else
+                {
                     ApplyAssetPick(fieldPtr, candidates[static_cast<usize>(index) - 1]);
+                }
             }
         }
     }
@@ -90,7 +106,9 @@ namespace VengEditor
                          const FieldWidgetContext& ctx)
     {
         if (field.Hidden)
+        {
             return;
+        }
 
         // A game-registered custom widget for this type overrides the built-in.
         if (const FieldWidgetFn* custom = ctx.Editors.FieldWidgetFor(field.Type))
@@ -107,11 +125,17 @@ namespace VengEditor
         // absent metadata leaves the DragOptions defaults (0.01f speed, unclamped).
         UI::DragOptions drag;
         if (field.Step)
+        {
             drag.Speed = static_cast<f32>(*field.Step);
+        }
         if (field.Min)
+        {
             drag.Min = static_cast<f32>(*field.Min);
+        }
         if (field.Max)
+        {
             drag.Max = static_cast<f32>(*field.Max);
+        }
 
         switch (field.Class)
         {
@@ -130,7 +154,9 @@ namespace VengEditor
                 // u32 has no Drag overload; edit through a signed view clamped to 0+.
                 i32 value = static_cast<i32>(*static_cast<u32*>(fieldPtr));
                 if (UI::Drag(label, value, UI::DragOptions{.Min = 0.0f}))
+                {
                     *static_cast<u32*>(fieldPtr) = static_cast<u32>(value < 0 ? 0 : value);
+                }
             }
             else if (field.Type == TypeIdOf<bool>())
             {
@@ -145,11 +171,17 @@ namespace VengEditor
         case FieldClass::Vector:
         {
             if (field.Type == TypeIdOf<vec2>())
+            {
                 UI::Drag(label, *static_cast<vec2*>(fieldPtr), drag);
+            }
             else if (field.Type == TypeIdOf<vec3>())
+            {
                 UI::Drag(label, *static_cast<vec3*>(fieldPtr), drag);
+            }
             else if (field.Type == TypeIdOf<vec4>())
+            {
                 UI::Drag(label, *static_cast<vec4*>(fieldPtr), drag);
+            }
             break;
         }
         case FieldClass::Quaternion:
@@ -158,7 +190,9 @@ namespace VengEditor
             vec3 euler = glm::degrees(glm::eulerAngles(q));
             const string eulerLabel = label + " (Euler °)";
             if (UI::Drag(eulerLabel, euler, UI::DragOptions{.Speed = 0.5f}))
+            {
                 q = quat(glm::radians(euler));
+            }
             break;
         }
         case FieldClass::String:
@@ -176,9 +210,13 @@ namespace VengEditor
         {
             const Entity& ref = *static_cast<const Entity*>(fieldPtr);
             if (ref.IsNull())
+            {
                 UI::Label(label, "(null)");
+            }
             else
+            {
                 UI::Label(label, fmt::format("Entity {}:{}", ref.Index, ref.Generation));
+            }
             break;
         }
         case FieldClass::Matrix:
@@ -187,8 +225,10 @@ namespace VengEditor
             if (auto t = UI::TreeNode(label, UI::TreeFlags::SpanAvailWidth))
             {
                 for (int row = 0; row < 4; ++row)
+                {
                     UI::Text(fmt::format("{: .3f}  {: .3f}  {: .3f}  {: .3f}", m[0][row], m[1][row],
                                          m[2][row], m[3][row]));
+                }
             }
             break;
         }
@@ -207,7 +247,9 @@ namespace VengEditor
                 for (const FieldDescriptor& nestedField : nested.Fields)
                 {
                     if (nestedField.Hidden)
+                    {
                         continue;
+                    }
                     void* nestedPtr = static_cast<u8*>(fieldPtr) + nestedField.Offset;
                     DrawFieldWidget(nestedPtr, nestedField, ctx);
                 }
@@ -217,6 +259,8 @@ namespace VengEditor
         }
 
         if (!field.Tooltip.empty())
+        {
             UI::Tooltip(field.Tooltip);
+        }
     }
 }

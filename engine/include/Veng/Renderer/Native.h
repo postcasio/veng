@@ -118,7 +118,7 @@ namespace Veng::Renderer
     [[nodiscard]] inline ReleasedBuffer ReleaseBuffer(Buffer& buffer)
     {
         auto& native = buffer.GetNative();
-        const ReleasedBuffer released{native.Buffer, native.Allocation};
+        const ReleasedBuffer released{.Buffer = native.Buffer, .Allocation = native.Allocation};
         native.Buffer = nullptr;
         native.Allocation = nullptr;
         return released;

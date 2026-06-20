@@ -213,7 +213,7 @@ namespace
 
 TEST_CASE("Transform + Name round-trip through the descriptor walk only")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
 
     Transform src;
     src.Position = vec3{1.0f, 2.0f, 3.0f};
@@ -241,7 +241,7 @@ TEST_CASE("Transform + Name round-trip through the descriptor walk only")
 
 TEST_CASE("Light round-trips through the descriptor walk only")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
 
     Light src;
     src.Type = LightType::Spot;
@@ -272,7 +272,7 @@ TEST_CASE("Light round-trips through the descriptor walk only")
 // proving a field addition is forward-compatible (an old prefab still loads).
 TEST_CASE("Light reads an old record with the new typed-light fields defaulted")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
 
     // Author a record carrying only the three original fields, by name.
     Light legacy;
@@ -289,8 +289,12 @@ TEST_CASE("Light reads an old record with the new typed-light fields defaulted")
         TypeInfo partial = info;
         partial.Fields.clear();
         for (const FieldDescriptor& field : info.Fields)
+        {
             if (field.Name == "Direction" || field.Name == "Color" || field.Name == "Intensity")
+            {
                 partial.Fields.push_back(field);
+            }
+        }
         WriteFields(bytes, &legacy, partial, registry);
     }
 
@@ -313,12 +317,12 @@ TEST_CASE("Light reads an old record with the new typed-light fields defaulted")
 
 TEST_CASE("Editor metadata does not affect the serialized bytes")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
 
     // PlainData carries Min/Max metadata on X; serializing must ignore it. The
     // byte stream is identical whether metadata is present or not — proven by the
     // round-trip reproducing the value with no metadata-derived clamping.
-    PlainData src{0.75f, "tag"};
+    PlainData src{.X = 0.75f, .Label = "tag"};
     vector<u8> bytes;
     WriteFields(bytes, &src, registry.Info(registry.IdOf<PlainData>()), registry);
     PlainData dst;
@@ -336,7 +340,7 @@ TEST_CASE("Nested struct recurses and auto-registers the nested schema")
     CHECK(registry.IsRegistered(registry.IdOf<Inner>()));
 
     Outer src;
-    src.Nested = Inner{1.5f, 99u};
+    src.Nested = Inner{.A = 1.5f, .B = 99u};
     src.Offset = vec3{7.0f, 8.0f, 9.0f};
 
     vector<u8> bytes;
@@ -351,10 +355,10 @@ TEST_CASE("Nested struct recurses and auto-registers the nested schema")
 
 TEST_CASE("Schema tolerance: extra record skipped, missing field keeps default")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
 
     // Serialize the full Inner (A + B).
-    Inner src{3.0f, 17u};
+    Inner src{.A = 3.0f, .B = 17u};
     vector<u8> bytes;
     WriteFields(bytes, &src, registry.Info(registry.IdOf<Inner>()), registry);
 
@@ -389,7 +393,7 @@ TEST_CASE("Schema tolerance: extra record skipped, missing field keeps default")
 
 TEST_CASE("AssetHandle field round-trips its underlying AssetId")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
 
     WithAsset src;
     // No AssetManager: forge the underlying id via the byte layout the serializer
@@ -408,7 +412,7 @@ TEST_CASE("AssetHandle field round-trips its underlying AssetId")
 
 TEST_CASE("Enum field round-trips as its underlying integer")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
 
     WithEnum src;
     src.Side = Team::Green;
@@ -440,9 +444,9 @@ TEST_CASE("Reference field round-trips an Entity within one Scene")
 
 TEST_CASE("Generic over non-components: a plain struct round-trips")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
 
-    PlainData src{2.5f, "never-a-component"};
+    PlainData src{.X = 2.5f, .Label = "never-a-component"};
     vector<u8> bytes;
     WriteFields(bytes, &src, registry.Info(registry.IdOf<PlainData>()), registry);
     PlainData dst;
@@ -476,9 +480,9 @@ TEST_CASE("Open extension: a game-defined leaf + struct round-trips with no engi
 
 TEST_CASE("Trailing bytes after the last record are ignored")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
 
-    Inner src{3.0f, 17u};
+    Inner src{.A = 3.0f, .B = 17u};
     vector<u8> bytes;
     WriteFields(bytes, &src, registry.Info(registry.IdOf<Inner>()), registry);
 
@@ -494,13 +498,13 @@ TEST_CASE("Trailing bytes after the last record are ignored")
 
 TEST_CASE("An unknown variable-length record is skipped by its length prefix")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
 
     // Author a record carrying A (matches Inner) and a variable-length Note
     // (which Inner has no descriptor for). Reading into Inner must consume the
     // Note record by its length prefix — not by guessing its class — so A reads
     // and B keeps its default.
-    Labeled src{2.5f, "an unknown variable-length value"};
+    Labeled src{.A = 2.5f, .Note = "an unknown variable-length value"};
     vector<u8> bytes;
     WriteFields(bytes, &src, registry.Info(registry.IdOf<Labeled>()), registry);
 
@@ -527,7 +531,7 @@ namespace
 
 TEST_CASE("Truncated record count returns an error")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
 
     // Fewer than four bytes: the leading record-count ReadU32 overruns.
     const u8 bytes[2] = {0x01, 0x00};
@@ -539,7 +543,7 @@ TEST_CASE("Truncated record count returns an error")
 
 TEST_CASE("Truncated leaf value returns an error")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
     const TypeInfo& info = registry.Info(registry.IdOf<Transform>());
 
     Transform src;
@@ -556,7 +560,7 @@ TEST_CASE("Truncated leaf value returns an error")
 
 TEST_CASE("Truncated string length prefix returns an error")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
     const TypeInfo& info = registry.Info(registry.IdOf<Name>());
 
     // A hand-built Name record: one field "Value", a value region of four bytes
@@ -576,7 +580,7 @@ TEST_CASE("Truncated string length prefix returns an error")
 
 TEST_CASE("Truncated asset id returns an error")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
     const TypeInfo& info = registry.Info(registry.IdOf<WithAsset>());
 
     // A Mesh AssetHandle field whose value region is fewer than the 8 id bytes.
@@ -594,7 +598,7 @@ TEST_CASE("Truncated asset id returns an error")
 
 TEST_CASE("Truncated field name returns an error")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
     const TypeInfo& info = registry.Info(registry.IdOf<Inner>());
 
     // A record whose declared name length runs past the buffer.
@@ -610,9 +614,9 @@ TEST_CASE("Truncated field name returns an error")
 
 TEST_CASE("A valid round-trip returns a value")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
 
-    PlainData src{0.75f, "tag"};
+    PlainData src{.X = 0.75f, .Label = "tag"};
     vector<u8> bytes;
     WriteFields(bytes, &src, registry.Info(registry.IdOf<PlainData>()), registry);
 
@@ -626,12 +630,12 @@ TEST_CASE("A valid round-trip returns a value")
 
 TEST_CASE("Drift recovery returns a value")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
 
     // Write the full Inner, then append an unknown trailing record's worth of
     // garbage and read into a descriptor missing field B: an unknown record is
     // skipped and an absent descriptor keeps its default — both succeed.
-    Inner src{3.0f, 17u};
+    Inner src{.A = 3.0f, .B = 17u};
     vector<u8> bytes;
     WriteFields(bytes, &src, registry.Info(registry.IdOf<Inner>()), registry);
 

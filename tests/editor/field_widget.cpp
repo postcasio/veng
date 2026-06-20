@@ -97,11 +97,15 @@ TEST_CASE("FieldWidget: a field walk skips hidden fields and addresses by offset
     for (const Veng::FieldDescriptor& field : fields)
     {
         if (field.Hidden)
+        {
             continue;
+        }
         // The offset addressing the inspector and the node panel both use.
-        void* ptr = reinterpret_cast<Veng::u8*>(&props) + field.Offset;
+        const void* ptr = reinterpret_cast<Veng::u8*>(&props) + field.Offset;
         if (field.Name == "Tint")
+        {
             CHECK(ptr == &props.Tint);
+        }
         visited.push_back(field.Name);
     }
 

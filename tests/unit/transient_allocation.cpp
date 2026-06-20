@@ -26,7 +26,9 @@ namespace
     {
         u32 count = 0;
         for (const u32 slot : assignment)
+        {
             count = std::max(count, slot + 1);
+        }
         return count;
     }
 }

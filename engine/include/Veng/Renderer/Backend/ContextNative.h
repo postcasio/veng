@@ -80,14 +80,14 @@ namespace Veng::Renderer
             u64 LastSubmittedValue = 0;
         };
 
-        vector<TransferPool> TransferPools{};
+        vector<TransferPool> TransferPools;
 
         /// @brief Override pool for CommandBuffer allocation.
         ///
         /// When non-null, CommandBuffer's constructor allocates from this pool instead of
         /// the shared graphics CommandPool. Set transiently while allocating a worker's
         /// transfer command buffer in InitializeTransferPools.
-        vk::CommandPool AllocationPoolOverride{};
+        vk::CommandPool AllocationPoolOverride;
 
         /// @brief Serializes every vkQueueSubmit to a shared queue.
         ///
@@ -115,7 +115,7 @@ namespace Veng::Renderer
         /// A resource sampled in a frame after an async upload registers its
         /// (semaphore, value) here; SubmitFrame chains them onto the submit and clears
         /// the set. Guarded by SubmitMutex.
-        vector<std::pair<vk::Semaphore, u64>> PendingFrameTransferWaits{};
+        vector<std::pair<vk::Semaphore, u64>> PendingFrameTransferWaits;
 
         /// @brief Serializes Retire, RetireOnTransfer, the transfer-retire list, and their drains.
         ///
@@ -134,9 +134,9 @@ namespace Veng::Renderer
             u64 TimelineValue;
         };
 
-        vector<TransferRetireEntry> TransferRetireList{};
+        vector<TransferRetireEntry> TransferRetireList;
 
-        vector<SynchronizationFrame> SynchronizationFrames{};
+        vector<SynchronizationFrame> SynchronizationFrames;
         u32 CurrentFrameInFlight = 0;
         u32 MaxFramesInFlight = 2;
 
@@ -159,7 +159,7 @@ namespace Veng::Renderer
             vector<vk::DescriptorSet> DescriptorSets;
         };
 
-        vector<RetireBin> RetireBins{};
+        vector<RetireBin> RetireBins;
         bool Disposed = false;
 
         RetireBin& CurrentRetireBin();

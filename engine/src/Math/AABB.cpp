@@ -36,6 +36,6 @@ namespace Veng
 
     AABB Union(const AABB& a, const AABB& b)
     {
-        return AABB{glm::min(a.Min, b.Min), glm::max(a.Max, b.Max)};
+        return AABB{.Min = glm::min(a.Min, b.Min), .Max = glm::max(a.Max, b.Max)};
     }
 }

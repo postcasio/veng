@@ -82,6 +82,6 @@ namespace Veng::Renderer
             cascadeCount < 1 ? 1 : (cascadeCount > MaxCascades ? MaxCascades : cascadeCount);
         const u32 columns = count < 2 ? count : 2;
         const u32 rows = (count + 1) / 2;
-        return {columns, rows};
+        return {.Columns = columns, .Rows = rows};
     }
 }

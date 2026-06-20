@@ -40,7 +40,9 @@ namespace VengEditor
                 // when two components share a display name.
                 auto scope = UI::PushId(fmt::format("{}", id));
                 if (UI::CollapsingHeader(info.Name, UI::TreeFlags::DefaultOpen))
+                {
                     DrawFields(component, info);
+                }
             });
     }
 
@@ -51,7 +53,9 @@ namespace VengEditor
         for (const FieldDescriptor& field : type.Fields)
         {
             if (field.Hidden)
+            {
                 continue;
+            }
 
             void* fieldPtr = static_cast<u8*>(base) + field.Offset;
             DrawFieldWidget(fieldPtr, field, ctx);

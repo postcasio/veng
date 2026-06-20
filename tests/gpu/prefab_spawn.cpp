@@ -97,8 +97,8 @@ TEST_CASE_FIXTURE(PrefabFixture, "Roots are entities with no in-prefab Parent, i
     // idx 0 root "a", idx 1 child of 0 "b", idx 2 root "c".
     vector<Prefab::PrefabEntity> entities;
     entities.push_back({{MakeComponent(Types, Name{"a"})}});
-    entities.push_back(
-        {{MakeComponent(Types, Name{"b"}), MakeComponent(Types, Parent{Entity{0, 0}})}});
+    entities.push_back({{MakeComponent(Types, Name{"b"}),
+                         MakeComponent(Types, Parent{Entity{.Index = 0, .Generation = 0}})}});
     entities.push_back({{MakeComponent(Types, Name{"c"})}});
 
     const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
@@ -127,7 +127,7 @@ TEST_CASE_FIXTURE(PrefabFixture,
 {
     // idx 0 links to idx 1; both are roots (no Parent), returned in order.
     vector<Prefab::PrefabEntity> entities;
-    entities.push_back({{MakeComponent(Types, Link{Entity{1, 0}})}});
+    entities.push_back({{MakeComponent(Types, Link{Entity{.Index = 1, .Generation = 0}})}});
     entities.push_back({{MakeComponent(Types, Name{"target"})}});
 
     const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});

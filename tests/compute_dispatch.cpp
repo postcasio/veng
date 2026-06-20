@@ -48,7 +48,9 @@ using namespace Veng::Renderer;
 int main()
 {
     if (!Test::HasVulkanDriver())
+    {
         return 77;
+    }
 
     constexpr u32 size = 4;
 
@@ -228,7 +230,7 @@ int main()
                         .Resource = sourceId,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
-                        .Clear = ClearColor{0.2f, 0.4f, 0.6f, 1.0f},
+                        .Clear = ClearColor{.R = 0.2f, .G = 0.4f, .B = 0.6f, .A = 1.0f},
                     })
                     .Execute([](PassContext&) {});
 
@@ -253,7 +255,7 @@ int main()
                         .Resource = outputId,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
-                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
                     })
                     .Sample(derivedId)
                     .Execute(
@@ -270,9 +272,9 @@ int main()
                         });
 
                 const RenderGraph::ImportBinding bindings[] = {
-                    {sourceId, sourceView},
-                    {derivedId, derivedView},
-                    {outputId, outputView},
+                    {.Id = sourceId, .View = sourceView},
+                    {.Id = derivedId, .View = derivedView},
+                    {.Id = outputId, .View = outputView},
                 };
                 graph.Compile()->Execute(cmd, bindings);
             });

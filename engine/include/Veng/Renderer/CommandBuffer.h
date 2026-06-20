@@ -58,11 +58,11 @@ namespace Veng::Renderer
         /// @brief Multiview mask (0 = disabled).
         u32 ViewMask = 0;
         /// @brief Color attachment list.
-        vector<RenderingAttachmentInfo> ColorAttachments{};
+        vector<RenderingAttachmentInfo> ColorAttachments;
         /// @brief Optional depth attachment.
-        optional<RenderingAttachmentInfo> DepthAttachment{};
+        optional<RenderingAttachmentInfo> DepthAttachment;
         /// @brief Optional stencil attachment.
-        optional<RenderingAttachmentInfo> StencilAttachment{};
+        optional<RenderingAttachmentInfo> StencilAttachment;
     };
 
     /// @brief Parameters for binding descriptor sets, with optional dynamic offsets.
@@ -231,20 +231,20 @@ namespace Veng::Renderer
         /// @brief Backend Vulkan command buffer.
         Unique<Native> m_Native;
         /// @brief Layout of the most recently bound pipeline; used for typed push-constant lookup.
-        Ref<PipelineLayout> m_LastBoundPipelineLayout{};
+        Ref<PipelineLayout> m_LastBoundPipelineLayout;
 
         /// @brief Attachment-format validation state captured from BeginRendering and BindPipeline.
         ///
         /// Compared at draw time to turn a silent dynamic-rendering validation error into a
         /// named VE_ASSERT. Cleared in EndRendering.
-        vector<Format> m_ActiveColorAttachmentFormats{};
+        vector<Format> m_ActiveColorAttachmentFormats;
         /// @brief Active depth format.
         Format m_ActiveDepthAttachmentFormat = Format::Undefined;
         /// @brief True while inside BeginRendering/EndRendering.
         bool m_HasActiveRenderingInfo = false;
 
         /// @brief Color attachment formats declared by the bound pipeline.
-        vector<Format> m_BoundPipelineColorAttachmentFormats{};
+        vector<Format> m_BoundPipelineColorAttachmentFormats;
         /// @brief Depth format declared by the bound pipeline.
         Format m_BoundPipelineDepthAttachmentFormat = Format::Undefined;
         /// @brief True once a graphics pipeline has been bound.

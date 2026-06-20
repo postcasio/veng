@@ -47,7 +47,9 @@ namespace Veng
                                         static_cast<u32>(Renderer::ShaderStage::Compute);
 
             if (value == 0 || (value & ~KnownStages) != 0)
+            {
                 return std::nullopt;
+            }
 
             return static_cast<Renderer::ShaderStage>(value);
         }
@@ -73,8 +75,10 @@ namespace Veng
                                                     bool /*async*/) const
     {
         if (cooked.size() < sizeof(CookedShaderHeader))
+        {
             return std::unexpected(
                 Corrupt(id, "shader: cooked blob smaller than CookedShaderHeader"));
+        }
 
         CookedShaderHeader header;
         std::memcpy(&header, cooked.data(), sizeof(header));
@@ -82,8 +86,10 @@ namespace Veng
         usize cursor = sizeof(CookedShaderHeader);
 
         if (cooked.size() < cursor + sizeof(CookedShaderInterfaceHeader))
+        {
             return std::unexpected(
                 Corrupt(id, "shader: cooked blob smaller than CookedShaderInterfaceHeader"));
+        }
 
         CookedShaderInterfaceHeader interfaceHeader;
         std::memcpy(&interfaceHeader, cooked.data() + cursor, sizeof(interfaceHeader));
@@ -94,8 +100,10 @@ namespace Veng
         const usize bindingBytes =
             static_cast<usize>(interfaceHeader.BindingCount) * sizeof(CookedDescriptorBinding);
         if (cooked.size() < cursor + bindingBytes)
+        {
             return std::unexpected(
                 Corrupt(id, "shader: cooked blob smaller than descriptor binding table"));
+        }
 
         shaderInterface.Bindings.reserve(interfaceHeader.BindingCount);
         for (u32 i = 0; i < interfaceHeader.BindingCount; ++i)
@@ -137,8 +145,10 @@ namespace Veng
         const usize pushConstantBytes =
             static_cast<usize>(interfaceHeader.PushConstantCount) * sizeof(CookedPushConstantBlock);
         if (cooked.size() < cursor + pushConstantBytes)
+        {
             return std::unexpected(
                 Corrupt(id, "shader: cooked blob smaller than push-constant table"));
+        }
 
         shaderInterface.PushConstants.reserve(interfaceHeader.PushConstantCount);
         for (u32 i = 0; i < interfaceHeader.PushConstantCount; ++i)
@@ -185,11 +195,15 @@ namespace Veng
             const AssetResult<AssetHandle<Veng::VertexLayout>> layout =
                 manager.LoadSync<Veng::VertexLayout>(AssetId{interfaceHeader.VertexLayoutAssetId});
             if (!layout)
+            {
                 return std::unexpected(layout.error());
+            }
         }
 
         if (cooked.size() < cursor + header.SpirvBytes)
+        {
             return std::unexpected(Corrupt(id, "shader: cooked blob smaller than header + SPIR-V"));
+        }
 
         const std::span<const u8> spirv = cooked.subspan(cursor, header.SpirvBytes);
 

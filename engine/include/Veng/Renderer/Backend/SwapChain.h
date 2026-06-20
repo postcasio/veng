@@ -112,9 +112,9 @@ namespace Veng::Renderer
         vk::Format m_Format;
         vk::ColorSpaceKHR m_ColorSpace;
         vk::SwapchainKHR m_VkSwapChain;
-        vector<Ref<Image>> m_Images{};
-        vector<Ref<ImageView>> m_ImageViews{};
-        vector<std::function<void()>> m_OnInvalidated{};
+        vector<Ref<Image>> m_Images;
+        vector<Ref<ImageView>> m_ImageViews;
+        vector<std::function<void()>> m_OnInvalidated;
 
         void Dispose();
     };

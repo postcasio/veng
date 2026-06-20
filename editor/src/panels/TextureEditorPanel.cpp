@@ -34,8 +34,12 @@ namespace VengEditor
         optional<E> ParseEnum(const std::string& value, const char* const* names, usize count)
         {
             for (usize i = 0; i < count; ++i)
+            {
                 if (value == names[i])
+                {
                     return static_cast<E>(i);
+                }
+            }
             return std::nullopt;
         }
     }
@@ -65,7 +69,7 @@ namespace VengEditor
     {
         m_Settings = Settings{};
 
-        std::ifstream file(m_SourcePath, std::ios::binary);
+        const std::ifstream file(m_SourcePath, std::ios::binary);
         if (!file)
         {
             Log::Error("Texture editor: failed to open {}", m_SourcePath.string());
@@ -82,7 +86,9 @@ namespace VengEditor
         }
 
         if (tex.contains("srgb") && tex["srgb"].is_boolean())
+        {
             m_Settings.Srgb = tex["srgb"].get<bool>();
+        }
 
         if (tex.contains("sampler") && tex["sampler"].is_object())
         {
@@ -90,16 +96,24 @@ namespace VengEditor
             auto readFilter = [&](const char* key, Filter& out)
             {
                 if (sampler.contains(key) && sampler[key].is_string())
+                {
                     if (auto parsed =
                             ParseEnum<Filter>(sampler[key].get<std::string>(), FilterNames, 2))
+                    {
                         out = *parsed;
+                    }
+                }
             };
             auto readWrap = [&](const char* key, Wrap& out)
             {
                 if (sampler.contains(key) && sampler[key].is_string())
+                {
                     if (auto parsed =
                             ParseEnum<Wrap>(sampler[key].get<std::string>(), WrapNames, 4))
+                    {
                         out = *parsed;
+                    }
+                }
             };
 
             readFilter("min", m_Settings.Min);
@@ -116,21 +130,25 @@ namespace VengEditor
         // structure) survive the round-trip — only the edited keys are patched.
         nlohmann::json tex = nlohmann::json::object();
         {
-            std::ifstream file(m_SourcePath, std::ios::binary);
+            const std::ifstream file(m_SourcePath, std::ios::binary);
             if (file)
             {
                 std::ostringstream contents;
                 contents << file.rdbuf();
                 const nlohmann::json parsed = nlohmann::json::parse(contents.str(), nullptr, false);
                 if (!parsed.is_discarded() && parsed.is_object())
+                {
                     tex = parsed;
+                }
             }
         }
 
         tex["srgb"] = m_Settings.Srgb;
         nlohmann::json& sampler = tex["sampler"];
         if (!sampler.is_object())
+        {
             sampler = nlohmann::json::object();
+        }
         sampler["min"] = FilterNames[static_cast<u32>(m_Settings.Min)];
         sampler["mag"] = FilterNames[static_cast<u32>(m_Settings.Mag)];
         sampler["mipmap"] = FilterNames[static_cast<u32>(m_Settings.Mipmap)];
@@ -151,7 +169,9 @@ namespace VengEditor
     void TextureEditorPanel::TriggerCook()
     {
         if (m_Cooking)
+        {
             return;
+        }
 
         m_Cooking = true;
         m_CookError.reset();
@@ -197,15 +217,23 @@ namespace VengEditor
         const vec2 available = UI::ContentRegionAvail();
         const f32 previewSide = available.x > 16.0f ? available.x : 16.0f;
         if (m_Preview && m_Handle.IsLoaded())
+        {
             UI::Image(m_Preview, {previewSide, previewSide});
+        }
         else
+        {
             UI::Text(m_Cooking ? "Cooking..." : "Loading...");
+        }
 
         if (m_Cooking)
+        {
             UI::Text("Cooking...");
+        }
 
         if (m_CookError)
+        {
             UI::TextColored({0.9f, 0.3f, 0.3f, 1.0f}, fmt::format("Cook error: {}", *m_CookError));
+        }
 
         UI::Separator();
 
@@ -253,7 +281,9 @@ namespace VengEditor
         UI::Separator();
 
         if (UI::Button("Save"))
+        {
             SaveSettings();
+        }
         UI::SameLine();
         if (UI::Button("Revert"))
         {

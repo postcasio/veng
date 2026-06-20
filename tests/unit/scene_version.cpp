@@ -141,7 +141,7 @@ TEST_CASE("Non-const spatial access is a write proxy — it bumps")
     SUBCASE("Get<Transform>")
     {
         const u64 before = scene->GetSpatialVersion();
-        Transform& transform = scene->Get<Transform>(e);
+        auto& transform = scene->Get<Transform>(e);
         transform.Position.x = 5.0f;
         CHECK(scene->GetSpatialVersion() > before);
     }
@@ -224,7 +224,7 @@ TEST_CASE("The const iteration path never bumps the version")
     SUBCASE("const TryGet<Transform>")
     {
         const u64 before = scene->GetSpatialVersion();
-        const Transform* transform = constScene.TryGet<Transform>(e);
+        const auto* transform = constScene.TryGet<Transform>(e);
         CHECK(transform != nullptr);
         CHECK(scene->GetSpatialVersion() == before);
     }

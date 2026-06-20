@@ -24,11 +24,15 @@ namespace Veng
             for (const Entity entity : m_Pending)
             {
                 if (!scene.IsAlive(entity))
+                {
                     continue;
+                }
 
-                const MeshRenderer* renderer = scene.TryGet<MeshRenderer>(entity);
+                const auto* renderer = scene.TryGet<MeshRenderer>(entity);
                 if (renderer != nullptr && renderer->Mesh.IsLoaded())
+                {
                     needRebuild = true;
+                }
 
                 m_Pending[live++] = entity;
             }
@@ -54,7 +58,9 @@ namespace Veng
         m_LeafScratch.clear();
         m_LeafScratch.reserve(m_Candidates.size());
         for (u32 i = 0; i < m_Candidates.size(); ++i)
-            m_LeafScratch.push_back(BVH::Leaf{m_Candidates[i].WorldBounds, i});
+        {
+            m_LeafScratch.push_back(BVH::Leaf{.Box = m_Candidates[i].WorldBounds, .Id = i});
+        }
 
         m_Tree.Build(m_LeafScratch);
 
@@ -65,7 +71,9 @@ namespace Veng
         {
             (void)transform;
             if (!renderer.Mesh.IsLoaded())
+            {
                 m_Pending.push_back(entity);
+            }
         }
     }
 

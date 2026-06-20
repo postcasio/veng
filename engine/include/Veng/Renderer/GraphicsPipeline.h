@@ -15,7 +15,7 @@ namespace Veng::Renderer
         /// @brief Debug name.
         string Name;
         /// @brief Color attachment formats and blend states.
-        vector<PipelineAttachmentInfo> ColorAttachments = {};
+        vector<PipelineAttachmentInfo> ColorAttachments;
         /// @brief Depth attachment format (Undefined = none).
         Format DepthAttachmentFormat = Format::Undefined;
         /// @brief Stencil attachment format (Undefined = none).
@@ -25,7 +25,7 @@ namespace Veng::Renderer
         /// @brief Descriptor set and push-constant layout.
         Ref<PipelineLayout> PipelineLayout;
         /// @brief Shader stages (vertex, fragment, etc.).
-        vector<PipelineShaderStageInfo> ShaderStages = {};
+        vector<PipelineShaderStageInfo> ShaderStages;
         /// @brief Fill, line, or point rasterization.
         PolygonMode PolygonMode = PolygonMode::Fill;
         /// @brief Face culling mode.

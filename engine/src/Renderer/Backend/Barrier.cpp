@@ -22,8 +22,10 @@ namespace Veng::Renderer::Backend
         // graph declares cover a uniform-state range. The hazard rule lives in
         // DecideBarrier (Backend/BarrierDecision.h).
         const auto& tracked = native.At(baseLayer, baseMip);
-        const SubresourceState current{tracked.Layout, tracked.Stage, tracked.Access,
-                                       tracked.ProducingFamily};
+        const SubresourceState current{.Layout = tracked.Layout,
+                                       .Stage = tracked.Stage,
+                                       .Access = tracked.Access,
+                                       .ProducingFamily = tracked.ProducingFamily};
 
         Context& context = image.GetContext();
         const QueueFamilyIndices& families = context.GetQueueFamilies();
@@ -66,11 +68,11 @@ namespace Veng::Renderer::Backend
                 .image = native.Image,
                 .subresourceRange =
                     {
-                        Utils::GetAspectFlags(ToVk(image.GetFormat())),
-                        baseMip,
-                        mipCount,
-                        baseLayer,
-                        layerCount,
+                        .aspectMask = Utils::GetAspectFlags(ToVk(image.GetFormat())),
+                        .baseMipLevel = baseMip,
+                        .levelCount = mipCount,
+                        .baseArrayLayer = baseLayer,
+                        .layerCount = layerCount,
                     },
             };
 
@@ -83,6 +85,7 @@ namespace Veng::Renderer::Backend
         // state; a no-hazard read widens the scope. Clear the pending transfer value
         // once consumed so a later use never re-waits.
         for (u32 layer = baseLayer; layer < baseLayer + layerCount; layer++)
+        {
             for (u32 mip = baseMip; mip < baseMip + mipCount; mip++)
             {
                 auto& s = native.At(layer, mip);
@@ -95,6 +98,7 @@ namespace Veng::Renderer::Backend
                     s.PendingTransferValue = 0;
                 }
             }
+        }
     }
 
     void TransitionImage(CommandBuffer& cmd, Image& image, const ImageLayout newLayout,
@@ -110,12 +114,14 @@ namespace Veng::Renderer::Backend
     {
         auto& native = image.GetNative();
         for (u32 layer = 0; layer < native.Layers; layer++)
+        {
             for (u32 mip = 0; mip < native.MipLevels; mip++)
             {
                 auto& s = native.At(layer, mip);
                 s.ProducingFamily = producingFamily;
                 s.PendingTransferValue = transferValue;
             }
+        }
     }
 
     void ReleaseImageToGraphicsQueue(CommandBuffer& cmd, Image& image, const u32 transferFamily,
@@ -146,11 +152,11 @@ namespace Veng::Renderer::Backend
             .image = native.Image,
             .subresourceRange =
                 {
-                    Utils::GetAspectFlags(ToVk(image.GetFormat())),
-                    0,
-                    native.MipLevels,
-                    0,
-                    native.Layers,
+                    .aspectMask = Utils::GetAspectFlags(ToVk(image.GetFormat())),
+                    .baseMipLevel = 0,
+                    .levelCount = native.MipLevels,
+                    .baseArrayLayer = 0,
+                    .layerCount = native.Layers,
                 },
         };
 

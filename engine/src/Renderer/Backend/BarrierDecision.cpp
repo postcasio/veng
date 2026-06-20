@@ -39,13 +39,18 @@ namespace Veng::Renderer::Backend
             // the layout. The subresource stays graphics-produced.
             return {
                 .NeedsBarrier = false,
-                .NewState = {current.Layout, current.Stage | dstStage, current.Access | dstAccess},
+                .NewState = {.Layout = current.Layout,
+                             .Stage = current.Stage | dstStage,
+                             .Access = current.Access | dstAccess},
             };
         }
 
         // After a graphics-queue use the subresource is graphics-produced, so a
         // later use never re-acquires.
-        const SubresourceState desired{newLayout, dstStage, dstAccess, graphicsFamily};
+        const SubresourceState desired{.Layout = newLayout,
+                                       .Stage = dstStage,
+                                       .Access = dstAccess,
+                                       .ProducingFamily = graphicsFamily};
         return {
             .NeedsBarrier = true,
             .NewState = desired,
@@ -63,48 +68,48 @@ namespace Veng::Renderer::Backend
         {
         case Kind::ColorAttachment:
             return {
-                vk::ImageLayout::eColorAttachmentOptimal,
-                vk::PipelineStageFlagBits::eColorAttachmentOutput,
-                vk::AccessFlagBits::eColorAttachmentWrite |
-                    vk::AccessFlagBits::eColorAttachmentRead,
+                .Layout = vk::ImageLayout::eColorAttachmentOptimal,
+                .Stage = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                .Access = vk::AccessFlagBits::eColorAttachmentWrite |
+                          vk::AccessFlagBits::eColorAttachmentRead,
             };
         case Kind::DepthAttachment:
             return {
-                vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                vk::PipelineStageFlagBits::eEarlyFragmentTests |
-                    vk::PipelineStageFlagBits::eLateFragmentTests,
-                vk::AccessFlagBits::eDepthStencilAttachmentWrite |
-                    vk::AccessFlagBits::eDepthStencilAttachmentRead,
+                .Layout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                .Stage = vk::PipelineStageFlagBits::eEarlyFragmentTests |
+                         vk::PipelineStageFlagBits::eLateFragmentTests,
+                .Access = vk::AccessFlagBits::eDepthStencilAttachmentWrite |
+                          vk::AccessFlagBits::eDepthStencilAttachmentRead,
             };
         case Kind::Sample:
             return {
-                vk::ImageLayout::eShaderReadOnlyOptimal,
-                vk::PipelineStageFlagBits::eFragmentShader,
-                vk::AccessFlagBits::eShaderRead,
+                .Layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                .Stage = vk::PipelineStageFlagBits::eFragmentShader,
+                .Access = vk::AccessFlagBits::eShaderRead,
             };
         case Kind::StorageRead:
             return {
-                vk::ImageLayout::eGeneral,
-                vk::PipelineStageFlagBits::eComputeShader,
-                vk::AccessFlagBits::eShaderRead,
+                .Layout = vk::ImageLayout::eGeneral,
+                .Stage = vk::PipelineStageFlagBits::eComputeShader,
+                .Access = vk::AccessFlagBits::eShaderRead,
             };
         case Kind::StorageWrite:
             return {
-                vk::ImageLayout::eGeneral,
-                vk::PipelineStageFlagBits::eComputeShader,
-                vk::AccessFlagBits::eShaderWrite,
+                .Layout = vk::ImageLayout::eGeneral,
+                .Stage = vk::PipelineStageFlagBits::eComputeShader,
+                .Access = vk::AccessFlagBits::eShaderWrite,
             };
         case Kind::TransferSrc:
             return {
-                vk::ImageLayout::eTransferSrcOptimal,
-                vk::PipelineStageFlagBits::eTransfer,
-                vk::AccessFlagBits::eTransferRead,
+                .Layout = vk::ImageLayout::eTransferSrcOptimal,
+                .Stage = vk::PipelineStageFlagBits::eTransfer,
+                .Access = vk::AccessFlagBits::eTransferRead,
             };
         case Kind::TransferDst:
             return {
-                vk::ImageLayout::eTransferDstOptimal,
-                vk::PipelineStageFlagBits::eTransfer,
-                vk::AccessFlagBits::eTransferWrite,
+                .Layout = vk::ImageLayout::eTransferDstOptimal,
+                .Stage = vk::PipelineStageFlagBits::eTransfer,
+                .Access = vk::AccessFlagBits::eTransferWrite,
             };
         }
         VE_ASSERT(false, "unhandled AccessKind {}", static_cast<u32>(kind));

@@ -56,19 +56,23 @@ namespace Veng
                              std::span<const u8> cooked, bool /*async*/) const
     {
         if (cooked.size() < sizeof(CookedVertexLayoutHeader))
+        {
             return std::unexpected(
                 Corrupt(id, "vertex_layout: cooked blob smaller than CookedVertexLayoutHeader"));
+        }
 
         CookedVertexLayoutHeader header;
         std::memcpy(&header, cooked.data(), sizeof(header));
 
-        usize cursor = sizeof(CookedVertexLayoutHeader);
+        const usize cursor = sizeof(CookedVertexLayoutHeader);
 
         const usize elementBytes =
             static_cast<usize>(header.ElementCount) * sizeof(CookedVertexLayoutElement);
         if (cooked.size() < cursor + elementBytes)
+        {
             return std::unexpected(
                 Corrupt(id, "vertex_layout: cooked blob smaller than element table"));
+        }
 
         vector<Renderer::VertexBufferElement> elements;
         elements.reserve(header.ElementCount);

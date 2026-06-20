@@ -27,9 +27,15 @@ namespace
     bool IsFinite(const mat4& m)
     {
         for (int c = 0; c < 4; ++c)
+        {
             for (int r = 0; r < 4; ++r)
+            {
                 if (!std::isfinite(m[c][r]))
+                {
                     return false;
+                }
+            }
+        }
         return true;
     }
 
@@ -154,7 +160,9 @@ TEST_CASE("ComputePointShadowView: each axis hits its matching face and no other
         for (u32 other = 0; other < CubeFaceCount; ++other)
         {
             if (other == axis)
+            {
                 continue;
+            }
             const vec3 ndc = ProjectNdc(view.ViewProj[other], point);
             const bool outside = std::abs(ndc.x) > 1.0f + 1e-3f || std::abs(ndc.y) > 1.0f + 1e-3f ||
                                  ndc.z < -1e-3f || ndc.z > 1.0f + 1e-3f;

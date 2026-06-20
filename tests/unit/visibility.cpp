@@ -46,7 +46,7 @@ TEST_CASE("GatherMeshes: two mesh entities yield two VisibleMeshes in dense orde
     AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
-    const AABB unit{vec3(-0.5f), vec3(0.5f)};
+    const AABB unit{.Min = vec3(-0.5f), .Max = vec3(0.5f)};
     const AssetHandle<Mesh> mesh = manager.Adopt<Mesh>(BoundsMesh(unit));
 
     const Entity a = scene->CreateEntity();
@@ -105,7 +105,8 @@ TEST_CASE("GatherMeshes: non-resident and MeshRenderer-less entities contribute 
     scene->Add<Transform>(transformOnly, Transform{.Position = vec3(-5.0f)});
 
     // One genuinely resident entity to prove the others are simply skipped.
-    const AssetHandle<Mesh> mesh = manager.Adopt<Mesh>(BoundsMesh(AABB{vec3(-1.0f), vec3(1.0f)}));
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-1.0f), .Max = vec3(1.0f)}));
     const Entity resident = scene->CreateEntity();
     scene->Add<Transform>(resident, Transform{});
     scene->Add<MeshRenderer>(resident, MeshRenderer{.Mesh = mesh});
@@ -122,10 +123,10 @@ TEST_CASE("GatherMeshes: an empty scene yields an empty list and empty bounds")
 {
     TypeRegistry types;
     RegisterBuiltins(types);
-    Unique<Scene> scene = Scene::Create(types);
+    const Unique<Scene> scene = Scene::Create(types);
 
     vector<VisibleMesh> out;
-    AABB outBounds{vec3(-99.0f), vec3(99.0f)};
+    AABB outBounds{.Min = vec3(-99.0f), .Max = vec3(99.0f)};
     GatherMeshes(*scene, out, outBounds);
 
     CHECK(out.empty());
@@ -142,7 +143,8 @@ TEST_CASE("GatherMeshes: outBounds equals SceneBounds (the by-product agrees)")
     AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
-    const AssetHandle<Mesh> mesh = manager.Adopt<Mesh>(BoundsMesh(AABB{vec3(-0.5f), vec3(0.5f)}));
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
 
     const Entity a = scene->CreateEntity();
     scene->Add<Transform>(a, Transform{.Position = vec3(10.0f, 0.0f, 0.0f)});
@@ -175,7 +177,8 @@ TEST_CASE("GatherMeshes: a pre-filled out vector is cleared first")
     AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
-    const AssetHandle<Mesh> mesh = manager.Adopt<Mesh>(BoundsMesh(AABB{vec3(-0.5f), vec3(0.5f)}));
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
     const Entity e = scene->CreateEntity();
     scene->Add<Transform>(e, Transform{});
     scene->Add<MeshRenderer>(e, MeshRenderer{.Mesh = mesh});

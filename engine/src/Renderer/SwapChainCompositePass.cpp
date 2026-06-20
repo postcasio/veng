@@ -142,7 +142,9 @@ namespace Veng::Renderer
         // on the next replay without a recompile.
         BindlessRegistry& bindless = m_Impl->Context.GetBindlessRegistry();
         if (m_Impl->SceneHandle.IsValid())
+        {
             bindless.Release(m_Impl->SceneHandle);
+        }
         m_Impl->SceneHandle = bindless.Register(sceneSource);
     }
 
@@ -158,7 +160,7 @@ namespace Veng::Renderer
                 .Resource = m_Impl->SwapId,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
-                .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
             })
             .Sample(m_Impl->SceneId)
             .Sample(m_Impl->ImGuiId)
@@ -186,9 +188,9 @@ namespace Veng::Renderer
                                          const Ref<ImageView>& swapChainView) const
     {
         const RenderGraph::ImportBinding bindings[] = {
-            {m_Impl->SwapId, swapChainView},
-            {m_Impl->SceneId, m_Impl->SceneSource},
-            {m_Impl->ImGuiId, m_Impl->ImGuiView},
+            {.Id = m_Impl->SwapId, .View = swapChainView},
+            {.Id = m_Impl->SceneId, .View = m_Impl->SceneSource},
+            {.Id = m_Impl->ImGuiId, .View = m_Impl->ImGuiView},
         };
         graph.Execute(cmd, bindings);
     }

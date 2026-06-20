@@ -149,7 +149,9 @@ namespace VengEditor
         };
         gameModule->Register(host);
         if (editorModule)
+        {
             editorModule->Register(host);
+        }
 
         auto gameModulePtr = CreateUnique<LoadedModule>(std::move(*gameModule));
         return Unique<EditorHost>(new EditorHost(
@@ -169,7 +171,9 @@ namespace VengEditor
     void EditorHost::OpenAssetEditor(AssetType type, AssetId id)
     {
         if (Unique<EditorPanel> panel = m_Registries->Editor.CreateEditorFor(type, id))
+        {
             m_PendingPanels.push_back(std::move(panel));
+        }
     }
 
     void EditorHost::OnInitialize()
@@ -280,7 +284,9 @@ namespace VengEditor
         m_Panels.push_back({CreateUnique<ConsolePanel>(), true});
 
         for (Unique<EditorPanel>& panel : m_Registries->Editor.Panels())
+        {
             m_Panels.push_back({std::move(panel), true});
+        }
     }
 
     Unique<Renderer::CompiledGraph> EditorHost::BuildPresentGraph()
@@ -293,7 +299,7 @@ namespace VengEditor
                 .Resource = m_SwapId,
                 .Load = Renderer::LoadOp::Clear,
                 .Store = Renderer::StoreOp::Store,
-                .Clear = Renderer::ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                .Clear = Renderer::ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
             })
             .Sample(m_ImGuiId)
             .Execute(
@@ -330,7 +336,9 @@ namespace VengEditor
         // panels build manifest-agnostic requests.
         CookRequest resolved = request;
         if (m_Info.AssetManifestPath)
+        {
             resolved.ReferenceManifest = *m_Info.AssetManifestPath;
+        }
 
         Task<vector<u8>> task = m_Info.Cook(resolved, GetTaskSystem());
 
@@ -358,13 +366,17 @@ namespace VengEditor
             if (auto file = UI::Menu("File"))
             {
                 if (UI::MenuItem("Exit"))
+                {
                     RequestExit();
+                }
             }
 
             if (auto window = UI::Menu("Window"))
             {
                 for (PanelSlot& slot : m_Panels)
+                {
                     UI::MenuItem(slot.Panel->GetTitle(), &slot.Open);
+                }
             }
         }
     }
@@ -382,13 +394,19 @@ namespace VengEditor
 
         // Adopt any panels opened via OpenAssetEditor since last frame.
         for (Unique<EditorPanel>& opened : m_PendingPanels)
+        {
             m_Panels.push_back({std::move(opened), true});
+        }
         m_PendingPanels.clear();
 
         // The viewport is driven explicitly above; its OnRender is a no-op.
         for (PanelSlot& slot : m_Panels)
+        {
             if (slot.Open)
+            {
                 slot.Panel->OnRender(cmd);
+            }
+        }
 
         ImGui::DockSpaceOverViewport();
         DrawMenuBar();
@@ -396,7 +414,9 @@ namespace VengEditor
         for (PanelSlot& slot : m_Panels)
         {
             if (!slot.Open)
+            {
                 continue;
+            }
 
             const UI::WindowFlags flags = slot.Panel->GetWindowFlags();
 
@@ -407,17 +427,21 @@ namespace VengEditor
             const bool noPadding = (flags & UI::WindowFlags::NoScrollbar) != UI::WindowFlags::None;
             optional<UI::StyleVarScope> padding;
             if (noPadding)
+            {
                 padding.emplace(UI::StyleVar(UI::StyleVarId::WindowPadding, vec2(0, 0)));
+            }
 
             if (auto window = UI::Window(slot.Panel->GetTitle(), &slot.Open, flags))
+            {
                 slot.Panel->OnImGui();
+            }
         }
 
         GetImGuiLayer()->Render(cmd);
 
         const Renderer::RenderGraph::ImportBinding bindings[] = {
-            {m_SwapId, GetRenderContext().GetCurrentSwapChainImageView()},
-            {m_ImGuiId, m_ImGuiView},
+            {.Id = m_SwapId, .View = GetRenderContext().GetCurrentSwapChainImageView()},
+            {.Id = m_ImGuiId, .View = m_ImGuiView},
         };
         m_PresentGraph->Execute(cmd, bindings);
     }

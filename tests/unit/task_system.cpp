@@ -55,7 +55,7 @@ TEST_CASE("void jobs complete and report success")
     std::atomic<int> counter = 0;
     Task<void> t = tasks.Submit([&counter] { counter.fetch_add(1); });
 
-    Result<std::monostate> r = t.Get();
+    const Result<std::monostate> r = t.Get();
     CHECK(r.has_value());
     CHECK(counter.load() == 1);
 }
@@ -130,13 +130,13 @@ TEST_CASE("WaitForAll blocks until every in-flight job is done")
 
 TEST_CASE("WorkerCount = 0 derives a sane count (>= 1)")
 {
-    TaskSystem tasks(TaskSystemInfo{.WorkerCount = 0});
+    const TaskSystem tasks(TaskSystemInfo{.WorkerCount = 0});
     CHECK(tasks.GetWorkerCount() >= 1);
 }
 
 TEST_CASE("WorkerCount is honored when set explicitly")
 {
-    TaskSystem tasks(TaskSystemInfo{.WorkerCount = 3});
+    const TaskSystem tasks(TaskSystemInfo{.WorkerCount = 3});
     CHECK(tasks.GetWorkerCount() == 3);
 }
 
@@ -152,7 +152,7 @@ TEST_CASE("ForEachWorker runs once on each worker")
         [&](u32 index)
         {
             calls.fetch_add(1);
-            std::lock_guard lock(mutex);
+            const std::scoped_lock lock(mutex);
             seen.insert(index);
         });
 

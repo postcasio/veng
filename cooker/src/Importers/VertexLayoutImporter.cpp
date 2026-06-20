@@ -14,14 +14,18 @@ namespace Veng::Cook
                                                   const json& entry) const
     {
         if (!entry.contains("source") || !entry["source"].is_string())
+        {
             return std::unexpected("vertex layout importer: missing or invalid 'source'");
+        }
 
         const path sourcePath = context.PackDir / entry["source"].get<string>();
 
         const Result<vector<CookedVertexLayoutElement>> elementsResult =
             ReadVertexLayoutFile(sourcePath);
         if (!elementsResult)
+        {
             return std::unexpected(elementsResult.error());
+        }
 
         const vector<CookedVertexLayoutElement>& elements = *elementsResult;
 

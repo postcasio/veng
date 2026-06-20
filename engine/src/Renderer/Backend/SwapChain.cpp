@@ -61,7 +61,7 @@ namespace Veng::Renderer
             .minImageCount = imageCount,
             .imageFormat = m_Format,
             .imageColorSpace = m_ColorSpace,
-            .imageExtent = {m_Width, m_Height},
+            .imageExtent = {.width = m_Width, .height = m_Height},
             .imageArrayLayers = 1,
             .imageUsage = vk::ImageUsageFlagBits::eColorAttachment};
 
@@ -176,7 +176,7 @@ namespace Veng::Renderer
         }
         else
         {
-            vk::Extent2D actualExtent = {window.GetWidth(), window.GetHeight()};
+            vk::Extent2D actualExtent = {.width = window.GetWidth(), .height = window.GetHeight()};
 
             actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width,
                                             capabilities.maxImageExtent.width);

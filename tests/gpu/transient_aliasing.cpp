@@ -51,14 +51,14 @@ TEST_CASE_FIXTURE(
         .Color({.Resource = a,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
-                .Clear = ClearColor{0.0f, 1.0f, 0.0f, 1.0f}})
+                .Clear = ClearColor{.R = 0.0f, .G = 1.0f, .B = 0.0f, .A = 1.0f}})
         .Execute([](PassContext&) {});
 
     graph.AddPass("clear B blue")
         .Color({.Resource = b,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
-                .Clear = ClearColor{0.0f, 0.0f, 1.0f, 1.0f}})
+                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 1.0f, .A = 1.0f}})
         .Execute([](PassContext&) {});
 
     const auto compiled = graph.Compile();
@@ -95,11 +95,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Color({.Resource = a,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
-                .Clear = ClearColor{1.0f, 0.0f, 0.0f, 1.0f}})
+                .Clear = ClearColor{.R = 1.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f}})
         .Color({.Resource = b,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
-                .Clear = ClearColor{0.0f, 1.0f, 0.0f, 1.0f}})
+                .Clear = ClearColor{.R = 0.0f, .G = 1.0f, .B = 0.0f, .A = 1.0f}})
         .Execute([](PassContext&) {});
 
     const auto compiled = graph.Compile();

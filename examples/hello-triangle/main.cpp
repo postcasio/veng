@@ -154,7 +154,9 @@ protected:
         m_Camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
         if (GetImGuiLayer())
+        {
             m_CompositeGraph = BuildCompositeGraph();
+        }
     }
 
     void OnUpdate(const f32 delta) override

@@ -15,9 +15,9 @@ namespace
 {
     // Shorthand for the read-only sampled state used by several cases.
     const SubresourceState ShaderRead{
-        vk::ImageLayout::eShaderReadOnlyOptimal,
-        vk::PipelineStageFlagBits::eFragmentShader,
-        vk::AccessFlagBits::eShaderRead,
+        .Layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        .Stage = vk::PipelineStageFlagBits::eFragmentShader,
+        .Access = vk::AccessFlagBits::eShaderRead,
     };
 
     // Distinct family indices for the discrete-queue cases. On the dev box
@@ -41,9 +41,9 @@ namespace
 TEST_CASE("DecideBarrier: first use from Undefined is a layout-change barrier")
 {
     const SubresourceState current{
-        vk::ImageLayout::eUndefined,
-        vk::PipelineStageFlagBits::eTopOfPipe,
-        vk::AccessFlags{},
+        .Layout = vk::ImageLayout::eUndefined,
+        .Stage = vk::PipelineStageFlagBits::eTopOfPipe,
+        .Access = vk::AccessFlags{},
     };
 
     const auto d = DecideSameQueue(current, vk::ImageLayout::eColorAttachmentOptimal,
@@ -93,9 +93,9 @@ TEST_CASE("DecideBarrier: read -> write at same layout is a write hazard")
 TEST_CASE("DecideBarrier: write -> read at same layout is a source-write hazard")
 {
     const SubresourceState current{
-        vk::ImageLayout::eGeneral,
-        vk::PipelineStageFlagBits::eComputeShader,
-        vk::AccessFlagBits::eShaderWrite,
+        .Layout = vk::ImageLayout::eGeneral,
+        .Stage = vk::PipelineStageFlagBits::eComputeShader,
+        .Access = vk::AccessFlagBits::eShaderWrite,
     };
 
     const auto d =
@@ -113,10 +113,10 @@ TEST_CASE("DecideBarrier: transfer-produced, families differ, acquires on first 
     // layout) first sampled on the graphics queue with a discrete transfer
     // family present.
     const SubresourceState produced{
-        vk::ImageLayout::eTransferDstOptimal,
-        vk::PipelineStageFlagBits::eTransfer,
-        vk::AccessFlagBits::eTransferWrite,
-        TransferFamily,
+        .Layout = vk::ImageLayout::eTransferDstOptimal,
+        .Stage = vk::PipelineStageFlagBits::eTransfer,
+        .Access = vk::AccessFlagBits::eTransferWrite,
+        .ProducingFamily = TransferFamily,
     };
 
     const auto d = DecideBarrier(produced, vk::ImageLayout::eShaderReadOnlyOptimal,
@@ -141,10 +141,10 @@ TEST_CASE("DecideBarrier: transfer-produced, families match, degenerates to a pl
     // The MoltenVK single-queue collapse: transfer and graphics share a family,
     // so the same scenario carries no ownership transfer.
     const SubresourceState produced{
-        vk::ImageLayout::eTransferDstOptimal,
-        vk::PipelineStageFlagBits::eTransfer,
-        vk::AccessFlagBits::eTransferWrite,
-        GraphicsFamily,
+        .Layout = vk::ImageLayout::eTransferDstOptimal,
+        .Stage = vk::PipelineStageFlagBits::eTransfer,
+        .Access = vk::AccessFlagBits::eTransferWrite,
+        .ProducingFamily = GraphicsFamily,
     };
 
     const auto d = DecideBarrier(produced, vk::ImageLayout::eShaderReadOnlyOptimal,

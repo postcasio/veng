@@ -90,7 +90,9 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
         constexpr std::array v = {ImageType::Type1D, ImageType::Type2D, ImageType::Type3D};
         std::set<std::underlying_type_t<vk::ImageType>> s;
         for (auto e : v)
+        {
             s.insert(Underlying(ToVk(e)));
+        }
         CHECK(s.size() == v.size());
         CHECK(ToVk(ImageType::Type2D) == vk::ImageType::e2D);
     }
@@ -102,7 +104,9 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
         };
         std::set<std::underlying_type_t<vk::ImageViewType>> s;
         for (auto e : v)
+        {
             s.insert(Underlying(ToVk(e)));
+        }
         CHECK(s.size() == v.size());
         CHECK(ToVk(ImageViewType::CubeArray) == vk::ImageViewType::eCubeArray);
     }
@@ -118,7 +122,9 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
         };
         std::set<std::underlying_type_t<vk::CompareOp>> s;
         for (auto e : v)
+        {
             s.insert(Underlying(ToVk(e)));
+        }
         CHECK(s.size() == v.size());
         CHECK(ToVk(CompareOp::LessOrEqual) == vk::CompareOp::eLessOrEqual);
     }
@@ -141,7 +147,9 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
         };
         std::set<std::underlying_type_t<vk::SamplerAddressMode>> s;
         for (auto e : v)
+        {
             s.insert(Underlying(ToVk(e)));
+        }
         CHECK(s.size() == v.size());
         CHECK(ToVk(AddressMode::ClampToEdge) == vk::SamplerAddressMode::eClampToEdge);
     }
@@ -161,7 +169,9 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
         };
         std::set<std::underlying_type_t<vk::DescriptorType>> s;
         for (auto e : v)
+        {
             s.insert(Underlying(ToVk(e)));
+        }
         CHECK(s.size() == v.size());
         CHECK(ToVk(DescriptorType::StorageImage) == vk::DescriptorType::eStorageImage);
     }
@@ -174,7 +184,9 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
         };
         std::set<std::underlying_type_t<vk::BlendFactor>> s;
         for (auto e : v)
+        {
             s.insert(Underlying(ToVk(e)));
+        }
         CHECK(s.size() == v.size());
         CHECK(ToVk(BlendFactor::SrcAlpha) == vk::BlendFactor::eSrcAlpha);
     }
@@ -184,7 +196,9 @@ TEST_CASE("scalar ToVk enums map every defined enumerator distinctly")
         };
         std::set<std::underlying_type_t<vk::BlendOp>> s;
         for (auto e : v)
+        {
             s.insert(Underlying(ToVk(e)));
+        }
         CHECK(s.size() == v.size());
         CHECK(ToVk(BlendOp::ReverseSubtract) == vk::BlendOp::eReverseSubtract);
     }
@@ -267,13 +281,14 @@ TEST_CASE("BlendState composite mapper")
 
 TEST_CASE("ClearValue composite mapper")
 {
-    const vk::ClearValue color = ToVk(ClearValue{ClearColor{0.25f, 0.5f, 0.75f, 1.0f}});
+    const vk::ClearValue color =
+        ToVk(ClearValue{ClearColor{.R = 0.25f, .G = 0.5f, .B = 0.75f, .A = 1.0f}});
     CHECK(color.color.float32[0] == doctest::Approx(0.25f));
     CHECK(color.color.float32[1] == doctest::Approx(0.5f));
     CHECK(color.color.float32[2] == doctest::Approx(0.75f));
     CHECK(color.color.float32[3] == doctest::Approx(1.0f));
 
-    const vk::ClearValue depth = ToVk(ClearValue{ClearDepth{0.5f, 3}});
+    const vk::ClearValue depth = ToVk(ClearValue{ClearDepth{.Depth = 0.5f, .Stencil = 3}});
     CHECK(depth.depthStencil.depth == doctest::Approx(0.5f));
     CHECK(depth.depthStencil.stencil == 3u);
 }

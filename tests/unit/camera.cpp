@@ -21,9 +21,15 @@ namespace
     bool MatrixApprox(const mat4& a, const mat4& b, f32 eps = 1e-4f)
     {
         for (int c = 0; c < 4; ++c)
+        {
             for (int r = 0; r < 4; ++r)
+            {
                 if (std::abs(a[c][r] - b[c][r]) > eps)
+                {
                     return false;
+                }
+            }
+        }
         return true;
     }
 }

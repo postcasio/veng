@@ -16,15 +16,21 @@ namespace VengEditor
     const NodeType* NodeCatalog::Find(NodeTypeId id) const
     {
         if (id.Value == 0 || id.Value > m_Types.size())
+        {
             return nullptr;
+        }
         return &m_Types[id.Value - 1];
     }
 
     const NodeType* NodeCatalog::Find(Veng::string_view name) const
     {
         for (const NodeType& type : m_Types)
+        {
             if (type.Name == name)
+            {
                 return &type;
+            }
+        }
         return nullptr;
     }
 
@@ -41,10 +47,14 @@ namespace VengEditor
         NodePinShape shape;
         shape.Inputs.reserve(type->Inputs.size());
         for (const PinDesc& pin : type->Inputs)
+        {
             shape.Inputs.push_back(pin.Type);
+        }
         shape.Outputs.reserve(type->Outputs.size());
         for (const PinDesc& pin : type->Outputs)
+        {
             shape.Outputs.push_back(pin.Type);
+        }
         return shape;
     }
 }

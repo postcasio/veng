@@ -17,7 +17,9 @@ namespace Veng
     {
         AABB bounds = AABB::Empty();
         for (const CanonicalVertex& vertex : vertices)
+        {
             bounds.Expand(vertex.Position);
+        }
         return bounds;
     }
 

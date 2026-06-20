@@ -25,7 +25,7 @@ namespace Veng::Renderer
         /// Set for a SampledImage binding sampled through a fixed sampler the layout owns —
         /// e.g. a comparison sampler for hardware SampleCmp — so a write supplies only the
         /// image, never a sampler. Empty for the common case.
-        vector<Ref<Sampler>> ImmutableSamplers{};
+        vector<Ref<Sampler>> ImmutableSamplers;
 
         /// @brief When false (default), the binding is static: written at setup or between frames,
         /// then bound — no descriptor-indexing flags. When true, the binding is bindless: may

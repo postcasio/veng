@@ -55,7 +55,7 @@ int main(int argc, char** argv)
                 fmt::print(stderr, "veng_cook_bootstrap: --reference requires an argument\n");
                 return 1;
             }
-            referencePacks.push_back(path(args[++i]));
+            referencePacks.emplace_back(args[++i]);
         }
         else if (!packPath)
         {

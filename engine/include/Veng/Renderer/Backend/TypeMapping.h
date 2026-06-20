@@ -217,7 +217,9 @@ namespace Veng::Renderer
     {
         vk::CommandBufferUsageFlags flags{};
         if (HasFlag(usage, CommandBufferUsage::OneTimeSubmit))
+        {
             flags |= vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+        }
         return flags;
     }
 
@@ -225,17 +227,29 @@ namespace Veng::Renderer
     {
         vk::ImageUsageFlags flags{};
         if (HasFlag(usage, ImageUsage::Sampled))
+        {
             flags |= vk::ImageUsageFlagBits::eSampled;
+        }
         if (HasFlag(usage, ImageUsage::Storage))
+        {
             flags |= vk::ImageUsageFlagBits::eStorage;
+        }
         if (HasFlag(usage, ImageUsage::ColorAttachment))
+        {
             flags |= vk::ImageUsageFlagBits::eColorAttachment;
+        }
         if (HasFlag(usage, ImageUsage::DepthAttachment))
+        {
             flags |= vk::ImageUsageFlagBits::eDepthStencilAttachment;
+        }
         if (HasFlag(usage, ImageUsage::TransferSrc))
+        {
             flags |= vk::ImageUsageFlagBits::eTransferSrc;
+        }
         if (HasFlag(usage, ImageUsage::TransferDst))
+        {
             flags |= vk::ImageUsageFlagBits::eTransferDst;
+        }
         return flags;
     }
 
@@ -243,31 +257,51 @@ namespace Veng::Renderer
     {
         vk::BufferUsageFlags flags{};
         if (HasFlag(usage, BufferUsage::Vertex))
+        {
             flags |= vk::BufferUsageFlagBits::eVertexBuffer;
+        }
         if (HasFlag(usage, BufferUsage::Index))
+        {
             flags |= vk::BufferUsageFlagBits::eIndexBuffer;
+        }
         if (HasFlag(usage, BufferUsage::Uniform))
+        {
             flags |= vk::BufferUsageFlagBits::eUniformBuffer;
+        }
         if (HasFlag(usage, BufferUsage::Storage))
+        {
             flags |= vk::BufferUsageFlagBits::eStorageBuffer;
+        }
         if (HasFlag(usage, BufferUsage::TransferSrc))
+        {
             flags |= vk::BufferUsageFlagBits::eTransferSrc;
+        }
         if (HasFlag(usage, BufferUsage::TransferDst))
+        {
             flags |= vk::BufferUsageFlagBits::eTransferDst;
+        }
         return flags;
     }
 
     inline vk::ShaderStageFlags ToVk(ShaderStage stage)
     {
         if (stage == ShaderStage::All)
+        {
             return vk::ShaderStageFlagBits::eAll;
+        }
         vk::ShaderStageFlags flags{};
         if (HasFlag(stage, ShaderStage::Vertex))
+        {
             flags |= vk::ShaderStageFlagBits::eVertex;
+        }
         if (HasFlag(stage, ShaderStage::Fragment))
+        {
             flags |= vk::ShaderStageFlagBits::eFragment;
+        }
         if (HasFlag(stage, ShaderStage::Compute))
+        {
             flags |= vk::ShaderStageFlagBits::eCompute;
+        }
         return flags;
     }
 
@@ -461,22 +495,36 @@ namespace Veng::Renderer
         switch (type)
         {
         case DescriptorType::CombinedImageSampler:
-            return {vk::DescriptorType::eCombinedImageSampler, 10000, true};
+            return {.VkType = vk::DescriptorType::eCombinedImageSampler,
+                    .PoolBudget = 10000,
+                    .SupportsBindless = true};
         case DescriptorType::SampledImage:
-            return {vk::DescriptorType::eSampledImage, 10000, true};
+            return {.VkType = vk::DescriptorType::eSampledImage,
+                    .PoolBudget = 10000,
+                    .SupportsBindless = true};
         case DescriptorType::StorageImage:
-            return {vk::DescriptorType::eStorageImage, 10000, true};
+            return {.VkType = vk::DescriptorType::eStorageImage,
+                    .PoolBudget = 10000,
+                    .SupportsBindless = true};
         case DescriptorType::UniformBuffer:
-            return {vk::DescriptorType::eUniformBuffer, 10000, true};
+            return {.VkType = vk::DescriptorType::eUniformBuffer,
+                    .PoolBudget = 10000,
+                    .SupportsBindless = true};
         case DescriptorType::StorageBuffer:
-            return {vk::DescriptorType::eStorageBuffer, 10000, true};
+            return {.VkType = vk::DescriptorType::eStorageBuffer,
+                    .PoolBudget = 10000,
+                    .SupportsBindless = true};
         case DescriptorType::Sampler:
-            return {vk::DescriptorType::eSampler, 1000, true};
+            return {.VkType = vk::DescriptorType::eSampler,
+                    .PoolBudget = 1000,
+                    .SupportsBindless = true};
         // A dynamic uniform buffer rebinds its region every frame, never
         // UpdateAfterBind — the per-frame ring selects the region with a bind-time
         // dynamic offset, so it does not opt into bindless.
         case DescriptorType::UniformBufferDynamic:
-            return {vk::DescriptorType::eUniformBufferDynamic, 1000, false};
+            return {.VkType = vk::DescriptorType::eUniformBufferDynamic,
+                    .PoolBudget = 1000,
+                    .SupportsBindless = false};
         }
         VE_ASSERT(false, "GetDescriptorTypeInfo: unmapped DescriptorType {}",
                   static_cast<u32>(type));
@@ -562,7 +610,8 @@ namespace Veng::Renderer
             return result;
         }
         const auto& depth = std::get<ClearDepth>(clear);
-        result.depthStencil = vk::ClearDepthStencilValue{depth.Depth, depth.Stencil};
+        result.depthStencil =
+            vk::ClearDepthStencilValue{.depth = depth.Depth, .stencil = depth.Stencil};
         return result;
     }
 }

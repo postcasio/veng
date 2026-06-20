@@ -17,7 +17,9 @@ namespace Veng::Cook
         string DiagnosticsText(slang::IBlob* diagnostics)
         {
             if (!diagnostics || diagnostics->getBufferSize() == 0)
+            {
                 return "";
+            }
 
             return string(static_cast<const char*>(diagnostics->getBufferPointer()),
                           diagnostics->getBufferSize());
@@ -45,7 +47,9 @@ namespace Veng::Cook
             u32 componentCount = 1;
             const slang::TypeReflection::Kind kind = type->getKind();
             if (kind == slang::TypeReflection::Kind::Vector)
+            {
                 componentCount = static_cast<u32>(type->getColumnCount());
+            }
             else if (kind != slang::TypeReflection::Kind::Scalar)
             {
                 return std::unexpected(fmt::format(
@@ -84,7 +88,9 @@ namespace Veng::Cook
             u32 componentCount = 1;
             const slang::TypeReflection::Kind kind = type->getKind();
             if (kind == slang::TypeReflection::Kind::Vector)
+            {
                 componentCount = static_cast<u32>(type->getColumnCount());
+            }
             else if (kind != slang::TypeReflection::Kind::Scalar)
             {
                 return std::unexpected(fmt::format(
@@ -104,15 +110,21 @@ namespace Veng::Cook
         bool IsTargetSemantic(const char* semantic)
         {
             if (!semantic)
+            {
                 return false;
+            }
             static constexpr std::string_view Prefix = "SV_TARGET";
-            std::string_view s(semantic);
+            const std::string_view s(semantic);
             if (s.size() < Prefix.size())
+            {
                 return false;
+            }
             for (usize i = 0; i < Prefix.size(); ++i)
             {
                 if (std::toupper(static_cast<unsigned char>(s[i])) != Prefix[i])
+                {
                     return false;
+                }
             }
             return true;
         }
@@ -125,7 +137,9 @@ namespace Veng::Cook
         {
             vector<ReflectedFragmentOutput> outputs;
             if (!result)
+            {
                 return outputs;
+            }
 
             slang::TypeLayoutReflection* typeLayout = result->getTypeLayout();
             if (typeLayout && typeLayout->getKind() == slang::TypeReflection::Kind::Struct)
@@ -147,7 +161,9 @@ namespace Veng::Cook
                         ReflectOutputType(field->getTypeLayout()->getType(),
                                           static_cast<u32>(field->getSemanticIndex()), entry);
                     if (!output)
+                    {
                         return std::unexpected(output.error());
+                    }
                     outputs.push_back(*output);
                 }
             }
@@ -164,7 +180,9 @@ namespace Veng::Cook
                 const Result<ReflectedFragmentOutput> output = ReflectOutputType(
                     typeLayout->getType(), static_cast<u32>(result->getSemanticIndex()), entry);
                 if (!output)
+                {
                     return std::unexpected(output.error());
+                }
                 outputs.push_back(*output);
             }
 
@@ -180,14 +198,16 @@ namespace Veng::Cook
     {
         ComPtr<slang::IGlobalSession> globalSession;
         if (SLANG_FAILED(slang::createGlobalSession(globalSession.writeRef())))
+        {
             return std::unexpected("material importer: failed to create Slang global session");
+        }
 
         slang::TargetDesc targetDesc{};
         targetDesc.format = SLANG_SPIRV;
         targetDesc.profile = globalSession->findProfile("spirv_1_5");
 
         const string searchPath = slangSource.parent_path().string();
-        const char* searchPaths[] = {searchPath.c_str()};
+        const char* const searchPaths[] = {searchPath.c_str()};
 
         slang::SessionDesc sessionDesc{};
         sessionDesc.targets = &targetDesc;
@@ -200,7 +220,9 @@ namespace Veng::Cook
 
         ComPtr<slang::ISession> session;
         if (SLANG_FAILED(globalSession->createSession(sessionDesc, session.writeRef())))
+        {
             return std::unexpected("material importer: failed to create Slang session");
+        }
 
         const string moduleName = slangSource.stem().string();
 
@@ -212,7 +234,7 @@ namespace Veng::Cook
                                                slangSource.string(), DiagnosticsText(diagnostics)));
         }
 
-        slang::IComponentType* components[] = {module};
+        slang::IComponentType* const components[] = {module};
         ComPtr<slang::IComponentType> program;
         diagnostics = nullptr;
         if (SLANG_FAILED(session->createCompositeComponentType(components, 1, program.writeRef(),
@@ -242,7 +264,9 @@ namespace Veng::Cook
         if (!type)
         {
             if (optional)
+            {
                 return ReflectedStruct{};
+            }
             return std::unexpected(fmt::format("material importer: '{}': struct '{}' not found (is "
                                                "it declared and used in the shader?)",
                                                slangSource.string(), structName));
@@ -263,7 +287,9 @@ namespace Veng::Cook
             const Result<ReflectedStructField> field =
                 ReflectField(typeLayout->getFieldByIndex(i), structName);
             if (!field)
+            {
                 return std::unexpected(field.error());
+            }
             result.Fields.push_back(*field);
         }
 
@@ -275,14 +301,16 @@ namespace Veng::Cook
     {
         ComPtr<slang::IGlobalSession> globalSession;
         if (SLANG_FAILED(slang::createGlobalSession(globalSession.writeRef())))
+        {
             return std::unexpected("material importer: failed to create Slang global session");
+        }
 
         slang::TargetDesc targetDesc{};
         targetDesc.format = SLANG_SPIRV;
         targetDesc.profile = globalSession->findProfile("spirv_1_5");
 
         const string searchPath = slangSource.parent_path().string();
-        const char* searchPaths[] = {searchPath.c_str()};
+        const char* const searchPaths[] = {searchPath.c_str()};
 
         slang::SessionDesc sessionDesc{};
         sessionDesc.targets = &targetDesc;
@@ -293,7 +321,9 @@ namespace Veng::Cook
 
         ComPtr<slang::ISession> session;
         if (SLANG_FAILED(globalSession->createSession(sessionDesc, session.writeRef())))
+        {
             return std::unexpected("material importer: failed to create Slang session");
+        }
 
         const string moduleName = slangSource.stem().string();
         const string entryStr(entry);
@@ -316,7 +346,7 @@ namespace Veng::Cook
                             slangSource.string(), entry));
         }
 
-        slang::IComponentType* components[] = {module, entryPoint};
+        slang::IComponentType* const components[] = {module, entryPoint};
         ComPtr<slang::IComponentType> program;
         diagnostics = nullptr;
         if (SLANG_FAILED(session->createCompositeComponentType(components, 2, program.writeRef(),

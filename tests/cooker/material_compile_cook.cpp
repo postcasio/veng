@@ -73,15 +73,19 @@ TEST_CASE("Cooker: a compiled material graph cooks through the real MaterialImpo
 
     // Patch the Factors param so the cooked authored block carries real values.
     NodeId paramNode{};
-    for (NodeId node : graph.Nodes())
+    for (const NodeId node : graph.Nodes())
+    {
         if (graph.GetTypeOf(node) == types.Param)
+        {
             paramNode = node;
+        }
+    }
     REQUIRE(graph.IsValid(paramNode));
 
     const NodeType* paramType = catalog.Find(types.Param);
     REQUIRE(paramType != nullptr);
     const vec4 factors{1.0f, 0.9f, 0.8f, 1.0f};
-    const std::byte* factorBytes = reinterpret_cast<const std::byte*>(&factors);
+    const auto* factorBytes = reinterpret_cast<const std::byte*>(&factors);
     graph.SetProperty(paramNode, paramType->Properties[0],
                       std::span<const std::byte>(factorBytes, sizeof(factors)));
 
@@ -126,7 +130,9 @@ TEST_CASE("Cooker: a compiled material graph cooks through the real MaterialImpo
     RegisterBuiltinImporters(cooker);
     const VoidResult cookResult = cooker.CookPack(packPath, outArchive);
     if (!cookResult.has_value())
+    {
         FAIL("cook failed: ", cookResult.error());
+    }
     REQUIRE(cookResult.has_value());
 
     const Result<ArchiveReader> reader = ArchiveReader::Open(outArchive);
@@ -142,7 +148,7 @@ TEST_CASE("Cooker: a compiled material graph cooks through the real MaterialImpo
     CHECK(header.FragmentShaderId == 4102ULL);
     CHECK(header.FieldCount == 3); // Albedo + AlbedoSampler + Factors
 
-    const CookedMaterialField* fieldTable = reinterpret_cast<const CookedMaterialField*>(
+    const auto* fieldTable = reinterpret_cast<const CookedMaterialField*>(
         entry->Blob.data() + sizeof(CookedMaterialHeader));
 
     const CookedMaterialField* albedo = nullptr;
@@ -152,11 +158,17 @@ TEST_CASE("Cooker: a compiled material graph cooks through the real MaterialImpo
     {
         const std::string_view name(fieldTable[i].Name);
         if (name == "Albedo")
+        {
             albedo = &fieldTable[i];
+        }
         else if (name == "AlbedoSampler")
+        {
             sampler = &fieldTable[i];
+        }
         else if (name == "Factors")
+        {
             params = &fieldTable[i];
+        }
     }
     REQUIRE(albedo != nullptr);
     REQUIRE(sampler != nullptr);

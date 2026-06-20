@@ -47,12 +47,24 @@ namespace Veng::Primitives
         };
 
         const Face faces[6] = {
-            {{+1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, +1.0f, 0.0f}}, // +X
-            {{-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, +1.0f}, {0.0f, +1.0f, 0.0f}}, // -X
-            {{0.0f, +1.0f, 0.0f}, {+1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, +1.0f}}, // +Y
-            {{0.0f, -1.0f, 0.0f}, {+1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}}, // -Y
-            {{0.0f, 0.0f, +1.0f}, {+1.0f, 0.0f, 0.0f}, {0.0f, +1.0f, 0.0f}}, // +Z
-            {{0.0f, 0.0f, -1.0f}, {-1.0f, 0.0f, 0.0f}, {0.0f, +1.0f, 0.0f}}, // -Z
+            {.Normal = {+1.0f, 0.0f, 0.0f},
+             .Tangent = {0.0f, 0.0f, -1.0f},
+             .Bitangent = {0.0f, +1.0f, 0.0f}}, // +X
+            {.Normal = {-1.0f, 0.0f, 0.0f},
+             .Tangent = {0.0f, 0.0f, +1.0f},
+             .Bitangent = {0.0f, +1.0f, 0.0f}}, // -X
+            {.Normal = {0.0f, +1.0f, 0.0f},
+             .Tangent = {+1.0f, 0.0f, 0.0f},
+             .Bitangent = {0.0f, 0.0f, +1.0f}}, // +Y
+            {.Normal = {0.0f, -1.0f, 0.0f},
+             .Tangent = {+1.0f, 0.0f, 0.0f},
+             .Bitangent = {0.0f, 0.0f, -1.0f}}, // -Y
+            {.Normal = {0.0f, 0.0f, +1.0f},
+             .Tangent = {+1.0f, 0.0f, 0.0f},
+             .Bitangent = {0.0f, +1.0f, 0.0f}}, // +Z
+            {.Normal = {0.0f, 0.0f, -1.0f},
+             .Tangent = {-1.0f, 0.0f, 0.0f},
+             .Bitangent = {0.0f, +1.0f, 0.0f}}, // -Z
         };
 
         MeshData data;
@@ -186,7 +198,9 @@ namespace Veng::Primitives
                 // Degenerate at the poles (sinTheta = 0); fall back to +X there.
                 vec3 tangent = vec3(-sinPhi, 0.0f, cosPhi);
                 if (sinTheta <= 1e-6f)
+                {
                     tangent = vec3(1.0f, 0.0f, 0.0f);
+                }
 
                 data.Vertices.push_back(CanonicalVertex{
                     .Position = normal * radius,
@@ -261,7 +275,9 @@ namespace Veng::Primitives
             {
                 const u64 key = (static_cast<u64>(std::min(a, b)) << 32) | std::max(a, b);
                 if (const auto it = midpoints.find(key); it != midpoints.end())
+                {
                     return it->second;
+                }
                 const u32 index = static_cast<u32>(dirs.size());
                 dirs.push_back(glm::normalize(dirs[a] + dirs[b]));
                 midpoints.emplace(key, index);
@@ -275,10 +291,10 @@ namespace Veng::Primitives
                 const u32 ab = midpoint(f.x, f.y);
                 const u32 bc = midpoint(f.y, f.z);
                 const u32 ca = midpoint(f.z, f.x);
-                next.push_back({f.x, ab, ca});
-                next.push_back({f.y, bc, ab});
-                next.push_back({f.z, ca, bc});
-                next.push_back({ab, bc, ca});
+                next.emplace_back(f.x, ab, ca);
+                next.emplace_back(f.y, bc, ab);
+                next.emplace_back(f.z, ca, bc);
+                next.emplace_back(ab, bc, ca);
             }
             faces = std::move(next);
         }
@@ -290,7 +306,9 @@ namespace Veng::Primitives
         {
             f32 u = std::atan2(d.z, d.x) / (2.0f * Pi);
             if (u < 0.0f)
+            {
                 u += 1.0f;
+            }
             return vec2(u, std::acos(std::clamp(d.y, -1.0f, 1.0f)) / Pi);
         };
 
@@ -319,7 +337,9 @@ namespace Veng::Primitives
         auto wrap = [&](u32 index) -> u32
         {
             if (const auto it = wrapped.find(index); it != wrapped.end())
+            {
                 return it->second;
+            }
             CanonicalVertex v = data.Vertices[index];
             v.UV.x += 1.0f;
             const u32 dup = static_cast<u32>(data.Vertices.size());
@@ -340,11 +360,17 @@ namespace Veng::Primitives
             if (std::max({u0, u1, u2}) - std::min({u0, u1, u2}) > 0.5f)
             {
                 if (u0 < 0.5f)
+                {
                     i0 = wrap(i0);
+                }
                 if (u1 < 0.5f)
+                {
                     i1 = wrap(i1);
+                }
                 if (u2 < 0.5f)
+                {
                     i2 = wrap(i2);
+                }
             }
             data.Indices.push_back(i0);
             data.Indices.push_back(i1);

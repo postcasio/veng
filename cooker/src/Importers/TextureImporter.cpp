@@ -20,31 +20,47 @@ namespace Veng::Cook
         optional<u32> ParseFilter(const string& name)
         {
             if (name == "nearest")
+            {
                 return 0u;
+            }
             if (name == "linear")
+            {
                 return 1u;
+            }
             return std::nullopt;
         }
 
         optional<u32> ParseMipmapMode(const string& name)
         {
             if (name == "nearest")
+            {
                 return 0u;
+            }
             if (name == "linear")
+            {
                 return 1u;
+            }
             return std::nullopt;
         }
 
         optional<u32> ParseAddressMode(const string& name)
         {
             if (name == "repeat")
+            {
                 return 0u;
+            }
             if (name == "mirrored_repeat")
+            {
                 return 1u;
+            }
             if (name == "clamp_to_edge")
+            {
                 return 2u;
+            }
             if (name == "clamp_to_border")
+            {
                 return 3u;
+            }
             return std::nullopt;
         }
     }
@@ -52,21 +68,27 @@ namespace Veng::Cook
     Result<vector<u8>> TextureImporter::Cook(const CookContext& context, const json& entry) const
     {
         if (!entry.contains("source") || !entry["source"].is_string())
+        {
             return std::unexpected("texture importer: missing or invalid 'source'");
+        }
 
         const path sourcePath = context.PackDir / entry["source"].get<string>();
 
-        std::ifstream sourceFile(sourcePath, std::ios::binary);
+        const std::ifstream sourceFile(sourcePath, std::ios::binary);
         if (!sourceFile)
+        {
             return std::unexpected(
                 fmt::format("texture importer: failed to open '{}'", sourcePath.string()));
+        }
 
         std::ostringstream contentStream;
         contentStream << sourceFile.rdbuf();
         const json texJson = json::parse(contentStream.str(), nullptr, false);
         if (texJson.is_discarded() || !texJson.is_object())
+        {
             return std::unexpected(
                 fmt::format("texture importer: '{}': invalid JSON", sourcePath.string()));
+        }
 
         if (!texJson.contains("image") || !texJson["image"].is_string())
         {
@@ -130,7 +152,9 @@ namespace Veng::Cook
             auto field = [&](const char* key, auto parser, u32 fallback) -> Result<u32>
             {
                 if (!sampler.contains(key) || !sampler[key].is_string())
+                {
                     return fallback;
+                }
 
                 const string value = sampler[key].get<string>();
                 const optional<u32> parsed = parser(value);
@@ -146,32 +170,44 @@ namespace Veng::Cook
 
             const Result<u32> minFilter = field("min", ParseFilter, header.MinFilter);
             if (!minFilter)
+            {
                 return std::unexpected(minFilter.error());
+            }
             header.MinFilter = *minFilter;
 
             const Result<u32> magFilter = field("mag", ParseFilter, header.MagFilter);
             if (!magFilter)
+            {
                 return std::unexpected(magFilter.error());
+            }
             header.MagFilter = *magFilter;
 
             const Result<u32> mipmapMode = field("mipmap", ParseMipmapMode, header.MipmapMode);
             if (!mipmapMode)
+            {
                 return std::unexpected(mipmapMode.error());
+            }
             header.MipmapMode = *mipmapMode;
 
             const Result<u32> addressModeU = field("wrap_u", ParseAddressMode, header.AddressModeU);
             if (!addressModeU)
+            {
                 return std::unexpected(addressModeU.error());
+            }
             header.AddressModeU = *addressModeU;
 
             const Result<u32> addressModeV = field("wrap_v", ParseAddressMode, header.AddressModeV);
             if (!addressModeV)
+            {
                 return std::unexpected(addressModeV.error());
+            }
             header.AddressModeV = *addressModeV;
 
             const Result<u32> addressModeW = field("wrap_w", ParseAddressMode, header.AddressModeW);
             if (!addressModeW)
+            {
                 return std::unexpected(addressModeW.error());
+            }
             header.AddressModeW = *addressModeW;
 
             if (sampler.contains("anisotropy") && sampler["anisotropy"].is_number())

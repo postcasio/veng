@@ -275,13 +275,13 @@ namespace Veng::Renderer
                         .Resource = io.GBufferAlbedo,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
-                        .Clear = ClearColor{0.05f, 0.05f, 0.08f, 1.0f},
+                        .Clear = ClearColor{.R = 0.05f, .G = 0.05f, .B = 0.08f, .A = 1.0f},
                     })
                     .Color({
                         .Resource = io.GBufferNormal,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
-                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 0.0f},
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
                     })
                     .Color({
                         .Resource = io.GBufferOrm,
@@ -289,14 +289,14 @@ namespace Veng::Renderer
                         .Store = StoreOp::Store,
                         // Default occlusion 1 (unoccluded), roughness/metallic/emissive 0
                         // for any background texel; a material overwrites all four.
-                        .Clear = ClearColor{1.0f, 0.0f, 0.0f, 0.0f},
+                        .Clear = ClearColor{.R = 1.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
                     })
                     .Depth({
                         .Resource = io.GBufferDepth,
                         .Load = LoadOp::Clear,
                         // Stored: the lighting pass reads depth as a texture.
                         .Store = StoreOp::Store,
-                        .Clear = ClearDepth{1.0f, 0},
+                        .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
                     })
                     .Execute([this](PassContext& inner) { Record(Wrap(inner)); });
             }
@@ -324,9 +324,13 @@ namespace Veng::Renderer
 
                     bool materialsReady = true;
                     for (const AssetHandle<Material>& material : materials)
+                    {
                         materialsReady = materialsReady && material.IsLoaded();
+                    }
                     if (!materialsReady)
+                    {
                         return;
+                    }
 
                     cmd.BindVertexBuffer(mesh.GetVertexBuffer());
                     cmd.BindIndexBuffer(mesh.GetIndexBuffer());
@@ -345,7 +349,9 @@ namespace Veng::Renderer
                     for (const SubMesh& subMesh : mesh.GetSubMeshes())
                     {
                         if (subMesh.MaterialIndex == SubMesh::NoMaterial)
+                        {
                             continue;
+                        }
 
                         // Pipeline must be bound before registry.Bind: Bind uses the currently-bound layout.
                         materials[subMesh.MaterialIndex].Get()->Bind(cmd);
@@ -364,12 +370,16 @@ namespace Veng::Renderer
                     m_CullScratch.clear();
                     view.Broadphase->Cull(cameraFrustum, m_CullScratch);
                     for (const u32 idx : m_CullScratch)
+                    {
                         Draw(view.Visible[idx]);
+                    }
                 }
                 else
                 {
                     for (const VisibleMesh& item : view.Visible)
+                    {
                         Draw(item);
+                    }
                 }
             }
 
@@ -428,7 +438,7 @@ namespace Veng::Renderer
                         .Resource = m_WriteToOutput ? io.Output : io.Hdr,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
-                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
                     })
                     .Sample(io.GBufferAlbedo)
                     .Sample(io.GBufferNormal)
@@ -440,12 +450,18 @@ namespace Veng::Renderer
                 // lighting shader through set 1 (off bindless); the declarations here
                 // are only for barrier derivation.
                 if (io.ShadowMap.IsValid())
+                {
                     builder.Sample(io.ShadowMap);
+                }
                 if (io.PunctualShadowMap.IsValid())
+                {
                     builder.Sample(io.PunctualShadowMap);
+                }
 
                 if (useSsao)
+                {
                     builder.Sample(io.Ssao);
+                }
 
                 builder.Execute(
                     [this, albedoHandle, normalHandle, ormHandle, depthHandle, ssaoHandle,
@@ -549,7 +565,7 @@ namespace Veng::Renderer
                         .Resource = io.Output,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
-                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
                     })
                     .Sample(sourceId)
                     .Execute(
@@ -632,7 +648,7 @@ namespace Veng::Renderer
                         .Resource = io.Output,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
-                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
                     })
                     .Sample(ormId)
                     .Execute(
@@ -693,7 +709,7 @@ namespace Veng::Renderer
                         .Resource = io.Output,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
-                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
                     })
                     .Sample(sampleId)
                     .Execute(
@@ -759,7 +775,9 @@ namespace Veng::Renderer
     void PostProcessScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
     {
         if (!m_Pipeline)
+        {
             BuildPipeline();
+        }
 
         const PostProcessInput input = m_Input;
         const PostProcessExtraInput extra = m_Extra;
@@ -773,18 +791,20 @@ namespace Veng::Renderer
                 .Resource = m_Output,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
-                .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
             })
             .Sample(input.Source);
         if (hasExtra)
+        {
             builder.Sample(extra.Source);
+        }
 
         builder.Execute(
             [this, input, extra, hasExtra](PassContext& inner)
             {
                 CommandBuffer& cmd = inner.Cmd();
                 // AssetHandle::Get is const; cast away to write the per-frame handle fields.
-                Material& material = const_cast<Material&>(*m_Material.Get());
+                auto& material = const_cast<Material&>(*m_Material.Get());
 
                 // Write the live upstream bindless slots; must precede Material::Bind
                 // so the pushed selector reads this frame's region.
@@ -1139,10 +1159,10 @@ namespace Veng::Renderer
                         .Resource = target,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
-                        .Clear = ClearDepth{1.0f, 0},
+                        .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
                     })
                     .Execute([](PassContext&) {});
-                const RenderGraph::ImportBinding binding{target, m_DummyShadowView};
+                const RenderGraph::ImportBinding binding{.Id = target, .View = m_DummyShadowView};
                 graph.Compile()->Execute(cmd, {&binding, 1});
                 cmd.PrepareForAccess(m_DummyShadowView, AccessKind::Sample);
             });
@@ -1235,10 +1255,11 @@ namespace Veng::Renderer
                         .Resource = target,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
-                        .Clear = ClearDepth{1.0f, 0},
+                        .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
                     })
                     .Execute([](PassContext&) {});
-                const RenderGraph::ImportBinding binding{target, m_PunctualShadowView};
+                const RenderGraph::ImportBinding binding{.Id = target,
+                                                         .View = m_PunctualShadowView};
                 graph.Compile()->Execute(cmd, {&binding, 1});
                 cmd.PrepareForAccess(m_PunctualShadowView, AccessKind::Sample);
             });
@@ -1429,12 +1450,16 @@ namespace Veng::Renderer
 
         ResourceId shadowId{};
         if (shadowActive)
+        {
             shadowId = graph.Import("SceneRenderer ShadowMap");
+        }
         m_ShadowId = shadowId;
 
         ResourceId punctualShadowId{};
         if (punctualShadowActive)
+        {
             punctualShadowId = graph.Import("SceneRenderer PunctualShadowMap");
+        }
         m_PunctualShadowId = punctualShadowId;
 
         if (bloomActive)
@@ -1447,7 +1472,9 @@ namespace Veng::Renderer
 
         TextureHandle ssaoHandle{};
         if (ssaoActive)
+        {
             m_SsaoId = graph.Import("SceneRenderer SSAO");
+        }
 
         m_Passes.clear();
         m_GBufferDrawnCount = nullptr;
@@ -1631,7 +1658,9 @@ namespace Veng::Renderer
         // Point binding 0 at the punctual atlas for the debug blit (overwrites the
         // cascade/dummy atlas written above).
         if (debugPunctual)
+        {
             m_ShadowBlitSet->Write(0, m_PunctualShadowView);
+        }
 
         const PassIO io{
             .GBufferAlbedo = albedoId,
@@ -1712,17 +1741,23 @@ namespace Veng::Renderer
     {
         // Per-frame param writes land in the ring-buffered block's current region (no stall).
         if (m_TonemapMaterial.IsLoaded())
+        {
             const_cast<Material&>(*m_TonemapMaterial.Get())
                 .SetParam("Exposure", m_Settings.Exposure);
+        }
 
         if (m_BloomActive)
         {
             if (m_BloomBrightMaterial.IsLoaded())
+            {
                 const_cast<Material&>(*m_BloomBrightMaterial.Get())
                     .SetParam("Threshold", view.BloomThreshold);
+            }
             if (m_BloomCompositeMaterial.IsLoaded())
+            {
                 const_cast<Material&>(*m_BloomCompositeMaterial.Get())
                     .SetParam("Intensity", view.BloomIntensity);
+            }
         }
 
         // The first MaxShadowedPunctual point/spot lights are assigned a shadow slot
@@ -1740,7 +1775,9 @@ namespace Veng::Renderer
         for (auto [entity, light] : view.World.View<Light>())
         {
             if (lightCount >= SceneView::MaxLights)
+            {
                 break;
+            }
 
             // Shadow the first directional light; its direction drives the light-space matrix.
             if (!haveDirectional && light.Type == LightType::Directional)
@@ -1809,7 +1846,9 @@ namespace Veng::Renderer
         // Mirror filled records into the GPU block (unused slots stay zeroed → type 0 = "no map").
         // AtlasParams.x = 1/tileRes, used by the lighting pass for inset clamping and PCF.
         for (u32 s = 0; s < punctualCount; ++s)
+        {
             punctualBlock.Records[s] = punctualRecords[s];
+        }
         punctualBlock.AtlasParams =
             vec4(1.0f / static_cast<f32>(m_Settings.PunctualShadowResolution), 0.0f, 0.0f, 0.0f);
 
@@ -1893,9 +1932,13 @@ namespace Veng::Renderer
             {m_DepthId, m_DepthView},   {m_HdrId, m_HdrView},       {m_OutputId, m_OutputView},
         };
         if (m_ShadowActive && m_ShadowPass)
+        {
             bindings.push_back({m_ShadowId, m_ShadowPass->GetShadowView()});
+        }
         if (m_PunctualShadowActive && m_PunctualShadowPass)
+        {
             bindings.push_back({m_PunctualShadowId, m_PunctualShadowView});
+        }
         if (m_BloomActive)
         {
             bindings.push_back({m_BloomBrightId, m_BloomBrightView});
@@ -1904,7 +1947,9 @@ namespace Veng::Renderer
             bindings.push_back({m_BloomResultId, m_BloomResultView});
         }
         if (m_SsaoActive && m_SsaoPass != nullptr)
+        {
             bindings.push_back({m_SsaoId, m_SsaoPass->GetAoView()});
+        }
         m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
     }
 

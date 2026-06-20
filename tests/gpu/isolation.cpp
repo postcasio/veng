@@ -37,7 +37,7 @@ namespace
                      });
 
         std::array<u8, Size> source{};
-        std::iota(source.begin(), source.end(), fillStart);
+        std::ranges::iota(source, fillStart);
 
         buffer->UploadSync(source);
 

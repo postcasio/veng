@@ -12,7 +12,9 @@ namespace Veng::Cook
     {
         Result<LoadedModule> loaded = ModuleLoader::Load(modulePath);
         if (!loaded)
+        {
             return std::unexpected(loaded.error());
+        }
 
         LoadedModuleTypes result{.Module = std::move(*loaded), .Types = {}};
 

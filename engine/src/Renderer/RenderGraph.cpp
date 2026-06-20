@@ -217,7 +217,9 @@ namespace Veng::Renderer
             for (usize i = 0; i < m_Resources.size(); i++)
             {
                 if (m_Resources[i].IsImport)
+                {
                     continue;
+                }
 
                 transientIndex[i] = static_cast<u32>(transientSlots.size());
                 transientSlots.push_back(static_cast<u32>(i));
@@ -234,7 +236,9 @@ namespace Veng::Renderer
                 {
                     const u32 ti = transientIndex[access.Resource.Index];
                     if (ti == ~0u)
+                    {
                         continue;
+                    }
 
                     Backend::TransientLifetime& life = lifetimes[ti];
                     if (Backend::IsWriteAccess(ScopeFor(access.Kind).Access) && !firstWriteSeen[ti])
@@ -250,7 +254,9 @@ namespace Veng::Renderer
 
             u32 slotCount = 0;
             for (const u32 slot : assignment)
+            {
                 slotCount = std::max(slotCount, slot + 1);
+            }
 
             // One image+view per distinct slot, named for its first assigned transient.
             vector<Ref<Image>> slotImages(slotCount);
@@ -313,27 +319,35 @@ namespace Veng::Renderer
                 if (!source.IsImport)
                 {
                     if (access.Kind == AccessKind::ColorAttachment)
+                    {
                         VE_ASSERT(HasFlag(source.Desc.Usage, ImageUsage::ColorAttachment),
                                   "RenderGraph::Compile: transient '{}' is a color attachment "
                                   "but lacks ImageUsage::ColorAttachment",
                                   source.Name);
+                    }
                     else if (access.Kind == AccessKind::DepthAttachment)
+                    {
                         VE_ASSERT(HasFlag(source.Desc.Usage, ImageUsage::DepthAttachment),
                                   "RenderGraph::Compile: transient '{}' is a depth attachment "
                                   "but lacks ImageUsage::DepthAttachment",
                                   source.Name);
+                    }
                     else if (access.Kind == AccessKind::Sample)
+                    {
                         VE_ASSERT(HasFlag(source.Desc.Usage, ImageUsage::Sampled),
                                   "RenderGraph::Compile: transient '{}' is sampled "
                                   "but lacks ImageUsage::Sampled",
                                   source.Name);
+                    }
                 }
 
                 const auto scope = ScopeFor(access.Kind);
                 baked.Transitions.push_back({.Slot = slot, .Dst = scope});
 
                 if (Backend::IsWriteAccess(scope.Access))
+                {
                     written[slot] = true;
+                }
 
                 if (access.Kind == AccessKind::ColorAttachment ||
                     access.Kind == AccessKind::DepthAttachment)
@@ -364,7 +378,9 @@ namespace Veng::Renderer
     Ref<Image> CompiledGraph::ResolvedImage(const ResourceId id) const
     {
         if (!id.IsValid() || id.Index >= m_Native->Resources.size())
+        {
             return nullptr;
+        }
         return m_Native->Resources[id.Index].Image;
     }
 
@@ -458,9 +474,13 @@ namespace Veng::Renderer
                     };
 
                     if (attachment.IsDepth)
+                    {
                         info.DepthAttachment = info2;
+                    }
                     else
+                    {
                         info.ColorAttachments.push_back(info2);
+                    }
                 }
 
                 info.LayerCount = pass.LayerCount;

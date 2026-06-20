@@ -67,7 +67,7 @@ namespace Veng::Renderer
             {
                 auto& element = elements[i];
 
-                vk::VertexInputAttributeDescription attributeDescription = {
+                const vk::VertexInputAttributeDescription attributeDescription = {
                     .location = i,
                     .binding = 0,
                     .format = ToVk(element.Type),
@@ -92,14 +92,15 @@ namespace Veng::Renderer
                                .pVertexAttributeDescriptions = nullptr};
         }
 
-        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
+        const vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
             .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = VK_FALSE};
 
-        vk::PipelineTessellationStateCreateInfo tessellationState{.patchControlPoints = 0};
+        const vk::PipelineTessellationStateCreateInfo tessellationState{.patchControlPoints = 0};
 
-        vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1, .scissorCount = 1};
+        const vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1,
+                                                                .scissorCount = 1};
 
-        vk::PipelineRasterizationStateCreateInfo rasterizerState = {
+        const vk::PipelineRasterizationStateCreateInfo rasterizerState = {
             .depthClampEnable = vk::False,
             .rasterizerDiscardEnable = vk::False,
             .polygonMode = ToVk(info.PolygonMode),
@@ -109,10 +110,10 @@ namespace Veng::Renderer
             .lineWidth = 1.0f,
         };
 
-        vk::PipelineMultisampleStateCreateInfo multisampleState = {
+        const vk::PipelineMultisampleStateCreateInfo multisampleState = {
             .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False};
 
-        vk::PipelineDepthStencilStateCreateInfo depthStencilState = {
+        const vk::PipelineDepthStencilStateCreateInfo depthStencilState = {
             .depthTestEnable = VK_BOOL(info.DepthTestEnable),
             .depthWriteEnable = VK_BOOL(info.DepthWriteEnable),
             .depthCompareOp = ToVk(info.DepthCompareOp),
@@ -131,7 +132,7 @@ namespace Veng::Renderer
             blendAttachments.push_back(ToVk(attachment.Blend));
         }
 
-        vk::PipelineColorBlendStateCreateInfo colorBlendState = {
+        const vk::PipelineColorBlendStateCreateInfo colorBlendState = {
             .logicOpEnable = vk::False,
             .logicOp = vk::LogicOp::eCopy,
             .attachmentCount = static_cast<u32>(blendAttachments.size()),
@@ -147,7 +148,7 @@ namespace Veng::Renderer
         vector<vk::DynamicState> dynamicStates = {vk::DynamicState::eViewport,
                                                   vk::DynamicState::eScissor};
 
-        vk::PipelineDynamicStateCreateInfo dynamicState = {
+        const vk::PipelineDynamicStateCreateInfo dynamicState = {
             .dynamicStateCount = static_cast<u32>(dynamicStates.size()),
             .pDynamicStates = dynamicStates.data()};
 

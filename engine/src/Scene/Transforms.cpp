@@ -34,7 +34,7 @@ namespace Veng
             }
             chain.push_back(current);
 
-            if (const Parent* parent = scene.TryGet<Parent>(current))
+            if (const auto* parent = scene.TryGet<Parent>(current))
             {
                 current = parent->Value;
             }
@@ -48,7 +48,7 @@ namespace Veng
         mat4 world(1.0f);
         for (usize i = chain.size(); i-- > 0;)
         {
-            if (const Transform* transform = scene.TryGet<Transform>(chain[i]))
+            if (const auto* transform = scene.TryGet<Transform>(chain[i]))
             {
                 world = world * LocalMatrix(*transform);
             }
@@ -84,9 +84,11 @@ namespace Veng
         AABB bounds = AABB::Empty();
         for (usize i = 0; i < count; ++i)
         {
-            const MeshRenderer* renderer = scene.TryGet<MeshRenderer>(dense[i]);
+            const auto* renderer = scene.TryGet<MeshRenderer>(dense[i]);
             if (renderer == nullptr || !renderer->Mesh.IsLoaded())
+            {
                 continue;
+            }
 
             bounds.Expand(renderer->Mesh->GetBounds().Transformed(worldMatrices[i]));
         }

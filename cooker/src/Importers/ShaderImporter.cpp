@@ -55,7 +55,9 @@ namespace Veng::Cook
         string DiagnosticsText(slang::IBlob* diagnostics)
         {
             if (!diagnostics || diagnostics->getBufferSize() == 0)
+            {
                 return "";
+            }
 
             return string(static_cast<const char*>(diagnostics->getBufferPointer()),
                           diagnostics->getBufferSize());
@@ -146,10 +148,14 @@ namespace Veng::Cook
             };
 
             if (type->getScalarType() != slang::TypeReflection::ScalarType::Float32)
+            {
                 return unsupported();
+            }
 
             if (type->getKind() == slang::TypeReflection::Kind::Scalar)
+            {
                 return FormatR32Sfloat;
+            }
 
             if (type->getKind() == slang::TypeReflection::Kind::Vector)
             {
@@ -216,14 +222,16 @@ namespace Veng::Cook
         {
             ComPtr<slang::IGlobalSession> globalSession;
             if (SLANG_FAILED(slang::createGlobalSession(globalSession.writeRef())))
+            {
                 return std::unexpected("shader importer: failed to create Slang global session");
+            }
 
             slang::TargetDesc targetDesc{};
             targetDesc.format = SLANG_SPIRV;
             targetDesc.profile = globalSession->findProfile("spirv_1_5");
 
             const string searchPath = sourcePath.parent_path().string();
-            const char* searchPaths[] = {searchPath.c_str()};
+            const char* const searchPaths[] = {searchPath.c_str()};
 
             slang::SessionDesc sessionDesc{};
             sessionDesc.targets = &targetDesc;
@@ -236,7 +244,9 @@ namespace Veng::Cook
 
             ComPtr<slang::ISession> session;
             if (SLANG_FAILED(globalSession->createSession(sessionDesc, session.writeRef())))
+            {
                 return std::unexpected("shader importer: failed to create Slang session");
+            }
 
             const string moduleName = sourcePath.stem().string();
 
@@ -255,7 +265,9 @@ namespace Veng::Cook
             // them re-cooks the shader when any included source changes, which a
             // manifest naming only the entry .slang cannot capture.
             for (SlangInt32 i = 0; i < module->getDependencyFileCount(); ++i)
+            {
                 context.RecordDependency(path(module->getDependencyFilePath(i)));
+            }
 
             ComPtr<slang::IEntryPoint> entryPoint;
             if (SLANG_FAILED(
@@ -266,7 +278,7 @@ namespace Veng::Cook
                                                    sourcePath.string(), entryName));
             }
 
-            slang::IComponentType* components[] = {module, entryPoint};
+            slang::IComponentType* const components[] = {module, entryPoint};
             ComPtr<slang::IComponentType> program;
             diagnostics = nullptr;
             if (SLANG_FAILED(session->createCompositeComponentType(
@@ -350,12 +362,16 @@ namespace Veng::Cook
                 // from the declared interface; author bindings live in sets >= 1.
                 const u32 set = param->getBindingSpace();
                 if (set == 0)
+                {
                     continue;
+                }
 
                 const Result<u32> descriptorType =
                     MapBindingType(param->getTypeLayout(), param->getName(), sourcePath, entryName);
                 if (!descriptorType)
+                {
                     return std::unexpected(descriptorType.error());
+                }
 
                 CookedDescriptorBinding binding{};
                 binding.Set = set;
@@ -384,7 +400,9 @@ namespace Veng::Cook
                     slang::VariableLayoutReflection* param =
                         entryPointLayout->getParameterByIndex(i);
                     if (param->getCategory() != slang::ParameterCategory::VaryingInput)
+                    {
                         continue;
+                    }
 
                     slang::TypeLayoutReflection* typeLayout = param->getTypeLayout();
                     if (typeLayout->getKind() == slang::TypeReflection::Kind::Struct)
@@ -395,7 +413,9 @@ namespace Veng::Cook
                             const Result<u32> format = MapVertexInputFormat(
                                 field->getType(), field->getName(), sourcePath, entryName);
                             if (!format)
+                            {
                                 return std::unexpected(format.error());
+                            }
                             reflectedInputs.push_back(
                                 {field->getBindingIndex(), *format, field->getName()});
                         }
@@ -405,7 +425,9 @@ namespace Veng::Cook
                         const Result<u32> format = MapVertexInputFormat(
                             param->getType(), param->getName(), sourcePath, entryName);
                         if (!format)
+                        {
                             return std::unexpected(format.error());
+                        }
                         reflectedInputs.push_back(
                             {param->getBindingIndex(), *format, param->getName()});
                     }
@@ -503,11 +525,13 @@ namespace Veng::Cook
     Result<vector<u8>> ShaderImporter::Cook(const CookContext& context, const json& entry) const
     {
         if (!entry.contains("source") || !entry["source"].is_string())
+        {
             return std::unexpected("shader importer: missing or invalid 'source'");
+        }
 
         const path shaderJsonPath = context.PackDir / entry["source"].get<string>();
 
-        std::ifstream file(shaderJsonPath, std::ios::binary);
+        const std::ifstream file(shaderJsonPath, std::ios::binary);
         std::ostringstream oss;
         oss << file.rdbuf();
         const string text = oss.str();
@@ -537,7 +561,9 @@ namespace Veng::Cook
         u64 vertexLayoutAssetId = 0;
         if (shaderJson.contains("vertex_layout") &&
             shaderJson["vertex_layout"].is_number_unsigned())
+        {
             vertexLayoutAssetId = shaderJson["vertex_layout"].get<u64>();
+        }
 
         return CookFromSource(context, slangPath, shaderJson["entry"].get<string>(),
                               vertexLayoutAssetId);

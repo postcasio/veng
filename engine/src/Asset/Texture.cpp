@@ -50,7 +50,9 @@ namespace Veng
     Texture::~Texture()
     {
         if (!m_Registered)
+        {
             return;
+        }
 
         auto& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_TextureHandle);

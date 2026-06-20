@@ -22,9 +22,11 @@ namespace Veng
         outBounds = AABB::Empty();
         for (usize i = 0; i < count; ++i)
         {
-            const MeshRenderer* renderer = scene.TryGet<MeshRenderer>(dense[i]);
+            const auto* renderer = scene.TryGet<MeshRenderer>(dense[i]);
             if (renderer == nullptr || !renderer->Mesh.IsLoaded())
+            {
                 continue;
+            }
 
             const AABB worldBounds = renderer->Mesh->GetBounds().Transformed(worldMatrices[i]);
             out.push_back(VisibleMesh{

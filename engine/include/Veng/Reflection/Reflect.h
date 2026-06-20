@@ -32,7 +32,9 @@ namespace Veng::Detail
     inline FieldDescriptor FinishField(FieldDescriptor desc)
     {
         if (desc.DisplayName.empty())
+        {
             desc.DisplayName = desc.Name;
+        }
         return desc;
     }
 

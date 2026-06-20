@@ -61,8 +61,12 @@ namespace
     bool AssetVerdict(const VerifyReport& report, AssetId id)
     {
         for (const VerifiedAsset& asset : report.Assets)
+        {
             if (asset.Id.Value == id.Value)
+            {
                 return asset.Ok;
+            }
+        }
         FAIL("asset id not present in report");
         return false;
     }

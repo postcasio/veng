@@ -76,12 +76,16 @@ namespace Veng
         for (const MountedArchive& mount : m_Mounts)
         {
             if (mount.Path == archive)
+            {
                 return {};
+            }
         }
 
         Result<ArchiveReader> reader = ArchiveReader::Open(archive);
         if (!reader)
+        {
             return std::unexpected(reader.error());
+        }
 
         m_Mounts.push_back(MountedArchive{.Path = archive, .Reader = std::move(*reader)});
         return {};
@@ -92,12 +96,16 @@ namespace Veng
         for (const MountedArchive& mount : m_Mounts)
         {
             if (mount.Path == identity)
+            {
                 return {};
+            }
         }
 
         Result<ArchiveReader> reader = ArchiveReader::FromBytes(bytes);
         if (!reader)
+        {
             return std::unexpected(reader.error());
+        }
 
         m_Mounts.push_back(MountedArchive{.Path = identity, .Reader = std::move(*reader)});
         return {};
@@ -186,13 +194,17 @@ namespace Veng
         for (auto it = m_MemoryMounts.rbegin(); it != m_MemoryMounts.rend(); ++it)
         {
             if (optional<ArchiveEntry> entry = it->Reader.Find(id))
+            {
                 return entry;
+            }
         }
 
         for (const MountedArchive& mount : m_Mounts)
         {
             if (optional<ArchiveEntry> entry = mount.Reader.Find(id))
+            {
                 return entry;
+            }
         }
 
         return std::nullopt;
@@ -254,7 +266,7 @@ namespace Veng
             return nullptr;
         }
 
-        AssetLoader* loader = resolved->first;
+        const AssetLoader* loader = resolved->first;
         const ArchiveEntry& archiveEntry = resolved->second;
 
         // The blob lives in the mounted archive reader's storage, so the span outlives the call.
@@ -380,15 +392,19 @@ namespace Veng
 
         const AssetResult<std::pair<AssetLoader*, ArchiveEntry>> resolved = Resolve(type, id);
         if (!resolved)
+        {
             return std::unexpected(resolved.error());
+        }
 
-        AssetLoader* loader = resolved->first;
+        const AssetLoader* loader = resolved->first;
         const ArchiveEntry& archiveEntry = resolved->second;
 
         AssetResult<Detail::LoadJob> job =
             loader->Load(*this, m_Context, m_Tasks, m_Types, id, archiveEntry.Blob, false);
         if (!job)
+        {
             return std::unexpected(job.error());
+        }
 
         // Finalize inline (on the main thread, blocking) — bypassing the async
         // continuation queue entirely, so there is no self-deadlock. The

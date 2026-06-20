@@ -26,7 +26,7 @@
 #define VK_RAW_ASSERT(f, msg)                                                                      \
     do                                                                                             \
     {                                                                                              \
-        VkResult res = (f);                                                                        \
+        const VkResult res = (f);                                                                  \
         if (res != VK_SUCCESS)                                                                     \
         {                                                                                          \
             ::Veng::Detail::FatalAssert(                                                           \
@@ -38,7 +38,7 @@
 #define VK_ASSERT(f, msg)                                                                          \
     do                                                                                             \
     {                                                                                              \
-        vk::Result res = (f);                                                                      \
+        const vk::Result res = (f);                                                                \
         if (res != vk::Result::eSuccess)                                                           \
         {                                                                                          \
             ::Veng::Detail::FatalAssert(__FILE__, __LINE__, #f,                                    \

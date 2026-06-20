@@ -12,7 +12,9 @@ namespace VengEditor
             [this](Log::Level level, std::string_view message)
             {
                 if (m_Entries.size() >= MaxEntries)
+                {
                     m_Entries.erase(m_Entries.begin());
+                }
 
                 m_Entries.push_back({.Level = level, .Message = string(message)});
                 m_ScrollToBottom = true;
@@ -27,7 +29,9 @@ namespace VengEditor
     void ConsolePanel::OnImGui()
     {
         if (UI::Button("Clear"))
+        {
             m_Entries.clear();
+        }
 
         UI::Separator();
 

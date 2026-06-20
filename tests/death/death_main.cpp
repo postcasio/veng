@@ -252,7 +252,9 @@ namespace
     [[noreturn]] void InGpuContext(Body&& body)
     {
         if (!Test::HasVulkanDriver())
+        {
             std::_Exit(SkipExitCode);
+        }
 
         Context context;
         context.Initialize(
@@ -355,40 +357,74 @@ int main(int argc, char** argv)
 
     // Pure-logic
     if (name == "sentinel")
+    {
         RunSentinel();
+    }
     else if (name == "vertex_format_unknown")
+    {
         RunVertexFormatUnknown();
+    }
     else if (name == "tovk_unmapped")
+    {
         RunToVkUnmapped();
+    }
     else if (name == "assert_message")
+    {
         RunAssertMessage();
+    }
     else if (name == "scene_get_stale_entity")
+    {
         RunSceneGetStaleEntity();
+    }
     else if (name == "scene_get_missing_component")
+    {
         RunSceneGetMissingComponent();
+    }
     else if (name == "type_id_collision")
+    {
         RunTypeIdCollision();
+    }
     else if (name == "transform_parent_cycle")
+    {
         RunTransformParentCycle();
+    }
     else if (name == "transform_parent_dead")
+    {
         RunTransformParentDead();
+    }
     else if (name == "spot_shadow_range_nonpositive")
+    {
         RunSpotShadowRangeNonPositive();
+    }
     else if (name == "spot_shadow_cone_out_of_range")
+    {
         RunSpotShadowConeOutOfRange();
+    }
     else if (name == "point_shadow_range_nonpositive")
+    {
         RunPointShadowRangeNonPositive();
-    // GPU-coupled
+        // GPU-coupled
+    }
     else if (name == "buffer_upload_overrun")
+    {
         RunBufferUploadOverrun();
+    }
     else if (name == "index_u16_into_u32")
+    {
         RunIndexU16IntoU32();
+    }
     else if (name == "index_u32_into_u16")
+    {
         RunIndexU32IntoU16();
+    }
     else if (name == "descriptor_type_mismatch")
+    {
         RunDescriptorTypeMismatch();
+    }
     else
+    {
         fmt::print(stderr, "death harness: unknown case '{}'\n", name);
+    }
 
     // Reached only if the case did not abort — exit non-zero, and (with no
     // assert message printed) the PASS_REGULAR_EXPRESSION misses: the test fails.

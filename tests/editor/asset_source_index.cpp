@@ -36,8 +36,7 @@ namespace
 
     bool Contains(const Veng::vector<Veng::AssetId>& ids, Veng::u64 value)
     {
-        return std::any_of(ids.begin(), ids.end(),
-                           [value](Veng::AssetId id) { return id.Value == value; });
+        return std::ranges::any_of(ids, [value](Veng::AssetId id) { return id.Value == value; });
     }
 }
 

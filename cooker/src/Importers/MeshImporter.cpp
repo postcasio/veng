@@ -43,7 +43,9 @@ namespace Veng::Cook
         bool ImportFlag(const json& import, const char* key, bool fallback)
         {
             if (import.contains(key) && import[key].is_boolean())
+            {
                 return import[key].get<bool>();
+            }
             return fallback;
         }
     }
@@ -51,21 +53,27 @@ namespace Veng::Cook
     Result<vector<u8>> MeshImporter::Cook(const CookContext& context, const json& entry) const
     {
         if (!entry.contains("source") || !entry["source"].is_string())
+        {
             return std::unexpected("mesh importer: missing or invalid 'source'");
+        }
 
         const path sourcePath = context.PackDir / entry["source"].get<string>();
 
-        std::ifstream sourceFile(sourcePath, std::ios::binary);
+        const std::ifstream sourceFile(sourcePath, std::ios::binary);
         if (!sourceFile)
+        {
             return std::unexpected(
                 fmt::format("mesh importer: failed to open '{}'", sourcePath.string()));
+        }
 
         std::ostringstream contentStream;
         contentStream << sourceFile.rdbuf();
         const json meshJson = json::parse(contentStream.str(), nullptr, false);
         if (meshJson.is_discarded() || !meshJson.is_object())
+        {
             return std::unexpected(
                 fmt::format("mesh importer: '{}': invalid JSON", sourcePath.string()));
+        }
 
         if (!meshJson.contains("model") || !meshJson["model"].is_string())
         {
@@ -88,13 +96,21 @@ namespace Veng::Cook
 
         unsigned int flags = aiProcess_Triangulate;
         if (ImportFlag(import, "join_identical_vertices", true))
+        {
             flags |= aiProcess_JoinIdenticalVertices;
+        }
         if (ImportFlag(import, "generate_normals", true))
+        {
             flags |= aiProcess_GenSmoothNormals;
+        }
         if (ImportFlag(import, "generate_tangents", true))
+        {
             flags |= aiProcess_CalcTangentSpace;
+        }
         if (ImportFlag(import, "flip_uv", false))
+        {
             flags |= aiProcess_FlipUVs;
+        }
 
         Assimp::Importer importer;
         const aiScene* scene = importer.ReadFile(modelPath.string(), flags);
@@ -107,8 +123,10 @@ namespace Veng::Cook
         }
 
         if (scene->mNumMeshes == 0)
+        {
             return std::unexpected(fmt::format("mesh importer: '{}': no meshes in '{}'",
                                                sourcePath.string(), modelPath.string()));
+        }
 
         // Per-submesh material overrides: { "<submesh index>": <AssetId u64> }.
         const json materials = meshJson.contains("materials") && meshJson["materials"].is_object()
@@ -187,7 +205,9 @@ namespace Veng::Cook
             u64 materialId = 0;
             const string key = std::to_string(meshIndex);
             if (materials.contains(key) && materials[key].is_number_unsigned())
+            {
                 materialId = materials[key].get<u64>();
+            }
 
             subMeshes.push_back(CookedSubMesh{
                 .IndexOffset = indexOffset,

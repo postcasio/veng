@@ -45,7 +45,7 @@ namespace Veng::Renderer
 
     private:
         /// @brief Ordered attribute elements.
-        vector<VertexBufferElement> m_Elements = {};
+        vector<VertexBufferElement> m_Elements;
         /// @brief Total vertex byte size.
         u32 m_Stride = 0;
         /// @brief Total 32-bit scalar components per vertex.

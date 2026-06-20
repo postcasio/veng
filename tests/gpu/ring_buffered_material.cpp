@@ -95,7 +95,7 @@ namespace
                 .Resource = outputId,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
-                .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
             })
             .Execute(
                 [&](PassContext& ctx)
@@ -112,7 +112,7 @@ namespace
                     passCmd.DrawFullscreenTriangle();
                 });
 
-        const RenderGraph::ImportBinding bindings[] = {{outputId, outputView}};
+        const RenderGraph::ImportBinding bindings[] = {{.Id = outputId, .View = outputView}};
         graph.Compile()->Execute(cmd, bindings);
 
         context.EndFrame();

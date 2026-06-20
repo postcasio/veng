@@ -54,7 +54,9 @@ int main(int argc, char** argv)
     Image actual;
     Image golden;
     if (!Load(argv[1], actual) || !Load(argv[2], golden))
+    {
         return 1;
+    }
 
     if (actual.Width != golden.Width || actual.Height != golden.Height)
     {
@@ -76,12 +78,18 @@ int main(int argc, char** argv)
             const int g = golden.Pixels[i * 3 + channel];
             const int d = a > g ? a - g : g - a;
             if (d > pixelDelta)
+            {
                 pixelDelta = d;
+            }
         }
         if (pixelDelta > worstDelta)
+        {
             worstDelta = pixelDelta;
+        }
         if (pixelDelta > maxChannelDelta)
+        {
             mismatched++;
+        }
     }
 
     const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);

@@ -29,13 +29,21 @@ namespace Veng::Cook
         optional<u32> ParseFormatString(const string& name)
         {
             if (name == "R32Sfloat")
+            {
                 return FormatR32Sfloat;
+            }
             if (name == "RG32Sfloat")
+            {
                 return FormatRG32Sfloat;
+            }
             if (name == "RGB32Sfloat")
+            {
                 return FormatRGB32Sfloat;
+            }
             if (name == "RGBA32Sfloat")
+            {
                 return FormatRGBA32Sfloat;
+            }
             return std::nullopt;
         }
     }
@@ -86,7 +94,7 @@ namespace Veng::Cook
 
     Result<vector<CookedVertexLayoutElement>> ReadVertexLayoutFile(const path& filePath)
     {
-        std::ifstream file(filePath, std::ios::binary);
+        const std::ifstream file(filePath, std::ios::binary);
         if (!file)
         {
             return std::unexpected(

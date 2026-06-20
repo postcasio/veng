@@ -42,7 +42,7 @@ namespace
                         .Clear = clear,
                     })
                     .Execute([](PassContext&) {});
-                const RenderGraph::ImportBinding binding{target, view};
+                const RenderGraph::ImportBinding binding{.Id = target, .View = view};
                 graph.Compile()->Execute(cmd, {&binding, 1});
             });
     }
@@ -63,7 +63,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "image clear: 64x32 RGBA8Unorm cleared
 
     auto view = ImageView::Create(Context, {.Name = "Clear Target RGBA8 View", .Image = image});
 
-    ClearImage(Context, view, ClearColor{0.0f, 1.0f, 0.0f, 1.0f});
+    ClearImage(Context, view, ClearColor{.R = 0.0f, .G = 1.0f, .B = 0.0f, .A = 1.0f});
 
     const vector<u8> pixels = image->Download();
 
@@ -87,7 +87,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "image clear: 64x32 R8Unorm cleared to
 
     // Only the red channel is meaningful for a single-channel format; the
     // other channels of ClearColor are ignored by the backend.
-    ClearImage(Context, view, ClearColor{1.0f, 0.0f, 0.0f, 1.0f});
+    ClearImage(Context, view, ClearColor{.R = 1.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f});
 
     const vector<u8> pixels = image->Download();
 

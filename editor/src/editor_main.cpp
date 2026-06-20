@@ -8,7 +8,7 @@
 // Modules are resolved beside the binary via the @loader_path/$ORIGIN rpath.
 int main(const int argc, char** argv)
 {
-    VengEditor::EditorHostInfo info{
+    const VengEditor::EditorHostInfo info{
         .GameModulePath = Veng::ExecutableDirectory() / VENG_EDITOR_GAME_MODULE,
 #ifdef VENG_EDITOR_EDITOR_MODULE
         .EditorModulePath = Veng::ExecutableDirectory() / VENG_EDITOR_EDITOR_MODULE,

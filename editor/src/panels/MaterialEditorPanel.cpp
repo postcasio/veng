@@ -91,7 +91,9 @@ namespace VengEditor
         m_Preview = CreateUnique<MaterialPreview>(m_Context, m_Assets, m_ImGui, PreviewExtent);
 
         if (!LoadInterface())
+        {
             return;
+        }
 
         BuildGraph();
         TriggerCook();
@@ -123,7 +125,7 @@ namespace VengEditor
 
         // The cooked Material does not surface its shader ids; read them from the
         // source document. They round-trip through the regenerated "shaders" block.
-        std::ifstream file(m_SourcePath, std::ios::binary);
+        const std::ifstream file(m_SourcePath, std::ios::binary);
         if (file)
         {
             std::ostringstream contents;
@@ -134,9 +136,13 @@ namespace VengEditor
             {
                 const Json& shaders = doc["shaders"];
                 if (shaders.contains("vertex") && shaders["vertex"].is_number_unsigned())
+                {
                     m_VertexShader = AssetId{shaders["vertex"].get<u64>()};
+                }
                 if (shaders.contains("fragment") && shaders["fragment"].is_number_unsigned())
+                {
                     m_FragmentShader = AssetId{shaders["fragment"].get<u64>()};
+                }
             }
         }
 
@@ -162,7 +168,7 @@ namespace VengEditor
         Json editorBlock;
         bool haveBlock = false;
         {
-            std::ifstream file(m_SourcePath, std::ios::binary);
+            const std::ifstream file(m_SourcePath, std::ios::binary);
             if (file)
             {
                 std::ostringstream contents;
@@ -211,7 +217,9 @@ namespace VengEditor
     void MaterialEditorPanel::MarkDirty()
     {
         if (m_ReadOnly)
+        {
             return;
+        }
         m_CookPending = true;
         m_DebounceRemaining = DebounceSeconds;
     }
@@ -223,20 +231,24 @@ namespace VengEditor
         const Result<vector<CompiledField>> compiled =
             CompileMaterialGraph(*m_Graph, m_Catalog, iface, m_Domain);
         if (!compiled)
+        {
             return std::nullopt;
+        }
 
         // Read the existing source so unknown keys survive; patch "shaders",
         // "fields", and "_editor".
         Json doc = Json::object();
         {
-            std::ifstream file(m_SourcePath, std::ios::binary);
+            const std::ifstream file(m_SourcePath, std::ios::binary);
             if (file)
             {
                 std::ostringstream contents;
                 contents << file.rdbuf();
                 const Json parsed = Json::parse(contents.str(), nullptr, false);
                 if (!parsed.is_discarded() && parsed.is_object())
+                {
                     doc = parsed;
+                }
             }
         }
 
@@ -254,7 +266,9 @@ namespace VengEditor
         // a nested object rather than an escaped string.
         const Json graphDoc = Json::parse(WriteNodeGraph(*m_Graph, m_Catalog), nullptr, false);
         if (!graphDoc.is_discarded())
+        {
             doc[EditorKey] = graphDoc;
+        }
 
         return doc.dump(4);
     }
@@ -283,12 +297,16 @@ namespace VengEditor
     void MaterialEditorPanel::TriggerCook()
     {
         if (m_Cooking || m_Graph == nullptr)
+        {
             return;
+        }
 
         // Write the temp source next to the real one (source-dir-relative resolves);
         // a compile failure aborts the cook with an inline error.
         if (!WriteVmat(m_TempPath))
+        {
             return;
+        }
 
         m_Cooking = true;
         m_CookError.reset();
@@ -315,7 +333,9 @@ namespace VengEditor
     void MaterialEditorPanel::OnRender(Renderer::CommandBuffer& cmd)
     {
         if (m_Preview)
+        {
             m_Preview->Render(cmd);
+        }
     }
 
     bool MaterialEditorPanel::DrawCanvas()
@@ -341,11 +361,13 @@ namespace VengEditor
 
         ImNodes::BeginNodeEditor();
 
-        for (NodeId node : m_Graph->Nodes())
+        for (const NodeId node : m_Graph->Nodes())
         {
             const NodeType* type = m_Catalog.Find(m_Graph->GetTypeOf(node));
             if (type == nullptr)
+            {
                 continue;
+            }
 
             ImNodes::BeginNode(NodeImId(node));
 
@@ -382,15 +404,21 @@ namespace VengEditor
 
         // Right-click the canvas → add-node menu.
         if (ImNodes::IsEditorHovered() && UI::IsMouseClicked(UI::MouseButton::Right))
+        {
             UI::OpenPopup("AddNodeMenu");
+        }
 
         // Decode a NodeId from a node imnodes id by scanning the live set (the
         // index is unique among live nodes).
         const auto nodeFromIndex = [&](u32 index) -> NodeId
         {
             for (NodeId n : m_Graph->Nodes())
+            {
                 if (n.Index == index)
+                {
                     return n;
+                }
+            }
             return NodeId{};
         };
 
@@ -406,8 +434,10 @@ namespace VengEditor
                 const int inAttr = IsOutputAttr(startAttr) ? endAttr : startAttr;
                 if (IsOutputAttr(outAttr) && !IsOutputAttr(inAttr))
                 {
-                    const PinRef from{nodeFromIndex(NodeIndexOf(outAttr)), PinOf(outAttr)};
-                    const PinRef to{nodeFromIndex(NodeIndexOf(inAttr)), PinOf(inAttr)};
+                    const PinRef from{.Node = nodeFromIndex(NodeIndexOf(outAttr)),
+                                      .Pin = PinOf(outAttr)};
+                    const PinRef to{.Node = nodeFromIndex(NodeIndexOf(inAttr)),
+                                    .Pin = PinOf(inAttr)};
                     const VoidResult result = m_Graph->Connect(from, to);
                     if (!result)
                     {
@@ -440,11 +470,13 @@ namespace VengEditor
                 {
                     vector<int> selected(static_cast<usize>(count));
                     ImNodes::GetSelectedNodes(selected.data());
-                    for (int imId : selected)
+                    for (const int imId : selected)
                     {
                         const NodeId node = nodeFromIndex(static_cast<u32>(imId - 1));
                         if (m_Graph->IsValid(node))
+                        {
                             m_Graph->RemoveNode(node);
+                        }
                     }
                     ImNodes::ClearNodeSelection();
                     mutated = true;
@@ -453,11 +485,13 @@ namespace VengEditor
         }
 
         // Persist node drags back into the model so a recook/save records them.
-        for (NodeId node : m_Graph->Nodes())
+        for (const NodeId node : m_Graph->Nodes())
         {
             const vec2 pos = ImNodes::GetNodeGridSpacePos(NodeImId(node));
             if (pos != m_Graph->PositionOf(node))
+            {
                 m_Graph->MoveNode(node, pos);
+            }
         }
 
         return mutated;
@@ -477,9 +511,13 @@ namespace VengEditor
 
         // Decode the first selected node.
         NodeId node{};
-        for (NodeId n : m_Graph->Nodes())
+        for (const NodeId n : m_Graph->Nodes())
+        {
             if (n.Index == static_cast<u32>(selected[0] - 1))
+            {
                 node = n;
+            }
+        }
         if (!m_Graph->IsValid(node))
         {
             UI::TextDisabled("Select a node");
@@ -509,14 +547,18 @@ namespace VengEditor
             for (const FieldDescriptor& field : type->Properties)
             {
                 if (field.Hidden)
+                {
                     continue;
+                }
                 DrawFieldWidget(scratch.data() + field.Offset, field, ctx);
             }
         }
 
         if (m_ReadOnly || scratch.size() != bytes.size() ||
             std::memcmp(scratch.data(), bytes.data(), bytes.size()) == 0)
+        {
             return false;
+        }
 
         for (usize i = 0; i < type->Properties.size(); ++i)
         {
@@ -544,7 +586,9 @@ namespace VengEditor
         }
 
         if (m_ToastRemaining > 0.0f)
+        {
             m_ToastRemaining -= Time::GetDeltaTime();
+        }
 
         // Swap the freshly loaded material into the preview once resident.
         if (m_MaterialDirty && m_Handle.IsLoaded())
@@ -558,7 +602,9 @@ namespace VengEditor
         {
             UI::TextColored({0.9f, 0.3f, 0.3f, 1.0f}, "Material failed to load");
             if (m_CookError)
+            {
                 UI::TextColored({0.9f, 0.3f, 0.3f, 1.0f}, *m_CookError);
+            }
             return;
         }
 
@@ -566,7 +612,9 @@ namespace VengEditor
         {
             auto disabled = UI::Disabled(m_ReadOnly);
             if (UI::Button("Save"))
+            {
                 WriteVmat(m_SourcePath);
+            }
         }
         UI::SameLine();
         if (UI::Button("Revert"))
@@ -587,9 +635,13 @@ namespace VengEditor
             UI::Text("Cooking...");
         }
         if (m_CookError)
+        {
             UI::TextColored({0.9f, 0.3f, 0.3f, 1.0f}, fmt::format("Cook error: {}", *m_CookError));
+        }
         if (m_Toast && m_ToastRemaining > 0.0f)
+        {
             UI::TextColored({0.9f, 0.6f, 0.3f, 1.0f}, fmt::format("Rejected: {}", *m_Toast));
+        }
 
         UI::Separator();
 
@@ -600,9 +652,13 @@ namespace VengEditor
         {
             const f32 previewSide = PreviewExtent.x;
             if (m_PreviewReady)
+            {
                 UI::Image(m_Preview->GetTexture(), vec2(previewSide, previewSide));
+            }
             else
+            {
                 UI::Text("Preview loading...");
+            }
             UI::Separator();
             DrawNodeInspector();
         }
@@ -611,9 +667,13 @@ namespace VengEditor
 
         bool mutated = false;
         if (auto canvas = UI::Child("MatCanvas"))
+        {
             mutated = DrawCanvas();
+        }
 
         if (mutated)
+        {
             MarkDirty();
+        }
     }
 }

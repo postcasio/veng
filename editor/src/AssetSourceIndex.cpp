@@ -17,19 +17,33 @@ namespace VengEditor
         optional<AssetType> ParseAssetType(const std::string& name)
         {
             if (name == "raw")
+            {
                 return AssetType::Raw;
+            }
             if (name == "texture")
+            {
                 return AssetType::Texture;
+            }
             if (name == "mesh")
+            {
                 return AssetType::Mesh;
+            }
             if (name == "shader")
+            {
                 return AssetType::Shader;
+            }
             if (name == "material")
+            {
                 return AssetType::Material;
+            }
             if (name == "vertex_layout")
+            {
                 return AssetType::VertexLayout;
+            }
             if (name == "prefab")
+            {
                 return AssetType::Prefab;
+            }
             return std::nullopt;
         }
     }
@@ -38,7 +52,7 @@ namespace VengEditor
     {
         AssetSourceIndex index;
 
-        std::ifstream file(manifestPath, std::ios::binary);
+        const std::ifstream file(manifestPath, std::ios::binary);
         if (!file)
         {
             Log::Error("AssetSourceIndex: failed to open manifest {}", manifestPath.string());
@@ -61,11 +75,15 @@ namespace VengEditor
             if (!entry.is_object() || !entry.contains("id") || !entry["id"].is_number_unsigned() ||
                 !entry.contains("type") || !entry["type"].is_string() ||
                 !entry.contains("source") || !entry["source"].is_string())
+            {
                 continue;
+            }
 
             const optional<AssetType> type = ParseAssetType(entry["type"].get<std::string>());
             if (!type)
+            {
                 continue;
+            }
 
             const u64 id = entry["id"].get<u64>();
             index.m_Entries[id] = Entry{
@@ -87,8 +105,12 @@ namespace VengEditor
     {
         vector<AssetId> ids;
         for (const auto& [id, entry] : m_Entries)
+        {
             if (entry.Type == type)
+            {
                 ids.push_back(AssetId{id});
+            }
+        }
         return ids;
     }
 }

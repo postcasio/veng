@@ -260,7 +260,9 @@ namespace Veng::Renderer
     {
         const MaterialEntry& entry = m_MaterialEntries[materialIndex];
         if (entry.Block.empty())
+        {
             return;
+        }
 
         const u64 regionBase = static_cast<u64>(frameInFlight) * MaxMaterials * MaterialParamStride;
         const u64 offset = regionBase + static_cast<u64>(materialIndex) * MaterialParamStride;
@@ -271,28 +273,36 @@ namespace Veng::Renderer
     void BindlessRegistry::Release(TextureHandle handle)
     {
         if (!handle.IsValid())
+        {
             return;
+        }
         m_Textures.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
     }
 
     void BindlessRegistry::Release(SamplerHandle handle)
     {
         if (!handle.IsValid())
+        {
             return;
+        }
         m_Samplers.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
     }
 
     void BindlessRegistry::Release(StorageImageHandle handle)
     {
         if (!handle.IsValid())
+        {
             return;
+        }
         m_StorageImages.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
     }
 
     void BindlessRegistry::Release(MaterialHandle handle)
     {
         if (!handle.IsValid())
+        {
             return;
+        }
         m_Materials.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
     }
 
@@ -361,7 +371,9 @@ namespace Veng::Renderer
         {
             MaterialEntry& entry = m_MaterialEntries[i];
             if (entry.DirtyFrames == 0)
+            {
                 continue;
+            }
             WriteMaterialRegion(i, frameInFlight);
             entry.DirtyFrames--;
         }

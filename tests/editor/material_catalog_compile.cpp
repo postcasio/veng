@@ -78,8 +78,12 @@ namespace
                                    Veng::string_view name)
     {
         for (const CompiledField& f : fields)
+        {
             if (f.Name == name)
+            {
                 return &f;
+            }
+        }
         return nullptr;
     }
 }
@@ -140,10 +144,10 @@ TEST_CASE("MaterialCatalog: DomainOutputContract is the per-domain sink table")
 
 TEST_CASE("MaterialCatalog: CanConnect enforces exact-type + the v1 coercions")
 {
-    const PinType f32{PinType::Kind::Value, TypeIdOf<Veng::f32>()};
-    const PinType vec2{PinType::Kind::Value, TypeIdOf<Veng::vec2>()};
-    const PinType vec3{PinType::Kind::Value, TypeIdOf<Veng::vec3>()};
-    const PinType vec4{PinType::Kind::Value, TypeIdOf<Veng::vec4>()};
+    const PinType f32{.Kind = PinType::Kind::Value, .Type = TypeIdOf<Veng::f32>()};
+    const PinType vec2{.Kind = PinType::Kind::Value, .Type = TypeIdOf<Veng::vec2>()};
+    const PinType vec3{.Kind = PinType::Kind::Value, .Type = TypeIdOf<Veng::vec3>()};
+    const PinType vec4{.Kind = PinType::Kind::Value, .Type = TypeIdOf<Veng::vec4>()};
 
     // Exact identity.
     CHECK(MaterialCanConnect(vec4, vec4));
@@ -264,15 +268,19 @@ TEST_CASE("MaterialCompile: a Param edit flows through compile")
     NodeGraph graph = BuildGraphFromMaterial(iface, catalog, types);
 
     NodeId paramNode{};
-    for (NodeId node : graph.Nodes())
+    for (const NodeId node : graph.Nodes())
+    {
         if (graph.GetTypeOf(node) == types.Param)
+        {
             paramNode = node;
+        }
+    }
     REQUIRE(graph.IsValid(paramNode));
 
     const NodeType* paramType = catalog.Find(types.Param);
     REQUIRE(paramType != nullptr);
     const Veng::vec4 value{0.25f, 0.5f, 0.75f, 1.0f};
-    const std::byte* valueBytes = reinterpret_cast<const std::byte*>(&value);
+    const auto* valueBytes = reinterpret_cast<const std::byte*>(&value);
     graph.SetProperty(paramNode, paramType->Properties[0],
                       std::span<const std::byte>(valueBytes, sizeof(value)));
 
@@ -303,14 +311,18 @@ TEST_CASE("MaterialCompile: a param feeder's value coerces to its field arity")
     NodeGraph graph = BuildGraphFromMaterial(iface, catalog, types);
 
     NodeId paramNode{};
-    for (NodeId node : graph.Nodes())
+    for (const NodeId node : graph.Nodes())
+    {
         if (graph.GetTypeOf(node) == types.Param)
+        {
             paramNode = node;
+        }
+    }
     REQUIRE(graph.IsValid(paramNode));
 
     const NodeType* paramType = catalog.Find(types.Param);
     const Veng::vec4 value{0.7f, 0.1f, 0.2f, 0.3f};
-    const std::byte* valueBytes = reinterpret_cast<const std::byte*>(&value);
+    const auto* valueBytes = reinterpret_cast<const std::byte*>(&value);
     graph.SetProperty(paramNode, paramType->Properties[0],
                       std::span<const std::byte>(valueBytes, sizeof(value)));
 
@@ -367,10 +379,13 @@ TEST_CASE("MaterialCompile: an incompatible connection is rejected by CanConnect
 
     const NodeTypeId vec2Source = catalog.Register(NodeType{
         .Name = "Vec2Source",
-        .Outputs = {PinDesc{"Out", PinType{PinType::Kind::Value, TypeIdOf<Veng::vec2>()}}},
+        .Outputs = {PinDesc{
+            .Name = "Out",
+            .Type = PinType{.Kind = PinType::Kind::Value, .Type = TypeIdOf<Veng::vec2>()}}},
     });
     const NodeId source = graph.AddNode(vec2Source);
 
-    const Veng::VoidResult result = graph.Connect(PinRef{source, 0}, PinRef{output, 0});
+    const Veng::VoidResult result =
+        graph.Connect(PinRef{.Node = source, .Pin = 0}, PinRef{.Node = output, .Pin = 0});
     CHECK_FALSE(result.has_value());
 }

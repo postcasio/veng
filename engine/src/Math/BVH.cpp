@@ -25,7 +25,9 @@ namespace Veng
         m_LeafCount = static_cast<u32>(leaves.size());
 
         if (leaves.empty())
+        {
             return;
+        }
 
         // Copy into scratch BuildRange partitions in place. The node pool is
         // sized to the exact internal+leaf count (2N-1 for N leaves) so no
@@ -40,7 +42,8 @@ namespace Veng
         if (leaves.size() == 1)
         {
             const i32 index = static_cast<i32>(m_Nodes.size());
-            m_Nodes.push_back(Node{leaves[0].Box, NullNode, NullNode, leaves[0].Id});
+            m_Nodes.push_back(Node{
+                .Box = leaves[0].Box, .Child1 = NullNode, .Child2 = NullNode, .Id = leaves[0].Id});
             return index;
         }
 
@@ -48,14 +51,20 @@ namespace Veng
         // the leaves widest, giving the SAH sweep the most separation to work with.
         AABB centroidBounds = AABB::Empty();
         for (const Leaf& leaf : leaves)
+        {
             centroidBounds.Expand(leaf.Box.Center());
+        }
 
         const vec3 centroidSize = centroidBounds.Size();
         i32 axis = 0;
         if (centroidSize.y > centroidSize.x)
+        {
             axis = 1;
+        }
         if (centroidSize.z > centroidSize[axis])
+        {
             axis = 2;
+        }
 
         const auto centroidAxis = [axis](const Leaf& leaf) { return leaf.Box.Center()[axis]; };
 
@@ -81,11 +90,13 @@ namespace Veng
             AABB bucketBox[BucketCount];
             i32 bucketCount[BucketCount] = {};
             for (i32 b = 0; b < BucketCount; ++b)
+            {
                 bucketBox[b] = AABB::Empty();
+            }
 
             const auto bucketOf = [&](const Leaf& leaf)
             {
-                i32 b = static_cast<i32>((centroidAxis(leaf) - axisMin) * axisInv);
+                const i32 b = static_cast<i32>((centroidAxis(leaf) - axisMin) * axisInv);
                 return std::clamp(b, 0, BucketCount - 1);
             };
 
@@ -118,7 +129,9 @@ namespace Veng
                 }
 
                 if (leftCount == 0 || rightCount == 0)
+                {
                     continue;
+                }
 
                 const f32 cost = SurfaceArea(leftBox) * static_cast<f32>(leftCount) +
                                  SurfaceArea(rightBox) * static_cast<f32>(rightCount);
@@ -141,10 +154,9 @@ namespace Veng
             {
                 // The SAH skip of empty-side splits guarantees both groups are
                 // non-empty, so the partition boundary is a valid interior split.
-                const auto boundary =
-                    std::partition(leaves.begin(), leaves.end(),
-                                   [&](const Leaf& leaf) { return bucketOf(leaf) < bestSplit; });
-                mid = static_cast<usize>(boundary - leaves.begin());
+                const auto boundary = std::ranges::partition(
+                    leaves, [&](const Leaf& leaf) { return bucketOf(leaf) < bestSplit; });
+                mid = static_cast<usize>(boundary.begin() - leaves.begin());
             }
         }
 
@@ -154,14 +166,19 @@ namespace Veng
         const i32 child2 = BuildRange(right);
 
         const i32 index = static_cast<i32>(m_Nodes.size());
-        m_Nodes.push_back(Node{Union(m_Nodes[child1].Box, m_Nodes[child2].Box), child1, child2, 0});
+        m_Nodes.push_back(Node{.Box = Union(m_Nodes[child1].Box, m_Nodes[child2].Box),
+                               .Child1 = child1,
+                               .Child2 = child2,
+                               .Id = 0});
         return index;
     }
 
     void BVH::Query(const Frustum& frustum, vector<u32>& out) const
     {
         if (m_Root == NullNode)
+        {
             return;
+        }
 
         // Explicit-stack descent: a node whose box misses the frustum prunes its
         // subtree; a leaf is accepted on its tight box, so the result is exact.
@@ -173,7 +190,9 @@ namespace Veng
         {
             const Node& node = m_Nodes[stack[--top]];
             if (!Intersects(frustum, node.Box))
+            {
                 continue;
+            }
 
             if (node.IsLeaf())
             {
@@ -190,7 +209,9 @@ namespace Veng
     i32 BVH::GetHeight() const
     {
         if (m_Root == NullNode)
+        {
             return 0;
+        }
 
         // Iterative post-order over the index pool: a node's height is
         // 1 + max(child heights), a leaf's is 0.
@@ -199,7 +220,9 @@ namespace Veng
         {
             const Node& node = m_Nodes[i];
             if (!node.IsLeaf())
+            {
                 height[i] = 1 + std::max(height[node.Child1], height[node.Child2]);
+            }
         }
         return height[static_cast<usize>(m_Root)];
     }
@@ -207,7 +230,9 @@ namespace Veng
     AABB BVH::GetRootBounds() const
     {
         if (m_Root == NullNode)
+        {
             return AABB::Empty();
+        }
         return m_Nodes[static_cast<usize>(m_Root)].Box;
     }
 }

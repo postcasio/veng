@@ -20,7 +20,7 @@ namespace Veng::Renderer
     /// @return The loaded module, or an error string if the file cannot be opened.
     Result<Ref<ShaderModule>> ShaderModule::Create(Context& context, const ShaderModuleInfo& info)
     {
-        path filePath = std::filesystem::absolute(info.Path);
+        const path filePath = std::filesystem::absolute(info.Path);
         std::ifstream file(filePath, std::ios::ate | std::ios::binary);
 
         if (!file.is_open())
@@ -50,7 +50,7 @@ namespace Veng::Renderer
         : m_Context(context), m_Name(info.Name), m_EntryPoint(info.EntryPoint),
           m_Native(CreateUnique<Native>())
     {
-        vk::ShaderModuleCreateInfo createInfo{
+        const vk::ShaderModuleCreateInfo createInfo{
             .codeSize = info.Binary.size_bytes(),
             .pCode = reinterpret_cast<const u32*>(info.Binary.data()),
         };

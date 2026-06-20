@@ -28,7 +28,7 @@ namespace VengEditor
 
         PinType ValuePin(Veng::TypeId id)
         {
-            return PinType{PinType::Kind::Value, id};
+            return PinType{.Kind = PinType::Kind::Value, .Type = id};
         }
     }
 
@@ -38,12 +38,12 @@ namespace VengEditor
         {
         case Veng::MaterialDomain::PostProcess:
             return {
-                DomainOutputPin{OutputColorPin, ValuePin(TypeIdOf<Veng::vec4>())},
+                DomainOutputPin{.Name = OutputColorPin, .Type = ValuePin(TypeIdOf<Veng::vec4>())},
             };
         case Veng::MaterialDomain::Surface:
             return {
-                DomainOutputPin{OutputAlbedoPin, ValuePin(TypeIdOf<Veng::vec4>())},
-                DomainOutputPin{OutputNormalPin, ValuePin(TypeIdOf<Veng::vec3>())},
+                DomainOutputPin{.Name = OutputAlbedoPin, .Type = ValuePin(TypeIdOf<Veng::vec4>())},
+                DomainOutputPin{.Name = OutputNormalPin, .Type = ValuePin(TypeIdOf<Veng::vec3>())},
             };
         }
         VE_ASSERT(false, "DomainOutputContract: unhandled MaterialDomain {}",
@@ -61,10 +61,10 @@ namespace VengEditor
             NodeType type;
             type.Name = TextureSampleTypeName;
             type.Inputs = {
-                PinDesc{TextureSampleUVPin, ValuePin(TypeIdOf<Veng::vec2>())},
+                PinDesc{.Name = TextureSampleUVPin, .Type = ValuePin(TypeIdOf<Veng::vec2>())},
             };
             type.Outputs = {
-                PinDesc{TextureSampleColorPin, ValuePin(TypeIdOf<Veng::vec4>())},
+                PinDesc{.Name = TextureSampleColorPin, .Type = ValuePin(TypeIdOf<Veng::vec4>())},
             };
             type.Properties = {
                 Veng::FieldDescriptor{
@@ -83,7 +83,7 @@ namespace VengEditor
             NodeType type;
             type.Name = ParamTypeName;
             type.Outputs = {
-                PinDesc{ParamValuePin, ValuePin(TypeIdOf<Veng::vec4>())},
+                PinDesc{.Name = ParamValuePin, .Type = ValuePin(TypeIdOf<Veng::vec4>())},
             };
             type.Properties = {
                 Veng::FieldDescriptor{
@@ -105,7 +105,9 @@ namespace VengEditor
             NodeType type;
             type.Name = MaterialOutputTypeName;
             for (const DomainOutputPin& sink : DomainOutputContract(domain))
-                type.Inputs.push_back(PinDesc{sink.Name, sink.Type});
+            {
+                type.Inputs.push_back(PinDesc{.Name = sink.Name, .Type = sink.Type});
+            }
             type.PropertySize = 0;
             types.MaterialOutput = catalog.Register(std::move(type));
         }
@@ -116,11 +118,15 @@ namespace VengEditor
     bool MaterialCanConnect(const PinType& from, const PinType& to)
     {
         if (from.Kind != PinType::Kind::Value || to.Kind != PinType::Kind::Value)
+        {
             return false;
+        }
 
         // Exact-type identity always connects.
         if (from.Type == to.Type)
+        {
             return true;
+        }
 
         const Veng::TypeId f32Type = TypeIdOf<Veng::f32>();
         const Veng::TypeId vec2Type = TypeIdOf<Veng::vec2>();
@@ -130,11 +136,15 @@ namespace VengEditor
         // f32 → vecN: splat the scalar across the destination's components.
         if (from.Type == f32Type &&
             (to.Type == vec2Type || to.Type == vec3Type || to.Type == vec4Type))
+        {
             return true;
+        }
 
         // vec4 → vec3 / vec2: truncate the trailing components.
         if (from.Type == vec4Type && (to.Type == vec3Type || to.Type == vec2Type))
+        {
             return true;
+        }
 
         return false;
     }

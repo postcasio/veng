@@ -102,7 +102,9 @@ namespace Veng::Cook
             fmt::print("{:<8} {:>5}  0x{:016X}\n", asset.Ok ? "OK" : "MISMATCH",
                        TypeName(asset.Type), asset.Id.Value);
             if (!asset.Ok)
+            {
                 ++mismatches;
+            }
         }
 
         fmt::print("{:<8} archive digest\n", report.DigestOk ? "OK" : "MISMATCH");

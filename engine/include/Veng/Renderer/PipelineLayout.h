@@ -56,9 +56,9 @@ namespace Veng::Renderer
         /// @brief Debug name.
         string Name;
         /// @brief Descriptor set layouts in set-number order.
-        vector<Ref<DescriptorSetLayout>> DescriptorSetLayouts{};
+        vector<Ref<DescriptorSetLayout>> DescriptorSetLayouts;
         /// @brief Push-constant ranges.
-        vector<PushConstantRange> PushConstantRanges{};
+        vector<PushConstantRange> PushConstantRanges;
     };
 
     /// @brief A compiled Vulkan pipeline layout declaring descriptor sets and push-constant ranges.

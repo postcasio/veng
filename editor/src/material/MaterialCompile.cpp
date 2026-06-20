@@ -20,13 +20,21 @@ namespace VengEditor
         Veng::u32 ArityOf(Veng::TypeId type)
         {
             if (type == TypeIdOf<Veng::f32>())
+            {
                 return 1;
+            }
             if (type == TypeIdOf<Veng::vec2>())
+            {
                 return 2;
+            }
             if (type == TypeIdOf<Veng::vec3>())
+            {
                 return 3;
+            }
             if (type == TypeIdOf<Veng::vec4>())
+            {
                 return 4;
+            }
             return 0;
         }
 
@@ -71,9 +79,13 @@ namespace VengEditor
             const std::span<const std::byte> bytes = graph.PropertyBytes(node);
             Veng::f32 v[4] = {0.0f, 0.0f, 0.0f, 0.0f};
             if (bytes.size() >= sizeof(v))
+            {
                 std::memcpy(v, bytes.data(), sizeof(v));
+            }
             for (Veng::usize i = 0; i < 4; ++i)
+            {
                 out[i] = v[i];
+            }
         }
 
         // Reads a TextureSample node's Texture property AssetId (the leading u64).
@@ -82,7 +94,9 @@ namespace VengEditor
             const std::span<const std::byte> bytes = graph.PropertyBytes(node);
             Veng::u64 id = 0;
             if (bytes.size() >= sizeof(id))
+            {
                 std::memcpy(&id, bytes.data(), sizeof(id));
+            }
             return id;
         }
 
@@ -110,34 +124,44 @@ namespace VengEditor
         const NodeType* param = catalog.Find(ParamTypeName);
         const NodeType* outputType = catalog.Find(MaterialOutputTypeName);
         if (textureSample == nullptr || param == nullptr || outputType == nullptr)
+        {
             return std::unexpected(
                 "CompileMaterialGraph: the catalog lacks the material node types");
+        }
 
         bool outputCount = false;
-        for (NodeId node : graph.Nodes())
+        for (const NodeId node : graph.Nodes())
         {
             if (graph.GetTypeOf(node) == outputType->Id)
             {
                 if (outputCount)
+                {
                     return std::unexpected(
                         "CompileMaterialGraph: more than one MaterialOutput node");
+                }
                 outputCount = true;
             }
         }
         if (!outputCount)
+        {
             return std::unexpected("CompileMaterialGraph: no MaterialOutput node in the graph");
+        }
 
         // Collect feeders in node-creation order so the synthesized graph round-trips
         // its source field list; the domain output node is the contract endpoint only.
         Veng::vector<NodeId> textureFeeders;
         Veng::vector<NodeId> paramFeeders;
-        for (NodeId node : graph.Nodes())
+        for (const NodeId node : graph.Nodes())
         {
             const NodeTypeId nodeType = graph.GetTypeOf(node);
             if (nodeType == textureSample->Id)
+            {
                 textureFeeders.push_back(node);
+            }
             else if (nodeType == param->Id)
+            {
                 paramFeeders.push_back(node);
+            }
         }
 
         Veng::vector<CompiledField> fields;
@@ -154,7 +178,9 @@ namespace VengEditor
                 texture.Name = shaderField.Name;
                 texture.Type = "texture";
                 if (textureCursor < textureFeeders.size())
+                {
                     texture.TextureId = ReadTextureId(graph, textureFeeders[textureCursor++]);
+                }
                 fields.push_back(std::move(texture));
                 break;
             }
@@ -169,8 +195,10 @@ namespace VengEditor
                 if (shaderField.Name.size() > suffix.size() &&
                     shaderField.Name.compare(shaderField.Name.size() - suffix.size(), suffix.size(),
                                              suffix) == 0)
+                {
                     sampler.SamplerTexture =
                         shaderField.Name.substr(0, shaderField.Name.size() - suffix.size());
+                }
                 fields.push_back(std::move(sampler));
                 break;
             }
@@ -178,18 +206,24 @@ namespace VengEditor
             {
                 const Veng::u32 targetArity = ArityOf(ParamFieldType(shaderField.Size));
                 if (targetArity == 0)
+                {
                     return std::unexpected("CompileMaterialGraph: param field '" +
                                            shaderField.Name + "' has an unsupported size");
+                }
 
                 Veng::f32 value[4] = {0.0f, 0.0f, 0.0f, 0.0f};
                 if (paramCursor < paramFeeders.size())
+                {
                     ReadParamValue(graph, paramFeeders[paramCursor++], value);
+                }
 
                 CompiledField field;
                 field.Name = shaderField.Name;
                 field.Type = VecTypeName(targetArity);
                 for (Veng::u32 i = 0; i < targetArity; ++i)
+                {
                     field.Values.push_back(value[i]);
+                }
                 fields.push_back(std::move(field));
                 break;
             }
@@ -238,8 +272,10 @@ namespace VengEditor
             else
             {
                 Json values = Json::array();
-                for (Veng::f32 v : field.Values)
+                for (const Veng::f32 v : field.Values)
+                {
                     values.push_back(v);
+                }
                 entry["value"] = std::move(values);
             }
 
@@ -280,20 +316,26 @@ namespace VengEditor
         {
             while (nextSink < outputType->Inputs.size())
             {
-                const Veng::u16 sink = static_cast<Veng::u16>(nextSink++);
+                const auto sink = static_cast<Veng::u16>(nextSink++);
                 if (!MaterialCanConnect(outPin, outputType->Inputs[sink].Type))
+                {
                     continue;
-                const Veng::VoidResult result =
-                    graph.Connect(PinRef{feeder, 0}, PinRef{outputNode, sink});
+                }
+                const Veng::VoidResult result = graph.Connect(
+                    PinRef{.Node = feeder, .Pin = 0}, PinRef{.Node = outputNode, .Pin = sink});
                 if (result)
+                {
                     return;
+                }
             }
         };
 
         for (const Veng::MaterialField& field : shader.Fields)
         {
             if (field.Kind == Veng::MaterialField::FieldKind::SamplerHandle)
+            {
                 continue; // a sampler is paired to its texture, never its own node
+            }
 
             if (field.Kind == Veng::MaterialField::FieldKind::TextureHandle)
             {
@@ -304,7 +346,7 @@ namespace VengEditor
                 VE_ASSERT(sampleType != nullptr && !sampleType->Properties.empty(),
                           "BuildGraphFromMaterial: TextureSample lacks its Texture property");
                 const Veng::u64 id = field.TextureId;
-                const std::byte* idBytes = reinterpret_cast<const std::byte*>(&id);
+                const auto* idBytes = reinterpret_cast<const std::byte*>(&id);
                 graph.SetProperty(sample, sampleType->Properties[0],
                                   std::span<const std::byte>(idBytes, sizeof(id)));
 

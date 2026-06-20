@@ -51,13 +51,17 @@ namespace VengEditor
         }
 
         for (const ArchiveTocEntry& entry : reader->Entries())
+        {
             m_Assets.push_back({.Id = entry.Id, .Type = entry.Type, .Size = entry.Size});
+        }
     }
 
     void AssetBrowserPanel::OnImGui()
     {
         if (!m_Loaded)
+        {
             LoadTable();
+        }
 
         UI::Text(m_PackPath.filename().string());
         UI::Separator();
@@ -75,7 +79,9 @@ namespace VengEditor
                     m_Selected = asset.Id;
 
                     if (UI::IsMouseDoubleClicked(UI::MouseButton::Left))
+                    {
                         m_Host.OpenAssetEditor(asset.Type, asset.Id);
+                    }
                 }
             }
         }

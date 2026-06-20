@@ -59,11 +59,13 @@ namespace Veng::Cook
         // --- 1. Read the external *.vmat.json ---
 
         if (!entry.contains("source") || !entry["source"].is_string())
+        {
             return std::unexpected("material importer: missing or invalid 'source'");
+        }
 
         const path vmatPath = context.PackDir / entry["source"].get<string>();
 
-        std::ifstream vmatFile(vmatPath, std::ios::binary);
+        const std::ifstream vmatFile(vmatPath, std::ios::binary);
         if (!vmatFile)
         {
             return std::unexpected(
@@ -93,9 +95,13 @@ namespace Veng::Cook
             }
             const string domainStr = vmat["domain"].get<string>();
             if (domainStr == "surface")
+            {
                 domain = 0;
+            }
             else if (domainStr == "postprocess")
+            {
                 domain = 1;
+            }
             else
             {
                 return std::unexpected(fmt::format("material importer: '{}': unknown domain '{}' "
@@ -107,23 +113,31 @@ namespace Veng::Cook
         // --- 2. Validate and resolve shader references ---
 
         if (!vmat.contains("shaders") || !vmat["shaders"].is_object())
+        {
             return std::unexpected("material importer: missing or invalid 'shaders' object");
+        }
 
         const json& shaders = vmat["shaders"];
 
         if (!shaders.contains("vertex") || !shaders["vertex"].is_number_unsigned())
+        {
             return std::unexpected(
                 "material importer: 'shaders.vertex' must be an unsigned integer AssetId");
+        }
 
         if (!shaders.contains("fragment") || !shaders["fragment"].is_number_unsigned())
+        {
             return std::unexpected(
                 "material importer: 'shaders.fragment' must be an unsigned integer AssetId");
+        }
 
         const u64 vertexShaderId = shaders["vertex"].get<u64>();
         const u64 fragmentShaderId = shaders["fragment"].get<u64>();
 
         if (!context.Resolve)
+        {
             return std::unexpected("material importer: no resolver available");
+        }
 
         const optional<ResolvedSource> vertexResolved =
             context.Resolve(AssetId{.Value = vertexShaderId});
@@ -170,7 +184,7 @@ namespace Veng::Cook
         // Read that JSON to locate the actual .slang source relative to its directory.
         const path shaderJsonPath = fragmentResolved->AbsolutePath;
 
-        std::ifstream shaderJsonFile(shaderJsonPath, std::ios::binary);
+        const std::ifstream shaderJsonFile(shaderJsonPath, std::ios::binary);
         if (!shaderJsonFile)
         {
             return std::unexpected(
@@ -210,7 +224,9 @@ namespace Veng::Cook
         const Result<vector<ReflectedFragmentOutput>> outputs =
             ReflectFragmentOutputs(fragSlangPath, fragEntry);
         if (!outputs)
+        {
             return std::unexpected(outputs.error());
+        }
 
         if (domain == 0) // Surface
         {
@@ -246,7 +262,9 @@ namespace Veng::Cook
         const Result<ReflectedStruct> blockReflected =
             ReflectStructLayout(fragSlangPath, "MaterialParams", /*optional=*/true);
         if (!blockReflected)
+        {
             return std::unexpected(blockReflected.error());
+        }
 
         if (blockReflected->Size > MaterialParamStride)
         {
@@ -258,7 +276,9 @@ namespace Veng::Cook
         // --- 4. Parse vmat["fields"] into an ordered declared-field list ---
 
         if (!vmat.contains("fields") || !vmat["fields"].is_array())
+        {
             return std::unexpected("material importer: missing or invalid 'fields' array");
+        }
 
         struct DeclaredField
         {
@@ -281,9 +301,13 @@ namespace Veng::Cook
         for (const json& fieldJson : fieldsJson)
         {
             if (!fieldJson.contains("name") || !fieldJson["name"].is_string())
+            {
                 return std::unexpected("material importer: field entry missing or invalid 'name'");
+            }
             if (!fieldJson.contains("type") || !fieldJson["type"].is_string())
+            {
                 return std::unexpected("material importer: field entry missing or invalid 'type'");
+            }
 
             DeclaredField decl;
             decl.Name = fieldJson["name"].get<string>();
@@ -297,8 +321,7 @@ namespace Veng::Cook
 
             const vector<string> AllowedTypes = {"texture", "sampler", "float", "vec2",
                                                  "vec3",    "vec4",    "uint"};
-            if (std::find(AllowedTypes.begin(), AllowedTypes.end(), decl.Type) ==
-                AllowedTypes.end())
+            if (std::ranges::find(AllowedTypes, decl.Type) == AllowedTypes.end())
             {
                 return std::unexpected(fmt::format(
                     "material importer: field '{}' has unknown type '{}'", decl.Name, decl.Type));
@@ -402,7 +425,9 @@ namespace Veng::Cook
         // or param) validates against the single combined struct.
         std::map<string, const ReflectedStructField*> blockByName;
         for (const ReflectedStructField& f : blockReflected->Fields)
+        {
             blockByName[f.Name] = &f;
+        }
 
         // --- 6. Walk declared fields, routing each by type ---
         //

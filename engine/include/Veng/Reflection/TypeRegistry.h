@@ -83,7 +83,9 @@ namespace Veng
             static_assert(id != InvalidTypeId, "VengReflect<T>::Id must be a non-zero authored id");
 
             if (m_Types.contains(id))
+            {
                 return id;
+            }
 
             const TypeId registered = RegisterImpl<T>(
                 id, VengReflect<T>::Name(), VengReflect<T>::Class, VengReflect<T>::Fields());

@@ -68,7 +68,9 @@ namespace
 int main()
 {
     if (!Test::HasVulkanDriver())
+    {
         return 77;
+    }
 
     Time::Initialize();
 
@@ -125,7 +127,9 @@ int main()
 
         VengEditor::MaterialPreview preview(context, assets, *imgui, previewExtent);
         if (brick.has_value())
+        {
             preview.SetMaterial(*brick);
+        }
 
         // A second, viewport-style SceneRenderer over its own one-sphere scene — the
         // two-renderer handoff the validation gate must exercise. Disjoint targets,

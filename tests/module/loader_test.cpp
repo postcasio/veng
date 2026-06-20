@@ -112,7 +112,8 @@ int main()
 
     // 3. A nonexistent path is a recoverable Result error.
     {
-        Result<LoadedModule> loaded = ModuleLoader::Load(path{"this-module-does-not-exist.dylib"});
+        const Result<LoadedModule> loaded =
+            ModuleLoader::Load(path{"this-module-does-not-exist.dylib"});
         Check(!loaded.has_value(), "nonexistent path is a Result error");
     }
 

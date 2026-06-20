@@ -37,7 +37,7 @@ namespace VengEditor
         node.Position = Veng::vec2{0.0f, 0.0f};
         node.Properties.assign(m_PropertySize(type), std::byte{0});
 
-        NodeId id{index, node.Generation};
+        NodeId id{.Index = index, .Generation = node.Generation};
         m_Live.push_back(id);
         return id;
     }
@@ -46,7 +46,9 @@ namespace VengEditor
     {
         const Node* found = Lookup(node);
         if (found == nullptr)
+        {
             return; // stale / non-existent — a no-op
+        }
 
         // Drop every link incident to this node.
         std::erase_if(m_Links, [&](const Link& link)
@@ -63,22 +65,30 @@ namespace VengEditor
     Veng::VoidResult NodeGraph::Connect(PinRef from, PinRef to)
     {
         if (!IsValid(from.Node) || !IsValid(to.Node))
+        {
             return std::unexpected("Connect: a referenced node does not exist");
+        }
 
         const NodePinShape fromShape = ShapeOf(from.Node);
         const NodePinShape toShape = ShapeOf(to.Node);
 
         // Direction: From must be a valid output, To a valid input.
         if (from.Pin >= fromShape.Outputs.size())
+        {
             return std::unexpected("Connect: From is not an output pin");
+        }
         if (to.Pin >= toShape.Inputs.size())
+        {
             return std::unexpected("Connect: To is not an input pin");
+        }
 
         // Arity: an input pin holds at most one link. Output pins fan out freely.
         for (const Link& link : m_Links)
         {
             if (link.To == to)
+            {
                 return std::unexpected("Connect: input pin already has a link");
+            }
         }
 
         // Type: Wildcard is compatible with anything; otherwise the domain decides.
@@ -87,14 +97,18 @@ namespace VengEditor
         const bool wildcard =
             fromType.Kind == PinType::Kind::Wildcard || toType.Kind == PinType::Kind::Wildcard;
         if (!wildcard && !m_CanConnect(fromType, toType))
+        {
             return std::unexpected("Connect: incompatible pin types");
+        }
 
         // Acyclicity: reject an edge that would close a cycle. The new edge runs
         // From's node -> To's node; if From is already reachable from To, it closes.
         if (Reaches(to.Node, from.Node))
+        {
             return std::unexpected("Connect: would introduce a cycle");
+        }
 
-        m_Links.push_back(Link{from, to});
+        m_Links.push_back(Link{.From = from, .To = to});
         return {};
     }
 
@@ -106,7 +120,9 @@ namespace VengEditor
     void NodeGraph::MoveNode(NodeId node, Veng::vec2 canvasPos)
     {
         if (!IsValid(node))
+        {
             return;
+        }
         m_Nodes[node.Index].Position = canvasPos;
     }
 
@@ -114,7 +130,9 @@ namespace VengEditor
                                 std::span<const std::byte> bytes)
     {
         if (!IsValid(node))
+        {
             return;
+        }
 
         Veng::vector<std::byte>& buffer = m_Nodes[node.Index].Properties;
         VE_ASSERT(field.Offset + bytes.size() <= buffer.size(),
@@ -171,8 +189,12 @@ namespace VengEditor
         const auto liveIndexOf = [&](NodeId node) -> Veng::usize
         {
             for (Veng::usize i = 0; i < m_Live.size(); ++i)
+            {
                 if (m_Live[i] == node)
+                {
                     return i;
+                }
+            }
             return m_Live.size();
         };
 
@@ -184,9 +206,13 @@ namespace VengEditor
             for (const Link& link : m_Links)
             {
                 if (!(link.To.Node == target))
+                {
                     continue;
-                if (std::find(sources.begin(), sources.end(), link.From.Node) == sources.end())
+                }
+                if (std::ranges::find(sources, link.From.Node) == sources.end())
+                {
                     sources.push_back(link.From.Node);
+                }
             }
             indegree[i] = static_cast<Veng::u32>(sources.size());
         }
@@ -217,16 +243,21 @@ namespace VengEditor
             for (const Link& link : m_Links)
             {
                 if (!(link.From.Node == picked))
+                {
                     continue;
-                if (std::find(successors.begin(), successors.end(), link.To.Node) ==
-                    successors.end())
+                }
+                if (std::ranges::find(successors, link.To.Node) == successors.end())
+                {
                     successors.push_back(link.To.Node);
+                }
             }
-            for (NodeId successor : successors)
+            for (const NodeId successor : successors)
             {
                 const Veng::usize si = liveIndexOf(successor);
                 if (si < m_Live.size() && indegree[si] > 0)
+                {
                     --indegree[si];
+                }
             }
         }
 
@@ -236,10 +267,14 @@ namespace VengEditor
     const NodeGraph::Node* NodeGraph::Lookup(NodeId node) const
     {
         if (node.Index >= m_Nodes.size())
+        {
             return nullptr;
+        }
         const Node& slot = m_Nodes[node.Index];
         if (!slot.Alive || slot.Generation != node.Generation)
+        {
             return nullptr;
+        }
         return &slot;
     }
 
@@ -253,7 +288,9 @@ namespace VengEditor
     bool NodeGraph::Reaches(NodeId origin, NodeId target) const
     {
         if (origin == target)
+        {
             return true;
+        }
 
         Veng::vector<NodeId> stack;
         stack.push_back(origin);
@@ -268,11 +305,15 @@ namespace VengEditor
             for (const Link& link : m_Links)
             {
                 if (!(link.From.Node == current))
+                {
                     continue;
+                }
                 const NodeId next = link.To.Node;
                 if (next == target)
+                {
                     return true;
-                if (std::find(seen.begin(), seen.end(), next) == seen.end())
+                }
+                if (std::ranges::find(seen, next) == seen.end())
                 {
                     seen.push_back(next);
                     stack.push_back(next);

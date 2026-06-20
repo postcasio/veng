@@ -48,7 +48,9 @@ namespace Veng::UI
     void Tooltip(string_view text)
     {
         if (ImGui::IsItemHovered())
+        {
             ImGui::SetTooltip("%.*s", static_cast<int>(text.size()), text.data());
+        }
     }
 
     bool IsMouseClicked(MouseButton button)

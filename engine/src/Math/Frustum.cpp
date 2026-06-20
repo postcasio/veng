@@ -36,7 +36,9 @@ namespace Veng
                                 normal.z >= 0.0f ? box.Max.z : box.Min.z);
 
             if (glm::dot(normal, positive) + plane.w < 0.0f)
+            {
                 return false;
+            }
         }
         return true;
     }

@@ -26,7 +26,9 @@ using namespace Veng::Renderer;
 int main()
 {
     if (!Test::HasVulkanDriver())
+    {
         return 77;
+    }
 
     constexpr u32 size = 4;
     // Exactly representable in RGBA8Unorm: red, fully opaque.
@@ -67,10 +69,10 @@ int main()
                         .Resource = target,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
-                        .Clear = ClearColor{1.0f, 0.0f, 0.0f, 1.0f},
+                        .Clear = ClearColor{.R = 1.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
                     })
                     .Execute([](PassContext&) {});
-                const RenderGraph::ImportBinding binding{target, view};
+                const RenderGraph::ImportBinding binding{.Id = target, .View = view};
                 graph.Compile()->Execute(cmd, {&binding, 1});
             });
 

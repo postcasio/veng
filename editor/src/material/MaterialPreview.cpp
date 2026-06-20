@@ -127,7 +127,9 @@ namespace VengEditor
     void MaterialPreview::Resize(uvec2 extent)
     {
         if (extent.x == 0 || extent.y == 0 || extent == m_Extent)
+        {
             return;
+        }
 
         m_Extent = extent;
         m_SceneRenderer->Resize(m_Extent);

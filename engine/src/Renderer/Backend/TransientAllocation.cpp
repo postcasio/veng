@@ -36,7 +36,7 @@ namespace Veng::Renderer::Backend
         // is the minimal one on a linear graph. Stable on ties keeps the result
         // deterministic.
         vector<u32> order(lifetimes.size());
-        std::iota(order.begin(), order.end(), 0u);
+        std::ranges::iota(order, 0u);
         std::ranges::stable_sort(order, [&](const u32 a, const u32 b)
                                  { return lifetimes[a].FirstUse < lifetimes[b].FirstUse; });
 
@@ -49,13 +49,17 @@ namespace Veng::Renderer::Backend
             for (u32 s = 0; s < slots.size(); s++)
             {
                 if (slots[s].Key != keys[t])
+                {
                     continue;
+                }
 
                 const bool collides =
                     std::ranges::any_of(slots[s].Members, [&](const u32 m)
                                         { return Overlaps(lifetimes[m], lifetimes[t]); });
                 if (collides)
+                {
                     continue;
+                }
 
                 chosen = s;
                 break;

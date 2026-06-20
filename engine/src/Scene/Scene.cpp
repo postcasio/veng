@@ -43,7 +43,7 @@ namespace Veng
         slot.Alive = true;
         ++m_LiveCount;
 
-        return Entity{index, slot.Generation};
+        return Entity{.Index = index, .Generation = slot.Generation};
     }
 
     void Scene::DestroyEntity(Entity entity)
@@ -68,7 +68,7 @@ namespace Veng
                 for (usize i = 0; i < count; ++i)
                 {
                     const Entity child = dense[i];
-                    const Parent* link = static_cast<const Parent*>(parents->TryGet(child));
+                    const auto* link = static_cast<const Parent*>(parents->TryGet(child));
                     if (link == nullptr || link->Value != ancestor)
                     {
                         continue;

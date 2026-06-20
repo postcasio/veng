@@ -55,7 +55,7 @@ namespace Veng::Renderer
             flags |= vk::ImageCreateFlagBits::eCubeCompatible;
         }
 
-        VkImageCreateInfo imageCreateInfo = {
+        const VkImageCreateInfo imageCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
             .flags = static_cast<VkImageCreateFlags>(flags),
             .imageType = static_cast<VkImageType>(ToVk(m_Type)),
@@ -69,7 +69,7 @@ namespace Veng::Renderer
             .sharingMode = static_cast<VkSharingMode>(vk::SharingMode::eExclusive),
             .initialLayout = static_cast<VkImageLayout>(vk::ImageLayout::eUndefined)};
 
-        VmaAllocationCreateInfo allocationCreateInfo{
+        const VmaAllocationCreateInfo allocationCreateInfo{
             .usage = VMA_MEMORY_USAGE_AUTO,
             .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             .pool = VK_NULL_HANDLE,
@@ -127,9 +127,13 @@ namespace Veng::Renderer
                                      1);
 
             if (mipWidth > 1)
+            {
                 mipWidth /= 2;
+            }
             if (mipHeight > 1)
+            {
                 mipHeight /= 2;
+            }
         }
 
         Backend::TransitionImage(commandBuffer, *this, ImageLayout::ShaderReadOnly, 0, 1,

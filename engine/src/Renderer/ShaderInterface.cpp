@@ -14,7 +14,9 @@ namespace Veng::Renderer
         for (const ShaderBinding& binding : Bindings)
         {
             if (binding.Name == name)
+            {
                 return binding;
+            }
         }
 
         return std::nullopt;
@@ -41,7 +43,9 @@ namespace Veng::Renderer
     ShaderInterface::BuildDescriptorSetLayouts(Context& context, std::string_view namePrefix) const
     {
         if (Bindings.empty())
+        {
             return {};
+        }
 
         u32 maxSet = 0;
         for (const ShaderBinding& binding : Bindings)

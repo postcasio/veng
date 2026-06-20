@@ -315,7 +315,7 @@ TEST_CASE("WorldMatrix of a root equals its LocalMatrix")
     const Unique<Scene> scene = Scene::Create(registry);
 
     const Entity root = scene->CreateEntity();
-    Transform& t = scene->Add<Transform>(root);
+    auto& t = scene->Add<Transform>(root);
     t.Position = vec3(3.0f, 4.0f, 5.0f);
 
     CHECK(MatrixApproxEqual(WorldMatrix(*scene, root), LocalMatrix(t)));

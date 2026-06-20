@@ -46,7 +46,7 @@ namespace Veng::Renderer
         /// SceneRenderer sets it to &view on every Execute.
         [[nodiscard]] const SceneView& View() const
         {
-            void* userData = m_Inner.UserData();
+            const void* userData = m_Inner.UserData();
             VE_ASSERT(userData != nullptr,
                       "ScenePassContext::View: the RenderGraph user pointer is null — "
                       "a ScenePass was replayed outside SceneRenderer::Execute");

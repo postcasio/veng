@@ -36,19 +36,33 @@ namespace VengEditor
         {
             using Veng::TypeIdOf;
             if (type == TypeIdOf<Veng::f32>())
-                return {LeafLayout::Repr::F32, 1};
+            {
+                return {.Component = LeafLayout::Repr::F32, .Count = 1};
+            }
             if (type == TypeIdOf<Veng::i32>())
-                return {LeafLayout::Repr::I32, 1};
+            {
+                return {.Component = LeafLayout::Repr::I32, .Count = 1};
+            }
             if (type == TypeIdOf<Veng::u32>())
-                return {LeafLayout::Repr::U32, 1};
+            {
+                return {.Component = LeafLayout::Repr::U32, .Count = 1};
+            }
             if (type == TypeIdOf<Veng::vec2>())
-                return {LeafLayout::Repr::F32, 2};
+            {
+                return {.Component = LeafLayout::Repr::F32, .Count = 2};
+            }
             if (type == TypeIdOf<Veng::vec3>())
-                return {LeafLayout::Repr::F32, 3};
+            {
+                return {.Component = LeafLayout::Repr::F32, .Count = 3};
+            }
             if (type == TypeIdOf<Veng::vec4>())
-                return {LeafLayout::Repr::F32, 4};
+            {
+                return {.Component = LeafLayout::Repr::F32, .Count = 4};
+            }
             if (type == TypeIdOf<Veng::quat>())
-                return {LeafLayout::Repr::F32, 4};
+            {
+                return {.Component = LeafLayout::Repr::F32, .Count = 4};
+            }
             return {};
         }
 
@@ -139,7 +153,9 @@ namespace VengEditor
                 const Veng::usize size = ComponentSize(layout.Component);
                 Json array = Json::array();
                 for (Veng::usize i = 0; i < layout.Count; ++i)
+                {
                     array.push_back(ComponentToJson(fieldPtr + i * size, layout.Component));
+                }
                 return array;
             }
             case Veng::FieldClass::Enum:
@@ -156,7 +172,9 @@ namespace VengEditor
                 Veng::u64 id = 0;
                 std::memcpy(&id, fieldPtr, sizeof(id));
                 if (id == 0)
+                {
                     return nullptr;
+                }
                 return id;
             }
             default:
@@ -177,7 +195,9 @@ namespace VengEditor
             {
                 const LeafLayout layout = NumericLayoutOf(field.Type);
                 if (layout.Count == 1)
+                {
                     JsonToComponent(value, fieldPtr, layout.Component);
+                }
                 break;
             }
             case Veng::FieldClass::Vector:
@@ -185,11 +205,15 @@ namespace VengEditor
             {
                 const LeafLayout layout = NumericLayoutOf(field.Type);
                 if (layout.Count == 0 || !value.is_array())
+                {
                     break;
+                }
                 const Veng::usize size = ComponentSize(layout.Component);
                 const Veng::usize count = std::min<Veng::usize>(layout.Count, value.size());
                 for (Veng::usize i = 0; i < count; ++i)
+                {
                     JsonToComponent(value[i], fieldPtr + i * size, layout.Component);
+                }
                 break;
             }
             case Veng::FieldClass::Enum:
@@ -235,16 +259,24 @@ namespace VengEditor
         const PinDesc* FindPin(const Veng::vector<PinDesc>& pins, Veng::string_view name)
         {
             for (const PinDesc& pin : pins)
+            {
                 if (pin.Name == name)
+                {
                     return &pin;
+                }
+            }
             return nullptr;
         }
 
         Veng::u16 PinIndex(const Veng::vector<PinDesc>& pins, Veng::string_view name)
         {
             for (Veng::usize i = 0; i < pins.size(); ++i)
+            {
                 if (pins[i].Name == name)
+                {
                     return static_cast<Veng::u16>(i);
+                }
+            }
             return static_cast<Veng::u16>(pins.size());
         }
     }
@@ -258,18 +290,24 @@ namespace VengEditor
 
         // Links reference nodes by position in this array, not by runtime NodeId.
         Veng::vector<NodeId> order;
-        for (NodeId node : graph.Nodes())
+        for (const NodeId node : graph.Nodes())
+        {
             order.push_back(node);
+        }
 
         const auto serialIndexOf = [&](NodeId node) -> Veng::usize
         {
             for (Veng::usize i = 0; i < order.size(); ++i)
+            {
                 if (order[i] == node)
+                {
                     return i;
+                }
+            }
             return order.size();
         };
 
-        for (NodeId node : order)
+        for (const NodeId node : order)
         {
             const NodeType* type = catalog.Find(graph.GetTypeOf(node));
             VE_ASSERT(type != nullptr, "WriteNodeGraph: a live node has an unknown type");
@@ -285,7 +323,9 @@ namespace VengEditor
                 Json props = Json::object();
                 const std::span<const std::byte> bytes = graph.PropertyBytes(node);
                 for (const Veng::FieldDescriptor& field : type->Properties)
+                {
                     props[field.Name] = PropertyValueToJson(bytes.data() + field.Offset, field);
+                }
                 entry["properties"] = std::move(props);
             }
 
@@ -323,15 +363,21 @@ namespace VengEditor
         // JSON_NOEXCEPTION: a parse error yields a discarded value, not a throw.
         const Json in = Json::parse(json, nullptr, false);
         if (in.is_discarded() || !in.is_object())
+        {
             return NodeGraphReadOutcome::Malformed;
+        }
 
         Veng::i32 version = NodeGraphFormatVersion;
         if (in.contains("version") && in["version"].is_number_integer())
+        {
             version = in["version"].get<Veng::i32>();
+        }
 
         // Refuse newer documents outright; a degraded parse must not overwrite the author's data.
         if (version > NodeGraphFormatVersion)
+        {
             return NodeGraphReadOutcome::VersionTooNew;
+        }
 
         // serialIndex -> spawned NodeId; entries stay null (IsValid == false) for
         // dropped nodes (unknown type), so incident links are also dropped.
@@ -376,12 +422,16 @@ namespace VengEditor
                     for (const Veng::FieldDescriptor& field : type->Properties)
                     {
                         if (!props.contains(field.Name))
+                        {
                             continue; // omitted field keeps its default
+                        }
 
                         // Decode into a scratch buffer, then route through SetProperty.
                         Veng::vector<std::byte> scratch(PropertyFieldSize(field), std::byte{0});
                         if (scratch.empty())
+                        {
                             continue;
+                        }
                         JsonToPropertyValue(props[field.Name], scratch.data(), field);
                         dest.SetProperty(node, field, scratch);
                     }
@@ -430,10 +480,12 @@ namespace VengEditor
                     continue;
                 }
 
-                const PinRef from{fromNode, PinIndex(fromType->Outputs, fromPin)};
-                const PinRef to{toNode, PinIndex(toType->Inputs, toPin)};
+                const PinRef from{.Node = fromNode, .Pin = PinIndex(fromType->Outputs, fromPin)};
+                const PinRef to{.Node = toNode, .Pin = PinIndex(toType->Inputs, toPin)};
                 if (const Veng::VoidResult result = dest.Connect(from, to); !result)
+                {
                     Veng::Log::Warn("ReadNodeGraph: dropping an invalid link: {}", result.error());
+                }
             }
         }
 

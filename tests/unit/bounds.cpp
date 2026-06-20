@@ -36,7 +36,7 @@ TEST_CASE("AABB::Empty is the identity for Union")
     const AABB empty = AABB::Empty();
     CHECK(empty.IsEmpty());
 
-    const AABB box{vec3(-1.0f, -2.0f, -3.0f), vec3(4.0f, 5.0f, 6.0f)};
+    const AABB box{.Min = vec3(-1.0f, -2.0f, -3.0f), .Max = vec3(4.0f, 5.0f, 6.0f)};
     CHECK_FALSE(box.IsEmpty());
 
     const AABB unioned = Union(empty, box);
@@ -63,7 +63,7 @@ TEST_CASE("AABB::Expand grows tight min/max for points and boxes")
     CHECK(VecApprox(box.Min, vec3(-1.0f, 2.0f, 0.0f)));
     CHECK(VecApprox(box.Max, vec3(1.0f, 5.0f, 3.0f)));
 
-    AABB other{vec3(-2.0f, 0.0f, -1.0f), vec3(0.0f, 10.0f, 4.0f)};
+    AABB const other{.Min = vec3(-2.0f, 0.0f, -1.0f), .Max = vec3(0.0f, 10.0f, 4.0f)};
     box.Expand(other);
     CHECK(VecApprox(box.Min, vec3(-2.0f, 0.0f, -1.0f)));
     CHECK(VecApprox(box.Max, vec3(1.0f, 10.0f, 4.0f)));
@@ -71,7 +71,7 @@ TEST_CASE("AABB::Expand grows tight min/max for points and boxes")
 
 TEST_CASE("AABB Center/Extents/Size on a known box")
 {
-    const AABB box{vec3(-2.0f, 0.0f, 4.0f), vec3(2.0f, 6.0f, 10.0f)};
+    const AABB box{.Min = vec3(-2.0f, 0.0f, 4.0f), .Max = vec3(2.0f, 6.0f, 10.0f)};
     CHECK(VecApprox(box.Center(), vec3(0.0f, 3.0f, 7.0f)));
     CHECK(VecApprox(box.Extents(), vec3(2.0f, 3.0f, 3.0f)));
     CHECK(VecApprox(box.Size(), vec3(4.0f, 6.0f, 6.0f)));
@@ -81,7 +81,7 @@ TEST_CASE("AABB::Transformed refits under rotation (corners, not min/max)")
 {
     // A unit box rotated 45° about Z. The refit box is larger than the original
     // (the corners swing out), not the same box.
-    const AABB unit{vec3(-0.5f), vec3(0.5f)};
+    const AABB unit{.Min = vec3(-0.5f), .Max = vec3(0.5f)};
     const mat4 rot = glm::rotate(mat4(1.0f), glm::radians(45.0f), vec3(0.0f, 0.0f, 1.0f));
     const AABB refit = unit.Transformed(rot);
 
@@ -98,7 +98,7 @@ TEST_CASE("AABB::Transformed refits under rotation (corners, not min/max)")
 
 TEST_CASE("AABB::Transformed translates by the matrix")
 {
-    const AABB unit{vec3(-0.5f), vec3(0.5f)};
+    const AABB unit{.Min = vec3(-0.5f), .Max = vec3(0.5f)};
     const mat4 translate = glm::translate(mat4(1.0f), vec3(10.0f, -3.0f, 2.0f));
     const AABB moved = unit.Transformed(translate);
     CHECK(VecApprox(moved.Center(), vec3(10.0f, -3.0f, 2.0f)));
@@ -175,7 +175,8 @@ TEST_CASE("SceneBounds: union of two primitives at known transforms")
 
     // A unit cube mesh placed at +X 10 and a unit cube at -X 10; the scene bound
     // spans both.
-    const AssetHandle<Mesh> mesh = manager.Adopt<Mesh>(BoundsMesh(AABB{vec3(-0.5f), vec3(0.5f)}));
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
 
     const Entity a = scene->CreateEntity();
     scene->Add<Transform>(a, Transform{.Position = vec3(10.0f, 0.0f, 0.0f)});
@@ -197,8 +198,8 @@ TEST_CASE("SceneBounds: union of two primitives at known transforms")
 
 TEST_CASE("SceneBounds: a non-resident mesh contributes nothing")
 {
-    Renderer::Context context;
-    TaskSystem tasks;
+    const Renderer::Context context;
+    const TaskSystem tasks;
     TypeRegistry types;
     types.Register<Name>("Name");
     types.Register<Transform>("Transform");
@@ -223,6 +224,6 @@ TEST_CASE("SceneBounds: an empty scene returns AABB::Empty")
     types.Register<Parent>("Parent");
     types.Register<MeshRenderer>("MeshRenderer");
 
-    Unique<Scene> scene = Scene::Create(types);
+    const Unique<Scene> scene = Scene::Create(types);
     CHECK(SceneBounds(*scene).IsEmpty());
 }

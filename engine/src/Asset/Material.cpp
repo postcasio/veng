@@ -25,7 +25,9 @@ namespace Veng
     Material::~Material()
     {
         if (m_Registered)
+        {
             m_Context.GetBindlessRegistry().Release(m_Handle);
+        }
     }
 
     void Material::Finalize(Ref<Renderer::PipelineLayout> layout,
@@ -52,10 +54,14 @@ namespace Veng
         {
             if (field.Kind != MaterialField::FieldKind::TextureHandle &&
                 field.Kind != MaterialField::FieldKind::SamplerHandle)
+            {
                 continue;
+            }
 
             if (field.TextureId == 0)
+            {
                 continue;
+            }
 
             const Texture* tex = nullptr;
             for (const AssetHandle<Texture>& handle : m_Textures)
@@ -91,7 +97,9 @@ namespace Veng
         // binds the fullscreen pipeline it built from this material's shaders, so
         // Bind only pushes the selector. A Surface material binds its own.
         if (m_Pipeline != nullptr)
+        {
             cmd.BindPipeline(m_Pipeline);
+        }
 
         // Fold the current frame's region base into the pushed selector so the
         // shader's index * MaterialParamStride load lands in this frame's copy of
@@ -105,7 +113,9 @@ namespace Veng
         for (const MaterialField& f : m_Fields)
         {
             if (f.Name == name)
+            {
                 return &f;
+            }
         }
         return nullptr;
     }
@@ -160,7 +170,9 @@ namespace Veng
             }
         }
         if (!found)
+        {
             m_Textures.push_back(std::move(texture));
+        }
 
         UploadParams();
     }

@@ -34,7 +34,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "buffer roundtrip: whole-buffer upload
 
     // Whole-buffer upload/download identity: 0, 1, 2, ... 63.
     std::array<u8, size> source{};
-    std::iota(source.begin(), source.end(), u8{0});
+    std::ranges::iota(source, u8{0});
 
     buffer->UploadSync(source);
 
@@ -62,7 +62,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                                 });
 
     std::array<u8, size> source{};
-    std::iota(source.begin(), source.end(), u8{0});
+    std::ranges::iota(source, u8{0});
 
     buffer->UploadSync(source);
 

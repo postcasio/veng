@@ -28,11 +28,17 @@ namespace Veng
         optional<AssetType> AssetTypeForHandleField(TypeId fieldType)
         {
             if (fieldType == TypeIdOf<AssetHandle<Texture>>())
+            {
                 return AssetType::Texture;
+            }
             if (fieldType == TypeIdOf<AssetHandle<Mesh>>())
+            {
                 return AssetType::Mesh;
+            }
             if (fieldType == TypeIdOf<AssetHandle<Material>>())
+            {
                 return AssetType::Material;
+            }
             return std::nullopt;
         }
 
@@ -45,7 +51,7 @@ namespace Veng
             {
                 if (async)
                 {
-                    AssetHandle<T> handle = manager.Load<T>(depId);
+                    const AssetHandle<T> handle = manager.Load<T>(depId);
                     if (!AssetManager::EntryOf(handle))
                     {
                         return std::unexpected(AssetLoadError{
@@ -59,7 +65,9 @@ namespace Veng
 
                 const AssetResult<AssetHandle<T>> handle = manager.LoadSync<T>(depId);
                 if (!handle)
+                {
                     return std::unexpected(handle.error());
+                }
                 return AssetManager::EntryOf(*handle);
             };
 
@@ -101,7 +109,9 @@ namespace Veng
                     u64 fid = 0;
                     std::memcpy(&fid, fieldPtr, sizeof(fid));
                     if (fid == 0)
+                    {
                         continue;
+                    }
 
                     const optional<AssetType> assetType = AssetTypeForHandleField(field.Type);
                     if (!assetType)
@@ -117,7 +127,9 @@ namespace Veng
                     const VoidResult nested = CollectHandleDeps(
                         parentId, fieldPtr, registry.Info(field.Type), registry, out);
                     if (!nested)
+                    {
                         return nested;
+                    }
                 }
             }
             return {};
@@ -132,8 +144,10 @@ namespace Veng
     {
         // ── 1. CookedPrefabHeader ────────────────────────────────────────────
         if (cooked.size() < sizeof(CookedPrefabHeader))
+        {
             return std::unexpected(
                 Corrupt(id, "prefab: cooked blob smaller than CookedPrefabHeader"));
+        }
 
         CookedPrefabHeader header;
         std::memcpy(&header, cooked.data(), sizeof(header));
@@ -161,12 +175,16 @@ namespace Veng
         // ── 2. Entity + component tables ─────────────────────────────────────
         vector<CookedPrefabEntity> cookedEntities(header.EntityCount);
         if (entityTableBytes > 0)
+        {
             std::memcpy(cookedEntities.data(), cooked.data() + cursor, entityTableBytes);
+        }
         cursor += entityTableBytes;
 
         vector<CookedPrefabComponent> cookedComponents(header.ComponentCount);
         if (componentTableBytes > 0)
+        {
             std::memcpy(cookedComponents.data(), cooked.data() + cursor, componentTableBytes);
+        }
         cursor += componentTableBytes;
 
         const std::span<const u8> records = cooked.subspan(cursor, header.RecordBytes);
@@ -183,7 +201,9 @@ namespace Veng
             const CookedPrefabEntity& ce = cookedEntities[e];
 
             if (ce.FirstComponent + ce.ComponentCount > header.ComponentCount)
+            {
                 return std::unexpected(Corrupt(id, "prefab: entity component range out of bounds"));
+            }
 
             Prefab::PrefabEntity entity;
             entity.Components.reserve(ce.ComponentCount);
@@ -193,8 +213,10 @@ namespace Veng
                 const CookedPrefabComponent& cc = cookedComponents[ce.FirstComponent + c];
 
                 if (static_cast<usize>(cc.RecordOffset) + cc.RecordSize > header.RecordBytes)
+                {
                     return std::unexpected(
                         Corrupt(id, "prefab: component record range out of bounds"));
+                }
 
                 Prefab::Component component;
                 component.Type = cc.TypeId;
@@ -224,7 +246,9 @@ namespace Veng
                         CollectHandleDeps(id, instance.data(), typeInfo, types, handleDeps);
                     typeInfo.Destruct(instance.data());
                     if (!collected)
+                    {
                         return std::unexpected(Corrupt(id, collected.error()));
+                    }
                 }
 
                 entity.Components.push_back(std::move(component));
@@ -240,19 +264,25 @@ namespace Veng
         {
             bool known = false;
             for (const u64 existing : loaded)
+            {
                 if (existing == dep.Id)
                 {
                     known = true;
                     break;
                 }
+            }
             if (known)
+            {
                 continue;
+            }
             loaded.push_back(dep.Id);
 
             AssetResult<Ref<Detail::AssetCacheEntry>> entry =
                 LoadDependency(manager, id, AssetId{dep.Id}, dep.Type, async);
             if (!entry)
+            {
                 return std::unexpected(entry.error());
+            }
             dependencies.push_back(*entry);
         }
 

@@ -137,7 +137,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                     .Resource = sourceId,
                     .Load = LoadOp::Clear,
                     .Store = StoreOp::Store,
-                    .Clear = ClearColor{0.0f, 0.0f, 1.0f, 1.0f},
+                    .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 1.0f, .A = 1.0f},
                 })
                 .Execute([](PassContext&) {});
 
@@ -146,7 +146,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                     .Resource = outputId,
                     .Load = LoadOp::Clear,
                     .Store = StoreOp::Store,
-                    .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                    .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
                 })
                 .Sample(sourceId)
                 .Execute(
@@ -165,8 +165,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                     });
 
             const RenderGraph::ImportBinding bindings[] = {
-                {sourceId, sourceView},
-                {outputId, outputView},
+                {.Id = sourceId, .View = sourceView},
+                {.Id = outputId, .View = outputView},
             };
             graph.Compile()->Execute(cmd, bindings);
         });

@@ -115,7 +115,7 @@ namespace Veng::Renderer
                 // The whole atlas clears to depth = 1; a tile beyond the live
                 // record/face count keeps this clear and is never sampled (the
                 // lighting pass gates on the record's type/slot).
-                .Clear = ClearDepth{1.0f, 0},
+                .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
             })
             .Execute(
                 [this, resolution](PassContext& inner)
@@ -136,9 +136,13 @@ namespace Veng::Renderer
 
                         bool materialsReady = true;
                         for (const AssetHandle<Material>& material : materials)
+                        {
                             materialsReady = materialsReady && material.IsLoaded();
+                        }
                         if (!materialsReady)
+                        {
                             return;
+                        }
 
                         cmd.BindVertexBuffer(mesh.GetVertexBuffer());
                         cmd.BindIndexBuffer(mesh.GetIndexBuffer());
@@ -149,7 +153,9 @@ namespace Veng::Renderer
                         for (const SubMesh& subMesh : mesh.GetSubMeshes())
                         {
                             if (subMesh.MaterialIndex == SubMesh::NoMaterial)
+                            {
                                 continue;
+                            }
                             cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                         }
                     };
@@ -165,7 +171,9 @@ namespace Veng::Renderer
                         // 1 = point (six faces), 0 = unused slot (skipped).
                         const f32 type = view.PunctualShadows[slot].Params.x;
                         if (type < 0.5f)
+                        {
                             continue;
+                        }
                         const u32 faceCount = type > 1.5f ? 1u : CubeFaceCount;
 
                         for (u32 face = 0; face < faceCount; ++face)
@@ -185,12 +193,16 @@ namespace Veng::Renderer
                                 m_CullScratch.clear();
                                 view.Broadphase->Cull(lightFrustum, m_CullScratch);
                                 for (const u32 idx : m_CullScratch)
+                                {
                                     Draw(view.Visible[idx], lightViewProj);
+                                }
                             }
                             else
                             {
                                 for (const VisibleMesh& item : view.Visible)
+                                {
                                     Draw(item, lightViewProj);
+                                }
                             }
                         }
                     }

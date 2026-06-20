@@ -24,14 +24,18 @@ namespace
     bool PointInside(const Frustum& frustum, const vec3& point)
     {
         for (const vec4& plane : frustum.Planes)
+        {
             if (glm::dot(vec3(plane), point) + plane.w < 0.0f)
+            {
                 return false;
+            }
+        }
         return true;
     }
 
     AABB BoxAt(const vec3& center, f32 halfExtent = 0.5f)
     {
-        return AABB{center - vec3(halfExtent), center + vec3(halfExtent)};
+        return AABB{.Min = center - vec3(halfExtent), .Max = center + vec3(halfExtent)};
     }
 
     // The engine's real camera: a Y-flipped Vulkan perspective looking down -Z
@@ -124,22 +128,30 @@ TEST_CASE("Intersects is conservative — no false cull near the frustum boundar
     // genuinely inside the frustum must not be culled — a false negative would be
     // a dropped visible mesh.
     for (f32 x = -30.0f; x <= 30.0f; x += 2.0f)
+    {
         for (f32 y = -30.0f; y <= 30.0f; y += 2.0f)
+        {
             for (f32 z = -50.0f; z <= -2.0f; z += 3.0f)
             {
                 const AABB box = BoxAt(vec3(x, y, z), 1.0f);
 
                 bool anyCornerInside = false;
                 for (const vec3& corner : box.Corners())
+                {
                     if (PointInside(frustum, corner))
                     {
                         anyCornerInside = true;
                         break;
                     }
+                }
 
                 if (anyCornerInside)
+                {
                     CHECK(Intersects(frustum, box));
+                }
             }
+        }
+    }
 }
 
 TEST_CASE("Ortho extraction yields axis-aligned planes bounding the ortho box")

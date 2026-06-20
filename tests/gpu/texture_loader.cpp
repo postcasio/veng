@@ -133,7 +133,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                     .Resource = outputId,
                     .Load = LoadOp::Clear,
                     .Store = StoreOp::Store,
-                    .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                    .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
                 })
                 .Execute(
                     [&](PassContext& ctx)
@@ -150,7 +150,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                         cmd.DrawFullscreenTriangle();
                     });
 
-            const RenderGraph::ImportBinding binding{outputId, outputView};
+            const RenderGraph::ImportBinding binding{.Id = outputId, .View = outputView};
             graph.Compile()->Execute(cmd, {&binding, 1});
         });
 
@@ -181,7 +181,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(assets.Mount(outArchive).has_value());
 
     // Load returns immediately with a not-yet-resident handle.
-    AssetHandle<Texture> handle = assets.Load<Texture>(AssetId{0x7D1});
+    const AssetHandle<Texture> handle = assets.Load<Texture>(AssetId{0x7D1});
     CHECK_FALSE(handle.IsLoaded());
 
     // The decode + upload run on the task system; the finalize lands on the main

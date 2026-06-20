@@ -156,7 +156,9 @@ namespace Veng
         [[nodiscard]] optional<AssetHandle<T>> Lock() const
         {
             if (Ref<Detail::AssetCacheEntry> entry = m_Entry.lock())
+            {
                 return AssetHandle<T>(m_Id, std::move(entry));
+            }
 
             return std::nullopt;
         }

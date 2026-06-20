@@ -31,10 +31,12 @@ namespace
         vector<const TypeInfo*> infos;
         infos.reserve(types.All().size());
         for (const auto& [id, info] : types.All())
+        {
             infos.push_back(&info);
+        }
 
-        std::sort(infos.begin(), infos.end(),
-                  [](const TypeInfo* a, const TypeInfo* b) { return a->Name < b->Name; });
+        std::ranges::sort(infos,
+                          [](const TypeInfo* a, const TypeInfo* b) { return a->Name < b->Name; });
 
         fmt::print("reflected types ({}):\n", infos.size());
         for (const TypeInfo* info : infos)
@@ -95,7 +97,7 @@ int main(int argc, char** argv)
                     fmt::print(stderr, "vengc: --reference requires an argument\n");
                     return 1;
                 }
-                referencePacks.push_back(path(args[++i]));
+                referencePacks.emplace_back(args[++i]);
             }
             else if (args[i] == "--module")
             {
@@ -187,7 +189,7 @@ int main(int argc, char** argv)
                     fmt::print(stderr, "vengc: --reference requires an argument\n");
                     return 1;
                 }
-                referencePacks.push_back(path(args[++i]));
+                referencePacks.emplace_back(args[++i]);
             }
             else
             {
@@ -212,7 +214,9 @@ int main(int argc, char** argv)
         vector<const AssetPack*> packPtrs;
         packPtrs.reserve(packs.size());
         for (const AssetPack& p : packs)
+        {
             packPtrs.push_back(&p);
+        }
 
         const AssetId id = GenerateAssetId(packPtrs);
         // Hex for C++ literals, decimal for JSON packs (JSON has no hex literal).
@@ -250,7 +254,7 @@ int main(int argc, char** argv)
         // The module image must outlive the registry it populates.
         optional<LoadedModuleTypes> moduleTypes;
         TypeRegistry builtins;
-        TypeRegistry* registry = nullptr;
+        const TypeRegistry* registry = nullptr;
         if (modulePath)
         {
             Result<LoadedModuleTypes> loaded = LoadModuleTypes(*modulePath);

@@ -26,7 +26,7 @@ namespace
     Aabb ComputeAabb(const MeshData& data)
     {
         REQUIRE_FALSE(data.Vertices.empty());
-        Aabb box{data.Vertices[0].Position, data.Vertices[0].Position};
+        Aabb box{.Min = data.Vertices[0].Position, .Max = data.Vertices[0].Position};
         for (const CanonicalVertex& v : data.Vertices)
         {
             box.Min = glm::min(box.Min, v.Position);
@@ -43,8 +43,10 @@ namespace
         CHECK_FALSE(data.Indices.empty());
 
         // Every index is in bounds.
-        for (u32 index : data.Indices)
+        for (const u32 index : data.Indices)
+        {
             CHECK(index < data.Vertices.size());
+        }
 
         // Exactly one submesh covering the whole index range.
         REQUIRE(data.SubMeshes.size() == 1);

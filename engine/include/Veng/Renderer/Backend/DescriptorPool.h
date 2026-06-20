@@ -17,7 +17,7 @@ namespace Veng::Renderer
         /// @brief Per-type descriptor budgets.
         vector<vk::DescriptorPoolSize> PoolSizes;
         /// @brief Pool creation flags (e.g. FreeDescriptorSet).
-        vk::DescriptorPoolCreateFlags Flags{};
+        vk::DescriptorPoolCreateFlags Flags;
     };
 
     /// @brief RAII wrapper around a vk::DescriptorPool.

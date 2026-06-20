@@ -26,7 +26,7 @@ namespace
 {
     PinType ValueOf(Veng::TypeId id)
     {
-        return PinType{PinType::Kind::Value, id};
+        return PinType{.Kind = PinType::Kind::Value, .Type = id};
     }
 
     // A node type carrying one vec4 property "Value".
@@ -78,26 +78,26 @@ namespace
 
             Source = Catalog.Register(NodeType{
                 .Name = "Source",
-                .Outputs = {PinDesc{"Out", ValueOf(f32Id)}},
+                .Outputs = {PinDesc{.Name = "Out", .Type = ValueOf(f32Id)}},
             });
 
             Param = Catalog.Register(NodeType{
                 .Name = "Param",
-                .Outputs = {PinDesc{"Out", ValueOf(f32Id)}},
+                .Outputs = {PinDesc{.Name = "Out", .Type = ValueOf(f32Id)}},
                 .Properties = {ValueField()},
                 .PropertySize = sizeof(ValueProps),
             });
 
             Sample = Catalog.Register(NodeType{
                 .Name = "Sample",
-                .Outputs = {PinDesc{"Out", ValueOf(f32Id)}},
+                .Outputs = {PinDesc{.Name = "Out", .Type = ValueOf(f32Id)}},
                 .Properties = {TextureField()},
                 .PropertySize = sizeof(TextureProps),
             });
 
             Output = Catalog.Register(NodeType{
                 .Name = "Output",
-                .Inputs = {PinDesc{"In", ValueOf(f32Id)}},
+                .Inputs = {PinDesc{.Name = "In", .Type = ValueOf(f32Id)}},
             });
         }
 
@@ -154,7 +154,7 @@ TEST_CASE("NodeCatalog: Find round-trips by id and by name")
 
 TEST_CASE("NodeGraphSerialize: nodes, links, positions, and a vec4 property round-trip")
 {
-    Fixture fx;
+    const Fixture fx;
     NodeGraph graph = fx.MakeGraph();
 
     const NodeId param = graph.AddNode(fx.Param);
@@ -182,12 +182,16 @@ TEST_CASE("NodeGraphSerialize: nodes, links, positions, and a vec4 property roun
     // Find the Param node back by its type and read its property.
     NodeId loadedParam{};
     NodeId loadedOutput{};
-    for (NodeId n : loaded.Nodes())
+    for (const NodeId n : loaded.Nodes())
     {
         if (loaded.GetTypeOf(n) == fx.Param)
+        {
             loadedParam = n;
+        }
         if (loaded.GetTypeOf(n) == fx.Output)
+        {
             loadedOutput = n;
+        }
     }
     REQUIRE(loaded.IsValid(loadedParam));
     REQUIRE(loaded.IsValid(loadedOutput));
@@ -205,7 +209,7 @@ TEST_CASE("NodeGraphSerialize: nodes, links, positions, and a vec4 property roun
 TEST_CASE(
     "NodeGraphSerialize: an AssetHandle property persists and rehydrates; invalid is no asset")
 {
-    Fixture fx;
+    const Fixture fx;
     const Veng::FieldDescriptor texture = TextureField();
 
     SUBCASE("a valid id round-trips")
@@ -251,7 +255,7 @@ TEST_CASE(
 
 TEST_CASE("NodeGraphSerialize: an unknown node type is dropped, the rest loads")
 {
-    Fixture fx;
+    const Fixture fx;
     NodeGraph graph = fx.MakeGraph();
     const NodeId source = graph.AddNode(fx.Source);
     const NodeId output = graph.AddNode(fx.Output);
@@ -284,7 +288,7 @@ TEST_CASE("NodeGraphSerialize: an unknown node type is dropped, the rest loads")
 
 TEST_CASE("NodeGraphSerialize: a version newer than the format is read-only, no partial graph")
 {
-    Fixture fx;
+    const Fixture fx;
     NodeGraph graph = fx.MakeGraph();
     graph.AddNode(fx.Source);
     graph.AddNode(fx.Output);

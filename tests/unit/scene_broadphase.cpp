@@ -51,8 +51,12 @@ namespace
     {
         vector<u32> ids;
         for (u32 i = 0; i < candidates.size(); ++i)
+        {
             if (Intersects(frustum, candidates[i].WorldBounds))
+            {
                 ids.push_back(i);
+            }
+        }
         return ids; // already ascending — i is monotonic
     }
 
@@ -75,7 +79,9 @@ namespace
             const vec3 eye(pos(rng), pos(rng), pos(rng));
             const vec3 target(pos(rng), pos(rng), pos(rng));
             if (glm::distance(eye, target) < 1.0f)
+            {
                 continue;
+            }
             frustums.push_back(
                 Frustum::FromViewProjection(MakeCameraAt(eye, target).ViewProjection()));
         }
@@ -95,7 +101,8 @@ TEST_CASE("SceneBroadphase: Cull equals the linear tight scan, ascending, over m
     AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
-    const AssetHandle<Mesh> mesh = manager.Adopt<Mesh>(BoundsMesh(AABB{vec3(-0.5f), vec3(0.5f)}));
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
 
     std::mt19937 rng(0xC0FFEEu);
     std::uniform_real_distribution<f32> pos(-40.0f, 40.0f);
@@ -120,7 +127,7 @@ TEST_CASE("SceneBroadphase: Cull equals the linear tight scan, ascending, over m
         CHECK(culled == expected); // identical set AND ascending order
 
         // Ascending in its own right (the contract the draw order depends on).
-        CHECK(std::is_sorted(culled.begin(), culled.end()));
+        CHECK(std::ranges::is_sorted(culled));
     }
 }
 
@@ -134,7 +141,8 @@ TEST_CASE("SceneBroadphase: Cull appends to caller scratch, never clears it")
     AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
-    const AssetHandle<Mesh> mesh = manager.Adopt<Mesh>(BoundsMesh(AABB{vec3(-0.5f), vec3(0.5f)}));
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
     const Entity e = scene->CreateEntity();
     // Place the box where the ortho frustum below (near 1, far 100, looking down -z)
     // contains it, so the cull keeps it and the append grows the vector.
@@ -163,7 +171,8 @@ TEST_CASE("SceneBroadphase: version gate — a second Sync of an unmutated scene
     AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
-    const AssetHandle<Mesh> mesh = manager.Adopt<Mesh>(BoundsMesh(AABB{vec3(-0.5f), vec3(0.5f)}));
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
     for (i32 i = 0; i < 4; ++i)
     {
         const Entity e = scene->CreateEntity();
@@ -197,7 +206,8 @@ TEST_CASE("SceneBroadphase: every spatial mutation rebuilds and the tree stays c
     AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
-    const AssetHandle<Mesh> mesh = manager.Adopt<Mesh>(BoundsMesh(AABB{vec3(-0.5f), vec3(0.5f)}));
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
 
     auto AddMesh = [&](vec3 position) -> Entity
     {
@@ -292,10 +302,10 @@ TEST_CASE("SceneBroadphase: a mesh becoming resident between frames enters the t
     // false. The handle shares the entry, so re-populating it later flips IsLoaded()
     // in place WITHOUT touching the scene — no spatial-version bump.
     const AssetHandle<Mesh> resident =
-        manager.Adopt<Mesh>(BoundsMesh(AABB{vec3(-0.5f), vec3(0.5f)}));
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
 
-    const Ref<Mesh> pendingMesh = BoundsMesh(AABB{vec3(-0.5f), vec3(0.5f)});
-    AssetHandle<Mesh> pending = manager.Adopt<Mesh>(pendingMesh);
+    const Ref<Mesh> pendingMesh = BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)});
+    const AssetHandle<Mesh> pending = manager.Adopt<Mesh>(pendingMesh);
     const Ref<Detail::AssetCacheEntry> entry = AssetManager::EntryOf(pending);
     REQUIRE(entry != nullptr);
     entry->Resource = nullptr; // make it not-yet-resident

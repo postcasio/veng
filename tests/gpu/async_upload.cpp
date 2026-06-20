@@ -162,7 +162,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             .Resource = outputId,
             .Load = LoadOp::Clear,
             .Store = StoreOp::Store,
-            .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+            .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
         })
         .Sample(sourceId)
         .Execute(
@@ -180,8 +180,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                 cmd.DrawFullscreenTriangle();
             });
     const RenderGraph::ImportBinding bindings[] = {
-        {outputId, outputView},
-        {sourceId, sourceView},
+        {.Id = outputId, .View = outputView},
+        {.Id = sourceId, .View = sourceView},
     };
     graph.Compile()->Execute(cmd, bindings);
 

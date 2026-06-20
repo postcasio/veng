@@ -12,14 +12,18 @@
 int main(int argc, char** argv)
 {
     if (!Veng::Test::HasVulkanDriver())
+    {
         return 77;
+    }
 
     doctest::Context ctx;
     ctx.applyCommandLine(argc, argv);
 
     const int res = ctx.run();
     if (ctx.shouldExit())
+    {
         return res;
+    }
 
     return res;
 }

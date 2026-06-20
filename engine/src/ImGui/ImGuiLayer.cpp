@@ -237,7 +237,9 @@ namespace Veng
         // layer), so any sets still in the retire queue free immediately. Must run
         // before the backend shuts down, while the sets are still valid.
         for (const PendingTextureRemoval& removal : m_PendingTextureRemovals)
+        {
             ImGui_ImplVulkan_RemoveTexture(removal.Set);
+        }
         m_PendingTextureRemovals.clear();
 
         ImGui_ImplVulkan_Shutdown();
@@ -292,8 +294,10 @@ namespace Veng
                           --removal.FramesRemaining;
                           return false;
                       });
-        for (vk::DescriptorSet set : setsToFree)
+        for (const vk::DescriptorSet set : setsToFree)
+        {
             ImGui_ImplVulkan_RemoveTexture(set);
+        }
 
         if (!m_RenderedThisFrame)
         {
@@ -321,7 +325,7 @@ namespace Veng
                 .ImageView = m_ImageView,
                 .LoadOp = LoadOp::Clear,
                 .StoreOp = StoreOp::Store,
-                .ClearValue = ClearColor{1.0f, 0.0f, 0.0f, 0.0f},
+                .ClearValue = ClearColor{.R = 1.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
             }},
         });
 

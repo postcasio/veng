@@ -35,7 +35,7 @@ namespace Veng
     TaskSystem::~TaskSystem()
     {
         {
-            std::lock_guard lock(m_QueueMutex);
+            const std::scoped_lock lock(m_QueueMutex);
             m_Stopping = true;
         }
         m_WorkAvailable.notify_all();
@@ -118,7 +118,7 @@ namespace Veng
 
     void TaskSystem::EnqueueMainThread(function<void()> fn)
     {
-        std::lock_guard lock(m_MainThreadMutex);
+        const std::scoped_lock lock(m_MainThreadMutex);
         m_MainThreadQueue.push_back(std::move(fn));
     }
 
@@ -128,11 +128,11 @@ namespace Veng
         // on the next pump, not this one (bounded work per frame).
         std::deque<function<void()>> pending;
         {
-            std::lock_guard lock(m_MainThreadMutex);
+            const std::scoped_lock lock(m_MainThreadMutex);
             pending.swap(m_MainThreadQueue);
         }
 
-        for (function<void()>& fn : pending)
+        for (const function<void()>& fn : pending)
         {
             fn();
         }

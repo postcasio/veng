@@ -60,18 +60,24 @@ namespace Veng
                                                   bool async) const
     {
         if (cooked.size() < sizeof(CookedMeshHeader))
+        {
             return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than CookedMeshHeader"));
+        }
 
         CookedMeshHeader header;
         std::memcpy(&header, cooked.data(), sizeof(header));
 
         const optional<Renderer::IndexType> indexType = BridgeIndexType(header.IndexType);
         if (!indexType)
+        {
             return std::unexpected(
                 Corrupt(id, fmt::format("mesh: unrecognized IndexType {}", header.IndexType)));
+        }
 
         if (*indexType != Renderer::IndexType::U32)
+        {
             return std::unexpected(Corrupt(id, "mesh: only u32 indices are supported"));
+        }
 
         // Validate the cooked attribute descriptor against the engine's single
         // canonical layout: count, per-attribute format + offset, and stride
@@ -100,8 +106,10 @@ namespace Veng
         const usize attributeBytes =
             static_cast<usize>(header.AttributeCount) * sizeof(CookedVertexAttribute);
         if (cooked.size() < cursor + attributeBytes)
+        {
             return std::unexpected(
                 Corrupt(id, "mesh: cooked blob smaller than attribute descriptor"));
+        }
 
         for (u32 i = 0; i < header.AttributeCount; ++i)
         {
@@ -123,7 +131,9 @@ namespace Veng
 
         const usize subMeshBytes = static_cast<usize>(header.SubMeshCount) * sizeof(CookedSubMesh);
         if (cooked.size() < cursor + subMeshBytes)
+        {
             return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than submesh table"));
+        }
 
         // Resolve cooked submesh material ids into resident material instances
         // eagerly: a distinct non-zero id becomes one entry in the material list;
@@ -136,13 +146,17 @@ namespace Veng
             for (u32 i = 0; i < materialIds.size(); ++i)
             {
                 if (materialIds[i] == materialId)
+                {
                     return i;
+                }
             }
 
             const AssetResult<AssetHandle<Veng::Material>> result =
                 manager.LoadSync<Veng::Material>(AssetId{materialId});
             if (!result)
+            {
                 return std::unexpected(result.error());
+            }
 
             const u32 index = static_cast<u32>(materials.size());
             materialIds.push_back(materialId);
@@ -162,7 +176,9 @@ namespace Veng
             {
                 const AssetResult<u32> resolved = resolveMaterial(cookedSubMesh.MaterialId);
                 if (!resolved)
+                {
                     return std::unexpected(resolved.error());
+                }
                 materialIndex = *resolved;
             }
 
@@ -176,14 +192,18 @@ namespace Veng
 
         const usize vertexBytes = static_cast<usize>(header.VertexCount) * header.VertexStride;
         if (cooked.size() < cursor + vertexBytes)
+        {
             return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than vertex buffer"));
+        }
 
         const std::span<const u8> vertexData = cooked.subspan(cursor, vertexBytes);
         cursor += vertexBytes;
 
         const usize indexBytes = static_cast<usize>(header.IndexCount) * sizeof(u32);
         if (cooked.size() < cursor + indexBytes)
+        {
             return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than index buffer"));
+        }
 
         const std::span<const u8> indexData = cooked.subspan(cursor, indexBytes);
         const std::span<const u32> indices(reinterpret_cast<const u32*>(indexData.data()),
@@ -202,8 +222,8 @@ namespace Veng
 
         if (async)
         {
-            Task<void> vertexUpload = vertexBuffer->Upload(tasks, vertexData);
-            Task<void> indexUpload = indexBuffer.GetBuffer()->Upload(tasks, indexData);
+            const Task<void> vertexUpload = vertexBuffer->Upload(tasks, vertexData);
+            const Task<void> indexUpload = indexBuffer.GetBuffer()->Upload(tasks, indexData);
         }
         else
         {

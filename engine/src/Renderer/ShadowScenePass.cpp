@@ -140,7 +140,7 @@ namespace Veng::Renderer
                 .Store = StoreOp::Store,
                 // The whole atlas clears to depth = 1; an unused tile (the fourth
                 // cell at three cascades) keeps this clear and is never selected.
-                .Clear = ClearDepth{1.0f, 0},
+                .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
             })
             .Execute(
                 [this, resolution, columns, cascadeCount](PassContext& inner)
@@ -182,9 +182,13 @@ namespace Veng::Renderer
 
                             bool materialsReady = true;
                             for (const AssetHandle<Material>& material : materials)
+                            {
                                 materialsReady = materialsReady && material.IsLoaded();
+                            }
                             if (!materialsReady)
+                            {
                                 return;
+                            }
 
                             cmd.BindVertexBuffer(mesh.GetVertexBuffer());
                             cmd.BindIndexBuffer(mesh.GetIndexBuffer());
@@ -195,7 +199,9 @@ namespace Veng::Renderer
                             for (const SubMesh& subMesh : mesh.GetSubMeshes())
                             {
                                 if (subMesh.MaterialIndex == SubMesh::NoMaterial)
+                                {
                                     continue;
+                                }
                                 cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                             }
                         };
@@ -205,12 +211,16 @@ namespace Veng::Renderer
                             m_CullScratch.clear();
                             view.Broadphase->Cull(cascadeFrustum, m_CullScratch);
                             for (const u32 idx : m_CullScratch)
+                            {
                                 Draw(view.Visible[idx]);
+                            }
                         }
                         else
                         {
                             for (const VisibleMesh& item : view.Visible)
+                            {
                                 Draw(item);
+                            }
                         }
                     }
                 });

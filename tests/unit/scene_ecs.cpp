@@ -116,7 +116,7 @@ TEST_CASE("Add/Get/Has/TryGet/Remove round-trip")
     CHECK_FALSE(scene->Has<Position>(e));
     CHECK(scene->TryGet<Position>(e) == nullptr);
 
-    Position& p = scene->Add<Position>(e, Position{1.0f, 2.0f, 3.0f});
+    const auto& p = scene->Add<Position>(e, Position{.X = 1.0f, .Y = 2.0f, .Z = 3.0f});
     CHECK(scene->Has<Position>(e));
     CHECK(p.Y == doctest::Approx(2.0f));
 
@@ -124,7 +124,7 @@ TEST_CASE("Add/Get/Has/TryGet/Remove round-trip")
     CHECK(scene->TryGet<Position>(e) != nullptr);
 
     // A second component type on the same entity lives in its own pool.
-    scene->Add<Velocity>(e, Velocity{0.5f, -0.5f});
+    scene->Add<Velocity>(e, Velocity{.Dx = 0.5f, .Dy = -0.5f});
     CHECK(scene->Has<Velocity>(e));
     CHECK(scene->Get<Velocity>(e).Dx == doctest::Approx(0.5f));
 
@@ -173,9 +173,9 @@ TEST_CASE("DestroyEntity removes the entity's components from every pool")
     const Entity a = scene->CreateEntity();
     const Entity b = scene->CreateEntity();
 
-    scene->Add<Position>(a, Position{1, 1, 1});
+    scene->Add<Position>(a, Position{.X = 1, .Y = 1, .Z = 1});
     scene->Add<Label>(a, Label{"a-label"});
-    scene->Add<Position>(b, Position{2, 2, 2});
+    scene->Add<Position>(b, Position{.X = 2, .Y = 2, .Z = 2});
 
     scene->DestroyEntity(a);
 
@@ -194,7 +194,7 @@ TEST_CASE("DestroyEntity removes the entity's components from every pool")
 
 TEST_CASE("TypeRegistry Register/IdOf/Info round-trip")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
 
     CHECK(registry.Count() == 4);
     CHECK(registry.IsRegistered(registry.IdOf<Position>()));
@@ -230,7 +230,7 @@ TEST_CASE("Distinct types get distinct ids")
 
 TEST_CASE("A non-component leaf struct registers like any other type")
 {
-    TypeRegistry registry = MakeRegistry();
+    const TypeRegistry registry = MakeRegistry();
     // LeafColor is never Added to an entity, yet it registers and carries a
     // TypeId just like a component — the registry is generic over any type.
     CHECK(registry.IsRegistered(registry.IdOf<LeafColor>()));

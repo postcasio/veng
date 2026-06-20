@@ -126,9 +126,13 @@ namespace Veng::UI
         // ImGui::IsItemActive is valid only after the widget is submitted, so the
         // scratch's owning id is updated here, after InputText.
         if (ImGui::IsItemActive())
+        {
             s_ActiveId = itemId;
+        }
         else if (s_ActiveId == itemId)
+        {
             s_ActiveId = 0;
+        }
 
         if (entered || ImGui::IsItemDeactivatedAfterEdit())
         {
@@ -160,7 +164,9 @@ namespace Veng::UI
                     changed = true;
                 }
                 if (selected)
+                {
                     ImGui::SetItemDefaultFocus();
+                }
             }
             ImGui::EndCombo();
         }

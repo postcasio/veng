@@ -72,13 +72,14 @@ TEST_CASE("module reflect: LoadModuleTypes reflects builtins + the game's Spinne
 
 TEST_CASE("module reflect: an ABI-mismatched module is a located Result error")
 {
-    Result<LoadedModuleTypes> loaded = LoadModuleTypes(path{VENG_BAD_VERSION_MODULE_PATH});
+    const Result<LoadedModuleTypes> loaded = LoadModuleTypes(path{VENG_BAD_VERSION_MODULE_PATH});
     CHECK_FALSE(loaded.has_value());
 }
 
 TEST_CASE("module reflect: a nonexistent module path is a located Result error")
 {
-    Result<LoadedModuleTypes> loaded = LoadModuleTypes(path{"this-module-does-not-exist.dylib"});
+    const Result<LoadedModuleTypes> loaded =
+        LoadModuleTypes(path{"this-module-does-not-exist.dylib"});
     CHECK_FALSE(loaded.has_value());
 }
 
@@ -117,7 +118,7 @@ TEST_CASE("module reflect: cooking a prefab entry with no --module is a located 
         out << R"({ "version": 1, "assets": [ { "id": 4242, "type": "prefab", "source": "x.prefab.json" } ] })";
     }
 
-    Cooker cooker;
+    const Cooker cooker;
     const path outPath =
         std::filesystem::temp_directory_path() / "veng_cooker_prefab_no_module.vengpack";
 

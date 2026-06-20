@@ -18,7 +18,9 @@ namespace VengEditor
 
                 vector<path> referencePacks;
                 if (!request.ReferenceManifest.empty())
+                {
                     referencePacks.push_back(request.ReferenceManifest);
+                }
 
                 return cooker.CookSource(request.SourcePath, request.TargetId, request.Type,
                                          referencePacks);

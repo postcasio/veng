@@ -104,7 +104,9 @@ namespace Veng
         vector<Entity> spawned;
         spawned.reserve(m_Entities.size());
         for (usize i = 0; i < m_Entities.size(); ++i)
+        {
             spawned.push_back(scene.CreateEntity());
+        }
 
         vector<Entity> roots;
 
@@ -129,7 +131,9 @@ namespace Veng
                 const TypeInfo& typeInfo = registry.Info(component.Type);
 
                 if (component.Type == parentId)
+                {
                     hasParent = true;
+                }
 
                 void* slot = scene.AddComponent(entity, component.Type);
 
@@ -142,7 +146,9 @@ namespace Veng
             // A root carries no in-prefab Parent component. Returned in authoring
             // order.
             if (!hasParent)
+            {
                 roots.push_back(entity);
+            }
         }
 
         return roots;

@@ -60,15 +60,21 @@ namespace
 
         const VoidResult cookResult = cooker.CookPack(packJson, outArchive, refs, types);
         if (!cookResult.has_value())
+        {
             return std::unexpected(cookResult.error());
+        }
 
         const Result<ArchiveReader> reader = ArchiveReader::Open(outArchive);
         if (!reader.has_value())
+        {
             return std::unexpected(reader.error());
+        }
 
         const optional<ArchiveEntry> entry = reader->Find(prefabId);
         if (!entry.has_value())
+        {
             return std::unexpected(string("prefab entry missing from archive"));
+        }
 
         return vector<u8>(entry->Blob.begin(), entry->Blob.end());
     }
@@ -106,7 +112,7 @@ namespace
 
 TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-trip")
 {
-    LoadedModuleTypes module = LoadRegistry();
+    const LoadedModuleTypes module = LoadRegistry();
     const TypeRegistry& types = module.Types;
 
     const path packJson = FixtureDir / "prefab_pack.json";
@@ -130,11 +136,10 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
 
     const u8* cursor = blob.data() + sizeof(CookedPrefabHeader);
 
-    const CookedPrefabEntity* entityTable = reinterpret_cast<const CookedPrefabEntity*>(cursor);
+    const auto* entityTable = reinterpret_cast<const CookedPrefabEntity*>(cursor);
     cursor += header.EntityCount * sizeof(CookedPrefabEntity);
 
-    const CookedPrefabComponent* componentTable =
-        reinterpret_cast<const CookedPrefabComponent*>(cursor);
+    const auto* componentTable = reinterpret_cast<const CookedPrefabComponent*>(cursor);
     cursor += header.ComponentCount * sizeof(CookedPrefabComponent);
 
     const u8* records = cursor;
@@ -150,8 +155,12 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
     auto findComponent = [&](u32 first, u32 count, TypeId id) -> const CookedPrefabComponent*
     {
         for (u32 i = first; i < first + count; ++i)
+        {
             if (componentTable[i].TypeId == id)
+            {
                 return &componentTable[i];
+            }
+        }
         return nullptr;
     };
 
@@ -196,7 +205,7 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
 
 TEST_CASE("prefab cook: unknown component is a located error")
 {
-    LoadedModuleTypes module = LoadRegistry();
+    const LoadedModuleTypes module = LoadRegistry();
     json components;
     components["NotARealComponent"] = json::object();
     const path packJson = WriteInlinePrefab("prefab_unknown_component", components);
@@ -209,7 +218,7 @@ TEST_CASE("prefab cook: unknown component is a located error")
 
 TEST_CASE("prefab cook: a vec3 field given a scalar is a located error")
 {
-    LoadedModuleTypes module = LoadRegistry();
+    const LoadedModuleTypes module = LoadRegistry();
     json transform;
     transform["Position"] = 3.0; // a scalar where a 3-array is required
     json components;
@@ -224,7 +233,7 @@ TEST_CASE("prefab cook: a vec3 field given a scalar is a located error")
 
 TEST_CASE("prefab cook: a string field given a number is a located error")
 {
-    LoadedModuleTypes module = LoadRegistry();
+    const LoadedModuleTypes module = LoadRegistry();
     json name;
     name["Value"] = 42; // a number where a string is required
     json components;
@@ -239,7 +248,7 @@ TEST_CASE("prefab cook: a string field given a number is a located error")
 
 TEST_CASE("prefab cook: an unknown field is a located error")
 {
-    LoadedModuleTypes module = LoadRegistry();
+    const LoadedModuleTypes module = LoadRegistry();
     json transform;
     transform["Nonexistent"] = 1.0;
     json components;
@@ -254,7 +263,7 @@ TEST_CASE("prefab cook: an unknown field is a located error")
 
 TEST_CASE("prefab cook: an omitted field keeps its default value")
 {
-    LoadedModuleTypes module = LoadRegistry();
+    const LoadedModuleTypes module = LoadRegistry();
     const TypeRegistry& types = module.Types;
 
     // A Transform with only Position set; Scale is omitted and must decode to its
@@ -274,7 +283,7 @@ TEST_CASE("prefab cook: an omitted field keeps its default value")
     REQUIRE(header.EntityCount == 1);
     REQUIRE(header.ComponentCount == 1);
 
-    const CookedPrefabComponent* component = reinterpret_cast<const CookedPrefabComponent*>(
+    const auto* component = reinterpret_cast<const CookedPrefabComponent*>(
         blob.data() + sizeof(CookedPrefabHeader) + sizeof(CookedPrefabEntity));
     const u8* records = blob.data() + sizeof(CookedPrefabHeader) + sizeof(CookedPrefabEntity) +
                         sizeof(CookedPrefabComponent);
@@ -288,7 +297,7 @@ TEST_CASE("prefab cook: an omitted field keeps its default value")
 
 TEST_CASE("prefab cook: an out-of-range entity reference is a located error")
 {
-    LoadedModuleTypes module = LoadRegistry();
+    const LoadedModuleTypes module = LoadRegistry();
     json parent;
     parent["Value"] = 5; // only one entity in this prefab, so index 5 is out of range
     json components;
@@ -302,7 +311,7 @@ TEST_CASE("prefab cook: an out-of-range entity reference is a located error")
 
 TEST_CASE("prefab cook: a null entity reference stays Entity::Null")
 {
-    LoadedModuleTypes module = LoadRegistry();
+    const LoadedModuleTypes module = LoadRegistry();
     const TypeRegistry& types = module.Types;
 
     json parent;
@@ -315,7 +324,7 @@ TEST_CASE("prefab cook: a null entity reference stays Entity::Null")
     REQUIRE(blobResult.has_value());
 
     const vector<u8>& blob = *blobResult;
-    const CookedPrefabComponent* component = reinterpret_cast<const CookedPrefabComponent*>(
+    const auto* component = reinterpret_cast<const CookedPrefabComponent*>(
         blob.data() + sizeof(CookedPrefabHeader) + sizeof(CookedPrefabEntity));
     const u8* records = blob.data() + sizeof(CookedPrefabHeader) + sizeof(CookedPrefabEntity) +
                         sizeof(CookedPrefabComponent);
@@ -328,7 +337,7 @@ TEST_CASE("prefab cook: a null entity reference stays Entity::Null")
 
 TEST_CASE("prefab cook: an AssetHandle id resolving to the wrong type is a located error")
 {
-    LoadedModuleTypes module = LoadRegistry();
+    const LoadedModuleTypes module = LoadRegistry();
 
     // 8002 resolves to a Texture in the reference pack, but MeshRenderer.Mesh
     // expects a Mesh.
@@ -366,7 +375,7 @@ TEST_CASE("prefab cook: an AssetHandle id resolving to the wrong type is a locat
 
 TEST_CASE("prefab cook: a non-resident AssetHandle id is accepted as-is")
 {
-    LoadedModuleTypes module = LoadRegistry();
+    const LoadedModuleTypes module = LoadRegistry();
 
     // An id not in the pack or any reference pack: residency is the runtime's job.
     json renderer;

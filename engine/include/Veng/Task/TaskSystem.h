@@ -193,7 +193,7 @@ namespace Veng
         {
             function<void()> continuation;
             {
-                std::lock_guard lock(state.Mutex);
+                const std::lock_guard lock(state.Mutex);
                 state.Value = std::move(result);
                 state.Done = true;
 
@@ -212,7 +212,7 @@ namespace Veng
             }
 
             {
-                std::lock_guard lock(m_QueueMutex);
+                const std::scoped_lock lock(m_QueueMutex);
                 --m_ActiveJobs;
             }
             m_WorkDrained.notify_all();
@@ -253,7 +253,7 @@ namespace Veng
         VE_ASSERT(m_State, "Then() on an empty Task");
         VE_ASSERT(m_System, "Then() on an empty Task");
 
-        Ref<Detail::TaskState<T>> state = m_State;
+        const Ref<Detail::TaskState<T>> state = m_State;
 
         std::unique_lock lock(state->Mutex);
         if (state->Done)
@@ -283,7 +283,7 @@ namespace Veng
 
             auto state = CreateRef<State>();
             {
-                std::lock_guard lock(m_QueueMutex);
+                const std::scoped_lock lock(m_QueueMutex);
                 ++m_ActiveJobs;
                 m_Queue.emplace_back(
                     [this, state, fn = std::forward<Fn>(fn)]() mutable
@@ -301,7 +301,7 @@ namespace Veng
 
             auto state = CreateRef<State>();
             {
-                std::lock_guard lock(m_QueueMutex);
+                const std::scoped_lock lock(m_QueueMutex);
                 ++m_ActiveJobs;
                 m_Queue.emplace_back(
                     [this, state, fn = std::forward<Fn>(fn)]() mutable
@@ -319,7 +319,7 @@ namespace Veng
 
             auto state = CreateRef<State>();
             {
-                std::lock_guard lock(m_QueueMutex);
+                const std::scoped_lock lock(m_QueueMutex);
                 ++m_ActiveJobs;
                 m_Queue.emplace_back(
                     [this, state, fn = std::forward<Fn>(fn)]() mutable

@@ -18,11 +18,17 @@ namespace Veng::UI
         {
             ImGuiWindowFlags out = ImGuiWindowFlags_None;
             if ((flags & WindowFlags::NoScrollbar) != WindowFlags::None)
+            {
                 out |= ImGuiWindowFlags_NoScrollbar;
+            }
             if ((flags & WindowFlags::NoScrollWithMouse) != WindowFlags::None)
+            {
                 out |= ImGuiWindowFlags_NoScrollWithMouse;
+            }
             if ((flags & WindowFlags::HorizontalScrollbar) != WindowFlags::None)
+            {
                 out |= ImGuiWindowFlags_HorizontalScrollbar;
+            }
             return out;
         }
 
@@ -30,9 +36,13 @@ namespace Veng::UI
         {
             ImGuiTreeNodeFlags out = ImGuiTreeNodeFlags_None;
             if ((flags & TreeFlags::DefaultOpen) != TreeFlags::None)
+            {
                 out |= ImGuiTreeNodeFlags_DefaultOpen;
+            }
             if ((flags & TreeFlags::SpanAvailWidth) != TreeFlags::None)
+            {
                 out |= ImGuiTreeNodeFlags_SpanAvailWidth;
+            }
             return out;
         }
 
@@ -68,67 +78,89 @@ namespace Veng::UI
     ScopedWindow::~ScopedWindow()
     {
         if (m_Live)
+        {
             ImGui::End();
+        }
     }
 
     ScopedChild::~ScopedChild()
     {
         if (m_Live)
+        {
             ImGui::EndChild();
+        }
     }
 
     ScopedTree::~ScopedTree()
     {
         if (m_Live && m_Open && m_Pop)
+        {
             ImGui::TreePop();
+        }
     }
 
     ScopedTable::~ScopedTable()
     {
         if (m_Live && m_Open)
+        {
             ImGui::EndTable();
+        }
     }
 
     ScopedMenuBar::~ScopedMenuBar()
     {
         if (m_Live && m_Open)
+        {
             ImGui::EndMainMenuBar();
+        }
     }
 
     ScopedMenu::~ScopedMenu()
     {
         if (m_Live && m_Open)
+        {
             ImGui::EndMenu();
+        }
     }
 
     ScopedPopup::~ScopedPopup()
     {
         if (m_Live && m_Open)
+        {
             ImGui::EndPopup();
+        }
     }
 
     DisabledScope::~DisabledScope()
     {
         if (m_Live)
+        {
             ImGui::EndDisabled();
+        }
     }
 
     IdScope::~IdScope()
     {
         if (m_Live)
+        {
             ImGui::PopID();
+        }
     }
 
     StyleColorScope::~StyleColorScope()
     {
         if (m_Live)
+        {
             ImGui::PopStyleColor();
+        }
     }
 
     StyleVarScope::~StyleVarScope()
     {
         if (m_Live)
+        {
             ImGui::PopStyleVar();
+        }
     }
 
     ScopedWindow Window(string_view title, bool* open, WindowFlags flags)

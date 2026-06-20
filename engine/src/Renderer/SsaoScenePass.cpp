@@ -70,7 +70,9 @@ namespace Veng::Renderer
         // pass with the current extent, and recreating would invalidate the bindless
         // handle the renderer already read for the lighting pass.
         if (extent == m_Extent && m_AoView)
+        {
             return;
+        }
         m_Extent = extent;
         CreateTarget();
     }
@@ -89,8 +91,11 @@ namespace Veng::Renderer
                 .Store = StoreOp::Store,
                 .Clear =
                     ClearColor{
-                        1.0f, 1.0f, 1.0f,
-                        1.0f}, // 1 = unoccluded, the default for texels the kernel does not touch
+                        .R = 1.0f,
+                        .G = 1.0f,
+                        .B = 1.0f,
+                        .A =
+                            1.0f}, // 1 = unoccluded, the default for texels the kernel does not touch
             })
             .Sample(io.GBufferNormal)
             .Sample(io.GBufferDepth)

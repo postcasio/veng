@@ -26,7 +26,9 @@ namespace Veng::Log
             fmt::print("[{:.4f}] [{}] {}", now, ToString(level), message);
 
             if (!message.empty() && message.back() != '\n')
+            {
                 fmt::print("\n");
+            }
         }
 
         Sink s_Sink = DefaultSink;
@@ -46,7 +48,9 @@ namespace Veng::Log
     void LogMessage(Level level, std::string_view message)
     {
         if (static_cast<int>(level) < static_cast<int>(s_MinimumLevel))
+        {
             return;
+        }
 
         s_Sink(level, message);
     }

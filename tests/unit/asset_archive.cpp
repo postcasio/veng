@@ -104,11 +104,15 @@ TEST_CASE("ArchiveReader: sorted TOC and Find over a large id set")
 
     std::set<u64> ids;
     while (ids.size() < 500)
+    {
         ids.insert(dist(rng));
+    }
 
     ArchiveWriter writer;
     for (const u64 id : ids)
+    {
         writer.Add(AssetId{id}, AssetType::Raw, Bytes({static_cast<u8>(id & 0xFF)}));
+    }
 
     const Result<ArchiveReader> reader = ArchiveReader::FromBytes(writer.Build());
     REQUIRE(reader.has_value());
