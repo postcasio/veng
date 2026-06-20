@@ -82,8 +82,26 @@ If no target was given, ask for one before doing anything. Do not assume `all`.
    *callee's* general behavior instead of *why this call is here*. Replace with the
    local intent, or delete if self-evident. If one contract recurs at many call
    sites, document it once and reference it at the rest.
+6. **Project-specific jargon where a standard term exists** — prefer the
+   industry-standard word a graphics/systems engineer would already know over an
+   internal coinage. Rewrite veng shorthand into the plain concept: "retire the
+   handle" → "defer destruction until the GPU is done"; "the relocatable trio" →
+   "the launcher, module, and asset pack"; "the recompile seam" → "the point where
+   the pipeline set is rebuilt". The goal is prose a newcomer reads without a
+   veng glossary.
 
 ### Keep (do NOT over-correct — these look like hits but are correct)
+
+- **An actual identifier or type name** — `SceneRenderer`, `BindlessRegistry`,
+  `AssetId`, `Context::AcquireNextFrame`. Naming the real symbol is not jargon; keep
+  it spelled exactly. The jargon rule targets *descriptive prose*, not the names of
+  things the code defines.
+- **Industry-standard terms that only look project-specific** — "bindless",
+  "g-buffer", "deferred lighting", "frustum culling", "broadphase", "BVH", "PSSM
+  cascades", "tonemap", "frame-in-flight" are standard graphics vocabulary. Keep
+  them; do not "simplify" a precise term into a vaguer one.
+- When a veng concept has no standard equivalent, keep its name but anchor it to the
+  nearest standard idea on first use, rather than assuming the reader knows it.
 
 - **`previously` / `later` about program execution**, not source history — "clear
   any previously bound pipeline", "a later graph pass declares the same use", "lands
