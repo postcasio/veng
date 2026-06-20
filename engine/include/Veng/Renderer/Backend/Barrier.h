@@ -11,6 +11,7 @@ namespace Veng::Renderer
 {
     class CommandBuffer;
     class Image;
+    class Buffer;
 }
 
 namespace Veng::Renderer::Backend
@@ -40,6 +41,24 @@ namespace Veng::Renderer::Backend
     /// fold the timeline value into the frame submit. Called by the async upload
     /// worker after recording its copy.
     void MarkProducedOn(Image& image, u32 producingFamily, u64 transferValue);
+
+    /// @brief Emits a buffer-memory barrier over the whole buffer between two
+    /// stage/access scopes.
+    ///
+    /// A buffer has no layout, so the barrier is purely a stage/access dependency
+    /// (no transition). The render graph derives the source and destination scopes
+    /// from a producing pass's declared write and a consuming pass's declared read
+    /// (e.g. a compute StorageBufferWrite followed by an IndirectRead). Buffers do
+    /// not carry per-resource tracked state, so both scopes are supplied by the caller.
+    /// @param cmd       Command buffer the barrier is recorded into.
+    /// @param buffer    The buffer to barrier.
+    /// @param srcStage  Pipeline stage(s) of the producing access.
+    /// @param srcAccess Access flags of the producing access.
+    /// @param dstStage  Pipeline stage(s) of the consuming access.
+    /// @param dstAccess Access flags of the consuming access.
+    void TransitionBuffer(CommandBuffer& cmd, Buffer& buffer, vk::PipelineStageFlags srcStage,
+                          vk::AccessFlags srcAccess, vk::PipelineStageFlags dstStage,
+                          vk::AccessFlags dstAccess);
 
     /// @brief Records the release half of a transfer→graphics queue-family ownership
     /// transfer for the whole image (TransferDst → ShaderReadOnly).

@@ -134,6 +134,8 @@ namespace Veng::Renderer
         TransferSrc = 1 << 4,
         /// @brief Destination of a copy operation.
         TransferDst = 1 << 5,
+        /// @brief Source of indirect draw/dispatch arguments (vkCmdDrawIndexedIndirect).
+        Indirect = 1 << 6,
     };
 
     /// @brief Bitmask of shader stages.
@@ -190,6 +192,18 @@ namespace Veng::Renderer
         TransferSrc,
         /// @brief Destination of a transfer operation.
         TransferDst,
+        /// @brief Read as indirect draw/dispatch arguments (eDrawIndirect/eIndirectCommandRead).
+        IndirectRead,
+        /// @brief Read as a storage buffer.
+        ///
+        /// Distinct from StorageRead, which is a storage-image layout; a buffer has no
+        /// layout, so this resolves to a stage/access memory scope with no transition.
+        StorageBufferRead,
+        /// @brief Written as a storage buffer.
+        ///
+        /// Distinct from StorageWrite, which is a storage-image layout; a buffer has no
+        /// layout, so this resolves to a stage/access memory scope with no transition.
+        StorageBufferWrite,
     };
 
     /// @brief Width of index elements in an index buffer.

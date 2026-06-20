@@ -111,6 +111,26 @@ namespace Veng::Renderer::Backend
                 .Stage = vk::PipelineStageFlagBits::eTransfer,
                 .Access = vk::AccessFlagBits::eTransferWrite,
             };
+        // Buffer access kinds carry no layout — a buffer has none. The layout
+        // stays Undefined and the buffer-barrier path uses only stage/access.
+        case Kind::IndirectRead:
+            return {
+                .Layout = vk::ImageLayout::eUndefined,
+                .Stage = vk::PipelineStageFlagBits::eDrawIndirect,
+                .Access = vk::AccessFlagBits::eIndirectCommandRead,
+            };
+        case Kind::StorageBufferRead:
+            return {
+                .Layout = vk::ImageLayout::eUndefined,
+                .Stage = vk::PipelineStageFlagBits::eComputeShader,
+                .Access = vk::AccessFlagBits::eShaderRead,
+            };
+        case Kind::StorageBufferWrite:
+            return {
+                .Layout = vk::ImageLayout::eUndefined,
+                .Stage = vk::PipelineStageFlagBits::eComputeShader,
+                .Access = vk::AccessFlagBits::eShaderWrite,
+            };
         }
         VE_ASSERT(false, "unhandled AccessKind {}", static_cast<u32>(kind));
     }

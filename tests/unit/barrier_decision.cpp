@@ -233,4 +233,42 @@ TEST_CASE("ScopeFor maps each AccessKind to its documented scope")
     CHECK(tdst.Layout == vk::ImageLayout::eTransferDstOptimal);
     CHECK(tdst.Stage == vk::PipelineStageFlagBits::eTransfer);
     CHECK(tdst.Access == vk::AccessFlagBits::eTransferWrite);
+
+    // Buffer access kinds carry no layout (a buffer has none): the layout stays
+    // Undefined and only stage/access are meaningful.
+    const auto indirect = ScopeFor(Kind::IndirectRead);
+    CHECK(indirect.Layout == vk::ImageLayout::eUndefined);
+    CHECK(indirect.Stage == vk::PipelineStageFlagBits::eDrawIndirect);
+    CHECK(indirect.Access == vk::AccessFlagBits::eIndirectCommandRead);
+
+    const auto sbr = ScopeFor(Kind::StorageBufferRead);
+    CHECK(sbr.Layout == vk::ImageLayout::eUndefined);
+    CHECK(sbr.Stage == vk::PipelineStageFlagBits::eComputeShader);
+    CHECK(sbr.Access == vk::AccessFlagBits::eShaderRead);
+
+    const auto sbw = ScopeFor(Kind::StorageBufferWrite);
+    CHECK(sbw.Layout == vk::ImageLayout::eUndefined);
+    CHECK(sbw.Stage == vk::PipelineStageFlagBits::eComputeShader);
+    CHECK(sbw.Access == vk::AccessFlagBits::eShaderWrite);
+}
+
+TEST_CASE("Buffer hazard: compute storage-write -> indirect read is the load-bearing barrier")
+{
+    // The graph derives a buffer barrier from a compute pass declaring StorageBufferWrite
+    // followed by a graphics pass declaring IndirectRead on the same buffer: the source
+    // is the compute write, the destination the indirect-args read. A buffer carries no
+    // layout, so the barrier is purely stage/access (ScopeFor + IsWriteAccess), the
+    // device-free pieces the graph composes for the compute -> indirect handoff.
+    const auto write = ScopeFor(AccessKind::StorageBufferWrite);
+    const auto read = ScopeFor(AccessKind::IndirectRead);
+
+    // The write is the producing scope; a hazard fires because the prior access wrote.
+    CHECK(IsWriteAccess(write.Access));
+    CHECK_FALSE(IsWriteAccess(read.Access));
+
+    // The derived barrier goes eComputeShader/eShaderWrite -> eDrawIndirect/eIndirectCommandRead.
+    CHECK(write.Stage == vk::PipelineStageFlagBits::eComputeShader);
+    CHECK(write.Access == vk::AccessFlagBits::eShaderWrite);
+    CHECK(read.Stage == vk::PipelineStageFlagBits::eDrawIndirect);
+    CHECK(read.Access == vk::AccessFlagBits::eIndirectCommandRead);
 }

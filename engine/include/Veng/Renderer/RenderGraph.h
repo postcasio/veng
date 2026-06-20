@@ -31,6 +31,7 @@
 /// rebuild + re-Compile(); per-frame data never recompiles.
 namespace Veng::Renderer
 {
+    class Buffer;
     class CommandBuffer;
     class Context;
     class RenderGraph;
@@ -67,6 +68,21 @@ namespace Veng::Renderer
         ImageUsage Usage;
     };
 
+    /// @brief Descriptor for a graph-owned transient buffer.
+    ///
+    /// A transient buffer is allocated at the graph's Compile step and resolved per
+    /// frame. Indirect-args buffers are small and persist within a frame, so they are
+    /// not aliased — the buffer path allocates one buffer per transient.
+    struct TransientBufferDesc
+    {
+        /// @brief Debug name for the transient buffer.
+        string Name;
+        /// @brief Byte size of the buffer.
+        u64 Bytes = 0;
+        /// @brief Required usage flags (e.g. Storage | Indirect).
+        BufferUsage Usage;
+    };
+
     /// @brief Per-frame record-time context handed to a pass callback.
     ///
     /// Resolves a declared transient to its concrete view for this frame and exposes
@@ -78,8 +94,15 @@ namespace Veng::Renderer
         [[nodiscard]] CommandBuffer& Cmd() const { return m_Cmd; }
 
         /// @brief The concrete view a declared transient resolves to this frame.
-        /// @pre id must be a resource resolved for this graph — asserted otherwise.
+        /// @pre id must be an image resource resolved for this graph — asserted otherwise.
         [[nodiscard]] ImageView& Resolved(ResourceId id) const;
+
+        /// @brief The concrete buffer a declared buffer resource resolves to this frame.
+        ///
+        /// Mirrors Resolved(id) for the buffer axis: returns the graph-owned transient
+        /// buffer or the imported buffer bound for this Execute.
+        /// @pre id must be a buffer resource resolved for this graph — asserted otherwise.
+        [[nodiscard]] const Ref<Buffer>& ResolvedBuffer(ResourceId id) const;
 
         /// @brief Opaque per-Execute pointer threaded through to every pass callback.
         ///
@@ -92,14 +115,18 @@ namespace Veng::Renderer
         friend class RenderGraph;
         friend class CompiledGraph;
 
-        PassContext(CommandBuffer& cmd, const vector<Ref<ImageView>>& resolved, void* userData)
-            : m_Cmd(cmd), m_Resolved(resolved), m_UserData(userData)
+        PassContext(CommandBuffer& cmd, const vector<Ref<ImageView>>& resolved,
+                    const vector<Ref<Buffer>>& resolvedBuffers, void* userData)
+            : m_Cmd(cmd), m_Resolved(resolved), m_ResolvedBuffers(resolvedBuffers),
+              m_UserData(userData)
         {
         }
 
         CommandBuffer& m_Cmd;
-        /// @brief Graph resource table resolved to concrete views, indexed by ResourceId::Index.
+        /// @brief Image resource table resolved to concrete views, indexed by ResourceId::Index.
         const vector<Ref<ImageView>>& m_Resolved;
+        /// @brief Buffer resource table resolved to concrete buffers, indexed by ResourceId::Index.
+        const vector<Ref<Buffer>>& m_ResolvedBuffers;
         /// @brief Forwarded verbatim from Execute.
         void* m_UserData = nullptr;
     };
@@ -190,6 +217,12 @@ namespace Veng::Renderer
             PassBuilder& StorageRead(ResourceId resource);
             /// @brief Declares a storage-image write on resource.
             PassBuilder& StorageWrite(ResourceId resource);
+            /// @brief Declares a storage-buffer read on a buffer resource.
+            PassBuilder& StorageBufferRead(ResourceId resource);
+            /// @brief Declares a storage-buffer write on a buffer resource.
+            PassBuilder& StorageBufferWrite(ResourceId resource);
+            /// @brief Declares an indirect-args read on a buffer resource.
+            PassBuilder& IndirectRead(ResourceId resource);
             /// @brief Declares a transfer-source read on resource.
             PassBuilder& TransferSrc(ResourceId resource);
             /// @brief Declares a transfer-destination write on resource.
@@ -210,6 +243,13 @@ namespace Veng::Renderer
         /// @return A handle usable in Color/Depth/Sample/… declarations.
         [[nodiscard]] ResourceId CreateTransient(const TransientDesc& desc);
 
+        /// @brief Declares a graph-owned transient buffer.
+        ///
+        /// Allocated at Compile and resolved per frame, alongside CreateTransient for
+        /// images. The buffer path does not alias; one buffer is allocated per transient.
+        /// @return A handle usable in StorageBufferRead/StorageBufferWrite/IndirectRead.
+        [[nodiscard]] ResourceId CreateTransientBuffer(const TransientBufferDesc& desc);
+
         /// @brief Declares an external resource (swapchain image, app-owned target).
         ///
         /// The graph never allocates or aliases it; its concrete view is supplied
@@ -217,13 +257,25 @@ namespace Veng::Renderer
         /// @return A handle usable in access declarations.
         [[nodiscard]] ResourceId Import(string_view name);
 
-        /// @brief Binds an imported resource's concrete view for one Execute call.
+        /// @brief Declares an external buffer resource supplied per frame.
+        ///
+        /// The buffer analogue of Import: its concrete Ref<Buffer> is bound per frame as
+        /// an ImportBinding passed to Execute, and the graph never allocates it.
+        /// @return A handle usable in StorageBufferRead/StorageBufferWrite/IndirectRead.
+        [[nodiscard]] ResourceId ImportBuffer(string_view name);
+
+        /// @brief Binds an imported resource's concrete handle for one Execute call.
+        ///
+        /// An image import supplies View; a buffer import supplies Buffer. Exactly one
+        /// of the two is set, matching the imported resource's kind.
         struct ImportBinding
         {
-            /// @brief The handle returned by Import.
+            /// @brief The handle returned by Import or ImportBuffer.
             ResourceId Id;
-            /// @brief The concrete view to resolve for this frame.
+            /// @brief The concrete image view to resolve (image imports).
             Ref<ImageView> View;
+            /// @brief The concrete buffer to resolve (buffer imports).
+            Ref<Buffer> Buffer;
         };
 
         /// @brief Adds a graphics pass (dynamic rendering).
@@ -250,10 +302,14 @@ namespace Veng::Renderer
         {
             /// @brief True for an imported (externally-owned) resource.
             bool IsImport = false;
+            /// @brief True for a buffer resource; false for an image resource.
+            bool IsBuffer = false;
             /// @brief Debug name.
             string Name;
-            /// @brief Allocation descriptor (transient only).
+            /// @brief Image allocation descriptor (image transient only).
             TransientDesc Desc;
+            /// @brief Buffer allocation descriptor (buffer transient only).
+            TransientBufferDesc BufferDesc;
         };
 
         /// @brief Context used to allocate transients; must outlive this graph.

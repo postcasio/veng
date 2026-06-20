@@ -208,5 +208,12 @@ namespace Veng::Renderer
         vk::Device CreateDevice();
 
         QueueFamilyIndices QueueFamilies{};
+
+        /// @brief True when both multiDrawIndirect and drawIndirectFirstInstance were
+        /// enabled at device creation.
+        ///
+        /// The GPU-driven cull path (multiDrawIndirect command buffer + candidate index
+        /// in firstInstance) is available only when both are present; set in CreateDevice.
+        bool GpuDrivenCullingSupported = false;
     };
 }

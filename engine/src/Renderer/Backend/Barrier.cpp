@@ -1,8 +1,10 @@
 #include <Veng/Renderer/Backend/Barrier.h>
 
+#include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/TimelineSemaphore.h>
 #include <Veng/Renderer/Backend/BarrierDecision.h>
 #include <Veng/Renderer/Backend/Natives.h>
@@ -108,6 +110,24 @@ namespace Veng::Renderer::Backend
         const auto vkLayout = ToVk(newLayout);
         TransitionImage(cmd, image, vkLayout, Utils::GetDestinationStageMask(vkLayout),
                         Utils::GetAccessMask(vkLayout), baseLayer, layerCount, baseMip, mipCount);
+    }
+
+    void TransitionBuffer(CommandBuffer& cmd, Buffer& buffer, const vk::PipelineStageFlags srcStage,
+                          const vk::AccessFlags srcAccess, const vk::PipelineStageFlags dstStage,
+                          const vk::AccessFlags dstAccess)
+    {
+        const vk::BufferMemoryBarrier barrier{
+            .srcAccessMask = srcAccess,
+            .dstAccessMask = dstAccess,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = GetVkBuffer(buffer),
+            .offset = 0,
+            .size = VK_WHOLE_SIZE,
+        };
+
+        cmd.GetNative().CommandBuffer.pipelineBarrier(srcStage, dstStage, vk::DependencyFlags{}, 0,
+                                                      nullptr, 1, &barrier, 0, nullptr);
     }
 
     void MarkProducedOn(Image& image, const u32 producingFamily, const u64 transferValue)
