@@ -165,7 +165,14 @@ shadow fit and CSM both need real bounds first. Also future: **history-buffer ri
 temporal effects (TAA/motion-blur reading an older frame); **cross-queue synchronization** (an
 explicit semaphore once a handoff side moves off the single graphics queue); and **parallel
 pass recording** into secondary command buffers (area 2's seam — the user-pointer channel is
-shaped for it, not built).
+shaped for it, not built). The **CSM shadow-render path** (planset-20's depth atlas) has a
+follow-on — a single-pass depth **array** via `VK_KHR_multiview` or layered
+`SV_RenderTargetArrayIndex` routing — but it is a **quality/cleanliness** change (cleaner
+per-layer sampling), **not a perf win**: the installed MoltenVK 1.4.0 implements multiview by
+instance multiplication (`instanceCount *= viewCount`), not Metal vertex amplification, so it
+renders the scene `viewCount` times exactly as the atlas does (verified against the dylib +
+upstream `MVKCmdDraw.mm`; see [scene-renderer.md](scene-renderer.md)). Deprioritized, gated on
+a `RenderGraph` layered-pass seam; revisit only if MoltenVK adds amplification-based multiview.
 
 **On-tile / subpass-fused deferred is a measure-first maybe, not a named next increment.**
 The richer g-buffer raises its bandwidth payoff on Apple Silicon, but it is **not** a

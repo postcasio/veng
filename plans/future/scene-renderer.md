@@ -358,6 +358,28 @@ mechanism:
   fixed-size orthographic box because no bounds facility exists; a **tight shadow fit** and
   **cascaded shadow maps (CSM)** both need a real scene/mesh AABB facility first. This is the
   gate the shadow-quality follow-ons sit behind.
+- **CSM shadow-render path: a single-pass depth array (multiview / layered), over the atlas —
+  a planset-20 follow-on.** [planset-20](../planset-20/README.md) renders the cascades into a
+  depth **atlas** sized to the cascade count (one pass, per-cascade viewports) because that needs
+  no `RenderGraph` layered-pass machinery. Rendering into a depth **texture array** (layer = cascade) in one
+  pass — via `VK_KHR_multiview`, or instanced `SV_RenderTargetArrayIndex` layer routing — is
+  the follow-on for **cleaner per-layer sampling** (no tile-UV remap, no atlas-edge PCF bleed),
+  not for GPU efficiency — see the finding below. It is gated on a `RenderGraph` seam
+  expressing a **layered / viewMask pass** (the graph builds one non-layered `RenderingInfo`
+  per pass today), **to be planned after planset-20**.
+
+  **Finding (2026-06, verified against the installed MoltenVK 1.4.0 dylib + upstream
+  `MVKCmdDraw.mm`):** MoltenVK implements Vulkan multiview by **instance multiplication**
+  (`instanceCount *= viewCount`) + layered routing (`gl_ViewIndex` → `gl_Layer`,
+  `setRenderTargetArrayLength`), **not** Metal vertex amplification (`setVertexAmplificationCount`
+  is never called) — for *any* view count. The M2 hardware supports amplification to 8 views,
+  but MoltenVK leaves it unused. So multiview on this platform renders the scene `viewCount`
+  times exactly as the atlas does (per-cascade viewports) — there is **no geometry-amplification
+  win** to be had over the atlas; the only difference is a CPU draw-call-count reduction (one
+  instanced draw vs N), negligible at current scene scale. The array path is therefore a
+  **quality/cleanliness** change, not a perf one, and is **deprioritized** accordingly (revisit
+  only if a future MoltenVK adds amplification-based multiview, or the renderer moves enough
+  casters that CPU draw-call count matters).
 - **Parallel pass recording** into secondary command buffers (area 2's seam): the
   `SceneView`-rides-the-record-context choice is made *for* it, but no parallel recording is
   built.
