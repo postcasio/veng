@@ -80,7 +80,10 @@ ctest --test-dir build --output-on-failure
 ### Formatting
 
 Code style is enforced by `clang-format` against the repo-root `.clang-format`.
-The whole tree conforms to it. A checked-in pre-commit hook
+The whole tree conforms to it. **`const` is west-placed** (`const T`, not `T const`)
+— `QualifierAlignment: Left` normalizes it on format, so the `const` that
+`misc-const-correctness` adds lands on the house side automatically. A checked-in
+pre-commit hook
 (`.githooks/pre-commit`) format-checks **only the lines a commit touches** via
 `git clang-format --staged`, so a commit stays fast and each changed line must
 conform. Enable it once per clone:
@@ -91,6 +94,48 @@ git config core.hooksPath .githooks
 
 The hook skips cleanly when `clang-format` is absent. To reformat staged changes
 the hook flagged, run `git clang-format --staged`, then re-stage and commit.
+
+### Linting (clang-tidy)
+
+clang-tidy is configured by the repo-root `.clang-tidy` as a **deliberately small
+allowlist** (`-*` then the eight checks below): the whole tree is clean against
+exactly these, so an enabled run — or the pre-commit hook — is green and any new
+finding is a real regression. These checks enforce mechanical conventions that are
+tedious to police by hand, and they are **authoritative** — where one of them
+contradicted older hand-written style, the tree was migrated to the check:
+
+- `readability-braces-around-statements` — **every control-flow body is braced**,
+  even a single statement (`if (x) { return; }`, never `if (x) return;`).
+- `misc-const-correctness` — **a local that is never mutated is declared `const`**.
+- `readability-redundant-member-init` — drop a redundant `{}` on a member whose type
+  already default-constructs (`vector`/`optional`/`Ref`).
+- `modernize-use-designated-initializers` — aggregate init uses the designated
+  `.Field = value` form, matching the `XInfo` house idiom everywhere.
+- `modernize-use-scoped-lock` — `std::scoped_lock` over `std::lock_guard`.
+- `modernize-use-ranges` — `std::ranges` algorithms over iterator-pair calls.
+- `modernize-use-emplace` — `emplace_back` over `push_back(T{...})`.
+- `modernize-use-auto` — `auto` when a cast on the RHS already names the type.
+
+The broader `bugprone-*`/`performance-*`/`readability-*` families are **not**
+enabled: a survey found them either noisy against this codebase's style
+(anonymous-namespace vs `static`, implicit-bool truthiness, math parenthesization,
+C-array interop tables, `std::print` vs fmt) or large stylistic churn not worth the
+diff. Re-enabling any is a deliberate, separately-scoped pass. **Identifier naming
+is not enforced by clang-tidy** either; the house naming rules are reviewed by hand.
+Findings are warnings, never build-breaking.
+
+Two ways to run it, both opt-in:
+
+- **In-build:** configure with `-DVENG_ENABLE_CLANG_TIDY=ON` and clang-tidy runs
+  per-TU during the build. It is wired only onto veng's own targets (set after
+  the FetchContent deps), so third-party sources are never linted; the `imgui`/
+  `stb`/`tinyexr` vendor aggregation TUs carry a `Checks: '-*'` override
+  (`engine/src/Vendor/.clang-tidy`) and the generated core-pack embed is
+  `SKIP_LINTING`. The option degrades to a warning if clang-tidy is not found.
+- **Pre-commit:** the same `.githooks/pre-commit` hook runs a second stage that
+  tidies **only the changed lines** of staged C/C++ via `clang-tidy-diff.py`
+  against `build/compile_commands.json` (exported unconditionally). It skips
+  cleanly when clang-tidy, the diff driver, or a compile DB is missing.
 
 Tests, examples, and the `vengc` cooker tool build only when veng is the
 top-level project (`PROJECT_IS_TOP_LEVEL`); toggles are `VENG_BUILD_TESTS` /

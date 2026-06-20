@@ -1,24 +1,62 @@
 #!/usr/bin/env bash
-# Format-check only the C/C++ lines this commit touches, using clang-format
-# and the repo-root .clang-format. Existing hand-formatted code is left alone;
-# the gate applies to changed lines only (git clang-format --staged).
+# Pre-commit gate over the C/C++ lines this commit touches. Both stages apply to
+# changed lines only and leave existing code alone; each skips cleanly when its
+# tooling is absent, so the hook never blocks a clone that lacks the tools.
 set -euo pipefail
 
-if ! command -v clang-format >/dev/null 2>&1 || ! command -v git-clang-format >/dev/null 2>&1; then
+# --- Stage 1: clang-format (repo-root .clang-format) -------------------------
+# Format-check only the touched lines via git clang-format --staged.
+if command -v clang-format >/dev/null 2>&1 && command -v git-clang-format >/dev/null 2>&1; then
+    diff=$(git clang-format --staged --diff --extensions h,hpp,cpp,cc 2>/dev/null || true)
+    case "$diff" in
+        "" | "no modified files to format" | "clang-format did not modify any files")
+            ;;
+        *)
+            echo "pre-commit: staged C/C++ changes are not clang-format clean." >&2
+            echo "Fix with:  git clang-format --staged   then re-stage the files and commit." >&2
+            echo "------------------------------------------------------------------" >&2
+            printf '%s\n' "$diff" >&2
+            exit 1
+            ;;
+    esac
+else
     echo "pre-commit: clang-format / git-clang-format not found, skipping format check." >&2
-    exit 0
 fi
 
-diff=$(git clang-format --staged --diff --extensions h,hpp,cpp,cc 2>/dev/null || true)
+# --- Stage 2: clang-tidy (repo-root .clang-tidy) -----------------------------
+# Lint only the touched lines via clang-tidy-diff.py, which needs a compile DB
+# (built into build/ — compile_commands.json is exported unconditionally). Skips
+# cleanly when clang-tidy, the diff driver, or a compile DB is missing.
+tidy_db=""
+for d in build build-debug cmake-build-debug; do
+    if [ -f "$d/compile_commands.json" ]; then
+        tidy_db="$d"
+        break
+    fi
+done
 
-case "$diff" in
-    "" | "no modified files to format" | "clang-format did not modify any files")
-        exit 0
-        ;;
-esac
+tidy_diff=""
+for c in clang-tidy-diff.py clang-tidy-diff; do
+    if command -v "$c" >/dev/null 2>&1; then
+        tidy_diff="$c"
+        break
+    fi
+done
 
-echo "pre-commit: staged C/C++ changes are not clang-format clean." >&2
-echo "Fix with:  git clang-format --staged   then re-stage the files and commit." >&2
-echo "------------------------------------------------------------------" >&2
-printf '%s\n' "$diff" >&2
-exit 1
+if command -v clang-tidy >/dev/null 2>&1 && [ -n "$tidy_diff" ] && [ -n "$tidy_db" ]; then
+    tidy_out=$(git diff --staged -U0 --no-color -- '*.h' '*.hpp' '*.cpp' '*.cc' \
+        | "$tidy_diff" -p1 -path "$tidy_db" -quiet 2>/dev/null || true)
+    case "$tidy_out" in
+        *" warning: "* | *" error: "*)
+            echo "pre-commit: clang-tidy flagged staged C/C++ changes." >&2
+            echo "Review the findings below, fix or justify with NOLINT, then re-commit." >&2
+            echo "------------------------------------------------------------------" >&2
+            printf '%s\n' "$tidy_out" >&2
+            exit 1
+            ;;
+    esac
+else
+    echo "pre-commit: clang-tidy / clang-tidy-diff / compile DB not found, skipping tidy check." >&2
+fi
+
+exit 0

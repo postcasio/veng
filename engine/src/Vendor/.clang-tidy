@@ -1,0 +1,4 @@
+# The files here are thin aggregation TUs that #include third-party
+# implementations (ImGui, stb, tinyexr) to compile them once into libveng.
+# Tidying them would lint the vendored code, so all checks are disabled.
+Checks: '-*'

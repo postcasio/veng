@@ -11,6 +11,10 @@ set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_VISIBILITY_PRESET default)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN OFF)
 
+# Always emit compile_commands.json so clang-tidy and editor tooling can find the
+# per-TU flags, whether or not the in-build linter (below) is enabled.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 include(FetchContent)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -153,6 +157,25 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(imnodes)
 
 # ---------------------------------------------------------------------------
+# clang-tidy (opt-in)
+# ---------------------------------------------------------------------------
+
+# Set after the FetchContent deps above are configured and before veng's own
+# subdirectories below, so CMAKE_CXX_CLANG_TIDY is inherited only by veng's
+# targets — third-party sources built above are never tidied.
+option(VENG_ENABLE_CLANG_TIDY "Run clang-tidy on veng's own sources during the build" OFF)
+
+if (VENG_ENABLE_CLANG_TIDY)
+    find_program(VENG_CLANG_TIDY NAMES clang-tidy)
+    if (VENG_CLANG_TIDY)
+        set(CMAKE_CXX_CLANG_TIDY "${VENG_CLANG_TIDY}")
+        message(STATUS "clang-tidy enabled: ${VENG_CLANG_TIDY}")
+    else ()
+        message(WARNING "VENG_ENABLE_CLANG_TIDY is ON but clang-tidy was not found; not linting.")
+    endif ()
+endif ()
+
+# ---------------------------------------------------------------------------
 # Libraries
 # ---------------------------------------------------------------------------
 
@@ -204,7 +227,11 @@ if (TARGET veng_cook_bootstrap)
         DEPENDS ${VENG_CORE_PACK_BIN} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinary.cmake
         COMMENT "Embedding veng core pack")
 
-    set_source_files_properties(${VENG_CORE_PACK_CPP} PROPERTIES GENERATED TRUE)
+    # GENERATED so the build doesn't expect it up front; SKIP_LINTING so the
+    # opt-in clang-tidy pass never walks the multi-megabyte embedded byte array.
+    set_source_files_properties(${VENG_CORE_PACK_CPP} PROPERTIES
+            GENERATED TRUE
+            SKIP_LINTING TRUE)
 
     # Custom target so veng (in a subdirectory scope) can depend on the
     # generated file produced by a command in this (root) scope.

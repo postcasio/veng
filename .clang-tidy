@@ -1,0 +1,35 @@
+# clang-tidy configuration for veng. Opt-in via -DVENG_ENABLE_CLANG_TIDY=ON, or run
+# out-of-band against build/compile_commands.json.
+#
+# This is a deliberately small allowlist: the whole tree is clean against exactly
+# these checks, so an enabled run (or the pre-commit hook) is green and any new
+# finding is a real regression. The checks enforce mechanical conventions that are
+# tedious to police by hand:
+#
+#   misc-const-correctness               - locals that are never mutated are declared const.
+#   modernize-use-auto                   - auto when a cast already names the type.
+#   modernize-use-designated-initializers- aggregate init uses designated .Field = form.
+#   modernize-use-emplace                - emplace_back over push_back(T{...}).
+#   modernize-use-ranges                 - std::ranges algorithms over iterator-pair calls.
+#   modernize-use-scoped-lock            - std::scoped_lock over std::lock_guard.
+#   readability-braces-around-statements - control-flow bodies are always braced.
+#   readability-redundant-member-init    - drop a redundant {} on a default-constructed member.
+#
+# Identifier naming is NOT enforced here (the house rules in CLAUDE.md are reviewed by
+# hand). Findings are warnings, never build-breaking (WarningsAsErrors is empty).
+Checks: >
+  -*,
+  misc-const-correctness,
+  modernize-use-auto,
+  modernize-use-designated-initializers,
+  modernize-use-emplace,
+  modernize-use-ranges,
+  modernize-use-scoped-lock,
+  readability-braces-around-statements,
+  readability-redundant-member-init
+
+# Only diagnose veng's own headers; third-party headers (build/_deps, the Vulkan
+# SDK, system headers) are never flagged.
+HeaderFilterRegex: '.*/(engine|assetpack|cooker|editor|examples|tests)/.*\.(h|hpp)$'
+
+WarningsAsErrors: ''

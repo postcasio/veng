@@ -149,6 +149,27 @@ cleanly on machines without a Vulkan driver.
 
 ---
 
+## Code style & linting
+
+Formatting is enforced by `clang-format` (repo-root `.clang-format`). Static
+analysis is configured in the repo-root `.clang-tidy` — a small, focused allowlist
+of mechanical-convention checks (always-braced control flow, const-correctness,
+designated initializers, and a few modernizations) that the whole tree is kept clean
+against. clang-tidy is opt-in; turn it on during the build with:
+
+```sh
+cmake -B build -S . -DVENG_ENABLE_CLANG_TIDY=ON
+```
+
+A checked-in pre-commit hook format-checks and tidies **only the lines a commit
+touches**, and skips cleanly when the tools are absent. Enable it once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+---
+
 ## API documentation
 
 veng's public headers are documented with Doxygen comments. If **Doxygen** is
