@@ -88,6 +88,7 @@
 #include <Veng/Renderer/ScenePass.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Sampler.h>
+#include <Veng/Renderer/ShadowCascades.h>
 #include <Veng/Renderer/Semaphore.h>
 #include <Veng/Renderer/ShaderModule.h>
 #include <Veng/Renderer/SwapChainCompositePass.h>

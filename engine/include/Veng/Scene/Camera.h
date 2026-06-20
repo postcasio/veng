@@ -24,6 +24,8 @@ namespace Veng
             mat4 projection = glm::perspective(fovYRadians, aspect, near, far);
             projection[1][1] *= -1.0f; // Vulkan's clip space has Y pointing down.
             m_Projection = projection;
+            m_Near = near;
+            m_Far = far;
         }
 
         void SetView(vec3 eye, vec3 target, vec3 up)
@@ -47,9 +49,18 @@ namespace Veng
         // inverse (the world matrix that placed the camera).
         [[nodiscard]] vec3 GetPosition() const { return vec3(glm::inverse(m_View)[3]); }
 
+        // The view-space clip range. Recovering near/far from the projection matrix
+        // is fiddly under the Y-flip, so the camera carries them; SetPerspective
+        // sets them. A camera whose projection was set by another path keeps these
+        // defaults, so a perspective camera built by other means must set the range.
+        [[nodiscard]] f32 GetNear() const { return m_Near; }
+        [[nodiscard]] f32 GetFar() const { return m_Far; }
+
     private:
         mat4 m_View{1.0f};
         mat4 m_Projection{1.0f};
+        f32 m_Near = 0.1f;
+        f32 m_Far = 100.0f;
     };
 
     // A camera that lives on an entity; its view derives from the entity's world
