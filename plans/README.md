@@ -426,16 +426,21 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   6 plans). Takes planset-21's mesh-granularity **CPU** frustum cull all the way to
   **GPU-driven** — the deepest culling refinement. Staged: **per-submesh bounds** + a CPU
   per-submesh cull (a pure refinement, bounds derived at load with no cooked-format change);
-  a **hi-Z depth pyramid** (compute min/max mip reduction) + a conservative temporal **occlusion
-  test** (drop only the provably hidden, never a visible draw); then **indirect-draw
-  infrastructure** (`DrawIndexedIndirectCount`, GPU-sourced count — net-new engine capability,
-  MoltenVK-verified) and a **compute cull → indirect draw** path that uploads the gather's
-  candidates, runs frustum+occlusion GPU-side, and compacts survivors into an indirect buffer the
-  geometry pass issues. A `CullMode` setting selects CPU/GPU with the CPU path as fallback. The
-  image stays **byte-identical** (frustum-identical; occlusion drops only hidden draws);
-  draw-count fixtures are the guard. Meshlet/cluster culling, two-pass occlusion, and GPU-driven
-  shadow culling are named next; the GPU candidate set is the natural consumer of the BVH
-  broadphase. **Independent of planset-24**; builds on planset-23.
+  a **hi-Z depth pyramid** (compute **max-Z** mip reduction) + a conservative temporal
+  **occlusion test** (drop only the provably hidden, never a visible draw); then **indirect-draw
+  infrastructure** (`vkCmdDrawIndexedIndirect` over a `multiDrawIndirect` command buffer — the
+  `drawIndirectCount`-free shape MoltenVK supports, net-new engine capability, dev-box-verified)
+  and a **compute cull → indirect draw** path that uploads the broadphase's frustum survivors,
+  runs **occlusion only** GPU-side (the BVH already did frustum), and gates each draw by writing
+  its command's `instanceCount` (1 survivor / 0 culled — no compaction). The CPU and GPU paths
+  share one **buffer-indexed** draw (per-instance transform/material, candidate index via
+  `firstInstance`), differing only in direct-vs-indirect submission. A `CullMode` setting selects
+  CPU/GPU with the CPU path as fallback where `multiDrawIndirect`/`drawIndirectFirstInstance` is
+  absent. The image stays **byte-identical** (frustum-identical; occlusion drops only hidden
+  draws); draw-count + GPU↔CPU set-equivalence fixtures are the guard. Meshlet/cluster culling,
+  two-pass occlusion, GPU compaction into a count buffer, and GPU-driven shadow culling are named
+  next; the GPU candidate set is the natural consumer of the BVH broadphase. **Independent of
+  planset-24**; builds on planset-23.
 
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
