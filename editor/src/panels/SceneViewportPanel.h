@@ -80,6 +80,13 @@ namespace VengEditor
 
         Veng::optional<Veng::Entity> m_PrimaryEntity;
 
+        // The renderer's topology/sizing settings, driven by the debug-view dropdown.
+        // A change sets m_SettingsDirty; Render applies it through Configure before the
+        // next Execute, so the recompile happens off the ImGui pass and the rebound
+        // output is the freshly-rendered one (no one-frame stale sample).
+        Veng::Renderer::SceneRendererSettings m_Settings;
+        bool m_SettingsDirty = false;
+
         Veng::uvec2 m_RenderExtent{};
         Veng::uvec2 m_PendingExtent{};
 

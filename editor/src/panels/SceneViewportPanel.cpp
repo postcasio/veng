@@ -18,6 +18,8 @@
 #include <Veng/Time.h>
 #include <Veng/UI/UI.h>
 
+#include <array>
+
 namespace VengEditor
 {
     using namespace Veng;
@@ -43,7 +45,7 @@ namespace VengEditor
             .Assets = assets,
             .OutputFormat = context.GetOutputFormat(),
             .Extent = m_RenderExtent,
-            .Settings = {},
+            .Settings = m_Settings,
         });
 
         BuildScene();
@@ -103,9 +105,14 @@ namespace VengEditor
 
     void SceneViewportPanel::Render(Renderer::CommandBuffer& cmd)
     {
+        // Resize and Configure both invalidate GetOutput(), so a single rebind of the
+        // ImGui texture covers either (an ImGuiTexture wraps a fixed view, so the prior
+        // one is dropped). Both run here, before recording, so the rebound output is the
+        // one this frame renders into.
+        bool outputInvalidated = false;
+
         // A pending resize from the previous frame's content region: recreate the
-        // renderer at the new size before recording, then re-bind the source
-        // (Resize invalidates GetOutput()).
+        // renderer at the new size before recording.
         if (m_PendingExtent.x != 0 && m_PendingExtent.y != 0 && m_PendingExtent != m_RenderExtent)
         {
             m_RenderExtent = m_PendingExtent;
@@ -114,8 +121,20 @@ namespace VengEditor
             const f32 aspect = static_cast<f32>(m_RenderExtent.x) / static_cast<f32>(m_RenderExtent.y);
             m_Camera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
 
-            // Resize invalidates GetOutput(); recreate the ImGui texture over the new
-            // view (an ImGuiTexture wraps a fixed view, so the prior one is dropped).
+            outputInvalidated = true;
+        }
+
+        // A pending debug-view (or other settings) change from OnImGui: recompile the
+        // pass set before recording this frame's scene.
+        if (m_SettingsDirty)
+        {
+            m_SceneRenderer->Configure(m_Settings);
+            m_SettingsDirty = false;
+            outputInvalidated = true;
+        }
+
+        if (outputInvalidated)
+        {
             m_SceneTexture = m_ImGui.CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
         }
 
@@ -159,6 +178,23 @@ namespace VengEditor
 
     void SceneViewportPanel::OnImGui()
     {
+        // The debug-view dropdown re-wires the renderer's pass set. Its entries mirror
+        // the DebugView enum in declaration order, so the combo index is the enum value
+        // and every arm is selectable. The change is deferred to Render (m_SettingsDirty)
+        // so the Configure recompile runs before the next scene record, not mid-ImGui.
+        static constexpr std::array<string_view, 10> modeNames{
+            "Final", "Albedo", "Normal", "Depth",
+            "Roughness", "Metallic", "Occlusion",
+            "AO", "Shadows", "Cascades"};
+        i32 mode = static_cast<i32>(m_Settings.Mode);
+        if (UI::Combo("Debug View", mode, modeNames))
+        {
+            m_Settings.Mode = static_cast<Renderer::DebugView>(mode);
+            m_SettingsDirty = true;
+        }
+
+        // The image fills the region left below the dropdown; its size drives the
+        // renderer's resize (applied next Render).
         const vec2 available = UI::ContentRegionAvail();
         const uvec2 wanted{static_cast<u32>(available.x), static_cast<u32>(available.y)};
         m_PendingExtent = wanted;
