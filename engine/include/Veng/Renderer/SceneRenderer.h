@@ -6,6 +6,7 @@
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
+#include <Veng/Renderer/PunctualShadows.h>
 #include <Veng/Renderer/ShadowCascades.h>
 
 #include <Veng/Scene/Camera.h>
@@ -42,6 +43,32 @@ namespace Veng::Renderer
     class Buffer;
     class DescriptorSet;
     class DescriptorSetLayout;
+
+    // The maximum number of shadow-casting point/spot lights. The first N shadow-casting
+    // punctual lights (by the per-frame selection) get a shadow map; the rest light
+    // unshadowed, as all punctual lights do today. Small by design: a point light costs
+    // six cube-face redraws of its caster set, so N bounds the punctual shadow atlas and
+    // the lighting loop's sample set at 6N depth tiles / sample faces.
+    inline constexpr u32 MaxShadowedPunctual = 4;
+
+    // One shadowed punctual light's GPU record. glm-only — no backend types — so it
+    // rides a public header; its layout is std140/std430-identical to the shader's
+    // PunctualShadowRecord, so the same struct serves a uniform or an SSBO binding.
+    struct PunctualShadowRecord
+    {
+        // The world → light-clip transforms with the atlas tile-remap baked in: [0]
+        // for a spot's single perspective view, [0..5] for a point's six cube faces
+        // (in CubeFace order). A lit fragment projected by ViewProj[f] lands in this
+        // light's atlas tile f, so the lighting pass samples the right tile by
+        // construction, exactly as a cascade tile does.
+        mat4 ViewProj[CubeFaceCount];      // 384
+        // xyz the light's world position (the cube-face select + linearize), w its
+        // range (the falloff radius the depth pass projects to).
+        vec4 PositionRange;                // 16
+        // x type (1 point / 2 spot; 0 = no map, the zeroed/unused slot), y near,
+        // z far, w depth bias.
+        vec4 Params;                       // 16
+    };                                     // 416
 
     // Which result the renderer produces, re-wiring the pass set: Final is the full
     // deferred chain (g-buffer → lighting → tonemap), the others terminate the chain
@@ -98,6 +125,12 @@ namespace Veng::Renderer
         // A default 4-cascade atlas is then 2048² — the same footprint as a single
         // 2048 map.
         u32 ShadowResolution = 1024;
+
+        // The per-tile edge length in texels of the punctual shadow atlas (a spot's
+        // single tile, a point's six cube-face tiles). Sizing: changing it recreates
+        // the punctual atlas (through the deferred retire path) and recompiles. The
+        // atlas is then MaxShadowedPunctual·CubeFaceCount tiles of this resolution.
+        u32 PunctualShadowResolution = 512;
 
         // The number of shadow cascades the directional light splits its frustum
         // into, clamped to [1, MaxCascades]. Sizing: it sizes the atlas tile grid
@@ -181,6 +214,13 @@ namespace Veng::Renderer
         std::array<mat4, MaxCascades> CascadeViewProj{};
         u32 CascadeCount = 0;
 
+        // The shadowed punctual lights selected this frame (the first MaxShadowedPunctual
+        // shadow-casting point/spot lights). The punctual shadow pass renders each record's
+        // view(s) into the atlas; the lighting pass samples Records[slot]. PunctualShadowCount
+        // records are valid. A caller's values are overwritten by the renderer each Execute.
+        std::array<PunctualShadowRecord, MaxShadowedPunctual> PunctualShadows{};
+        u32 PunctualShadowCount = 0;
+
         // The frame's resident mesh candidates, set by the renderer on every Execute
         // from the broadphase's cached candidate list. The g-buffer pass culls this
         // span against the camera frustum; the shadow pass culls it against each
@@ -259,6 +299,14 @@ namespace Veng::Renderer
         // tonemap stage then reads the raw HDR target. Exposed for tests.
         [[nodiscard]] Ref<ImageView> GetBloomResultView() const;
 
+        // The punctual shadow atlas the lighting pass SampleCmps (set 1 binding 4): a
+        // 2D depth atlas of MaxShadowedPunctual·CubeFaceCount tiles. Renderer-owned and
+        // long-lived past any Configure (the layout must always be satisfiable); the
+        // punctual shadow render pass writes its tiles. Recreated on Resize/Configure,
+        // so a cached Ref is invalidated by those calls. Exposed for that render-pass
+        // handoff and for tests inspecting the atlas extent.
+        [[nodiscard]] Ref<ImageView> GetPunctualShadowView() const;
+
     private:
         explicit SceneRenderer(const SceneRendererInfo& info);
 
@@ -287,6 +335,12 @@ namespace Veng::Renderer
         // sampler, the set-1 layout, the descriptor set, the dummy atlas, and the
         // ShadowConstants ring buffer. Long-lived past any Configure.
         void CreateShadowSystem();
+
+        // Recreate the punctual shadow atlas at the current PunctualShadowResolution ×
+        // (MaxShadowedPunctual·CubeFaceCount) tile grid through the deferred retire
+        // path, clear it to depth = 1, and (re)write it into set 1 binding 4. Called
+        // at Create and on every Resize/Configure (the resolution is a recompile knob).
+        void CreatePunctualShadowAtlas();
 
         // (Re)write set 1's atlas binding (binding 0) to the given view — the wired
         // shadow pass's atlas, or the dummy when shadows are off — and the debug
@@ -441,6 +495,29 @@ namespace Veng::Renderer
         Ref<Buffer> m_ShadowConstantsBuffer;
         u32 m_ShadowRingStride = 0;
         u32 m_FramesInFlight = 0;
+
+        // The punctual shadow atlas (set 1 binding 4): a second D32 depth image
+        // alongside the directional cascade atlas, off bindless, a 2D atlas of
+        // MaxShadowedPunctual·CubeFaceCount tiles of PunctualShadowResolution² (a spot
+        // uses one tile, a point six). DepthAttachment | Sampled — the punctual shadow
+        // pass writes per-tile viewports, the lighting pass SampleCmps it through the
+        // shared comparison sampler (binding 1). SceneRenderer-owned, recreated through
+        // the deferred retire path on Resize/Configure. A closed producer→consumer
+        // resource needs no bindless registration; a comparison-sampled image bars set-0
+        // bindless on MoltenVK regardless. Cleared to depth = 1 at creation so it is in a
+        // valid sampleable layout whenever bound.
+        Ref<Image> m_PunctualShadowImage;
+        Ref<ImageView> m_PunctualShadowView;
+
+        // The per-light punctual shadow records (set 1 binding 3): a std140 dynamic
+        // uniform ringed framesInFlight regions of m_PunctualRingStride bytes, the
+        // current region picked by the bind-time dynamic offset, beside the
+        // ShadowConstants ring. Host-visible + persistently mapped; a per-frame write
+        // touches only the current (not-yet-submitted) region. Zeroed regions read as
+        // "no map" (every record Params.x type = 0) so the budget-zero frame is fully
+        // lit.
+        Ref<Buffer> m_PunctualShadowBuffer;
+        u32 m_PunctualRingStride = 0;
 
         // The core tonemap PostProcess material, loaded once at Create. The Final
         // chain's terminal PostProcessScenePass drives it (HDR target as the

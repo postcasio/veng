@@ -19,6 +19,31 @@ struct ShadowConstants
 [[vk::binding(1, 1)]] SamplerComparisonState g_ShadowSampler;
 [[vk::binding(2, 1)]] ConstantBuffer<ShadowConstants> g_Shadow;
 
+// The shadow system also carries a bounded set of punctual (point/spot) shadows.
+// MaxShadowedPunctual lights get a record; the lighting pass reads light.Cone.z as
+// the slot (-1 = unshadowed) and SampleCmps Records[slot] through the SAME comparison
+// sampler (binding 1) and a SECOND 2D depth atlas (binding 4), packed in tiles exactly
+// as the cascade atlas is. CubeFaceCount is the cube-face count: 1 view for a spot
+// (ViewProj[0]), 6 for a point (ViewProj[0..5]) — each with the atlas tile-remap baked
+// in, so a fragment projected by a record's matrix lands in that light's tile.
+static const uint MaxShadowedPunctual = 4;
+static const uint CubeFaceCount = 6;
+
+struct PunctualShadowRecord
+{
+    float4x4 ViewProj[CubeFaceCount]; // tile-remap baked in ([0] spot, [0..5] point)
+    float4   PositionRange;           // xyz world position, w range
+    float4   Params;                  // x type (1 point / 2 spot / 0 none), y near, z far, w bias
+};
+
+struct PunctualShadows
+{
+    PunctualShadowRecord Records[MaxShadowedPunctual];
+};
+
+[[vk::binding(3, 1)]] ConstantBuffer<PunctualShadows> g_Punctual;
+[[vk::binding(4, 1)]] Texture2D g_PunctualAtlas;
+
 // The PCF tap grid half-extent: a (2*Radius+1)² kernel of comparison taps, each
 // offset by the atlas texel size and individually hardware-filtered, widening the
 // penumbra past the comparison sampler's own 2×2 bilinear footprint.

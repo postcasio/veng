@@ -249,6 +249,92 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(resampled[3] == 255);
 }
 
+// The shadow-system / set-1-coexistence pin. Set 0 is the bindless registry; set 1
+// carries the directional cascade system (bindings 0-2) AND the punctual system
+// (binding 3 the PunctualShadowBlock dynamic uniform, binding 4 the punctual atlas)
+// on BOTH lighting pipelines. With Shadows on but no punctual light in the scene, the
+// budget is zero: binding 4 binds the cleared punctual atlas and binding 3 a zeroed
+// block, so the layout is satisfied and the frame records with no descriptor
+// validation error (the validation gate is the portability arbiter; this case drives
+// the path). It also asserts the punctual atlas is sized to
+// MaxShadowedPunctual·CubeFaceCount tiles.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: set 1 carries directional + punctual shadow bindings; "
+                  "the budget-zero dummy binds satisfy the layout")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
+    REQUIRE(mountResult.has_value());
+
+    constexpr uvec2 extent{64, 64};
+    constexpr u32 punctualRes = 512;
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Ref<Mesh> cube = PopulateCubeScene(Context, assets, *scene);
+
+    // A directional light so the directional shadow pass wires (set 1 bindings 0-2
+    // exercised) — but NO point/spot light, so the punctual budget is zero and the
+    // zeroed-block + cleared-atlas dummy binds are what satisfy bindings 3-4.
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Type = LightType::Directional,
+        .Direction = vec3(0.0f, -1.0f, 0.0f),
+        .Color = vec3(1.0f),
+        .Intensity = 1.0f,
+    };
+
+    Camera camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    // Final mode wires the deferred lighting pass (set 1 on m_LightingPipeline); the
+    // SSAO-folded variant covers m_SsaoLightingPipeline — both carry bindings 0-4.
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = true,
+                     .PunctualShadowResolution = punctualRes, .AO = false},
+    });
+
+    // The punctual atlas is sized to MaxShadowedPunctual·CubeFaceCount tiles of
+    // PunctualShadowResolution² — laid out CubeFaceCount columns × MaxShadowedPunctual
+    // rows.
+    const Ref<ImageView> punctual = renderer->GetPunctualShadowView();
+    REQUIRE(punctual != nullptr);
+    CHECK(punctual->GetImage()->GetWidth() == CubeFaceCount * punctualRes);
+    CHECK(punctual->GetImage()->GetHeight() == MaxShadowedPunctual * punctualRes);
+    CHECK(punctual->GetImage()->GetFormat() == Format::D32Sfloat);
+
+    // The frame records cleanly: the lighting pass binds set 1 (bindings 0-4) with
+    // both dynamic offsets, samples the zeroed punctual block + cleared atlas, and
+    // completes. A descriptor mismatch would fault here / under the validation gate.
+    Context.ImmediateCommands([&](CommandBuffer& cmd)
+    {
+        renderer->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+    });
+
+    // The SSAO-folded lighting variant is the other pipeline carrying set 1: enabling
+    // AO selects it, so this exercises bindings 0-4 on m_SsaoLightingPipeline too.
+    renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .Shadows = true,
+                         .PunctualShadowResolution = punctualRes, .AO = true});
+    Context.ImmediateCommands([&](CommandBuffer& cmd)
+    {
+        renderer->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+    });
+
+    // Configure recreates the punctual atlas through the retire path — the prior Ref is
+    // stale, and the new atlas keeps the same tile sizing.
+    const Ref<ImageView> reconfigured = renderer->GetPunctualShadowView();
+    REQUIRE(reconfigured != nullptr);
+    CHECK(reconfigured.get() != punctual.get());
+    CHECK(reconfigured->GetImage()->GetWidth() == CubeFaceCount * punctualRes);
+    CHECK(reconfigured->GetImage()->GetHeight() == MaxShadowedPunctual * punctualRes);
+}
+
 namespace
 {
     // Adds an entity carrying a Transform at `position` and a MeshRenderer holding

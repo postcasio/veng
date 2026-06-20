@@ -27,6 +27,7 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
+#include <Veng/Renderer/PunctualShadows.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/ShadowCascades.h>
 
@@ -148,7 +149,7 @@ namespace Veng::Renderer
             vec4 PositionRange;   // xyz world position, w range
             vec4 DirectionType;   // xyz travel direction, w LightType
             vec4 ColorIntensity;  // rgb linear color, a intensity
-            vec4 Cone;            // x cos(inner), y cos(outer), zw pad
+            vec4 Cone;            // x cos(inner), y cos(outer), z shadow slot (-1 unshadowed), w pad
         };
 
         static_assert(sizeof(GpuLight) == BindlessRegistry::LightStride,
@@ -186,6 +187,23 @@ namespace Veng::Renderer
         static_assert(sizeof(ShadowConstantsBlock) == 288,
                       "ShadowConstantsBlock must be the std140-packed 288-byte block");
 
+        // The punctual shadow records, bound in set 1 binding 3 as a dynamic uniform
+        // (ringed per frame-in-flight, the current region by the bind-time dynamic
+        // offset) — a separate binding from the directional ShadowConstants, so that
+        // block's layout and its 288-byte static_assert are preserved untouched. The
+        // record array is std140/std430-identical, so this same block serves a uniform
+        // (at this budget) or an SSBO (were the budget to grow). The CPU mirror is
+        // PunctualShadowRecord, glm-only and 416 bytes each (a mat4[6] + two vec4), so
+        // the array is MaxShadowedPunctual·416 = 1664 bytes at N = 4, well inside the
+        // 16 KiB min-max-uniform guarantee.
+        struct PunctualShadowBlock
+        {
+            PunctualShadowRecord Records[MaxShadowedPunctual];
+        };
+
+        static_assert(sizeof(PunctualShadowBlock) == MaxShadowedPunctual * 416,
+                      "PunctualShadowBlock must be the std140-packed record array (416 bytes per record)");
+
         // The atlas-tile remap baked into a cascade's matrix: a fragment projected
         // by CascadeViewProj[k] · world lands in cascade k's tile sub-rect of the
         // atlas (NDC → the tile's [0,1] UV window), so the lighting pass samples the
@@ -212,6 +230,33 @@ namespace Veng::Renderer
             remap[3][0] = sx * (2.0f * col + 1.0f) - 1.0f;
             remap[3][1] = sy * (2.0f * row + 1.0f) - 1.0f;
             return remap * cascadeViewProj;
+        }
+
+        // The punctual shadow atlas tile grid: CubeFaceCount columns × MaxShadowedPunctual
+        // rows of PunctualShadowResolution² tiles. A shadowed light's slot s, face f maps
+        // to tile (column f, row s) — linear index s·CubeFaceCount + f — so a spot uses
+        // tile (0, s) and a point uses the whole of row s.
+        constexpr u32 PunctualAtlasColumns = CubeFaceCount;
+        constexpr u32 PunctualAtlasRows = MaxShadowedPunctual;
+
+        // The atlas-tile remap baked into a punctual light's view-proj, the same
+        // construction ComposeTileRemap does for a cascade: a fragment projected by the
+        // remapped matrix lands in slot s's face-f tile sub-rect of the atlas, so the
+        // lighting pass samples the right tile by construction (projective SampleCmp,
+        // exactly like a cascade tile).
+        mat4 ComposePunctualTileRemap(const mat4& viewProj, u32 slot, u32 face)
+        {
+            const f32 sx = 1.0f / static_cast<f32>(PunctualAtlasColumns);
+            const f32 sy = 1.0f / static_cast<f32>(PunctualAtlasRows);
+            const f32 col = static_cast<f32>(face);
+            const f32 row = static_cast<f32>(slot);
+
+            mat4 remap(1.0f);
+            remap[0][0] = sx;
+            remap[1][1] = sy;
+            remap[3][0] = sx * (2.0f * col + 1.0f) - 1.0f;
+            remap[3][1] = sy * (2.0f * row + 1.0f) - 1.0f;
+            return remap * viewProj;
         }
 
         // The shared debug-blit fragment push block: the bindless slots a fullscreen
@@ -422,9 +467,11 @@ namespace Veng::Renderer
             // chain, tonemapped downstream) or the renderer's output directly (the
             // cascade-debug arm, a terminal tint with no tonemap tail).
             DeferredLightingScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent, bool useSsao,
-                                      Ref<DescriptorSet> shadowSet, u32 shadowRingStride, bool writeToOutput = false)
+                                      Ref<DescriptorSet> shadowSet, u32 shadowRingStride, u32 punctualRingStride,
+                                      bool writeToOutput = false)
                 : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent), m_UseSsao(useSsao),
-                  m_ShadowSet(std::move(shadowSet)), m_ShadowRingStride(shadowRingStride), m_WriteToOutput(writeToOutput)
+                  m_ShadowSet(std::move(shadowSet)), m_ShadowRingStride(shadowRingStride),
+                  m_PunctualRingStride(punctualRingStride), m_WriteToOutput(writeToOutput)
             {
             }
 
@@ -441,6 +488,7 @@ namespace Veng::Renderer
                 const bool useSsao = m_UseSsao;
                 const Ref<DescriptorSet> shadowSet = m_ShadowSet;
                 const u32 shadowRingStride = m_ShadowRingStride;
+                const u32 punctualRingStride = m_PunctualRingStride;
 
                 RenderGraph::PassBuilder builder = graph.AddPass("Deferred Lighting");
                 builder.Color({
@@ -464,7 +512,7 @@ namespace Veng::Renderer
                 if (useSsao)
                     builder.Sample(io.Ssao);
 
-                builder.Execute([this, albedoHandle, normalHandle, ormHandle, depthHandle, ssaoHandle, samplerHandle, useSsao, shadowSet, shadowRingStride](PassContext& inner)
+                builder.Execute([this, albedoHandle, normalHandle, ormHandle, depthHandle, ssaoHandle, samplerHandle, useSsao, shadowSet, shadowRingStride, punctualRingStride](PassContext& inner)
                     {
                         const ScenePassContext ctx = Wrap(inner);
                         CommandBuffer& cmd = ctx.Cmd();
@@ -475,17 +523,20 @@ namespace Veng::Renderer
                         cmd.SetScissor({0, 0}, m_Extent);
                         registry.Bind(cmd);
 
-                        // Set 1 — the directional-shadow system (atlas + immutable
-                        // comparison sampler + the ShadowConstants ring). The current
-                        // frame's ShadowConstants region is selected by a bind-time
-                        // dynamic offset; the frame-in-flight slot is the registry's
-                        // view-constants index. Bound after set 0 against the same
-                        // pipeline layout.
+                        // Set 1 — the shadow system (the directional cascade atlas +
+                        // shared comparison sampler + ShadowConstants ring, plus the
+                        // punctual atlas + PunctualShadowBlock ring). Both dynamic
+                        // uniforms (binding 2 ShadowConstants, binding 3 the punctual
+                        // records) select their current frame-in-flight region by a
+                        // bind-time dynamic offset; the slot is the registry's
+                        // view-constants index. The offsets are listed in binding order.
+                        // Bound after set 0 against the same pipeline layout.
+                        const u32 frameSlot = registry.GetCurrentViewConstantsIndex();
                         cmd.BindDescriptorSets(DescriptorSetBindInfo{
                             .Sets = {shadowSet},
                             .FirstSet = 1,
                             .PipelineBindPoint = PipelineBindPoint::Graphics,
-                            .DynamicOffsets = {registry.GetCurrentViewConstantsIndex() * shadowRingStride},
+                            .DynamicOffsets = {frameSlot * shadowRingStride, frameSlot * punctualRingStride},
                         });
 
                         if (useSsao)
@@ -526,6 +577,7 @@ namespace Veng::Renderer
             bool m_UseSsao = false;
             Ref<DescriptorSet> m_ShadowSet;
             u32 m_ShadowRingStride = 0;
+            u32 m_PunctualRingStride = 0;
             bool m_WriteToOutput = false;
         };
 
@@ -1018,9 +1070,15 @@ namespace Veng::Renderer
             .BorderColor = BorderColor::OpaqueWhite,
         });
 
-        // Set 1 — the directional-shadow system. Binding 1's sampler is immutable
-        // (baked into the layout), so a descriptor write supplies only the atlas
-        // (binding 0) and the ShadowConstants buffer (binding 2).
+        // Set 1 — the shadow system. The directional cascade system is bindings 0-2
+        // (atlas / immutable comparison sampler / ShadowConstants dynamic uniform);
+        // the punctual system adds binding 3 (the PunctualShadowBlock dynamic uniform,
+        // ringed beside ShadowConstants) and binding 4 (the punctual shadow atlas). The
+        // comparison sampler (binding 1) is shared — a cascade tile, a spot tile, and a
+        // point face all SampleCmp through the same hardware compare, so no second
+        // sampler is added. Binding 1's sampler is immutable (baked into the layout), so
+        // a descriptor write supplies only the two atlases (bindings 0, 4) and the two
+        // dynamic-uniform buffers (bindings 2, 3).
         m_ShadowSetLayout = DescriptorSetLayout::Create(m_Context, {
             .Name = "SceneRenderer Shadow Set Layout",
             .Bindings = {
@@ -1028,6 +1086,8 @@ namespace Veng::Renderer
                 {.Binding = 1, .Type = DescriptorType::Sampler, .Count = 1, .Stages = ShaderStage::Fragment,
                  .ImmutableSamplers = {m_ComparisonSampler}},
                 {.Binding = 2, .Type = DescriptorType::UniformBufferDynamic, .Count = 1, .Stages = ShaderStage::Fragment},
+                {.Binding = 3, .Type = DescriptorType::UniformBufferDynamic, .Count = 1, .Stages = ShaderStage::Fragment},
+                {.Binding = 4, .Type = DescriptorType::SampledImage, .Count = 1, .Stages = ShaderStage::Fragment},
             },
         });
         m_ShadowSet = DescriptorSet::Create(m_Context, {
@@ -1118,9 +1178,80 @@ namespace Veng::Renderer
 
         m_ShadowSet->Write(2, m_ShadowConstantsBuffer, 0, sizeof(ShadowConstantsBlock));
 
-        // Start with the dummy atlas bound; Rebuild rewrites it to the wired pass's
-        // atlas when shadows are on.
+        // The PunctualShadowBlock ring: framesInFlight regions, each align-up of the
+        // 1664-byte block to minUniformBufferOffsetAlignment, selected by the same
+        // bind-time dynamic offset frame * stride the ShadowConstants ring uses.
+        const u64 punctualBlockSize = sizeof(PunctualShadowBlock);
+        m_PunctualRingStride = static_cast<u32>(((punctualBlockSize + alignment - 1) / alignment) * alignment);
+        VE_ASSERT(m_PunctualRingStride % alignment == 0,
+                  "PunctualShadowBlock ring stride {} is not a multiple of minUniformBufferOffsetAlignment {}",
+                  m_PunctualRingStride, alignment);
+
+        m_PunctualShadowBuffer = Buffer::Create(m_Context, {
+            .Name = "SceneRenderer PunctualShadows",
+            .Size = static_cast<u64>(m_PunctualRingStride) * m_FramesInFlight,
+            .Usage = BufferUsage::Uniform,
+            .HostMapped = true,
+        });
+
+        // Zero every region so a budget-zero frame reads "no map" (every record's
+        // Params.x type = 0) and the lighting pass leaves those lights fully lit.
+        std::memset(m_PunctualShadowBuffer->GetMappedData(), 0,
+                    static_cast<usize>(m_PunctualRingStride) * m_FramesInFlight);
+
+        m_ShadowSet->Write(3, m_PunctualShadowBuffer, 0, sizeof(PunctualShadowBlock));
+
+        // The punctual atlas: allocated, cleared, and written into binding 4. Long-lived
+        // and recreated on Resize/Configure.
+        CreatePunctualShadowAtlas();
+
+        // Start with the dummy atlas bound on binding 0; Rebuild rewrites it to the wired
+        // pass's atlas when shadows are on.
         WriteShadowAtlasBinding(m_DummyShadowView);
+    }
+
+    void SceneRenderer::CreatePunctualShadowAtlas()
+    {
+        // A 2D depth atlas of PunctualAtlasColumns × PunctualAtlasRows tiles of
+        // PunctualShadowResolution² — MaxShadowedPunctual·CubeFaceCount tiles in all.
+        // Dropping the old Refs retires them through the deferred window, so an in-flight
+        // frame's sample of the prior atlas is not reclaimed early.
+        const u32 res = m_Settings.PunctualShadowResolution;
+        const uvec2 atlasExtent{PunctualAtlasColumns * res, PunctualAtlasRows * res};
+
+        m_PunctualShadowImage = Image::Create(m_Context, {
+            .Name = "SceneRenderer Punctual Shadow Atlas",
+            .Extent = {atlasExtent.x, atlasExtent.y, 1},
+            .Format = Format::D32Sfloat,
+            .Usage = ImageUsage::DepthAttachment | ImageUsage::Sampled,
+        });
+        m_PunctualShadowView = ImageView::Create(m_Context, {
+            .Name = "SceneRenderer Punctual Shadow Atlas View",
+            .Image = m_PunctualShadowImage,
+        });
+
+        // Clear the whole atlas to depth = 1 (full visibility) and transition it to
+        // ShaderReadOnly, so binding 4 names a valid sampleable layout whenever it is
+        // bound — the punctual render pass that fills it lands later, but the layout
+        // must be satisfiable the moment it exists.
+        m_Context.ImmediateCommands([&](CommandBuffer& cmd)
+        {
+            RenderGraph graph(m_Context);
+            const ResourceId target = graph.Import("Clear Punctual Atlas");
+            graph.AddPass("Clear Punctual Shadow Atlas")
+                .Depth({
+                    .Resource = target,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = ClearDepth{1.0f, 0},
+                })
+                .Execute([](PassContext&) {});
+            const RenderGraph::ImportBinding binding{target, m_PunctualShadowView};
+            graph.Compile()->Execute(cmd, {&binding, 1});
+            cmd.PrepareForAccess(m_PunctualShadowView, AccessKind::Sample);
+        });
+
+        m_ShadowSet->Write(4, m_PunctualShadowView);
     }
 
     void SceneRenderer::WriteShadowAtlasBinding(const Ref<ImageView>& atlasView)
@@ -1389,7 +1520,7 @@ namespace Veng::Renderer
             {
                 m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                     m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent, ssaoFold,
-                    m_ShadowSet, m_ShadowRingStride));
+                    m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride));
 
                 // The tonemap stage's input: the bloom composite result when bloom is
                 // on, the raw HDR target otherwise. The four bloom stages sit between
@@ -1513,7 +1644,7 @@ namespace Veng::Renderer
                 // the output directly (a terminal arm, no tonemap tail).
                 m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                     m_Context, m_CascadeDebugPipeline, m_Extent, /*useSsao=*/false,
-                    m_ShadowSet, m_ShadowRingStride, /*writeToOutput=*/true));
+                    m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride, /*writeToOutput=*/true));
                 break;
         }
 
@@ -1553,12 +1684,14 @@ namespace Veng::Renderer
         CreateGBuffer();
         CreateHdr();
         CreateBloom();
+        CreatePunctualShadowAtlas();
         Rebuild();
     }
 
     void SceneRenderer::Configure(const SceneRendererSettings& settings)
     {
         m_Settings = settings;
+        CreatePunctualShadowAtlas();
         Rebuild();
     }
 
@@ -1588,8 +1721,17 @@ namespace Veng::Renderer
         // Light packs zero lights, so the lighting pass loops zero times and the
         // result is flat-ambient — never pure black, never asserting. The caller's
         // view.LightCount, if any, is overwritten: the renderer owns this selection.
+        //
+        // The first MaxShadowedPunctual point/spot lights are also assigned a punctual
+        // shadow slot: each fills a PunctualShadowRecord (its view(s) via Plan 01's
+        // Compute*ShadowView with the atlas tile-remap baked in) and carries its slot in
+        // GpuLight::Cone.z (-1 for unshadowed), so the lighting pass samples Records[slot]
+        // without a new GpuLight field. The records ride the set-1 binding-3 ring.
         std::array<GpuLight, SceneView::MaxLights> packedLights{};
+        PunctualShadowBlock punctualBlock{};
+        std::array<PunctualShadowRecord, MaxShadowedPunctual> punctualRecords{};
         u32 lightCount = 0;
+        u32 punctualCount = 0;
         bool haveDirectional = false;
         vec3 directionalTravel{0.0f, -1.0f, 0.0f};
         for (auto [entity, light] : view.World.View<Light>())
@@ -1614,14 +1756,51 @@ namespace Veng::Renderer
             const f32 cosInner = std::cos(light.InnerCone);
             const f32 cosOuter = std::cos(light.OuterCone);
 
+            // Assign the first MaxShadowedPunctual point/spot lights a shadow slot and
+            // fill its record; the rest (and every directional light) carry slot -1.
+            f32 shadowSlot = -1.0f;
+            if (punctualCount < MaxShadowedPunctual &&
+                (light.Type == LightType::Point || light.Type == LightType::Spot))
+            {
+                const u32 slot = punctualCount;
+                // A small fixed bias the lighting pass adds to the compared depth;
+                // the lighting sample (Plan 04) consumes it.
+                constexpr f32 PunctualBias = 0.0015f;
+                PunctualShadowRecord& record = punctualRecords[slot];
+                if (light.Type == LightType::Spot)
+                {
+                    const SpotShadowView spotView =
+                        ComputeSpotShadowView(worldPos, light.Direction, light.Range, light.OuterCone);
+                    // A spot uses face 0; the remaining faces stay identity (unused).
+                    record.ViewProj[0] = ComposePunctualTileRemap(spotView.ViewProj, slot, 0);
+                    record.Params = vec4(2.0f, spotView.Near, spotView.Far, PunctualBias);
+                }
+                else
+                {
+                    const PointShadowView pointView = ComputePointShadowView(worldPos, light.Range);
+                    for (u32 f = 0; f < CubeFaceCount; ++f)
+                        record.ViewProj[f] = ComposePunctualTileRemap(pointView.ViewProj[f], slot, f);
+                    record.Params = vec4(1.0f, pointView.Near, pointView.Far, PunctualBias);
+                }
+                record.PositionRange = vec4(worldPos, light.Range);
+
+                shadowSlot = static_cast<f32>(slot);
+                ++punctualCount;
+            }
+
             packedLights[lightCount] = GpuLight{
                 .PositionRange = vec4(worldPos, light.Range),
                 .DirectionType = vec4(light.Direction, static_cast<f32>(light.Type)),
                 .ColorIntensity = vec4(light.Color, light.Intensity),
-                .Cone = vec4(cosInner, cosOuter, 0.0f, 0.0f),
+                .Cone = vec4(cosInner, cosOuter, shadowSlot, 0.0f),
             };
             ++lightCount;
         }
+
+        // Mirror the filled records into the GPU block (the unused slots stay zeroed →
+        // Params.x type = 0, read as "no map").
+        for (u32 s = 0; s < punctualCount; ++s)
+            punctualBlock.Records[s] = punctualRecords[s];
 
         // Bring the broadphase current with the scene: it re-gathers the resident mesh
         // candidates and rebuilds its BVH only when the scene's spatial version moved
@@ -1647,6 +1826,8 @@ namespace Veng::Renderer
         resolvedView.LightCount = lightCount;
         resolvedView.CascadeViewProj = cascades.ViewProj;
         resolvedView.CascadeCount = cascades.Count;
+        resolvedView.PunctualShadows = punctualRecords;
+        resolvedView.PunctualShadowCount = punctualCount;
         resolvedView.Visible = m_Broadphase.GetCandidates();
         resolvedView.Broadphase = &m_Broadphase;
 
@@ -1703,6 +1884,13 @@ namespace Veng::Renderer
                         static_cast<usize>(frameIndex) * m_ShadowRingStride,
                     &shadowConstants, sizeof(ShadowConstantsBlock));
 
+        // Flush the punctual records into this frame-in-flight's binding-3 region (the
+        // same safe current-region write, selected by the bind-time dynamic offset).
+        // The unused slots stay zeroed, so a budget-zero frame reads "no map".
+        std::memcpy(static_cast<u8*>(m_PunctualShadowBuffer->GetMappedData()) +
+                        static_cast<usize>(frameIndex) * m_PunctualRingStride,
+                    &punctualBlock, sizeof(PunctualShadowBlock));
+
         // Every declared import must be bound; the bloom imports are declared only
         // when the chain is active, so they are appended only then.
         vector<RenderGraph::ImportBinding> bindings = {
@@ -1741,4 +1929,5 @@ namespace Veng::Renderer
     Ref<ImageView> SceneRenderer::GetDepthView() const { return m_DepthView; }
     Ref<ImageView> SceneRenderer::GetHdrView() const { return m_HdrView; }
     Ref<ImageView> SceneRenderer::GetBloomResultView() const { return m_BloomResultView; }
+    Ref<ImageView> SceneRenderer::GetPunctualShadowView() const { return m_PunctualShadowView; }
 }
