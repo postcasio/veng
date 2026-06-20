@@ -1,0 +1,78 @@
+# libveng_editor — the editor framework
+
+The editor is a separate executable, not part of the runtime. It is built on the
+engine ([engine/CLAUDE.md](../engine/CLAUDE.md)) — `Veng::UI`, `SceneRenderer`,
+`AssetManager`, and the reflection layer — and on the cook pipeline
+([cooker/CLAUDE.md](../cooker/CLAUDE.md)) for its cook-on-demand loop. Project-wide
+conventions live in the [root CLAUDE.md](../CLAUDE.md).
+
+`libveng_editor` is the editor **framework** library; the `<name>-editor` exe
+(produced by `veng_add_editor`) links `libveng`, `libveng_editor`, and `libveng_cook`,
+and `dlopen`s the game module the same way the launcher does — but passing a non-null
+`EditorRegistry*` in `VengModuleHost::Editor`.
+
+- **`EditorHost`** is an `Application` subclass living in `libveng_editor`. It builds a
+  top-level single-window `DockSpace` (`ImGuiConfigFlags_DockingEnable`; multi-viewport
+  OS windows are not built — they conflict with the single-offscreen-composite model),
+  owns the panel set (open/close state, Window menu, dock layout), and loads the game
+  module with `Editor = &m_EditorRegistry`.
+- **`EditorPanel`** is the panel base class: a `Title()` / `OnImGui()` virtual interface;
+  the host drives it each frame and owns its visibility. Built-in panels: scene viewport,
+  asset browser, inspector, console/log.
+- **`EditorRegistry`** is defined in `libveng_editor` and **forward-declared** in
+  `engine/include/Veng/Module/Module.h` (so `libveng` stays clean). It holds the
+  `AssetType`→editor-factory map (double-click an asset opens its editor),
+  `RegisterPanel` for game-contributed panels, and `RegisterFieldWidget(TypeId,
+  FieldWidgetFn)` for custom inspector widgets. It is non-null in `VengModuleHost` only
+  in the editor host.
+- **Reflection-driven inspector.** Selecting an entity walks its components through the
+  host-owned `TypeRegistry` / `FieldDescriptor` layer (`Scene::ForEachComponent`), drawing
+  a built-in widget per `FieldClass`
+  (Scalar/Vector/Quaternion/String/AssetHandle/Enum/Struct/Matrix/Reference); a
+  `RegisterFieldWidget` entry overrides the built-in for a given `TypeId`. The per-field draw
+  is the shared `DrawFieldWidget` helper (`editor/src/FieldWidget.{h,cpp}`, taking a
+  `FieldWidgetContext { AssetManager&, const AssetSourceIndex&, const EditorRegistry& }`) —
+  the entity inspector and the node-property inspector both call it, so the two share
+  identical widget behavior. The `AssetHandle` widget is an asset **picker** (a combo over
+  the `AssetSourceIndex` entries of the field's `AssetType`), not a read-only label.
+- **Cook-on-demand keeps the importer boundary.** `libveng_cook` is linked **only into
+  the editor exe** — never `libveng_editor`, never `libgame` — so the editor framework
+  library stays importer-free. The exe injects a `CookBackend` implementation;
+  `EditorHost::RequestCook(CookRequest, callback)` cooks a single source off the render
+  thread via `TaskSystem` (`CookSession` → `Task<vector<u8>>`), then mounts the resulting
+  in-memory archive via `AssetManager::MountMemory` and hot-reloads behind the stable
+  `AssetHandle`.
+- **The texture editor is the template.** `TextureEditorPanel` previews via a render
+  target (`CreateTexture` → `ImGui::Image`), edits `.tex.json` settings (sRGB + sampler
+  filter/wrap), recooks live (300ms-debounced), and round-trips the JSON on save —
+  patching known keys, preserving unknown ones.
+- **`VengEditor/NodeGraph/` is a named, reusable node-graph surface.** A generic,
+  imnodes-free, device-free **topology core** (`NodeGraph` — generational `NodeId`, `PinType`,
+  the mutation vocabulary, direction/arity/acyclicity validation, a construction-time
+  `CanConnectFn`/`PinShapeFn`/`PropertySizeFn` hook set) + a data-driven `NodeType`/
+  `NodeCatalog` + graph (de)serialization to/from a JSON document string (the public surface
+  stays free of the JSON library type). It is reusable by any editor. The material editor
+  (and future editors — the scene editor) consume it from editor src. imnodes is used **only
+  by the editor** (linked PRIVATE into `libveng_editor`, src-only — its header never appears
+  in a `VengEditor/` public header; its symbols are vendored in `libveng`'s ImGui aggregation
+  TU and imported across the PUBLIC `veng::veng` link).
+- **Node types are data, not subclasses.** A `NodeType` is pins (typed in/out) + a reflected
+  property struct; a node instance stores property bytes the reflection serializer and
+  inspector widgets walk, exactly like an ECS component. `NodeTypeId` is editor-local
+  (defined in `NodeGraph.h`), distinct from the runtime `TypeId` space; pin data types reuse
+  builtin leaf `TypeId`s.
+- **The material editor authors a graph compiled to a `.vmat` field list** (v1 binds params
+  to an author-provided shader — no node→Slang codegen). The graph (nodes, positions,
+  property values, links) is embedded under an `"_editor"` key in the `.vmat.json`, and
+  `fields` is regenerated on compile (reusing the texture editor's preserve-unknown-keys JSON
+  round-trip). `MaterialEditorPanel` drives an imnodes canvas over the graph and a
+  node-property inspector reusing the per-`FieldClass` widgets. Textures are node properties
+  (`FieldClass::AssetHandle`), not wired pins, so the topology core stays asset-agnostic. The
+  node catalog is **domain-aware** (`RegisterMaterialNodeTypes` takes the domain): the
+  `MaterialOutput` node's pins follow the domain's output contract (`Color` for PostProcess)
+  rather than only mirroring the loaded shader's `GetFields()`, and compile writes the
+  `"domain"` key. Node→Slang codegen — every node an expression emitter generating the
+  fragment source — remains the named follow-on.
+- **`MaterialPreview` renders one material on a sphere via `SceneRenderer`** into an ImGui
+  texture; the edit loop recooks off-thread and hot-reloads behind the stable `AssetHandle`,
+  re-fetching the texture after the recompile/resize invalidates `GetOutput()`.
