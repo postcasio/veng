@@ -504,3 +504,138 @@ TEST_CASE("An unknown variable-length record is skipped by its length prefix")
     CHECK(dst.A == doctest::Approx(2.5f));
     CHECK(dst.B == 0u); // Note skipped, no descriptor named B in the data
 }
+
+// ---- Truncated input is a recoverable error, not an abort ------------------
+//
+// A truncated byte stream — a length prefix or value that runs past the end of
+// the buffer — makes ReadFields return an error in-process; the read never
+// aborts and never reads past the span. Each case targets a distinct guard.
+
+namespace
+{
+    void PushU32(vector<u8>& out, u32 value)
+    {
+        const auto* p = reinterpret_cast<const u8*>(&value);
+        out.insert(out.end(), p, p + sizeof(value));
+    }
+}
+
+TEST_CASE("Truncated record count returns an error")
+{
+    TypeRegistry registry = MakeRegistry();
+
+    // Fewer than four bytes: the leading record-count ReadU32 overruns.
+    const u8 bytes[2] = {0x01, 0x00};
+    Transform dst;
+    const VoidResult result = ReadFields(std::span<const u8>(bytes, sizeof(bytes)), &dst,
+                                         registry.Info(registry.IdOf<Transform>()), registry);
+    CHECK_FALSE(result);
+}
+
+TEST_CASE("Truncated leaf value returns an error")
+{
+    TypeRegistry registry = MakeRegistry();
+    const TypeInfo& info = registry.Info(registry.IdOf<Transform>());
+
+    Transform src;
+    vector<u8> bytes;
+    WriteFields(bytes, &src, info, registry);
+
+    // Cut into the last field's value region: its declared value length now
+    // exceeds what remains, tripping the field-value guard.
+    bytes.resize(bytes.size() - 8);
+    Transform dst;
+    const VoidResult result = ReadFields(bytes, &dst, info, registry);
+    CHECK_FALSE(result);
+}
+
+TEST_CASE("Truncated string length prefix returns an error")
+{
+    TypeRegistry registry = MakeRegistry();
+    const TypeInfo& info = registry.Info(registry.IdOf<Name>());
+
+    // A hand-built Name record: one field "Value", a value region of four bytes
+    // declaring a 100-char string, but no string bytes follow. The String guard
+    // catches the overrun.
+    vector<u8> bytes;
+    PushU32(bytes, 1);   // record count
+    PushU32(bytes, 5);   // name length
+    bytes.insert(bytes.end(), {'V', 'a', 'l', 'u', 'e'});
+    PushU32(bytes, 4);   // value length (just the inner length prefix)
+    PushU32(bytes, 100); // inner string length — overruns the record
+
+    Name dst;
+    const VoidResult result = ReadFields(bytes, &dst, info, registry);
+    CHECK_FALSE(result);
+}
+
+TEST_CASE("Truncated asset id returns an error")
+{
+    TypeRegistry registry = MakeRegistry();
+    const TypeInfo& info = registry.Info(registry.IdOf<WithAsset>());
+
+    // A Mesh AssetHandle field whose value region is fewer than the 8 id bytes.
+    vector<u8> bytes;
+    PushU32(bytes, 1);   // record count
+    PushU32(bytes, 4);   // name length
+    bytes.insert(bytes.end(), {'M', 'e', 's', 'h'});
+    PushU32(bytes, 4);   // value length — only four bytes where eight are needed
+    PushU32(bytes, 0);   // four payload bytes
+
+    WithAsset dst;
+    const VoidResult result = ReadFields(bytes, &dst, info, registry);
+    CHECK_FALSE(result);
+}
+
+TEST_CASE("Truncated field name returns an error")
+{
+    TypeRegistry registry = MakeRegistry();
+    const TypeInfo& info = registry.Info(registry.IdOf<Inner>());
+
+    // A record whose declared name length runs past the buffer.
+    vector<u8> bytes;
+    PushU32(bytes, 1);    // record count
+    PushU32(bytes, 64);   // name length — far past the remaining bytes
+    bytes.insert(bytes.end(), {'A'});
+
+    Inner dst;
+    const VoidResult result = ReadFields(bytes, &dst, info, registry);
+    CHECK_FALSE(result);
+}
+
+TEST_CASE("A valid round-trip returns a value")
+{
+    TypeRegistry registry = MakeRegistry();
+
+    PlainData src{0.75f, "tag"};
+    vector<u8> bytes;
+    WriteFields(bytes, &src, registry.Info(registry.IdOf<PlainData>()), registry);
+
+    PlainData dst;
+    const VoidResult result = ReadFields(bytes, &dst,
+                                         registry.Info(registry.IdOf<PlainData>()), registry);
+    REQUIRE(result);
+    CHECK(dst.X == doctest::Approx(0.75f));
+    CHECK(dst.Label == "tag");
+}
+
+TEST_CASE("Drift recovery returns a value")
+{
+    TypeRegistry registry = MakeRegistry();
+
+    // Write the full Inner, then append an unknown trailing record's worth of
+    // garbage and read into a descriptor missing field B: an unknown record is
+    // skipped and an absent descriptor keeps its default — both succeed.
+    Inner src{3.0f, 17u};
+    vector<u8> bytes;
+    WriteFields(bytes, &src, registry.Info(registry.IdOf<Inner>()), registry);
+
+    TypeInfo trimmed = registry.Info(registry.IdOf<Inner>());
+    trimmed.Fields.pop_back(); // drop B; its record is skipped on read
+
+    Inner dst;
+    const VoidResult result = ReadFields(bytes, &dst, trimmed, registry);
+    REQUIRE(result);
+    CHECK(dst.A == doctest::Approx(3.0f));
+    CHECK(dst.B == 0u); // descriptor-only field keeps its default
+}

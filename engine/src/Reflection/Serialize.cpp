@@ -9,8 +9,8 @@ namespace Veng
 {
     namespace
     {
-        usize ReadFieldsInner(std::span<const u8> in, void* obj, const TypeInfo& type,
-                              const TypeRegistry& registry);
+        Result<usize> ReadFieldsInner(std::span<const u8> in, void* obj, const TypeInfo& type,
+                                      const TypeRegistry& registry);
 
         // ----- little-endian-agnostic raw append/read (host byte order; this is
         // an in-memory seam, not an on-disk format) ------------------------------
@@ -26,9 +26,10 @@ namespace Veng
             AppendBytes(out, &value, sizeof(value));
         }
 
-        u32 ReadU32(std::span<const u8> in, usize& cursor)
+        Result<u32> ReadU32(std::span<const u8> in, usize& cursor)
         {
-            VE_ASSERT(cursor + sizeof(u32) <= in.size(), "ReadFields: truncated u32");
+            if (cursor + sizeof(u32) > in.size())
+                return std::unexpected("ReadFields: truncated u32");
             u32 value = 0;
             std::memcpy(&value, in.data() + cursor, sizeof(value));
             cursor += sizeof(value);
@@ -88,9 +89,11 @@ namespace Veng
         }
 
         // Reads a field's value from in[cursor..] into obj+offset. The byte count
-        // consumed must match WriteValue exactly.
-        void ReadValue(std::span<const u8> in, usize& cursor, void* fieldPtr,
-                       const FieldDescriptor& field, const TypeRegistry& registry)
+        // consumed must match WriteValue exactly. A value that runs past the end of
+        // `in` is a recoverable error; a descriptor naming an unregistered type is
+        // a fatal schema fault.
+        VoidResult ReadValue(std::span<const u8> in, usize& cursor, void* fieldPtr,
+                             const FieldDescriptor& field, const TypeRegistry& registry)
         {
             switch (field.Class)
             {
@@ -101,23 +104,28 @@ namespace Veng
                 case FieldClass::Enum:
                 {
                     const usize size = registry.Info(field.Type).Size;
-                    VE_ASSERT(cursor + size <= in.size(), "ReadFields: truncated leaf");
+                    if (cursor + size > in.size())
+                        return std::unexpected("ReadFields: truncated leaf");
                     std::memcpy(fieldPtr, in.data() + cursor, size);
                     cursor += size;
                     break;
                 }
                 case FieldClass::String:
                 {
-                    const u32 length = ReadU32(in, cursor);
-                    VE_ASSERT(cursor + length <= in.size(), "ReadFields: truncated string");
+                    const Result<u32> length = ReadU32(in, cursor);
+                    if (!length)
+                        return std::unexpected(length.error());
+                    if (cursor + *length > in.size())
+                        return std::unexpected("ReadFields: truncated string");
                     auto& value = *static_cast<string*>(fieldPtr);
-                    value.assign(reinterpret_cast<const char*>(in.data() + cursor), length);
-                    cursor += length;
+                    value.assign(reinterpret_cast<const char*>(in.data() + cursor), *length);
+                    cursor += *length;
                     break;
                 }
                 case FieldClass::AssetHandle:
                 {
-                    VE_ASSERT(cursor + sizeof(u64) <= in.size(), "ReadFields: truncated asset id");
+                    if (cursor + sizeof(u64) > in.size())
+                        return std::unexpected("ReadFields: truncated asset id");
                     u64 id = 0;
                     std::memcpy(&id, in.data() + cursor, sizeof(id));
                     cursor += sizeof(id);
@@ -129,8 +137,14 @@ namespace Veng
                 case FieldClass::Reference:
                 {
                     auto& entity = *static_cast<Entity*>(fieldPtr);
-                    entity.Index = ReadU32(in, cursor);
-                    entity.Generation = ReadU32(in, cursor);
+                    const Result<u32> index = ReadU32(in, cursor);
+                    if (!index)
+                        return std::unexpected(index.error());
+                    const Result<u32> generation = ReadU32(in, cursor);
+                    if (!generation)
+                        return std::unexpected(generation.error());
+                    entity.Index = *index;
+                    entity.Generation = *generation;
                     break;
                 }
                 case FieldClass::Struct:
@@ -140,31 +154,43 @@ namespace Veng
                     // caller, but here we recurse over exactly the nested record's
                     // bytes, so hand it the remaining span and advance by what it
                     // consumed. ReadFields below reads a self-delimited blob.
-                    const usize consumed = ReadFieldsInner(in.subspan(cursor), fieldPtr,
-                                                           nested, registry);
-                    cursor += consumed;
+                    const Result<usize> consumed = ReadFieldsInner(in.subspan(cursor), fieldPtr,
+                                                                   nested, registry);
+                    if (!consumed)
+                        return std::unexpected(consumed.error());
+                    cursor += *consumed;
                     break;
                 }
             }
+
+            return {};
         }
 
         // Core reader: walks a value's records from the start of `in`, returns the
         // number of bytes consumed (so a nested struct can advance its parent).
-        usize ReadFieldsInner(std::span<const u8> in, void* obj, const TypeInfo& type,
-                              const TypeRegistry& registry)
+        Result<usize> ReadFieldsInner(std::span<const u8> in, void* obj, const TypeInfo& type,
+                                      const TypeRegistry& registry)
         {
             usize cursor = 0;
-            const u32 recordCount = ReadU32(in, cursor);
+            const Result<u32> recordCount = ReadU32(in, cursor);
+            if (!recordCount)
+                return std::unexpected(recordCount.error());
 
-            for (u32 i = 0; i < recordCount; ++i)
+            for (u32 i = 0; i < *recordCount; ++i)
             {
-                const u32 nameLen = ReadU32(in, cursor);
-                VE_ASSERT(cursor + nameLen <= in.size(), "ReadFields: truncated field name");
-                const string_view name(reinterpret_cast<const char*>(in.data() + cursor), nameLen);
-                cursor += nameLen;
+                const Result<u32> nameLen = ReadU32(in, cursor);
+                if (!nameLen)
+                    return std::unexpected(nameLen.error());
+                if (cursor + *nameLen > in.size())
+                    return std::unexpected("ReadFields: truncated field name");
+                const string_view name(reinterpret_cast<const char*>(in.data() + cursor), *nameLen);
+                cursor += *nameLen;
 
-                const u32 valueLen = ReadU32(in, cursor);
-                VE_ASSERT(cursor + valueLen <= in.size(), "ReadFields: truncated field value");
+                const Result<u32> valueLen = ReadU32(in, cursor);
+                if (!valueLen)
+                    return std::unexpected(valueLen.error());
+                if (cursor + *valueLen > in.size())
+                    return std::unexpected("ReadFields: truncated field value");
 
                 // Locate the matching descriptor by name. A record with no
                 // matching descriptor is skipped (schema drift tolerance).
@@ -183,11 +209,13 @@ namespace Veng
                 {
                     void* fieldPtr = static_cast<u8*>(obj) + match->Offset;
                     usize valueCursor = cursor;
-                    ReadValue(in.subspan(0, cursor + valueLen), valueCursor, fieldPtr,
-                              *match, registry);
+                    if (VoidResult read = ReadValue(in.subspan(0, cursor + *valueLen), valueCursor,
+                                                    fieldPtr, *match, registry);
+                        !read)
+                        return std::unexpected(read.error());
                 }
 
-                cursor += valueLen;
+                cursor += *valueLen;
             }
 
             return cursor;
@@ -217,9 +245,12 @@ namespace Veng
         }
     }
 
-    void ReadFields(std::span<const u8> in, void* obj, const TypeInfo& type,
-                    const TypeRegistry& registry)
+    VoidResult ReadFields(std::span<const u8> in, void* obj, const TypeInfo& type,
+                          const TypeRegistry& registry)
     {
-        ReadFieldsInner(in, obj, type, registry);
+        Result<usize> consumed = ReadFieldsInner(in, obj, type, registry);
+        if (!consumed)
+            return std::unexpected(consumed.error());
+        return {};
     }
 }

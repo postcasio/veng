@@ -355,18 +355,6 @@ if (VENG_BUILD_TESTS)
     set_tests_properties(death.transform_parent_dead PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "Parent references a dead or stale entity")
 
-    add_test(NAME death.serialize_truncated_header COMMAND veng_death serialize_truncated_header)
-    set_tests_properties(death.serialize_truncated_header PROPERTIES LABELS death
-            PASS_REGULAR_EXPRESSION "ReadFields: truncated u32")
-
-    add_test(NAME death.serialize_truncated_value COMMAND veng_death serialize_truncated_value)
-    set_tests_properties(death.serialize_truncated_value PROPERTIES LABELS death
-            PASS_REGULAR_EXPRESSION "ReadFields: truncated field value")
-
-    add_test(NAME death.serialize_truncated_string COMMAND veng_death serialize_truncated_string)
-    set_tests_properties(death.serialize_truncated_string PROPERTIES LABELS death
-            PASS_REGULAR_EXPRESSION "ReadFields: truncated string")
-
     # GPU-coupled death cases (need a headless Context; skip with no driver).
     add_test(NAME death.buffer_upload_overrun COMMAND veng_death buffer_upload_overrun)
     set_tests_properties(death.buffer_upload_overrun PROPERTIES LABELS "gpu;death"

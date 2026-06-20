@@ -44,7 +44,6 @@
 #include <Veng/Renderer/VertexBufferLayout.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
-#include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
@@ -216,68 +215,6 @@ namespace
         (void)WorldMatrix(*scene, child);
     }
 
-    // -- Reflection serializer death cases (pure-logic, no device) -----------
-    //
-    // The serializer's contract on malformed bytes is a loud fatal assert, never
-    // silent UB. Each case truncates a different guard: the leading record count,
-    // a field value region, and a string body whose declared length overruns its
-    // record.
-
-    void RunSerializeTruncatedHeader()
-    {
-        TypeRegistry registry;
-        registry.Register<Transform>();
-
-        // Fewer than four bytes: the very first ReadU32 (the record count) aborts.
-        const u8 bytes[2] = {0x01, 0x00};
-        Transform dst;
-        ReadFields(std::span<const u8>(bytes, sizeof(bytes)), &dst,
-                   registry.Info(registry.IdOf<Transform>()), registry);
-    }
-
-    void RunSerializeTruncatedValue()
-    {
-        TypeRegistry registry;
-        registry.Register<Transform>();
-        const TypeInfo& info = registry.Info(registry.IdOf<Transform>());
-
-        Transform src;
-        vector<u8> bytes;
-        WriteFields(bytes, &src, info, registry);
-
-        // Cut into the last field's value region: the record's declared value
-        // length now exceeds what remains, tripping the field-value guard.
-        bytes.resize(bytes.size() - 8);
-        Transform dst;
-        ReadFields(bytes, &dst, info, registry);
-    }
-
-    void RunSerializeTruncatedString()
-    {
-        TypeRegistry registry;
-        registry.Register<Name>();
-        const TypeInfo& info = registry.Info(registry.IdOf<Name>());
-
-        auto pushU32 = [](vector<u8>& out, u32 value)
-        {
-            const auto* p = reinterpret_cast<const u8*>(&value);
-            out.insert(out.end(), p, p + sizeof(value));
-        };
-
-        // A hand-built Name record: one field "Value", a value region of exactly
-        // four bytes that declares a 100-char string — but no string bytes follow.
-        // The string guard catches the overrun.
-        vector<u8> bytes;
-        pushU32(bytes, 1);                 // record count
-        pushU32(bytes, 5);                 // name length
-        bytes.insert(bytes.end(), {'V', 'a', 'l', 'u', 'e'});
-        pushU32(bytes, 4);                 // value length (just the inner length prefix)
-        pushU32(bytes, 100);               // inner string length — overruns the record
-
-        Name dst;
-        ReadFields(bytes, &dst, info, registry);
-    }
-
     // -- GPU-coupled death cases (need a headless Context) -------------------
 
     // Bring up a headless Context, run `body` (which is expected to abort), and
@@ -389,9 +326,6 @@ int main(int argc, char** argv)
     else if (name == "type_id_collision") RunTypeIdCollision();
     else if (name == "transform_parent_cycle") RunTransformParentCycle();
     else if (name == "transform_parent_dead") RunTransformParentDead();
-    else if (name == "serialize_truncated_header") RunSerializeTruncatedHeader();
-    else if (name == "serialize_truncated_value") RunSerializeTruncatedValue();
-    else if (name == "serialize_truncated_string") RunSerializeTruncatedString();
     // GPU-coupled
     else if (name == "buffer_upload_overrun") RunBufferUploadOverrun();
     else if (name == "index_u16_into_u32") RunIndexU16IntoU32();

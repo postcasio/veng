@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Result.h>
 #include <Veng/Reflection/TypeRegistry.h>
 
 #include <span>
@@ -31,7 +32,11 @@ namespace Veng
                             const TypeRegistry& registry);
 
     // Reads fields from in into a (default-constructed) obj per the descriptors,
-    // tolerating drift in either direction.
-    VE_API void ReadFields(std::span<const u8> in, void* obj, const TypeInfo& type,
-                           const TypeRegistry& registry);
+    // tolerating drift in either direction. A truncated record — a length prefix
+    // or value that runs past the end of `in` — is a recoverable error, not an
+    // abort: the byte stream may come from a corrupt cooked blob or a mid-edit
+    // source. A descriptor that names a type the registry does not hold is a
+    // schema/registration fault and stays a fatal assert.
+    VE_API VoidResult ReadFields(std::span<const u8> in, void* obj, const TypeInfo& type,
+                                 const TypeRegistry& registry);
 }
