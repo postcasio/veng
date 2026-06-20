@@ -34,10 +34,15 @@
 #include <Veng/Asset/Shader.h>
 #include <Veng/Renderer/Types.h>
 
+#include <Veng/Math/Frustum.h>
+#include <Veng/Renderer/ShadowCascades.h>
+
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/Transforms.h>
+#include <Veng/Scene/Visibility.h>
 
 #include <gpu/fixture.h>
 
@@ -242,6 +247,233 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const vector<u8> resampled = SampleThroughBindless(Context, assets, renderer->GetOutput(), resizedExtent);
     REQUIRE(resampled.size() == static_cast<size_t>(resizedExtent.x) * resizedExtent.y * 4);
     CHECK(resampled[3] == 255);
+}
+
+namespace
+{
+    // Adds an entity carrying a Transform at `position` and a MeshRenderer holding
+    // the adopted cube; the gather counts it as a resident candidate. The cube has
+    // no material, so the g-buffer pass records no DrawIndexed for it but still
+    // counts it as "drawn" (it passes the cull and material-readiness skips) — the
+    // counters this test reads.
+    Entity AddCubeAt(Scene& scene, AssetManager& assets, const Ref<Mesh>& cube, vec3 position)
+    {
+        const Entity entity = scene.CreateEntity();
+        scene.Add<Transform>(entity).Position = position;
+        scene.Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+        return entity;
+    }
+}
+
+// The cull guard (the planset's distinguishing assertion — the byte-identical golden
+// proves nothing about whether culling ran). It drives the draw-count getters over
+// purpose-built scenes: an off-frustum mesh is gathered but not drawn; the same scene
+// with FrustumCull off draws strictly more; an all-visible scene draws its full
+// count; an all-culled frame draws zero (exercising the zero-draw path the validation
+// gate pins); and the cascade-frustum cull keeps an off-screen, light-ward caster.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: frustum culling drops off-frustum meshes and counts draws")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
+    REQUIRE(mountResult.has_value());
+
+    constexpr uvec2 extent{64, 64};
+
+    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.0f), "Cull Cube");
+
+    Camera camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 6.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        // Albedo terminates after the g-buffer — no light/shadow setup needed for a
+        // draw-count assertion, and the g-buffer pass (the one this test counts) runs.
+        .Settings = {.Mode = DebugView::Albedo},
+    });
+
+    auto Render = [&](const Scene& scene)
+    {
+        Context.ImmediateCommands([&](CommandBuffer& cmd)
+        {
+            renderer->Execute(cmd, Renderer::SceneView{.World = scene, .Camera = camera, .Delta = 0.0f});
+        });
+    };
+
+    SUBCASE("off-frustum mesh is gathered but not drawn; FrustumCull off draws both")
+    {
+        const Unique<Scene> scene = Scene::Create(Types);
+        AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, 0.0f));    // dead center, in view
+        AddCubeAt(*scene, assets, cube, vec3(1000.0f, 0.0f, 0.0f)); // far to the side, out of view
+
+        // Culling on (default): both gather, only the in-view cube draws.
+        renderer->Configure({.Mode = DebugView::Albedo, .FrustumCull = true});
+        Render(*scene);
+        CHECK(renderer->GetLastVisibleCount() == 2);
+        CHECK(renderer->GetLastDrawnCount() == 1);
+
+        // Same scene, culling off: the off-frustum cube is no longer dropped — both
+        // draw. Strictly more than with culling on (the fixture's off-frustum mesh is
+        // what makes "strictly more" hold).
+        renderer->Configure({.Mode = DebugView::Albedo, .FrustumCull = false});
+        Render(*scene);
+        CHECK(renderer->GetLastVisibleCount() == 2);
+        CHECK(renderer->GetLastDrawnCount() == 2);
+    }
+
+    SUBCASE("a behind-camera mesh is culled")
+    {
+        const Unique<Scene> scene = Scene::Create(Types);
+        AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, 0.0f));    // in front of the camera
+        AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, 100.0f));  // behind the camera (eye at z=6)
+
+        renderer->Configure({.Mode = DebugView::Albedo, .FrustumCull = true});
+        Render(*scene);
+        CHECK(renderer->GetLastVisibleCount() == 2);
+        CHECK(renderer->GetLastDrawnCount() == 1);
+    }
+
+    SUBCASE("an all-visible scene draws its full count")
+    {
+        const Unique<Scene> scene = Scene::Create(Types);
+        AddCubeAt(*scene, assets, cube, vec3(-1.5f, 0.0f, 0.0f));
+        AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, 0.0f));
+        AddCubeAt(*scene, assets, cube, vec3(1.5f, 0.0f, 0.0f));
+
+        // Every cube sits inside the camera frustum, so culling on draws every one —
+        // no false cull (the case the off-frustum fixture cannot cover).
+        renderer->Configure({.Mode = DebugView::Albedo, .FrustumCull = true});
+        Render(*scene);
+        CHECK(renderer->GetLastVisibleCount() == 3);
+        CHECK(renderer->GetLastDrawnCount() == 3);
+    }
+
+    SUBCASE("an all-culled frame records zero draws")
+    {
+        const Unique<Scene> scene = Scene::Create(Types);
+        // Every cube is far outside the frustum; with culling on, the g-buffer pass
+        // records ZERO draws — the empty-draw-set path the validation gate pins.
+        AddCubeAt(*scene, assets, cube, vec3(1000.0f, 0.0f, 0.0f));
+        AddCubeAt(*scene, assets, cube, vec3(-1000.0f, 0.0f, 0.0f));
+
+        renderer->Configure({.Mode = DebugView::Albedo, .FrustumCull = true});
+        Render(*scene);
+        CHECK(renderer->GetLastVisibleCount() == 2);
+        CHECK(renderer->GetLastDrawnCount() == 0);
+
+        // The frame still completes cleanly: the g-buffer pass cleared and
+        // transitioned its attachments per the baked schedule, drawing nothing.
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+    }
+
+    // The off-screen shadow caster: a caster placed outside the camera frustum on the
+    // light-ward side, whose shadow falls into view, must NOT be culled by the cascade
+    // it casts into. The byte-identical golden structurally cannot cover this (a
+    // wrongly-culled caster is a missing shadow, not a moved pixel), so this is a
+    // device-free check over ComputeCascades + Frustum + Intersects — the exact
+    // facility the shadow pass culls with.
+    SUBCASE("an off-screen light-ward caster survives the cascade frustum cull")
+    {
+        // A directional light traveling straight down: a caster ABOVE the camera's
+        // view, off-screen, casts its shadow downward into the visible ground.
+        const vec3 lightTravel{0.0f, -1.0f, 0.0f};
+
+        // The scene bound spans the visible ground plus the off-screen caster high
+        // above it — the near-plane extension toward the light is what catches it.
+        const Unique<Scene> scene = Scene::Create(Types);
+        const Ref<Mesh> ground = Mesh::Create(Context, Primitives::Plane(vec2(20.0f), uvec2(1)), "Cull Ground");
+        const Entity groundEntity = scene->CreateEntity();
+        scene->Add<Transform>(groundEntity);
+        scene->Add<MeshRenderer>(groundEntity).Mesh = assets.Adopt(ground);
+        // The caster sits high above the ground, beyond where the camera looks.
+        const Entity casterEntity = AddCubeAt(*scene, assets, cube, vec3(0.0f, 30.0f, 0.0f));
+
+        // A camera looking forward along the ground; the high caster is above the
+        // frustum's top plane (off-screen) but on the light-ward side.
+        Camera shadowCamera;
+        shadowCamera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+        shadowCamera.SetView(vec3(0.0f, 1.0f, 8.0f), vec3(0.0f, 0.0f, -4.0f), vec3(0.0f, 1.0f, 0.0f));
+
+        // The caster is NOT inside the camera frustum (the case that would wrongly
+        // drop it if the shadow pass culled by the camera, which it must not).
+        const Frustum cameraFrustum = Frustum::FromViewProjection(shadowCamera.ViewProjection());
+        AABB sceneBounds = AABB::Empty();
+        vector<VisibleMesh> gathered;
+        GatherMeshes(*scene, gathered, sceneBounds);
+        REQUIRE(gathered.size() == 2);
+        AABB casterBounds = AABB::Empty();
+        for (const VisibleMesh& item : gathered)
+            if (item.Owner == casterEntity)
+                casterBounds = item.WorldBounds;
+        REQUIRE_FALSE(casterBounds.IsEmpty());
+        CHECK_FALSE(Intersects(cameraFrustum, casterBounds));
+
+        // But it IS kept by some cascade frustum — the cascades are fit to the camera
+        // slice and extended toward the light, so the high light-ward caster lands in
+        // at least one cascade's frustum and survives the shadow pass's cull.
+        const CascadeData cascades = ComputeCascades(
+            shadowCamera, lightTravel, sceneBounds,
+            {.Count = MaxCascades, .Lambda = 0.85f, .Resolution = 1024});
+        bool keptBySomeCascade = false;
+        for (u32 k = 0; k < cascades.Count; ++k)
+        {
+            const Frustum cascadeFrustum = Frustum::FromViewProjection(cascades.ViewProj[k]);
+            if (Intersects(cascadeFrustum, casterBounds))
+                keptBySomeCascade = true;
+        }
+        CHECK(keptBySomeCascade);
+    }
+
+    // Per-cascade independence: each cascade culls by its OWN frustum. Cascade 0 is
+    // the tight near slice (small far split); a far-down-range mesh sits beyond it but
+    // inside the last cascade's wide slice. So the same mesh is culled from cascade 0
+    // and kept by the far cascade — the per-cascade culls do not move together.
+    // Device-free over ComputeCascades + Frustum + Intersects.
+    SUBCASE("per-cascade frustums cull independently")
+    {
+        const vec3 lightTravel{0.2f, -1.0f, 0.1f};
+
+        const Unique<Scene> scene = Scene::Create(Types);
+        // A long ground so the cascade fit spans real depth, plus a small mesh far
+        // down-range (large view depth → beyond cascade 0's near slice, inside the
+        // far cascade's).
+        const Ref<Mesh> ground = Mesh::Create(Context, Primitives::Plane(vec2(120.0f), uvec2(1)), "Indep Ground");
+        const Entity groundEntity = scene->CreateEntity();
+        scene->Add<Transform>(groundEntity);
+        scene->Add<MeshRenderer>(groundEntity).Mesh = assets.Adopt(ground);
+        const Entity farEntity = AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.5f, -55.0f));
+
+        Camera grazing;
+        grazing.SetPerspective(glm::radians(55.0f), 1.0f, 0.1f, 100.0f);
+        grazing.SetView(vec3(0.0f, 1.2f, 4.0f), vec3(0.0f, 0.0f, -40.0f), vec3(0.0f, 1.0f, 0.0f));
+
+        AABB sceneBounds = AABB::Empty();
+        vector<VisibleMesh> gathered;
+        GatherMeshes(*scene, gathered, sceneBounds);
+        AABB farBounds = AABB::Empty();
+        for (const VisibleMesh& item : gathered)
+            if (item.Owner == farEntity)
+                farBounds = item.WorldBounds;
+        REQUIRE_FALSE(farBounds.IsEmpty());
+
+        const CascadeData cascades = ComputeCascades(
+            grazing, lightTravel, sceneBounds,
+            {.Count = MaxCascades, .Lambda = 0.85f, .Resolution = 1024});
+        REQUIRE(cascades.Count >= 2);
+
+        const Frustum nearCascade = Frustum::FromViewProjection(cascades.ViewProj[0]);
+        const Frustum farCascade = Frustum::FromViewProjection(cascades.ViewProj[cascades.Count - 1]);
+
+        // The far-down-range cube lies beyond cascade 0's tight near slice but inside
+        // the far cascade's wide slice — culled from one cascade, kept by the other.
+        CHECK_FALSE(Intersects(nearCascade, farBounds));
+        CHECK(Intersects(farCascade, farBounds));
+    }
 }
 
 #ifdef GPU_GBUFFER_FIXTURE_DIR

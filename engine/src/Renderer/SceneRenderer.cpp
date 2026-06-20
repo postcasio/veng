@@ -31,6 +31,7 @@
 #include <Veng/Renderer/ShadowCascades.h>
 
 #include <Veng/Math/AABB.h>
+#include <Veng/Math/Frustum.h>
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
@@ -246,7 +247,19 @@ namespace Veng::Renderer
             {
             }
 
+            void Configure(const SceneRendererSettings& settings) override
+            {
+                m_FrustumCull = settings.FrustumCull;
+            }
+
             void Resize(const uvec2 extent) override { m_Extent = extent; }
+
+            // The address of the per-record drawn counter — meshes the last Record
+            // actually recorded, after the camera-frustum cull and the
+            // material-readiness skip. The renderer points at it once per Rebuild and
+            // reads it back through SceneRenderer::GetLastDrawnCount; the pass owns the
+            // u32 and outlives the pointer (m_Passes is rebuilt as a unit).
+            [[nodiscard]] const u32* GetLastDrawnPointer() const { return &m_LastDrawn; }
 
             void Declare(RenderGraph& graph, const PassIO& io) override
             {
@@ -296,37 +309,40 @@ namespace Veng::Renderer
                 const mat4 viewProjection = view.Camera.ViewProjection();
                 const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
-                // Each (Transform, MeshRenderer) entity draws its own mesh at its
-                // world transform; the mesh is the MeshRenderer's AssetHandle —
-                // cooked or adopted runtime primitive alike. Scene::Each yields
-                // mutable component references and the borrowed view is const; this
-                // pass only reads, so casting away const to iterate is sound.
-                const_cast<Scene&>(view.World).Each<Transform, MeshRenderer>(
-                    [&](const Entity entity, Transform&, MeshRenderer& meshRenderer)
-                {
-                    if (!meshRenderer.Mesh.IsLoaded())
-                        return;
+                // Built once outside the draw loop: the planes the camera frustum
+                // bounds, in world space, so each mesh's world bound tests directly.
+                const Frustum cameraFrustum = Frustum::FromViewProjection(viewProjection);
 
-                    const Mesh& mesh = *meshRenderer.Mesh.Get();
+                m_LastDrawn = 0;
+
+                // The gathered candidate list (one GatherMeshes pass per Execute)
+                // carries each mesh's world matrix and world bound; item.World is the
+                // same matrix WorldMatrix(view.World, entity) composed before, so the
+                // drawn pixels are unchanged — only off-frustum meshes are skipped.
+                for (const VisibleMesh& item : view.Visible)
+                {
+                    if (m_FrustumCull && !Intersects(cameraFrustum, item.WorldBounds))
+                        continue;
+
+                    const Mesh& mesh = *item.Mesh;
                     const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
 
                     bool materialsReady = true;
                     for (const AssetHandle<Material>& material : materials)
                         materialsReady = materialsReady && material.IsLoaded();
                     if (!materialsReady)
-                        return;
+                        continue;
 
                     cmd.BindVertexBuffer(mesh.GetVertexBuffer());
                     cmd.BindIndexBuffer(mesh.GetIndexBuffer());
 
-                    const mat4 world = WorldMatrix(view.World, entity);
-                    const mat4 mvp = viewProjection * world;
+                    const mat4 mvp = viewProjection * item.World;
 
                     // The normal matrix is the inverse-transpose of the model's
                     // upper 3x3 — correct under non-uniform scale. Packed
                     // column-major into three 16-byte-aligned columns matching the
                     // shader's column-major float3x3.
-                    const mat3 normalMatrix = glm::inverseTranspose(mat3(world));
+                    const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
                     const NormalMatrixPush normalPush{
                         .Column0 = vec4(normalMatrix[0], 0.0f),
                         .Column1 = vec4(normalMatrix[1], 0.0f),
@@ -352,11 +368,17 @@ namespace Veng::Renderer
 
                         cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                     }
-                });
+
+                    ++m_LastDrawn;
+                }
             }
 
             Context& m_Context;
             uvec2 m_Extent;
+            bool m_FrustumCull = true;
+            // Reset and incremented per Record (which the renderer reads back after
+            // Execute); mutable because Record is const.
+            mutable u32 m_LastDrawn = 0;
         };
 
         // The fullscreen deferred-lighting pass: samples the g-buffer (G0 albedo,
@@ -1308,6 +1330,7 @@ namespace Veng::Renderer
             m_SsaoId = graph.Import("SceneRenderer SSAO");
 
         m_Passes.clear();
+        m_GBufferDrawnCount = nullptr;
 
         // The shadow pass is first when active — it writes the shadow map the
         // lighting pass samples, so the graph orders the depth write before the
@@ -1327,7 +1350,9 @@ namespace Veng::Renderer
         // atlas (or the dummy when shadows are off, so the layout stays satisfied).
         WriteShadowAtlasBinding(shadowActive ? shadowAtlasView : m_DummyShadowView);
 
-        m_Passes.push_back(CreateUnique<GBufferScenePass>(m_Context, m_Extent));
+        auto gbufferPass = CreateUnique<GBufferScenePass>(m_Context, m_Extent);
+        m_GBufferDrawnCount = gbufferPass->GetLastDrawnPointer();
+        m_Passes.push_back(std::move(gbufferPass));
 
         // The SSAO pass writes its AO target before any later pass samples it; it owns
         // the target (recreated through the deferred Release() path on Resize/Configure)
@@ -1582,12 +1607,17 @@ namespace Veng::Renderer
             ++lightCount;
         }
 
-        // Compute the cascades once per frame. SceneBounds runs every frame but is
-        // consumed only for the per-cascade near-plane extension (off-screen
-        // casters); the cascade XY extent comes purely from the camera frustum
-        // slice. With no spatial structure yet it is a full-scene reduction over the
-        // amortized ComputeWorldMatrices pass SceneBounds shares.
-        const AABB sceneBounds = SceneBounds(view.World);
+        // Gather the resident mesh candidates once per frame into renderer scratch,
+        // exactly where and how the light pack is built. The scene passes loop this
+        // shared list and cull it against their own frustum; sceneBounds is the
+        // bound-union by-product of the same pass, so this one walk replaces a
+        // separate SceneBounds call (no second world-matrix pass).
+        AABB sceneBounds = AABB::Empty();
+        GatherMeshes(view.World, m_VisibleMeshes, sceneBounds);
+
+        // Compute the cascades once per frame. sceneBounds is consumed only for the
+        // per-cascade near-plane extension (off-screen casters); the cascade XY extent
+        // comes purely from the camera frustum slice.
         const CascadeData cascades = ComputeCascades(
             view.Camera, directionalTravel, sceneBounds,
             {.Count = m_Settings.CascadeCount, .Lambda = m_Settings.CascadeSplitLambda,
@@ -1600,6 +1630,7 @@ namespace Veng::Renderer
         resolvedView.LightCount = lightCount;
         resolvedView.CascadeViewProj = cascades.ViewProj;
         resolvedView.CascadeCount = cascades.Count;
+        resolvedView.Visible = m_VisibleMeshes;
 
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
         registry.WriteLights(std::as_bytes(std::span(packedLights.data(), lightCount)));
@@ -1681,6 +1712,9 @@ namespace Veng::Renderer
     }
 
     Ref<ImageView> SceneRenderer::GetOutput() const { return m_OutputView; }
+
+    u32 SceneRenderer::GetLastVisibleCount() const { return static_cast<u32>(m_VisibleMeshes.size()); }
+    u32 SceneRenderer::GetLastDrawnCount() const { return m_GBufferDrawnCount ? *m_GBufferDrawnCount : 0; }
     Ref<ImageView> SceneRenderer::GetAlbedoView() const { return m_AlbedoView; }
     Ref<ImageView> SceneRenderer::GetNormalView() const { return m_NormalView; }
     Ref<ImageView> SceneRenderer::GetOrmView() const { return m_OrmView; }

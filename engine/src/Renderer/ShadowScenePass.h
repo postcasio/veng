@@ -64,6 +64,7 @@ namespace Veng::Renderer
             return {m_TileColumns * m_Resolution, m_TileRows * m_Resolution};
         }
 
+        void Configure(const SceneRendererSettings& settings) override;
         void Declare(RenderGraph& graph, const PassIO& io) override;
 
     private:
@@ -76,6 +77,7 @@ namespace Veng::Renderer
         u32 m_CascadeCount;
         u32 m_TileColumns;
         u32 m_TileRows;
+        bool m_FrustumCull = true;
 
         Ref<Image> m_ShadowImage;
         Ref<ImageView> m_ShadowView;

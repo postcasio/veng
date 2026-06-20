@@ -10,6 +10,9 @@
 
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/Visibility.h>
+
+#include <span>
 
 // A long-lived, configurable render pipeline that owns an offscreen target,
 // renders a Scene from a Camera through an internal compiled RenderGraph composed
@@ -112,6 +115,15 @@ namespace Veng::Renderer
         // modulates the ambient/indirect term only; the radius/intensity/bias are
         // fixed kernel constants in the SSAO shader.
         bool AO = true;
+
+        // Whether the scene passes cull by frustum. The g-buffer pass tests each
+        // mesh's world bound against the camera frustum; the shadow pass tests it
+        // against each cascade's light frustum. Off → both record every resident
+        // mesh. The passes capture it in Configure, so a toggle drives a recompile —
+        // topology-neutral (the same passes record fewer draws), so the rebuild is a
+        // no-op beyond re-declaring; it still invalidates GetOutput() like any
+        // Configure.
+        bool FrustumCull = true;
     };
 
     struct SceneRendererInfo
@@ -167,6 +179,13 @@ namespace Veng::Renderer
         // matrices from the set-1 ShadowConstants buffer, not these.)
         std::array<mat4, MaxCascades> CascadeViewProj{};
         u32 CascadeCount = 0;
+
+        // The frame's resident mesh candidates, set by the renderer on every Execute
+        // from one GatherMeshes pass. The g-buffer pass culls this span against the
+        // camera frustum; the shadow pass culls it against each cascade's light
+        // frustum. The renderer owns it — a caller's value is overwritten. It borrows
+        // renderer scratch valid only for the Execute that gathered it.
+        std::span<const VisibleMesh> Visible;
     };
 
     class SceneRenderer
@@ -194,6 +213,15 @@ namespace Veng::Renderer
 
         // The sampleable view of the owned result. Invalidated by Resize/Configure.
         [[nodiscard]] Ref<ImageView> GetOutput() const;
+
+        // Culling stats for the last Execute. GetLastVisibleCount is the gathered
+        // candidate total (every resident (Transform, MeshRenderer) with a loaded
+        // mesh, pre-cull); GetLastDrawnCount is the meshes the g-buffer pass actually
+        // recorded (after the camera-frustum cull and the material-readiness skip).
+        // Drawn <= visible; with FrustumCull off and all materials ready they are
+        // equal. Both are zero before the first Execute.
+        [[nodiscard]] u32 GetLastVisibleCount() const;
+        [[nodiscard]] u32 GetLastDrawnCount() const;
 
         // The deferred g-buffer the geometry pass writes — the sampleable views
         // and their bindless slots. Renderer-owned and imported into the internal
@@ -416,6 +444,17 @@ namespace Veng::Renderer
         // The renderer owns its pass units; the set is rebuilt per Settings.Mode on
         // every Rebuild (the geometry pass is always first; Mode selects the tail).
         vector<Unique<ScenePass>> m_Passes;
+
+        // The per-Execute visible-candidate scratch, filled by one GatherMeshes pass
+        // at the top of Execute and pointed at by SceneView::Visible. Reused across
+        // frames (like the light pack), so the steady state allocates nothing.
+        vector<VisibleMesh> m_VisibleMeshes;
+
+        // The g-buffer pass's per-record drawn counter, pointed at every Rebuild
+        // (the pass owns the u32 through m_Passes; the renderer reads it back through
+        // GetLastDrawnCount). Null before the first Rebuild. A raw pointer rather than
+        // a typed pass back-reference because GBufferScenePass is a .cpp-local type.
+        const u32* m_GBufferDrawnCount = nullptr;
 
         // The imported ids every rebuild re-declares, bound to their concrete
         // views per Execute and threaded to the pass units through PassIO.

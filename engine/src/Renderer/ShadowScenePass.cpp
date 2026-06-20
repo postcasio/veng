@@ -20,9 +20,11 @@
 #include <Veng/Asset/Shader.h>
 #include <Veng/Asset/VertexLayout.h>
 
+#include <Veng/Math/Frustum.h>
+
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
-#include <Veng/Scene/Transforms.h>
+#include <Veng/Scene/Visibility.h>
 
 namespace Veng::Renderer
 {
@@ -118,6 +120,11 @@ namespace Veng::Renderer
         });
     }
 
+    void ShadowScenePass::Configure(const SceneRendererSettings& settings)
+    {
+        m_FrustumCull = settings.FrustumCull;
+    }
+
     void ShadowScenePass::Declare(RenderGraph& graph, const PassIO& io)
     {
         const u32 resolution = m_Resolution;
@@ -160,29 +167,33 @@ namespace Veng::Renderer
 
                     const mat4 lightViewProj = view.CascadeViewProj[k];
 
-                    // The same per-submesh loop the g-buffer pass runs; only
-                    // positions matter and only depth is written. Casting away const
-                    // to iterate the borrowed const scene is sound: this only reads.
-                    const_cast<Scene&>(view.World).Each<Transform, MeshRenderer>(
-                        [&](const Entity entity, Transform&, MeshRenderer& meshRenderer)
-                    {
-                        if (!meshRenderer.Mesh.IsLoaded())
-                            return;
+                    // Cull each cascade by ITS OWN light frustum, never the camera's:
+                    // an off-screen mesh behind or beside the camera can still cast a
+                    // shadow into view, and CascadeViewProj[k] is fit to the camera
+                    // slice and extended toward the light, so culling against it keeps
+                    // every caster the cascade can shadow and drops only what cannot.
+                    const Frustum cascadeFrustum = Frustum::FromViewProjection(lightViewProj);
 
-                        const Mesh& mesh = *meshRenderer.Mesh.Get();
+                    // The same per-submesh loop the g-buffer pass runs over the shared
+                    // candidate list; only positions matter and only depth is written.
+                    for (const VisibleMesh& item : view.Visible)
+                    {
+                        if (m_FrustumCull && !Intersects(cascadeFrustum, item.WorldBounds))
+                            continue;
+
+                        const Mesh& mesh = *item.Mesh;
                         const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
 
                         bool materialsReady = true;
                         for (const AssetHandle<Material>& material : materials)
                             materialsReady = materialsReady && material.IsLoaded();
                         if (!materialsReady)
-                            return;
+                            continue;
 
                         cmd.BindVertexBuffer(mesh.GetVertexBuffer());
                         cmd.BindIndexBuffer(mesh.GetIndexBuffer());
 
-                        const mat4 world = WorldMatrix(view.World, entity);
-                        const mat4 mvp = lightViewProj * world;
+                        const mat4 mvp = lightViewProj * item.World;
                         cmd.PushConstants(ShadowPushConstants{.MVP = mvp});
 
                         for (const SubMesh& subMesh : mesh.GetSubMeshes())
@@ -191,7 +202,7 @@ namespace Veng::Renderer
                                 continue;
                             cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                         }
-                    });
+                    }
                 }
             });
     }
