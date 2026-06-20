@@ -117,10 +117,38 @@ Full spec lives in `CLAUDE.md`. In brief:
 
 ## Delegation
 
-For `all` or a large directory, dispatch per-directory batches to `model: sonnet`
-subagents, handing each the rubric above and the target file list. Keep the seed
-grep, the final report, and the build on the main thread. For a single file or a
+Parallelize only for `all` or a large directory. For `diff`, a single file, or a
 handful, do it inline — a subagent is not worth the spin-up.
+
+The only parallel axis is **by file**: partition the target into disjoint batches,
+one `model: sonnet` subagent per batch, and each agent does **both jobs**
+(reject-cleanup *and* Doxygen coverage) on its own files. Disjoint file sets cannot
+conflict. Do **not** split by job type (a "reject" agent and a "Doxygen" agent over
+the same files race on writes).
+
+Partition rules:
+
+- **By module, not blindly by directory.** Keep a public header and its paired
+  implementation in the same batch (`Image.h` + `Backend/Image.cpp` together) so one
+  agent sees both tiers and files each fact correctly — API contract on the header's
+  Doxygen comment, local `why` in the `.cpp`'s inline comments.
+- Balance batches by file count/size; aim for 4–6 for a full sweep.
+- Hand each agent the full rubric and Doxygen style from this file (so they converge
+  on one style) and its exact file list.
+
+Stays on the main thread — never delegated:
+
+1. **Seed grep + partition** — once, up front.
+2. **The build** — one shared `build/`; run `cmake --build build -j 2` a single time
+   after all batches return. Concurrent builds of one dir are illegal.
+3. **Cross-file call-site dedup (category 5)** — "one engine contract recurs at many
+   call sites → document once, reference at the rest" needs a global view a per-file
+   agent lacks. Do this coordinating pass over call sites after the batches land.
+4. **The synthesized report.**
+
+Structure: main seeds + partitions by module → fan out sonnet batches (both jobs
+each) → main runs the single build + the cross-file dedup → main synthesizes the
+report.
 
 ## What this skill does not do
 
