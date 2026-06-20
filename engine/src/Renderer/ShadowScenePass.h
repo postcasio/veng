@@ -78,6 +78,10 @@ namespace Veng::Renderer
         u32 m_TileColumns;
         u32 m_TileRows;
         bool m_FrustumCull = true;
+        // The reused per-cascade frustum-query result scratch (candidate indices into
+        // SceneView::Visible). Cleared and refilled per cascade; reused across frames
+        // so the steady state allocates nothing.
+        vector<u32> m_CullScratch;
 
         Ref<Image> m_ShadowImage;
         Ref<ImageView> m_ShadowView;

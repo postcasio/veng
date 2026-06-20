@@ -176,11 +176,8 @@ namespace Veng::Renderer
 
                     // The same per-submesh loop the g-buffer pass runs over the shared
                     // candidate list; only positions matter and only depth is written.
-                    for (const VisibleMesh& item : view.Visible)
+                    const auto Draw = [&](const VisibleMesh& item)
                     {
-                        if (m_FrustumCull && !Intersects(cascadeFrustum, item.WorldBounds))
-                            continue;
-
                         const Mesh& mesh = *item.Mesh;
                         const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
 
@@ -188,7 +185,7 @@ namespace Veng::Renderer
                         for (const AssetHandle<Material>& material : materials)
                             materialsReady = materialsReady && material.IsLoaded();
                         if (!materialsReady)
-                            continue;
+                            return;
 
                         cmd.BindVertexBuffer(mesh.GetVertexBuffer());
                         cmd.BindIndexBuffer(mesh.GetIndexBuffer());
@@ -202,6 +199,23 @@ namespace Veng::Renderer
                                 continue;
                             cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                         }
+                    };
+
+                    // Query the broadphase tree against THIS cascade's light frustum;
+                    // the returned ids index view.Visible in ascending (GatherMeshes)
+                    // order, the tight linear scan's exact set. With culling off, the
+                    // full candidate span records into every cascade.
+                    if (m_FrustumCull)
+                    {
+                        m_CullScratch.clear();
+                        view.Broadphase->Cull(cascadeFrustum, m_CullScratch);
+                        for (const u32 idx : m_CullScratch)
+                            Draw(view.Visible[idx]);
+                    }
+                    else
+                    {
+                        for (const VisibleMesh& item : view.Visible)
+                            Draw(item);
                     }
                 }
             });

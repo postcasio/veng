@@ -325,6 +325,63 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         CHECK(renderer->GetLastDrawnCount() == 2);
     }
 
+    SUBCASE("the broadphase tree culls identically to a linear view.Visible scan")
+    {
+        const Unique<Scene> scene = Scene::Create(Types);
+        AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, 0.0f));     // in view
+        AddCubeAt(*scene, assets, cube, vec3(-1.5f, 0.0f, 0.0f));    // in view
+        AddCubeAt(*scene, assets, cube, vec3(1000.0f, 0.0f, 0.0f));  // off-frustum
+        AddCubeAt(*scene, assets, cube, vec3(0.0f, 1000.0f, 0.0f));  // off-frustum
+
+        renderer->Configure({.Mode = DebugView::Albedo, .FrustumCull = true});
+        Render(*scene);
+
+        // The materialless cubes all pass the material-readiness skip, so the g-buffer
+        // pass's drawn count is exactly the meshes the camera frustum keeps — which is
+        // a linear Intersects scan of the gathered candidates. Recompute that scan
+        // independently and assert the renderer's tree-driven count matches it.
+        AABB sceneBounds = AABB::Empty();
+        vector<VisibleMesh> gathered;
+        GatherMeshes(*scene, gathered, sceneBounds);
+        const Frustum cameraFrustum = Frustum::FromViewProjection(camera.ViewProjection());
+        u32 linearKept = 0;
+        for (const VisibleMesh& item : gathered)
+            if (Intersects(cameraFrustum, item.WorldBounds))
+                ++linearKept;
+
+        CHECK(renderer->GetLastVisibleCount() == 4);
+        CHECK(renderer->GetLastDrawnCount() == linearKept);
+        CHECK(linearKept == 2);
+    }
+
+    SUBCASE("a static scene rebuilds the tree once, then never again — same drawn count")
+    {
+        const Unique<Scene> scene = Scene::Create(Types);
+        AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, 0.0f));
+        AddCubeAt(*scene, assets, cube, vec3(-1.5f, 0.0f, 0.0f));
+
+        renderer->Configure({.Mode = DebugView::Albedo, .FrustumCull = true});
+
+        // Frame 1: the first Execute syncs against a never-seen version, so it rebuilds.
+        Render(*scene);
+        CHECK(renderer->DidBroadphaseRebuildLastFrame());
+        const u32 drawnFrame1 = renderer->GetLastDrawnCount();
+
+        // Frame 2: nothing in the scene moved, so the version gate short-circuits — no
+        // rebuild — and the same meshes draw to the same count.
+        Render(*scene);
+        CHECK_FALSE(renderer->DidBroadphaseRebuildLastFrame());
+        CHECK(renderer->GetLastDrawnCount() == drawnFrame1);
+
+        // A Configure between two Executes recreates render targets but moves no world
+        // matrix and changes no candidate, so the cached tree stands and the next
+        // Execute does not rebuild (decision 3 — no broadphase reset on Resize/Configure).
+        renderer->Configure({.Mode = DebugView::Albedo, .FrustumCull = true});
+        Render(*scene);
+        CHECK_FALSE(renderer->DidBroadphaseRebuildLastFrame());
+        CHECK(renderer->GetLastDrawnCount() == drawnFrame1);
+    }
+
     SUBCASE("a behind-camera mesh is culled")
     {
         const Unique<Scene> scene = Scene::Create(Types);

@@ -264,6 +264,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/scene_ecs.cpp
             tests/unit/scene_queries.cpp
             tests/unit/scene_version.cpp
+            tests/unit/scene_broadphase.cpp
             tests/unit/reflection.cpp
             tests/unit/camera.cpp
             tests/unit/material_params.cpp

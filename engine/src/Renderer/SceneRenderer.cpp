@@ -315,15 +315,14 @@ namespace Veng::Renderer
 
                 m_LastDrawn = 0;
 
-                // The gathered candidate list (one GatherMeshes pass per Execute)
-                // carries each mesh's world matrix and world bound; item.World is the
-                // same matrix WorldMatrix(view.World, entity) composed before, so the
-                // drawn pixels are unchanged — only off-frustum meshes are skipped.
-                for (const VisibleMesh& item : view.Visible)
+                // The broadphase's cached candidate list carries each mesh's world
+                // matrix and world bound; item.World is the same matrix
+                // WorldMatrix(view.World, entity) composed before, so the drawn pixels
+                // are unchanged — only off-frustum meshes are skipped. With culling on,
+                // the BVH query returns exactly the tight linear scan's set in ascending
+                // candidate (GatherMeshes) order; with it off, the full span iterates.
+                const auto Draw = [&](const VisibleMesh& item)
                 {
-                    if (m_FrustumCull && !Intersects(cameraFrustum, item.WorldBounds))
-                        continue;
-
                     const Mesh& mesh = *item.Mesh;
                     const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
 
@@ -331,7 +330,7 @@ namespace Veng::Renderer
                     for (const AssetHandle<Material>& material : materials)
                         materialsReady = materialsReady && material.IsLoaded();
                     if (!materialsReady)
-                        continue;
+                        return;
 
                     cmd.BindVertexBuffer(mesh.GetVertexBuffer());
                     cmd.BindIndexBuffer(mesh.GetIndexBuffer());
@@ -370,6 +369,19 @@ namespace Veng::Renderer
                     }
 
                     ++m_LastDrawn;
+                };
+
+                if (m_FrustumCull)
+                {
+                    m_CullScratch.clear();
+                    view.Broadphase->Cull(cameraFrustum, m_CullScratch);
+                    for (const u32 idx : m_CullScratch)
+                        Draw(view.Visible[idx]);
+                }
+                else
+                {
+                    for (const VisibleMesh& item : view.Visible)
+                        Draw(item);
                 }
             }
 
@@ -379,6 +391,10 @@ namespace Veng::Renderer
             // Reset and incremented per Record (which the renderer reads back after
             // Execute); mutable because Record is const.
             mutable u32 m_LastDrawn = 0;
+            // The reused frustum-query result scratch (candidate indices into
+            // view.Visible). Mutable because Record is const; reused across frames so
+            // the steady state allocates nothing.
+            mutable vector<u32> m_CullScratch;
         };
 
         // The fullscreen deferred-lighting pass: samples the g-buffer (G0 albedo,
@@ -1607,13 +1623,14 @@ namespace Veng::Renderer
             ++lightCount;
         }
 
-        // Gather the resident mesh candidates once per frame into renderer scratch,
-        // exactly where and how the light pack is built. The scene passes loop this
-        // shared list and cull it against their own frustum; sceneBounds is the
-        // bound-union by-product of the same pass, so this one walk replaces a
-        // separate SceneBounds call (no second world-matrix pass).
-        AABB sceneBounds = AABB::Empty();
-        GatherMeshes(view.World, m_VisibleMeshes, sceneBounds);
+        // Bring the broadphase current with the scene: it re-gathers the resident mesh
+        // candidates and rebuilds its BVH only when the scene's spatial version moved
+        // (or a mesh finished loading), and stands its cached candidate list + bound
+        // otherwise. The scene passes query its tree and cull against their own
+        // frustum; sceneBounds is the bound union the same gather produced (when it
+        // ran), so this replaces a separate SceneBounds call.
+        m_Broadphase.Sync(view.World);
+        const AABB sceneBounds = m_Broadphase.GetSceneBounds();
 
         // Compute the cascades once per frame. sceneBounds is consumed only for the
         // per-cascade near-plane extension (off-screen casters); the cascade XY extent
@@ -1630,7 +1647,8 @@ namespace Veng::Renderer
         resolvedView.LightCount = lightCount;
         resolvedView.CascadeViewProj = cascades.ViewProj;
         resolvedView.CascadeCount = cascades.Count;
-        resolvedView.Visible = m_VisibleMeshes;
+        resolvedView.Visible = m_Broadphase.GetCandidates();
+        resolvedView.Broadphase = &m_Broadphase;
 
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
         registry.WriteLights(std::as_bytes(std::span(packedLights.data(), lightCount)));
@@ -1713,8 +1731,9 @@ namespace Veng::Renderer
 
     Ref<ImageView> SceneRenderer::GetOutput() const { return m_OutputView; }
 
-    u32 SceneRenderer::GetLastVisibleCount() const { return static_cast<u32>(m_VisibleMeshes.size()); }
+    u32 SceneRenderer::GetLastVisibleCount() const { return static_cast<u32>(m_Broadphase.GetCandidates().size()); }
     u32 SceneRenderer::GetLastDrawnCount() const { return m_GBufferDrawnCount ? *m_GBufferDrawnCount : 0; }
+    bool SceneRenderer::DidBroadphaseRebuildLastFrame() const { return m_Broadphase.DidRebuildLastSync(); }
     Ref<ImageView> SceneRenderer::GetAlbedoView() const { return m_AlbedoView; }
     Ref<ImageView> SceneRenderer::GetNormalView() const { return m_NormalView; }
     Ref<ImageView> SceneRenderer::GetOrmView() const { return m_OrmView; }

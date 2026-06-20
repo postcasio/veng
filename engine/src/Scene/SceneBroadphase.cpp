@@ -1,0 +1,84 @@
+#include <Veng/Scene/SceneBroadphase.h>
+
+#include <algorithm>
+
+#include <Veng/Asset/Mesh.h>
+#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Scene.h>
+
+namespace Veng
+{
+    void SceneBroadphase::Sync(const Scene& scene)
+    {
+        const u64 version = scene.GetSpatialVersion();
+
+        bool needRebuild = (version != m_LastVersion);
+
+        // A mesh finishing async load does not mutate the scene, so it does not bump
+        // the spatial version. While candidates are still resolving residency, poll
+        // only the tracked pending entities: a load completing grew the candidate set
+        // without a version move, so rebuild. A dead pending entity is dropped.
+        if (!needRebuild && !m_Pending.empty())
+        {
+            usize live = 0;
+            for (const Entity entity : m_Pending)
+            {
+                if (!scene.IsAlive(entity))
+                    continue;
+
+                const MeshRenderer* renderer = scene.TryGet<MeshRenderer>(entity);
+                if (renderer != nullptr && renderer->Mesh.IsLoaded())
+                    needRebuild = true;
+
+                m_Pending[live++] = entity;
+            }
+            m_Pending.resize(live);
+        }
+
+        if (needRebuild)
+        {
+            Rebuild(scene);
+            m_LastVersion = version;
+            m_DidRebuild = true;
+        }
+        else
+        {
+            m_DidRebuild = false;
+        }
+    }
+
+    void SceneBroadphase::Rebuild(const Scene& scene)
+    {
+        // The pure one-shot gather fills the candidate list (resident only, in
+        // Transform-dense order) and the bound union in one pass.
+        GatherMeshes(scene, m_Candidates, m_SceneBounds);
+
+        m_LeafScratch.clear();
+        m_LeafScratch.reserve(m_Candidates.size());
+        for (u32 i = 0; i < m_Candidates.size(); ++i)
+            m_LeafScratch.push_back(BVH::Leaf{m_Candidates[i].WorldBounds, i});
+
+        m_Tree.Build(m_LeafScratch);
+
+        // Record the entities whose mesh is not yet resident so a later Sync rebuilds
+        // when one loads. The const View routes through the const TryGetRaw only, so
+        // refreshing the set never bumps the spatial version.
+        m_Pending.clear();
+        for (auto [entity, transform, renderer] : scene.View<Transform, MeshRenderer>())
+        {
+            (void)transform;
+            if (!renderer.Mesh.IsLoaded())
+                m_Pending.push_back(entity);
+        }
+    }
+
+    void SceneBroadphase::Cull(const Frustum& frustum, vector<u32>& out) const
+    {
+        const usize start = out.size();
+        m_Tree.Query(frustum, out);
+        // Sort the appended range ascending so draws issue in GatherMeshes order,
+        // identical to the pre-BVH linear scan; an earlier-appended range is left
+        // untouched.
+        std::sort(out.begin() + static_cast<std::ptrdiff_t>(start), out.end());
+    }
+}

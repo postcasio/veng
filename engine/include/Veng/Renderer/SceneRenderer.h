@@ -10,6 +10,7 @@
 
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/SceneBroadphase.h>
 #include <Veng/Scene/Visibility.h>
 
 #include <span>
@@ -181,11 +182,17 @@ namespace Veng::Renderer
         u32 CascadeCount = 0;
 
         // The frame's resident mesh candidates, set by the renderer on every Execute
-        // from one GatherMeshes pass. The g-buffer pass culls this span against the
-        // camera frustum; the shadow pass culls it against each cascade's light
-        // frustum. The renderer owns it — a caller's value is overwritten. It borrows
-        // renderer scratch valid only for the Execute that gathered it.
+        // from the broadphase's cached candidate list. The g-buffer pass culls this
+        // span against the camera frustum; the shadow pass culls it against each
+        // cascade's light frustum. The renderer owns it — a caller's value is
+        // overwritten. It borrows broadphase-cached scratch valid only for the Execute
+        // that produced it.
         std::span<const VisibleMesh> Visible;
+
+        // The renderer's broadphase, set on every Execute. A pass queries it (Cull)
+        // for the candidate indices its frustum touches; the returned ids index
+        // Visible. The renderer owns it — a caller's value is overwritten.
+        const SceneBroadphase* Broadphase = nullptr;
     };
 
     class SceneRenderer
@@ -222,6 +229,12 @@ namespace Veng::Renderer
         // equal. Both are zero before the first Execute.
         [[nodiscard]] u32 GetLastVisibleCount() const;
         [[nodiscard]] u32 GetLastDrawnCount() const;
+
+        // Whether the broadphase rebuilt its tree during the most recent Execute
+        // (false on a fully static frame — the scene's spatial version was unchanged).
+        // Diagnostics; the rendered image is identical regardless. Backed by
+        // SceneBroadphase::DidRebuildLastSync().
+        [[nodiscard]] bool DidBroadphaseRebuildLastFrame() const;
 
         // The deferred g-buffer the geometry pass writes — the sampleable views
         // and their bindless slots. Renderer-owned and imported into the internal
@@ -445,10 +458,12 @@ namespace Veng::Renderer
         // every Rebuild (the geometry pass is always first; Mode selects the tail).
         vector<Unique<ScenePass>> m_Passes;
 
-        // The per-Execute visible-candidate scratch, filled by one GatherMeshes pass
-        // at the top of Execute and pointed at by SceneView::Visible. Reused across
-        // frames (like the light pack), so the steady state allocates nothing.
-        vector<VisibleMesh> m_VisibleMeshes;
+        // The spatial broadphase: a BVH over the resident draw candidates, served
+        // through one cached candidate list rebuilt when the scene's spatial version
+        // moves (or a mesh finishes loading). Synced once at the top of Execute; its
+        // candidate span is pointed at by SceneView::Visible and its tree is queried
+        // by the g-buffer and shadow passes. A static scene rebuilds not at all.
+        SceneBroadphase m_Broadphase;
 
         // The g-buffer pass's per-record drawn counter, pointed at every Rebuild
         // (the pass owns the u32 through m_Passes; the renderer reads it back through

@@ -38,6 +38,7 @@ add_library(veng SHARED
         src/Scene/BuiltinTypes.cpp
         src/Scene/ComponentPool.cpp
         src/Scene/Scene.cpp
+        src/Scene/SceneBroadphase.cpp
         src/Scene/Transforms.cpp
         src/Scene/Visibility.cpp
         src/Renderer/SwapChainCompositePass.cpp
