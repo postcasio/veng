@@ -10,11 +10,16 @@
 // only for resident AssetHandle fields — every prefab here uses invalid ids, so
 // it stays a no-op.
 
+#include <cstring>
+
 #include <doctest/doctest.h>
 
+#include <Veng/Asset/Archive.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Reflection/Serialize.h>
+#include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
@@ -180,4 +185,73 @@ TEST_CASE_FIXTURE(PrefabFixture, "An embedded AssetHandle with an invalid id sta
     const MeshRenderer& renderer = Stage->Get<MeshRenderer>(roots[0]);
     CHECK_FALSE(renderer.Mesh.Id().IsValid());
     CHECK_FALSE(renderer.Mesh.IsLoaded());
+}
+
+namespace
+{
+    // Append a u32 in host byte order — the reflection record's own encoding
+    // (Serialize.cpp), so a hand-built record matches the bytes the loader feeds
+    // to ReadFields.
+    void PushU32(vector<u8>& out, u32 value)
+    {
+        const auto* p = reinterpret_cast<const u8*>(&value);
+        out.insert(out.end(), p, p + sizeof(value));
+    }
+
+    template <class T>
+    void PushPod(vector<u8>& out, const T& value)
+    {
+        const auto* p = reinterpret_cast<const u8*>(&value);
+        out.insert(out.end(), p, p + sizeof(value));
+    }
+
+    // A cooked prefab blob with one entity carrying one component whose record is
+    // a *truncated* reflection record: it claims one field with a name length that
+    // runs past the record's bytes. Every loader structural range check passes
+    // (the record blob is exactly RecordSize bytes, RecordOffset + RecordSize ==
+    // RecordBytes, the cooked blob is fully sized) — only ReadFields meets the
+    // truncation, so the loader surfaces it as Corrupt rather than aborting.
+    vector<u8> TruncatedPrefabBlob(u64 componentTypeId)
+    {
+        // The malformed record: recordCount=1, then a field name length of 64 with
+        // no name bytes following — ReadFieldsInner's "truncated field name" guard.
+        vector<u8> record;
+        PushU32(record, 1);   // one field record
+        PushU32(record, 64);  // name length far past the record's end
+
+        CookedPrefabHeader header;
+        header.Version = CookedPrefabVersion;
+        header.EntityCount = 1;
+        header.ComponentCount = 1;
+        header.RecordBytes = static_cast<u32>(record.size());
+
+        const CookedPrefabEntity entity{.FirstComponent = 0, .ComponentCount = 1};
+        const CookedPrefabComponent component{
+            .TypeId = componentTypeId, .RecordOffset = 0,
+            .RecordSize = static_cast<u32>(record.size())};
+
+        vector<u8> blob;
+        PushPod(blob, header);
+        PushPod(blob, entity);
+        PushPod(blob, component);
+        blob.insert(blob.end(), record.begin(), record.end());
+        return blob;
+    }
+}
+
+TEST_CASE_FIXTURE(PrefabFixture, "A truncated cooked prefab record loads as AssetError::Corrupt, not an abort")
+{
+    const AssetId prefabId{0x5111A2C033B47ED9ULL};
+
+    ArchiveWriter writer;
+    const vector<u8> blob = TruncatedPrefabBlob(Types.IdOf<Transform>());
+    writer.Add(prefabId, AssetType::Prefab, blob);
+
+    const MountHandle mount = Assets->MountMemory(writer.Build(), "truncated_prefab");
+
+    const AssetResult<AssetHandle<Prefab>> result = Assets->LoadSync<Prefab>(prefabId);
+
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error().Kind == AssetError::Corrupt);
+    CHECK(result.error().Id == prefabId);
 }

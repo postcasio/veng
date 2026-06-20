@@ -75,7 +75,7 @@ cannot meet bad bytes.
 | # | Plan | Summary | Status |
 |---|---|---|---|
 | 01 | [ReadFields returns a Result](01-serializer-result.md) | `ReadFields` → `VoidResult`; the internal `ReadFieldsInner`/`ReadValue`/`ReadU32` truncation guards return `std::unexpected` instead of `VE_ASSERT`; the `registry.Info` schema lookups stay fatal; `WriteFields` untouched. In-process unit tests over malformed/truncated bytes (assert on `.error()`) plus the drift-skip recovery cases. | done |
-| 02 | [Propagate to AssetError::Corrupt](02-loader-propagation.md) | The prefab loader's load-time `ReadFields` ([PrefabLoader.cpp:206](../../engine/src/Asset/Loaders/PrefabLoader.cpp)) propagates a read failure as `Corrupt(id, ...)`; the spawn-time call ([Prefab.cpp:139](../../engine/src/Asset/Prefab.cpp)) `.value()`s the already-validated record. A `gpu`-band test feeds a truncated cooked prefab blob and asserts `LoadSync` returns `AssetError::Corrupt`, not an abort. | proposed |
+| 02 | [Propagate to AssetError::Corrupt](02-loader-propagation.md) | The prefab loader's load-time `ReadFields` ([PrefabLoader.cpp:206](../../engine/src/Asset/Loaders/PrefabLoader.cpp)) propagates a read failure as `Corrupt(id, ...)`; the spawn-time call ([Prefab.cpp:139](../../engine/src/Asset/Prefab.cpp)) `.value()`s the already-validated record. A `gpu`-band test feeds a truncated cooked prefab blob and asserts `LoadSync` returns `AssetError::Corrupt`, not an abort. | done |
 
 _(Companion items are open — this planset can grow a row or two before it lands.)_
 

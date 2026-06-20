@@ -136,7 +136,10 @@ namespace Veng
                     hasParent = true;
 
                 void* slot = scene.AddComponent(entity, component.Type);
-                ReadFields(component.Record, slot, typeInfo, registry);
+
+                // The prefab loader validated this record at load; a read failure
+                // here would be an engine invariant violation, not bad data.
+                ReadFields(component.Record, slot, typeInfo, registry).value();
                 Resolve(slot, typeInfo, registry, spawned, manager);
             }
 

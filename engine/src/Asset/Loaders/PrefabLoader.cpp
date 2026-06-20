@@ -203,7 +203,16 @@ namespace Veng
                     const TypeInfo& typeInfo = types.Info(cc.TypeId);
                     vector<u8> instance(typeInfo.Size);
                     typeInfo.DefaultConstruct(instance.data());
-                    ReadFields(component.Record, instance.data(), typeInfo, types);
+
+                    // The untrusted-first parse: a truncated record from a corrupt
+                    // cooked blob surfaces as a recoverable Corrupt load failure.
+                    const VoidResult read = ReadFields(component.Record, instance.data(), typeInfo, types);
+                    if (!read)
+                    {
+                        typeInfo.Destruct(instance.data());
+                        return std::unexpected(Corrupt(id, read.error()));
+                    }
+
                     const VoidResult collected =
                         CollectHandleDeps(id, instance.data(), typeInfo, types, handleDeps);
                     typeInfo.Destruct(instance.data());
