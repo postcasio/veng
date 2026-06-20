@@ -1576,7 +1576,7 @@ namespace Veng::Renderer
         u32 lightCount = 0;
         bool haveDirectional = false;
         vec3 directionalTravel{0.0f, -1.0f, 0.0f};
-        for (auto [entity, light] : const_cast<Scene&>(view.World).View<Light>())
+        for (auto [entity, light] : view.World.View<Light>())
         {
             if (lightCount >= SceneView::MaxLights)
                 break;
