@@ -17,11 +17,16 @@ namespace Veng::UI
             return string(s);
         }
 
-        // The default DragOptions::Format is a float spec; the integer overload
-        // substitutes "%d" unless the caller overrode it.
+        // A null DragOptions::Format means "use the type's default spec". The
+        // float overloads default to "%.3f", the integer one to "%d".
+        const char* FloatFormat(const DragOptions& options)
+        {
+            return options.Format ? options.Format : "%.3f";
+        }
+
         const char* IntFormat(const DragOptions& options)
         {
-            return options.Format == DragOptions{}.Format ? "%d" : options.Format;
+            return options.Format ? options.Format : "%d";
         }
 
         ImGuiSliderFlags DragClampFlags(const DragOptions& options)
@@ -36,7 +41,7 @@ namespace Veng::UI
         const string id = AsCStr(label);
         return ImGui::DragFloat(id.c_str(), &v, options.Speed,
                                 options.Min.value_or(0.0f), options.Max.value_or(0.0f),
-                                options.Format, DragClampFlags(options));
+                                FloatFormat(options), DragClampFlags(options));
     }
 
     bool Drag(string_view label, vec2& v, DragOptions options)
@@ -44,7 +49,7 @@ namespace Veng::UI
         const string id = AsCStr(label);
         return ImGui::DragFloat2(id.c_str(), glm::value_ptr(v), options.Speed,
                                  options.Min.value_or(0.0f), options.Max.value_or(0.0f),
-                                 options.Format, DragClampFlags(options));
+                                 FloatFormat(options), DragClampFlags(options));
     }
 
     bool Drag(string_view label, vec3& v, DragOptions options)
@@ -52,7 +57,7 @@ namespace Veng::UI
         const string id = AsCStr(label);
         return ImGui::DragFloat3(id.c_str(), glm::value_ptr(v), options.Speed,
                                  options.Min.value_or(0.0f), options.Max.value_or(0.0f),
-                                 options.Format, DragClampFlags(options));
+                                 FloatFormat(options), DragClampFlags(options));
     }
 
     bool Drag(string_view label, vec4& v, DragOptions options)
@@ -60,7 +65,7 @@ namespace Veng::UI
         const string id = AsCStr(label);
         return ImGui::DragFloat4(id.c_str(), glm::value_ptr(v), options.Speed,
                                  options.Min.value_or(0.0f), options.Max.value_or(0.0f),
-                                 options.Format, DragClampFlags(options));
+                                 FloatFormat(options), DragClampFlags(options));
     }
 
     bool Drag(string_view label, i32& v, DragOptions options)

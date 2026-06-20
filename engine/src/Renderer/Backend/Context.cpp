@@ -591,6 +591,11 @@ namespace Veng::Renderer
     u32 Context::GetMaxFramesInFlight() const { return m_Native->MaxFramesInFlight; }
     u32 Context::GetCurrentFrameInFlight() const { return m_Native->CurrentFrameInFlight; }
 
+    u32 Context::GetMaxImageDimension2D() const
+    {
+        return m_Native->PhysicalDevice.getProperties().limits.maxImageDimension2D;
+    }
+
     uvec2 Context::GetSwapChainExtent() const { VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)"); return m_Native->SwapChain->GetExtent(); }
     Format Context::GetSwapChainFormat() const { VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)"); return m_Native->SwapChain->GetFormat(); }
     Ref<Image> Context::GetCurrentSwapChainImage() const { VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)"); return m_Native->SwapChain->GetCurrentImage(); }

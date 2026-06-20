@@ -900,6 +900,7 @@ namespace Veng::Renderer
           m_Settings(info.Settings),
           m_Internal(CreateUnique<Internal>())
     {
+        ClampShadowResolutions();
         CreateShadowSystem();
         CreatePipelines();
 
@@ -1759,9 +1760,35 @@ namespace Veng::Renderer
         Rebuild();
     }
 
+    u32 SceneRenderer::GetMaxShadowResolution() const
+    {
+        // The directional atlas is widest at the largest cascade grid (2×2 at four
+        // cascades), so a tile larger than the device limit / 2 would overflow it.
+        const ShadowAtlasGrid grid = ComputeShadowAtlasGrid(MaxCascades);
+        const u32 factor = std::max(grid.Columns, grid.Rows);
+        return m_Context.GetMaxImageDimension2D() / factor;
+    }
+
+    u32 SceneRenderer::GetMaxPunctualShadowResolution() const
+    {
+        // The punctual atlas tiles CubeFaceCount columns × MaxShadowedPunctual rows,
+        // so its widest side is CubeFaceCount · resolution.
+        const u32 factor = std::max(CubeFaceCount, MaxShadowedPunctual);
+        return m_Context.GetMaxImageDimension2D() / factor;
+    }
+
+    void SceneRenderer::ClampShadowResolutions()
+    {
+        m_Settings.ShadowResolution =
+            std::min(m_Settings.ShadowResolution, GetMaxShadowResolution());
+        m_Settings.PunctualShadowResolution =
+            std::min(m_Settings.PunctualShadowResolution, GetMaxPunctualShadowResolution());
+    }
+
     void SceneRenderer::Configure(const SceneRendererSettings& settings)
     {
         m_Settings = settings;
+        ClampShadowResolutions();
         CreatePunctualShadowAtlas();
         Rebuild();
     }

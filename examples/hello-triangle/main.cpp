@@ -306,7 +306,9 @@ private:
 
             i32 shadowResolution = static_cast<i32>(m_SceneSettings.ShadowResolution);
             if (UI::Drag("Shadow resolution", shadowResolution,
-                         {.Speed = 16.0f, .Min = 256.0f, .Max = 4096.0f}))
+                         {.Speed = 16.0f,
+                          .Min = 256.0f,
+                          .Max = static_cast<f32>(m_SceneRenderer->GetMaxShadowResolution())}))
             {
                 m_SceneSettings.ShadowResolution = static_cast<u32>(shadowResolution);
                 ReconfigureScene();
@@ -328,7 +330,9 @@ private:
 
             i32 punctualResolution = static_cast<i32>(m_SceneSettings.PunctualShadowResolution);
             if (UI::Drag("Punctual shadow resolution", punctualResolution,
-                         {.Speed = 16.0f, .Min = 256.0f, .Max = 4096.0f}))
+                         {.Speed = 16.0f,
+                          .Min = 256.0f,
+                          .Max = static_cast<f32>(m_SceneRenderer->GetMaxPunctualShadowResolution())}))
             {
                 m_SceneSettings.PunctualShadowResolution = static_cast<u32>(punctualResolution);
                 ReconfigureScene();

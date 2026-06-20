@@ -13,15 +13,15 @@ namespace Veng::UI
     // AlwaysClamp flag in the implementation.
     //
     // Format is a printf numeric spec (ImGui's own value-formatting, not user
-    // text). The default "%.3f" is a float spec; the integer Drag overload
-    // substitutes "%d" when Format is this default sentinel, so one DragOptions
-    // serves both the float and integer overloads — a caller may still override it.
+    // text). A null Format means each Drag overload picks its type-appropriate
+    // default ("%.3f" for the float overloads, "%d" for the integer one), so one
+    // DragOptions serves both — a caller may still override it with an explicit spec.
     struct DragOptions
     {
         f32 Speed = 0.01f;
         optional<f32> Min;
         optional<f32> Max;
-        const char* Format = "%.3f";
+        const char* Format = nullptr;
     };
 
     // Slider-edit configuration. A slider without a declared range is meaningless,

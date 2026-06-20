@@ -274,7 +274,32 @@ namespace Veng::Renderer
 
         // Recreate only affected resources and recompile the graph's topology.
         // Invalidates the prior GetOutput() Ref like Resize.
+        //
+        // ShadowResolution / PunctualShadowResolution above the device-supported
+        // maximum (GetMaxShadowResolution / GetMaxPunctualShadowResolution) are
+        // clamped before any atlas is sized, so an over-large request degrades to
+        // the largest valid atlas rather than a fatal driver error.
         void Configure(const SceneRendererSettings& settings);
+
+        /// @brief Largest directional-cascade tile resolution this device supports.
+        ///
+        /// The directional atlas tiles its cascades in a grid at most two tiles per
+        /// side (2×2 at four cascades), so a tile larger than
+        /// Context::GetMaxImageDimension2D() / 2 would overflow the device's image
+        /// limit. Configure() clamps ShadowResolution to this; a UI sizing the knob
+        /// uses it as the slider maximum.
+        /// @return The maximum valid ShadowResolution, in texels.
+        [[nodiscard]] u32 GetMaxShadowResolution() const;
+
+        /// @brief Largest punctual-atlas tile resolution this device supports.
+        ///
+        /// The punctual atlas tiles CubeFaceCount columns × MaxShadowedPunctual rows,
+        /// so its widest dimension is CubeFaceCount × resolution; a tile larger than
+        /// Context::GetMaxImageDimension2D() / CubeFaceCount would overflow the
+        /// device's image limit. Configure() clamps PunctualShadowResolution to this;
+        /// a UI sizing the knob uses it as the slider maximum.
+        /// @return The maximum valid PunctualShadowResolution, in texels.
+        [[nodiscard]] u32 GetMaxPunctualShadowResolution() const;
 
         // Replay the internal graph against this frame's view, recording each pass
         // unit's draws. Never reallocates or recompiles.
@@ -357,6 +382,13 @@ namespace Veng::Renderer
         // sampler, the set-1 layout, the descriptor set, the dummy atlas, and the
         // ShadowConstants ring buffer. Long-lived past any Configure.
         void CreateShadowSystem();
+
+        // Clamp m_Settings.ShadowResolution / PunctualShadowResolution to the
+        // device-supported maxima (GetMaxShadowResolution / GetMaxPunctualShadowResolution).
+        // Called before any atlas is sized — the constructor body and Configure — so an
+        // over-large request degrades to the largest valid atlas, never a fatal driver
+        // error from an image past maxImageDimension2D.
+        void ClampShadowResolutions();
 
         // Recreate the punctual shadow atlas at the current PunctualShadowResolution ×
         // (MaxShadowedPunctual·CubeFaceCount) tile grid through the deferred retire
