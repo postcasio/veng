@@ -365,16 +365,16 @@ namespace Veng::Renderer
         /// Invalidated by Resize and Configure; re-fetch after those calls.
         [[nodiscard]] Ref<ImageView> GetOutput() const;
 
-        /// @brief Returns the total resident candidate count from the last Execute.
+        /// @brief Returns the total resident per-submesh candidate count from the last Execute.
         ///
-        /// Every (Transform, MeshRenderer) with a loaded mesh, before any frustum cull.
-        /// Zero before the first Execute.
+        /// One per submesh of every (Transform, MeshRenderer) with a loaded mesh, before any
+        /// frustum cull. Zero before the first Execute.
         [[nodiscard]] u32 GetLastVisibleCount() const;
 
-        /// @brief Returns the number of meshes the g-buffer pass actually recorded in the last Execute.
+        /// @brief Returns the number of submesh candidates that survived the camera-frustum cull in the last Execute.
         ///
-        /// After camera-frustum cull and material-readiness skip; always <= GetLastVisibleCount().
-        /// Equal to GetLastVisibleCount() when FrustumCull is off and all materials are ready.
+        /// One per per-submesh candidate the g-buffer pass processed after the cull; always
+        /// <= GetLastVisibleCount(). A materialless submesh still counts as a survivor.
         /// Zero before the first Execute.
         [[nodiscard]] u32 GetLastDrawnCount() const;
 

@@ -128,37 +128,41 @@ namespace Veng::Renderer
                     cmd.BindPipeline(m_Pipeline);
                     registry.Bind(cmd);
 
-                    const auto Draw = [&](const VisibleMesh& item, const mat4& lightViewProj)
+                    const Mesh* lastBound = nullptr;
+
+                    const auto DrawSubMesh =
+                        [&](const VisibleMesh& item, u32 subMeshIndex, const mat4& lightViewProj)
                     {
                         const Mesh& mesh = *item.Mesh;
                         const std::span<const AssetHandle<Material>> materials =
                             mesh.GetMaterials();
 
-                        bool materialsReady = true;
-                        for (const AssetHandle<Material>& material : materials)
+                        const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
+                        if (subMesh.MaterialIndex == SubMesh::NoMaterial)
                         {
-                            materialsReady = materialsReady && material.IsLoaded();
+                            return;
                         }
-                        if (!materialsReady)
+                        if (!materials[subMesh.MaterialIndex].IsLoaded())
                         {
                             return;
                         }
 
-                        cmd.BindVertexBuffer(mesh.GetVertexBuffer());
-                        cmd.BindIndexBuffer(mesh.GetIndexBuffer());
-
-                        cmd.PushConstants(
-                            PunctualShadowPushConstants{.MVP = lightViewProj * item.World});
-
-                        for (const SubMesh& subMesh : mesh.GetSubMeshes())
+                        // The candidate list is in GatherMeshes order, so a mesh's submeshes
+                        // are contiguous within a face — bind its buffers + MVP once.
+                        if (lastBound != &mesh)
                         {
-                            if (subMesh.MaterialIndex == SubMesh::NoMaterial)
-                            {
-                                continue;
-                            }
-                            cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
+                            cmd.BindVertexBuffer(mesh.GetVertexBuffer());
+                            cmd.BindIndexBuffer(mesh.GetIndexBuffer());
+                            cmd.PushConstants(
+                                PunctualShadowPushConstants{.MVP = lightViewProj * item.World});
+                            lastBound = &mesh;
                         }
+
+                        cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                     };
+
+                    const std::span<const SubMeshCandidate> candidates =
+                        view.Broadphase->GetSubMeshCandidates();
 
                     // Cull against each face's own frustum: off-screen casters within the
                     // light's range/cone are kept; only what falls outside is dropped.
@@ -188,20 +192,27 @@ namespace Veng::Renderer
                             const mat4 lightViewProj = view.PunctualShadowRawViewProj[slot][face];
                             const Frustum lightFrustum = Frustum::FromViewProjection(lightViewProj);
 
+                            // Each face is a fresh draw set with its own MVP; reset the
+                            // redundant-bind tracker so the first mesh rebinds + repushes.
+                            lastBound = nullptr;
+
                             if (m_FrustumCull)
                             {
                                 m_CullScratch.clear();
                                 view.Broadphase->Cull(lightFrustum, m_CullScratch);
-                                for (const u32 idx : m_CullScratch)
+                                for (const u32 id : m_CullScratch)
                                 {
-                                    Draw(view.Visible[idx], lightViewProj);
+                                    const SubMeshCandidate& c = candidates[id];
+                                    DrawSubMesh(view.Visible[c.MeshCandidate], c.SubMeshIndex,
+                                                lightViewProj);
                                 }
                             }
                             else
                             {
-                                for (const VisibleMesh& item : view.Visible)
+                                for (const SubMeshCandidate& c : candidates)
                                 {
-                                    Draw(item, lightViewProj);
+                                    DrawSubMesh(view.Visible[c.MeshCandidate], c.SubMeshIndex,
+                                                lightViewProj);
                                 }
                             }
                         }

@@ -55,11 +55,24 @@ namespace Veng
     {
         GatherMeshes(scene, m_Candidates, m_SceneBounds);
 
+        // One BVH leaf per submesh: a frustum rejects an off-screen submesh of an on-screen
+        // mesh by the same tree descent. The candidate list is in mesh-then-submesh order, so
+        // a mesh's submeshes are contiguous (the g-buffer pass relies on this to skip redundant
+        // vertex/index binds).
+        m_SubMeshCandidates.clear();
         m_LeafScratch.clear();
-        m_LeafScratch.reserve(m_Candidates.size());
-        for (u32 i = 0; i < m_Candidates.size(); ++i)
+        for (u32 meshIndex = 0; meshIndex < m_Candidates.size(); ++meshIndex)
         {
-            m_LeafScratch.push_back(BVH::Leaf{.Box = m_Candidates[i].WorldBounds, .Id = i});
+            const VisibleMesh& candidate = m_Candidates[meshIndex];
+            const std::span<const SubMesh> subMeshes = candidate.Mesh->GetSubMeshes();
+            for (u32 subMeshIndex = 0; subMeshIndex < subMeshes.size(); ++subMeshIndex)
+            {
+                const u32 id = static_cast<u32>(m_SubMeshCandidates.size());
+                m_SubMeshCandidates.push_back(
+                    SubMeshCandidate{.MeshCandidate = meshIndex, .SubMeshIndex = subMeshIndex});
+                m_LeafScratch.push_back(BVH::Leaf{
+                    .Box = subMeshes[subMeshIndex].Bounds.Transformed(candidate.World), .Id = id});
+            }
         }
 
         m_Tree.Build(m_LeafScratch);

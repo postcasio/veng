@@ -387,6 +387,36 @@ namespace
         scene.Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
         return entity;
     }
+
+    // A single mesh with two well-separated submeshes: a unit cube near the local
+    // origin and a second unit cube shifted far on +X. Two index ranges over one
+    // shared vertex/index buffer — the per-submesh leaf granularity under test.
+    Ref<Mesh> TwoSubMeshMesh(Context& context, f32 separation)
+    {
+        const MeshData near = Primitives::Cube(1.0f);
+        const u32 vertexBase = static_cast<u32>(near.Vertices.size());
+
+        MeshData data;
+        data.Vertices = near.Vertices;
+        data.Indices = near.Indices;
+        for (CanonicalVertex vertex : near.Vertices)
+        {
+            vertex.Position.x += separation;
+            data.Vertices.push_back(vertex);
+        }
+        for (const u32 index : near.Indices)
+        {
+            data.Indices.push_back(index + vertexBase);
+        }
+
+        data.SubMeshes = {
+            SubMesh{.IndexOffset = 0, .IndexCount = static_cast<u32>(near.Indices.size())},
+            SubMesh{.IndexOffset = static_cast<u32>(near.Indices.size()),
+                    .IndexCount = static_cast<u32>(near.Indices.size())},
+        };
+
+        return Mesh::Create(context, data, "Two-SubMesh");
+    }
 }
 
 // The cull guard (the planset's distinguishing assertion — the byte-identical golden
@@ -676,6 +706,75 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         // the far cascade's wide slice — culled from one cascade, kept by the other.
         CHECK_FALSE(Intersects(nearCascade, farBounds));
         CHECK(Intersects(farCascade, farBounds));
+    }
+}
+
+// Per-submesh cull: a single mesh with two well-separated submeshes, framed so the
+// camera frustum contains one submesh and excludes the other. The mesh-granularity
+// drawn counter could not observe this (dropping a submesh leaves the mesh count
+// unchanged); the per-submesh counter reports 1, then 2 when the camera frames both.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a partially-off-frustum mesh draws only its in-view submesh")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
+    REQUIRE(mountResult.has_value());
+
+    constexpr uvec2 extent{64, 64};
+
+    // Two submeshes 1000 units apart on X: only one can fall inside a tight frustum.
+    const Ref<Mesh> mesh = TwoSubMeshMesh(Context, 1000.0f);
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(mesh);
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Albedo, .FrustumCull = true},
+    });
+
+    auto Render = [&](const Camera& camera)
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+    };
+
+    // Both submeshes are candidates regardless of the camera — the per-submesh leaf
+    // count is fixed at the mesh's submesh count.
+    SUBCASE("the camera frames the near submesh — one of two draws")
+    {
+        Camera camera;
+        camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+        camera.SetView(vec3(0.0f, 0.0f, 6.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+        Render(camera);
+        CHECK(renderer->GetLastVisibleCount() == 2); // two submesh candidates
+        CHECK(renderer->GetLastDrawnCount() == 1);   // only the near one survives the cull
+    }
+
+    SUBCASE("the camera framing both submeshes draws two")
+    {
+        // Pull the eye far back along +Z and widen the FOV so both well-separated
+        // submeshes fall inside the frustum.
+        Camera camera;
+        camera.SetPerspective(glm::radians(100.0f), 1.0f, 0.1f, 5000.0f);
+        camera.SetView(vec3(500.0f, 0.0f, 1200.0f), vec3(500.0f, 0.0f, 0.0f),
+                       vec3(0.0f, 1.0f, 0.0f));
+
+        Render(camera);
+        CHECK(renderer->GetLastVisibleCount() == 2);
+        CHECK(renderer->GetLastDrawnCount() == 2); // both submeshes in view
     }
 }
 

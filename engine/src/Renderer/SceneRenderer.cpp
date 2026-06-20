@@ -317,23 +317,31 @@ namespace Veng::Renderer
 
                 m_LastDrawn = 0;
 
-                const auto Draw = [&](const VisibleMesh& item)
+                // Track the last-bound mesh to skip a redundant vertex/index bind: the
+                // candidate list is in GatherMeshes order, so a mesh's submeshes are contiguous.
+                const Mesh* lastBound = nullptr;
+
+                const auto DrawSubMesh = [&](const VisibleMesh& item, u32 subMeshIndex)
                 {
                     const Mesh& mesh = *item.Mesh;
                     const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
 
-                    bool materialsReady = true;
-                    for (const AssetHandle<Material>& material : materials)
+                    const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
+                    if (subMesh.MaterialIndex == SubMesh::NoMaterial)
                     {
-                        materialsReady = materialsReady && material.IsLoaded();
+                        return;
                     }
-                    if (!materialsReady)
+                    if (!materials[subMesh.MaterialIndex].IsLoaded())
                     {
                         return;
                     }
 
-                    cmd.BindVertexBuffer(mesh.GetVertexBuffer());
-                    cmd.BindIndexBuffer(mesh.GetIndexBuffer());
+                    if (lastBound != &mesh)
+                    {
+                        cmd.BindVertexBuffer(mesh.GetVertexBuffer());
+                        cmd.BindIndexBuffer(mesh.GetIndexBuffer());
+                        lastBound = &mesh;
+                    }
 
                     const mat4 mvp = viewProjection * item.World;
 
@@ -346,39 +354,37 @@ namespace Veng::Renderer
                         .Column2 = vec4(normalMatrix[2], 0.0f),
                     };
 
-                    for (const SubMesh& subMesh : mesh.GetSubMeshes())
-                    {
-                        if (subMesh.MaterialIndex == SubMesh::NoMaterial)
-                        {
-                            continue;
-                        }
+                    // Pipeline must be bound before registry.Bind: Bind uses the currently-bound layout.
+                    materials[subMesh.MaterialIndex].Get()->Bind(cmd);
+                    registry.Bind(cmd);
+                    cmd.PushConstants(MeshPushConstants{.MVP = mvp});
+                    cmd.PushConstants(normalPush, NormalMatrixPushOffset);
 
-                        // Pipeline must be bound before registry.Bind: Bind uses the currently-bound layout.
-                        materials[subMesh.MaterialIndex].Get()->Bind(cmd);
-                        registry.Bind(cmd);
-                        cmd.PushConstants(MeshPushConstants{.MVP = mvp});
-                        cmd.PushConstants(normalPush, NormalMatrixPushOffset);
-
-                        cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
-                    }
-
-                    ++m_LastDrawn;
+                    cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                 };
 
+                const std::span<const SubMeshCandidate> candidates =
+                    view.Broadphase->GetSubMeshCandidates();
+
+                // m_LastDrawn counts surviving submesh candidates (the per-submesh cull
+                // result), so it observes a dropped submesh of an on-screen mesh.
                 if (m_FrustumCull)
                 {
                     m_CullScratch.clear();
                     view.Broadphase->Cull(cameraFrustum, m_CullScratch);
-                    for (const u32 idx : m_CullScratch)
+                    for (const u32 id : m_CullScratch)
                     {
-                        Draw(view.Visible[idx]);
+                        const SubMeshCandidate& c = candidates[id];
+                        DrawSubMesh(view.Visible[c.MeshCandidate], c.SubMeshIndex);
+                        ++m_LastDrawn;
                     }
                 }
                 else
                 {
-                    for (const VisibleMesh& item : view.Visible)
+                    for (const SubMeshCandidate& c : candidates)
                     {
-                        Draw(item);
+                        DrawSubMesh(view.Visible[c.MeshCandidate], c.SubMeshIndex);
+                        ++m_LastDrawn;
                     }
                 }
             }
@@ -388,7 +394,7 @@ namespace Veng::Renderer
             bool m_FrustumCull = true;
             /// @brief Reset and incremented per Record; mutable because Record is const.
             mutable u32 m_LastDrawn = 0;
-            /// @brief Frustum-query scratch (indices into view.Visible); reused across frames.
+            /// @brief Frustum-query scratch (per-submesh candidate ids); reused across frames.
             mutable vector<u32> m_CullScratch;
         };
 
@@ -1960,7 +1966,7 @@ namespace Veng::Renderer
 
     u32 SceneRenderer::GetLastVisibleCount() const
     {
-        return static_cast<u32>(m_Broadphase.GetCandidates().size());
+        return static_cast<u32>(m_Broadphase.GetSubMeshCandidates().size());
     }
     u32 SceneRenderer::GetLastDrawnCount() const
     {

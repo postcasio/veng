@@ -34,14 +34,28 @@ namespace Veng
         /// since the last Sync, or a mesh that was still loading has become resident.
         void Sync(const Scene& scene);
 
-        /// @brief Returns the live draw candidates in GatherMeshes order.
+        /// @brief Returns the live per-mesh gather records in GatherMeshes order.
         ///
-        /// A Cull result index into this span.
+        /// The scene-bound and shadow-view consumers read these (world matrix + world
+        /// bound + resident mesh). A Cull id does NOT index this span — it indexes the
+        /// per-submesh candidate list (GetSubMeshCandidates); a candidate's MeshCandidate
+        /// field indexes here.
         [[nodiscard]] std::span<const VisibleMesh> GetCandidates() const { return m_Candidates; }
 
-        /// @brief Appends candidate indices visible to frustum, in ascending (GatherMeshes) order.
+        /// @brief Returns the flat per-submesh draw candidates a Cull id indexes.
         ///
-        /// `out` is the caller's reused scratch, cleared by the caller; this appends.
+        /// One entry per submesh of each gathered mesh, in GatherMeshes order then submesh
+        /// order — so a mesh's submesh candidates are contiguous. The broadphase's leaf
+        /// granularity; a Cull survivor id indexes this span.
+        [[nodiscard]] std::span<const SubMeshCandidate> GetSubMeshCandidates() const
+        {
+            return m_SubMeshCandidates;
+        }
+
+        /// @brief Appends per-submesh candidate ids visible to frustum, in ascending order.
+        ///
+        /// Each id indexes GetSubMeshCandidates(). `out` is the caller's reused scratch,
+        /// cleared by the caller; this appends.
         void Cull(const Frustum& frustum, vector<u32>& out) const;
 
         /// @brief Returns the union of all live candidates' world bounds.
@@ -62,8 +76,10 @@ namespace Veng
 
         /// @brief The bounding-volume hierarchy over the gathered candidates.
         BVH m_Tree;
-        /// @brief Dense candidates in GatherMeshes order; a Cull id is an index.
+        /// @brief Dense per-mesh gather records in GatherMeshes order.
         vector<VisibleMesh> m_Candidates;
+        /// @brief Flat per-submesh candidates; one BVH leaf each, a Cull id is an index.
+        vector<SubMeshCandidate> m_SubMeshCandidates;
         /// @brief Reused per rebuild: tight box + candidate index per leaf.
         vector<BVH::Leaf> m_LeafScratch;
         /// @brief (Transform, MeshRenderer) entities whose mesh is not yet resident.

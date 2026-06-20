@@ -38,6 +38,36 @@ namespace Veng
         return bounds;
     }
 
+    AABB Mesh::ComputeSubMeshBounds(std::span<const CanonicalVertex> vertices,
+                                    std::span<const u32> indices, u32 indexOffset, u32 indexCount)
+    {
+        AABB bounds = AABB::Empty();
+        for (u32 i = 0; i < indexCount; ++i)
+        {
+            const u32 vertexIndex = indices[indexOffset + i];
+            bounds.Expand(vertices[vertexIndex].Position);
+        }
+        return bounds;
+    }
+
+    AABB Mesh::ComputeSubMeshBounds(std::span<const u8> interleaved, usize stride,
+                                    std::span<const u32> indices, u32 indexOffset, u32 indexCount)
+    {
+        VE_ASSERT(stride >= sizeof(vec3),
+                  "Mesh::ComputeSubMeshBounds: stride {} smaller than a vec3 position", stride);
+
+        AABB bounds = AABB::Empty();
+        for (u32 i = 0; i < indexCount; ++i)
+        {
+            const u32 vertexIndex = indices[indexOffset + i];
+            const usize offset = static_cast<usize>(vertexIndex) * stride;
+            vec3 position;
+            std::memcpy(&position, interleaved.data() + offset, sizeof(position));
+            bounds.Expand(position);
+        }
+        return bounds;
+    }
+
     Ref<Mesh> Mesh::Create(Context& context, const MeshData& data, const string& name)
     {
         VE_ASSERT(!data.Vertices.empty(), "Mesh::Create: '{}' has no vertices", name);
@@ -70,6 +100,15 @@ namespace Veng
         else
         {
             subMeshes = data.SubMeshes;
+        }
+
+        // Fold each resolved submesh's local-space bound over its index range, including
+        // a synthesized whole-range submesh — derived at load, never serialized.
+        for (SubMesh& subMesh : subMeshes)
+        {
+            subMesh.Bounds = Mesh::ComputeSubMeshBounds(
+                std::span<const CanonicalVertex>(data.Vertices), std::span<const u32>(data.Indices),
+                subMesh.IndexOffset, subMesh.IndexCount);
         }
 
         const Ref<Buffer> vertexBuffer =

@@ -174,52 +174,56 @@ namespace Veng::Renderer
                         // completely outside the cascade's volume is dropped.
                         const Frustum cascadeFrustum = Frustum::FromViewProjection(lightViewProj);
 
-                        const auto Draw = [&](const VisibleMesh& item)
+                        const Mesh* lastBound = nullptr;
+
+                        const auto DrawSubMesh = [&](const VisibleMesh& item, u32 subMeshIndex)
                         {
                             const Mesh& mesh = *item.Mesh;
                             const std::span<const AssetHandle<Material>> materials =
                                 mesh.GetMaterials();
 
-                            bool materialsReady = true;
-                            for (const AssetHandle<Material>& material : materials)
+                            const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
+                            if (subMesh.MaterialIndex == SubMesh::NoMaterial)
                             {
-                                materialsReady = materialsReady && material.IsLoaded();
+                                return;
                             }
-                            if (!materialsReady)
+                            if (!materials[subMesh.MaterialIndex].IsLoaded())
                             {
                                 return;
                             }
 
-                            cmd.BindVertexBuffer(mesh.GetVertexBuffer());
-                            cmd.BindIndexBuffer(mesh.GetIndexBuffer());
-
-                            const mat4 mvp = lightViewProj * item.World;
-                            cmd.PushConstants(ShadowPushConstants{.MVP = mvp});
-
-                            for (const SubMesh& subMesh : mesh.GetSubMeshes())
+                            // The candidate list is in GatherMeshes order, so a mesh's
+                            // submeshes are contiguous — bind its buffers + MVP once.
+                            if (lastBound != &mesh)
                             {
-                                if (subMesh.MaterialIndex == SubMesh::NoMaterial)
-                                {
-                                    continue;
-                                }
-                                cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
+                                cmd.BindVertexBuffer(mesh.GetVertexBuffer());
+                                cmd.BindIndexBuffer(mesh.GetIndexBuffer());
+                                cmd.PushConstants(
+                                    ShadowPushConstants{.MVP = lightViewProj * item.World});
+                                lastBound = &mesh;
                             }
+
+                            cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                         };
+
+                        const std::span<const SubMeshCandidate> candidates =
+                            view.Broadphase->GetSubMeshCandidates();
 
                         if (m_FrustumCull)
                         {
                             m_CullScratch.clear();
                             view.Broadphase->Cull(cascadeFrustum, m_CullScratch);
-                            for (const u32 idx : m_CullScratch)
+                            for (const u32 id : m_CullScratch)
                             {
-                                Draw(view.Visible[idx]);
+                                const SubMeshCandidate& c = candidates[id];
+                                DrawSubMesh(view.Visible[c.MeshCandidate], c.SubMeshIndex);
                             }
                         }
                         else
                         {
-                            for (const VisibleMesh& item : view.Visible)
+                            for (const SubMeshCandidate& c : candidates)
                             {
-                                Draw(item);
+                                DrawSubMesh(view.Visible[c.MeshCandidate], c.SubMeshIndex);
                             }
                         }
                     }

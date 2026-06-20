@@ -33,6 +33,12 @@ namespace Veng
         u32 IndexCount = 0;
         /// @brief Index into the owning Mesh's material list, or NoMaterial.
         u32 MaterialIndex = NoMaterial;
+        /// @brief Local-space bound of this range's referenced vertices.
+        ///
+        /// Folded at load over [IndexOffset, IndexOffset + IndexCount) through the mesh's
+        /// vertex positions; never serialized. Lift to world space per instance via
+        /// AABB::Transformed(worldMatrix). It is the broadphase's per-submesh leaf granularity.
+        AABB Bounds = AABB::Empty();
         /// @brief Sentinel: submesh has no assigned material.
         static constexpr u32 NoMaterial = ~0u;
     };
@@ -144,6 +150,34 @@ namespace Veng
         ///
         /// Used by MeshLoader, which operates on raw bytes. Zero vertices yields AABB::Empty().
         [[nodiscard]] static AABB ComputeBounds(std::span<const u8> interleaved, usize stride);
+
+        /// @brief Folds the local-space AABB of a submesh's referenced canonical vertices.
+        ///
+        /// Walks the index range [indexOffset, indexOffset + indexCount) into vertices.
+        /// Zero indices yields AABB::Empty().
+        /// @param vertices    The mesh's canonical vertices.
+        /// @param indices     The mesh's index list.
+        /// @param indexOffset First index in the submesh's range.
+        /// @param indexCount  Number of indices in the submesh's range.
+        /// @return The local-space bound of the referenced vertices.
+        [[nodiscard]] static AABB ComputeSubMeshBounds(std::span<const CanonicalVertex> vertices,
+                                                       std::span<const u32> indices,
+                                                       u32 indexOffset, u32 indexCount);
+
+        /// @brief Folds a submesh's local-space AABB from raw interleaved vertex bytes via its index range.
+        ///
+        /// Reads each index in [indexOffset, indexOffset + indexCount) and dereferences the
+        /// leading vec3 Position at that vertex's offset (index * stride). Used by MeshLoader,
+        /// which operates on raw bytes. Zero indices yields AABB::Empty().
+        /// @param interleaved The mesh's interleaved vertex bytes.
+        /// @param stride      Per-vertex stride in bytes.
+        /// @param indices     The mesh's index list.
+        /// @param indexOffset First index in the submesh's range.
+        /// @param indexCount  Number of indices in the submesh's range.
+        /// @return The local-space bound of the referenced vertices.
+        [[nodiscard]] static AABB ComputeSubMeshBounds(std::span<const u8> interleaved,
+                                                       usize stride, std::span<const u32> indices,
+                                                       u32 indexOffset, u32 indexCount);
 
         /// @brief Returns the mesh's debug name.
         [[nodiscard]] const string& GetName() const { return m_Name; }

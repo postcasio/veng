@@ -28,6 +28,20 @@ namespace Veng
         const Mesh* Mesh;
     };
 
+    /// @brief One per-submesh draw candidate: a gather record and the submesh within it.
+    ///
+    /// The broadphase's leaf granularity. MeshCandidate indexes the per-mesh VisibleMesh
+    /// span (GatherMeshes order); SubMeshIndex selects the submesh in that mesh's
+    /// GetSubMeshes(). A SceneBroadphase::Cull id indexes the flat candidate list these
+    /// form, mapping a frustum survivor back to the mesh + submesh a draw needs.
+    struct SubMeshCandidate
+    {
+        /// @brief Index into the per-mesh VisibleMesh span.
+        u32 MeshCandidate;
+        /// @brief Index into the mesh's GetSubMeshes() span.
+        u32 SubMeshIndex;
+    };
+
     /// @brief Gathers every resident (Transform, MeshRenderer) entity into out and unions their world bounds.
     ///
     /// Clears out first, then fills it in Transform pool dense order. Each entry's

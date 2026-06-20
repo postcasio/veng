@@ -38,11 +38,34 @@ namespace
         types.Register<Light>("Light");
     }
 
-    // A device-free Mesh: only a name + bound, no GPU buffers. The gather reads
-    // GetBounds() and never touches the (empty) vertex/index buffers.
+    // A device-free Mesh: a name, a whole-range submesh carrying the local bound, and
+    // the same value as the mesh bound — no GPU buffers. The broadphase emits one leaf
+    // per submesh, so a single-submesh mesh maps a candidate id 1:1 to its mesh index;
+    // the gather reads GetBounds() and never touches the (empty) vertex/index buffers.
     Ref<Mesh> BoundsMesh(const AABB& bounds)
     {
-        return Mesh::Create(MeshInfo{.Name = "test", .Bounds = bounds});
+        return Mesh::Create(MeshInfo{
+            .Name = "test",
+            .SubMeshes = {SubMesh{.IndexOffset = 0, .IndexCount = 0, .Bounds = bounds}},
+            .Bounds = bounds,
+        });
+    }
+
+    // A device-free Mesh with two submeshes carrying the given local bounds. The
+    // broadphase emits one leaf per submesh; the whole-mesh bound is their union.
+    Ref<Mesh> TwoSubMeshMesh(const AABB& left, const AABB& right)
+    {
+        AABB whole = left;
+        whole.Expand(right);
+        return Mesh::Create(MeshInfo{
+            .Name = "two submeshes",
+            .SubMeshes =
+                {
+                    SubMesh{.IndexOffset = 0, .IndexCount = 0, .Bounds = left},
+                    SubMesh{.IndexOffset = 0, .IndexCount = 0, .Bounds = right},
+                },
+            .Bounds = whole,
+        });
     }
 
     // The exact set the broadphase's Cull must reproduce: every candidate whose
@@ -341,4 +364,72 @@ TEST_CASE("SceneBroadphase: a mesh becoming resident between frames enters the t
     // empty, so there is nothing left to poll.
     broadphase.Sync(*scene);
     CHECK_FALSE(broadphase.DidRebuildLastSync());
+}
+
+TEST_CASE("SceneBroadphase: per-submesh leaves — a frustum drops one submesh of an on-screen mesh")
+{
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    RegisterBuiltins(types);
+
+    AssetManager manager(context, tasks, types);
+    Unique<Scene> scene = Scene::Create(types);
+
+    // One wide mesh, two submeshes well separated on X: the left around x=-20, the
+    // right around x=+20. Placed at the origin so its local bounds are its world bounds.
+    const AABB left{.Min = vec3(-21.0f, -1.0f, -1.0f), .Max = vec3(-19.0f, 1.0f, 1.0f)};
+    const AABB right{.Min = vec3(19.0f, -1.0f, -1.0f), .Max = vec3(21.0f, 1.0f, 1.0f)};
+    const AssetHandle<Mesh> mesh = manager.Adopt<Mesh>(TwoSubMeshMesh(left, right));
+
+    const Entity e = scene->CreateEntity();
+    scene->Add<Transform>(e, Transform{.Position = vec3(0.0f)});
+    scene->Add<MeshRenderer>(e, MeshRenderer{.Mesh = mesh});
+
+    SceneBroadphase broadphase;
+    broadphase.Sync(*scene);
+    REQUIRE(broadphase.DidRebuildLastSync());
+
+    // One mesh candidate, two per-submesh candidates.
+    REQUIRE(broadphase.GetCandidates().size() == 1);
+    REQUIRE(broadphase.GetSubMeshCandidates().size() == 2);
+    CHECK(broadphase.GetSubMeshCandidates()[0].MeshCandidate == 0);
+    CHECK(broadphase.GetSubMeshCandidates()[0].SubMeshIndex == 0);
+    CHECK(broadphase.GetSubMeshCandidates()[1].SubMeshIndex == 1);
+
+    // The union of the per-submesh world bounds equals the whole-mesh world bound.
+    AABB unioned = AABB::Empty();
+    unioned.Expand(left);
+    unioned.Expand(right);
+    const AABB whole = broadphase.GetCandidates()[0].WorldBounds;
+    CHECK(unioned.Min.x == doctest::Approx(whole.Min.x));
+    CHECK(unioned.Max.x == doctest::Approx(whole.Max.x));
+
+    // A wide frustum containing the whole mesh returns BOTH submesh candidates.
+    const Frustum wide =
+        Frustum::FromViewProjection(glm::ortho(-50.0f, 50.0f, -50.0f, 50.0f, -50.0f, 50.0f));
+    {
+        vector<u32> culled;
+        broadphase.Cull(wide, culled);
+        CHECK(culled == vector<u32>{0u, 1u});
+    }
+
+    // A frustum covering only the right half misses the left submesh's bound entirely,
+    // so the cull drops exactly that submesh's candidate — the per-submesh refinement.
+    const Frustum rightOnly =
+        Frustum::FromViewProjection(glm::ortho(10.0f, 50.0f, -50.0f, 50.0f, -50.0f, 50.0f));
+    {
+        vector<u32> culled;
+        broadphase.Cull(rightOnly, culled);
+        CHECK(culled == vector<u32>{1u}); // only the right submesh (candidate id 1)
+    }
+
+    // Symmetric: a left-only frustum keeps only the left submesh.
+    const Frustum leftOnly =
+        Frustum::FromViewProjection(glm::ortho(-50.0f, -10.0f, -50.0f, 50.0f, -50.0f, 50.0f));
+    {
+        vector<u32> culled;
+        broadphase.Cull(leftOnly, culled);
+        CHECK(culled == vector<u32>{0u});
+    }
 }

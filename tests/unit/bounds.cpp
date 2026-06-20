@@ -120,6 +120,47 @@ TEST_CASE("Mesh::ComputeBounds: typed and raw forms agree, empty for no vertices
     CHECK(VecApprox(typed.Max, fromBytes.Max));
 }
 
+TEST_CASE("Mesh::ComputeSubMeshBounds: folds exactly a referenced index range")
+{
+    // Four vertices spread on X; two disjoint index ranges referencing the left pair
+    // and the right pair. The fold over each range bounds only that pair.
+    const vector<CanonicalVertex> vertices = {
+        {.Position = vec3(-10.0f, 0.0f, 0.0f)},
+        {.Position = vec3(-8.0f, 1.0f, -1.0f)},
+        {.Position = vec3(8.0f, -1.0f, 1.0f)},
+        {.Position = vec3(10.0f, 0.0f, 0.0f)},
+    };
+    const vector<u32> indices = {0, 1, 2, 3};
+
+    const std::span<const CanonicalVertex> v(vertices);
+    const std::span<const u32> idx(indices);
+
+    // Empty range → Empty().
+    CHECK(Mesh::ComputeSubMeshBounds(v, idx, 0, 0).IsEmpty());
+
+    const AABB left = Mesh::ComputeSubMeshBounds(v, idx, 0, 2);
+    CHECK(VecApprox(left.Min, vec3(-10.0f, 0.0f, -1.0f)));
+    CHECK(VecApprox(left.Max, vec3(-8.0f, 1.0f, 0.0f)));
+
+    const AABB right = Mesh::ComputeSubMeshBounds(v, idx, 2, 2);
+    CHECK(VecApprox(right.Min, vec3(8.0f, -1.0f, 0.0f)));
+    CHECK(VecApprox(right.Max, vec3(10.0f, 0.0f, 1.0f)));
+
+    // A range covering every index equals Mesh::ComputeBounds over the whole span.
+    const AABB whole = Mesh::ComputeSubMeshBounds(v, idx, 0, static_cast<u32>(indices.size()));
+    const AABB full = Mesh::ComputeBounds(v);
+    CHECK(VecApprox(whole.Min, full.Min));
+    CHECK(VecApprox(whole.Max, full.Max));
+
+    // The raw-bytes overload agrees with the typed one over the same range.
+    const std::span<const u8> raw(reinterpret_cast<const u8*>(vertices.data()),
+                                  vertices.size() * sizeof(CanonicalVertex));
+    const AABB leftBytes = Mesh::ComputeSubMeshBounds(raw, sizeof(CanonicalVertex), idx, 0, 2);
+    CHECK(VecApprox(leftBytes.Min, left.Min));
+    CHECK(VecApprox(leftBytes.Max, left.Max));
+    CHECK(Mesh::ComputeSubMeshBounds(raw, sizeof(CanonicalVertex), idx, 0, 0).IsEmpty());
+}
+
 TEST_CASE("Primitive bounds: Cube/Sphere/Plane")
 {
     const AABB cube =

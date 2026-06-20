@@ -209,6 +209,14 @@ namespace Veng
         const std::span<const u32> indices(reinterpret_cast<const u32*>(indexData.data()),
                                            header.IndexCount);
 
+        // Fold each submesh's local-space bound over its index range through the raw
+        // vertex bytes — derived at load, never serialized.
+        for (Veng::SubMesh& subMesh : subMeshes)
+        {
+            subMesh.Bounds = Veng::Mesh::ComputeSubMeshBounds(
+                vertexData, header.VertexStride, indices, subMesh.IndexOffset, subMesh.IndexCount);
+        }
+
         const Ref<Renderer::Buffer> vertexBuffer =
             Renderer::Buffer::Create(context, {
                                                   .Name = fmt::format("Mesh {} Vertices", id.Value),
