@@ -85,6 +85,7 @@ namespace Veng
 
 namespace Veng
 {
+    /// @cond DOXYGEN_EXCLUDE
     VE_LEAF(bool, 0x283EDB5B266A27EDULL, FieldClass::Scalar);
     VE_LEAF(f32, 0x4AF0D89664A476FBULL, FieldClass::Scalar);
     VE_LEAF(i32, 0xE4A543818EB46182ULL, FieldClass::Scalar);
@@ -103,6 +104,7 @@ namespace Veng
     // Entity is an intra-scene reference, not a value leaf — the prefab loader
     // recognises FieldClass::Reference to remap it into a fresh Scene.
     VE_LEAF(Entity, 0x448BDF481E27075EULL, FieldClass::Reference);
+    /// @endcond
 }
 
 #if defined(__clang__) || defined(__GNUC__)

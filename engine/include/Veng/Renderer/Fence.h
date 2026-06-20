@@ -35,9 +35,9 @@ namespace Veng::Renderer
         /// @brief Resets the fence to the unsignaled state.
         void Reset() const;
 
-        /// @brief Backend handle accessor. Returns a mutable ref from a const method by design —
-        /// see the Native idiom in Native.h.
+        /// @brief Opaque backend handle; defined in the matching .cpp.
         struct Native;
+        /// @brief Returns the backend handle. Mutable ref from a const method by design — see Native.h.
         [[nodiscard]] Native& GetNative() const;
 
     private:

@@ -135,9 +135,9 @@ namespace Veng::Renderer
         /// @brief Binds a typed index buffer. Index width is derived from IndexBuffer.
         void BindIndexBuffer(const IndexBuffer& buffer);
 
-        /// @brief Backend handle accessor. Returns a mutable ref from a const method by design —
-        /// see the Native idiom in Native.h.
+        /// @brief Opaque backend handle; defined in the matching .cpp.
         struct Native;
+        /// @brief Returns the backend handle. Mutable ref from a const method by design — see Native.h.
         [[nodiscard]] Native& GetNative() const;
 
         /// @brief Resets the command buffer, discarding any previously recorded commands.

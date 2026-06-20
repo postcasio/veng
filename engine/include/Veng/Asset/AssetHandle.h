@@ -45,7 +45,7 @@ namespace Veng
 
     /// @brief Maps an asset C++ type T to its AssetType enum value.
     ///
-    /// Each concrete asset type specializes this trait. AssetManager::LoadSync<T>/Get<T>
+    /// Each concrete asset type specializes this trait. `AssetManager::LoadSync<T>`/`Get<T>`
     /// use it to derive the AssetType for a typed request.
     template <typename T>
     struct AssetTypeTrait;

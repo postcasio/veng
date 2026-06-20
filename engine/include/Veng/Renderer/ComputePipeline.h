@@ -43,9 +43,9 @@ namespace Veng::Renderer
         /// @brief Returns the pipeline layout.
         [[nodiscard]] Ref<PipelineLayout> GetPipelineLayout() const { return m_PipelineLayout; }
 
-        /// @brief Backend handle accessor. Returns a mutable ref from a const method by design —
-        /// see the Native idiom in Native.h.
+        /// @brief Opaque backend handle; defined in the matching .cpp.
         struct Native;
+        /// @brief Returns the backend handle. Mutable ref from a const method by design — see Native.h.
         [[nodiscard]] Native& GetNative() const;
 
     private:

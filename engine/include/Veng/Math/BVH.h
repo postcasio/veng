@@ -20,7 +20,9 @@ namespace Veng
         /// @brief One BVH leaf: a tight world-space box and a caller-supplied payload id.
         struct Leaf
         {
+            /// @brief Tight world-space bounding box.
             AABB Box;
+            /// @brief Caller-supplied payload id returned by queries.
             u32 Id;
         };
 

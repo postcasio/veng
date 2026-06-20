@@ -73,9 +73,9 @@ namespace Veng::Renderer
         /// @brief Returns the depth attachment format declared at creation.
         [[nodiscard]] Format GetDepthAttachmentFormat() const { return m_DepthAttachmentFormat; }
 
-        /// @brief Backend handle accessor. Returns a mutable ref from a const method by design —
-        /// see the Native idiom in Native.h.
+        /// @brief Opaque backend handle; defined in the matching .cpp.
         struct Native;
+        /// @brief Returns the backend handle. Mutable ref from a const method by design — see Native.h.
         [[nodiscard]] Native& GetNative() const;
 
     private:

@@ -37,6 +37,7 @@ namespace Veng
         /// @brief One prefab entity and the components it carries, in authored order.
         struct PrefabEntity
         {
+            /// @brief The entity's components, in authored order.
             vector<Component> Components;
         };
 

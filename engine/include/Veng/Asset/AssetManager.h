@@ -38,7 +38,9 @@ namespace Veng
         MountHandle(const MountHandle&) = delete;
         MountHandle& operator=(const MountHandle&) = delete;
 
+        /// @brief Move-constructs, transferring ownership of the mounted archive.
         MountHandle(MountHandle&& other) noexcept;
+        /// @brief Move-assigns, unmounting any archive this handle currently owns first.
         MountHandle& operator=(MountHandle&& other) noexcept;
 
         /// @brief Returns true when this handle owns a mounted archive.

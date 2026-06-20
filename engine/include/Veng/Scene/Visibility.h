@@ -35,6 +35,7 @@ namespace Veng
     /// handle (not IsLoaded()) is skipped. outBounds equals SceneBounds(scene) and
     /// is AABB::Empty() when no resident mesh renderers exist. No culling is
     /// applied — this is the unculled candidate set.
+    /// @param scene     Scene whose resident (Transform, MeshRenderer) entities are gathered.
     /// @param out       Destination; cleared then filled with gathered candidates.
     /// @param outBounds Receives the union of all gathered world bounds.
     void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds);

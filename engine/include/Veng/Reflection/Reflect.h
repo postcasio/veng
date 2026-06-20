@@ -42,6 +42,9 @@ namespace Veng::Detail
         /// @brief Accumulated field descriptors.
         vector<FieldDescriptor> Fields;
 
+        /// @brief Appends one finished field descriptor to the collected list.
+        /// @tparam Owner  The struct type declaring the field.
+        /// @tparam Field  The field's value type.
         template <class Owner, class Field>
         void Field_(FieldDescriptor desc)
         {
@@ -58,6 +61,9 @@ namespace Veng::Detail
         /// @brief The registry receiving each field's type registration.
         TypeRegistry& Registry;
 
+        /// @brief Registers the field's type, recursing through struct-class fields.
+        /// @tparam Owner  The struct type declaring the field.
+        /// @tparam Field  The field's value type, registered into the registry.
         template <class Owner, class Field>
         void Field_(const FieldDescriptor&)
         {

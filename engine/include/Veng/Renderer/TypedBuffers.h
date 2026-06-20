@@ -12,10 +12,10 @@
 /// @brief Typed wrappers over Buffer that fix usage flags and element type at compile time.
 ///
 /// Eliminates restating BufferUsage and computing byte sizes at call sites. Each wrapper
-/// is a thin value type holding a Ref<Buffer> (composition); raw Buffer::Create remains
+/// is a thin value type holding a `Ref<Buffer>` (composition); raw Buffer::Create remains
 /// for staging and exotic cases.
 ///
-/// Alignment note for UniformBuffer<T>/StorageBuffer<T>: T's C++ layout must match the
+/// Alignment note for `UniformBuffer<T>`/`StorageBuffer<T>`: T's C++ layout must match the
 /// shader's std140 (UBO) / std430 (SSBO) expectations — veng does not translate layouts.
 /// Use alignas and padding to match the shader (e.g. vec3 padded to 16 bytes in std140).
 namespace Veng::Renderer

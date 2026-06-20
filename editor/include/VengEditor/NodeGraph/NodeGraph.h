@@ -19,6 +19,7 @@ namespace VengEditor
         /// @brief Catalog-assigned id value; 0 is the unset sentinel.
         Veng::u32 Value = 0;
 
+        /// @brief Member-wise equality on the id value.
         bool operator==(const NodeTypeId&) const = default;
     };
 
@@ -33,6 +34,7 @@ namespace VengEditor
         /// @brief Generation counter; must match the slot's current generation.
         Veng::u32 Generation = 0;
 
+        /// @brief Member-wise equality on index and generation.
         bool operator==(const NodeId&) const = default;
     };
 
@@ -47,6 +49,7 @@ namespace VengEditor
         /// @brief Zero-based index into the node's input or output pin list.
         Veng::u16 Pin = 0;
 
+        /// @brief Member-wise equality on the node and pin index.
         bool operator==(const PinRef&) const = default;
     };
 
@@ -73,6 +76,7 @@ namespace VengEditor
         /// @brief Destination (input) end of the edge.
         PinRef To;
 
+        /// @brief Member-wise equality on both endpoints.
         bool operator==(const Link&) const = default;
     };
 

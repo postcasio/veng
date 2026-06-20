@@ -26,6 +26,7 @@ namespace Veng
         /// @brief Returns true if this handle is null (no entity).
         [[nodiscard]] bool IsNull() const { return Index == InvalidIndex; }
 
+        /// @brief Member-wise equality on index and generation.
         bool operator==(const Entity&) const = default;
     };
 

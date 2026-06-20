@@ -57,6 +57,9 @@ namespace Veng
         ///
         /// Returns the unregistered texture and a Task that completes once the upload is submitted.
         /// The caller waits for the task and calls Finalize() on the main thread.
+        /// @param context    Render context the image/view/sampler are created on.
+        /// @param info       Texture description (extent, format, pixels, sampler settings).
+        /// @param tasks      Task system the async upload is recorded through.
         /// @param outUpload  Receives the upload task to wait on before calling Finalize().
         static Ref<Texture> CreateAsync(Renderer::Context& context, const TextureInfo& info,
                                         TaskSystem& tasks, Task<void>& outUpload);

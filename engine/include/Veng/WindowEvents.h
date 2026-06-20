@@ -18,6 +18,7 @@ namespace Veng
         {
         }
 
+        /// @brief Injects this event's type-identity members (see the EVENT macro).
         EVENT(WindowResize);
 
         /// @brief Returns the new window width in pixels.
@@ -38,6 +39,7 @@ namespace Veng
     public:
         WindowCloseEvent() = default;
 
+        /// @brief Injects this event's type-identity members (see the EVENT macro).
         EVENT(WindowClose);
     };
 }

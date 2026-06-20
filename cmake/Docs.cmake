@@ -23,6 +23,10 @@ function(veng_add_docs)
     set(DOXYGEN_GENERATE_LATEX NO)
     set(DOXYGEN_RECURSIVE YES)
 
+    # Teach Doxygen the std:: containers/smart pointers so it can resolve scopes
+    # like std::hash<T> specializations the public headers document.
+    set(DOXYGEN_BUILTIN_STL_SUPPORT YES)
+
     # `///` doc comments with @-tags, plus README.md as the landing page.
     set(DOXYGEN_JAVADOC_AUTOBRIEF NO)
     set(DOXYGEN_USE_MDFILE_AS_MAINPAGE ${CMAKE_SOURCE_DIR}/README.md)

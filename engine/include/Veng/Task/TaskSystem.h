@@ -45,7 +45,7 @@ namespace Veng
             function<void(Result<Payload>)> Continuation;
         };
 
-        /// @brief Trait: true when R is a Result<U>, allowing a job to report recoverable failures.
+        /// @brief Trait: true when R is a `Result<U>`, allowing a job to report recoverable failures.
         template <typename R>
         struct IsResult : std::false_type
         {
