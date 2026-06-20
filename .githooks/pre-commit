@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Pre-commit gate over the C/C++ lines this commit touches. Both stages apply to
-# changed lines only and leave existing code alone; each skips cleanly when its
-# tooling is absent, so the hook never blocks a clone that lacks the tools.
+# Pre-commit gate over the staged C/C++ changes. Stage 1 (clang-format) checks the
+# touched lines; stage 2 (clang-tidy) lints each staged translation unit against the
+# allowlist. Each skips cleanly when its tooling is absent, so the hook never blocks
+# a clone that lacks the tools.
 set -euo pipefail
 
 # --- Stage 1: clang-format (repo-root .clang-format) -------------------------
@@ -24,9 +25,13 @@ else
 fi
 
 # --- Stage 2: clang-tidy (repo-root .clang-tidy) -----------------------------
-# Lint only the touched lines via clang-tidy-diff.py, which needs a compile DB
-# (built into build/ — compile_commands.json is exported unconditionally). Skips
-# cleanly when clang-tidy, the diff driver, or a compile DB is missing.
+# Lint each staged .cpp/.cc against the allowlist. The tree is kept clean against
+# .clang-tidy, so any finding on a touched TU is a real regression — no changed-line
+# diffing needed. A changed header is checked transitively (a staged TU that includes
+# it reports its findings via HeaderFilterRegex); a header-only commit drives no TU,
+# so use -DVENG_ENABLE_CLANG_TIDY=ON or CI for those. Needs a compile DB
+# (compile_commands.json, exported unconditionally into build/). Skips cleanly when
+# clang-tidy or a DB is absent, or when nothing relevant is staged.
 tidy_db=""
 for d in build build-debug cmake-build-debug; do
     if [ -f "$d/compile_commands.json" ]; then
@@ -35,28 +40,28 @@ for d in build build-debug cmake-build-debug; do
     fi
 done
 
-tidy_diff=""
-for c in clang-tidy-diff.py clang-tidy-diff; do
-    if command -v "$c" >/dev/null 2>&1; then
-        tidy_diff="$c"
-        break
-    fi
-done
+staged_tus=$(git diff --cached --name-only --diff-filter=ACM -- '*.cpp' '*.cc')
 
-if command -v clang-tidy >/dev/null 2>&1 && [ -n "$tidy_diff" ] && [ -n "$tidy_db" ]; then
-    tidy_out=$(git diff --staged -U0 --no-color -- '*.h' '*.hpp' '*.cpp' '*.cc' \
-        | "$tidy_diff" -p1 -path "$tidy_db" -quiet 2>/dev/null || true)
-    case "$tidy_out" in
-        *" warning: "* | *" error: "*)
-            echo "pre-commit: clang-tidy flagged staged C/C++ changes." >&2
-            echo "Review the findings below, fix or justify with NOLINT, then re-commit." >&2
-            echo "------------------------------------------------------------------" >&2
-            printf '%s\n' "$tidy_out" >&2
-            exit 1
-            ;;
-    esac
+if command -v clang-tidy >/dev/null 2>&1 && [ -n "$tidy_db" ] && [ -n "$staged_tus" ]; then
+    # The compile DB carries AppleClang's flags, which omit the implicit macOS SDK
+    # and Vulkan include paths LLVM's clang-tidy needs. Supply them by env so no
+    # per-file --extra-arg plumbing is required; both are no-ops off macOS.
+    sdk=$(xcrun --show-sdk-path 2>/dev/null || true)
+    [ -n "$sdk" ] && export SDKROOT="$sdk"
+    vk=$(grep -m1 '^Vulkan_INCLUDE_DIR:' "$tidy_db/CMakeCache.txt" 2>/dev/null | cut -d= -f2 || true)
+    [ -n "$vk" ] && export CPATH="${vk}${CPATH:+:$CPATH}"
+
+    tidy_out=$(printf '%s\n' "$staged_tus" | tr '\n' '\0' \
+        | xargs -0 clang-tidy -p "$tidy_db" --quiet 2>/dev/null || true)
+    if printf '%s\n' "$tidy_out" | grep -qE ': (warning|error):'; then
+        echo "pre-commit: clang-tidy flagged staged C/C++ changes." >&2
+        echo "Fix the findings below or justify with NOLINT, then re-stage and commit." >&2
+        echo "------------------------------------------------------------------" >&2
+        printf '%s\n' "$tidy_out" | grep -E ': (warning|error):' >&2
+        exit 1
+    fi
 else
-    echo "pre-commit: clang-tidy / clang-tidy-diff / compile DB not found, skipping tidy check." >&2
+    echo "pre-commit: clang-tidy or a compile DB not found (or no staged .cpp/.cc), skipping tidy check." >&2
 fi
 
 exit 0
