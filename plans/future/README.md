@@ -92,10 +92,18 @@ model directly.**
 
 **Still future:**
 
+- A **hierarchy representation redesign** — replace the up-link `Parent` with an intrusive
+  sibling-linked `Hierarchy` (`Parent` / `FirstChild` / `PrevSibling` / `NextSibling`): O(1)
+  attach/detach/reparent through `SetParent`/`Detach` operations, ordered children, O(children)
+  down-traversal, and O(subtree) recursive destroy — closing the up-link's
+  no-down-traversal / no-order / unmanaged-reference limits and giving transform propagation
+  and the broadphase a precise change signal. **Design overview:** [hierarchy.md](hierarchy.md).
 - A **systems** framework (planset-10 ships storage + queries; the app writes its
   own update loops over `Each`/`View`).
-- **Archetype storage** and **dirty-flag** transform propagation (perf
-  optimizations behind the same API).
+- **Archetype storage** and **dirty-flag, depth-sorted** transform propagation (perf
+  optimizations behind the same API; the propagation layer rides the
+  [hierarchy redesign](hierarchy.md)'s ordered down-traversal and is what would let
+  planset-23's broadphase move from version-gated rebuild to incremental maintenance).
 - Migrating `VE_REFLECT` to inline `[[=…]]` **annotation reflection** once
   AppleClang gains P2996/P3394.
 
@@ -392,7 +400,8 @@ codegen precursor that can fold into that planset). Whichever the next planset t
 increments of the
 areas done in part — area 1's
 **hot-reload**, area 2's task graph / staging pool / cancellation, area 7's
-**systems framework** + perf follow-ons + the `ShaderInterface`/`MaterialField`
+**systems framework** + the **hierarchy representation redesign** + perf follow-ons +
+the `ShaderInterface`/`MaterialField`
 unification + container/array fields, area 8's **transparent/forward pass** +
 **shadowed punctual lights** + a **cached scene bound / BVH** (the shared scaling step) +
 history-buffer ringing / cross-queue

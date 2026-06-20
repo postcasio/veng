@@ -382,6 +382,60 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   with the `SceneBounds` reduction, and occlusion / per-submesh / GPU culling are the named
   refinements — each behind this delivered foundation.
 
+- **[planset-22](planset-22/README.md)** — recoverable reflection deserialization
+  (✅ done, 2 plans). Makes the reflection serializer's **read** side **recoverable**: the
+  `ReadFields` truncation/drift guards return a `VoidResult` (`std::unexpected`) instead of a
+  fatal `VE_ASSERT`, and the prefab loader propagates a malformed/truncated record as the
+  structured `AssetError::Corrupt` it already raises for its own range checks — drawing the line
+  veng's error policy implies (untrusted input is recoverable; the schema lookups stay fatal API
+  misuse). `WriteFields` is untouched; a `gpu`-band test feeds a truncated cooked prefab blob and
+  asserts `LoadSync` returns `Corrupt`, not an abort.
+
+- **[planset-23](planset-23/README.md)** — cached, dirty-tracked scene transforms & bounds
+  (📝 proposed, 4 plans). Cashes in the **shared scaling step** planset-20/21 both named — a
+  **cross-frame cache** behind the stable `ComputeWorldMatrices`/`SceneBounds`/`GatherMeshes`
+  seam, so a static scene stops re-walking every parent chain and re-transforming every mesh
+  bound each frame. **Foundation-first**: a scoped `Scene::TransformEpoch()` (bumped on
+  Transform/Parent structural change and **non-`const`** Transform/Parent access, never on other
+  pools or `const` access) + a `const` `View`/`Each` path so read-only iteration doesn't
+  self-dirty (dropping the renderer's light-pack `const_cast`), then a consumer-owned
+  `SceneTransformCache` that recomputes via the pure functions only on an epoch miss — both pure,
+  device-free, unit-tested (hit == miss == standalone gather) before the renderer consumes them.
+  The rendered image is **byte-identical** (the golden never moves; a hit/miss stat is the
+  evidence). This is the **cross-frame half** of the scaling step; the **full BVH broadphase**
+  (the spatial half — sub-linear cull even for a moving scene, feeding planset-24's many shadow
+  views) is named as the next scaling exploration with its implications-to-explore recorded,
+  behind the **same** gather seam.
+
+- **[planset-24](planset-24/README.md)** — shadowed punctual lights (📝 proposed, 5 plans).
+  The other named increment behind the delivered `AABB`/`Frustum`/gather facility: extend the
+  shadow system from **directional-only** to **point and spot**. A bounded budget of punctual
+  lights cast real shadows — a **spot** through one perspective map, a **point** through a
+  six-face **cube** — sampled in the deferred lighting pass with hardware `SampleCmp` + PCF and
+  multiplied into each light's contribution. **Set 1 generalizes** from "the directional system"
+  to "a shadow system" (directional cascades + a punctual atlas + per-light shadow records), and
+  each shadow view culls its casters off the **shared gather** against its own frustum (a spot
+  frustum, six cube-face frustums) — the many-shadow-view workload that most rewards planset-23's
+  cache and the named BVH. **Builds on planset-23** (warm cache for the per-light culls);
+  foundation-first (the punctual shadow-view math is pure/device-free). The image changes — the
+  **golden is regenerated once**. Clustered light culling and cached/static shadow maps stay named
+  next.
+
+- **[planset-25](planset-25/README.md)** — occlusion + GPU/compute-driven culling (📝 proposed,
+  6 plans). Takes planset-21's mesh-granularity **CPU** frustum cull all the way to
+  **GPU-driven** — the deepest culling refinement. Staged: **per-submesh bounds** + a CPU
+  per-submesh cull (a pure refinement, bounds derived at load with no cooked-format change);
+  a **hi-Z depth pyramid** (compute min/max mip reduction) + a conservative temporal **occlusion
+  test** (drop only the provably hidden, never a visible draw); then **indirect-draw
+  infrastructure** (`DrawIndexedIndirectCount`, GPU-sourced count — net-new engine capability,
+  MoltenVK-verified) and a **compute cull → indirect draw** path that uploads the gather's
+  candidates, runs frustum+occlusion GPU-side, and compacts survivors into an indirect buffer the
+  geometry pass issues. A `CullMode` setting selects CPU/GPU with the CPU path as fallback. The
+  image stays **byte-identical** (frustum-identical; occlusion drops only hidden draws);
+  draw-count fixtures are the guard. Meshlet/cluster culling, two-pass occlusion, and GPU-driven
+  shadow culling are named next; the GPU candidate set is the natural consumer of the BVH
+  broadphase. **Independent of planset-24**; builds on planset-23.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
