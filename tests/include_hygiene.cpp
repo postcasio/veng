@@ -46,6 +46,8 @@
 #include <Veng/ImGui/ImGuiTexture.h>
 
 #include <Veng/Math/AABB.h>
+#include <Veng/Math/BVH.h>
+#include <Veng/Math/Frustum.h>
 
 #include <Veng/UI/UI.h>
 #include <Veng/UI/Types.h>
