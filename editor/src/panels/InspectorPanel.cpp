@@ -1,4 +1,4 @@
-#include "InspectorPanel.h"
+#include "panels/InspectorPanel.h"
 
 #include "FieldWidget.h"
 
@@ -14,36 +14,36 @@ namespace VengEditor
     using namespace Veng;
 
     InspectorPanel::InspectorPanel(AssetManager& assets, EditorRegistry& editors,
-                                   const AssetSourceIndex& sources)
-        : m_Assets(assets), m_Editors(editors), m_Sources(sources)
+                                   const AssetSourceIndex& sources, PrefabEditContext& ctx)
+        : m_Assets(assets), m_Editors(editors), m_Sources(sources), m_Ctx(ctx)
     {
     }
 
     void InspectorPanel::OnImGui()
     {
-        if (m_Scene == nullptr || !m_Selected || !m_Scene->IsAlive(*m_Selected))
+        Scene* scene = m_Ctx.Scene;
+        if (scene == nullptr || !m_Ctx.Selection || !scene->IsAlive(*m_Ctx.Selection))
         {
             UI::TextDisabled("Nothing selected");
             return;
         }
 
-        TypeRegistry& types = m_Scene->GetTypeRegistry();
-        const Entity entity = *m_Selected;
+        TypeRegistry& types = scene->GetTypeRegistry();
+        const Entity entity = *m_Ctx.Selection;
 
-        m_Scene->ForEachComponent(
-            entity,
-            [&](TypeId id, void* component)
-            {
-                const TypeInfo& info = types.Info(id);
+        scene->ForEachComponent(entity,
+                                [&](TypeId id, void* component)
+                                {
+                                    const TypeInfo& info = types.Info(id);
 
-                // A stable per-type id keeps headers from collapsing into one another
-                // when two components share a display name.
-                auto scope = UI::PushId(fmt::format("{}", id));
-                if (UI::CollapsingHeader(info.Name, UI::TreeFlags::DefaultOpen))
-                {
-                    DrawFields(component, info);
-                }
-            });
+                                    // A stable per-type id keeps headers from collapsing into one another
+                                    // when two components share a display name.
+                                    auto scope = UI::PushId(fmt::format("{}", id));
+                                    if (UI::CollapsingHeader(info.Name, UI::TreeFlags::DefaultOpen))
+                                    {
+                                        DrawFields(component, info);
+                                    }
+                                });
     }
 
     void InspectorPanel::DrawFields(void* base, const TypeInfo& type)

@@ -28,8 +28,6 @@ namespace Veng
 
 namespace VengEditor
 {
-    class SceneViewportPanel;
-    class InspectorPanel;
     class AssetSourceIndex;
 
     /// @brief Construction parameters for EditorHost.
@@ -134,14 +132,6 @@ namespace VengEditor
         };
         /// @brief Host-owned panel set: built-ins plus any game-contributed panels.
         Veng::vector<PanelSlot> m_Panels;
-
-        /// @brief Non-owning pointer into m_Panels' viewport slot, used to drive the
-        /// scene render before the UI is built each frame.
-        SceneViewportPanel* m_Viewport = nullptr;
-
-        /// @brief Non-owning pointer into m_Panels' inspector slot, fed the viewport's
-        /// scene and selection each frame before the UI is built.
-        InspectorPanel* m_Inspector = nullptr;
 
         /// @brief Panels opened via OpenAssetEditor since the last frame; adopted into
         /// m_Panels outside panel-iteration so opening from OnImGui is safe.

@@ -9,6 +9,8 @@
 
 add_library(veng_editor SHARED
         src/EditorHost.cpp
+        src/EditorPanel.cpp
+        src/AssetEditorPanel.cpp
         src/AssetSourceIndex.cpp
         src/NodeGraph/NodeGraph.cpp
         src/NodeGraph/NodeType.cpp
@@ -17,6 +19,8 @@ add_library(veng_editor SHARED
         src/panels/ConsolePanel.cpp
         src/panels/InspectorPanel.cpp
         src/panels/MaterialEditorPanel.cpp
+        src/panels/PrefabEditorPanel.cpp
+        src/panels/PrefabExplorerPanel.cpp
         src/panels/SceneViewportPanel.cpp
         src/panels/TextureEditorPanel.cpp
         src/FieldWidget.cpp

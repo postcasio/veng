@@ -32,6 +32,16 @@ namespace VengEditor
         /// @brief Draws the panel's ImGui contents into the current frame.
         virtual void OnImGui() = 0;
 
+        /// @brief Submits this panel's top-level window(s) for the frame.
+        ///
+        /// The host calls this once per open panel. The default wraps OnImGui in a
+        /// single UI::Window titled GetTitle() (with the panel's GetWindowFlags() and
+        /// edge-to-edge padding for a NoScrollbar panel). An asset editor that hosts a
+        /// private dockspace overrides this to submit its document window and the
+        /// class-tagged child windows that dock into it.
+        /// @param open  Host-owned visibility flag, toggled by the window close button.
+        virtual void Draw(bool* open);
+
         /// @brief Records this frame's offscreen render into cmd.
         ///
         /// Called on every open panel before the ImGui frame is built, so the

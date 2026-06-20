@@ -21,9 +21,8 @@
 #include "AssetSourceIndex.h"
 #include "panels/AssetBrowserPanel.h"
 #include "panels/ConsolePanel.h"
-#include "panels/InspectorPanel.h"
 #include "panels/MaterialEditorPanel.h"
-#include "panels/SceneViewportPanel.h"
+#include "panels/PrefabEditorPanel.h"
 #include "panels/TextureEditorPanel.h"
 
 namespace VengEditor
@@ -36,6 +35,9 @@ namespace VengEditor
         // host uses to present the ImGui output to the swapchain.
         constexpr AssetId FullscreenVertId{0xF46DD3C6F2AE0628ULL};
         constexpr AssetId BlitFragId{0xBEB6DB78DFCF1D33ULL};
+
+        // The hello-triangle pack's sphere prefab, opened as the initial document.
+        constexpr AssetId SampleScenePrefabId{0xA123F30FD219F2D5ULL};
 
         struct BlitPushConstants
         {
@@ -112,6 +114,34 @@ namespace VengEditor
             ImGuiLayer& m_ImGui;
             EditorRegistry& m_Editors;
             VengEditor::CookDriver m_Cook;
+        };
+
+        // Opens a PrefabEditorPanel that spawns the prefab into a live Scene for editing.
+        // Needs no manifest source: the prefab is edited in-scene, not recooked.
+        class PrefabEditorFactory final : public AssetEditorFactory
+        {
+        public:
+            PrefabEditorFactory(Renderer::Context& context, AssetManager& assets, ImGuiLayer& imgui,
+                                TypeRegistry& types, EditorRegistry& editors,
+                                const AssetSourceIndex& sources)
+                : m_Context(context), m_Assets(assets), m_ImGui(imgui), m_Types(types),
+                  m_Editors(editors), m_Sources(sources)
+            {
+            }
+
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            {
+                return CreateUnique<PrefabEditorPanel>(id, m_Context, m_Assets, m_ImGui, m_Types,
+                                                       m_Editors, m_Sources);
+            }
+
+        private:
+            Renderer::Context& m_Context;
+            AssetManager& m_Assets;
+            ImGuiLayer& m_ImGui;
+            TypeRegistry& m_Types;
+            EditorRegistry& m_Editors;
+            const AssetSourceIndex& m_Sources;
         };
     }
 
@@ -241,17 +271,18 @@ namespace VengEditor
         GetRenderContext().AddSwapChainInvalidationCallback(
             [this] { m_PresentGraph = BuildPresentGraph(); });
 
-        // Keep a direct handle to drive the viewport's scene render before the panels are drawn.
-        auto viewport = CreateUnique<SceneViewportPanel>(GetRenderContext(), GetAssetManager(),
-                                                         *GetImGuiLayer(), GetTypeRegistry());
-        m_Viewport = viewport.get();
-        m_Panels.push_back({std::move(viewport), true});
-
         // Parsed once; an empty index when no manifest is configured keeps the picker
         // candidate-free rather than absent.
         m_Sources = CreateUnique<AssetSourceIndex>(
             m_Info.AssetManifestPath ? AssetSourceIndex::Parse(*m_Info.AssetManifestPath)
                                      : AssetSourceIndex{});
+
+        // A prefab is edited live in a spawned Scene, so its editor needs no manifest
+        // source; register it unconditionally.
+        m_Registries->Editor.RegisterAssetEditor(
+            AssetType::Prefab, CreateUnique<PrefabEditorFactory>(
+                                   GetRenderContext(), GetAssetManager(), *GetImGuiLayer(),
+                                   GetTypeRegistry(), m_Registries->Editor, *m_Sources));
 
         // try_emplace no-ops if the game module already registered a factory for these types.
         if (m_Info.AssetManifestPath)
@@ -277,16 +308,16 @@ namespace VengEditor
         m_Panels.push_back(
             {CreateUnique<AssetBrowserPanel>(ExecutableDirectory() / "sample.vengpack", *this),
              true});
-        auto inspector =
-            CreateUnique<InspectorPanel>(GetAssetManager(), m_Registries->Editor, *m_Sources);
-        m_Inspector = inspector.get();
-        m_Panels.push_back({std::move(inspector), true});
         m_Panels.push_back({CreateUnique<ConsolePanel>(), true});
 
         for (Unique<EditorPanel>& panel : m_Registries->Editor.Panels())
         {
             m_Panels.push_back({std::move(panel), true});
         }
+
+        // Open the sample prefab as the initial document so the editor starts on live
+        // content; double-clicking any prefab in the asset browser opens another.
+        OpenAssetEditor(AssetType::Prefab, SampleScenePrefabId);
     }
 
     Unique<Renderer::CompiledGraph> EditorHost::BuildPresentGraph()
@@ -385,21 +416,16 @@ namespace VengEditor
     {
         auto& cmd = GetRenderContext().GetCurrentCommandBuffer();
 
-        // Drive the viewport's scene render before the dockspace UI is built, so its
-        // output is sampleable when ImGui draws it into the viewport panel.
-        m_Viewport->Render(cmd);
-
-        // Feed the inspector the viewport's live scene and selection.
-        m_Inspector->SetSelection(&m_Viewport->GetScene(), m_Viewport->PrimaryEntity());
-
-        // Adopt any panels opened via OpenAssetEditor since last frame.
+        // Adopt any panels opened via OpenAssetEditor since last frame, before the
+        // render/draw passes so a freshly opened editor renders this frame.
         for (Unique<EditorPanel>& opened : m_PendingPanels)
         {
             m_Panels.push_back({std::move(opened), true});
         }
         m_PendingPanels.clear();
 
-        // The viewport is driven explicitly above; its OnRender is a no-op.
+        // Offscreen render pass: a render-owning panel (e.g. a prefab viewport) records
+        // its scene render here so the output is sampleable when its window draws it.
         for (PanelSlot& slot : m_Panels)
         {
             if (slot.Open)
@@ -411,29 +437,13 @@ namespace VengEditor
         ImGui::DockSpaceOverViewport();
         DrawMenuBar();
 
+        // Each panel submits its own top-level window(s); an asset editor submits its
+        // private dockspace and the children docked into it.
         for (PanelSlot& slot : m_Panels)
         {
-            if (!slot.Open)
+            if (slot.Open)
             {
-                continue;
-            }
-
-            const UI::WindowFlags flags = slot.Panel->GetWindowFlags();
-
-            // NoScrollbar panels (e.g. the scene viewport) are drawn edge-to-edge;
-            // push window padding to zero. WindowPadding is read at Begin, so the
-            // guard outliving Begin into the body is equivalent to popping immediately
-            // after — constructed only in the no-padding case.
-            const bool noPadding = (flags & UI::WindowFlags::NoScrollbar) != UI::WindowFlags::None;
-            optional<UI::StyleVarScope> padding;
-            if (noPadding)
-            {
-                padding.emplace(UI::StyleVar(UI::StyleVarId::WindowPadding, vec2(0, 0)));
-            }
-
-            if (auto window = UI::Window(slot.Panel->GetTitle(), &slot.Open, flags))
-            {
-                slot.Panel->OnImGui();
+                slot.Panel->Draw(&slot.Open);
             }
         }
 
@@ -450,8 +460,6 @@ namespace VengEditor
     {
         m_Panels.clear();
         m_PendingPanels.clear();
-        m_Viewport = nullptr;
-        m_Inspector = nullptr;
         m_Sources.reset();
         m_PresentGraph.reset();
         m_BlitPipeline.reset();
