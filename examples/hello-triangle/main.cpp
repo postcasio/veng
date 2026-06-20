@@ -312,6 +312,22 @@ private:
                 ReconfigureScene();
             }
 
+            // The GPU arm is a different pass topology, so the selector and the occlusion
+            // toggle both drive ReconfigureScene. CullMode::GPU degrades to CPU on a device
+            // without multiDrawIndirect; the active-mode line in Stats shows the real path.
+            static constexpr std::array<string_view, 2> cullNames{"CPU", "GPU"};
+            i32 cull = static_cast<i32>(m_SceneSettings.Cull);
+            if (UI::Combo("Cull mode", cull, cullNames))
+            {
+                m_SceneSettings.Cull = static_cast<Renderer::SceneRendererSettings::CullMode>(cull);
+                ReconfigureScene();
+            }
+
+            if (UI::Checkbox("GPU occlusion", m_SceneSettings.Occlusion))
+            {
+                ReconfigureScene();
+            }
+
             const vec2 available = UI::ContentRegionAvail();
             const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
             const f32 aspect = static_cast<f32>(output->GetImage()->GetHeight()) /
@@ -324,10 +340,25 @@ private:
             UI::Text(
                 fmt::format("{:.1f} fps ({:.2f} ms)", UI::FrameRate(), 1000.0f / UI::FrameRate()));
 
-            // Post-cull, post-material-readiness count over gathered candidates.
+            // The cull funnel: gathered submesh candidates → frustum survivors → draws issued.
+            const u32 gathered = m_SceneRenderer->GetLastVisibleCount();
+            const u32 frustum = m_SceneRenderer->GetFrustumSurvivedCount();
             const u32 drawn = m_SceneRenderer->GetLastDrawnCount();
-            const u32 total = m_SceneRenderer->GetLastVisibleCount();
-            UI::Text(fmt::format("Meshes: {} / {}", drawn, total));
+            UI::Text(fmt::format("Gathered: {}", gathered));
+            UI::Text(fmt::format("Frustum survived: {}", frustum));
+            UI::Text(fmt::format("Drawn: {}", drawn));
+
+            // Under the GPU path the occlusion test zeroes occluded commands' instanceCount;
+            // the survivor count is read back one frame late. The active line shows the real
+            // mode (GPU degrades to CPU on a device without multiDrawIndirect).
+            const bool gpuActive = m_SceneRenderer->GetActiveCullMode() ==
+                                   Renderer::SceneRendererSettings::CullMode::GPU;
+            UI::Text(fmt::format("Cull mode: {}", gpuActive ? "GPU" : "CPU"));
+            if (gpuActive)
+            {
+                UI::Text(fmt::format("Occlusion survived: {}",
+                                     m_SceneRenderer->GetLastGpuSurvivorCount()));
+            }
 
             // Flips live as the pause-spin toggle stops/resumes the per-frame Transform write.
             const bool rebuilt = m_SceneRenderer->DidBroadphaseRebuildLastFrame();
