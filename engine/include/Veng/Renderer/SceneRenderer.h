@@ -6,6 +6,7 @@
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
+#include <Veng/Renderer/ShadowCascades.h>
 
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
@@ -34,6 +35,9 @@ namespace Veng::Renderer
     class ShadowScenePass;
     class Image;
     class Sampler;
+    class Buffer;
+    class DescriptorSet;
+    class DescriptorSetLayout;
 
     // Which result the renderer produces, re-wiring the pass set: Final is the full
     // deferred chain (g-buffer → lighting → tonemap), the others terminate the chain
@@ -80,10 +84,20 @@ namespace Veng::Renderer
         // lighting pass reads full visibility for the directional term.
         bool Shadows = true;
 
-        // The square shadow-map edge length in texels. Sizing: changing it recreates
-        // the shadow target (through the deferred retire path) and recompiles. A
-        // higher value sharpens the shadow at a memory/fill cost.
+        // The per-cascade shadow tile edge length in texels. Sizing: changing it
+        // recreates the shadow atlas (through the deferred retire path) and
+        // recompiles. A higher value sharpens the shadow at a memory/fill cost.
         u32 ShadowResolution = 2048;
+
+        // The number of shadow cascades the directional light splits its frustum
+        // into, clamped to [1, MaxCascades]. Sizing: it sizes the atlas tile grid
+        // (min(Count,2)×ceil(Count/2)), so it recreates the atlas and recompiles.
+        u32 CascadeCount = MaxCascades;
+
+        // The PSSM split blend (0 = uniform splits, 1 = logarithmic). A
+        // recompile-safe per-frame value — it changes the cascade fit, not the
+        // atlas size or pass topology.
+        f32 CascadeSplitLambda = 0.85f;
 
         // Whether the screen-space ambient occlusion pass runs. A topology change:
         // it inserts/removes the fullscreen SsaoScenePass and selects the lighting
@@ -137,12 +151,16 @@ namespace Veng::Renderer
         f32 BloomThreshold = 1.0f;
         f32 BloomIntensity = 1.0f;
 
-        // The directional light's world → light-clip transform this frame, computed
-        // by the renderer on every Execute from the first directional light (or
-        // identity when there is none). The shadow pass reads it back as the
-        // light-space MVP and the lighting pass projects fragments into shadow
-        // space with it. A caller's value is overwritten — the renderer owns it.
-        mat4 LightViewProj = mat4(1.0f);
+        // The per-cascade world → light-clip transforms this frame, computed by the
+        // renderer on every Execute from the first directional light (or identity
+        // when there is none). These are the RAW (non-tile-remapped) cascade
+        // matrices: the shadow pass renders cascade k with CascadeViewProj[k]
+        // pushed and the viewport placing it in its atlas tile. Only
+        // [0, CascadeCount) are valid. A caller's values are overwritten — the
+        // renderer owns this selection. (The lighting pass reads the tile-remapped
+        // matrices from the set-1 ShadowConstants buffer, not these.)
+        std::array<mat4, MaxCascades> CascadeViewProj{};
+        u32 CascadeCount = 0;
     };
 
     class SceneRenderer
@@ -213,6 +231,16 @@ namespace Veng::Renderer
         // albedo/normal/depth debug blits) and load the core tonemap PostProcess
         // material once at Create.
         void CreatePipelines();
+
+        // Allocate the directional-shadow set-1 system once at Create: the comparison
+        // sampler, the set-1 layout, the descriptor set, the dummy atlas, and the
+        // ShadowConstants ring buffer. Long-lived past any Configure.
+        void CreateShadowSystem();
+
+        // (Re)write set 1's atlas binding (binding 0) to the given view — the wired
+        // shadow pass's atlas, or the dummy when shadows are off — and the debug
+        // blit set's binding 0. Called from Rebuild after the pass set is chosen.
+        void WriteShadowAtlasBinding(const Ref<ImageView>& atlasView);
         // Rebuild the pass set from Settings.Mode and the RenderGraph from it, then
         // re-Compile().
         void Rebuild();
@@ -321,6 +349,41 @@ namespace Veng::Renderer
         Ref<class PipelineLayout> m_AoBlitLayout;
         Ref<class GraphicsPipeline> m_ShadowBlitPipeline;
         Ref<class PipelineLayout> m_ShadowBlitLayout;
+
+        // The directional-shadow system's dedicated descriptor set (Vulkan set 1 on
+        // both lighting pipelines): binding 0 the shadow atlas (sampled image),
+        // binding 1 an immutable comparison sampler (hardware SampleCmp), binding 2
+        // the ShadowConstants dynamic uniform. SceneRenderer-owned and long-lived
+        // past any Configure — the layout, the comparison sampler, the dummy atlas,
+        // and the dummy ShadowConstants must exist whenever the layout does,
+        // independent of the per-recompile shadow pass. Bindings 0-1 are written once
+        // at Create/Resize/Configure (the atlas is single-copy); binding 2 rings
+        // per frame-in-flight, its region picked by the bind-time dynamic offset.
+        Ref<DescriptorSetLayout> m_ShadowSetLayout;
+        Ref<DescriptorSet> m_ShadowSet;
+        Ref<Sampler> m_ComparisonSampler;
+
+        // The debug shadow-atlas blit's dedicated set (set 1 of the shadow-blit
+        // pipeline): binding 0 the atlas, binding 1 an ordinary sampler (raw depth,
+        // not the comparison sampler). Its own layout/set so the DebugView::Shadows
+        // arm visualizes stored depth.
+        Ref<DescriptorSetLayout> m_ShadowBlitSetLayout;
+        Ref<DescriptorSet> m_ShadowBlitSet;
+
+        // A 1×1 D32 atlas cleared to depth = 1 (full visibility / far depth), bound
+        // into set 1 binding 0 whenever no shadow pass is wired, so the layout is
+        // always satisfied and a SampleCmp yields full visibility.
+        Ref<Image> m_DummyShadowImage;
+        Ref<ImageView> m_DummyShadowView;
+
+        // The ShadowConstants ring buffer (set 1 binding 2): host-visible,
+        // persistently mapped, framesInFlight regions of m_ShadowRingStride bytes
+        // (align_up(sizeof(ShadowConstantsBlock), minUniformBufferOffsetAlignment)).
+        // A per-frame write touches only the current (not-yet-submitted) region; the
+        // dynamic offset at bind selects it.
+        Ref<Buffer> m_ShadowConstantsBuffer;
+        u32 m_ShadowRingStride = 0;
+        u32 m_FramesInFlight = 0;
 
         // The core tonemap PostProcess material, loaded once at Create. The Final
         // chain's terminal PostProcessScenePass drives it (HDR target as the

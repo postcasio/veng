@@ -129,6 +129,11 @@ namespace Veng::Renderer
         // array. Appended rather than inserted to avoid renumbering existing
         // values.
         Sampler,
+        // A uniform buffer whose bound region is selected by a dynamic offset at
+        // vkCmdBindDescriptorSets (DescriptorSetBindInfo::DynamicOffsets). One
+        // buffer holds several regions and the bind selects the live one — the
+        // conventional per-frame-constants ring for a plain descriptor set.
+        UniformBufferDynamic,
     };
 
     enum class BlendFactor : u8

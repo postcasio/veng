@@ -6,6 +6,7 @@
 namespace Veng::Renderer
 {
     class Context;
+    class Sampler;
 
     struct DescriptorBinding
     {
@@ -13,6 +14,13 @@ namespace Veng::Renderer
         DescriptorType Type{};
         u32 Count = 1;
         ShaderStage Stages{};
+
+        // Immutable samplers baked into the layout for this binding (one per
+        // descriptor in Count). Set for a SampledImage binding that is sampled
+        // through a fixed sampler the layout owns — e.g. a comparison sampler for
+        // hardware SampleCmp — so a write supplies only the image, never a sampler.
+        // Empty for the common case.
+        vector<Ref<Sampler>> ImmutableSamplers{};
         // Static (default, false): written at setup/between frames, then
         // bound — no descriptor-indexing flags. Bindless (true): may be
         // updated while a set is bound (e.g. WriteArray into a streaming

@@ -168,7 +168,7 @@ namespace Veng::Renderer
         }
 
         m_Native->CommandBuffer.bindDescriptorSets(ToVk(info.PipelineBindPoint), m_LastBoundPipelineLayout->GetNative().Layout,
-                                             info.FirstSet, descriptorSets, nullptr);
+                                             info.FirstSet, descriptorSets, info.DynamicOffsets);
     }
 
     void CommandBuffer::DrawFullscreenTriangle()

@@ -52,6 +52,11 @@ namespace Veng::Renderer
         vector<Ref<DescriptorSet>> Sets;
         u32 FirstSet = 0;
         PipelineBindPoint PipelineBindPoint = PipelineBindPoint::Graphics;
+        // One byte offset per UniformBufferDynamic / StorageBufferDynamic
+        // descriptor across the bound sets, in binding order — selects the live
+        // region of a ring-buffered dynamic buffer at bind. Empty for sets with no
+        // dynamic descriptors.
+        vector<u32> DynamicOffsets;
     };
 
     struct BlitImageInfo

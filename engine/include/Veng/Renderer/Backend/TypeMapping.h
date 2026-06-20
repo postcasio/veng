@@ -338,6 +338,10 @@ namespace Veng::Renderer
         case DescriptorType::UniformBuffer: return {vk::DescriptorType::eUniformBuffer, 10000, true};
         case DescriptorType::StorageBuffer: return {vk::DescriptorType::eStorageBuffer, 10000, true};
         case DescriptorType::Sampler: return {vk::DescriptorType::eSampler, 1000, true};
+        // A dynamic uniform buffer rebinds its region every frame, never
+        // UpdateAfterBind — the per-frame ring selects the region with a bind-time
+        // dynamic offset, so it does not opt into bindless.
+        case DescriptorType::UniformBufferDynamic: return {vk::DescriptorType::eUniformBufferDynamic, 1000, false};
         }
         VE_ASSERT(false, "GetDescriptorTypeInfo: unmapped DescriptorType {}", static_cast<u32>(type));
     }
@@ -347,6 +351,7 @@ namespace Veng::Renderer
     inline constexpr std::array AllDescriptorTypes = {
         DescriptorType::CombinedImageSampler, DescriptorType::SampledImage, DescriptorType::StorageImage,
         DescriptorType::UniformBuffer, DescriptorType::StorageBuffer, DescriptorType::Sampler,
+        DescriptorType::UniformBufferDynamic,
     };
 
     inline vk::DescriptorType ToVk(DescriptorType type)

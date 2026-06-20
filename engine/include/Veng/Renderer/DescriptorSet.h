@@ -43,6 +43,9 @@ namespace Veng::Renderer
         // Sampled image or storage image (disambiguated by the layout; the
         // image layout follows from the type).
         void Write(u32 binding, const Ref<ImageView>& view);
+        // Plain sampler (no image) — a DescriptorType::Sampler binding. Not needed
+        // for an immutable-sampler binding (the layout owns the sampler).
+        void Write(u32 binding, const Ref<Sampler>& sampler);
         // Uniform or storage buffer, whole range.
         void Write(u32 binding, const Ref<Buffer>& buffer);
         // Uniform or storage buffer, explicit range.

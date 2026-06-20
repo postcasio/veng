@@ -5,7 +5,6 @@
 #include <fmt/format.h>
 
 #include <Veng/Assert.h>
-#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
@@ -33,9 +32,9 @@ namespace Veng::Renderer
         // light-space MVP, no fragment stage).
         constexpr AssetId ShadowDepthVertId{0x156C14C99FFF6B7CULL};
 
-        // The shadow map's depth format and usage: a single-channel float depth
-        // target that is both a depth attachment (written by the depth-only pass)
-        // and sampled by the lighting pass.
+        // The atlas's depth format and usage: a single-channel float depth target
+        // that is both a depth attachment (written per cascade) and sampled by the
+        // lighting pass through its dedicated set.
         constexpr Format ShadowFormat = Format::D32Sfloat;
         constexpr ImageUsage ShadowUsage = ImageUsage::DepthAttachment | ImageUsage::Sampled;
 
@@ -48,9 +47,13 @@ namespace Veng::Renderer
         };
     }
 
-    ShadowScenePass::ShadowScenePass(Context& context, AssetManager& assets, u32 resolution)
-        : m_Context(context), m_Resolution(resolution)
+    ShadowScenePass::ShadowScenePass(Context& context, AssetManager& assets, u32 resolution, u32 cascadeCount)
+        : m_Context(context), m_Resolution(resolution), m_CascadeCount(cascadeCount)
     {
+        const ShadowAtlasGrid grid = ComputeShadowAtlasGrid(cascadeCount);
+        m_TileColumns = grid.Columns;
+        m_TileRows = grid.Rows;
+
         const AssetResult<AssetHandle<Veng::Shader>> vs = assets.LoadSync<Veng::Shader>(ShadowDepthVertId);
         VE_ASSERT(vs.has_value(), "ShadowScenePass: depth vertex shader load failed: {}", vs.error().Detail);
         m_VertexShader = *vs;
@@ -91,48 +94,46 @@ namespace Veng::Renderer
             .DepthWriteEnable = true,
         });
 
-        CreateTarget();
+        CreateAtlas();
     }
 
-    ShadowScenePass::~ShadowScenePass()
-    {
-        m_Context.GetBindlessRegistry().Release(m_ShadowHandle);
-    }
+    ShadowScenePass::~ShadowScenePass() = default;
 
-    void ShadowScenePass::CreateTarget()
+    void ShadowScenePass::CreateAtlas()
     {
-        // Recreate the depth target at the current resolution; drop the old Refs to
-        // retire them and release the old bindless slot through the deferred window,
-        // so an in-flight frame's sample of the prior slot is not reclaimed early.
-        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
-        bindless.Release(m_ShadowHandle);
+        // Recreate the depth atlas at the current resolution × tile grid; dropping
+        // the old Refs retires them through the deferred window, so an in-flight
+        // frame's sample of the prior atlas is not reclaimed early.
+        const uvec2 atlasExtent = GetAtlasExtent();
 
         m_ShadowImage = Image::Create(m_Context, {
-            .Name = "ShadowScenePass Depth",
-            .Extent = {m_Resolution, m_Resolution, 1},
+            .Name = "ShadowScenePass Atlas",
+            .Extent = {atlasExtent.x, atlasExtent.y, 1},
             .Format = ShadowFormat,
             .Usage = ShadowUsage,
         });
         m_ShadowView = ImageView::Create(m_Context, {
-            .Name = "ShadowScenePass Depth View",
+            .Name = "ShadowScenePass Atlas View",
             .Image = m_ShadowImage,
         });
-
-        m_ShadowHandle = bindless.Register(m_ShadowView);
     }
 
     void ShadowScenePass::Declare(RenderGraph& graph, const PassIO& io)
     {
-        const uvec2 extent{m_Resolution, m_Resolution};
+        const u32 resolution = m_Resolution;
+        const u32 columns = m_TileColumns;
+        const u32 cascadeCount = m_CascadeCount;
 
         graph.AddPass("Shadow Depth")
             .Depth({
                 .Resource = io.ShadowMap,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
+                // The whole atlas clears to depth = 1; an unused tile (the fourth
+                // cell at three cascades) keeps this clear and is never selected.
                 .Clear = ClearDepth{1.0f, 0},
             })
-            .Execute([this, extent](PassContext& inner)
+            .Execute([this, resolution, columns, cascadeCount](PassContext& inner)
             {
                 const ScenePassContext ctx = Wrap(inner);
                 CommandBuffer& cmd = ctx.Cmd();
@@ -140,50 +141,58 @@ namespace Veng::Renderer
                 const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
                 cmd.BindPipeline(m_Pipeline);
-                cmd.SetViewport({0, 0}, extent);
-                cmd.SetScissor({0, 0}, extent);
                 registry.Bind(cmd);
 
-                // The light-space view-projection the renderer wrote into this
-                // frame's view-constants region this Execute; the same matrix the
-                // lighting pass reads back to project a fragment into shadow space.
-                const mat4 lightViewProj = view.LightViewProj;
-
-                // Draw every opaque mesh's geometry into the depth map — the same
-                // per-submesh loop the g-buffer pass runs, but only positions matter
-                // and only depth is written. Each (Transform, MeshRenderer) entity is
-                // drawn at its world transform under the light-space MVP. Casting
-                // away const to iterate the borrowed const scene is sound: this only
-                // reads.
-                const_cast<Scene&>(view.World).Each<Transform, MeshRenderer>(
-                    [&](const Entity entity, Transform&, MeshRenderer& meshRenderer)
+                // Render every active cascade into its atlas tile: set the viewport
+                // + scissor to cascade k's tile sub-rect, then draw the scene's
+                // opaque meshes with cascade k's RAW light-space matrix pushed. The
+                // depth-only pipeline and shadow_depth.vert are unchanged — only the
+                // pushed matrix and the viewport differ per cascade.
+                const u32 count = cascadeCount < view.CascadeCount ? cascadeCount : view.CascadeCount;
+                for (u32 k = 0; k < count; ++k)
                 {
-                    if (!meshRenderer.Mesh.IsLoaded())
-                        return;
+                    const ivec2 tileOffset{
+                        static_cast<i32>((k % columns) * resolution),
+                        static_cast<i32>((k / columns) * resolution),
+                    };
+                    cmd.SetViewport(tileOffset, {resolution, resolution});
+                    cmd.SetScissor(tileOffset, {resolution, resolution});
 
-                    const Mesh& mesh = *meshRenderer.Mesh.Get();
-                    const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
+                    const mat4 lightViewProj = view.CascadeViewProj[k];
 
-                    bool materialsReady = true;
-                    for (const AssetHandle<Material>& material : materials)
-                        materialsReady = materialsReady && material.IsLoaded();
-                    if (!materialsReady)
-                        return;
-
-                    cmd.BindVertexBuffer(mesh.GetVertexBuffer());
-                    cmd.BindIndexBuffer(mesh.GetIndexBuffer());
-
-                    const mat4 world = WorldMatrix(view.World, entity);
-                    const mat4 mvp = lightViewProj * world;
-                    cmd.PushConstants(ShadowPushConstants{.MVP = mvp});
-
-                    for (const SubMesh& subMesh : mesh.GetSubMeshes())
+                    // The same per-submesh loop the g-buffer pass runs; only
+                    // positions matter and only depth is written. Casting away const
+                    // to iterate the borrowed const scene is sound: this only reads.
+                    const_cast<Scene&>(view.World).Each<Transform, MeshRenderer>(
+                        [&](const Entity entity, Transform&, MeshRenderer& meshRenderer)
                     {
-                        if (subMesh.MaterialIndex == SubMesh::NoMaterial)
-                            continue;
-                        cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
-                    }
-                });
+                        if (!meshRenderer.Mesh.IsLoaded())
+                            return;
+
+                        const Mesh& mesh = *meshRenderer.Mesh.Get();
+                        const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
+
+                        bool materialsReady = true;
+                        for (const AssetHandle<Material>& material : materials)
+                            materialsReady = materialsReady && material.IsLoaded();
+                        if (!materialsReady)
+                            return;
+
+                        cmd.BindVertexBuffer(mesh.GetVertexBuffer());
+                        cmd.BindIndexBuffer(mesh.GetIndexBuffer());
+
+                        const mat4 world = WorldMatrix(view.World, entity);
+                        const mat4 mvp = lightViewProj * world;
+                        cmd.PushConstants(ShadowPushConstants{.MVP = mvp});
+
+                        for (const SubMesh& subMesh : mesh.GetSubMeshes())
+                        {
+                            if (subMesh.MaterialIndex == SubMesh::NoMaterial)
+                                continue;
+                            cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
+                        }
+                    });
+                }
             });
     }
 }

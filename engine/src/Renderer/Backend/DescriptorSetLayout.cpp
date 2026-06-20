@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Native.h>
+#include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
@@ -22,13 +23,37 @@ namespace Veng::Renderer
         vector<vk::DescriptorSetLayoutBinding> vkBindings;
         vkBindings.reserve(m_Bindings.size());
 
+        // The vk::Sampler arrays a binding's pImmutableSamplers points at must
+        // outlive createDescriptorSetLayout, so they are held here for the call.
+        vector<vector<vk::Sampler>> immutableSamplers;
+        immutableSamplers.reserve(m_Bindings.size());
+
         for (const auto& binding : m_Bindings)
         {
+            const vk::Sampler* immutable = nullptr;
+            if (!binding.ImmutableSamplers.empty())
+            {
+                VE_ASSERT(binding.ImmutableSamplers.size() == binding.Count,
+                          "DescriptorSetLayout '{}': binding {} has {} immutable samplers but Count {}",
+                          m_Name, binding.Binding, binding.ImmutableSamplers.size(), binding.Count);
+
+                vector<vk::Sampler>& samplers = immutableSamplers.emplace_back();
+                samplers.reserve(binding.ImmutableSamplers.size());
+                for (const Ref<Sampler>& sampler : binding.ImmutableSamplers)
+                    samplers.push_back(sampler->GetNative().Sampler);
+                immutable = samplers.data();
+            }
+            else
+            {
+                immutableSamplers.emplace_back();
+            }
+
             vkBindings.push_back({
                 .binding = binding.Binding,
                 .descriptorType = ToVk(binding.Type),
                 .descriptorCount = binding.Count,
                 .stageFlags = ToVk(binding.Stages),
+                .pImmutableSamplers = immutable,
             });
         }
 

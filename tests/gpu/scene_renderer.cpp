@@ -1192,6 +1192,152 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// The cross-frames-in-flight data-correctness pin for the set-1 ShadowConstants
+// dynamic-offset ring. The ring is the one part of this plan re-using the
+// per-frame-region mechanism MoltenVK mistranslated inside set 0 — here it is a
+// conventional dynamic offset on a plain (set-1) descriptor set, but a wrong offset
+// reads a stale region, a data hazard the validation gate would NOT catch.
+//
+// A caster cube floats above a receiver plane, lit by a directional light. Each
+// frame alternates the light between straight-down (the cast shadow centers under
+// the cube — the plane texel below it is dark) and angled far off (the shadow slides
+// away — that same texel is lit). Frames are driven through BeginFrame/EndFrame so
+// the frame-in-flight index actually advances and the ShadowConstants ring cycles
+// its regions. Past framesInFlight frames, the shadow under the cube must track the
+// CURRENT frame's light: a stale dynamic offset would lag it by a region and fail.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: the ShadowConstants dynamic-offset ring tracks the "
+                  "current frame across frames-in-flight")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_shadow_ring.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> plane = Mesh::Create(Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Ring Plane");
+    const Ref<Mesh> caster = Mesh::Create(Context, Primitives::Cube(1.2f, *material), "Ring Caster");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity planeEntity = scene->CreateEntity();
+    scene->Add<Transform>(planeEntity);
+    scene->Add<MeshRenderer>(planeEntity).Mesh = assets.Adopt(plane);
+
+    const Entity casterEntity = scene->CreateEntity();
+    scene->Add<Transform>(casterEntity).Position = vec3(0.0f, 1.6f, 0.0f);
+    scene->Add<MeshRenderer>(casterEntity).Mesh = assets.Adopt(caster);
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Type = LightType::Directional,
+        .Direction = vec3(-1.0f, -1.5f, 0.0f),
+        .Color = vec3(1.0f), .Intensity = 3.0f,
+    };
+
+    constexpr uvec2 extent{128, 128};
+
+    // An oblique top-front view so the plane fills the frame and the cast shadow
+    // sweeps across it as the light tilts.
+    Camera camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 5.0f, 5.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = true, .AO = false},
+    });
+
+    // Two opposite light tilts in X: LEFT travels toward -X (shadow thrown to the
+    // -X / image-left half), RIGHT travels toward +X (shadow thrown to image-right).
+    // The texel shadowed under one is lit under the other — the discriminator a
+    // stale ring (projecting with the prior frame's matrices) gets wrong.
+    const vec3 lightLeft{-1.4f, -1.5f, 0.0f};
+    const vec3 lightRight{1.4f, -1.5f, 0.0f};
+
+    auto RenderFrame = [&](vec3 lightDir) -> vector<u8>
+    {
+        scene->Get<Light>(lightEntity).Direction = lightDir;
+
+        CommandBuffer& cmd = Context.BeginFrame();
+        renderer->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+        Context.EndFrame();
+        Context.WaitIdle();
+
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        return pixels;
+    };
+
+    auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
+    {
+        const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+        return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
+    };
+
+    // The receiver row (the plane fills the lower band; the cube silhouette is near
+    // the center). Scan each light's frame for the darkest plane texel on its side
+    // of the column — that is its cast shadow.
+    const u32 shadowRow = extent.y * 9 / 16;
+    auto DarkestColumnOnSide = [&](const vector<u8>& pixels, bool leftHalf) -> u32
+    {
+        const u32 x0 = leftHalf ? 8u : extent.x / 2 + 12;
+        const u32 x1 = leftHalf ? extent.x / 2 - 12 : extent.x - 8;
+        u32 best = x0;
+        f32 bestLuma = Luma(pixels, x0, shadowRow);
+        for (u32 x = x0; x < x1; ++x)
+        {
+            const f32 l = Luma(pixels, x, shadowRow);
+            if (l < bestLuma) { bestLuma = l; best = x; }
+        }
+        return best;
+    };
+
+    // Baseline: LEFT throws the shadow to one side, RIGHT to the other. Locate each
+    // shadow's column and confirm the two are on opposite sides and each darkens its
+    // own texel well below the opposite (lit) texel.
+    const vector<u8> leftPixels = RenderFrame(lightLeft);
+    const vector<u8> rightPixels = RenderFrame(lightRight);
+    const u32 leftShadowX = DarkestColumnOnSide(leftPixels, /*leftHalf=*/true);
+    const u32 rightShadowX = DarkestColumnOnSide(rightPixels, /*leftHalf=*/false);
+
+    const f32 leftShadowDark = Luma(leftPixels, leftShadowX, shadowRow);
+    const f32 leftShadowLitUnderRight = Luma(rightPixels, leftShadowX, shadowRow);
+    const f32 rightShadowDark = Luma(rightPixels, rightShadowX, shadowRow);
+    const f32 rightShadowLitUnderLeft = Luma(leftPixels, rightShadowX, shadowRow);
+
+    // Each light's shadow texel is distinctly darker under its own light than under
+    // the opposite light — the fixture genuinely separates the two.
+    REQUIRE(leftShadowLitUnderRight > leftShadowDark + 0.02f);
+    REQUIRE(rightShadowLitUnderLeft > rightShadowDark + 0.02f);
+
+    // Now alternate LEFT/RIGHT every frame across well past framesInFlight frames so
+    // every ring region is overwritten and re-read. Each frame, the CURRENT light's
+    // shadow texel must be darker than the opposite light's shadow texel: the shadow
+    // tracks this frame's ShadowConstants. A stale dynamic offset reads the prior
+    // frame's matrices, so the lighting projects fragments with the opposite light's
+    // transform and the inequality flips — caught here, where the validation gate (a
+    // data hazard, not a layout error) would not be.
+    const u32 framesInFlight = Context.GetMaxFramesInFlight();
+    const u32 frameCount = framesInFlight * 2 + 3;
+    for (u32 frame = 0; frame < frameCount; ++frame)
+    {
+        const bool left = (frame % 2) == 0;
+        const vector<u8> pixels = RenderFrame(left ? lightLeft : lightRight);
+        const f32 ownShadow = Luma(pixels, left ? leftShadowX : rightShadowX, shadowRow);
+        const f32 otherShadow = Luma(pixels, left ? rightShadowX : leftShadowX, shadowRow);
+        CHECK_MESSAGE(ownShadow < otherShadow,
+                      "frame ", frame, ": the current light's shadow texel must be darker "
+                      "than the opposite light's — the ShadowConstants ring is stale");
+    }
+
+    std::filesystem::remove(outArchive);
+}
+
 #ifdef GPU_POSTPROCESS_FIXTURE_DIR
 
 // The PostProcess fullscreen-material proof. An identity PostProcess material —

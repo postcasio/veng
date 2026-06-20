@@ -99,13 +99,21 @@ namespace Veng::Renderer
         // The shared sampler bindless slot a fullscreen pass samples through.
         SamplerHandle SamplerHandle;
 
-        // The directional shadow map the ShadowScenePass writes (depth) and the
-        // lighting pass samples. The id is invalid and the handle unbound when the
-        // shadow pass is compiled out (Settings.Shadows == false); the lighting pass
-        // declares its .Sample only when the id is valid and reads full visibility
-        // when the handle is unbound.
+        // The directional shadow atlas the ShadowScenePass writes (depth) and the
+        // lighting pass samples. The id is invalid when the shadow pass is compiled
+        // out (Settings.Shadows == false); the lighting pass declares its .Sample
+        // only when the id is valid, so the graph derives the
+        // DepthAttachment → ShaderReadOnly transition. Binding is separate from this
+        // barrier declaration: the atlas reaches the lighting pass through a
+        // dedicated descriptor set (ShadowView below), not bindless.
         ResourceId ShadowMap;
-        TextureHandle ShadowHandle;
+
+        // The atlas view delivered into a consumer's dedicated descriptor set (the
+        // bound-view seam: a producer's Ref<ImageView> bound into a consumer's own
+        // set, not a bindless slot). Null when the shadow pass is compiled out. The
+        // layout it is sampled in is always ShaderReadOnly (the graph transitions it
+        // there from the declared .Sample), so no separate layout field is needed.
+        Ref<ImageView> ShadowView;
 
         // The imported output id the terminal pass writes.
         ResourceId Output;

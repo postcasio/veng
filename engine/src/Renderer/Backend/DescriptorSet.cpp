@@ -101,6 +101,31 @@ namespace Veng::Renderer
         m_BoundPerBinding[binding] = {std::static_pointer_cast<void>(view)};
     }
 
+    void DescriptorSet::Write(u32 binding, const Ref<Sampler>& sampler)
+    {
+        const DescriptorType type = m_Layout->GetBindingType(binding);
+        VE_ASSERT(type == DescriptorType::Sampler,
+                  "DescriptorSet '{}': binding {} is {}, not a plain sampler",
+                  m_Name, binding, TypeName(type));
+
+        const vk::DescriptorImageInfo imageInfo{
+            .sampler = sampler->GetNative().Sampler,
+        };
+
+        const vk::WriteDescriptorSet write{
+            .dstSet = m_Native->Set,
+            .dstBinding = binding,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = ToVk(type),
+            .pImageInfo = &imageInfo,
+        };
+
+        GetVkDevice(m_Context).updateDescriptorSets(write, {});
+
+        m_BoundPerBinding[binding] = {std::static_pointer_cast<void>(sampler)};
+    }
+
     void DescriptorSet::Write(u32 binding, const Ref<Buffer>& buffer)
     {
         Write(binding, buffer, 0, VK_WHOLE_SIZE);
@@ -109,8 +134,9 @@ namespace Veng::Renderer
     void DescriptorSet::Write(u32 binding, const Ref<Buffer>& buffer, u64 offset, u64 range)
     {
         const DescriptorType type = m_Layout->GetBindingType(binding);
-        VE_ASSERT(type == DescriptorType::UniformBuffer || type == DescriptorType::StorageBuffer,
-                  "DescriptorSet '{}': binding {} is {}, not a uniform or storage buffer",
+        VE_ASSERT(type == DescriptorType::UniformBuffer || type == DescriptorType::StorageBuffer ||
+                      type == DescriptorType::UniformBufferDynamic,
+                  "DescriptorSet '{}': binding {} is {}, not a uniform, storage, or dynamic-uniform buffer",
                   m_Name, binding, TypeName(type));
 
         const vk::DescriptorBufferInfo bufferInfo{

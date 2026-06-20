@@ -40,4 +40,23 @@ namespace Veng::Renderer
     [[nodiscard]] CascadeData ComputeCascades(
         const Camera& camera, vec3 lightDir, const AABB& sceneBounds,
         const CascadeSettings& settings);
+
+    // The shadow atlas tile grid for a cascade count: min(Count,2) columns ×
+    // ceil(Count/2) rows of square tiles (1×1 for one cascade, 2×1 for two, 2×2 for
+    // three or four), so a low cascade count pays for no idle tiles. Cascade k maps
+    // to tile (k % Columns, k / Columns). Both the render pass (per-cascade
+    // viewport) and the lighting-constant tile remap derive their layout from this.
+    struct ShadowAtlasGrid
+    {
+        u32 Columns;
+        u32 Rows;
+    };
+
+    [[nodiscard]] inline ShadowAtlasGrid ComputeShadowAtlasGrid(u32 cascadeCount)
+    {
+        const u32 count = cascadeCount < 1 ? 1 : (cascadeCount > MaxCascades ? MaxCascades : cascadeCount);
+        const u32 columns = count < 2 ? count : 2;
+        const u32 rows = (count + 1) / 2;
+        return {columns, rows};
+    }
 }

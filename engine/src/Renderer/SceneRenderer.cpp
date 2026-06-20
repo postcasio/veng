@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <span>
 #include <tuple>
 #include <utility>
@@ -18,12 +19,18 @@
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/GBuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/Sampler.h>
+#include <Veng/Renderer/ShadowCascades.h>
+
+#include <Veng/Math/AABB.h>
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
@@ -146,13 +153,14 @@ namespace Veng::Renderer
                       "GpuLight must match the bindless light buffer stride");
 
         // The per-frame view-constants block the lighting pass reads from set-0
-        // binding 5. Mirrors the core material.slang ViewConstants byte-for-byte.
+        // binding 5 — genuine camera/view state only. The directional shadow system
+        // (cascade matrices + splits + params) lives in the set-1 ShadowConstants
+        // block, not here. Mirrors the core material.slang ViewConstants
+        // byte-for-byte.
         struct ViewConstantsBlock
         {
-            mat4 InvViewProj;
+            mat4 InvViewProj;    // world-position reconstruction from depth
             vec4 CameraPosition; // xyz; w unused
-            mat4 LightViewProj;  // directional light's world → light-clip transform
-            vec4 ShadowParams;   // x shadow-map handle, y sampler handle, z 1/resolution, w enabled (0/1)
             mat4 View;           // world → view (the SSAO pass reconstructs view space)
             mat4 Proj;           // view → clip
         };
@@ -160,37 +168,48 @@ namespace Veng::Renderer
         static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,
                       "ViewConstantsBlock must fit one ring-buffered view-constants region");
 
-        // The directional shadow camera's fixed orthographic box, centered on the
-        // world origin. No scene-bounds/AABB fit exists yet, so the box is sized
-        // generously to cover the sample scene's casters and receivers; a tight fit
-        // (and cascades) is the quality follow-on this machinery extends.
-        constexpr f32 ShadowOrthoHalfExtent = 6.0f;
-        constexpr f32 ShadowOrthoDepth = 20.0f;
-
-        // The directional light's world → light-clip transform: an orthographic
-        // projection looking along the light's travel direction toward the origin
-        // from a point pulled back along -direction. Y is flipped for Vulkan clip
-        // space, matching Camera's projection convention, and the depth range is
-        // mapped to [0, 1] (GLM's _ZO ortho) so the sampled depth compares directly
-        // against the shadow map's stored depth.
-        mat4 DirectionalLightViewProj(vec3 travelDirection)
+        // The directional-shadow constants, bound in set 1 binding 2 as a dynamic
+        // uniform buffer (ringed per frame-in-flight, the current region selected by
+        // the bind-time dynamic offset). A std140 uniform block: CascadeViewProj is
+        // a genuine float4x4[MaxCascades] (each element 16-byte aligned) and the
+        // four splits ride one vec4 (a std140 float[4] would pad each element to a
+        // 16-byte stride). The CPU mirror matches that padding exactly.
+        struct ShadowConstantsBlock
         {
-            const vec3 dir = glm::normalize(travelDirection);
+            mat4 CascadeViewProj[MaxCascades]; // 256 — tile-remap baked in (for the sample)
+            vec4 CascadeSplits;                // 16  — per-cascade view-space far distance
+            vec4 ShadowParams;                 // 16  — x 1/tileRes, y blend-band, z count, w enabled
+        };
 
-            // A stable up vector: the world up unless the light points (nearly)
-            // straight up or down, in which case fall back to +Z.
-            const vec3 worldUp = std::abs(dir.y) > 0.99f ? vec3(0.0f, 0.0f, 1.0f) : vec3(0.0f, 1.0f, 0.0f);
+        static_assert(sizeof(ShadowConstantsBlock) == 288,
+                      "ShadowConstantsBlock must be the std140-packed 288-byte block");
 
-            const vec3 eye = -dir * (ShadowOrthoDepth * 0.5f);
-            const mat4 lightView = glm::lookAt(eye, vec3(0.0f), worldUp);
+        // The atlas-tile remap baked into a cascade's matrix: a fragment projected
+        // by CascadeViewProj[k] · world lands in cascade k's tile sub-rect of the
+        // atlas (NDC → the tile's [0,1] UV window), so the lighting pass samples the
+        // right tile by construction. Columns/Rows come from the cascade count's
+        // atlas grid. ComputeCascades stays tile-agnostic; the renderer composes
+        // this when packing the set-1 ShadowConstants.
+        mat4 ComposeTileRemap(const mat4& cascadeViewProj, u32 cascade, u32 columns, u32 rows)
+        {
+            const f32 sx = 1.0f / static_cast<f32>(columns);
+            const f32 sy = 1.0f / static_cast<f32>(rows);
+            const f32 col = static_cast<f32>(cascade % columns);
+            const f32 row = static_cast<f32>(cascade / columns);
 
-            mat4 lightProj = glm::orthoZO(
-                -ShadowOrthoHalfExtent, ShadowOrthoHalfExtent,
-                -ShadowOrthoHalfExtent, ShadowOrthoHalfExtent,
-                0.0f, ShadowOrthoDepth);
-            lightProj[1][1] *= -1.0f; // Vulkan clip space has Y pointing down.
-
-            return lightProj * lightView;
+            // NDC.xy in [-1,1] → atlas UV in [0,1] → the tile's window, then back to
+            // the [-1,1] clip the sample's NDC.xy * 0.5 + 0.5 will undo. Z is left
+            // unchanged (the depth compare is per-tile-agnostic). Built column-major
+            // to match glm.
+            mat4 remap(1.0f);
+            // Scale NDC x,y by tile fraction.
+            remap[0][0] = sx;
+            remap[1][1] = sy;
+            // Translate into the tile: map x ∈ [-1,1] within the full atlas. The
+            // tile's NDC center is offset so the [0,1] UV lands in the tile window.
+            remap[3][0] = sx * (2.0f * col + 1.0f) - 1.0f;
+            remap[3][1] = sy * (2.0f * row + 1.0f) - 1.0f;
+            return remap * cascadeViewProj;
         }
 
         // The shared debug-blit fragment push block: the bindless slots a fullscreen
@@ -353,8 +372,17 @@ namespace Veng::Renderer
             // useSsao selects the SSAO-enabled pipeline + push block: the pass then
             // also samples the AO target (io.Ssao) and pushes the SSAO bindless slot.
             // The renderer hands it the matching pipeline; the two stay paired.
-            DeferredLightingScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent, bool useSsao)
-                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent), m_UseSsao(useSsao)
+            //
+            // shadowSet is the dedicated set-1 descriptor set (atlas + immutable
+            // comparison sampler + the ShadowConstants dynamic uniform); the renderer
+            // owns it and keeps it always valid (a dummy atlas + zeroed constants when
+            // shadows are off), so the layout is always satisfied. shadowRingStride is
+            // the per-frame ShadowConstants region stride; the pass selects the
+            // current region with a bind-time dynamic offset.
+            DeferredLightingScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent, bool useSsao,
+                                      Ref<DescriptorSet> shadowSet, u32 shadowRingStride)
+                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent), m_UseSsao(useSsao),
+                  m_ShadowSet(std::move(shadowSet)), m_ShadowRingStride(shadowRingStride)
             {
             }
 
@@ -369,6 +397,8 @@ namespace Veng::Renderer
                 const TextureHandle ssaoHandle = io.SsaoHandle;
                 const SamplerHandle samplerHandle = io.SamplerHandle;
                 const bool useSsao = m_UseSsao;
+                const Ref<DescriptorSet> shadowSet = m_ShadowSet;
+                const u32 shadowRingStride = m_ShadowRingStride;
 
                 RenderGraph::PassBuilder builder = graph.AddPass("Deferred Lighting");
                 builder.Color({
@@ -392,7 +422,7 @@ namespace Veng::Renderer
                 if (useSsao)
                     builder.Sample(io.Ssao);
 
-                builder.Execute([this, albedoHandle, normalHandle, ormHandle, depthHandle, ssaoHandle, samplerHandle, useSsao](PassContext& inner)
+                builder.Execute([this, albedoHandle, normalHandle, ormHandle, depthHandle, ssaoHandle, samplerHandle, useSsao, shadowSet, shadowRingStride](PassContext& inner)
                     {
                         const ScenePassContext ctx = Wrap(inner);
                         CommandBuffer& cmd = ctx.Cmd();
@@ -402,6 +432,20 @@ namespace Veng::Renderer
                         cmd.SetViewport({0, 0}, m_Extent);
                         cmd.SetScissor({0, 0}, m_Extent);
                         registry.Bind(cmd);
+
+                        // Set 1 — the directional-shadow system (atlas + immutable
+                        // comparison sampler + the ShadowConstants ring). The current
+                        // frame's ShadowConstants region is selected by a bind-time
+                        // dynamic offset; the frame-in-flight slot is the registry's
+                        // view-constants index. Bound after set 0 against the same
+                        // pipeline layout.
+                        cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                            .Sets = {shadowSet},
+                            .FirstSet = 1,
+                            .PipelineBindPoint = PipelineBindPoint::Graphics,
+                            .DynamicOffsets = {registry.GetCurrentViewConstantsIndex() * shadowRingStride},
+                        });
+
                         if (useSsao)
                         {
                             cmd.PushConstants(SsaoLightingPushConstants{
@@ -438,6 +482,8 @@ namespace Veng::Renderer
             Ref<GraphicsPipeline> m_Pipeline;
             uvec2 m_Extent;
             bool m_UseSsao = false;
+            Ref<DescriptorSet> m_ShadowSet;
+            u32 m_ShadowRingStride = 0;
         };
 
         // A reusable fullscreen blit pass: samples one channel/target (selected by
@@ -451,9 +497,10 @@ namespace Veng::Renderer
         {
         public:
             // Selects which target this blit reads from the PassIO. Ao reads the
-            // SsaoScenePass's AO target, Shadow the ShadowScenePass's depth map; both
-            // are force-wired by the renderer in their debug mode.
-            enum class Source { Albedo, Normal, Depth, Ao, Shadow };
+            // SsaoScenePass's AO target, force-wired by the renderer in its debug
+            // mode. The shadow atlas is off bindless, so its debug blit is a separate
+            // pass over the bound-view seam (ShadowBlitScenePass).
+            enum class Source { Albedo, Normal, Depth, Ao };
 
             FullscreenBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent, Source source)
                 : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent), m_Source(source)
@@ -500,7 +547,6 @@ namespace Veng::Renderer
                     case Source::Normal: return io.GBufferNormal;
                     case Source::Depth:  return io.GBufferDepth;
                     case Source::Ao:     return io.Ssao;
-                    case Source::Shadow: return io.ShadowMap;
                 }
                 VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
             }
@@ -513,7 +559,6 @@ namespace Veng::Renderer
                     case Source::Normal: return io.NormalHandle;
                     case Source::Depth:  return io.DepthHandle;
                     case Source::Ao:     return io.SsaoHandle;
-                    case Source::Shadow: return io.ShadowHandle;
                 }
                 VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
             }
@@ -574,6 +619,57 @@ namespace Veng::Renderer
             Ref<GraphicsPipeline> m_Pipeline;
             uvec2 m_Extent;
             u32 m_Channel;
+        };
+
+        // The directional-shadow-atlas debug blit. The atlas is off bindless, so it
+        // reaches this blit through a dedicated set-1 descriptor set (binding 0 the
+        // atlas, binding 1 an ordinary — NOT comparison — sampler, so the blit reads
+        // raw stored depth). It declares .Sample(io.ShadowMap) for the graph-derived
+        // depth-attachment → shader-read barrier, then binds set 0 (the reserved
+        // registry slot) and set 1 (the debug shadow set) and draws fullscreen.
+        class ShadowBlitScenePass final : public ScenePass
+        {
+        public:
+            ShadowBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent, Ref<DescriptorSet> shadowSet)
+                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent), m_ShadowSet(std::move(shadowSet))
+            {
+            }
+
+            void Resize(const uvec2 extent) override { m_Extent = extent; }
+
+            void Declare(RenderGraph& graph, const PassIO& io) override
+            {
+                const Ref<DescriptorSet> shadowSet = m_ShadowSet;
+
+                graph.AddPass("Shadow Debug Blit")
+                    .Color({
+                        .Resource = io.Output,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
+                    })
+                    .Sample(io.ShadowMap)
+                    .Execute([this, shadowSet](PassContext& inner)
+                    {
+                        CommandBuffer& cmd = inner.Cmd();
+                        cmd.BindPipeline(m_Pipeline);
+                        cmd.SetViewport({0, 0}, m_Extent);
+                        cmd.SetScissor({0, 0}, m_Extent);
+                        m_Context.GetBindlessRegistry().Bind(cmd);
+                        cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                            .Sets = {shadowSet},
+                            .FirstSet = 1,
+                            .PipelineBindPoint = PipelineBindPoint::Graphics,
+                        });
+                        cmd.DrawFullscreenTriangle();
+                    });
+            }
+
+        private:
+            Context& m_Context;
+            Ref<GraphicsPipeline> m_Pipeline;
+            uvec2 m_Extent;
+            Ref<DescriptorSet> m_ShadowSet;
         };
     }
 
@@ -686,6 +782,7 @@ namespace Veng::Renderer
           m_Settings(info.Settings),
           m_Internal(CreateUnique<Internal>())
     {
+        CreateShadowSystem();
         CreatePipelines();
 
         CreateOutput();
@@ -749,18 +846,24 @@ namespace Veng::Renderer
         };
 
         // The lighting pipeline writes the HDR target (linear float); the tonemap and
-        // the three debug blits write the output format.
+        // the three debug blits write the output format. Both lighting layouts gain
+        // set 1 — the whole directional-shadow system (atlas + immutable comparison
+        // sampler + ShadowConstants dynamic uniform). Set 0 stays the reserved
+        // registry slot (PipelineLayout prepends it), so the shadow layout lands at
+        // descriptor-set index 1.
         m_LightingLayout = PipelineLayout::Create(m_Context, {
             .Name = "SceneRenderer Lighting Layout",
+            .DescriptorSetLayouts = {m_ShadowSetLayout},
             .PushConstantRanges = {PushConstantRange::Of<LightingPushConstants>(ShaderStage::Fragment)},
         });
         m_LightingPipeline = MakePipeline("SceneRenderer Deferred Lighting Pipeline", m_LightingLayout, lightingFs, HdrFormat);
 
         // The SSAO-enabled lighting variant: a wider push block (the AO bindless
         // slot) and the AO-fold fragment shader. Selected over m_LightingPipeline
-        // when Settings.AO is on.
+        // when Settings.AO is on. Same set-1 shadow layout.
         m_SsaoLightingLayout = PipelineLayout::Create(m_Context, {
             .Name = "SceneRenderer SSAO Lighting Layout",
+            .DescriptorSetLayouts = {m_ShadowSetLayout},
             .PushConstantRanges = {PushConstantRange::Of<SsaoLightingPushConstants>(ShaderStage::Fragment)},
         });
         m_SsaoLightingPipeline = MakePipeline("SceneRenderer Deferred Lighting SSAO Pipeline", m_SsaoLightingLayout, ssaoLightingFs, HdrFormat);
@@ -827,9 +930,12 @@ namespace Veng::Renderer
         });
         m_AoBlitPipeline = MakePipeline("SceneRenderer AO Blit Pipeline", m_AoBlitLayout, aoBlitFs, m_OutputFormat);
 
+        // The shadow blit samples the atlas through its own dedicated set 1 (atlas +
+        // ordinary sampler — raw depth), not bindless, so its layout carries that
+        // set and no push block.
         m_ShadowBlitLayout = PipelineLayout::Create(m_Context, {
             .Name = "SceneRenderer Shadow Blit Layout",
-            .PushConstantRanges = {blitRange},
+            .DescriptorSetLayouts = {m_ShadowBlitSetLayout},
         });
         m_ShadowBlitPipeline = MakePipeline("SceneRenderer Shadow Blit Pipeline", m_ShadowBlitLayout, shadowBlitFs, m_OutputFormat);
 
@@ -838,6 +944,140 @@ namespace Veng::Renderer
             .PushConstantRanges = {PushConstantRange::Of<OrmBlitPushConstants>(ShaderStage::Fragment)},
         });
         m_OrmBlitPipeline = MakePipeline("SceneRenderer ORM Blit Pipeline", m_OrmBlitLayout, ormBlitFs, m_OutputFormat);
+    }
+
+    void SceneRenderer::CreateShadowSystem()
+    {
+        m_FramesInFlight = m_Context.GetMaxFramesInFlight();
+
+        // The immutable comparison sampler for hardware SampleCmp: LESS-or-equal
+        // (a fragment is lit where its depth is no greater than the stored caster
+        // depth), linear filter for the hardware 2×2 PCF. A comparison sampler in a
+        // dedicated set is standard and supported — the MoltenVK argument-buffer bar
+        // applies only inside set 0's bindless array.
+        m_ComparisonSampler = Sampler::Create(m_Context, {
+            .Name = "SceneRenderer Shadow Comparison Sampler",
+            .MagFilter = Filter::Linear,
+            .MinFilter = Filter::Linear,
+            .MipmapMode = MipmapMode::Nearest,
+            .AddressModeU = AddressMode::ClampToEdge,
+            .AddressModeV = AddressMode::ClampToEdge,
+            .AddressModeW = AddressMode::ClampToEdge,
+            .AnisotropyEnabled = false,
+            .CompareEnable = true,
+            .CompareOp = CompareOp::LessOrEqual,
+            .BorderColor = BorderColor::OpaqueWhite,
+        });
+
+        // Set 1 — the directional-shadow system. Binding 1's sampler is immutable
+        // (baked into the layout), so a descriptor write supplies only the atlas
+        // (binding 0) and the ShadowConstants buffer (binding 2).
+        m_ShadowSetLayout = DescriptorSetLayout::Create(m_Context, {
+            .Name = "SceneRenderer Shadow Set Layout",
+            .Bindings = {
+                {.Binding = 0, .Type = DescriptorType::SampledImage, .Count = 1, .Stages = ShaderStage::Fragment},
+                {.Binding = 1, .Type = DescriptorType::Sampler, .Count = 1, .Stages = ShaderStage::Fragment,
+                 .ImmutableSamplers = {m_ComparisonSampler}},
+                {.Binding = 2, .Type = DescriptorType::UniformBufferDynamic, .Count = 1, .Stages = ShaderStage::Fragment},
+            },
+        });
+        m_ShadowSet = DescriptorSet::Create(m_Context, {
+            .Name = "SceneRenderer Shadow Set",
+            .Layout = m_ShadowSetLayout,
+        });
+
+        // The debug shadow-blit set: the atlas + an ordinary sampler (raw depth).
+        m_ShadowBlitSetLayout = DescriptorSetLayout::Create(m_Context, {
+            .Name = "SceneRenderer Shadow Blit Set Layout",
+            .Bindings = {
+                {.Binding = 0, .Type = DescriptorType::SampledImage, .Count = 1, .Stages = ShaderStage::Fragment},
+                {.Binding = 1, .Type = DescriptorType::Sampler, .Count = 1, .Stages = ShaderStage::Fragment},
+            },
+        });
+        m_ShadowBlitSet = DescriptorSet::Create(m_Context, {
+            .Name = "SceneRenderer Shadow Blit Set",
+            .Layout = m_ShadowBlitSetLayout,
+        });
+        // An ordinary (non-comparison) clamp sampler for the raw-depth debug read.
+        // The descriptor set retains it, so a local Ref suffices.
+        const Ref<Sampler> blitSampler = Sampler::Create(m_Context, {
+            .Name = "SceneRenderer Shadow Blit Sampler",
+            .MagFilter = Filter::Nearest,
+            .MinFilter = Filter::Nearest,
+            .MipmapMode = MipmapMode::Nearest,
+            .AddressModeU = AddressMode::ClampToEdge,
+            .AddressModeV = AddressMode::ClampToEdge,
+            .AddressModeW = AddressMode::ClampToEdge,
+            .AnisotropyEnabled = false,
+        });
+        m_ShadowBlitSet->Write(1, blitSampler);
+
+        // The dummy atlas: a 1×1 D32 cleared to depth = 1 (full visibility), bound
+        // when no shadow pass is wired so the layout is always satisfied. Cleared
+        // through a one-pass depth graph, then transitioned to ShaderReadOnly so the
+        // lighting pass (which does not declare .Sample on it when shadows are off)
+        // samples a valid layout.
+        m_DummyShadowImage = Image::Create(m_Context, {
+            .Name = "SceneRenderer Dummy Shadow",
+            .Extent = {1, 1, 1},
+            .Format = Format::D32Sfloat,
+            .Usage = ImageUsage::DepthAttachment | ImageUsage::Sampled,
+        });
+        m_DummyShadowView = ImageView::Create(m_Context, {
+            .Name = "SceneRenderer Dummy Shadow View",
+            .Image = m_DummyShadowImage,
+        });
+        m_Context.ImmediateCommands([&](CommandBuffer& cmd)
+        {
+            RenderGraph graph(m_Context);
+            const ResourceId target = graph.Import("Dummy Shadow");
+            graph.AddPass("Clear Dummy Shadow")
+                .Depth({
+                    .Resource = target,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = ClearDepth{1.0f, 0},
+                })
+                .Execute([](PassContext&) {});
+            const RenderGraph::ImportBinding binding{target, m_DummyShadowView};
+            graph.Compile()->Execute(cmd, {&binding, 1});
+            cmd.PrepareForAccess(m_DummyShadowView, AccessKind::Sample);
+        });
+
+        // The ShadowConstants ring: framesInFlight regions, each align-up of the
+        // 288-byte block to the device's minUniformBufferOffsetAlignment. The
+        // bind-time dynamic offset is frame * stride.
+        const u64 minAlign = GetVkPhysicalDevice(m_Context).getProperties()
+                                 .limits.minUniformBufferOffsetAlignment;
+        const u64 blockSize = sizeof(ShadowConstantsBlock);
+        const u64 alignment = minAlign == 0 ? 1 : minAlign;
+        m_ShadowRingStride = static_cast<u32>(((blockSize + alignment - 1) / alignment) * alignment);
+        VE_ASSERT(m_ShadowRingStride % alignment == 0,
+                  "ShadowConstants ring stride {} is not a multiple of minUniformBufferOffsetAlignment {}",
+                  m_ShadowRingStride, alignment);
+
+        m_ShadowConstantsBuffer = Buffer::Create(m_Context, {
+            .Name = "SceneRenderer ShadowConstants",
+            .Size = static_cast<u64>(m_ShadowRingStride) * m_FramesInFlight,
+            .Usage = BufferUsage::Uniform,
+            .HostMapped = true,
+        });
+
+        // Zero every region so an off-shadow frame reads full visibility (w = 0).
+        std::memset(m_ShadowConstantsBuffer->GetMappedData(), 0,
+                    static_cast<usize>(m_ShadowRingStride) * m_FramesInFlight);
+
+        m_ShadowSet->Write(2, m_ShadowConstantsBuffer, 0, sizeof(ShadowConstantsBlock));
+
+        // Start with the dummy atlas bound; Rebuild rewrites it to the wired pass's
+        // atlas when shadows are on.
+        WriteShadowAtlasBinding(m_DummyShadowView);
+    }
+
+    void SceneRenderer::WriteShadowAtlasBinding(const Ref<ImageView>& atlasView)
+    {
+        m_ShadowSet->Write(0, atlasView);
+        m_ShadowBlitSet->Write(0, atlasView);
     }
 
     void SceneRenderer::CreateOutput()
@@ -1056,14 +1296,19 @@ namespace Veng::Renderer
         // lighting pass samples, so the graph orders the depth write before the
         // lighting read. It survives across rebuilds at the current resolution
         // (recreated only when ShadowResolution changes), so it is rebuilt here too.
-        TextureHandle shadowHandle{};
+        Ref<ImageView> shadowAtlasView;
         if (shadowActive)
         {
-            auto shadowPass = CreateUnique<ShadowScenePass>(m_Context, m_Assets, m_Settings.ShadowResolution);
+            auto shadowPass = CreateUnique<ShadowScenePass>(
+                m_Context, m_Assets, m_Settings.ShadowResolution, m_Settings.CascadeCount);
             m_ShadowPass = shadowPass.get();
-            shadowHandle = shadowPass->GetShadowHandle();
+            shadowAtlasView = shadowPass->GetShadowView();
             m_Passes.push_back(std::move(shadowPass));
         }
+
+        // Bindings 0-1 of set 1 are written once per recompile: the wired pass's
+        // atlas (or the dummy when shadows are off, so the layout stays satisfied).
+        WriteShadowAtlasBinding(shadowActive ? shadowAtlasView : m_DummyShadowView);
 
         m_Passes.push_back(CreateUnique<GBufferScenePass>(m_Context, m_Extent));
 
@@ -1085,7 +1330,8 @@ namespace Veng::Renderer
             case DebugView::Final:
             {
                 m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
-                    m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent, ssaoFold));
+                    m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent, ssaoFold,
+                    m_ShadowSet, m_ShadowRingStride));
 
                 // The tonemap stage's input: the bloom composite result when bloom is
                 // on, the raw HDR target otherwise. The four bloom stages sit between
@@ -1197,9 +1443,10 @@ namespace Veng::Renderer
                     m_Context, m_AoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Ao));
                 break;
             case DebugView::Shadows:
-                // The shadow pass was force-wired above; the blit reads its produced shadow map.
-                m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                    m_Context, m_ShadowBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Shadow));
+                // The shadow pass was force-wired above; the blit reads its atlas
+                // through the dedicated bound-view set (raw depth), not bindless.
+                m_Passes.push_back(CreateUnique<ShadowBlitScenePass>(
+                    m_Context, m_ShadowBlitPipeline, m_Extent, m_ShadowBlitSet));
                 break;
         }
 
@@ -1218,7 +1465,7 @@ namespace Veng::Renderer
             .SsaoHandle = ssaoHandle,
             .SamplerHandle = m_SamplerHandle,
             .ShadowMap = shadowId,
-            .ShadowHandle = shadowHandle,
+            .ShadowView = shadowAtlasView,
             .Output = m_OutputId,
         };
 
@@ -1309,48 +1556,69 @@ namespace Veng::Renderer
             ++lightCount;
         }
 
-        // The directional light's light-space matrix, recomputed each frame from the
-        // first directional light. The shadow pass reads it back as the light-space
-        // MVP and the lighting pass projects fragments into shadow space with it.
-        const mat4 lightViewProj = DirectionalLightViewProj(directionalTravel);
+        // Compute the cascades once per frame. SceneBounds runs every frame but is
+        // consumed only for the per-cascade near-plane extension (off-screen
+        // casters); the cascade XY extent comes purely from the camera frustum
+        // slice. With no spatial structure yet it is a full-scene reduction over the
+        // amortized ComputeWorldMatrices pass SceneBounds shares.
+        const AABB sceneBounds = SceneBounds(view.World);
+        const CascadeData cascades = ComputeCascades(
+            view.Camera, directionalTravel, sceneBounds,
+            {.Count = m_Settings.CascadeCount, .Lambda = m_Settings.CascadeSplitLambda,
+             .Resolution = m_Settings.ShadowResolution});
 
+        // Thread the RAW (non-tile-remapped) cascade matrices to the shadow pass: it
+        // renders cascade k with CascadeViewProj[k] pushed and the viewport placing
+        // it in the tile.
         SceneView resolvedView = view;
         resolvedView.LightCount = lightCount;
-        resolvedView.LightViewProj = lightViewProj;
+        resolvedView.CascadeViewProj = cascades.ViewProj;
+        resolvedView.CascadeCount = cascades.Count;
 
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
         registry.WriteLights(std::as_bytes(std::span(packedLights.data(), lightCount)));
 
-        // ShadowParams gate the lighting pass's shadow path: the shadow-map and
-        // sampler bindless indices, the texel size (1/resolution) for the PCF kernel,
-        // and an enabled flag. Enabled only when the shadow pass is wired AND a
-        // directional light exists this frame — otherwise the lighting pass reads
-        // full visibility and never samples the (possibly stale) slot.
-        vec4 shadowParams{0.0f, 0.0f, 0.0f, 0.0f};
-        if (m_ShadowActive && m_ShadowPass && haveDirectional)
-        {
-            shadowParams = vec4(
-                static_cast<f32>(m_ShadowPass->GetShadowHandle().Index),
-                static_cast<f32>(m_SamplerHandle.Index),
-                1.0f / static_cast<f32>(m_ShadowPass->GetResolution()),
-                1.0f);
-        }
-
-        // Pack the per-frame view constants — the inverse view-projection (for
-        // world-position reconstruction), the camera position, the directional
-        // light's light-space matrix, and the shadow params — and write them into
-        // the current frame's ring-buffered region. The lighting pass reads them
-        // back through set-0 binding 5.
+        // Pack the per-frame view constants — genuine camera/view state only. The
+        // directional shadow system rides the set-1 ShadowConstants buffer.
         const mat4 viewProj = view.Camera.ViewProjection();
         const ViewConstantsBlock viewConstants{
             .InvViewProj = glm::inverse(viewProj),
             .CameraPosition = vec4(view.Camera.GetPosition(), 0.0f),
-            .LightViewProj = lightViewProj,
-            .ShadowParams = shadowParams,
             .View = view.Camera.View(),
             .Proj = view.Camera.Projection(),
         };
         registry.WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
+
+        // Pack the set-1 ShadowConstants: each cascade's atlas-tile remap composed
+        // onto its ViewProj (for the lighting sample), the per-cascade view-space far
+        // splits, and the params (1/tileRes, blend band, count, enabled). Enabled
+        // only when the shadow pass is wired AND a directional light exists this
+        // frame — otherwise the lighting pass reads full visibility. ComputeCascades
+        // is still called when shadows are off (count clamps to >= 1), and the atlas
+        // is still cleared, so no frame reads a stale region.
+        const bool shadowEnabled = m_ShadowActive && m_ShadowPass && haveDirectional;
+        const ShadowAtlasGrid grid = ComputeShadowAtlasGrid(m_Settings.CascadeCount);
+
+        ShadowConstantsBlock shadowConstants{};
+        for (u32 k = 0; k < cascades.Count && k < MaxCascades; ++k)
+        {
+            shadowConstants.CascadeViewProj[k] =
+                ComposeTileRemap(cascades.ViewProj[k], k, grid.Columns, grid.Rows);
+            shadowConstants.CascadeSplits[k] = cascades.SplitFar[k];
+        }
+        shadowConstants.ShadowParams = vec4(
+            1.0f / static_cast<f32>(m_Settings.ShadowResolution),
+            0.0f, // blend band — the cascade-boundary cross-fade width
+            static_cast<f32>(cascades.Count),
+            shadowEnabled ? 1.0f : 0.0f);
+
+        // Write only the current frame-in-flight's region (that frame is not yet
+        // submitted, so writing it is safe); the bind selects it with the dynamic
+        // offset frame * stride.
+        const u32 frameIndex = registry.GetCurrentViewConstantsIndex();
+        std::memcpy(static_cast<u8*>(m_ShadowConstantsBuffer->GetMappedData()) +
+                        static_cast<usize>(frameIndex) * m_ShadowRingStride,
+                    &shadowConstants, sizeof(ShadowConstantsBlock));
 
         // Every declared import must be bound; the bloom imports are declared only
         // when the chain is active, so they are appended only then.
