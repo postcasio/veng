@@ -50,7 +50,6 @@ is thin (shared deps + `add_subdirectory` per lib).
 - `tests/` — `include_hygiene`, `headless_smoke`, `compute_dispatch`, plus the
   `unit`, `death`, `gpu`, and `cooker` suites (and `shaders/`, `support/`).
 - `plans/` — the roadmap. See **Working norms** below.
-- `docs/ownership.md` — the resource-ownership rule, in full.
 
 ### Module guides
 
@@ -311,8 +310,8 @@ The house Doxygen style:
 - **One doc comment documents exactly one declaration — never a group.** A `@brief`
   attaches only to the single declaration immediately below it; the next
   declaration needs its own. Two getters, two overloads, or two fields sharing one
-  comment leaves the second *undocumented* — write a separate `///` block (or
-  trailing `///<`) for each. If two members are genuinely parallel, say so in each
+  comment leaves the second *undocumented* — write a separate `///` block for each.
+  If two members are genuinely parallel, say so in each
   ("@brief Number of atlas tile columns." / "@brief Number of atlas tile rows."),
   don't fold them into one comment over both.
 - **`///` line comments**, not `/** … */`. Tags are `@`-prefixed (`@brief`), not
@@ -325,8 +324,9 @@ The house Doxygen style:
   requirements, `@warning` for a footgun, `@see` to cross-reference. A `@param` is
   not mandatory when the brief already says everything (a one-arg setter); use
   judgment — the goal is a complete, non-redundant reference, not boilerplate.
-- A field/enumerator doc may be a trailing `///<` on the same line when it is
-  short.
+- **Never use a trailing `///<`.** *Every* doc comment — including a field or
+  enumerator doc, however short — sits on its own `///` line(s) **before** the
+  declaration, in `@brief` form. There is no same-line doc-comment form in veng.
 
 ```cpp
 /// @brief Stages and copies data into the image, blocking until the copy completes.
@@ -345,7 +345,7 @@ GPU resources are constructed **only** through static `X::Create(const XInfo&)`
 factories returning a smart pointer (no public constructors — they're private).
 `XInfo` structs use designated initializers (`.Name = ...`, `.Usage = ...`).
 
-The pointer type follows one rule (full version in `docs/ownership.md`):
+The pointer type follows one rule:
 - **`Ref<T>`** (`shared_ptr`) — genuinely shared GPU resources others hold
   references to: buffers, images, views, samplers, shaders, pipelines, descriptor
   sets/layouts, pipeline layouts.
@@ -353,14 +353,26 @@ The pointer type follows one rule (full version in `docs/ownership.md`):
   references: `Fence`, `Semaphore`, pools, per-frame sync. **When unsure, prefer
   `Unique`.**
 
+`Ref` is for *real* sharing, never a correctness crutch — deferred destruction,
+below, already makes it safe to drop a resource the GPU is still using.
+
 **Dropping a resource mid-frame is safe.** Destructors do not call `vkDestroy*`;
 they *retire* the handle into the current frame's bin on `Context` via the
 resource's stored back-reference (`m_Context.GetNative().Retire(...)`). The
 handle is destroyed only after that frame's fence is waited again
 (`Context::AcquireNextFrame`), i.e. once the GPU is done with it. No manual
-keep-alive lists. The one deliberate exception: `DescriptorSet` holds `Ref`s to
-the resources it was written with (`m_BoundResources`) — that's ownership, not
+keep-alive lists. An async upload's staging buffer instead retires on the
+**transfer timeline** (`RetireOnTransfer`), since its copy completes on the
+transfer queue, not the frame fence; off-thread drops make the whole retire path
+mutex-guarded. The one deliberate exception: `DescriptorSet` holds `Ref`s to the
+resources it was written with (`m_BoundResources`) — that's ownership, not
 frame-tracking.
+
+`AssetHandle<T>` and bindless handles (`TextureHandle`, …) sit *above* this rule
+and are not `Ref`s: an `AssetHandle` is refcounted indirection into the
+`AssetManager` cache, a bindless handle is a plain `u32` slot id whose owning
+`Ref` lives in the `BindlessRegistry`. Both release through the same per-frame
+retire path; the GPU `Ref`s *inside* an asset still follow the rule above.
 
 Apps must release every engine resource in `Application::OnDispose()` (reset all
 Refs/Uniques) — resources outliving the context fail on destruction.

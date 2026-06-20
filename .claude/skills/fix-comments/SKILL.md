@@ -192,12 +192,16 @@ Full spec lives in `CLAUDE.md`. In brief:
 - Contract tags as warranted: `@param`, `@tparam`, `@return`, `@pre`/`@post`,
   `@warning`, `@see`. Don't pad a self-evident one-arg setter with boilerplate —
   but it still gets a `@brief` (see Coverage).
-- Short field/enumerator docs may be trailing `///<`.
+- **Never use a trailing `///<`.** Every doc comment — including a short field or
+  enumerator doc — sits on its own `///` line(s) **before** the declaration, in
+  `@brief` form. veng has no same-line doc-comment form; converting any existing
+  trailing `///< text` into a preceding `/// @brief text` line is in scope for this
+  skill.
 - **One comment per declaration — never share.** A `@brief` documents only the
   single declaration directly beneath it. Two getters / two overloads / two fields
-  under one comment = the second is **undocumented**; give each its own `///` block
-  or trailing `///<`. This is a common failure mode — when you write a doc comment,
-  check that exactly one declaration follows before the next blank line.
+  under one comment = the second is **undocumented**; give each its own `///` block.
+  This is a common failure mode — when you write a doc comment, check that exactly
+  one declaration follows before the next blank line.
 - **Coverage:** *every* public declaration is documented, **even when the comment is
   obvious** — a plain getter, a one-arg setter, a `Configure(settings)` override all
   get a `@brief`, however short. "Self-evident" never excuses skipping a *public*

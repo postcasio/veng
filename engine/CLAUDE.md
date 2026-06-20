@@ -446,7 +446,7 @@ records the copy on the transfer queue, and never blocks — while `UploadSync`
 is the blocking path (host memcpy + `WaitIdle`) the sync loaders, tests, and
 smoke render use.
 - **`AssetHandle<T>` is refcounted indirection into the manager's cache**, not a
-  `Ref` to a GPU resource — see `docs/ownership.md`. Apps drop their handles in
+  `Ref` to a GPU resource (see the root CLAUDE.md ownership rule). Apps drop their handles in
   `OnDispose()` like any other engine resource; `CollectGarbage()` evicts entries
   no handle references, retiring their GPU resources through the per-frame
   deferred-destruction path. **`AssetManager::Adopt<T>(Ref<T>)`** wraps an
