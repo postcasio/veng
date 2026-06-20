@@ -259,6 +259,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/bounds.cpp
             tests/unit/visibility.cpp
             tests/unit/frustum.cpp
+            tests/unit/bvh.cpp
             tests/unit/shadow_cascades.cpp
             tests/unit/scene_ecs.cpp
             tests/unit/scene_queries.cpp
