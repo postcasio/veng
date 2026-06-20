@@ -81,6 +81,12 @@ ctest --test-dir build --output-on-failure
 Tests, examples, and the `vengc` cooker tool build only when veng is the
 top-level project (`PROJECT_IS_TOP_LEVEL`); toggles are `VENG_BUILD_TESTS` /
 `VENG_BUILD_EXAMPLES` / `VENG_BUILD_TOOLS`.
+
+When Doxygen is installed, `VENG_BUILD_DOCS` (default `PROJECT_IS_TOP_LEVEL`)
+adds a `docs` target that renders the public-header Doxygen comments into an HTML
+API reference under `build/docs/html` (`cmake --build build --target docs`). The
+wiring lives in `cmake/Docs.cmake`; the target is absent without Doxygen.
+
 Dependencies (fmt, VMA, nfd, tinyexr, stb, ImGui, imnodes) are pulled via
 `FetchContent` with pinned tags — no system install needed beyond Vulkan, GLFW,
 glm, and zlib (`find_package`). The cooker's heavy/toolchain deps

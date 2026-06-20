@@ -17,6 +17,7 @@ include(CMakePackageConfigHelpers)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AssetPack.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Game.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Editor.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Docs.cmake)
 
 option(VE_DEBUG "Enable veng debug features (validation layers, asserts)" OFF)
 
@@ -695,6 +696,16 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_golden_c
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidationGate.cmake
     )
     set_tests_properties(validation_gate PROPERTIES LABELS validation)
+endif ()
+
+# ---------------------------------------------------------------------------
+# Documentation
+# ---------------------------------------------------------------------------
+
+option(VENG_BUILD_DOCS "Add the Doxygen `docs` target" ${PROJECT_IS_TOP_LEVEL})
+
+if (VENG_BUILD_DOCS)
+    veng_add_docs()
 endif ()
 
 # ---------------------------------------------------------------------------
