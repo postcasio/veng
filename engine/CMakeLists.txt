@@ -21,6 +21,7 @@ add_library(veng SHARED
         src/ExecutableDirectory.cpp
         src/Log.cpp
         src/Math/AABB.cpp
+        src/Math/Frustum.cpp
         src/Module/ApplicationRegistry.cpp
         src/Module/ModuleLoader.cpp
         src/Task/TaskSystem.cpp
