@@ -375,6 +375,20 @@ scene-agnostic. A `ScenePass` reads it back through a typed `ScenePassContext`
 (`Cmd()` / `View()` / `Resolved(id)`); `View()` asserts the pointer is non-null
 before the reinterpret, and `SceneRenderer` sets it on every `Execute`.
 
+The scene-drawing passes **cull by frustum**. `Execute` runs one per-frame `GatherMeshes`
+(`Veng/Scene/Visibility.h`) pass over every resident `(Transform, MeshRenderer)` entity —
+world matrix + world-space `AABB` + resident mesh per candidate — into renderer scratch a
+`std::span<const VisibleMesh> Visible` on `SceneView` points at; the g-buffer geometry pass
+then records only the candidates the **camera** frustum touches and the cascaded shadow pass
+only the casters **each cascade's** light frustum touches, each testing that one shared list
+against its own `Frustum` (`Veng/Math/Frustum.h`) inline. The cull is conservative (an extra
+draw, never a dropped visible mesh) and recompute-on-demand off the gather's
+`ComputeWorldMatrices` pass, so the rendered image is unchanged — only the draw calls issued
+differ. `SceneRendererSettings::FrustumCull` (default on) toggles it; `GetLastVisibleCount()`
+/ `GetLastDrawnCount()` report the gathered-vs-drawn counts of the last `Execute`. A **BVH (or
+a cached, dirty-tracked scene bound)** is the named scaling step the gather shares with
+`SceneBounds`; occlusion, per-submesh, and GPU culling are named refinements behind it.
+
 A `ScenePass` is a reusable, self-contained pipeline stage (`Configure` / `Resize` /
 `Declare(RenderGraph&, const PassIO&)`) that **contributes** one or more
 `RenderGraph` passes into the renderer's single internal graph — it is not a
@@ -898,7 +912,10 @@ demand, no dirty-flag cache (a BVH is the deferred scaling answer shared with fr
 culling). Each `Mesh` carries a local-space `GetBounds()` derived from its canonical
 vertex positions at load (no cooked-format change). Both build on `AABB`
 (`Veng/Math/AABB.h`), the engine's glm-only bounds primitive — a min/max `vec3` pair with
-the union/expand/center/extents/corners/transform algebra and an empty sentinel.
+the union/expand/center/extents/corners/transform algebra and an empty sentinel. `Frustum`
+(`Veng/Math/Frustum.h`) is its visibility companion — six bounding planes extracted
+Gribb-Hartmann from a view-projection matrix (Vulkan ZO clip), with a conservative
+`Intersects(Frustum, AABB)` p-vertex test (never a false cull).
 
 A `Scene` is **`Unique`, single-owner** — nothing holds a `Ref` to it; the app owns it
 and a renderer reads it per frame as a `const Scene&`. Drop it in `OnDispose()` like

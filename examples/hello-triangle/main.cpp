@@ -356,6 +356,14 @@ private:
                 ReconfigureScene();
             }
 
+            // Frustum culling sits in Settings beside the other knobs for call-site
+            // consistency; toggling it recompiles (a no-op rebuild, since the cull
+            // rewires no topology) and so re-binds the GetOutput()-derived handles.
+            if (UI::Checkbox("Frustum culling", m_SceneSettings.FrustumCull))
+            {
+                ReconfigureScene();
+            }
+
             const vec2 available = UI::ContentRegionAvail();
             const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
             const f32 aspect = static_cast<f32>(output->GetImage()->GetHeight()) /
@@ -366,6 +374,13 @@ private:
         if (auto statsWindow = UI::Window("Stats"))
         {
             UI::Text(fmt::format("{:.1f} fps ({:.2f} ms)", UI::FrameRate(), 1000.0f / UI::FrameRate()));
+
+            // Drawn (post-cull, post-material-readiness) over gathered candidates. On
+            // this minimal scene the plane's bound spans most views, so a steady n / n
+            // is expected; the readout earns its keep on denser scenes.
+            const u32 drawn = m_SceneRenderer->GetLastDrawnCount();
+            const u32 total = m_SceneRenderer->GetLastVisibleCount();
+            UI::Text(fmt::format("Meshes: {} / {}", drawn, total));
         }
     }
 

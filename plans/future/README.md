@@ -167,12 +167,23 @@ sampled by the lighting pass via hardware **`SampleCmp`** with a boundary cross-
 Net-new descriptor infrastructure (immutable samplers, dynamic uniform buffers, the `PassIO`
 bound-view seam) lands with it.
 
+**Delivered — planset-21 (frustum culling):** the bounds facility's **other** prime consumer — a
+**`Frustum`** primitive (`Veng/Math/`, Gribb-Hartmann over Vulkan ZO clip, a conservative
+`Intersects(Frustum, AABB)` test) beside `AABB`, a per-frame **`GatherMeshes`** visibility gather
+(subsuming `SceneBounds`), and the two scene-drawing passes culling that one shared candidate list —
+the **g-buffer pass by the camera frustum**, the **cascaded shadow pass by each cascade's light
+frustum** — behind a `SceneRendererSettings::FrustumCull` knob (default on). The rendered image is
+byte-identical (a draw-count test over an off-frustum fixture is the guard, not the golden).
+
 **Still future:** a **transparent/forward pass** (a second material contract whose fragment
-outputs final color), **MSAA**, **shadowed punctual lights** (point/spot shadow cubemaps/atlas
-— directional is the only shadowed light) and **frustum culling** — the named next increments
-reading the delivered `AABB`/`SceneBounds` facility — a **cached/dirty-tracked scene bound or
-BVH** (the scaling step they share), **colored emissive** (a fourth g-buffer target), and
-**clustered/tiled light culling**. Also future: **history-buffer ringing** for
+outputs final color), **MSAA**, and **shadowed punctual lights** (point/spot shadow cubemaps/atlas
+— directional is the only shadowed light) — the named next increment reading the delivered
+`AABB`/`Frustum` facility. A **cached/dirty-tracked scene bound or BVH** is the **immediate shared
+scaling step** (the `GatherMeshes` gather its seam, replacing the linear scan behind the same
+surface) for both the `SceneBounds` reduction and the frustum-cull gather; **occlusion / per-submesh
+/ GPU culling** are the named refinements behind the delivered mesh-granularity frustum cull. Also
+named: **colored emissive** (a fourth g-buffer target) and **clustered/tiled light
+culling**. Also future: **history-buffer ringing** for
 temporal effects (TAA/motion-blur reading an older frame); **cross-queue synchronization** (an
 explicit semaphore once a handoff side moves off the single graphics queue); and **parallel
 pass recording** into secondary command buffers (area 2's seam — the user-pointer channel is
@@ -383,7 +394,8 @@ areas done in part — area 1's
 **hot-reload**, area 2's task graph / staging pool / cancellation, area 7's
 **systems framework** + perf follow-ons + the `ShaderInterface`/`MaterialField`
 unification + container/array fields, area 8's **transparent/forward pass** +
-**shadowed punctual lights / frustum culling** + history-buffer ringing / cross-queue
+**shadowed punctual lights** + a **cached scene bound / BVH** (the shared scaling step) +
+history-buffer ringing / cross-queue
 sync, area 9's culling / multi-queue /
 parallel recording, area 10's **cross-compiled cooking**, and area 12's **drive
 imgui private** + stateful editor-widget classes (the base `Veng::UI` vocab + full

@@ -356,6 +356,32 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   layered, a quality not perf change on MoltenVK) stays a [future](future/scene-renderer.md)
   follow-on gated on a `RenderGraph` layered-pass seam.
 
+- **[planset-21](planset-21/README.md)** — view-frustum culling (✅ done, 4 plans). Cashes in
+  the **other** prime consumer of the [planset-20](planset-20/README.md) bounds facility — the
+  one planset-20 named ("**frustum culling** (the other prime consumer of mesh bounds) is the
+  named next increment"). **Foundation-first**, mirroring planset-20: a **`Frustum`** glm-only
+  math primitive beside `AABB` (`Veng/Math/Frustum.h`) — six bounding planes extracted
+  **Gribb-Hartmann** from a view-projection matrix, adapted to **Vulkan ZO clip** (the one
+  extraction subtlety the test pins), with a conservative `Intersects(Frustum, AABB)` p-vertex
+  test (false only when a box lies wholly outside one plane — never a false cull) — and a
+  per-frame **`GatherMeshes`** visibility gather (`Veng/Scene/Visibility.h`) reducing a `Scene`
+  to its resident `(Transform, MeshRenderer)` instances (world matrix + world-space `AABB` +
+  resident mesh) in one `ComputeWorldMatrices` pass, **subsuming `SceneBounds`** (the union bound
+  falls out free); both pure, device-free, and fully unit-tested before any pass consumes them.
+  On that core, `SceneRenderer::Execute` gathers **once** into renderer scratch (like the light
+  pack) and points `SceneView` at a `std::span<const VisibleMesh>`; the **g-buffer geometry pass
+  culls that span by the camera frustum** and the **cascaded shadow pass by each cascade's light
+  frustum** (an off-screen caster can still shadow into view, so it must not cull by the camera
+  frustum), each draw using the gathered world matrix in place of a per-draw `WorldMatrix`
+  re-walk. A `SceneRendererSettings::FrustumCull` knob (default on) toggles it; an example debug-UI
+  checkbox + a drawn/total readout (`GetLastDrawnCount()`/`GetLastVisibleCount()`) expose it.
+  Culling is a pure optimization — the rendered image is **byte-identical**, so the
+  **`smoke_golden` never moved**; a **draw-count** test over a fixture with an off-frustum mesh is
+  the guard (a green golden proves nothing about whether culling ran). The gather is the **BVH
+  seam**: a **cached/dirty-tracked scene bound or BVH** is the immediate scaling step it shares
+  with the `SceneBounds` reduction, and occlusion / per-submesh / GPU culling are the named
+  refinements — each behind this delivered foundation.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the

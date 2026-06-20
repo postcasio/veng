@@ -1,14 +1,18 @@
 # Scene renderer — design overview
 
 > **Delivered — [planset-12](../planset-12/README.md) (spine) + [planset-19](../planset-19/README.md)
-> (PBR + batteries) + [planset-20](../planset-20/README.md) (bounds facility + CSM).** The shell +
+> (PBR + batteries) + [planset-20](../planset-20/README.md) (bounds facility + CSM) +
+> [planset-21](../planset-21/README.md) (frustum culling).** The shell +
 > the minimal-deferred spine shipped in planset-12; planset-19 turned it into a **physically-based
 > deferred renderer** — a metallic-roughness three-target g-buffer, tangent-space normal mapping,
 > Cook-Torrance over typed lights, directional shadows, SSAO, and bloom-as-a-PostProcess-material.
 > planset-20 stood up the engine's **bounds facility** (an `AABB` primitive, local-space mesh
 > bounds, a world-space `SceneBounds`) and on it delivered **cascaded shadow maps** — replacing the
 > single fixed-box directional shadow with a fit-per-frustum-slice cascaded atlas in a dedicated
-> descriptor set, sampled through a hardware comparison sampler. What remains future is a
+> descriptor set, sampled through a hardware comparison sampler. planset-21 cashed in the bounds
+> facility's other prime consumer — **view-frustum culling** — adding a `Frustum` primitive beside
+> `AABB` and a per-frame visibility gather so the g-buffer pass culls by the camera frustum and the
+> shadow pass by each cascade's light frustum. What remains future is a
 > transparent/forward pass, shadowed punctual lights, colored emissive, clustered light
 > culling, parallel pass recording, and on-tile deferred — each behind the same mechanism. This
 > document records **what shipped** against **what is still future**, so the direction stays legible. It builds on the
@@ -389,6 +393,32 @@ shadow maps**, replacing planset-19's single fixed-box directional shadow:
   visualizes the cascade selection; the set-0 view-constants block is trimmed to camera/view
   state.
 
+## Delivered frustum culling — planset-21
+
+planset-21 cashed in the bounds facility's **other** prime consumer — **view-frustum culling** —
+the increment planset-20 named beside CSM:
+
+- **A `Frustum` primitive beside `AABB`.** `Veng/Math/Frustum.h` (glm-only, inside
+  `include_hygiene`): six bounding planes extracted **Gribb-Hartmann** from a view-projection matrix
+  (adapted to **Vulkan ZO clip**, not the OpenGL `[-1,1]` form), with a conservative
+  `Intersects(Frustum, AABB)` p-vertex test — false only when a box lies wholly outside one plane, so
+  it never false-culls a visible mesh. Pure and device-free, unit-tested with no ICD.
+- **A per-frame visibility gather.** `GatherMeshes` (`Veng/Scene/Visibility.h`) reduces a `Scene` to
+  its resident `(Transform, MeshRenderer)` instances — world matrix + world-space `AABB` + resident
+  mesh — in one `ComputeWorldMatrices` pass, **subsuming `SceneBounds`** (the union bound falls out
+  as a free by-product). It is the unculled candidate set; the consumer applies `Intersects` per
+  frustum. This is the **BVH seam** — a spatial structure later replaces the linear scan behind the
+  same surface.
+- **Two frustums off one gather.** `SceneRenderer::Execute` gathers once into renderer scratch (like
+  the light pack) and points `SceneView` at a `std::span<const VisibleMesh> Visible`. The g-buffer
+  geometry pass culls that span by the **camera** frustum; the cascaded shadow pass culls it by **each
+  cascade's** light frustum (an off-screen caster can still shadow into view, so it must not cull by
+  the camera frustum). The gathered world matrix also replaces the per-draw `WorldMatrix` re-walk both
+  passes did. `SceneRendererSettings::FrustumCull` (default on) toggles it; `GetLastVisibleCount()` /
+  `GetLastDrawnCount()` report the gathered-vs-drawn counts. The rendered image is **byte-identical** —
+  only the draw calls issued change — so the `smoke_golden` never moved; a **draw-count** test over a
+  fixture with an off-frustum mesh is the cull's guard.
+
 ## Still future — the named next increments
 
 Each is its own later increment behind the **same** `ScenePass` + `Configure`-recompile
@@ -396,12 +426,18 @@ mechanism:
 
 - **A transparent/forward pass** (a second material contract whose fragment shader outputs
   *final color*, not g-buffer channels), **MSAA**, and a deeper post stack.
+- **A BVH (or a cached, dirty-tracked scene bound)** is the **immediate shared scaling step** —
+  the answer for both the `SceneBounds` reduction and the frustum-cull gather when the per-frame
+  linear scan is measured hot. The gather (`GatherMeshes`) is its seam: a spatial structure replaces
+  the linear scan behind the same surface, with no consumer change. Recompute-on-demand is the
+  current shape.
 - **Shadowed punctual lights** (point/spot shadow cubemaps/atlas — directional is the only
   shadowed light today) and **clustered/tiled light culling** (the lighting pass loops a
-  bounded list with no spatial culling). Shadowed punctual lights and **frustum culling** (the
-  other prime consumer of mesh bounds) are the named next increments reading the delivered
-  `AABB`/`SceneBounds` facility; a **cached/dirty-tracked scene bound** or a **BVH** is the
-  scaling step both share (recompute-on-demand is the current shape).
+  bounded list with no spatial culling). Shadowed punctual lights remain the other named increment
+  reading the delivered `AABB`/`Frustum` facility.
+- **Occlusion culling** (hi-Z / queries), **per-submesh** bounds + culling, and **GPU/compute-driven
+  culling** (plus portal/PVS visibility) are the named refinements behind the delivered
+  mesh-granularity CPU frustum cull, each reading the same `AABB`/`Frustum`/gather surface.
 - **Colored emissive** — an emissive color distinct from albedo needs the separate-emissive
   layout (a fourth g-buffer target); only scalar emissive strength rides G2.a today.
 - **CSM shadow-render path: a single-pass depth array (multiview / layered), over the atlas —
@@ -468,9 +504,18 @@ atlas in a dedicated descriptor set (off bindless), sampled through a hardware c
 into `view_constants.slang` (the now material-facing set-0 view state) and `shadow.slang` (the
 set-1 cascade selection + `SampleCmp`).
 
-**Still future:** a transparent/forward pass, **shadowed punctual lights** and **frustum
-culling** (the next increments behind the delivered bounds facility), colored emissive, clustered
-light culling, a cached/dirty-tracked scene bound or BVH (the scaling step), history-buffer
-ringing for temporal effects, cross-queue synchronization, parallel pass recording, the
-single-pass depth-array CSM render path, and on-tile/subpass-fused deferred (a measure-first
+**Delivered — [planset-21](../planset-21/README.md):** **view-frustum culling** — a `Frustum`
+primitive (`Veng/Math/Frustum.h`, Gribb-Hartmann over Vulkan ZO clip, a conservative
+`Intersects(Frustum, AABB)` test) beside `AABB`, a per-frame `GatherMeshes` visibility gather
+(subsuming `SceneBounds`), and the two scene-drawing passes culling that one shared candidate list —
+the g-buffer pass by the camera frustum, the cascaded shadow pass by each cascade's light frustum —
+behind a `SceneRendererSettings::FrustumCull` knob (default on). The rendered image is byte-identical;
+a draw-count test over an off-frustum fixture is the guard.
+
+**Still future:** a transparent/forward pass, **shadowed punctual lights** (the other named increment
+behind the delivered bounds facility), colored emissive, clustered light culling, a
+**cached/dirty-tracked scene bound or BVH** (the immediate shared scaling step, the gather its seam),
+occlusion / per-submesh / GPU culling (the refinements behind the delivered frustum cull),
+history-buffer ringing for temporal effects, cross-queue synchronization, parallel pass recording,
+the single-pass depth-array CSM render path, and on-tile/subpass-fused deferred (a measure-first
 `RenderGraph`-core change) — each named above as a next increment behind the same mechanism.
