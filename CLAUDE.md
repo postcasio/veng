@@ -251,6 +251,17 @@ be host-visible." "Must run before the swap chain is recreated or the view
 dangles." These earn their place precisely because they state *why*, not *how we
 arrived at it*.
 
+**Be concise — one line is the default.** A comment that earns its place still
+states its point in the fewest words that carry the *why*. Two lines only when a
+genuine non-obvious reason needs them; three or more inline lines is a smell. Cut a
+sentence that (a) describes what the called function does instead of why *this* call
+is here — that belongs on the callee's declaration; (b) restates a contract
+documented elsewhere — reference it (`see ReconfigureScene`) rather than re-deriving
+it; or (c) inventories structure the code already shows — `m_A.reset();
+m_B.reset();` needs the one reason the block exists, not a line-item map of who owns
+what. Keep the load-bearing why; drop the tour. (Doc comments on a public
+declaration are the exception: a full `@brief` plus contract is the goal there.)
+
 The test: if a sentence would still be true and useful to someone who has never
 seen the roadmap and does not care about the project's history, keep it.
 Otherwise cut it.
