@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Format-check only the C/C++ lines this commit touches, using clang-format
+# and the repo-root .clang-format. Existing hand-formatted code is left alone;
+# the gate applies to changed lines only (git clang-format --staged).
+set -euo pipefail
+
+if ! command -v clang-format >/dev/null 2>&1 || ! command -v git-clang-format >/dev/null 2>&1; then
+    echo "pre-commit: clang-format / git-clang-format not found, skipping format check." >&2
+    exit 0
+fi
+
+diff=$(git clang-format --staged --diff --extensions h,hpp,cpp,cc 2>/dev/null || true)
+
+case "$diff" in
+    "" | "no modified files to format" | "clang-format did not modify any files")
+        exit 0
+        ;;
+esac
+
+echo "pre-commit: staged C/C++ changes are not clang-format clean." >&2
+echo "Fix with:  git clang-format --staged   then re-stage the files and commit." >&2
+echo "------------------------------------------------------------------" >&2
+printf '%s\n' "$diff" >&2
+exit 1

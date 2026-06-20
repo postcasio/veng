@@ -78,6 +78,21 @@ ctest --test-dir build --output-on-failure
 
 **If you parallelize the build, cap it at `-j 2`.** Do not go higher.
 
+### Formatting
+
+Code style is enforced by `clang-format` against the repo-root `.clang-format`.
+A checked-in pre-commit hook (`.githooks/pre-commit`) format-checks **only the
+lines a commit touches** via `git clang-format --staged`, so the existing
+hand-formatted tree is left alone and only changed lines must conform. Enable it
+once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The hook skips cleanly when `clang-format` is absent. To reformat staged changes
+the hook flagged, run `git clang-format --staged`, then re-stage and commit.
+
 Tests, examples, and the `vengc` cooker tool build only when veng is the
 top-level project (`PROJECT_IS_TOP_LEVEL`); toggles are `VENG_BUILD_TESTS` /
 `VENG_BUILD_EXAMPLES` / `VENG_BUILD_TOOLS`.
