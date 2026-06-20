@@ -238,6 +238,72 @@ namespace Veng::UI
         bool m_Live = true;
     };
 
+    /// @brief Scope guard for `ImGui::BeginDragDropSource`/`EndDragDropSource`.
+    ///
+    /// `EndDragDropSource` runs only when the source began (an item is being dragged).
+    class [[nodiscard]] ScopedDragDropSource
+    {
+    public:
+        /// @brief Constructs the guard with the result of a prior `BeginDragDropSource` call.
+        /// @param open  Whether the drag-drop source began this frame.
+        explicit ScopedDragDropSource(bool open) : m_Open(open) {}
+
+        /// @brief Calls `ImGui::EndDragDropSource` when the source began.
+        ~ScopedDragDropSource();
+
+        ScopedDragDropSource(const ScopedDragDropSource&) = delete;
+        ScopedDragDropSource& operator=(const ScopedDragDropSource&) = delete;
+
+        /// @brief Move constructor; invalidates the source so its destructor is a no-op.
+        ScopedDragDropSource(ScopedDragDropSource&& other) noexcept : m_Open(other.m_Open)
+        {
+            other.m_Live = false;
+        }
+        ScopedDragDropSource& operator=(ScopedDragDropSource&&) = delete;
+
+        /// @brief Returns true when the drag-drop source began and its payload should be set.
+        explicit operator bool() const { return m_Open; }
+
+    private:
+        /// @brief Whether the source began this frame.
+        bool m_Open;
+        /// @brief False after a move; suppresses the destructor call.
+        bool m_Live = true;
+    };
+
+    /// @brief Scope guard for `ImGui::BeginDragDropTarget`/`EndDragDropTarget`.
+    ///
+    /// `EndDragDropTarget` runs only when the target began (the previous item can receive a drop).
+    class [[nodiscard]] ScopedDragDropTarget
+    {
+    public:
+        /// @brief Constructs the guard with the result of a prior `BeginDragDropTarget` call.
+        /// @param open  Whether the drag-drop target began this frame.
+        explicit ScopedDragDropTarget(bool open) : m_Open(open) {}
+
+        /// @brief Calls `ImGui::EndDragDropTarget` when the target began.
+        ~ScopedDragDropTarget();
+
+        ScopedDragDropTarget(const ScopedDragDropTarget&) = delete;
+        ScopedDragDropTarget& operator=(const ScopedDragDropTarget&) = delete;
+
+        /// @brief Move constructor; invalidates the source so its destructor is a no-op.
+        ScopedDragDropTarget(ScopedDragDropTarget&& other) noexcept : m_Open(other.m_Open)
+        {
+            other.m_Live = false;
+        }
+        ScopedDragDropTarget& operator=(ScopedDragDropTarget&&) = delete;
+
+        /// @brief Returns true when the target began and a payload may be accepted.
+        explicit operator bool() const { return m_Open; }
+
+    private:
+        /// @brief Whether the target began this frame.
+        bool m_Open;
+        /// @brief False after a move; suppresses the destructor call.
+        bool m_Live = true;
+    };
+
     /// @brief Unconditional scope guard for `ImGui::BeginDisabled`/`EndDisabled`.
     ///
     /// The body always runs and the destructor always pops. `m_Live` tracks move-out
@@ -405,6 +471,49 @@ namespace Veng::UI
     /// @brief Queues a popup to open on the next frame.
     /// @param id  ImGui id string for the popup, matching a `Popup(id)` call.
     void OpenPopup(string_view id);
+
+    /// @brief Opens a context-menu popup anchored to the previous item, on right-click.
+    ///
+    /// Wraps `BeginPopupContextItem`: right-clicking the previous widget opens it; the
+    /// returned guard's destructor calls `EndPopup` when the popup is open.
+    /// @param id  ImGui id string for the popup.
+    [[nodiscard]] ScopedPopup PopupContextItem(string_view id);
+
+    /// @brief Opens a context-menu popup for empty space in the current window, on right-click.
+    ///
+    /// Wraps `BeginPopupContextWindow`: right-clicking window space not over an item opens it;
+    /// the returned guard's destructor calls `EndPopup` when the popup is open.
+    /// @param id  ImGui id string for the popup.
+    [[nodiscard]] ScopedPopup PopupContextWindow(string_view id);
+
+    /// @brief Begins a drag-drop source on the previous item.
+    ///
+    /// Inside an open guard, call `SetDragDropPayload` to attach the dragged data and draw
+    /// a drag preview. The guard's destructor ends the source when it began.
+    [[nodiscard]] ScopedDragDropSource DragDropSource();
+
+    /// @brief Sets the payload carried by the active drag-drop source.
+    ///
+    /// Copies `size` bytes; ImGui owns the copy for the drag's duration. Call only inside an
+    /// open `DragDropSource` scope.
+    /// @param type  Caller-defined payload type tag, matched by `AcceptDragDropPayload`.
+    /// @param data  Pointer to the payload bytes to copy.
+    /// @param size  Payload size in bytes.
+    void SetDragDropPayload(string_view type, const void* data, usize size);
+
+    /// @brief Begins a drag-drop target on the previous item.
+    ///
+    /// Inside an open guard, call `AcceptDragDropPayload` to receive a matching drop. The
+    /// guard's destructor ends the target when it began.
+    [[nodiscard]] ScopedDragDropTarget DragDropTarget();
+
+    /// @brief Accepts a dropped payload of the given type on the active target.
+    ///
+    /// Returns a pointer to the payload bytes the frame the drop completes, else nullptr.
+    /// Call only inside an open `DragDropTarget` scope.
+    /// @param type  Payload type tag to match against the dragged source.
+    /// @return Pointer to the payload bytes on drop, or nullptr.
+    [[nodiscard]] const void* AcceptDragDropPayload(string_view type);
 
     /// @brief Returns a scope guard that greys out and blocks input for nested widgets.
     /// @param disabled  When false the scope is a no-op (guard still destructs safely).

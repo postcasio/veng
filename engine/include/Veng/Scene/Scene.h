@@ -62,6 +62,15 @@ namespace Veng
         /// @brief Returns true if the entity handle is live (not destroyed or stale).
         [[nodiscard]] bool IsAlive(Entity entity) const;
 
+        /// @brief Visits every live entity, calling fn(entity) in slot-index order.
+        ///
+        /// Enumerates entities regardless of which components they hold — the
+        /// whole-world walk a hierarchy view needs, distinct from the
+        /// component-keyed View/Each. The visitor must not create or destroy
+        /// entities; structural changes during the walk are illegal.
+        /// @param fn  Visitor invoked once per live entity.
+        void ForEachEntity(const function<void(Entity)>& fn) const;
+
         /// @brief Returns the number of live entities.
         [[nodiscard]] usize EntityCount() const { return m_LiveCount; }
 
@@ -89,6 +98,18 @@ namespace Veng
         {
             VE_ASSERT(IsAlive(entity), "AddComponent on a dead or stale entity");
             return AddRaw(entity, id);
+        }
+
+        /// @brief Type-erased remove: removes the component of the given TypeId from the entity.
+        ///
+        /// The templated Remove\<T\> resolves T to TypeId and forwards here; the
+        /// editor inspector, which only knows a component's TypeId, calls it
+        /// directly. A no-op when the entity lacks the component.
+        /// @pre The entity must be alive.
+        void RemoveComponent(Entity entity, TypeId id)
+        {
+            VE_ASSERT(IsAlive(entity), "RemoveComponent on a dead or stale entity");
+            RemoveRaw(entity, id);
         }
 
         /// @brief Adds component T (initialized from value) to the entity and returns a reference to it.

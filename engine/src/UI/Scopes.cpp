@@ -43,6 +43,18 @@ namespace Veng::UI
             {
                 out |= ImGuiTreeNodeFlags_SpanAvailWidth;
             }
+            if ((flags & TreeFlags::Selected) != TreeFlags::None)
+            {
+                out |= ImGuiTreeNodeFlags_Selected;
+            }
+            if ((flags & TreeFlags::Leaf) != TreeFlags::None)
+            {
+                out |= ImGuiTreeNodeFlags_Leaf;
+            }
+            if ((flags & TreeFlags::OpenOnArrow) != TreeFlags::None)
+            {
+                out |= ImGuiTreeNodeFlags_OpenOnArrow;
+            }
             return out;
         }
 
@@ -128,6 +140,22 @@ namespace Veng::UI
         if (m_Live && m_Open)
         {
             ImGui::EndPopup();
+        }
+    }
+
+    ScopedDragDropSource::~ScopedDragDropSource()
+    {
+        if (m_Live && m_Open)
+        {
+            ImGui::EndDragDropSource();
+        }
+    }
+
+    ScopedDragDropTarget::~ScopedDragDropTarget()
+    {
+        if (m_Live && m_Open)
+        {
+            ImGui::EndDragDropTarget();
         }
     }
 
@@ -253,6 +281,41 @@ namespace Veng::UI
     {
         const string label = AsCStr(id);
         ImGui::OpenPopup(label.c_str());
+    }
+
+    ScopedPopup PopupContextItem(string_view id)
+    {
+        const string label = AsCStr(id);
+        return ScopedPopup(ImGui::BeginPopupContextItem(label.c_str()));
+    }
+
+    ScopedPopup PopupContextWindow(string_view id)
+    {
+        const string label = AsCStr(id);
+        return ScopedPopup(ImGui::BeginPopupContextWindow(label.c_str()));
+    }
+
+    ScopedDragDropSource DragDropSource()
+    {
+        return ScopedDragDropSource(ImGui::BeginDragDropSource());
+    }
+
+    void SetDragDropPayload(string_view type, const void* data, usize size)
+    {
+        const string id = AsCStr(type);
+        ImGui::SetDragDropPayload(id.c_str(), data, size);
+    }
+
+    ScopedDragDropTarget DragDropTarget()
+    {
+        return ScopedDragDropTarget(ImGui::BeginDragDropTarget());
+    }
+
+    const void* AcceptDragDropPayload(string_view type)
+    {
+        const string id = AsCStr(type);
+        const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(id.c_str());
+        return payload != nullptr ? payload->Data : nullptr;
     }
 
     DisabledScope Disabled(bool disabled)

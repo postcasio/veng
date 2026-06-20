@@ -34,6 +34,10 @@ namespace Veng::UI
     /// @brief Returns true if the last item is hovered.
     [[nodiscard]] bool ItemHovered();
 
+    /// @brief Returns true the frame the last item was clicked with the given button.
+    /// @param button  Mouse button to query.
+    [[nodiscard]] bool IsItemClicked(MouseButton button = MouseButton::Left);
+
     /// @brief Returns true the frame the last item was deactivated after an edit.
     [[nodiscard]] bool ItemEdited();
 

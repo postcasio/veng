@@ -127,6 +127,18 @@ namespace Veng
         return slot.Alive && slot.Generation == entity.Generation;
     }
 
+    void Scene::ForEachEntity(const function<void(Entity)>& fn) const
+    {
+        for (u32 index = 0; index < m_Slots.size(); ++index)
+        {
+            const EntitySlot& slot = m_Slots[index];
+            if (slot.Alive)
+            {
+                fn(Entity{.Index = index, .Generation = slot.Generation});
+            }
+        }
+    }
+
     void* Scene::AddRaw(Entity entity, TypeId id)
     {
         if (IsSpatialId(id))

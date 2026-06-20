@@ -45,6 +45,11 @@ namespace Veng::UI
         return ImGui::IsItemDeactivatedAfterEdit();
     }
 
+    bool IsItemClicked(MouseButton button)
+    {
+        return ImGui::IsItemClicked(ToImGui(button));
+    }
+
     void Tooltip(string_view text)
     {
         if (ImGui::IsItemHovered())

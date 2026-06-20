@@ -81,6 +81,12 @@ namespace Veng::UI
         DefaultOpen = 1,
         /// @brief Hit area spans the full available width.
         SpanAvailWidth = 2,
+        /// @brief Draws the node highlighted as the active selection.
+        Selected = 4,
+        /// @brief Childless node: no arrow, no expansion (a hierarchy leaf).
+        Leaf = 8,
+        /// @brief Only the arrow toggles expansion; a label click is a plain selection.
+        OpenOnArrow = 16,
     };
 
     /// @brief Bitwise OR of two `TreeFlags` values.
