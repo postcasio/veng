@@ -546,6 +546,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/transient_aliasing.cpp
             tests/gpu/adopt.cpp
             tests/gpu/scene_renderer.cpp
+            tests/gpu/hi_z_pyramid.cpp
             tests/gpu/prefab_spawn.cpp
     )
     target_link_libraries(veng_gpu PRIVATE veng::veng veng_test_support doctest::doctest)

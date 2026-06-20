@@ -401,6 +401,21 @@ namespace Veng::Renderer
         /// @brief Returns the depth buffer view. Invalidated by Resize.
         [[nodiscard]] Ref<ImageView> GetDepthView() const;
 
+        /// @brief Returns the whole-chain sampled view of the hi-Z depth pyramid.
+        ///
+        /// The max-Z mip chain reduced from the depth target each Execute. Renderer-owned and
+        /// persisted across frames; invalidated by Resize and Configure. Exposed for tests.
+        [[nodiscard]] Ref<ImageView> GetHiZView() const;
+
+        /// @brief Returns the storage view of hi-Z mip @p level (one mip per view).
+        ///
+        /// Exposed for tests reading back a single reduced mip. Invalidated by Resize and Configure.
+        /// @param level  Mip level in [0, mip count).
+        [[nodiscard]] Ref<ImageView> GetHiZMipView(u32 level) const;
+
+        /// @brief Returns the number of mip levels in the hi-Z pyramid.
+        [[nodiscard]] u32 GetHiZMipCount() const;
+
         /// @brief Returns the HDR target the deferred lighting pass writes before tonemap.
         ///
         /// Exposed for tests and tooling. Invalidated by Resize.
@@ -425,6 +440,19 @@ namespace Veng::Renderer
         void CreateOutput();
         /// @brief Recreates g-buffer images/views at the current extent and (re-)registers them into bindless.
         void CreateGBuffer();
+        /// @brief Recreates the hi-Z pyramid image, per-mip views, and reduction descriptor sets.
+        ///
+        /// Sized to the depth target with a full mip chain; not cleared (it carries data across
+        /// frames). Called from CreateGBuffer, after the depth target exists, so the reduction's
+        /// mip-0 descriptor set can bind it.
+        void CreateHiZ();
+        /// @brief Declares the max-Z reduction compute chain into the graph after the tail passes.
+        ///
+        /// One dispatch per mip: mip 0 reads the depth target, mip n>0 reads hi-Z mip n-1, each
+        /// writing its hi-Z mip. The per-mip graph surface derives the chain's read-after-write
+        /// barriers.
+        /// @param graph  The renderer's internal graph being rebuilt.
+        void DeclareHiZReduction(RenderGraph& graph);
         /// @brief Recreates the HDR image/view at the current extent and (re-)registers it into bindless.
         void CreateHdr();
         /// @brief Recreates the four bloom intermediate images/views and registers them into bindless.
@@ -500,6 +528,24 @@ namespace Veng::Renderer
         Ref<Image> m_DepthImage;
         /// @brief View over m_DepthImage.
         Ref<ImageView> m_DepthView;
+
+        /// @brief Hi-Z depth pyramid: a max-Z mip chain reduced from the depth target.
+        ///
+        /// R32Sfloat, sized to the depth target with a full mip chain, Storage | Sampled.
+        /// A compute reduction (declared after tonemap) builds it at the end of each
+        /// Execute; the occlusion test samples last frame's chain. Persisted across
+        /// frames (temporal hi-Z), so it is renderer-owned, not a graph transient, and
+        /// not cleared. Recreated on Resize/Configure with the rest of the g-buffer.
+        Ref<Image> m_HiZImage;
+        /// @brief One storage view per hi-Z mip level (the reduction writes each).
+        ///
+        /// m_HiZMips[k] views exactly mip k; the reduction's k-th dispatch writes it and
+        /// the (k+1)-th reads it, so the per-mip graph surface derives a per-mip barrier.
+        vector<Ref<ImageView>> m_HiZMips;
+        /// @brief Whole-chain sampled view of the hi-Z pyramid (all mips), registered into bindless.
+        Ref<ImageView> m_HiZSampleView;
+        /// @brief Bindless slot for the whole-chain sampled hi-Z view.
+        TextureHandle m_HiZSampleHandle;
 
         /// @brief HDR target the deferred lighting pass writes (linear, unbounded range).
         ///
@@ -585,6 +631,24 @@ namespace Veng::Renderer
         Ref<class GraphicsPipeline> m_SsaoPipeline;
         /// @brief Layout for the SSAO pipeline.
         Ref<class PipelineLayout> m_SsaoLayout;
+
+        /// @brief Compute pipeline that reduces one depth/hi-Z mip into the next (max-Z).
+        ///
+        /// Built once at Create from the core pack's hi_z_reduce.comp. One dispatch per
+        /// mip; the per-mip descriptor sets bind that mip's source and destination views.
+        Ref<class ComputePipeline> m_HiZReducePipeline;
+        /// @brief Layout for m_HiZReducePipeline: set 1 (sampled source + storage dest) + push block.
+        Ref<class PipelineLayout> m_HiZReduceLayout;
+        /// @brief Set-1 layout for the reduction: binding 0 sampled source, binding 1 storage dest.
+        ///
+        /// Off bindless — a closed producer→consumer reduction needs no global registration, and a
+        /// dedicated set sidesteps the set-0 storage-image argument-buffer path on MoltenVK.
+        Ref<DescriptorSetLayout> m_HiZReduceSetLayout;
+        /// @brief One reduction descriptor set per destination mip, written on Rebuild.
+        ///
+        /// Set k binds mip k's source (the depth target for k=0, hi-Z mip k-1 otherwise) and
+        /// mip k's destination storage view. Recreated whenever the chain is (Resize/Configure).
+        vector<Ref<DescriptorSet>> m_HiZReduceSets;
 
         /// @brief Debug blit for the albedo channel.
         Ref<class GraphicsPipeline> m_AlbedoBlitPipeline;
@@ -735,6 +799,10 @@ namespace Veng::Renderer
         ResourceId m_SsaoId;
         /// @brief Imported id for the final output target.
         ResourceId m_OutputId;
+        /// @brief Imported id for the depth source the reduction reads into hi-Z mip 0.
+        ResourceId m_HiZDepthSourceId;
+        /// @brief Per-mip subresource handle for the hi-Z chain the reduction writes.
+        MipChainId m_HiZChainId;
 
         /// @brief True when the last Rebuild wired the bloom chain (Final mode + Settings.Bloom).
         ///

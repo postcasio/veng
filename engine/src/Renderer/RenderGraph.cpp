@@ -25,6 +25,14 @@ namespace Veng::Renderer
         return *view;
     }
 
+    ImageView& PassContext::ResolvedMip(const MipChainId chain, const u32 level) const
+    {
+        VE_ASSERT(level < chain.LevelCount,
+                  "PassContext::ResolvedMip: level {} out of range [0, {})", level,
+                  chain.LevelCount);
+        return Resolved(chain.Level(level));
+    }
+
     RenderGraph::PassBuilder& RenderGraph::PassBuilder::Color(const PassAttachment& attachment)
     {
         m_Pass.Accesses.push_back({attachment.Resource, AccessKind::ColorAttachment,
@@ -107,6 +115,21 @@ namespace Veng::Renderer
             .Name = string(name),
         });
         return ResourceId{.Index = index};
+    }
+
+    MipChainId RenderGraph::ImportImageMips(const string_view name, const u32 levelCount)
+    {
+        VE_ASSERT(levelCount != 0, "RenderGraph::ImportImageMips: levelCount must be non-zero");
+        const MipChainId chain{.Base = ResourceId{.Index = static_cast<u32>(m_Resources.size())},
+                               .LevelCount = levelCount};
+        for (u32 level = 0; level < levelCount; level++)
+        {
+            m_Resources.push_back(Resource{
+                .IsImport = true,
+                .Name = fmt::format("{} Mip {}", name, level),
+            });
+        }
+        return chain;
     }
 
     RenderGraph::PassBuilder RenderGraph::AddPass(const string_view name)
