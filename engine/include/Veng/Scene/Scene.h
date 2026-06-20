@@ -17,8 +17,10 @@ namespace Veng
 
     class Scene;
     struct AABB;
+    struct VisibleMesh;
     void ComputeWorldMatrices(const Scene& scene, vector<mat4>& out);
     AABB SceneBounds(const Scene& scene);
+    void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds);
 
     // A runtime ECS world: a generational entity free-list plus one type-erased
     // sparse-set pool per component type that has been Added to an entity. The
@@ -244,6 +246,10 @@ namespace Veng
         // SceneBounds aligns the world matrices with the Transform pool's dense
         // entity list through the same impl-only pool accessors.
         friend AABB SceneBounds(const Scene& scene);
+
+        // GatherMeshes walks the Transform pool's dense entity list through the
+        // same impl-only pool accessors to list each resident drawable.
+        friend void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds);
     };
 
     // The iterable returned by Scene::View<Ts...>(). begin()/end() yield a
