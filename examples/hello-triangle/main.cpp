@@ -310,10 +310,10 @@ private:
             // and every arm is selectable. Configure recreates the output image, so the
             // ImGui texture and the composite pass's scene bindless slot must both be
             // re-bound after it (the GetOutput()-invalidated-by-Configure contract).
-            static constexpr std::array<string_view, 10> modeNames{
+            static constexpr std::array<string_view, 11> modeNames{
                 "Final", "Albedo", "Normal", "Depth",
                 "Roughness", "Metallic", "Occlusion",
-                "AO", "Shadows", "Cascades"};
+                "AO", "Shadows", "Cascades", "Punctual shadows"};
             i32 mode = static_cast<i32>(m_SceneSettings.Mode);
             if (UI::Combo("View", mode, modeNames))
             {
@@ -356,6 +356,24 @@ private:
 
             if (UI::Slider("Split lambda", m_SceneSettings.CascadeSplitLambda, {.Min = 0.0f, .Max = 1.0f}))
             {
+                ReconfigureScene();
+            }
+
+            // The punctual-shadow knobs, beside the directional ones. PunctualShadows
+            // on/off inserts/removes the punctual depth pass + the per-light sample, and
+            // the per-tile resolution sizes the punctual atlas, so each is a Configure →
+            // recompile (the same GetOutput()-invalidated re-bind). The shadowed point/
+            // spot lights are the first MaxShadowedPunctual the renderer selects.
+            if (UI::Checkbox("Punctual shadows", m_SceneSettings.PunctualShadows))
+            {
+                ReconfigureScene();
+            }
+
+            i32 punctualResolution = static_cast<i32>(m_SceneSettings.PunctualShadowResolution);
+            if (UI::Drag("Punctual shadow resolution", punctualResolution,
+                         {.Speed = 16.0f, .Min = 256.0f, .Max = 4096.0f}))
+            {
+                m_SceneSettings.PunctualShadowResolution = static_cast<u32>(punctualResolution);
                 ReconfigureScene();
             }
 

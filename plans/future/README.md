@@ -191,16 +191,27 @@ immediate-mode ECS). The camera and every shadow cascade query it by tree descen
 per-view linear scan; a static scene rebuilds not at all. The query returns the linear scan's exact
 set in `GatherMeshes` order — byte-identical, the golden does not move.
 
+**Delivered — planset-24 (shadowed punctual lights):** a bounded set of point/spot lights (a
+`MaxShadowedPunctual` budget) cast real shadows — a spot through one perspective map, a point
+through six cube faces, both into a **shared punctual shadow atlas** that generalizes set 1 from
+"the directional system" to "a shadow system". The deferred lighting pass samples each shadowed
+light's map with hardware `SampleCmp` + PCF and multiplies the visibility into its contribution;
+each shadow view culls its casters through `SceneBroadphase::Cull` against its own frustum — the
+**delivered prime consumer** of the BVH, one tree queried `N` spot frustums + `6N` cube faces per
+frame. `PunctualShadows`/`PunctualShadowResolution` are the knobs, `DebugView::PunctualShadows` the
+visualizer, and `Veng/Renderer/PunctualShadows.h` the device-free view math beside `ShadowCascades.h`.
+
 **Still future:** a **transparent/forward pass** (a second material contract whose fragment
-outputs final color), **MSAA**, and **shadowed punctual lights** (point/spot shadow cubemaps/atlas
-— directional is the only shadowed light) — the **next renderer feature** reading the delivered
-`AABB`/`Frustum`/broadphase facility. The BVH broadphase's refinements, behind the same
-`Sync`/`Cull` + version-gate seam: **incremental tree maintenance** (per-object insert/update/remove
-with fat boxes, for large *N*), **GPU/compute-driven culling** + **occlusion (hi-Z / two-phase)**,
-**per-submesh leaf granularity**, and **a Scene-shared tree** (one tree across consumers).
-planset-24's per-light shadow views are the broadphase's prime new consumer. Also
-named: **colored emissive** (a fourth g-buffer target) and **clustered/tiled light
-culling**. Also future: **history-buffer ringing** for
+outputs final color) and **MSAA**, reading the delivered `AABB`/`Frustum`/broadphase facility. The
+BVH broadphase's refinements, behind the same `Sync`/`Cull` + version-gate seam: **incremental tree
+maintenance** (per-object insert/update/remove with fat boxes, for large *N*), **GPU/compute-driven
+culling** + **occlusion (hi-Z / two-phase)**, **per-submesh leaf granularity**, and **a Scene-shared
+tree** (one tree across consumers). The shadow system's named next increments: **clustered/tiled
+light culling** (the lighting loop stays a bounded linear loop until then), **cached/static shadow
+maps** (the highest-value — they retire the per-frame `6N` redraw for a static scene), and
+**per-light dynamic resolution / shadow LOD** (a variable tile rect in the set-1 records + a packer,
+sample shader unchanged; lands alongside clustered culling). Also named: **colored emissive** (a
+fourth g-buffer target). Also future: **history-buffer ringing** for
 temporal effects (TAA/motion-blur reading an older frame); **cross-queue synchronization** (an
 explicit semaphore once a handoff side moves off the single graphics queue); and **parallel
 pass recording** into secondary command buffers (area 2's seam — the user-pointer channel is
@@ -412,7 +423,8 @@ areas done in part — area 1's
 **systems framework** + the **hierarchy representation redesign** + perf follow-ons +
 the `ShaderInterface`/`MaterialField`
 unification + container/array fields, area 8's **transparent/forward pass** +
-**shadowed punctual lights** + the **BVH broadphase's refinements** (incremental tree
+**clustered/tiled light culling** + **cached/static shadow maps** + **per-light dynamic
+resolution / shadow LOD** + the **BVH broadphase's refinements** (incremental tree
 maintenance / GPU/occlusion culling / per-submesh leaves / a Scene-shared tree) +
 history-buffer ringing / cross-queue
 sync, area 9's culling / multi-queue /

@@ -128,7 +128,8 @@ namespace Veng::Renderer
         // lighting pass's per-light punctual sample, so it drives a Configure →
         // recompile. With it off the per-light selection writes slot -1 to every
         // light, so the lighting pass reads full visibility for every punctual term.
-        bool PunctualShadows = false;
+        // MaxShadowedPunctual caps how many punctual lights are shadowed when it is on.
+        bool PunctualShadows = true;
 
         // The per-cascade shadow tile edge length in texels. Sizing: changing it
         // recreates the shadow atlas (through the deferred retire path) and
@@ -141,7 +142,7 @@ namespace Veng::Renderer
         // single tile, a point's six cube-face tiles). Sizing: changing it recreates
         // the punctual atlas (through the deferred retire path) and recompiles. The
         // atlas is then MaxShadowedPunctual·CubeFaceCount tiles of this resolution.
-        u32 PunctualShadowResolution = 512;
+        u32 PunctualShadowResolution = 1024;
 
         // The number of shadow cascades the directional light splits its frustum
         // into, clamped to [1, MaxCascades]. Sizing: it sizes the atlas tile grid

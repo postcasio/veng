@@ -120,28 +120,50 @@ three-target g-buffer (albedo G0, world-normal G1, packed occlusion/roughness/me
 a fullscreen **Cook-Torrance** lighting pass evaluating GGX specular + Lambert diffuse
 over **multiple typed lights** (directional / point / spot) and reconstructing world
 position from depth, then tonemap to the output. The batteries hang off the g-buffer:
-**cascaded shadow maps** for the directional light, **SSAO** folded into the
-ambient/occlusion term, and **bloom authored as a PostProcess material** ahead of
-tonemap. Each battery is a `SceneRendererSettings` toggle driving the `Configure`
-recompile.
+**cascaded shadow maps** for the directional light and a **shared punctual shadow atlas**
+for a bounded set of point/spot lights, **SSAO** folded into the ambient/occlusion term,
+and **bloom authored as a PostProcess material** ahead of tonemap. Each battery is a
+`SceneRendererSettings` toggle driving the `Configure` recompile.
 
-The directional light is shadowed by **cascaded shadow maps**: the camera frustum is
-split into depth slices, each cascade fit (bounding-sphere + texel-snapped) to its
-slice and rendered into a depth **atlas** in **one** pass (per-cascade viewports), and
-the lighting pass selects the cascade by the fragment's view-space depth, remaps to the
-atlas tile, and **`SampleCmp`s** it through a **hardware comparison sampler** with a
-boundary cross-fade. Cascade fit is pure, device-free math (`Renderer::ComputeCascades`,
-`Veng/Renderer/ShadowCascades.h`) over the camera, light direction, and the world-space
-scene bound (the bound only extends each cascade's near plane toward the light to catch
-off-screen casters; the XY extent is the frustum slice). **Set 1 is the whole
-directional-shadow system** — the atlas (sampled image), an **immutable comparison
-sampler**, and a per-frame `ShadowConstants` buffer (cascade matrices + splits + params)
-bound as a **dynamic uniform** — held off the set-0 bindless registry, where a
-comparison sampler mistranslates inside the Metal argument buffer on MoltenVK and a
-closed producer→consumer resource needs no global registration. The set-0 view-constants
-block stays trimmed to material-facing camera/view state. `CascadeCount`,
-`CascadeSplitLambda`, and `ShadowResolution` (default 1024) are the CSM knobs;
-`DebugView::Cascades` tints each fragment by the cascade it selects.
+The directional light is shadowed by **cascaded shadow maps**, and a **bounded set of
+punctual lights** (`MaxShadowedPunctual`) by a **shared punctual shadow atlas**. The
+directional cascades split the camera frustum into depth slices, each cascade fit
+(bounding-sphere + texel-snapped) to its slice and rendered into a depth **atlas** in
+**one** pass (per-cascade viewports); the lighting pass selects the cascade by the
+fragment's view-space depth, remaps to the atlas tile, and **`SampleCmp`s** it through a
+**hardware comparison sampler** with a boundary cross-fade. Cascade fit is pure,
+device-free math (`Renderer::ComputeCascades`, `Veng/Renderer/ShadowCascades.h`) over the
+camera, light direction, and the world-space scene bound (the bound only extends each
+cascade's near plane toward the light to catch off-screen casters; the XY extent is the
+frustum slice). The punctual lights add the second arm: a **spot** renders one
+perspective shadow map through a single frustum, a **point** renders six 90° cube faces,
+both into the shared punctual atlas (a 2D atlas of `MaxShadowedPunctual·CubeFaceCount`
+tiles); the lighting pass samples each shadowed light's map (projective for a spot,
+cube-direction for a point) with the **same** hardware `SampleCmp` + PCF and multiplies
+the visibility into that light's contribution. The punctual view math is pure,
+device-free glm (`Renderer::ComputeSpotShadowView` / `ComputePointShadowView`,
+`Veng/Renderer/PunctualShadows.h`) beside `ShadowCascades.h`. Each shadow view culls its
+casters through `SceneBroadphase::Cull` against **its own** frustum — the camera frustum
+for the g-buffer, each cascade's light frustum, each spot's frustum, each cube face's
+frustum.
+
+**Set 1 is a general shadow system**, not just the directional one: the directional
+cascade atlas, the punctual shadow atlas, a **shared** immutable comparison sampler
+(hardware `SampleCmp`), the per-frame `ShadowConstants` block (the directional cascade
+matrices + splits + params) bound as a **dynamic uniform**, and the `PunctualShadowBlock`
+(the per-light shadow records — view-proj(s), tile rects, type) ringed beside it. All of
+set 1 is held **off the set-0 bindless registry**, where a comparison sampler
+mistranslates inside the Metal argument buffer on MoltenVK and a closed
+producer→consumer resource needs no global registration. The set-0 view-constants block
+stays trimmed to material-facing camera/view state. A `GpuLight`'s shadow **slot** (an
+index into the punctual record array, or `-1` for unshadowed) rides the `Cone.zw`
+padding, so `LightStride` is unchanged. `CascadeCount`, `CascadeSplitLambda`, and
+`ShadowResolution` (default 1024) are the directional CSM knobs; `PunctualShadows` (the
+on/off toggle) and `PunctualShadowResolution` (the per-tile edge length) are the punctual
+knobs; `DebugView::Cascades` tints each fragment by the cascade it selects and
+`DebugView::PunctualShadows` blits the punctual atlas. This per-light shadow cull is the
+**prime consumer of the delivered BVH broadphase** — one tree queried many times (`N`
+spot frustums + `6N` cube faces per frame, on top of the camera and cascade queries).
 
 Per-view data rides a **ring-buffered view-constants buffer**, not push constants: the
 `InvViewProj`/`CameraPosition` (for world-position reconstruction), the view/projection,
@@ -210,12 +232,14 @@ The über-pipeline is **batteries-included, not extensible**: a bespoke pass gra
 still means dropping to `RenderGraph` directly (the composite path the sample
 retains). `SceneRendererSettings` carries the topology/sizing knobs — `DebugView Mode`
 (Final, plus the `Albedo` / `Normal` / `Depth` g-buffer arms, the `Roughness` /
-`Metallic` / `Occlusion` packed-ORM-channel arms, and the `AO` / `Shadows` battery-target
-arms) re-wires the pass set through `Configure`, the recompile seam; `Exposure`, the
-`Bloom` / `Shadows` / `AO` battery toggles, and `ShadowResolution` are the other recompile
-knobs. A debug arm terminates the chain after the g-buffer (and, for `AO` / `Shadows`, the
-force-wired producing battery pass) with a single fullscreen debug blit; per-frame values
-(bloom threshold/intensity, the camera, the lights) ride `SceneView`.
+`Metallic` / `Occlusion` packed-ORM-channel arms, and the `AO` / `Shadows` / `Cascades` /
+`PunctualShadows` battery-target arms) re-wires the pass set through `Configure`, the
+recompile seam; `Exposure`, the `Bloom` / `Shadows` / `PunctualShadows` / `AO` battery
+toggles, and `ShadowResolution` / `PunctualShadowResolution` are the other recompile
+knobs. A debug arm terminates the chain after the g-buffer (and, for `AO` / `Shadows` /
+`PunctualShadows`, the force-wired producing battery pass) with a single fullscreen debug
+blit; per-frame values (bloom threshold/intensity, the camera, the lights) ride
+`SceneView`.
 
 The renderer-owned images are **single-copy**: one `Execute` resolves and completes
 before the next begins, written-then-read images within a frame are ordered by the
@@ -243,8 +267,9 @@ Albedo (G0) is sRGB-encoded (sampled back as linear); the normal (G1) is the
 tangent-space-perturbed world normal in a signed float format; ORM (G2) packs occlusion
 (R), roughness (G), metallic (B), and emissive strength (A) — the metallic-roughness
 PBR channel set. Depth is the depth attachment, also sampled by the lighting pass for
-world-position reconstruction (one of the two depth targets read as textures in the
-engine — the directional shadow map is the other). The g-buffer layout (channels,
+world-position reconstruction (one of the depth targets read as textures in the engine —
+the directional cascade atlas and the punctual shadow atlas are the others). The g-buffer
+layout (channels,
 formats, usage) is fixed in `Renderer/GBuffer.h`, agreed on by the geometry pass's
 `RenderingInfo` and every material pipeline. It is the **opaque** contract — a
 transparent/forward material outputs final color through a separate fragment entry, not
@@ -268,7 +293,8 @@ blur (H, V) → composite runs as four chained `PostProcessScenePass` stages ove
 renderer-owned intermediates ahead of tonemap, with `Threshold`/`Intensity` exposed
 params. The fixed plumbing composites stay hardcoded engine passes —
 `SwapChainCompositePass` (scene behind, ImGui over) and the `DebugView` blits
-(albedo/normal/depth, the packed-ORM channels, the SSAO target, the shadow map) have no
+(albedo/normal/depth, the packed-ORM channels, the SSAO target, the directional and
+punctual shadow maps) have no
 authorable surface; a PostProcess material is for *tunable effects with exposed
 parameters*, not plumbing.
 

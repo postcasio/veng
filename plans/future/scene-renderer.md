@@ -12,9 +12,11 @@
 > descriptor set, sampled through a hardware comparison sampler. planset-21 cashed in the bounds
 > facility's other prime consumer — **view-frustum culling** — adding a `Frustum` primitive beside
 > `AABB` and a per-frame visibility gather so the g-buffer pass culls by the camera frustum and the
-> shadow pass by each cascade's light frustum. What remains future is a
-> transparent/forward pass, shadowed punctual lights, colored emissive, clustered light
-> culling, parallel pass recording, and on-tile deferred — each behind the same mechanism. This
+> shadow pass by each cascade's light frustum. planset-24 generalized set 1 into a shadow system —
+> **shadowed punctual lights** (point/spot, a shared atlas) cast real shadows, the delivered
+> broadphase's prime consumer. What remains future is a transparent/forward pass, colored emissive,
+> clustered light culling, cached/static shadow maps, parallel pass recording, and on-tile deferred —
+> each behind the same mechanism. This
 > document records **what shipped** against **what is still future**, so the direction stays legible. It builds on the
 > shipped renderer / bindless / material foundation (planset-5), the **compiled
 > [`RenderGraph`](compiled-rendergraph.md)** (area 9, planset-8), and the runtime
@@ -441,12 +443,26 @@ mechanism:
     [planset-25](../planset-25/README.md)), finer rejection on large meshes.
   - **A Scene-shared tree** — one tree shared across consumers rather than one per renderer, once a
     single `Scene` drives several views that want the same structure.
-  [planset-24](../planset-24/README.md)'s per-light shadow views are the broadphase's **prime new
-  consumer** — a shadow frustum per punctual light queries one tree, many times.
-- **Shadowed punctual lights** (point/spot shadow cubemaps/atlas — directional is the only
-  shadowed light today) remain the **next renderer feature**, and **clustered/tiled light culling**
-  (the lighting pass loops a bounded list with no spatial culling) the increment beside it. Both read
-  the delivered `AABB`/`Frustum`/broadphase facility.
+  [planset-24](../planset-24/README.md)'s per-light shadow views are the broadphase's **delivered
+  prime consumer** — a shadow frustum per punctual light queries one tree, many times (`N` spot
+  frustums + `6N` cube faces per frame, on top of the camera and cascade queries).
+- **Shadowed punctual lights — delivered ([planset-24](../planset-24/README.md)).** A bounded set
+  of point/spot lights (a `MaxShadowedPunctual` budget) cast real shadows: a spot through one
+  perspective map, a point through six cube faces, both into a **shared punctual shadow atlas** in
+  set 1 beside the directional cascade atlas, sampled in the deferred lighting pass with hardware
+  `SampleCmp` + PCF and multiplied into each light's contribution; each shadow view culls its
+  casters through `SceneBroadphase::Cull` against its own frustum. The named next increments read
+  the delivered shadow-system surface:
+  - **Clustered/tiled light culling** — which lights are worth a tile; the lighting pass loops a
+    bounded linear list with no spatial culling until then.
+  - **Cached/static shadow maps** (re-render only on a light or caster move) — the **highest-value**
+    follow-on, since the `6N` point-cube redraw is otherwise paid every frame even for a scene whose
+    lights and casters never move.
+  - **Per-light dynamic resolution / shadow LOD** — a near light gets a larger tile than a distant
+    one (every tile is a uniform `PunctualShadowResolution²` today). The atlas makes this localized:
+    the set-1 records already address tiles by a **baked per-tile remap matrix**, so the tile rect
+    becomes variable and a packer (skyline/guillotine) replaces the fixed grid math, sample shader
+    unchanged. It lands **alongside clustered culling** — that selection decides each light's budget.
 - **Colored emissive** — an emissive color distinct from albedo needs the separate-emissive
   layout (a fourth g-buffer target); only scalar emissive strength rides G2.a today.
 - **CSM shadow-render path: a single-pass depth array (multiview / layered), over the atlas —
@@ -530,10 +546,25 @@ not at all. The query returns the linear scan's exact set in `GatherMeshes` orde
 byte-identical (the golden does not move). Refinements: incremental tree maintenance, GPU/occlusion
 culling, per-submesh leaves, and a Scene-shared tree.
 
-**Still future:** a transparent/forward pass, **shadowed punctual lights** (the next renderer
-feature, reading the delivered broadphase), colored emissive, clustered light culling, the BVH
-broadphase's refinements (**incremental tree maintenance**, **GPU/occlusion culling**,
-**per-submesh leaves**, a **Scene-shared tree**), history-buffer ringing for temporal effects,
-cross-queue synchronization, parallel pass recording, the single-pass depth-array CSM render path,
-and on-tile/subpass-fused deferred (a measure-first `RenderGraph`-core change) — each named above as
-a next increment behind the same mechanism.
+**Delivered — [planset-24](../planset-24/README.md):** **shadowed punctual lights** — a bounded
+set of point/spot lights (a `MaxShadowedPunctual` budget) cast real shadows: a spot through one
+perspective map, a point through six cube faces, both into a **shared punctual shadow atlas** that
+generalizes set 1 from "the directional system" to "a shadow system" (the directional cascade
+atlas + the punctual atlas + a shared comparison sampler + the `ShadowConstants` and per-light
+`PunctualShadowBlock` records, all off set-0 bindless). The deferred lighting pass samples each
+shadowed light's map (projective spot / cube point) with hardware `SampleCmp` + PCF and multiplies
+the visibility into its contribution, gated by the `GpuLight`'s shadow slot (riding `Cone.zw`); the
+punctual view math is pure device-free glm (`Veng/Renderer/PunctualShadows.h`, beside
+`ShadowCascades.h`). Each shadow view culls its casters through `SceneBroadphase::Cull` against its
+own frustum — the **delivered prime consumer** of planset-23's BVH, one tree queried `N` spot
+frustums + `6N` cube faces per frame. `PunctualShadows`/`PunctualShadowResolution` are the knobs and
+`DebugView::PunctualShadows` the visualizer.
+
+**Still future:** a transparent/forward pass, colored emissive, **clustered/tiled light culling**,
+**cached/static shadow maps** (the highest-value shadow follow-on — it retires the per-frame `6N`
+redraw for a static scene), **per-light dynamic resolution / shadow LOD**, the BVH broadphase's
+refinements (**incremental tree maintenance**, **GPU/occlusion culling**, **per-submesh leaves**, a
+**Scene-shared tree**), history-buffer ringing for temporal effects, cross-queue synchronization,
+parallel pass recording, the single-pass depth-array CSM render path, and on-tile/subpass-fused
+deferred (a measure-first `RenderGraph`-core change) — each named above as a next increment behind
+the same mechanism.

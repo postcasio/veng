@@ -25,8 +25,7 @@ the per-light shadow samples into the lighting loop. It is **foundation-first**:
 punctual shadow-view math (Plan 01) is pure and device-free, unit-tested before any
 pass renders a depth map.
 
-> **Status:** scoped — this README fixes the plan shape and order, and the per-plan
-> files (`01-…md` … `05-…md`) are drafted (each `proposed`, awaiting review).
+> **Status:** done — all five plans (`01-…md` … `05-…md`) landed and verified.
 
 ## Dependencies
 
@@ -136,7 +135,7 @@ Eight decisions fix the boundary of this work.
 | 02 | Shadow-system / set-1 generalization | Set 1 grows from the directional system to a shadow system: add the punctual shadow atlas (resource + format) and its comparison sampler (in set 1, off bindless), the per-light shadow-record array as a separate set-1 binding (preserving the 288-byte `ShadowConstantsBlock` layout + its `static_assert`), and a `GpuLight` shadow slot riding `Cone.zw`. Descriptor-layout + resource work; directional behavior unchanged. | done |
 | 03 | Punctual shadow render passes | Depth-only render of each budgeted shadowed light (spot: one view; point: six faces) into the punctual atlas, reusing `ShadowScenePass`; each view/face culls via `SceneBroadphase::Cull` against its own frustum, reusing the per-`Execute` `Sync` (decision 5). Validation gate. | done |
 | 04 | Lighting integration | The deferred lighting punctual loop samples each shadowed light's map (projective spot / cube point) with PCF + per-light bias, gated by the light's shadow slot; a `DebugView` arm for a selected punctual map. Validation gate. | done |
-| 05 | Budget/settings + sample + docs/roadmap | `MaxShadowedPunctual` budget + a `PunctualShadows` toggle (recompile knobs); a shadowed spot/point light in the sample scene; **golden regenerated once**; validation gate; roadmap re-cut (move shadowed-punctual to delivered in `future/README.md` and reconcile the broadphase-consumer note across planset-23/future; clustered light culling + cached/static shadow maps named next). | proposed |
+| 05 | Budget/settings + sample + docs/roadmap | `MaxShadowedPunctual` budget + a `PunctualShadows` toggle (recompile knobs); a shadowed spot/point light in the sample scene; **golden regenerated once**; validation gate; roadmap re-cut (move shadowed-punctual to delivered in `future/README.md` and reconcile the broadphase-consumer note across planset-23/future; clustered light culling + cached/static shadow maps named next). | done |
 
 ## Dependency analysis
 

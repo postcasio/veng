@@ -407,19 +407,20 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   **GPU/occlusion culling**, **per-submesh leaves**, and **a Scene-shared tree** are the recorded
   refinements behind the same `Sync`/`Cull` + version-gate seam.
 
-- **[planset-24](planset-24/README.md)** — shadowed punctual lights (📝 proposed, 5 plans).
-  The other named increment behind the delivered `AABB`/`Frustum`/gather facility: extend the
+- **[planset-24](planset-24/README.md)** — shadowed punctual lights (✅ done, 5 plans).
+  The other named increment behind the delivered `AABB`/`Frustum`/gather facility: it extended the
   shadow system from **directional-only** to **point and spot**. A bounded budget of punctual
-  lights cast real shadows — a **spot** through one perspective map, a **point** through a
-  six-face **cube** — sampled in the deferred lighting pass with hardware `SampleCmp` + PCF and
-  multiplied into each light's contribution. **Set 1 generalizes** from "the directional system"
-  to "a shadow system" (directional cascades + a punctual atlas + per-light shadow records), and
-  each shadow view culls its casters off the **shared broadphase** against its own frustum (a spot
-  frustum, six cube-face frustums) — the many-shadow-view workload that most rewards planset-23's
-  BVH broadphase. **Builds on planset-23** (one tree, queried once per shadow view);
-  foundation-first (the punctual shadow-view math is pure/device-free). The image changes — the
-  **golden is regenerated once**. Clustered light culling and cached/static shadow maps stay named
-  next.
+  lights (a `MaxShadowedPunctual` constant) cast real shadows — a **spot** through one perspective
+  map, a **point** through a six-face **cube** — sampled in the deferred lighting pass with hardware
+  `SampleCmp` + PCF and multiplied into each light's contribution. **Set 1 generalized** from "the
+  directional system" to "a shadow system" (directional cascades + a shared punctual atlas +
+  per-light shadow records), and each shadow view culls its casters off the **shared broadphase**
+  against its own frustum (a spot frustum, six cube-face frustums) — the many-shadow-view workload
+  that most rewards planset-23's BVH broadphase, its **delivered prime consumer**. **Built on
+  planset-23** (one tree, queried once per shadow view); foundation-first (the punctual shadow-view
+  math is pure/device-free, `Veng/Renderer/PunctualShadows.h`). The image changed — the **golden was
+  regenerated once**. **Clustered/tiled light culling**, **cached/static shadow maps** (the
+  highest-value follow-on), and **per-light dynamic resolution / shadow LOD** stay named next.
 
 - **[planset-25](planset-25/README.md)** — occlusion + GPU/compute-driven culling (📝 proposed,
   6 plans). Takes planset-21's mesh-granularity **CPU** frustum cull all the way to
