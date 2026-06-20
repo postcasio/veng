@@ -96,6 +96,14 @@ namespace
         f32 X = 0.0f;
         string Label;
     };
+
+    // Carries a variable-length (String) field after a scalar — used to prove the
+    // reader skips an unknown variable-length record by its length prefix.
+    struct Labeled
+    {
+        f32 A = 0.0f;
+        string Note;
+    };
 }
 
 // Team is a game-defined enum leaf: a fake leaf TypeId, no engine change.
@@ -126,6 +134,11 @@ VE_REFLECT_END();
 VE_REFLECT(PlainData, 0x7700110022003305ULL)
     VE_FIELD(X, .Min = -1.0, .Max = 1.0)
     VE_FIELD(Label)
+VE_REFLECT_END();
+
+VE_REFLECT(Labeled, 0x7700110022003306ULL)
+    VE_FIELD(A)
+    VE_FIELD(Note)
 VE_REFLECT_END();
 
 // ---- VE_REFLECT shape ------------------------------------------------------
@@ -188,6 +201,7 @@ namespace
         registry.Register<WithEnum>();
         registry.Register<WithReference>();
         registry.Register<PlainData>();
+        registry.Register<Labeled>();
         return registry;
     }
 }
@@ -451,4 +465,42 @@ TEST_CASE("Open extension: a game-defined leaf + struct round-trips with no engi
     // schema, so register a fielded type that pulls f32 in.
     registry.Register<Inner>();
     CHECK(registry.Info(TypeIdOf<f32>()).Name == "f32");
+}
+
+// ---- Malformed-input tolerance ---------------------------------------------
+
+TEST_CASE("Trailing bytes after the last record are ignored")
+{
+    TypeRegistry registry = MakeRegistry();
+
+    Inner src{3.0f, 17u};
+    vector<u8> bytes;
+    WriteFields(bytes, &src, registry.Info(registry.IdOf<Inner>()), registry);
+
+    // Garbage appended past the encoded records: the reader stops after
+    // recordCount records, so the tail never corrupts the read.
+    bytes.insert(bytes.end(), {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x11, 0x22, 0x33});
+
+    Inner dst;
+    ReadFields(bytes, &dst, registry.Info(registry.IdOf<Inner>()), registry);
+    CHECK(dst.A == doctest::Approx(3.0f));
+    CHECK(dst.B == 17u);
+}
+
+TEST_CASE("An unknown variable-length record is skipped by its length prefix")
+{
+    TypeRegistry registry = MakeRegistry();
+
+    // Author a record carrying A (matches Inner) and a variable-length Note
+    // (which Inner has no descriptor for). Reading into Inner must consume the
+    // Note record by its length prefix — not by guessing its class — so A reads
+    // and B keeps its default.
+    Labeled src{2.5f, "an unknown variable-length value"};
+    vector<u8> bytes;
+    WriteFields(bytes, &src, registry.Info(registry.IdOf<Labeled>()), registry);
+
+    Inner dst;
+    ReadFields(bytes, &dst, registry.Info(registry.IdOf<Inner>()), registry);
+    CHECK(dst.A == doctest::Approx(2.5f));
+    CHECK(dst.B == 0u); // Note skipped, no descriptor named B in the data
 }

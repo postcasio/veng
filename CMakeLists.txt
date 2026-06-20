@@ -261,6 +261,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/scene_ecs.cpp
             tests/unit/scene_queries.cpp
             tests/unit/reflection.cpp
+            tests/unit/camera.cpp
             tests/unit/material_params.cpp
     )
     target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
@@ -353,6 +354,18 @@ if (VENG_BUILD_TESTS)
     add_test(NAME death.transform_parent_dead COMMAND veng_death transform_parent_dead)
     set_tests_properties(death.transform_parent_dead PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "Parent references a dead or stale entity")
+
+    add_test(NAME death.serialize_truncated_header COMMAND veng_death serialize_truncated_header)
+    set_tests_properties(death.serialize_truncated_header PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "ReadFields: truncated u32")
+
+    add_test(NAME death.serialize_truncated_value COMMAND veng_death serialize_truncated_value)
+    set_tests_properties(death.serialize_truncated_value PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "ReadFields: truncated field value")
+
+    add_test(NAME death.serialize_truncated_string COMMAND veng_death serialize_truncated_string)
+    set_tests_properties(death.serialize_truncated_string PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "ReadFields: truncated string")
 
     # GPU-coupled death cases (need a headless Context; skip with no driver).
     add_test(NAME death.buffer_upload_overrun COMMAND veng_death buffer_upload_overrun)
@@ -499,6 +512,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/transient_aliasing.cpp
             tests/gpu/adopt.cpp
             tests/gpu/scene_renderer.cpp
+            tests/gpu/prefab_spawn.cpp
     )
     target_link_libraries(veng_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
     # transfer_retire.cpp reaches through Native.h (raw vk::/VMA handles via the

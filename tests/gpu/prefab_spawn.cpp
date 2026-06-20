@@ -1,0 +1,183 @@
+// Prefab::SpawnInto: the runtime spawn path the cooker feeds. The cooker side is
+// covered by prefab_cook; this exercises the *spawn* — entity creation, component
+// population from the reflection records, intra-prefab Entity-reference remapping
+// to fresh handles, root selection, and double-spawn independence. Prefabs are
+// hand-authored here (the WriteFields records the cooker would emit), so no cook
+// is involved.
+//
+// It lives in the GPU band only because SpawnInto takes an AssetManager&, which
+// requires a Context; the assertions touch no device. The manager is reached
+// only for resident AssetHandle fields — every prefab here uses invalid ids, so
+// it stays a no-op.
+
+#include <doctest/doctest.h>
+
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Prefab.h>
+#include <Veng/Reflection/Serialize.h>
+#include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/BuiltinTypes.h>
+#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Entity.h>
+#include <Veng/Scene/Scene.h>
+
+#include <gpu/fixture.h>
+
+using namespace Veng;
+
+namespace
+{
+    // A component carrying an intra-prefab entity reference (a Reference field):
+    // the spawn path must remap its prefab-local index to the freshly spawned
+    // handle.
+    struct Link
+    {
+        Entity Target = Entity::Null;
+    };
+}
+
+VE_REFLECT(Link, 0x7A9C1E55B0334401ULL)
+    VE_FIELD(Target)
+VE_REFLECT_END();
+
+namespace
+{
+    // Encode a component the way the cooker would: its TypeId plus the WriteFields
+    // record that populates it at spawn.
+    template <class T>
+    Prefab::Component MakeComponent(const TypeRegistry& registry, const T& value)
+    {
+        Prefab::Component component;
+        component.Type = registry.IdOf<T>();
+        WriteFields(component.Record, &value, registry.Info(component.Type), registry);
+        return component;
+    }
+
+    // A fixture wiring the builtin + test types into the GPU fixture's registry,
+    // then standing up a Scene and AssetManager over it.
+    struct PrefabFixture : Veng::Test::GpuFixture
+    {
+        Unique<Scene> Stage;
+        Unique<AssetManager> Assets;
+
+        PrefabFixture()
+        {
+            RegisterBuiltinTypes(Types);
+            Types.Register<Link>();
+            Stage = Scene::Create(Types);
+            Assets = CreateUnique<AssetManager>(Context, Tasks, Types);
+        }
+    };
+}
+
+TEST_CASE_FIXTURE(PrefabFixture, "SpawnInto populates components and returns the single root")
+{
+    Transform transform;
+    transform.Position = vec3{1.0f, 2.0f, 3.0f};
+
+    vector<Prefab::PrefabEntity> entities;
+    entities.push_back({{MakeComponent(Types, Name{"hero"}), MakeComponent(Types, transform)}});
+
+    const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
+    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets);
+
+    REQUIRE(roots.size() == 1);
+    CHECK(Stage->IsAlive(roots[0]));
+    CHECK(Stage->Get<Name>(roots[0]).Value == "hero");
+    CHECK(Stage->Get<Transform>(roots[0]).Position == vec3{1.0f, 2.0f, 3.0f});
+}
+
+TEST_CASE_FIXTURE(PrefabFixture, "Roots are entities with no in-prefab Parent, in authoring order")
+{
+    // idx 0 root "a", idx 1 child of 0 "b", idx 2 root "c".
+    vector<Prefab::PrefabEntity> entities;
+    entities.push_back({{MakeComponent(Types, Name{"a"})}});
+    entities.push_back({{MakeComponent(Types, Name{"b"}),
+                         MakeComponent(Types, Parent{Entity{0, 0}})}});
+    entities.push_back({{MakeComponent(Types, Name{"c"})}});
+
+    const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
+    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets);
+
+    REQUIRE(roots.size() == 2);
+    CHECK(Stage->Get<Name>(roots[0]).Value == "a");
+    CHECK(Stage->Get<Name>(roots[1]).Value == "c");
+
+    // The child's Parent (a Reference) was remapped from prefab index 0 to the
+    // freshly spawned root — roots[0] is the spawned entity for prefab idx 0.
+    bool sawChild = false;
+    for (auto [entity, name, parent] : Stage->View<Name, Parent>())
+    {
+        if (name.Value == "b")
+        {
+            sawChild = true;
+            CHECK(parent.Value == roots[0]);
+        }
+    }
+    CHECK(sawChild);
+}
+
+TEST_CASE_FIXTURE(PrefabFixture, "Intra-prefab entity references remap to the freshly spawned handles")
+{
+    // idx 0 links to idx 1; both are roots (no Parent), returned in order.
+    vector<Prefab::PrefabEntity> entities;
+    entities.push_back({{MakeComponent(Types, Link{Entity{1, 0}})}});
+    entities.push_back({{MakeComponent(Types, Name{"target"})}});
+
+    const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
+    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets);
+
+    REQUIRE(roots.size() == 2);
+    const Entity target = Stage->Get<Link>(roots[0]).Target;
+    CHECK(target == roots[1]);
+    CHECK(Stage->IsAlive(target));
+    CHECK(Stage->Get<Name>(target).Value == "target");
+}
+
+TEST_CASE_FIXTURE(PrefabFixture, "A null entity reference stays null after spawn")
+{
+    vector<Prefab::PrefabEntity> entities;
+    entities.push_back({{MakeComponent(Types, Link{Entity::Null})}});
+
+    const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
+    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets);
+
+    REQUIRE(roots.size() == 1);
+    CHECK(Stage->Get<Link>(roots[0]).Target.IsNull());
+}
+
+TEST_CASE_FIXTURE(PrefabFixture, "Spawning the same prefab twice yields independent copies")
+{
+    vector<Prefab::PrefabEntity> entities;
+    entities.push_back({{MakeComponent(Types, Name{"x"})}});
+
+    const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
+    const vector<Entity> first = prefab->SpawnInto(*Stage, *Assets);
+    const vector<Entity> second = prefab->SpawnInto(*Stage, *Assets);
+
+    REQUIRE(first.size() == 1);
+    REQUIRE(second.size() == 1);
+    CHECK(first[0] != second[0]);
+    CHECK(Stage->IsAlive(first[0]));
+    CHECK(Stage->IsAlive(second[0]));
+
+    // Mutating one copy leaves the other untouched.
+    Stage->Get<Name>(first[0]).Value = "mutated";
+    CHECK(Stage->Get<Name>(second[0]).Value == "x");
+}
+
+TEST_CASE_FIXTURE(PrefabFixture, "An embedded AssetHandle with an invalid id stays empty")
+{
+    // A default MeshRenderer carries an invalid (no-asset) mesh id — the resolve
+    // leaves it empty rather than asking the manager for a resident entry.
+    vector<Prefab::PrefabEntity> entities;
+    entities.push_back({{MakeComponent(Types, MeshRenderer{})}});
+
+    const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
+    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets);
+
+    REQUIRE(roots.size() == 1);
+    const MeshRenderer& renderer = Stage->Get<MeshRenderer>(roots[0]);
+    CHECK_FALSE(renderer.Mesh.Id().IsValid());
+    CHECK_FALSE(renderer.Mesh.IsLoaded());
+}
