@@ -71,11 +71,11 @@ per-module architecture lives in a `CLAUDE.md` inside each library:
 ```sh
 # Default build (validation OFF). Configure once, then build.
 cmake -B build -S .
-cmake --build build -j 2
+cmake --build build -j 4
 ctest --test-dir build --output-on-failure
 ```
 
-**If you parallelize the build, cap it at `-j 2`.** Do not go higher.
+**If you parallelize the build, cap it at `-j 4`.** Do not go higher.
 
 ### Formatting
 
@@ -117,7 +117,7 @@ The default `build/` has it OFF. Configure a **separate** dir from the repo root
 
 ```sh
 cmake -B build-debug -S . -DVE_DEBUG=ON
-cmake --build build-debug -j 2
+cmake --build build-debug -j 4
 ```
 
 ## Verification — read before you trust a green run

@@ -74,7 +74,7 @@ If no target was given, ask for one before doing anything. Do not assume `all`.
 
 8. **Apply** the edits.
 
-9. **Verify** — `cmake --build build -j 2` (cap at `-j 2`). Comments don't change
+9. **Verify** — `cmake --build build -j 4` (cap at `-j 4`). Comments don't change
    logic, but this catches an edit that ate real code or broke a `/* */` block. A
    green build is the gate before you call it done.
 
@@ -238,7 +238,7 @@ Partition rules:
 Stays on the main thread — never delegated:
 
 1. **Seed grep + partition** — once, up front.
-2. **The build** — one shared `build/`; run `cmake --build build -j 2` a single time
+2. **The build** — one shared `build/`; run `cmake --build build -j 4` a single time
    after all batches return. Concurrent builds of one dir are illegal.
 3. **Cross-file call-site dedup (category 5)** — "one engine contract recurs at many
    call sites → document once, reference at the rest" needs a global view a per-file
