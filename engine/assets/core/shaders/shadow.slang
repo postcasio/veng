@@ -39,6 +39,7 @@ struct PunctualShadowRecord
 struct PunctualShadows
 {
     PunctualShadowRecord Records[MaxShadowedPunctual];
+    float4               AtlasParams; // x 1/tileRes (per-tile texel size), yzw pad
 };
 
 [[vk::binding(3, 1)]] ConstantBuffer<PunctualShadows> g_Punctual;
@@ -79,46 +80,32 @@ float CascadeWorldPerTexel(uint cascade, uint count)
     return 1.0 / ndcPerWorld;
 }
 
-// Sample cascade k's atlas tile with a PCF grid of hardware comparison taps. The
-// reference depth carries a per-cascade-scaled, slope-scaled bias; every tap UV
-// (including the kernel offsets) is clamped to the cascade's tile sub-rect (inset by
-// a half-texel) so a tap near a tile edge cannot bleed into a neighbouring cascade's
-// tile — the atlas's one cost over a texture array. Returns full visibility when the
-// projected fragment falls outside the tile or the valid depth range.
-float SampleCascade(float3 worldPos, float3 N, float3 L, uint cascade, uint count)
+// Project worldPos by a tile-remapped view-proj and PCF-SampleCmp the atlas tile it
+// lands in. The matrix bakes in the tile UV remap (cascade or punctual record), so
+// the projected NDC.xy already lies in the tile's atlas window. The reference depth
+// carries the supplied bias; every tap UV (including the kernel offsets) is clamped
+// to the tile sub-rect [tileMin, tileMax] inset by a half-texel so a tap near a tile
+// edge cannot bleed into a neighbouring tile — the atlas's one cost over a texture
+// array. Returns full visibility when the projected fragment falls outside the tile
+// or the valid depth range. Shared by the cascade and punctual paths over the two
+// atlases, selected by the atlas + sampler the caller passes.
+float SampleAtlasTile(Texture2D atlas, SamplerComparisonState cmp, float4x4 tileViewProj,
+                      float3 worldPos, float bias, float2 texel, float2 tileMin, float2 tileMax)
 {
-    float4 lightClip = mul(g_Shadow.CascadeViewProj[cascade], float4(worldPos, 1.0));
+    float4 lightClip = mul(tileViewProj, float4(worldPos, 1.0));
     float3 lightNdc = lightClip.xyz / lightClip.w;
 
-    // The tile remap already lands NDC.xy in the tile's atlas window; convert to UV.
-    float2 shadowUV = lightNdc.xy * 0.5 + 0.5;
     if (lightNdc.z < 0.0 || lightNdc.z > 1.0)
         return 1.0;
 
-    float texel = g_Shadow.ShadowParams.x; // 1 / tileRes (atlas-relative texel size)
-
-    // The cascade's tile sub-rect in atlas UV: tile count is min(count,2) columns ×
-    // ceil(count/2) rows, matching the renderer's atlas grid. Clamp every tap inside
-    // the tile inset by a half-texel.
-    uint columns = min(count, 2u);
-    uint rows = (count + 1u) / 2u;
-    float2 tileSize = float2(1.0 / float(columns), 1.0 / float(rows));
-    float2 tileMin = float2(float(cascade % columns), float(cascade / columns)) * tileSize;
-    float2 tileMax = tileMin + tileSize;
-    float2 clampMin = tileMin + 0.5 * texel;
-    float2 clampMax = tileMax - 0.5 * texel;
-
+    // The tile remap already lands NDC.xy in the tile's atlas window; convert to UV.
+    float2 shadowUV = lightNdc.xy * 0.5 + 0.5;
     if (any(shadowUV < tileMin) || any(shadowUV > tileMax))
         return 1.0;
 
-    // Per-cascade bias: coarser far cascades cover more world per texel and need more
-    // depth bias to stay acne-free. A slope-scaled term grows as the surface turns
-    // away from the light. The scale folds the cascade's world-per-texel in.
-    float nDotL = saturate(dot(N, L));
-    float worldPerTexel = CascadeWorldPerTexel(cascade, count);
-    float slope = clamp(1.0 - nDotL, 0.0, 1.0);
-    float bias = (0.0008 + 0.0040 * slope) * (worldPerTexel * 64.0);
-    bias = clamp(bias, 0.0002, 0.01);
+    float2 clampMin = tileMin + 0.5 * texel;
+    float2 clampMax = tileMax - 0.5 * texel;
+
     float refDepth = lightNdc.z - bias;
 
     float visibility = 0.0;
@@ -128,10 +115,37 @@ float SampleCascade(float3 worldPos, float3 N, float3 L, uint cascade, uint coun
         {
             float2 tapUV = shadowUV + float2(float(dx), float(dy)) * texel;
             tapUV = clamp(tapUV, clampMin, clampMax);
-            visibility += g_ShadowAtlas.SampleCmpLevelZero(g_ShadowSampler, tapUV, refDepth);
+            visibility += atlas.SampleCmpLevelZero(cmp, tapUV, refDepth);
             weight += 1.0;
         }
     return visibility / weight;
+}
+
+// Sample cascade k's atlas tile with a PCF grid of hardware comparison taps. The
+// reference depth carries a per-cascade-scaled, slope-scaled bias.
+float SampleCascade(float3 worldPos, float3 N, float3 L, uint cascade, uint count)
+{
+    float texel = g_Shadow.ShadowParams.x; // 1 / tileRes (atlas-relative texel size)
+
+    // The cascade's tile sub-rect in atlas UV: tile count is min(count,2) columns ×
+    // ceil(count/2) rows, matching the renderer's atlas grid.
+    uint columns = min(count, 2u);
+    uint rows = (count + 1u) / 2u;
+    float2 tileSize = float2(1.0 / float(columns), 1.0 / float(rows));
+    float2 tileMin = float2(float(cascade % columns), float(cascade / columns)) * tileSize;
+    float2 tileMax = tileMin + tileSize;
+
+    // Per-cascade bias: coarser far cascades cover more world per texel and need more
+    // depth bias to stay acne-free. A slope-scaled term grows as the surface turns
+    // away from the light. The scale folds the cascade's world-per-texel in.
+    float nDotL = saturate(dot(N, L));
+    float worldPerTexel = CascadeWorldPerTexel(cascade, count);
+    float slope = clamp(1.0 - nDotL, 0.0, 1.0);
+    float bias = (0.0008 + 0.0040 * slope) * (worldPerTexel * 64.0);
+    bias = clamp(bias, 0.0002, 0.01);
+
+    return SampleAtlasTile(g_ShadowAtlas, g_ShadowSampler, g_Shadow.CascadeViewProj[cascade],
+                           worldPos, bias, float2(texel, texel), tileMin, tileMax);
 }
 
 // Cascaded directional-shadow visibility via hardware SampleCmp. Selects the cascade
@@ -175,6 +189,68 @@ float DirectionalShadowVisibility(float3 worldPos, float3 N, float3 L, float vie
     }
 
     return visibility;
+}
+
+// Select a point light's cube face from the light→fragment direction (-L, since L
+// points surface→light): the largest-magnitude component picks one of the six
+// CubeFace-ordered faces (+X,-X,+Y,-Y,+Z,-Z), matching the canonical basis the render
+// partitions into. So the sampled face is the one that rendered that direction — the
+// cube analogue of the cascade's view-depth select, with no per-face containment test.
+uint SelectCubeFace(float3 toFragment)
+{
+    float3 a = abs(toFragment);
+    if (a.x >= a.y && a.x >= a.z)
+        return toFragment.x >= 0.0 ? 0u : 1u; // +X, -X
+    if (a.y >= a.z)
+        return toFragment.y >= 0.0 ? 2u : 3u; // +Y, -Y
+    return toFragment.z >= 0.0 ? 4u : 5u;      // +Z, -Z
+}
+
+// Per-shadowed-light punctual visibility via hardware SampleCmp, the punctual sibling
+// of DirectionalShadowVisibility over the set-1 punctual atlas (binding 4) and the
+// shared comparison sampler (binding 1). slot is light.Cone.z (-1 = unshadowed); a
+// negative slot returns full visibility with no sample, so an unshadowed light (past
+// the budget, or with PunctualShadows off) costs nothing. A spot (Params.x == 2)
+// SampleCmps its single tile through Records[slot].ViewProj[0]; a point (Params.x == 1)
+// selects the cube face from the major axis of -L and SampleCmps that face's tile. Both
+// reuse SampleAtlasTile — the tile remap is baked into the record's matrix, so the
+// sample is a projective SampleCmp of the record's tile exactly as a cascade tile is.
+float PunctualShadowVisibility(float3 worldPos, float3 N, float3 L, int slot)
+{
+    if (slot < 0)
+        return 1.0;
+
+    PunctualShadowRecord record = g_Punctual.Records[slot];
+    float type = record.Params.x;
+    if (type < 0.5)
+        return 1.0; // an unfilled record (type 0) is unshadowed
+
+    // A point covers six cube-face tiles (face from -L's major axis); a spot covers
+    // one (face 0). The face indexes the record's per-face tile-remapped matrix.
+    uint face = (type > 1.5) ? 0u : SelectCubeFace(-L);
+
+    // The punctual atlas is CubeFaceCount columns × MaxShadowedPunctual rows of
+    // PunctualShadowResolution² tiles. The record at (column face, row slot) is the
+    // tile the matrix remap targets; convert to its atlas-UV sub-rect.
+    float2 tileSize = float2(1.0 / float(CubeFaceCount), 1.0 / float(MaxShadowedPunctual));
+    float2 tileMin = float2(float(face), float(slot)) * tileSize;
+    float2 tileMax = tileMin + tileSize;
+
+    // The atlas-relative texel size: one tile spans tileSize of atlas UV over tileRes
+    // texels, so the per-axis texel is the per-tile texel (AtlasParams.x = 1/tileRes)
+    // scaled by the tile's UV span — anisotropic because the tile grid is non-square.
+    float invTileRes = g_Punctual.AtlasParams.x;
+    float2 texel = float2(invTileRes / float(CubeFaceCount), invTileRes / float(MaxShadowedPunctual));
+
+    // Per-light bias from the record (the renderer sets it from the light's range and
+    // tile resolution — a tile's world-per-texel) plus a slope-scaled term that grows
+    // as the surface turns away from the light, mirroring the cascade acne balance.
+    float nDotL = saturate(dot(N, L));
+    float slope = clamp(1.0 - nDotL, 0.0, 1.0);
+    float bias = record.Params.w * (1.0 + 2.0 * slope);
+
+    return SampleAtlasTile(g_PunctualAtlas, g_ShadowSampler, record.ViewProj[face],
+                           worldPos, bias, texel, tileMin, tileMax);
 }
 
 // Visualize the cascade selection: a per-cascade tint the DebugView::Cascades arm

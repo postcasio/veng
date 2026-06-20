@@ -297,7 +297,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .OutputFormat = Context.GetOutputFormat(),
         .Extent = extent,
         .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = true,
-                     .PunctualShadowResolution = punctualRes, .AO = false},
+                     .PunctualShadows = true, .PunctualShadowResolution = punctualRes,
+                     .AO = false},
     });
 
     // The punctual atlas is sized to MaxShadowedPunctual·CubeFaceCount tiles of
@@ -320,7 +321,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // The SSAO-folded lighting variant is the other pipeline carrying set 1: enabling
     // AO selects it, so this exercises bindings 0-4 on m_SsaoLightingPipeline too.
     renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .Shadows = true,
-                         .PunctualShadowResolution = punctualRes, .AO = true});
+                         .PunctualShadows = true, .PunctualShadowResolution = punctualRes,
+                         .AO = true});
     Context.ImmediateCommands([&](CommandBuffer& cmd)
     {
         renderer->Execute(cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
@@ -1882,8 +1884,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
         .Context = Context, .Assets = assets,
         .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
-        // The PunctualShadows arm force-wires the punctual pass and blits its atlas.
-        .Settings = {.Mode = DebugView::PunctualShadows, .Bloom = false, .Shadows = false, .AO = false},
+        // The PunctualShadows arm force-wires the punctual pass and blits its atlas;
+        // PunctualShadows = true is the per-light slot selection that fills the records.
+        .Settings = {.Mode = DebugView::PunctualShadows, .Bloom = false, .Shadows = false,
+                     .PunctualShadows = true, .AO = false},
     });
 
     // The fraction of blit texels that read non-black (shade = 1 - depth > 0): a
@@ -2013,7 +2017,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             .Context = Context, .Assets = assets,
             .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
             .Settings = {.Mode = DebugView::PunctualShadows, .Bloom = false,
-                         .Shadows = false, .PunctualShadowResolution = 256, .AO = false},
+                         .Shadows = false, .PunctualShadows = true,
+                         .PunctualShadowResolution = 256, .AO = false},
         });
 
         // Render through the PunctualShadows debug blit (the renderer output, which is
@@ -2025,7 +2030,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         auto RenderBlit = [&](bool cull) -> vector<u8>
         {
             renderer->Configure({.Mode = DebugView::PunctualShadows, .Bloom = false,
-                                 .Shadows = false, .PunctualShadowResolution = 256,
+                                 .Shadows = false, .PunctualShadows = true,
+                                 .PunctualShadowResolution = 256,
                                  .AO = false, .FrustumCull = cull});
             return RenderOutput(Context, *renderer, *scene, camera);
         };
@@ -2102,7 +2108,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             .Context = Context, .Assets = assets,
             .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
             .Settings = {.Mode = DebugView::PunctualShadows, .Bloom = false,
-                         .Shadows = false, .PunctualShadowResolution = 256, .AO = false},
+                         .Shadows = false, .PunctualShadows = true,
+                         .PunctualShadowResolution = 256, .AO = false},
         });
 
         auto Render = [&]()
@@ -2122,6 +2129,310 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         Render();
         CHECK_FALSE(rendererOwned->DidBroadphaseRebuildLastFrame());
     }
+
+    std::filesystem::remove(outArchive);
+}
+
+// Punctual lit-result — spot occlusion. Presence (a darker map somewhere) cannot tell
+// a correct projective sample from a broken one; this pins occlusion by comparing the
+// SAME receiver texel with the shadow on vs off. A spot above an occluder cube throws a
+// shadow onto the floor behind it (away from the camera): toggling PunctualShadows
+// darkens the floor texel UNDER the occluder (now in shadow) while a texel BESIDE it
+// (no caster between it and the light) keeps its brightness. The delta between the two
+// regions is the visibility multiply the lighting pass applies — not just "darker
+// somewhere," but darker exactly where the occluder stands.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a shadowed spot darkens the receiver behind an "
+                  "occluder and lights it beside the occluder")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_punctual_spot_lit.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> plane = Mesh::Create(Context, Primitives::Plane(vec2(12.0f), uvec2(1), *material), "Spot Floor");
+    const Ref<Mesh> occluder = Mesh::Create(Context, Primitives::Cube(1.5f, *material), "Spot Occluder");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity planeEntity = scene->CreateEntity();
+    scene->Add<Transform>(planeEntity);
+    scene->Add<MeshRenderer>(planeEntity).Mesh = assets.Adopt(plane);
+
+    // The occluder floats above the floor, offset toward +X. The spot sits directly
+    // above it, so its shadow lands on the floor at the occluder's X.
+    const Entity occluderEntity = scene->CreateEntity();
+    scene->Add<Transform>(occluderEntity).Position = vec3(2.0f, 1.5f, 0.0f);
+    scene->Add<MeshRenderer>(occluderEntity).Mesh = assets.Adopt(occluder);
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Transform>(lightEntity).Position = vec3(2.0f, 6.0f, 0.0f);
+    scene->Add<Light>(lightEntity) = Light{
+        .Type = LightType::Spot,
+        .Direction = vec3(0.0f, -1.0f, 0.0f),
+        .Color = vec3(1.0f), .Intensity = 14.0f, .Range = 14.0f,
+        .InnerCone = 0.6f, .OuterCone = 0.9f,
+    };
+
+    constexpr uvec2 extent{128, 128};
+
+    // A top-down-ish view so the floor fills the frame: +X is image-right, the
+    // occluder's shadow falls on the image-right half, an unoccluded patch on the left.
+    Camera camera;
+    camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 9.0f, 0.01f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false,
+                     .PunctualShadows = true, .PunctualShadowResolution = 1024, .AO = false},
+    });
+
+    auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
+    {
+        const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+        return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
+    };
+
+    const vector<u8> shadowed = RenderOutput(Context, *renderer, *scene, camera);
+    REQUIRE(shadowed.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+
+    renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .Shadows = false,
+                         .PunctualShadows = false, .PunctualShadowResolution = 1024, .AO = false});
+    const vector<u8> unshadowed = RenderOutput(Context, *renderer, *scene, camera);
+
+    // Locate the cast shadow on the image-right floor band by the largest on-vs-off
+    // darkening — the texel the occluder shadows most. Scanning the darkening delta
+    // (rather than absolute luma) targets the shadow term itself, not the BRDF gradient
+    // or the lit occluder silhouette.
+    const u32 row = extent.y / 2;
+    auto DarkenDelta = [&](u32 x) -> f32 { return Luma(unshadowed, x, row) - Luma(shadowed, x, row); };
+    u32 shadowX = extent.x * 9 / 16;
+    f32 maxDarken = DarkenDelta(shadowX);
+    for (u32 x = extent.x * 9 / 16; x < extent.x - 6; ++x)
+    {
+        const f32 d = DarkenDelta(x);
+        if (d > maxDarken) { maxDarken = d; shadowX = x; }
+    }
+
+    // Compare that column lit (shadows off) vs shadowed (shadows on): the occluder
+    // darkens this floor texel substantially.
+    const f32 behindLit = Luma(unshadowed, shadowX, row);
+    const f32 behindShadowed = Luma(shadowed, shadowX, row);
+    CHECK(behindLit > behindShadowed + 0.03f);
+
+    // A floor texel on the image-left band has no occluder between it and the spot, so
+    // toggling the shadow barely changes it — the shadow is local to the occluder, not
+    // a global dimming. The delta there is far smaller than behind the occluder.
+    const u32 besideX = extent.x * 3 / 8;
+    const f32 besideLit = Luma(unshadowed, besideX, row);
+    const f32 besideShadowed = Luma(shadowed, besideX, row);
+    const f32 behindDelta = behindLit - behindShadowed;
+    const f32 besideDelta = std::abs(besideLit - besideShadowed);
+    CHECK(behindDelta > besideDelta + 0.02f);
+
+    std::filesystem::remove(outArchive);
+}
+
+// Punctual lit-result — point face select. A point light's shadow must land on the
+// correct cube face: the occluder darkens the receiver in the occluder's DIRECTION from
+// the light, and a receiver in a DIFFERENT face's direction stays lit. This pins the
+// major-axis face select (SelectCubeFace on -L), not just shadow presence — a wrong
+// face would either miss the shadow or shadow the wrong receiver.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a shadowed point casts its shadow on the occluder's "
+                  "face; a probe in another face direction stays lit")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_punctual_point_lit.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> floor = Mesh::Create(Context, Primitives::Plane(vec2(16.0f), uvec2(1), *material), "Point Floor");
+    const Ref<Mesh> occluder = Mesh::Create(Context, Primitives::Cube(1.5f, *material), "Point Occluder");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity floorEntity = scene->CreateEntity();
+    scene->Add<Transform>(floorEntity);
+    scene->Add<MeshRenderer>(floorEntity).Mesh = assets.Adopt(floor);
+
+    // The point light is above the floor; an occluder offset to +X casts the floor
+    // shadow under it (the light's -Y face captures that downward direction). The
+    // occluder sits close to under the light so the cast shadow lands in a brightly-lit
+    // floor region (the point's inverse-square falloff dims the far floor). A patch on
+    // the -X side has no occluder between it and the light, so it stays lit.
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Transform>(lightEntity).Position = vec3(0.0f, 4.0f, 0.0f);
+    scene->Add<Light>(lightEntity) = Light{
+        .Type = LightType::Point,
+        .Color = vec3(1.0f), .Intensity = 60.0f, .Range = 16.0f,
+    };
+
+    const Entity occluderEntity = scene->CreateEntity();
+    scene->Add<Transform>(occluderEntity).Position = vec3(1.4f, 1.8f, 0.0f);
+    scene->Add<MeshRenderer>(occluderEntity).Mesh = assets.Adopt(occluder);
+
+    constexpr uvec2 extent{128, 128};
+
+    Camera camera;
+    camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 9.0f, 0.01f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false,
+                     .PunctualShadows = true, .PunctualShadowResolution = 1024, .AO = false},
+    });
+
+    auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
+    {
+        const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+        return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
+    };
+
+    const vector<u8> shadowed = RenderOutput(Context, *renderer, *scene, camera);
+    REQUIRE(shadowed.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+
+    renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .Shadows = false,
+                         .PunctualShadows = false, .PunctualShadowResolution = 1024, .AO = false});
+    const vector<u8> unshadowed = RenderOutput(Context, *renderer, *scene, camera);
+
+    // Locate the shadow on the image-right floor band by the largest on-vs-off
+    // darkening — the texel the occluder's downward shadow ray darkens most. Scanning
+    // the darkening delta (rather than absolute luma) targets the shadow term itself,
+    // not the point's falloff gradient or the occluder silhouette.
+    const u32 row = extent.y / 2;
+    auto DarkenDelta = [&](u32 x) -> f32 { return Luma(unshadowed, x, row) - Luma(shadowed, x, row); };
+    u32 shadowX = extent.x * 9 / 16;
+    f32 maxDarken = DarkenDelta(shadowX);
+    for (u32 x = extent.x * 9 / 16; x < extent.x - 6; ++x)
+    {
+        const f32 d = DarkenDelta(x);
+        if (d > maxDarken) { maxDarken = d; shadowX = x; }
+    }
+
+    // The point's -Y cube face captures the downward ray to the occluded floor, so that
+    // texel is distinctly darker with the shadow on than off.
+    const f32 occludedLit = Luma(unshadowed, shadowX, row);
+    const f32 occludedShadowed = Luma(shadowed, shadowX, row);
+    CHECK(occludedLit > occludedShadowed + 0.03f);
+
+    // A -X floor patch (image-left): no occluder between it and the light, so the
+    // shadow toggle barely moves it — the face select shadows only the occluder's
+    // direction, not the whole floor.
+    const u32 probeX = extent.x * 3 / 8;
+    const f32 probeLit = Luma(unshadowed, probeX, row);
+    const f32 probeShadowed = Luma(shadowed, probeX, row);
+    const f32 occludedDelta = occludedLit - occludedShadowed;
+    const f32 probeDelta = std::abs(probeLit - probeShadowed);
+    CHECK(occludedDelta > probeDelta + 0.02f);
+
+    std::filesystem::remove(outArchive);
+}
+
+// Punctual lit-result — slot gate. A punctual light past MaxShadowedPunctual gets slot
+// -1 (no record), so PunctualShadowVisibility short-circuits to full visibility: its
+// receiver is lit identically whether shadows are on or off. This pins the budget bound
+// — an over-budget light costs nothing and casts no shadow. MaxShadowedPunctual point
+// lights fill the budget, and one more (the gated light) lights its own receiver fully.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a punctual light past the shadow budget (slot -1) "
+                  "lights its receiver fully")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_punctual_slotgate.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> floor = Mesh::Create(Context, Primitives::Plane(vec2(12.0f), uvec2(1), *material), "Gate Floor");
+    const Ref<Mesh> occluder = Mesh::Create(Context, Primitives::Cube(1.5f, *material), "Gate Occluder");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity floorEntity = scene->CreateEntity();
+    scene->Add<Transform>(floorEntity);
+    scene->Add<MeshRenderer>(floorEntity).Mesh = assets.Adopt(floor);
+
+    // Fill the punctual shadow budget with MaxShadowedPunctual point lights crowded far
+    // off to -X, away from the receiver — they take slots 0..N-1.
+    for (u32 i = 0; i < MaxShadowedPunctual; ++i)
+    {
+        const Entity filler = scene->CreateEntity();
+        scene->Add<Transform>(filler).Position = vec3(-20.0f - static_cast<f32>(i), 5.0f, 0.0f);
+        scene->Add<Light>(filler) = Light{
+            .Type = LightType::Point,
+            .Color = vec3(0.0f), .Intensity = 0.0f, .Range = 1.0f,
+        };
+    }
+
+    // The over-budget spot (the MaxShadowedPunctual+1'th punctual light) above an
+    // occluder over the receiver. With it past the budget, its slot is -1: no shadow,
+    // so the floor under the occluder is lit exactly as if shadows were off.
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Transform>(lightEntity).Position = vec3(2.0f, 6.0f, 0.0f);
+    scene->Add<Light>(lightEntity) = Light{
+        .Type = LightType::Spot,
+        .Direction = vec3(0.0f, -1.0f, 0.0f),
+        .Color = vec3(1.0f), .Intensity = 14.0f, .Range = 14.0f,
+        .InnerCone = 0.6f, .OuterCone = 0.9f,
+    };
+
+    const Entity occluderEntity = scene->CreateEntity();
+    scene->Add<Transform>(occluderEntity).Position = vec3(2.0f, 1.5f, 0.0f);
+    scene->Add<MeshRenderer>(occluderEntity).Mesh = assets.Adopt(occluder);
+
+    constexpr uvec2 extent{128, 128};
+
+    Camera camera;
+    camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 9.0f, 0.01f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(), .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false,
+                     .PunctualShadows = true, .PunctualShadowResolution = 1024, .AO = false},
+    });
+
+    auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
+    {
+        const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+        return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
+    };
+
+    const u32 row = extent.y / 2;
+    const vector<u8> shadowsOn = RenderOutput(Context, *renderer, *scene, camera);
+    REQUIRE(shadowsOn.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+
+    renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .Shadows = false,
+                         .PunctualShadows = false, .PunctualShadowResolution = 1024, .AO = false});
+    const vector<u8> shadowsOff = RenderOutput(Context, *renderer, *scene, camera);
+
+    // The floor under the occluder (image-right): the over-budget spot is unshadowed
+    // (slot -1), so this texel reads the SAME with PunctualShadows on or off — no
+    // record was filled for it. A budget leak (slot ≥ 0) would darken the on-frame here.
+    bool anyLit = false;
+    for (u32 x = extent.x * 5 / 8; x < extent.x - 6; ++x)
+    {
+        const f32 on = Luma(shadowsOn, x, row);
+        const f32 off = Luma(shadowsOff, x, row);
+        if (off > 0.05f)
+            anyLit = true;
+        CHECK(std::abs(on - off) < 0.01f);
+    }
+    REQUIRE(anyLit);
 
     std::filesystem::remove(outArchive);
 }

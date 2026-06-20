@@ -123,6 +123,13 @@ namespace Veng::Renderer
         // lighting pass reads full visibility for the directional term.
         bool Shadows = true;
 
+        // Whether the bounded set of point/spot lights cast shadows. A topology
+        // change: it inserts/removes the depth-only PunctualShadowScenePass and the
+        // lighting pass's per-light punctual sample, so it drives a Configure →
+        // recompile. With it off the per-light selection writes slot -1 to every
+        // light, so the lighting pass reads full visibility for every punctual term.
+        bool PunctualShadows = false;
+
         // The per-cascade shadow tile edge length in texels. Sizing: changing it
         // recreates the shadow atlas (through the deferred retire path) and
         // recompiles. A higher value sharpens the shadow at a memory/fill cost.

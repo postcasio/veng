@@ -224,9 +224,17 @@ float4 fsMain(VSOutput input) : SV_Target
             }
         }
 
-        // The directional light is shadowed by the cascaded shadow atlas (hardware
-        // SampleCmp); point and spot lights are unshadowed (visibility 1.0).
-        float visibility = isDirectional ? DirectionalShadowVisibility(worldPos, N, L, viewDepth) : 1.0;
+        // The directional light is shadowed by the cascaded shadow atlas; a point or
+        // spot light is shadowed by its punctual atlas tile, gated by its shadow slot
+        // (Cone.z, -1 = unshadowed). Both sample through hardware SampleCmp.
+        float visibility;
+        if (isDirectional)
+            visibility = DirectionalShadowVisibility(worldPos, N, L, viewDepth);
+        else
+        {
+            int slot = int(light.Cone.z);
+            visibility = PunctualShadowVisibility(worldPos, N, L, slot);
+        }
 
         direct += EvaluateLight(N, V, L, radiance * attenuation, albedo, roughness, metallic, f0) * visibility;
     }

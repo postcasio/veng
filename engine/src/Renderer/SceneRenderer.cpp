@@ -5,6 +5,7 @@
 #include "PunctualShadowScenePass.h"
 #include "SsaoScenePass.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -200,10 +201,12 @@ namespace Veng::Renderer
         struct PunctualShadowBlock
         {
             PunctualShadowRecord Records[MaxShadowedPunctual];
+            vec4                 AtlasParams; // x 1/tileRes (per-tile texel size), yzw pad
         };
 
-        static_assert(sizeof(PunctualShadowBlock) == MaxShadowedPunctual * 416,
-                      "PunctualShadowBlock must be the std140-packed record array (416 bytes per record)");
+        static_assert(sizeof(PunctualShadowBlock) == MaxShadowedPunctual * 416 + 16,
+                      "PunctualShadowBlock must be the std140-packed record array (416 bytes per "
+                      "record) plus the trailing AtlasParams vec4");
 
         // The atlas-tile remap baked into a cascade's matrix: a fragment projected
         // by CascadeViewProj[k] · world lands in cascade k's tile sub-rect of the
@@ -1460,11 +1463,12 @@ namespace Veng::Renderer
         m_ShadowActive = shadowActive;
         m_ShadowPass = nullptr;
 
-        // The punctual shadow pass runs in the Final mode (gated by Settings.Shadows,
-        // the shadow-budget gate) and is force-wired by the PunctualShadows debug arm.
-        // When active it contributes a depth-only pass ahead of the lighting pass writing
-        // the renderer-owned punctual atlas; its import is declared and bound only then.
-        const bool punctualShadowActive = (m_Settings.Mode == DebugView::Final && m_Settings.Shadows) || debugPunctual;
+        // The punctual shadow pass runs in the Final mode (gated by
+        // Settings.PunctualShadows, the shadow-budget gate) and is force-wired by the
+        // PunctualShadows debug arm. When active it contributes a depth-only pass ahead
+        // of the lighting pass writing the renderer-owned punctual atlas; its import is
+        // declared and bound only then.
+        const bool punctualShadowActive = (m_Settings.Mode == DebugView::Final && m_Settings.PunctualShadows) || debugPunctual;
         m_PunctualShadowActive = punctualShadowActive;
         m_PunctualShadowPass = nullptr;
 
@@ -1831,15 +1835,24 @@ namespace Veng::Renderer
 
             // Assign the first MaxShadowedPunctual point/spot lights a shadow slot and
             // fill its record; the rest (and every directional light) carry slot -1.
+            // With PunctualShadows off the selection writes -1 to every light, so the
+            // lighting pass reads full visibility for every punctual term and the
+            // punctual pass is not wired.
             f32 shadowSlot = -1.0f;
-            if (punctualCount < MaxShadowedPunctual &&
+            if (m_Settings.PunctualShadows && punctualCount < MaxShadowedPunctual &&
                 (light.Type == LightType::Point || light.Type == LightType::Spot))
             {
                 const u32 slot = punctualCount;
-                // A small fixed bias the lighting pass adds to the compared depth;
-                // the lighting sample (Plan 04) consumes it.
-                constexpr f32 PunctualBias = 0.0015f;
                 PunctualShadowRecord& record = punctualRecords[slot];
+                // The depth-compare bias the lighting pass adds to the reference depth:
+                // a tile covers Range·2/Resolution world units per texel (a spot's whole
+                // frustum, a point's 90° face), so the bias scales with that
+                // world-per-texel — a coarser tile (larger range, smaller resolution)
+                // takes more bias to stay acne-free. The lighting sample adds a
+                // slope-scaled term on top.
+                const f32 worldPerTexel =
+                    light.Range * 2.0f / static_cast<f32>(m_Settings.PunctualShadowResolution);
+                const f32 punctualBias = std::clamp(worldPerTexel * 0.5f, 0.0005f, 0.01f);
                 if (light.Type == LightType::Spot)
                 {
                     const SpotShadowView spotView =
@@ -1849,7 +1862,7 @@ namespace Veng::Renderer
                     // raw channel the un-remapped one (the depth render + per-view cull).
                     record.ViewProj[0] = ComposePunctualTileRemap(spotView.ViewProj, slot, 0);
                     punctualRawViewProj[slot][0] = spotView.ViewProj;
-                    record.Params = vec4(2.0f, spotView.Near, spotView.Far, PunctualBias);
+                    record.Params = vec4(2.0f, spotView.Near, spotView.Far, punctualBias);
                 }
                 else
                 {
@@ -1859,7 +1872,7 @@ namespace Veng::Renderer
                         record.ViewProj[f] = ComposePunctualTileRemap(pointView.ViewProj[f], slot, f);
                         punctualRawViewProj[slot][f] = pointView.ViewProj[f];
                     }
-                    record.Params = vec4(1.0f, pointView.Near, pointView.Far, PunctualBias);
+                    record.Params = vec4(1.0f, pointView.Near, pointView.Far, punctualBias);
                 }
                 record.PositionRange = vec4(worldPos, light.Range);
 
@@ -1877,9 +1890,13 @@ namespace Veng::Renderer
         }
 
         // Mirror the filled records into the GPU block (the unused slots stay zeroed →
-        // Params.x type = 0, read as "no map").
+        // Params.x type = 0, read as "no map"). AtlasParams.x carries the per-tile
+        // texel size (1 / PunctualShadowResolution) the lighting sample folds into the
+        // tile-inset clamp and PCF tap step.
         for (u32 s = 0; s < punctualCount; ++s)
             punctualBlock.Records[s] = punctualRecords[s];
+        punctualBlock.AtlasParams =
+            vec4(1.0f / static_cast<f32>(m_Settings.PunctualShadowResolution), 0.0f, 0.0f, 0.0f);
 
         // Bring the broadphase current with the scene: it re-gathers the resident mesh
         // candidates and rebuilds its BVH only when the scene's spatial version moved
