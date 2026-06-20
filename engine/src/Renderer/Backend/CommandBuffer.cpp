@@ -222,6 +222,23 @@ namespace Veng::Renderer
                                             firstInstance);
     }
 
+    void CommandBuffer::DrawIndexedIndirect(const Ref<Buffer>& buffer, const u64 offset,
+                                            const u32 drawCount, const u32 stride)
+    {
+        if (m_HasActiveRenderingInfo && m_HasBoundGraphicsPipelineFormats)
+        {
+            ValidateBoundPipelineAttachmentFormats(
+                m_ActiveColorAttachmentFormats, m_ActiveDepthAttachmentFormat,
+                m_BoundPipelineColorAttachmentFormats, m_BoundPipelineDepthAttachmentFormat);
+        }
+
+        // vkCmdDrawIndexedIndirect requires a 4-byte-aligned offset.
+        VE_ASSERT(offset % 4 == 0, "DrawIndexedIndirect: offset {} is not 4-byte aligned", offset);
+
+        m_Native->CommandBuffer.drawIndexedIndirect(buffer->GetNative().Buffer, offset, drawCount,
+                                                    stride);
+    }
+
     void CommandBuffer::Dispatch(const u32 groupsX, const u32 groupsY, const u32 groupsZ)
     {
         m_Native->CommandBuffer.dispatch(groupsX, groupsY, groupsZ);

@@ -116,6 +116,13 @@ namespace Veng::Renderer
         /// @brief Returns the resolved queue family indices.
         [[nodiscard]] const QueueFamilyIndices& GetQueueFamilies() const;
 
+        /// @brief Returns true when GPU-driven culling is supported by the device.
+        ///
+        /// True only when both multiDrawIndirect and drawIndirectFirstInstance were
+        /// enabled at device creation — the features the indirect-draw cull path needs.
+        /// CullMode::GPU is unavailable otherwise and the CPU path is the fallback.
+        [[nodiscard]] bool IsGpuDrivenCullingSupported() const;
+
         /// @brief Returns the borrowed window.
         [[nodiscard]] Window& GetWindow() const { return *m_Window; }
 

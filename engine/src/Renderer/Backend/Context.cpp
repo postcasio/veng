@@ -525,6 +525,11 @@ namespace Veng::Renderer
         return m_Native->QueueFamilies;
     }
 
+    bool Context::IsGpuDrivenCullingSupported() const
+    {
+        return m_Native->GpuDrivenCullingSupported;
+    }
+
     SynchronizationFrame& Context::GetCurrentFrame()
     {
         return m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight];
@@ -811,6 +816,20 @@ namespace Veng::Renderer
                                               .features = deviceFeatures};
 
         PhysicalDevice.getFeatures2(&features2);
+
+        // The GPU-driven cull issues a multiDrawIndirect command buffer and carries each
+        // candidate's index in the command's firstInstance (read back as an instance-rate
+        // vertex attribute), which needs drawIndirectFirstInstance. Enable the pair only
+        // when both are supported, so a half-supported device never enables one alone;
+        // GpuDrivenCullingSupported gates CullMode::GPU, with the CPU path as the fallback.
+        // MoltenVK lacks drawIndirectCount, so the count-buffer (vkCmdDrawIndexedIndirectCount)
+        // path is out — the buffer holds a fixed candidate maximum and culled slots no-op.
+        const bool gpuDrivenCullingSupported =
+            features2.features.multiDrawIndirect && features2.features.drawIndirectFirstInstance;
+        GpuDrivenCullingSupported = gpuDrivenCullingSupported;
+        features2.features.multiDrawIndirect = gpuDrivenCullingSupported ? vk::True : vk::False;
+        features2.features.drawIndirectFirstInstance =
+            gpuDrivenCullingSupported ? vk::True : vk::False;
 
         // Timeline semaphores are required for the async-upload sync channel.
         // Fatal-assert if the device lacks support before enabling the feature.

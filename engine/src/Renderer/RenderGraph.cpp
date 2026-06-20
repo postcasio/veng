@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
+#include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
@@ -33,6 +34,16 @@ namespace Veng::Renderer
         return Resolved(chain.Level(level));
     }
 
+    const Ref<Buffer>& PassContext::ResolvedBuffer(const ResourceId id) const
+    {
+        VE_ASSERT(id.IsValid() && id.Index < m_ResolvedBuffers.size(),
+                  "PassContext::ResolvedBuffer: invalid ResourceId");
+        const Ref<Buffer>& buffer = m_ResolvedBuffers[id.Index];
+        VE_ASSERT(buffer != nullptr,
+                  "PassContext::ResolvedBuffer: resource is not resolved this frame");
+        return buffer;
+    }
+
     RenderGraph::PassBuilder& RenderGraph::PassBuilder::Color(const PassAttachment& attachment)
     {
         m_Pass.Accesses.push_back({attachment.Resource, AccessKind::ColorAttachment,
@@ -62,6 +73,25 @@ namespace Veng::Renderer
     RenderGraph::PassBuilder& RenderGraph::PassBuilder::StorageWrite(const ResourceId resource)
     {
         m_Pass.Accesses.push_back({.Resource = resource, .Kind = AccessKind::StorageWrite});
+        return *this;
+    }
+
+    RenderGraph::PassBuilder& RenderGraph::PassBuilder::StorageBufferRead(const ResourceId resource)
+    {
+        m_Pass.Accesses.push_back({.Resource = resource, .Kind = AccessKind::StorageBufferRead});
+        return *this;
+    }
+
+    RenderGraph::PassBuilder&
+    RenderGraph::PassBuilder::StorageBufferWrite(const ResourceId resource)
+    {
+        m_Pass.Accesses.push_back({.Resource = resource, .Kind = AccessKind::StorageBufferWrite});
+        return *this;
+    }
+
+    RenderGraph::PassBuilder& RenderGraph::PassBuilder::IndirectRead(const ResourceId resource)
+    {
+        m_Pass.Accesses.push_back({.Resource = resource, .Kind = AccessKind::IndirectRead});
         return *this;
     }
 
@@ -107,6 +137,18 @@ namespace Veng::Renderer
         return ResourceId{.Index = index};
     }
 
+    ResourceId RenderGraph::CreateTransientBuffer(const TransientBufferDesc& desc)
+    {
+        const u32 index = static_cast<u32>(m_Resources.size());
+        m_Resources.push_back(Resource{
+            .IsImport = false,
+            .IsBuffer = true,
+            .Name = desc.Name,
+            .BufferDesc = desc,
+        });
+        return ResourceId{.Index = index};
+    }
+
     ResourceId RenderGraph::Import(const string_view name)
     {
         const u32 index = static_cast<u32>(m_Resources.size());
@@ -130,6 +172,17 @@ namespace Veng::Renderer
             });
         }
         return chain;
+    }
+
+    ResourceId RenderGraph::ImportBuffer(const string_view name)
+    {
+        const u32 index = static_cast<u32>(m_Resources.size());
+        m_Resources.push_back(Resource{
+            .IsImport = true,
+            .IsBuffer = true,
+            .Name = string(name),
+        });
+        return ResourceId{.Index = index};
     }
 
     RenderGraph::PassBuilder RenderGraph::AddPass(const string_view name)
@@ -159,23 +212,38 @@ namespace Veng::Renderer
     // Backend::SubresourceState keeps this out of the public header.
     struct CompiledGraph::Native
     {
-        // A resolved resource-table slot: transients carry their image/view
+        // A resolved resource-table slot: transients carry their image/view or buffer
         // (allocated at compile); imports carry only a name and are bound per frame.
         struct Resource
         {
             bool IsImport = false;
+            bool IsBuffer = false;
             string Name;
-            Ref<Image> Image;    // transient only
-            Ref<ImageView> View; // transient only
+            Ref<Image> Image;    // image transient only
+            Ref<ImageView> View; // image transient only
+            Ref<Buffer> Buffer;  // buffer transient only
         };
 
-        // A baked transition: destination scope derived by ScopeFor at compile.
+        // A baked image transition: destination scope derived by ScopeFor at compile.
         // The source and subresource range come from the resolved view's tracked state
         // at replay — only the destination bakes.
         struct Transition
         {
             u32 Slot;
             Backend::SubresourceState Dst;
+        };
+
+        // A baked buffer barrier: a buffer carries no runtime tracked state, so both the
+        // source (the prior pass's declared scope on this slot) and the destination
+        // (this pass's declared scope) bake at compile. Emitted only when the prior
+        // access was a write or this access is a write (a hazard).
+        struct BufferBarrier
+        {
+            u32 Slot;
+            vk::PipelineStageFlags SrcStage;
+            vk::AccessFlags SrcAccess;
+            vk::PipelineStageFlags DstStage;
+            vk::AccessFlags DstAccess;
         };
 
         // A baked graphics attachment: slot + load/store/clear from the declaration.
@@ -194,6 +262,7 @@ namespace Veng::Renderer
             u32 LayerCount = 1;
             u32 ViewMask = 0;
             vector<Transition> Transitions;
+            vector<BufferBarrier> BufferBarriers;
             vector<Attachment> Attachments; // graphics passes only
             function<void(PassContext&)> Execute;
         };
@@ -214,7 +283,27 @@ namespace Veng::Renderer
         {
             CompiledGraph::Native::Resource& resource = native->Resources[i];
             resource.IsImport = m_Resources[i].IsImport;
+            resource.IsBuffer = m_Resources[i].IsBuffer;
             resource.Name = m_Resources[i].Name;
+        }
+
+        // Allocate buffer transients: one buffer per transient (no aliasing — the
+        // buffer path's resources are small and persist within a frame). Imported
+        // buffers carry no backing here; they bind per frame.
+        for (usize i = 0; i < m_Resources.size(); i++)
+        {
+            const Resource& source = m_Resources[i];
+            if (!source.IsBuffer || source.IsImport)
+            {
+                continue;
+            }
+
+            native->Resources[i].Buffer =
+                Buffer::Create(m_Context, {
+                                              .Name = source.BufferDesc.Name,
+                                              .Size = source.BufferDesc.Bytes,
+                                              .Usage = source.BufferDesc.Usage,
+                                          });
         }
 
         // Allocate transient backing with aliasing: compute each transient's live
@@ -239,7 +328,9 @@ namespace Veng::Renderer
 
             for (usize i = 0; i < m_Resources.size(); i++)
             {
-                if (m_Resources[i].IsImport)
+                // Buffer transients allocate above (no aliasing); only image
+                // transients participate in the aliasing assignment here.
+                if (m_Resources[i].IsImport || m_Resources[i].IsBuffer)
                 {
                     continue;
                 }
@@ -313,6 +404,11 @@ namespace Veng::Renderer
         // Tracks which slots have been written by a prior pass, to detect a read before any write.
         vector<bool> written(m_Resources.size(), false);
 
+        // A buffer carries no runtime tracked state, so the graph tracks each buffer
+        // slot's last declared scope at compile and bakes both halves of a buffer
+        // barrier. Default-constructed entries (no stage/access) mean no prior access.
+        vector<Backend::SubresourceState> bufferScope(m_Resources.size());
+
         for (const auto& pass : m_Passes)
         {
             CompiledGraph::Native::Pass baked;
@@ -325,6 +421,83 @@ namespace Veng::Renderer
             {
                 const u32 slot = access.Resource.Index;
                 const Resource& source = m_Resources[slot];
+
+                const bool isBufferAccess = access.Kind == AccessKind::StorageBufferRead ||
+                                            access.Kind == AccessKind::StorageBufferWrite ||
+                                            access.Kind == AccessKind::IndirectRead;
+
+                VE_ASSERT(isBufferAccess == source.IsBuffer,
+                          "RenderGraph::Compile: pass '{}' declares a {} access on '{}', which is "
+                          "a {} resource",
+                          pass->Name, isBufferAccess ? "buffer" : "image", source.Name,
+                          source.IsBuffer ? "buffer" : "image");
+
+                if (isBufferAccess)
+                {
+                    const auto scope = ScopeFor(access.Kind);
+
+                    // A transient buffer read before any pass writes it reads undefined contents.
+                    const bool isBufferRead = access.Kind == AccessKind::StorageBufferRead ||
+                                              access.Kind == AccessKind::IndirectRead;
+                    if (!source.IsImport && isBufferRead)
+                    {
+                        VE_ASSERT(written[slot],
+                                  "RenderGraph::Compile: transient buffer '{}' is read by pass "
+                                  "'{}' before any pass writes it",
+                                  source.Name, pass->Name);
+                    }
+
+                    // A buffer used as indirect args must declare BufferUsage::Indirect;
+                    // a storage-buffer access must declare BufferUsage::Storage.
+                    if (!source.IsImport)
+                    {
+                        if (access.Kind == AccessKind::IndirectRead)
+                        {
+                            VE_ASSERT(HasFlag(source.BufferDesc.Usage, BufferUsage::Indirect),
+                                      "RenderGraph::Compile: transient buffer '{}' is read as "
+                                      "indirect args but lacks BufferUsage::Indirect",
+                                      source.Name);
+                        }
+                        else
+                        {
+                            VE_ASSERT(HasFlag(source.BufferDesc.Usage, BufferUsage::Storage),
+                                      "RenderGraph::Compile: transient buffer '{}' is a storage "
+                                      "buffer access but lacks BufferUsage::Storage",
+                                      source.Name);
+                        }
+                    }
+
+                    // Emit a barrier only on a hazard: the prior access wrote, or this
+                    // access writes. A read-after-read needs none; the scope is OR'd so a
+                    // later write waits on every prior read.
+                    const Backend::SubresourceState& prior = bufferScope[slot];
+                    const bool hadPriorAccess = static_cast<bool>(prior.Stage);
+                    const bool hazard = Backend::IsWriteAccess(prior.Access) ||
+                                        Backend::IsWriteAccess(scope.Access);
+
+                    if (hadPriorAccess && hazard)
+                    {
+                        baked.BufferBarriers.push_back({
+                            .Slot = slot,
+                            .SrcStage = prior.Stage,
+                            .SrcAccess = prior.Access,
+                            .DstStage = scope.Stage,
+                            .DstAccess = scope.Access,
+                        });
+                        bufferScope[slot] = {.Stage = scope.Stage, .Access = scope.Access};
+                    }
+                    else
+                    {
+                        bufferScope[slot] = {.Stage = prior.Stage | scope.Stage,
+                                             .Access = prior.Access | scope.Access};
+                    }
+
+                    if (Backend::IsWriteAccess(scope.Access))
+                    {
+                        written[slot] = true;
+                    }
+                    continue;
+                }
 
                 // A transient read before any pass writes it produces undefined contents.
                 const bool isRead = access.Kind == AccessKind::Sample ||
@@ -413,9 +586,11 @@ namespace Veng::Renderer
     {
         Native& native = *m_Native;
 
-        // Resolve every slot to a concrete view: transients use their allocated view;
-        // imports bind to the caller-supplied view. Indexed by ResourceId::Index.
+        // Resolve every slot to a concrete handle: a transient uses its allocated
+        // view/buffer; an import binds to the caller-supplied one. The two tables run
+        // in parallel, indexed by ResourceId::Index — exactly one is set per slot.
         vector<Ref<ImageView>> resolved(native.Resources.size());
+        vector<Ref<Buffer>> resolvedBuffers(native.Resources.size());
 
         for (usize i = 0; i < native.Resources.size(); i++)
         {
@@ -423,7 +598,14 @@ namespace Veng::Renderer
 
             if (!resource.IsImport)
             {
-                resolved[i] = resource.View;
+                if (resource.IsBuffer)
+                {
+                    resolvedBuffers[i] = resource.Buffer;
+                }
+                else
+                {
+                    resolved[i] = resource.View;
+                }
                 continue;
             }
 
@@ -431,12 +613,19 @@ namespace Veng::Renderer
             {
                 if (binding.Id.Index == i)
                 {
-                    resolved[i] = binding.View;
+                    if (resource.IsBuffer)
+                    {
+                        resolvedBuffers[i] = binding.Buffer;
+                    }
+                    else
+                    {
+                        resolved[i] = binding.View;
+                    }
                     break;
                 }
             }
 
-            VE_ASSERT(resolved[i] != nullptr,
+            VE_ASSERT(resource.IsBuffer ? resolvedBuffers[i] != nullptr : resolved[i] != nullptr,
                       "CompiledGraph::Execute: import '{}' has no supplied binding", resource.Name);
         }
 
@@ -453,6 +642,14 @@ namespace Veng::Renderer
                                          transition.Dst.Stage, transition.Dst.Access,
                                          view->GetBaseArrayLayer(), view->GetArrayLayers(),
                                          view->GetBaseMipLevel(), view->GetMipLevels());
+            }
+
+            // 1b. Replay the baked buffer barriers. A buffer carries no tracked state,
+            // so both scopes were derived at compile from the producing/consuming passes.
+            for (const Native::BufferBarrier& barrier : pass.BufferBarriers)
+            {
+                Backend::TransitionBuffer(cmd, *resolvedBuffers[barrier.Slot], barrier.SrcStage,
+                                          barrier.SrcAccess, barrier.DstStage, barrier.DstAccess);
             }
 
             // 2. Graphics passes begin dynamic rendering from baked attachments;
@@ -513,7 +710,7 @@ namespace Veng::Renderer
 
                 if (pass.Execute)
                 {
-                    PassContext context(cmd, resolved, userData);
+                    PassContext context(cmd, resolved, resolvedBuffers, userData);
                     pass.Execute(context);
                 }
 
@@ -521,7 +718,7 @@ namespace Veng::Renderer
             }
             else if (pass.Execute)
             {
-                PassContext context(cmd, resolved, userData);
+                PassContext context(cmd, resolved, resolvedBuffers, userData);
                 pass.Execute(context);
             }
         }

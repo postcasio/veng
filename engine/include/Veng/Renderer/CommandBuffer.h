@@ -179,6 +179,21 @@ namespace Veng::Renderer
         void DrawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset,
                          u32 firstInstance);
 
+        /// @brief Issues drawCount indexed draws from GPU-resident VkDrawIndexedIndirectCommand records.
+        ///
+        /// Maps to vkCmdDrawIndexedIndirect (multiDrawIndirect). A command with
+        /// instanceCount == 0 executes as a no-op — the compute cull zeroes culled
+        /// candidates rather than compacting, since drawIndirectCount is unavailable on
+        /// MoltenVK (the buffer holds a fixed candidate maximum, one slot per candidate).
+        /// @param buffer    Buffer holding the VkDrawIndexedIndirectCommand records.
+        /// @param offset    4-byte-aligned byte offset of the first command.
+        /// @param drawCount Number of command records to issue.
+        /// @param stride    Byte stride between records (sizeof(VkDrawIndexedIndirectCommand) = 20).
+        /// @pre buffer was created with BufferUsage::Indirect and is barriered for eDrawIndirect.
+        /// @pre A command with a non-zero firstInstance requires the drawIndirectFirstInstance
+        ///      device feature.
+        void DrawIndexedIndirect(const Ref<Buffer>& buffer, u64 offset, u32 drawCount, u32 stride);
+
         /// @brief Records a compute dispatch.
         void Dispatch(u32 groupsX, u32 groupsY, u32 groupsZ);
 

@@ -507,10 +507,16 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/fullscreen.vert.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sample.frag.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/bindless_sample.frag.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_instance.vert.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_instance.frag.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_cull.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/invert.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/fullscreen.vert.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sample.frag.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/bindless_sample.frag.shader.json)
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/bindless_sample.frag.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_instance.vert.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_instance.frag.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_cull.comp.shader.json)
 
     add_executable(veng_compute_dispatch tests/compute_dispatch.cpp)
     target_link_libraries(veng_compute_dispatch PRIVATE veng::veng veng_test_support)
@@ -544,6 +550,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/transfer_retire.cpp
             tests/gpu/async_upload.cpp
             tests/gpu/transient_aliasing.cpp
+            tests/gpu/indirect_draw.cpp
             tests/gpu/adopt.cpp
             tests/gpu/scene_renderer.cpp
             tests/gpu/hi_z_pyramid.cpp

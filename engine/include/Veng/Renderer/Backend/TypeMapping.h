@@ -280,6 +280,10 @@ namespace Veng::Renderer
         {
             flags |= vk::BufferUsageFlagBits::eTransferDst;
         }
+        if (HasFlag(usage, BufferUsage::Indirect))
+        {
+            flags |= vk::BufferUsageFlagBits::eIndirectBuffer;
+        }
         return flags;
     }
 
