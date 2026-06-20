@@ -31,34 +31,18 @@ struct MaterialParams
 // per shader, read at index * MaterialParamStride.
 static const uint MaterialParamStride = 256;
 
-// The per-frame view-constants block: per-view data the deferred lighting pass
-// reads (world-position reconstruction + the camera position). Ring-buffered
-// across frames-in-flight at binding 5, byte-addressed at
-// index * ViewConstantsStride; mirrors BindlessRegistry::ViewConstantsStride.
-// Lights ride a separate ring-buffered light buffer at binding 6.
-struct ViewConstants
-{
-    float4x4 InvViewProj;       // world-position reconstruction from depth
-    float4   CameraPosition;    // xyz; w unused
-    float4x4 View;              // world → view (SSAO reconstructs view space)
-    float4x4 Proj;              // view → clip
-};
-
-static const uint ViewConstantsStride = 512;
+// The canonical per-frame view-constants block (set 0, binding 5) is declared in
+// view_constants.slang — the single source for the lighting, SSAO, and material
+// shaders, reconciled to one lean block at one stride.
+#include "view_constants.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
-[[vk::binding(5, 0)]] ByteAddressBuffer g_ViewConstants;
 
 MaterialParams LoadMaterialParams(uint index)
 {
     return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
-}
-
-ViewConstants LoadViewConstants(uint index)
-{
-    return g_ViewConstants.Load<ViewConstants>(index * ViewConstantsStride);
 }
 
 // The deferred opaque g-buffer outputs the material fragment stage writes. The

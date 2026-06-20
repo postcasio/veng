@@ -1,0 +1,4 @@
+{
+  "source": "deferred_lighting_cascades.frag.slang",
+  "entry": "fsMain"
+}

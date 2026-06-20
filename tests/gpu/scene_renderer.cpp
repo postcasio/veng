@@ -1338,6 +1338,133 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// The CSM-distinguishing assertion (this plan's golden-move pin). Presence alone —
+// a caster darkening a receiver — cannot tell correct cascade selection from a
+// broken cascade (a transposed tile remap, an inverted compare, or
+// all-fragments-select-cascade-0 still darken the receiver). The DebugView::Cascades
+// arm tints each fragment by the cascade its VIEW-SPACE DEPTH selects (0 red, 1
+// green, 2 blue, 3 yellow), reusing the exact selection the shadow sample uses, so
+// the visualization pins selection, not just shadow presence.
+//
+// The existing 8×8-plane shadow fixture is degenerate for this: its whole visible
+// surface lands in cascade 1. This uses a GRAZING-VIEW fixture — a long receiver
+// (Plane(80)) viewed down its length (eye (0,3,20) → target (0,0,-20)) — whose
+// visible view-depths span the near (cascade 0) through far (a higher cascade)
+// splits, bottom-to-top of frame. The assertion: a near (lower-frame) region selects
+// cascade 0 (red-dominant), a far (upper-frame) region selects a higher cascade (a
+// different, non-red dominant tint). A broken selection that picks one cascade
+// everywhere (or selects 0 for the far region) fails the distinct-bucket check.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: DebugView::Cascades selects cascade 0 near and a "
+                  "higher cascade far over a depth-spanning receiver")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_cascades.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    // A long receiver plane in the XZ plane, big enough that its visible length spans
+    // multiple cascade depth ranges when viewed down its length.
+    const Ref<Mesh> plane = Mesh::Create(Context, Primitives::Plane(vec2(80.0f), uvec2(1), *material), "Cascade Plane");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity planeEntity = scene->CreateEntity();
+    scene->Add<Transform>(planeEntity);
+    scene->Add<MeshRenderer>(planeEntity).Mesh = assets.Adopt(plane);
+
+    // A directional light so the cascade constants are enabled (the Cascades arm
+    // force-wires the shadow pass, but the constants gate on a directional light).
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Type = LightType::Directional,
+        .Direction = vec3(0.2f, -1.0f, 0.1f),
+        .Color = vec3(1.0f), .Intensity = 1.0f,
+    };
+
+    constexpr uvec2 extent{128, 128};
+
+    // A grazing view down the plane's length: the camera sits low and close and looks
+    // far down -Z, so the lower frame is near the camera (small view-depth → cascade
+    // 0: ~2.3, below the ~4.2 cascade-0 split) and the frame recedes toward the
+    // horizon (large view-depth → a higher cascade) above it. With near 0.1 / far 100
+    // the default-count splits are ≈ 4.2 / 10.2 / 26.4 / 100.
+    Camera camera;
+    camera.SetPerspective(glm::radians(55.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 1.2f, 4.0f), vec3(0.0f, 0.0f, -40.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context, .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Cascades, .Bloom = false, .Shadows = true, .AO = false},
+    });
+
+    const vector<u8> pixels = RenderOutput(Context, *renderer, *scene, camera);
+    REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+
+    // Classify a tinted texel into its cascade bucket by the dominant tint channel:
+    // 0 red, 1 green, 2 blue, 3 yellow (r+g high, b low). Returns -1 for an
+    // unclassifiable (near-black background or grey) texel.
+    auto CascadeOf = [&](u32 x, u32 y) -> int
+    {
+        const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+        if (c.r + c.g + c.b < 0.2f)
+            return -1; // background / unlit
+        // Yellow: red and green both high, blue low.
+        if (c.r > 0.6f && c.g > 0.6f && c.b < 0.5f)
+            return 3;
+        if (c.r > c.g && c.r > c.b)
+            return 0; // red
+        if (c.g > c.r && c.g > c.b)
+            return 1; // green
+        if (c.b > c.r && c.b > c.g)
+            return 2; // blue
+        return -1;
+    };
+
+    // The dominant (most common) cascade bucket across a horizontal band of rows —
+    // robust to a few stray texels at silhouette/edge.
+    auto DominantCascadeInBand = [&](u32 y0, u32 y1) -> int
+    {
+        int counts[4] = {0, 0, 0, 0};
+        for (u32 y = y0; y < y1; ++y)
+            for (u32 x = extent.x / 4; x < extent.x * 3 / 4; ++x)
+            {
+                const int k = CascadeOf(x, y);
+                if (k >= 0 && k < 4)
+                    ++counts[k];
+            }
+        int best = -1, bestCount = 0;
+        for (int k = 0; k < 4; ++k)
+            if (counts[k] > bestCount) { bestCount = counts[k]; best = k; }
+        return best;
+    };
+
+    // The NEAR region — the lower band of the frame, closest to the camera — must
+    // select cascade 0 (red). The FAR region — the upper band, receding toward the
+    // horizon — must select a HIGHER cascade. A broken selection (one cascade
+    // everywhere, or cascade 0 in the far band) fails one of these.
+    // The receiver fills the lower frame and recedes toward the horizon at center:
+    // bottom rows are nearest the camera (cascade 0), the band just below center is
+    // far (a higher cascade). Above the horizon is background.
+    const int nearCascade = DominantCascadeInBand(extent.y * 7 / 8, extent.y - 2);
+    const int farCascade = DominantCascadeInBand(extent.y / 2, extent.y * 5 / 8);
+
+    REQUIRE(nearCascade >= 0);
+    REQUIRE(farCascade >= 0);
+
+    CHECK_MESSAGE(nearCascade == 0,
+                  "the near (lower-frame) region must select cascade 0, got ", nearCascade);
+    CHECK_MESSAGE(farCascade > nearCascade,
+                  "the far (upper-frame) region must select a higher cascade than the "
+                  "near region (near ", nearCascade, ", far ", farCascade, ")");
+
+    std::filesystem::remove(outArchive);
+}
+
 #ifdef GPU_POSTPROCESS_FIXTURE_DIR
 
 // The PostProcess fullscreen-material proof. An identity PostProcess material —

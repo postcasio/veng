@@ -50,6 +50,7 @@ namespace Veng::Renderer
         constexpr AssetId FullscreenVertId{0xF46DD3C6F2AE0628ULL};
         constexpr AssetId DeferredLightingFragId{0x6569EBAC0810CC1FULL};
         constexpr AssetId DeferredLightingSsaoFragId{0x6EEF5D26BAF2849FULL};
+        constexpr AssetId DeferredLightingCascadesFragId{0x834ED7C05F336E01ULL};
         constexpr AssetId SsaoFragId{0xCCBA63DB760A4E8EULL};
         constexpr AssetId TonemapMaterialId{0xBC968C8771B00434ULL};
         constexpr AssetId AlbedoBlitFragId{0xF90F709155D04BE7ULL};
@@ -379,10 +380,13 @@ namespace Veng::Renderer
             // shadows are off), so the layout is always satisfied. shadowRingStride is
             // the per-frame ShadowConstants region stride; the pass selects the
             // current region with a bind-time dynamic offset.
+            // writeToOutput selects the color target: the HDR target (the Final
+            // chain, tonemapped downstream) or the renderer's output directly (the
+            // cascade-debug arm, a terminal tint with no tonemap tail).
             DeferredLightingScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent, bool useSsao,
-                                      Ref<DescriptorSet> shadowSet, u32 shadowRingStride)
+                                      Ref<DescriptorSet> shadowSet, u32 shadowRingStride, bool writeToOutput = false)
                 : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent), m_UseSsao(useSsao),
-                  m_ShadowSet(std::move(shadowSet)), m_ShadowRingStride(shadowRingStride)
+                  m_ShadowSet(std::move(shadowSet)), m_ShadowRingStride(shadowRingStride), m_WriteToOutput(writeToOutput)
             {
             }
 
@@ -402,7 +406,7 @@ namespace Veng::Renderer
 
                 RenderGraph::PassBuilder builder = graph.AddPass("Deferred Lighting");
                 builder.Color({
-                        .Resource = io.Hdr,
+                        .Resource = m_WriteToOutput ? io.Output : io.Hdr,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
                         .Clear = ClearColor{0.0f, 0.0f, 0.0f, 1.0f},
@@ -484,6 +488,7 @@ namespace Veng::Renderer
             bool m_UseSsao = false;
             Ref<DescriptorSet> m_ShadowSet;
             u32 m_ShadowRingStride = 0;
+            bool m_WriteToOutput = false;
         };
 
         // A reusable fullscreen blit pass: samples one channel/target (selected by
@@ -821,6 +826,7 @@ namespace Veng::Renderer
         const AssetHandle<Veng::Shader> vs = LoadShader(FullscreenVertId, "fullscreen vertex");
         const AssetHandle<Veng::Shader> lightingFs = LoadShader(DeferredLightingFragId, "deferred-lighting fragment");
         const AssetHandle<Veng::Shader> ssaoLightingFs = LoadShader(DeferredLightingSsaoFragId, "deferred-lighting SSAO fragment");
+        const AssetHandle<Veng::Shader> cascadeDebugFs = LoadShader(DeferredLightingCascadesFragId, "deferred-lighting cascade-debug fragment");
         const AssetHandle<Veng::Shader> ssaoFs = LoadShader(SsaoFragId, "SSAO fragment");
         const AssetHandle<Veng::Shader> albedoBlitFs = LoadShader(AlbedoBlitFragId, "albedo-blit fragment");
         const AssetHandle<Veng::Shader> normalBlitFs = LoadShader(NormalBlitFragId, "normal-blit fragment");
@@ -867,6 +873,11 @@ namespace Veng::Renderer
             .PushConstantRanges = {PushConstantRange::Of<SsaoLightingPushConstants>(ShaderStage::Fragment)},
         });
         m_SsaoLightingPipeline = MakePipeline("SceneRenderer Deferred Lighting SSAO Pipeline", m_SsaoLightingLayout, ssaoLightingFs, HdrFormat);
+
+        // The cascade-debug lighting variant reuses the plain lighting layout (set 1
+        // + the non-SSAO push block) but writes the output format directly — it is a
+        // terminal debug arm tinting by cascade, with no tonemap tail.
+        m_CascadeDebugPipeline = MakePipeline("SceneRenderer Cascade Debug Pipeline", m_LightingLayout, cascadeDebugFs, m_OutputFormat);
 
         // The SSAO pass's fullscreen pipeline: samples the g-buffer normal/depth and
         // writes the single-channel R8 AO target. Its push block is the SSAO pass's
@@ -1243,10 +1254,16 @@ namespace Veng::Renderer
         const bool debugShadow = m_Settings.Mode == DebugView::Shadows;
         const bool debugAo = m_Settings.Mode == DebugView::AO;
 
+        // The Cascades debug arm visualizes cascade selection via the cascade-debug
+        // lighting pass, which needs the shadow pass force-wired so the cascade
+        // constants (matrices/splits/count) are written and enabled this frame.
+        const bool debugCascades = m_Settings.Mode == DebugView::Cascades;
+
         // The shadow pass runs in the Final mode (with Settings.Shadows) and is
-        // force-wired by the Shadows debug arm. When active it contributes a depth-only
-        // pass ahead of the lighting pass and its import is declared and bound only then.
-        const bool shadowActive = (m_Settings.Mode == DebugView::Final && m_Settings.Shadows) || debugShadow;
+        // force-wired by the Shadows/Cascades debug arms. When active it contributes a
+        // depth-only pass ahead of the lighting pass and its import is declared and
+        // bound only then.
+        const bool shadowActive = (m_Settings.Mode == DebugView::Final && m_Settings.Shadows) || debugShadow || debugCascades;
         m_ShadowActive = shadowActive;
         m_ShadowPass = nullptr;
 
@@ -1448,6 +1465,15 @@ namespace Veng::Renderer
                 m_Passes.push_back(CreateUnique<ShadowBlitScenePass>(
                     m_Context, m_ShadowBlitPipeline, m_Extent, m_ShadowBlitSet));
                 break;
+            case DebugView::Cascades:
+                // The shadow pass was force-wired above so the cascade constants are
+                // present. The cascade-debug lighting pass reuses the lighting layout
+                // (set 1 + view constants), tints by the selected cascade, and writes
+                // the output directly (a terminal arm, no tonemap tail).
+                m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
+                    m_Context, m_CascadeDebugPipeline, m_Extent, /*useSsao=*/false,
+                    m_ShadowSet, m_ShadowRingStride, /*writeToOutput=*/true));
+                break;
         }
 
         const PassIO io{
@@ -1606,9 +1632,17 @@ namespace Veng::Renderer
                 ComposeTileRemap(cascades.ViewProj[k], k, grid.Columns, grid.Rows);
             shadowConstants.CascadeSplits[k] = cascades.SplitFar[k];
         }
+        // The cross-fade blend band: a small view-space distance before each
+        // cascade's far split over which the lighting pass blends into the next
+        // cascade, so the resolution change across a cascade edge reads as a gradient.
+        // Sized as a fraction of the FIRST (smallest) cascade's range so one band
+        // width never exceeds any cascade's own range.
+        const f32 firstSplit = cascades.Count > 0 ? cascades.SplitFar[0] : 0.0f;
+        const f32 blendBand = firstSplit * 0.1f;
+
         shadowConstants.ShadowParams = vec4(
             1.0f / static_cast<f32>(m_Settings.ShadowResolution),
-            0.0f, // blend band — the cascade-boundary cross-fade width
+            blendBand,
             static_cast<f32>(cascades.Count),
             shadowEnabled ? 1.0f : 0.0f);
 

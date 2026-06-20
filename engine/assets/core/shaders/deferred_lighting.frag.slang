@@ -9,50 +9,29 @@
 // folded into the ambient/occlusion term. SSAO is a compile variant, not a
 // per-frame branch — the renderer selects the lighting pipeline by its AO setting.
 //
+// VE_DEBUG_CASCADES selects the DebugView::Cascades arm: the fragment is tinted by
+// the cascade its view-space depth selects (the same selection the shadow sample
+// uses) and written to the output unlit, so cascade selection is observable.
+//
 // Color space: G0 is an sRGB target, so the sample decodes albedo to linear; the
 // HDR output is a linear float target, so the lit color stays linear (the tail
 // tonemap/composite handles display encoding). World-space normals are sampled
 // straight from G1 (a signed float target). World position is reconstructed from
 // the depth attachment via ViewConstants.InvViewProj — one of the two depth targets
 // read as textures in the engine — rather than stored in a fat position target.
+#include "view_constants.slang"
+#include "shadow.slang"
+
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(5, 0)]] ByteAddressBuffer g_ViewConstants;
 [[vk::binding(6, 0)]] ByteAddressBuffer g_Lights;
 
-// Set 1 — the dedicated directional-shadow system (off bindless): the atlas, an
-// immutable comparison sampler for hardware SampleCmp, and the per-frame
-// ShadowConstants (dynamic uniform). The atlas is one 2D image holding all
-// cascades in tiles; each cascade's ShadowConstants matrix bakes in the tile UV
-// remap, so mul(CascadeViewProj[k], world) lands in cascade k's tile.
-static const uint MaxCascades = 4;
-
-struct ShadowConstants
-{
-    float4x4 CascadeViewProj[MaxCascades]; // tile-remap baked in
-    float4   CascadeSplits;                // per-cascade view-space far distance
-    float4   ShadowParams;                 // x 1/tileRes, y blend-band, z count, w enabled
-};
-
-[[vk::binding(0, 1)]] Texture2D g_ShadowAtlas;
-[[vk::binding(1, 1)]] SamplerComparisonState g_ShadowSampler;
-[[vk::binding(2, 1)]] ConstantBuffer<ShadowConstants> g_Shadow;
-
-static const uint ViewConstantsStride = 512;
 static const uint LightStride = 64;
 
 // LightType, matching the Light builtin's enum (Directional/Point/Spot).
 static const float LightTypeDirectional = 0.0;
 static const float LightTypePoint = 1.0;
 static const float LightTypeSpot = 2.0;
-
-struct ViewConstants
-{
-    float4x4 InvViewProj;
-    float4   CameraPosition;
-    float4x4 View;           // world → view (the SSAO variant reconstructs view space)
-    float4x4 Proj;           // view → clip
-};
 
 // One light, packed by the renderer into the ring-buffered light buffer. Position
 // is the entity's world transform; the type rides DirectionType.w.
@@ -124,56 +103,6 @@ float3 FresnelSchlick(float cosTheta, float3 f0)
     return f0 + (1.0 - f0) * pow(saturate(1.0 - cosTheta), 5.0);
 }
 
-// Cascaded directional-shadow visibility via hardware SampleCmp. The atlas holds
-// the scene's depth from the light's view per cascade; a fragment is lit where its
-// own light-space depth is no greater than the stored caster depth. The cascade is
-// selected by the fragment's view-space depth against ShadowConstants.CascadeSplits;
-// each cascade's matrix bakes in the atlas-tile UV remap, so the projected fragment
-// lands in the right tile. The immutable comparison sampler (set 1) does the
-// LESS-or-equal compare in hardware with a 2×2 PCF; a slope-scaled bias (larger as
-// N·L falls toward grazing) curbs self-shadow acne.
-float DirectionalShadowVisibility(float3 worldPos, float3 N, float3 L, ViewConstants vc)
-{
-    // ShadowParams.w gates the whole path: 0 when the shadow pass is compiled out,
-    // so the term is fully lit and the dummy/zeroed atlas is never meaningfully read.
-    if (g_Shadow.ShadowParams.w < 0.5)
-        return 1.0;
-
-    uint count = uint(g_Shadow.ShadowParams.z);
-    if (count == 0)
-        return 1.0;
-
-    // Select the cascade by the fragment's view-space depth (positive distance
-    // in front of the camera) against the per-cascade far splits.
-    float viewDepth = -mul(vc.View, float4(worldPos, 1.0)).z;
-    uint cascade = count - 1;
-    for (uint i = 0; i < count; ++i)
-    {
-        if (viewDepth <= g_Shadow.CascadeSplits[i])
-        {
-            cascade = i;
-            break;
-        }
-    }
-
-    float4 lightClip = mul(g_Shadow.CascadeViewProj[cascade], float4(worldPos, 1.0));
-    float3 lightNdc = lightClip.xyz / lightClip.w;
-
-    // The tile remap already maps NDC.xy → the tile's atlas window; convert to UV.
-    float2 shadowUV = lightNdc.xy * 0.5 + 0.5;
-    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || shadowUV.y < 0.0 || shadowUV.y > 1.0
-        || lightNdc.z < 0.0 || lightNdc.z > 1.0)
-        return 1.0;
-
-    // Slope-scaled bias: small head-on, growing as the surface turns away from the
-    // light so a near-grazing texel does not shadow itself.
-    float nDotL = saturate(dot(N, L));
-    float bias = clamp(0.0015 * tan(acos(nDotL)), 0.0005, 0.005);
-    float fragDepth = lightNdc.z - bias;
-
-    return g_ShadowAtlas.SampleCmpLevelZero(g_ShadowSampler, shadowUV, fragDepth);
-}
-
 // The Cook-Torrance contribution of one light: the surface's specular + diffuse
 // response to the incoming radiance from direction L, scaled by N·L. The caller
 // supplies the per-light radiance (already distance/cone-attenuated). f0 is the
@@ -210,7 +139,7 @@ float4 fsMain(VSOutput input) : SV_Target
     float4 orm    = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Sample(samp, input.v_UV);
     float depth   = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, input.v_UV).r;
 
-    ViewConstants vc = g_ViewConstants.Load<ViewConstants>(g_PC.ViewConstantsIndex * ViewConstantsStride);
+    ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
 
     float occlusion = orm.r;
     float roughness = clamp(orm.g, 0.04, 1.0);
@@ -226,6 +155,19 @@ float4 fsMain(VSOutput input) : SV_Target
     float4 clip = float4(ndcXY, depth, 1.0);
     float4 worldH = mul(vc.InvViewProj, clip);
     float3 worldPos = worldH.xyz / worldH.w;
+
+    // The fragment's view-space depth (positive distance in front of the camera),
+    // the cascade-selection key for both the shadow sample and the debug tint.
+    float viewDepth = -mul(vc.View, float4(worldPos, 1.0)).z;
+
+#if VE_DEBUG_CASCADES
+    // The cascade debug arm: tint by the selected cascade, unlit, so cascade
+    // selection (near → cascade 0, far → a higher cascade) is directly observable.
+    // The background (cleared depth = 1.0) reads black so the receiver stands out.
+    if (depth >= 1.0)
+        return float4(0.0, 0.0, 0.0, 1.0);
+    return float4(CascadeDebugTint(viewDepth), 1.0);
+#endif
 
     float3 V = normalize(vc.CameraPosition.xyz - worldPos);
 
@@ -282,9 +224,9 @@ float4 fsMain(VSOutput input) : SV_Target
             }
         }
 
-        // The directional light is shadowed by the shadow map (manual PCF); point
-        // and spot lights are unshadowed (visibility 1.0).
-        float visibility = isDirectional ? DirectionalShadowVisibility(worldPos, N, L, vc) : 1.0;
+        // The directional light is shadowed by the cascaded shadow atlas (hardware
+        // SampleCmp); point and spot lights are unshadowed (visibility 1.0).
+        float visibility = isDirectional ? DirectionalShadowVisibility(worldPos, N, L, viewDepth) : 1.0;
 
         direct += EvaluateLight(N, V, L, radiance * attenuation, albedo, roughness, metallic, f0) * visibility;
     }

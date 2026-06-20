@@ -49,6 +49,9 @@ namespace Veng::Renderer
     // G=roughness, B=metallic). AO reads the SSAO target and Shadows the directional
     // shadow map; the producing pass is force-wired in those modes so the channel is
     // always present regardless of the Settings.AO / Settings.Shadows toggle.
+    // Cascades tints each fragment by the shadow cascade its view-space depth selects
+    // (0 red, 1 green, 2 blue, 3 yellow), force-wiring the shadow pass so the cascade
+    // constants are present — pinning cascade selection, not just shadow presence.
     enum class DebugView : u8
     {
         Final,
@@ -56,6 +59,7 @@ namespace Veng::Renderer
         Roughness, Metallic, Occlusion,
         AO,
         Shadows,
+        Cascades,
     };
 
     // Topology/sizing knobs. A change here is a Configure → recompile: a knob that
@@ -329,6 +333,12 @@ namespace Veng::Renderer
         // compile-time variant, not a per-frame branch.
         Ref<class GraphicsPipeline> m_SsaoLightingPipeline;
         Ref<class PipelineLayout> m_SsaoLightingLayout;
+        // The cascade-debug lighting variant (DebugView::Cascades): the cascade-tint
+        // fragment shader over the plain lighting layout (set 1 + the non-SSAO push
+        // block), writing the output format directly. Reuses m_LightingLayout — same
+        // set 1 + push block, no AO fold — and the cascade selection logic the shadow
+        // sample uses, so the visualization pins the selection.
+        Ref<class GraphicsPipeline> m_CascadeDebugPipeline;
         // The SSAO pass's fullscreen pipeline (writes the R8 AO target) + its layout.
         // Built once at Create; the SsaoScenePass records through it.
         Ref<class GraphicsPipeline> m_SsaoPipeline;

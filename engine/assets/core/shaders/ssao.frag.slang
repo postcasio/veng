@@ -9,19 +9,14 @@
 // its range check. The view/projection matrices ride the per-frame view-constants
 // buffer (set-0 binding 5), the same buffer the lighting pass reads; radius,
 // intensity, and bias are fixed kernel constants.
+// The canonical per-frame view-constants block (set 0, binding 5) and its stride
+// are declared in view_constants.slang — the single source shared with the lighting
+// and material shaders, so the View/Proj this pass reads land at the exact byte
+// offsets the renderer writes (and at the correct per-frame region).
+#include "view_constants.slang"
+
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(5, 0)]] ByteAddressBuffer g_ViewConstants;
-
-static const uint ViewConstantsStride = 256;
-
-struct ViewConstants
-{
-    float4x4 InvViewProj;
-    float4   CameraPosition;
-    float4x4 View;          // world → view
-    float4x4 Proj;          // view → clip
-};
 
 struct PushConstants
 {
@@ -150,7 +145,7 @@ float fsMain(VSOutput input) : SV_Target
     if (depth >= 1.0)
         return 1.0;
 
-    ViewConstants vc = g_ViewConstants.Load<ViewConstants>(g_PC.ViewConstantsIndex * ViewConstantsStride);
+    ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
 
     float4x4 invProj = Inverse4x4(vc.Proj);
     float3 viewPos = ViewPositionFromDepth(invProj, input.v_UV, depth);
