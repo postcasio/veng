@@ -146,3 +146,18 @@ ctest --test-dir build --output-on-failure
 The test suite covers engine logic, GPU rendering, the asset cooker, and a
 golden-image comparison of the sample's output. Tests that need a GPU skip
 cleanly on machines without a Vulkan driver.
+
+---
+
+## API documentation
+
+veng's public headers are documented with Doxygen comments. If **Doxygen** is
+installed, the build adds a `docs` target that generates a browsable HTML
+reference of the public API:
+
+```sh
+cmake --build build --target docs
+```
+
+The output lands in `build/docs/html/index.html`. The target is optional —
+without Doxygen installed it is simply absent and a normal build is unaffected.
