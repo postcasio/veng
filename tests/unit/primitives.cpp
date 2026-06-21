@@ -1,8 +1,8 @@
 // Primitive-generator unit cases: pure CPU geometry, no Context, no Vulkan.
-// These pin the math — counts, winding-agnostic invariants, unit-length
-// normals/tangents, AABB extents, and the default no-material wiring. The
-// populated-material path needs a GPU AssetHandle<Material>, so it is exercised
-// elsewhere; here every generator is called with the empty default handle.
+// These pin the math — counts, triangle winding, unit-length normals/tangents,
+// AABB extents, and the default no-material wiring. The populated-material path
+// needs a GPU AssetHandle<Material>, so it is exercised elsewhere; here every
+// generator is called with the empty default handle.
 
 #include <doctest/doctest.h>
 
@@ -33,6 +33,34 @@ namespace
             box.Max = glm::max(box.Max, v.Position);
         }
         return box;
+    }
+
+    // Every triangle's winding must agree with its vertices' shading normals: the
+    // geometric face normal (cross of two edges, in index order) must point the same
+    // way as the stored normals. The surface pipeline culls back faces with a
+    // CCW-front winding, so a triangle wound the wrong way has its outward face
+    // culled and renders inside-out — geometry that looks correct but shades as if
+    // its normals were reversed. The existing per-vertex outward-normal checks pass
+    // regardless of winding, so this is the invariant that catches it.
+    void CheckWindingMatchesNormals(const MeshData& data)
+    {
+        for (usize i = 0; i + 2 < data.Indices.size(); i += 3)
+        {
+            const CanonicalVertex& v0 = data.Vertices[data.Indices[i + 0]];
+            const CanonicalVertex& v1 = data.Vertices[data.Indices[i + 1]];
+            const CanonicalVertex& v2 = data.Vertices[data.Indices[i + 2]];
+
+            const vec3 geometric = glm::cross(v1.Position - v0.Position, v2.Position - v0.Position);
+
+            // A degenerate (zero-area) triangle has no winding to check.
+            if (glm::length(geometric) <= 1e-12f)
+            {
+                continue;
+            }
+
+            const vec3 shading = v0.Normal + v1.Normal + v2.Normal;
+            CHECK(glm::dot(geometric, shading) > 0.0f);
+        }
     }
 
     // Shared invariants every primitive's MeshData must satisfy.
@@ -68,6 +96,8 @@ namespace
                   doctest::Approx(0.0f).epsilon(0.001f));
             CHECK(std::abs(v.Tangent.w) == doctest::Approx(1.0f));
         }
+
+        CheckWindingMatchesNormals(data);
     }
 }
 

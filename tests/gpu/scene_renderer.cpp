@@ -783,6 +783,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 #include <filesystem>
 
 #include <glm/gtc/packing.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
@@ -3265,6 +3266,146 @@ TEST_CASE_FIXTURE(
         }
         CHECK(drawn == 1);
         CHECK(dropped == 1);
+    }
+
+    std::filesystem::remove(outArchive);
+}
+
+// The primitive-normals end-to-end guard. Every generator's outward face must be
+// front-facing (the surface pipeline culls back faces) and must shade as if its
+// normal points outward. An orthographic camera frames one primitive at a time with
+// a chosen face toward the lens; a directional "headlight" travels along the view
+// axis. With the light traveling toward that face it is fully lit (N·L = 1); reverse
+// the light and the same front face falls to the ambient term. So a correctly-wound
+// primitive renders much brighter under the headlight than under the reversed light.
+//
+// A flipped winding (the inward-wound bug) culls the outward face: both the lit and
+// reversed frames then show the same culled-through interior, collapsing the ratio to
+// ~1 — which is what this guard fails on. The CPU primitives test pins the per-face
+// winding exhaustively; this confirms it through the real g-buffer + lighting path.
+// Mean frame luminance (not a center texel) keeps the torus's center hole and each
+// primitive's silhouette from mattering.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: every primitive's outward face is lit by a headlight and "
+                  "dark when lit from behind")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_primitive_normals.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    constexpr uvec2 extent{64, 64};
+
+    // Orthographic so a face directly toward the lens fills the view at uniform scale,
+    // regardless of the primitive's depth. The headlight travels along the view axis,
+    // onto the forward face; reversing it sends the light behind that face.
+    //
+    // The front camera (on +Z, looking down -Z) frames a primitive's +Z-facing surface.
+    // The flat, single-sided Plane faces +Y at rest, so it gets a top-down camera and a
+    // downward headlight instead — the same lit/dark geometry along Y.
+    CameraView frontCamera;
+    frontCamera.SetOrthographic(1.5f, 1.5f, 0.1f, 100.0f);
+    frontCamera.SetView(vec3(0.0f, 0.0f, 5.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+    const vec3 frontHeadlight(0.0f, 0.0f, -1.0f);
+
+    CameraView topCamera;
+    topCamera.SetOrthographic(2.0f, 2.0f, 0.1f, 100.0f);
+    topCamera.SetView(vec3(0.0f, 5.0f, 0.0f), vec3(0.0f), vec3(0.0f, 0.0f, -1.0f));
+    const vec3 topHeadlight(0.0f, -1.0f, 0.0f);
+
+    const quat identity(1.0f, 0.0f, 0.0f, 0.0f);
+    // The torus axis is Y at rest (ring in XZ, edge-on to the front camera); a quarter
+    // turn about X tips the ring so the tube's near surface faces the lens.
+    const quat tipForward = glm::angleAxis(glm::radians(-90.0f), vec3(1.0f, 0.0f, 0.0f));
+
+    struct Case
+    {
+        string Name;
+        MeshData Data;
+        quat Orient;
+        CameraView Camera;
+        vec3 Headlight;
+    };
+
+    vector<Case> cases;
+    cases.push_back(
+        {"Cube", Primitives::Cube(2.2f, *material), identity, frontCamera, frontHeadlight});
+    cases.push_back({"Plane", Primitives::Plane(vec2(3.0f), uvec2(1), *material), identity,
+                     topCamera, topHeadlight});
+    cases.push_back({"Sphere", Primitives::Sphere(1.2f, 16, 24, *material), identity, frontCamera,
+                     frontHeadlight});
+    cases.push_back({"Icosphere", Primitives::Icosphere(1.2f, 2, *material), identity, frontCamera,
+                     frontHeadlight});
+    cases.push_back({"Cylinder", Primitives::Cylinder(1.0f, 2.2f, 24, *material), identity,
+                     frontCamera, frontHeadlight});
+    cases.push_back({"Cone", Primitives::Cone(1.0f, 2.2f, 24, *material), identity, frontCamera,
+                     frontHeadlight});
+    cases.push_back({"Torus", Primitives::Torus(1.0f, 0.4f, 24, 12, *material), tipForward,
+                     frontCamera, frontHeadlight});
+    cases.push_back({"Capsule", Primitives::Capsule(0.9f, 1.2f, 24, 8, *material), identity,
+                     frontCamera, frontHeadlight});
+
+    auto MeanLuminance = [&](const vector<u8>& pixels) -> f64
+    {
+        f64 sum = 0.0;
+        for (u32 y = 0; y < extent.y; ++y)
+        {
+            for (u32 x = 0; x < extent.x; ++x)
+            {
+                const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+                sum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+            }
+        }
+        return sum / (static_cast<f64>(extent.x) * extent.y);
+    };
+
+    for (Case& test : cases)
+    {
+        CAPTURE(test.Name);
+
+        const Ref<Mesh> mesh = Mesh::BuildSync(Context, test.Data, test.Name);
+
+        const Unique<Scene> scene = Scene::Create(Types);
+        const Entity entity = scene->CreateEntity();
+        scene->Add<Transform>(entity).Rotation = test.Orient;
+        scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(mesh);
+
+        // A renderer per case: its broadphase caches gathered meshes from the scene it
+        // last synced, gated on that scene's spatial version. A fresh Scene restarts the
+        // version counter, so reusing one renderer across scenes would read the prior
+        // (destroyed) scene's cache — each case gets its own renderer + scene.
+        const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = extent,
+            .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+        });
+
+        const Entity lightEntity = scene->CreateEntity();
+        auto& light = scene->Add<Light>(lightEntity);
+        light = Light{
+            .Type = LightType::Directional,
+            .Color = vec3(1.0f, 1.0f, 1.0f),
+            .Intensity = 1.0f,
+        };
+
+        // Headlight onto the forward face: the outward normal is fully lit (N·L = 1).
+        light.Direction = test.Headlight;
+        const f64 litMean = MeanLuminance(RenderOutput(Context, *renderer, *scene, test.Camera));
+
+        // Reversed: the light passes behind the forward face, so it falls to ambient.
+        scene->Get<Light>(lightEntity).Direction = -test.Headlight;
+        const f64 darkMean = MeanLuminance(RenderOutput(Context, *renderer, *scene, test.Camera));
+
+        // The headlit frame is clearly brighter than the reversed-light frame. A culled
+        // (inward-wound) outward face would make the two frames match, collapsing this
+        // ratio toward 1 — the regression this guard fails on.
+        CHECK(litMean > 0.01);
+        CHECK(litMean > darkMean * 3.0);
     }
 
     std::filesystem::remove(outArchive);

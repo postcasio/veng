@@ -55,10 +55,10 @@ namespace Veng::Primitives
              .Bitangent = {0.0f, +1.0f, 0.0f}}, // -X
             {.Normal = {0.0f, +1.0f, 0.0f},
              .Tangent = {+1.0f, 0.0f, 0.0f},
-             .Bitangent = {0.0f, 0.0f, +1.0f}}, // +Y
+             .Bitangent = {0.0f, 0.0f, -1.0f}}, // +Y
             {.Normal = {0.0f, -1.0f, 0.0f},
              .Tangent = {+1.0f, 0.0f, 0.0f},
-             .Bitangent = {0.0f, 0.0f, -1.0f}}, // -Y
+             .Bitangent = {0.0f, 0.0f, +1.0f}}, // -Y
             {.Normal = {0.0f, 0.0f, +1.0f},
              .Tangent = {+1.0f, 0.0f, 0.0f},
              .Bitangent = {0.0f, +1.0f, 0.0f}}, // +Z
@@ -226,14 +226,14 @@ namespace Veng::Primitives
                 if (r != 0)
                 {
                     data.Indices.push_back(a);
-                    data.Indices.push_back(c);
                     data.Indices.push_back(b);
+                    data.Indices.push_back(c);
                 }
                 if (r != rings - 1)
                 {
                     data.Indices.push_back(b);
-                    data.Indices.push_back(c);
                     data.Indices.push_back(d);
+                    data.Indices.push_back(c);
                 }
             }
         }
@@ -429,11 +429,11 @@ namespace Veng::Primitives
 
             // CCW seen from outside.
             data.Indices.push_back(a);
-            data.Indices.push_back(c);
-            data.Indices.push_back(b);
             data.Indices.push_back(b);
             data.Indices.push_back(c);
+            data.Indices.push_back(b);
             data.Indices.push_back(d);
+            data.Indices.push_back(c);
         }
 
         // Each cap is a center vertex plus a rim fan, with a hard ±Y normal.
@@ -468,14 +468,14 @@ namespace Veng::Primitives
                 if (flip)
                 {
                     data.Indices.push_back(center);
-                    data.Indices.push_back(r1);
                     data.Indices.push_back(r0);
+                    data.Indices.push_back(r1);
                 }
                 else
                 {
                     data.Indices.push_back(center);
-                    data.Indices.push_back(r0);
                     data.Indices.push_back(r1);
+                    data.Indices.push_back(r0);
                 }
             }
         };
@@ -544,8 +544,8 @@ namespace Veng::Primitives
 
             // CCW seen from outside.
             data.Indices.push_back(base);
-            data.Indices.push_back(base + 1);
             data.Indices.push_back(base + 2);
+            data.Indices.push_back(base + 1);
         }
 
         // Bottom cap fan, hard -Y normal, wound CCW seen from below.
@@ -573,8 +573,8 @@ namespace Veng::Primitives
         for (u32 s = 0; s < segments; ++s)
         {
             data.Indices.push_back(center);
-            data.Indices.push_back(rimBase + s + 1);
             data.Indices.push_back(rimBase + s);
+            data.Indices.push_back(rimBase + s + 1);
         }
 
         FinishSubMesh(data, std::move(material));
@@ -638,11 +638,11 @@ namespace Veng::Primitives
 
                 // CCW seen from outside the tube.
                 data.Indices.push_back(a);
-                data.Indices.push_back(c);
-                data.Indices.push_back(b);
                 data.Indices.push_back(b);
                 data.Indices.push_back(c);
+                data.Indices.push_back(b);
                 data.Indices.push_back(d);
+                data.Indices.push_back(c);
             }
         }
 
@@ -727,14 +727,14 @@ namespace Veng::Primitives
                 if (row != 0)
                 {
                     data.Indices.push_back(a);
-                    data.Indices.push_back(c);
                     data.Indices.push_back(b);
+                    data.Indices.push_back(c);
                 }
                 if (row != latRows - 2)
                 {
                     data.Indices.push_back(b);
-                    data.Indices.push_back(c);
                     data.Indices.push_back(d);
+                    data.Indices.push_back(c);
                 }
             }
         }

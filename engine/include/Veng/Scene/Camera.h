@@ -31,6 +31,24 @@ namespace Veng
             m_Far = far;
         }
 
+        /// @brief Sets an orthographic projection.
+        ///
+        /// Parallel projection: no perspective foreshortening, so a face directly
+        /// facing the camera projects at uniform scale regardless of depth. Follows
+        /// the same Vulkan clip conventions as SetPerspective (Y flipped, ZO depth).
+        /// @param halfWidth   Half the view volume's width in world units.
+        /// @param halfHeight  Half the view volume's height in world units.
+        /// @param near        Near clip distance.
+        /// @param far         Far clip distance.
+        void SetOrthographic(f32 halfWidth, f32 halfHeight, f32 near, f32 far)
+        {
+            mat4 projection = glm::ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, near, far);
+            projection[1][1] *= -1.0f; // Vulkan's clip space has Y pointing down.
+            m_Projection = projection;
+            m_Near = near;
+            m_Far = far;
+        }
+
         /// @brief Sets the view matrix from eye, target, and up vectors.
         void SetView(vec3 eye, vec3 target, vec3 up) { m_View = glm::lookAt(eye, target, up); }
 

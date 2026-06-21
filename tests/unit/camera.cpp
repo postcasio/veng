@@ -49,6 +49,38 @@ TEST_CASE("SetPerspective flips Y for Vulkan clip space and carries near/far")
     CHECK(camera.GetFar() == doctest::Approx(250.0f));
 }
 
+TEST_CASE("SetOrthographic flips Y for Vulkan clip space and carries near/far")
+{
+    CameraView camera;
+    camera.SetOrthographic(4.0f, 3.0f, 0.5f, 50.0f);
+
+    // Same Y-flip as the perspective path: glm::ortho yields a positive [1][1],
+    // the engine negates it so clip space has Y pointing down.
+    CHECK(camera.Projection()[1][1] < 0.0f);
+
+    CHECK(camera.GetNear() == doctest::Approx(0.5f));
+    CHECK(camera.GetFar() == doctest::Approx(50.0f));
+}
+
+TEST_CASE("Orthographic projection has no perspective foreshortening")
+{
+    CameraView camera;
+    camera.SetOrthographic(2.0f, 2.0f, 0.1f, 100.0f);
+    camera.SetView(vec3{0.0f, 0.0f, 5.0f}, vec3{0.0f}, vec3{0.0f, 1.0f, 0.0f});
+
+    // A unit-width span projects to the same clip-X extent whether it sits near
+    // or far from the camera — the defining property of a parallel projection.
+    const auto clipX = [&](vec3 world)
+    {
+        const vec4 clip = camera.ViewProjection() * vec4{world, 1.0f};
+        return clip.x / clip.w;
+    };
+
+    const f32 nearSpan = clipX(vec3{1.0f, 0.0f, 2.0f}) - clipX(vec3{-1.0f, 0.0f, 2.0f});
+    const f32 farSpan = clipX(vec3{1.0f, 0.0f, -3.0f}) - clipX(vec3{-1.0f, 0.0f, -3.0f});
+    CHECK(nearSpan == doctest::Approx(farSpan));
+}
+
 TEST_CASE("Y-flip maps a world-up point to negative clip Y")
 {
     CameraView camera;
