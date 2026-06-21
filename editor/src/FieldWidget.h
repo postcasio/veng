@@ -52,7 +52,9 @@ namespace VengEditor
     /// @param fieldPtr Pointer to the field bytes (base + FieldDescriptor::Offset).
     /// @param field    Descriptor giving the field's type, class, and metadata.
     /// @param ctx      Dependencies: asset manager, source index, editor registry.
+    /// @return True when this edit changed the field (including any nested/variant member),
+    ///         so a caller can re-resolve a touched resolver-bearing component.
     /// @pre Called inside an open `UI::PropertyTable` scope.
-    void DrawFieldWidget(void* fieldPtr, const Veng::FieldDescriptor& field,
+    bool DrawFieldWidget(void* fieldPtr, const Veng::FieldDescriptor& field,
                          const FieldWidgetContext& ctx);
 }

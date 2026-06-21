@@ -33,8 +33,9 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
 - **The prefab editor is the scene-editing surface.** `PrefabEditorPanel` (registered for
   `AssetType::Prefab`) loads + `SpawnInto`s the prefab into a document-owned live `Scene`
   (adding a default directional light when the prefab carries none) and hosts three children
-  over one shared `PrefabEditContext` (`Scene*` + a multi-entity `Selection` + the `Active`
-  entity + the `EntityPayload` drag tag): `SceneViewportPanel` (renders the scene from an
+  over one shared `PrefabEditContext` (`Scene*` + `AssetManager*` + a multi-entity `Selection` +
+  the `Active` entity + the `EntityPayload` drag tag + a `ResolveEntity` helper): `SceneViewportPanel`
+  (renders the scene from an
   orbit camera via a `SceneRenderer` into a `UI::Image`, with the `DebugView` dropdown),
   `PrefabExplorerPanel`, and `InspectorPanel`. The host opens the sample prefab as the initial
   document; double-clicking a prefab in the asset browser opens another.
@@ -46,7 +47,18 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
   never reached — and creates / adds-child / duplicates / deletes entities, plus a name
   filter and row/empty-space context menus. Every structural edit is **queued during the
   draw and applied after** the snapshot walk returns, so nothing mutates the scene
-  mid-iteration (the `Scene` contract).
+  mid-iteration (the `Scene` contract). Duplicating an entity round-trips its components into
+  the copy but builds no derived resource, so `DuplicateSubtree` calls `ResolveEntity` on each
+  copy after its children recurse.
+- **Resolver-bearing components are resolved on every editing path.** A component that carries
+  a recipe whose resources are generated (a `PrimitiveComponent`) builds its mesh through a
+  spawn-resolve thunk ([engine/CLAUDE.md](../engine/CLAUDE.md)). Spawning a prefab resolves
+  automatically inside `Prefab::SpawnInto`; there is no per-frame scan. **Any editor path that
+  adds or edits a resolver-bearing component must call `ResolveComponents` on the touched
+  entity** — funnelled through `PrefabEditContext::ResolveEntity`. Today that is three paths:
+  Add Component (`InspectorPanel`), an inspector field edit (`InspectorPanel`, gated on the
+  `DrawFieldWidget` changed-bool), and duplicate (`PrefabExplorerPanel`). A future structural op
+  (paste, undo) must add its own trigger.
 - **Reflection-driven inspector.** `InspectorPanel` edits `PrefabEditContext::Active`: an
   editable name header, a searchable **Add Component** picker (every registered
   `FieldClass::Struct` type not already present, minus the hierarchy-owned `Hierarchy`), and
@@ -61,9 +73,11 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
   fields into Entity drop targets. The **`Variant` widget** is a combo over the alternatives'
   display names (plus "(none)") that `SetActive`s the chosen alternative on change and recurses
   the active member's fields as indented rows — so a `PrimitiveComponent`'s shape variant gives
-  primitive-kind selection and per-shape parameter editing for free, and editing re-resolves the
-  mesh through the editor's per-frame `ResolvePrimitiveMeshes`. A `RegisterFieldWidget` entry
-  overrides the built-in for a given `TypeId`; the entity inspector and the node-property
+  primitive-kind selection and per-shape parameter editing for free. `DrawFieldWidget` returns a
+  `bool changed` (accumulated through its nested-struct/variant recursion); `DrawComponent` ORs it
+  across the component's fields and, when true, calls `PrefabEditContext::ResolveEntity` so an edit
+  to a recipe (a primitive's shape/parameters) rebuilds its derived mesh. A `RegisterFieldWidget`
+  entry overrides the built-in for a given `TypeId`; the entity inspector and the node-property
   inspector both call `DrawFieldWidget`, so the two share identical widget behavior. The
   `AssetHandle` widget is an asset **picker** (a combo over the `AssetSourceIndex` entries of the
   field's `AssetType`), not a read-only label.

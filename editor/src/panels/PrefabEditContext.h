@@ -2,9 +2,15 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/Scene/Resolve.h>
 #include <Veng/Scene/Scene.h>
 
 #include <algorithm>
+
+namespace Veng
+{
+    class AssetManager;
+}
 
 namespace VengEditor
 {
@@ -25,6 +31,12 @@ namespace VengEditor
 
         /// @brief The scene the document spawned the prefab into.
         Veng::Scene* Scene = nullptr;
+
+        /// @brief The asset manager derived component resources resolve through.
+        ///
+        /// Reached by ResolveEntity so any panel sharing this context can re-run a
+        /// resolver-bearing component's resolve after adding or editing it.
+        Veng::AssetManager* Assets = nullptr;
 
         /// @brief The selected entities, in the order they were added to the selection.
         ///
@@ -74,6 +86,20 @@ namespace VengEditor
             {
                 Selection.push_back(entity);
                 Active = entity;
+            }
+        }
+
+        /// @brief Fires every resolver-bearing component on @p entity through ResolveComponents.
+        ///
+        /// Any editor path that adds or edits a resolver-bearing component (a Primitive,
+        /// say) must call this on the touched entity so its derived resource streams in;
+        /// there is no per-frame scan that would otherwise catch the change.
+        /// @param entity  The entity whose components are resolved; must be alive.
+        void ResolveEntity(Veng::Entity entity)
+        {
+            if (Scene != nullptr && Assets != nullptr && Scene->IsAlive(entity))
+            {
+                Veng::ResolveComponents(*Scene, entity, *Assets);
             }
         }
 

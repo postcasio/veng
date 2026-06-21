@@ -148,6 +148,7 @@ namespace VengEditor
 
         const FieldWidgetContext ctx{
             .Assets = m_Assets, .Sources = m_Sources, .Editors = m_Editors};
+        bool changed = false;
         if (auto table = UI::PropertyTable("##fields"))
         {
             for (const FieldDescriptor& field : info.Fields)
@@ -157,8 +158,15 @@ namespace VengEditor
                     continue;
                 }
                 void* fieldPtr = static_cast<u8*>(component) + field.Offset;
-                DrawFieldWidget(fieldPtr, field, ctx);
+                changed |= DrawFieldWidget(fieldPtr, field, ctx);
             }
+        }
+
+        // An edit to a recipe (a Primitive's shape/parameters) regenerates no resource on its
+        // own; re-resolve the touched entity so the derived mesh rebuilds.
+        if (changed)
+        {
+            m_Ctx.ResolveEntity(entity);
         }
     }
 
@@ -204,6 +212,8 @@ namespace VengEditor
             if (UI::Selectable(info.Name))
             {
                 scene->AddComponent(entity, id);
+                // A newly added recipe (a Primitive) builds no resource until resolved.
+                m_Ctx.ResolveEntity(entity);
             }
         }
     }

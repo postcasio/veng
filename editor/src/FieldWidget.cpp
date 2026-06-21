@@ -45,7 +45,8 @@ namespace VengEditor
     namespace
     {
         // Combo over the manifest's ids of the field's asset type; "(none)" clears it.
-        void DrawAssetPicker(void* fieldPtr, const FieldDescriptor& field, string_view label,
+        // Returns true when the pick changed the handle.
+        bool DrawAssetPicker(void* fieldPtr, const FieldDescriptor& field, string_view label,
                              const FieldWidgetContext& ctx)
         {
             u64 currentId = 0;
@@ -63,7 +64,7 @@ namespace VengEditor
                 {
                     UI::TextDisabled(fmt::format("0x{:X}", currentId));
                 }
-                return;
+                return false;
             }
 
             // Index 0 is "(none)" (clears the handle); index N picks candidate N-1.
@@ -99,7 +100,9 @@ namespace VengEditor
                 {
                     ApplyAssetPick(fieldPtr, candidates[static_cast<usize>(index) - 1]);
                 }
+                return true;
             }
+            return false;
         }
 
         // Reads an Entity drop on the previous widget; returns the dropped entity or nullopt.
@@ -121,7 +124,8 @@ namespace VengEditor
         }
 
         // A drop target plus a clear button for an intra-scene Entity reference field.
-        void DrawReference(void* fieldPtr, const FieldDescriptor& field, string_view label)
+        // Returns true when the reference changed (a drop or a clear).
+        bool DrawReference(void* fieldPtr, const FieldDescriptor& field, string_view label)
         {
             Entity& ref = *static_cast<Entity*>(fieldPtr);
 
@@ -135,9 +139,10 @@ namespace VengEditor
                 {
                     UI::TextDisabled(fmt::format("Entity {}:{}", ref.Index, ref.Generation));
                 }
-                return;
+                return false;
             }
 
+            bool changed = false;
             const string text = ref.IsNull()
                                     ? string{"(null)"}
                                     : fmt::format("Entity {}:{}", ref.Index, ref.Generation);
@@ -146,6 +151,7 @@ namespace VengEditor
             if (const optional<Entity> dropped = AcceptEntityDrop())
             {
                 ref = *dropped;
+                changed = true;
             }
 
             if (!ref.IsNull())
@@ -154,12 +160,15 @@ namespace VengEditor
                 if (UI::SmallButton(fmt::format("x##clear{}", label)))
                 {
                     ref = Entity::Null;
+                    changed = true;
                 }
             }
+            return changed;
         }
 
         // Editable integer view over an enum's backing bytes (width from its TypeInfo).
-        void DrawEnum(void* fieldPtr, const FieldDescriptor& field, string_view label,
+        // Returns true when the value changed.
+        bool DrawEnum(void* fieldPtr, const FieldDescriptor& field, string_view label,
                       const FieldWidgetContext& ctx)
         {
             const usize width = ctx.Assets.GetTypeRegistry().Info(field.Type).Size;
@@ -172,14 +181,17 @@ namespace VengEditor
             {
                 const i64 clamped = edited < 0 ? 0 : edited;
                 std::memcpy(fieldPtr, &clamped, width < sizeof(clamped) ? width : sizeof(clamped));
+                return true;
             }
+            return false;
         }
     }
 
     // Recurses each non-hidden field of a struct/active-alternative as an indented row;
-    // shared by the Struct and Variant cases.
-    static void DrawStructFields(void* base, const TypeInfo& info, const FieldWidgetContext& ctx)
+    // shared by the Struct and Variant cases. Returns true when any nested field changed.
+    static bool DrawStructFields(void* base, const TypeInfo& info, const FieldWidgetContext& ctx)
     {
+        bool changed = false;
         UI::Indent();
         for (const FieldDescriptor& nestedField : info.Fields)
         {
@@ -188,17 +200,19 @@ namespace VengEditor
                 continue;
             }
             void* nestedPtr = static_cast<u8*>(base) + nestedField.Offset;
-            DrawFieldWidget(nestedPtr, nestedField, ctx);
+            changed |= DrawFieldWidget(nestedPtr, nestedField, ctx);
         }
         UI::Unindent();
+        return changed;
     }
 
     namespace
     {
         // Combo over the variant's alternatives (plus "(none)"); switching activates a
         // default-constructed alternative or clears to empty, then the active member's fields
-        // recurse as indented rows beneath the combo.
-        void DrawVariant(void* fieldPtr, const FieldDescriptor& field, string_view label,
+        // recurse as indented rows beneath the combo. Returns true when the active alternative
+        // changed or any of its fields was edited.
+        bool DrawVariant(void* fieldPtr, const FieldDescriptor& field, string_view label,
                          const FieldWidgetContext& ctx)
         {
             const TypeRegistry& registry = ctx.Assets.GetTypeRegistry();
@@ -228,6 +242,7 @@ namespace VengEditor
                 }
             }
 
+            bool changed = false;
             if (UI::Combo(label, index, items))
             {
                 if (index == 0)
@@ -238,29 +253,32 @@ namespace VengEditor
                 {
                     info.VariantSetActive(fieldPtr, alternatives[static_cast<usize>(index) - 1]);
                 }
+                changed = true;
             }
 
             void* activePtr = info.VariantActivePtr(fieldPtr);
             if (activePtr != nullptr)
             {
                 const TypeInfo& activeInfo = registry.Info(info.VariantActiveType(fieldPtr));
-                DrawStructFields(activePtr, activeInfo, ctx);
+                changed |= DrawStructFields(activePtr, activeInfo, ctx);
             }
+            return changed;
         }
     }
 
-    void DrawFieldWidget(void* fieldPtr, const FieldDescriptor& field,
+    bool DrawFieldWidget(void* fieldPtr, const FieldDescriptor& field,
                          const FieldWidgetContext& ctx)
     {
         if (field.Hidden)
         {
-            return;
+            return false;
         }
 
         const string& displayName = field.DisplayName.empty() ? field.Name : field.DisplayName;
         const string valueLabel = "##" + field.Name;
 
-        // A custom widget owns its whole row, including the property label.
+        // A custom widget owns its whole row, including the property label. Its void
+        // signature carries no change signal, so a custom-widget edit does not re-resolve.
         if (const FieldWidgetFn* custom = ctx.Editors.FieldWidgetFor(field.Type))
         {
             UI::PropertyLabel(displayName);
@@ -269,7 +287,7 @@ namespace VengEditor
             {
                 UI::Tooltip(field.Tooltip);
             }
-            return;
+            return false;
         }
 
         // A nested struct flattens into further indented rows in the same table — never a
@@ -281,8 +299,7 @@ namespace VengEditor
             // an outer field keeps a distinct widget id.
             auto structScope = UI::PushId(valueLabel);
             const TypeInfo& nested = ctx.Assets.GetTypeRegistry().Info(field.Type);
-            DrawStructFields(fieldPtr, nested, ctx);
-            return;
+            return DrawStructFields(fieldPtr, nested, ctx);
         }
 
         // A variant draws an alternative-picker combo on its own row, then flattens the active
@@ -291,12 +308,12 @@ namespace VengEditor
         {
             UI::PropertyLabel(displayName);
             auto variantScope = UI::PushId(valueLabel);
-            DrawVariant(fieldPtr, field, valueLabel, ctx);
+            const bool changed = DrawVariant(fieldPtr, field, valueLabel, ctx);
             if (!field.Tooltip.empty())
             {
                 UI::Tooltip(field.Tooltip);
             }
-            return;
+            return changed;
         }
 
         UI::PropertyLabel(displayName);
@@ -307,12 +324,12 @@ namespace VengEditor
         // every other class shares one Disabled scope keyed on ReadOnly.
         if (field.Class == FieldClass::Reference)
         {
-            DrawReference(fieldPtr, field, valueLabel);
+            const bool changed = DrawReference(fieldPtr, field, valueLabel);
             if (!field.Tooltip.empty())
             {
                 UI::Tooltip(field.Tooltip);
             }
-            return;
+            return changed;
         }
 
         auto disabled = UI::Disabled(field.ReadOnly);
@@ -333,17 +350,18 @@ namespace VengEditor
             drag.Max = static_cast<f32>(*field.Max);
         }
 
+        bool changed = false;
         switch (field.Class)
         {
         case FieldClass::Scalar:
         {
             if (field.Type == TypeIdOf<f32>())
             {
-                (void)UI::Drag(valueLabel, *static_cast<f32*>(fieldPtr), drag);
+                changed = UI::Drag(valueLabel, *static_cast<f32*>(fieldPtr), drag);
             }
             else if (field.Type == TypeIdOf<i32>())
             {
-                (void)UI::Drag(valueLabel, *static_cast<i32*>(fieldPtr));
+                changed = UI::Drag(valueLabel, *static_cast<i32*>(fieldPtr));
             }
             else if (field.Type == TypeIdOf<u32>())
             {
@@ -352,11 +370,12 @@ namespace VengEditor
                 if (UI::Drag(valueLabel, value, UI::DragOptions{.Min = 0.0f}))
                 {
                     *static_cast<u32*>(fieldPtr) = static_cast<u32>(value < 0 ? 0 : value);
+                    changed = true;
                 }
             }
             else if (field.Type == TypeIdOf<bool>())
             {
-                (void)UI::Checkbox(valueLabel, *static_cast<bool*>(fieldPtr));
+                changed = UI::Checkbox(valueLabel, *static_cast<bool*>(fieldPtr));
             }
             else
             {
@@ -368,15 +387,15 @@ namespace VengEditor
         {
             if (field.Type == TypeIdOf<vec2>())
             {
-                (void)UI::Drag(valueLabel, *static_cast<vec2*>(fieldPtr), drag);
+                changed = UI::Drag(valueLabel, *static_cast<vec2*>(fieldPtr), drag);
             }
             else if (field.Type == TypeIdOf<vec3>())
             {
-                (void)UI::Drag(valueLabel, *static_cast<vec3*>(fieldPtr), drag);
+                changed = UI::Drag(valueLabel, *static_cast<vec3*>(fieldPtr), drag);
             }
             else if (field.Type == TypeIdOf<vec4>())
             {
-                (void)UI::Drag(valueLabel, *static_cast<vec4*>(fieldPtr), drag);
+                changed = UI::Drag(valueLabel, *static_cast<vec4*>(fieldPtr), drag);
             }
             break;
         }
@@ -387,18 +406,19 @@ namespace VengEditor
             if (UI::Drag(valueLabel, euler, UI::DragOptions{.Speed = 0.5f}))
             {
                 q = quat(glm::radians(euler));
+                changed = true;
             }
             break;
         }
         case FieldClass::String:
         {
             string& value = *static_cast<string*>(fieldPtr);
-            (void)UI::InputText(valueLabel, value);
+            changed = UI::InputText(valueLabel, value);
             break;
         }
         case FieldClass::AssetHandle:
         {
-            DrawAssetPicker(fieldPtr, field, valueLabel, ctx);
+            changed = DrawAssetPicker(fieldPtr, field, valueLabel, ctx);
             break;
         }
         case FieldClass::Matrix:
@@ -413,7 +433,7 @@ namespace VengEditor
         }
         case FieldClass::Enum:
         {
-            DrawEnum(fieldPtr, field, valueLabel, ctx);
+            changed = DrawEnum(fieldPtr, field, valueLabel, ctx);
             break;
         }
         case FieldClass::Reference:
@@ -429,5 +449,6 @@ namespace VengEditor
         {
             UI::Tooltip(field.Tooltip);
         }
+        return changed;
     }
 }

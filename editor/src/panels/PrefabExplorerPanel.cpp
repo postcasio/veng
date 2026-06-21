@@ -448,6 +448,11 @@ namespace VengEditor
             DuplicateSubtree(child, copy);
         }
 
+        // Round-tripping the components copies a recipe but builds no derived resource;
+        // resolve so a duplicated Primitive streams its mesh in. Fired after the children
+        // recurse so a resolver reading the subtree sees it complete.
+        m_Ctx.ResolveEntity(copy);
+
         return copy;
     }
 

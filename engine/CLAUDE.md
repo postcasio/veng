@@ -506,17 +506,19 @@ smoke render use.
   `AssetHandle<Material>`) — so a prefab persists "icosphere, radius 0.8, 4
   subdivisions, brick material" rather than an unaddressable runtime handle. The
   recipe cooks and loads through the ordinary prefab path; the embedded material in the
-  active alternative resolves as an ordinary load-time dependency.
-  `ResolvePrimitiveMeshes(Scene&, AssetManager&, PrimitiveMeshCache&)`
-  (`Veng/Scene/PrimitiveResolve.h`) turns each `PrimitiveComponent`'s active shape into
-  a `Mesh` streamed in via `AssetManager::CreateAsync` and stores the pending handle in
-  the entity's `MeshRenderer.Mesh`, so the primitive **appears** a few frames after
-  spawn exactly as a cooked mesh would (the renderer skips a not-yet-resident mesh). It
-  is idempotent — an entity already pointing at its current shape's mesh is skipped — so
-  the app calls it once after `SpawnInto` and the prefab editor calls it every frame; a
-  caller-owned `PrimitiveMeshCache` (keyed on the shape value) dedups identical recipes
-  to one GPU mesh. The hand-built `Primitives::`/`Adopt` path above stays public for
-  tests and tools.
+  active alternative resolves as an ordinary load-time dependency. The recipe becomes a
+  renderable mesh **automatically at spawn**: `PrimitiveComponent` declares a
+  spawn-resolve thunk (`VE_RESOLVE` in `Veng/Scene/Components.h`, the resolver body in
+  `Veng/Scene/Resolve.{h,cpp}`), and `Prefab::SpawnInto` fires it after populating the
+  component. The resolver calls `CreatePrimitiveMesh(AssetManager&, const
+  PrimitiveShapeVariant&) → AssetHandle<Mesh>` — which builds the active shape's CPU
+  geometry (`BuildShapeMeshData`) and streams it in via `AssetManager::CreateAsync` —
+  then adds (if absent) and sets the entity's `MeshRenderer.Mesh`, so the primitive
+  **appears** a few frames after spawn exactly as a cooked mesh would (the renderer
+  skips a not-yet-resident mesh). There is no caller-driven resolve pass and no dedup
+  cache: identical recipes build independent meshes, and a consumer wanting N entities
+  on one mesh calls `CreatePrimitiveMesh` once and assigns the shared handle N times.
+  The hand-built `Primitives::`/`Adopt` path above stays public for tests and tools.
 - **A mesh owns its materials; submeshes index them.** A `Mesh` holds a resident
   `vector<AssetHandle<Material>>` (`GetMaterials()`) and each `SubMesh` carries a
   `u32 MaterialIndex` into it (`SubMesh::NoMaterial` = unassigned). The cooked
@@ -540,6 +542,23 @@ smoke render use.
   fields. Spawning the same prefab twice spawns two independent copies — a prefab is a
   reusable recipe, not a singleton. `SpawnInto` lives on `Prefab`, so the dependency
   points asset → primitive; the `Scene` primitive gains no asset-system dependency.
+  After populating every spawned entity, `SpawnInto` runs a post-populate resolve pass
+  that fires each component's spawn-resolve thunk, so a recipe component's derived
+  resource streams in with no caller intervention.
+- **A component can carry a recipe whose resources resolve at spawn.** `TypeInfo` holds
+  an optional `SpawnResolve` thunk (`void (*)(void* component, Scene&, Entity,
+  AssetManager&)`) — a component opts in via the `VE_RESOLVE` macro (keyed off a separate
+  `VengResolver<T>` trait, wired through `RegisterImpl`'s `if constexpr` like the variant
+  thunks) and writes its resolver fully typed; the macro generates the `void*`→`T*`
+  trampoline. The typedef names `Scene`/`AssetManager`/`Entity` through forward
+  declarations in `TypeRegistry.h` (no upward include — the one layering compromise, so
+  `include_hygiene` stays green), and its parameter set is frozen; anything more is
+  reached through `Scene`/`AssetManager`. `Prefab::SpawnInto` fires every resolver-bearing
+  component after the spawn populates the subtree, and the public
+  `ResolveComponents(Scene&, Entity, AssetManager&)` (`Veng/Scene/Resolve.h`) is the
+  single resolve code path a runtime caller uses after adding or editing such a
+  component. `PrimitiveComponent` is the first rider; any future resolve-time component
+  (a mesh-baking spline, a buffer-allocating emitter) reuses the same seam.
 
 ## Shaders & materials
 

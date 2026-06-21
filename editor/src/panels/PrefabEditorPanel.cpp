@@ -25,6 +25,7 @@ namespace VengEditor
     {
         m_Scene = Scene::Create(types);
         m_Context.Scene = m_Scene.get();
+        m_Context.Assets = &assets;
 
         BuildScene(context, assets);
 
