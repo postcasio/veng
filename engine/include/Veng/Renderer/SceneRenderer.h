@@ -123,6 +123,20 @@ namespace Veng::Renderer
         PunctualShadows,
     };
 
+    /// @brief Selects the bloom pyramid's down/up filter kernel.
+    ///
+    /// The kernel choice changes the per-level compute shader, so it is a topology knob
+    /// (a Configure recompile), like the Bloom toggle. Cod is the reference filter the
+    /// golden is blessed against; Kawase is the bandwidth-optimized alternative.
+    enum class BloomKernel : u8
+    {
+        /// @brief Call of Duty / Jimenez 13-tap downsample + 3×3 tent upsample dual filter.
+        Cod,
+        /// @brief Dual Kawase 5-tap downsample + 8-tap upsample bilinear filter (Bjørge),
+        ///        designed for the bandwidth-bound tile-based GPUs veng primarily targets.
+        Kawase,
+    };
+
     /// @brief Topology and sizing knobs for SceneRenderer.
     ///
     /// A change to any field here is a Configure → recompile. Knobs that turn a pass
@@ -156,6 +170,12 @@ namespace Veng::Renderer
         /// BloomThreshold, BloomIntensity, and BloomRadius are per-frame values on SceneView
         /// and do not trigger a recompile.
         bool Bloom = true;
+
+        /// @brief Selects the bloom pyramid's down/up filter kernel.
+        ///
+        /// A topology change: it selects the compiled down/up compute pipeline. The Cod
+        /// default is the golden's kernel; Kawase is the bandwidth-optimized alternative.
+        BloomKernel Kernel = BloomKernel::Cod;
 
         /// @brief Whether the directional light casts a shadow.
         ///
@@ -791,10 +811,14 @@ namespace Veng::Renderer
         /// mip k's destination storage view. Recreated whenever the chain is (Resize/Configure).
         vector<Ref<DescriptorSet>> m_HiZReduceSets;
 
-        /// @brief Bloom downsample compute pipeline (bright-pass + Karis on mip 0, 13-tap below).
+        /// @brief Cod bloom downsample pipeline (bright-pass + Karis on mip 0, 13-tap below).
         Ref<class ComputePipeline> m_BloomDownPipeline;
-        /// @brief Bloom upsample-accumulate compute pipeline (3×3 tent into the finer level).
+        /// @brief Cod bloom upsample-accumulate pipeline (3×3 tent into the finer level).
         Ref<class ComputePipeline> m_BloomUpPipeline;
+        /// @brief Kawase bloom downsample pipeline (bright-pass + Karis on mip 0, 5-tap below).
+        Ref<class ComputePipeline> m_BloomDownKawasePipeline;
+        /// @brief Kawase bloom upsample-accumulate pipeline (8-tap bilinear into the finer level).
+        Ref<class ComputePipeline> m_BloomUpKawasePipeline;
         /// @brief Bloom composite compute pipeline (hdr + mip0 * Intensity → result).
         Ref<class ComputePipeline> m_BloomCompositePipeline;
         /// @brief Shared layout for the down/up pipelines (the shared down/up set + push block).

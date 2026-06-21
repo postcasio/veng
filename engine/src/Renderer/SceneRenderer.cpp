@@ -77,6 +77,10 @@ namespace Veng::Renderer
         constexpr AssetId BloomUpCompId{0x4F28282A720BC9F2ULL};
         constexpr AssetId BloomCompositeCompId{0x533236398AB7654FULL};
 
+        // The Dual Kawase variants of the down/up sweep.
+        constexpr AssetId BloomDownKawaseCompId{0xCB1AA796A1E3BBEFULL};
+        constexpr AssetId BloomUpKawaseCompId{0x0C269FA0D5F353D2ULL};
+
         // Linear float HDR format for the lighting target and bloom pyramid.
         // G1 uses the same format as a sampled color target, establishing RGBA16F
         // color-attachment + sampled support on the platform.
@@ -1198,6 +1202,10 @@ namespace Veng::Renderer
         const AssetHandle<Veng::Shader> bloomDownCs =
             LoadShader(BloomDownCompId, "bloom downsample");
         const AssetHandle<Veng::Shader> bloomUpCs = LoadShader(BloomUpCompId, "bloom upsample");
+        const AssetHandle<Veng::Shader> bloomDownKawaseCs =
+            LoadShader(BloomDownKawaseCompId, "bloom downsample (Kawase)");
+        const AssetHandle<Veng::Shader> bloomUpKawaseCs =
+            LoadShader(BloomUpKawaseCompId, "bloom upsample (Kawase)");
         const AssetHandle<Veng::Shader> bloomCompositeCs =
             LoadShader(BloomCompositeCompId, "bloom composite");
 
@@ -1273,6 +1281,20 @@ namespace Veng::Renderer
                 .PipelineLayout = m_BloomDownUpLayout,
                 .ShaderStage = {.Stage = ShaderStage::Compute, .Module = bloomUpCs.Get()->Module},
             });
+        m_BloomDownKawasePipeline = ComputePipeline::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Bloom Down Kawase Pipeline",
+                           .PipelineLayout = m_BloomDownUpLayout,
+                           .ShaderStage = {.Stage = ShaderStage::Compute,
+                                           .Module = bloomDownKawaseCs.Get()->Module},
+                       });
+        m_BloomUpKawasePipeline = ComputePipeline::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Bloom Up Kawase Pipeline",
+                           .PipelineLayout = m_BloomDownUpLayout,
+                           .ShaderStage = {.Stage = ShaderStage::Compute,
+                                           .Module = bloomUpKawaseCs.Get()->Module},
+                       });
         m_BloomCompositePipeline = ComputePipeline::Create(
             m_Context, {
                            .Name = "SceneRenderer Bloom Composite Pipeline",
@@ -2301,7 +2323,9 @@ namespace Veng::Renderer
             }
             builder.StorageWrite(m_BloomChainId.Level(level));
 
-            const Ref<ComputePipeline> pipeline = m_BloomDownPipeline;
+            const Ref<ComputePipeline> pipeline = m_Settings.Kernel == BloomKernel::Kawase
+                                                      ? m_BloomDownKawasePipeline
+                                                      : m_BloomDownPipeline;
             const Ref<DescriptorSet> set = m_BloomDownSets[level];
             const uvec2 dstExtent{dstW, dstH};
             const f32 brightPass = level == 0 ? 1.0f : 0.0f;
@@ -2342,7 +2366,9 @@ namespace Veng::Renderer
             builder.Sample(m_BloomChainId.Level(level + 1));
             builder.StorageWrite(m_BloomChainId.Level(level));
 
-            const Ref<ComputePipeline> pipeline = m_BloomUpPipeline;
+            const Ref<ComputePipeline> pipeline = m_Settings.Kernel == BloomKernel::Kawase
+                                                      ? m_BloomUpKawasePipeline
+                                                      : m_BloomUpPipeline;
             const Ref<DescriptorSet> set = m_BloomUpSets[level];
             const uvec2 dstExtent{dstW, dstH};
             builder.Execute(

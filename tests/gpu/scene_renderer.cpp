@@ -1621,6 +1621,118 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// The Kawase-kernel property assertion. The Dual Kawase filter is the bandwidth-optimized
+// alternative to the default Cod kernel; the Cod golden does not move, so this property
+// (not a second golden) pins that Kawase also blooms a bright region. The same metallic
+// brick fixture drives a tight HDR highlight; with Bloom on and Kernel = Kawase the halo
+// lifts over the bloom-off result, and the Kernel switch is a clean Configure recompile.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: the Kawase bloom kernel also spreads a bright region")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_bloom_kawase.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    auto& mat = const_cast<Material&>(*material->Get());
+    mat.SetParam("RoughnessFactor", 0.08f);
+    mat.SetParam("MetallicFactor", 1.0f);
+
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Kawase Bloom Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f),
+        .Intensity = 8.0f,
+    };
+
+    constexpr uvec2 extent{128, 128};
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false},
+    });
+
+    auto AnnulusLuma = [&](const vector<u8>& pixels, i32 inner, i32 outer) -> f64
+    {
+        const i32 cx = static_cast<i32>(extent.x) / 2;
+        const i32 cy = static_cast<i32>(extent.y) / 2;
+        f64 sum = 0.0;
+        u32 count = 0;
+        for (i32 dy = -outer; dy <= outer; ++dy)
+        {
+            for (i32 dx = -outer; dx <= outer; ++dx)
+            {
+                const i32 r2 = dx * dx + dy * dy;
+                if (r2 < inner * inner || r2 > outer * outer)
+                {
+                    continue;
+                }
+                const vec3 c = DecodeTexel(pixels, extent.x, static_cast<u32>(cx + dx),
+                                           static_cast<u32>(cy + dy));
+                sum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+                ++count;
+            }
+        }
+        return count == 0 ? 0.0 : sum / count;
+    };
+
+    auto HaloLuma = [&](const vector<u8>& pixels) -> f64 { return AnnulusLuma(pixels, 8, 24); };
+    auto FarHaloLuma = [&](const vector<u8>& pixels) -> f64 { return AnnulusLuma(pixels, 12, 40); };
+
+    auto Render = [&]() -> vector<u8>
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .BloomThreshold = 1.0f,
+                                                           .BloomIntensity = 1.0f,
+                                                           .BloomRadius = 1.0f});
+            });
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        return pixels;
+    };
+
+    // Bloom OFF: the halo stays at the surface's own (dim) shading.
+    const vector<u8> noBloomPixels = Render();
+    const f64 haloNoBloom = HaloLuma(noBloomPixels);
+    const f64 farHaloNoBloom = FarHaloLuma(noBloomPixels);
+
+    // Bloom ON with the Kawase kernel (a Configure recompile selecting the Kawase pipelines).
+    renderer->Configure({.Mode = DebugView::Final, .Bloom = true, .Kernel = BloomKernel::Kawase});
+    const vector<u8> kawasePixels = Render();
+    const f64 haloKawase = HaloLuma(kawasePixels);
+    const f64 farHaloKawase = FarHaloLuma(kawasePixels);
+
+    // The Kawase kernel also blooms a bright region: the near halo lifts over bloom-off,
+    // and the multi-octave spread reaches the far halo beyond a single 9-tap radius.
+    CHECK(haloKawase > haloNoBloom + 0.01);
+    CHECK(farHaloKawase > farHaloNoBloom + 0.005);
+
+    std::filesystem::remove(outArchive);
+}
+
 // The directional-shadow property assertion (this plan's property pin beyond the
 // re-blessed golden). A caster cube floats above a large receiver plane, lit by a
 // directional light traveling straight down. With Shadows ON the plane texel
