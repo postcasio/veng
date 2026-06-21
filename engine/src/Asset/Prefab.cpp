@@ -76,6 +76,21 @@ namespace Veng
                     break;
                 }
 
+                case FieldClass::Variant:
+                {
+                    // Descend into the active alternative so an AssetHandle/Reference
+                    // field inside it rehydrates like one in a nested struct; an empty
+                    // variant has nothing to resolve.
+                    const TypeInfo& info = registry.Info(field.Type);
+                    void* memberPtr = info.VariantActivePtr(fieldPtr);
+                    if (memberPtr != nullptr)
+                    {
+                        const TypeId active = info.VariantActiveType(fieldPtr);
+                        Resolve(memberPtr, registry.Info(active), registry, spawned, manager);
+                    }
+                    break;
+                }
+
                 default:
                     break;
                 }

@@ -85,6 +85,21 @@ namespace Veng
                 WriteFields(out, fieldPtr, nested, registry);
                 break;
             }
+            case FieldClass::Variant:
+            {
+                // Tag is the active alternative's TypeId (InvalidTypeId == empty);
+                // a non-empty variant follows it with the active member's record.
+                const TypeInfo& info = registry.Info(field.Type);
+                const TypeId active = info.VariantActiveType(fieldPtr);
+                const u64 tag = active;
+                AppendBytes(out, &tag, sizeof(tag));
+                if (active != InvalidTypeId)
+                {
+                    const void* memberPtr = info.VariantActivePtrConst(fieldPtr);
+                    WriteFields(out, memberPtr, registry.Info(active), registry);
+                }
+                break;
+            }
             }
         }
 
@@ -166,6 +181,49 @@ namespace Veng
                 // and advance cursor by what it consumed.
                 const Result<usize> consumed =
                     ReadFieldsInner(in.subspan(cursor), fieldPtr, nested, registry);
+                if (!consumed)
+                {
+                    return std::unexpected(consumed.error());
+                }
+                cursor += *consumed;
+                break;
+            }
+            case FieldClass::Variant:
+            {
+                if (cursor + sizeof(u64) > in.size())
+                {
+                    return std::unexpected("ReadFields: truncated variant tag");
+                }
+                u64 tag = 0;
+                std::memcpy(&tag, in.data() + cursor, sizeof(tag));
+                cursor += sizeof(tag);
+
+                const TypeInfo& info = registry.Info(field.Type);
+                if (tag == InvalidTypeId)
+                {
+                    // An empty source resets the destination; the tag width is the
+                    // whole value, so nothing more follows.
+                    info.VariantClear(fieldPtr);
+                    break;
+                }
+                if (!registry.IsRegistered(tag))
+                {
+                    // Unknown alternative: leave the destination empty. The enclosing
+                    // record's length skips any trailing member bytes, as for an
+                    // unknown field name.
+                    info.VariantClear(fieldPtr);
+                    break;
+                }
+                void* memberPtr = info.VariantSetActive(fieldPtr, tag);
+                if (memberPtr == nullptr)
+                {
+                    // Registered, but not an alternative of this variant; SetActive
+                    // left the destination untouched, so clear it to honor the tag.
+                    info.VariantClear(fieldPtr);
+                    break;
+                }
+                const Result<usize> consumed =
+                    ReadFieldsInner(in.subspan(cursor), memberPtr, registry.Info(tag), registry);
                 if (!consumed)
                 {
                     return std::unexpected(consumed.error());

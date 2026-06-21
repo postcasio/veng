@@ -22,6 +22,7 @@
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
+#include <Veng/Reflection/Variant.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Scene.h>
@@ -39,10 +40,36 @@ namespace
     {
         Entity Target = Entity::Null;
     };
+
+    // A variant alternative carrying a Reference field — the spawn-time Resolve
+    // walk must descend into the active alternative and remap it.
+    struct LinkShape
+    {
+        Entity Target = Entity::Null;
+    };
+
+    using ShapeVariant = Variant<LinkShape>;
+
+    // A component whose payload is a variant: the Resolve Variant case must reach
+    // the active alternative's Reference field.
+    struct VariantHolder
+    {
+        ShapeVariant Shape;
+    };
 }
 
 VE_REFLECT(Link, 0x7A9C1E55B0334401ULL)
 VE_FIELD(Target)
+VE_REFLECT_END();
+
+VE_REFLECT(LinkShape, 0x75D92F4155F0CF1BULL)
+VE_FIELD(Target)
+VE_REFLECT_END();
+
+VE_VARIANT(ShapeVariant, 0x1099063A85F1BA3DULL);
+
+VE_REFLECT(VariantHolder, 0xEBD7E2BC29BE5CA3ULL)
+VE_FIELD(Shape)
 VE_REFLECT_END();
 
 namespace
@@ -69,6 +96,7 @@ namespace
         {
             RegisterBuiltinTypes(Types);
             Types.Register<Link>();
+            Types.Register<VariantHolder>();
             Stage = Scene::Create(Types);
             Assets = CreateUnique<AssetManager>(Context, Tasks, Types);
         }
@@ -194,6 +222,30 @@ TEST_CASE_FIXTURE(PrefabFixture, "An embedded AssetHandle with an invalid id sta
     const MeshRenderer& renderer = Stage->Get<MeshRenderer>(roots[0]);
     CHECK_FALSE(renderer.Mesh.Id().IsValid());
     CHECK_FALSE(renderer.Mesh.IsLoaded());
+}
+
+TEST_CASE_FIXTURE(PrefabFixture,
+                  "Resolve descends into a variant's active alternative and remaps it")
+{
+    // idx 0 holds a variant whose active alternative references idx 1; the spawn
+    // Resolve walk must reach inside the variant to remap the prefab-local index.
+    VariantHolder holder;
+    static_cast<LinkShape*>(holder.Shape.SetActive(Types.IdOf<LinkShape>()))->Target =
+        Entity{.Index = 1, .Generation = 0};
+
+    vector<Prefab::PrefabEntity> entities;
+    entities.push_back({{MakeComponent(Types, holder)}});
+    entities.push_back({{MakeComponent(Types, Name{"target"})}});
+
+    const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
+    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets);
+
+    REQUIRE(roots.size() == 2);
+    const VariantHolder& spawned = Stage->Get<VariantHolder>(roots[0]);
+    REQUIRE(spawned.Shape.ActiveType() == Types.IdOf<LinkShape>());
+    const Entity target = static_cast<const LinkShape*>(spawned.Shape.ActivePtr())->Target;
+    CHECK(target == roots[1]);
+    CHECK(Stage->Get<Name>(target).Value == "target");
 }
 
 namespace
