@@ -2128,11 +2128,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 // (Plane(80)) viewed down its length (eye (0,3,20) → target (0,0,-20)) — whose
 // visible view-depths span the near (cascade 0) through far (a higher cascade)
 // splits, bottom-to-top of frame. The assertion: a near (lower-frame) region selects
-// cascade 0 (red-dominant), a far (upper-frame) region selects a higher cascade (a
-// different, non-red dominant tint). A broken selection that picks one cascade
-// everywhere (or selects 0 for the far region) fails the distinct-bucket check.
+// a lower cascade than a far (upper-frame) region (a distinct, dominant tint each). A
+// broken selection that picks one cascade everywhere (or inverts near/far) fails the
+// distinct-bucket check.
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "scene renderer: DebugView::Cascades selects cascade 0 near and a "
+                  "scene renderer: DebugView::Cascades selects a lower cascade near and a "
                   "higher cascade far over a depth-spanning receiver")
 {
     RegisterBuiltinTypes(Types);
@@ -2166,10 +2166,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     constexpr uvec2 extent{128, 128};
 
     // A grazing view down the plane's length: the camera sits low and close and looks
-    // far down -Z, so the lower frame is near the camera (small view-depth → cascade
-    // 0: ~2.3, below the ~4.2 cascade-0 split) and the frame recedes toward the
-    // horizon (large view-depth → a higher cascade) above it. With near 0.1 / far 100
-    // the default-count splits are ≈ 4.2 / 10.2 / 26.4 / 100.
+    // far down -Z, so the lower frame is near the camera (small view-depth → a low
+    // cascade) and the frame recedes toward the horizon (large view-depth → a higher
+    // cascade) above it. The split range fits the receiver's own view-depth extent, so
+    // the exact splits track the plane bound rather than the camera's far plane.
     CameraView camera;
     camera.SetPerspective(glm::radians(55.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 1.2f, 4.0f), vec3(0.0f, 0.0f, -40.0f), vec3(0.0f, 1.0f, 0.0f));
@@ -2244,11 +2244,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     };
 
     // The NEAR region — the lower band of the frame, closest to the camera — must
-    // select cascade 0 (red). The FAR region — the upper band, receding toward the
-    // horizon — must select a HIGHER cascade. A broken selection (one cascade
-    // everywhere, or cascade 0 in the far band) fails one of these.
+    // select a strictly LOWER cascade than the FAR region — the upper band receding
+    // toward the horizon. A broken selection (one cascade everywhere, or an inverted
+    // near/far select) collapses or reverses this ordering.
     // The receiver fills the lower frame and recedes toward the horizon at center:
-    // bottom rows are nearest the camera (cascade 0), the band just below center is
+    // bottom rows are nearest the camera (a low cascade), the band just below center is
     // far (a higher cascade). Above the horizon is background.
     const int nearCascade = DominantCascadeInBand(extent.y * 7 / 8, extent.y - 2);
     const int farCascade = DominantCascadeInBand(extent.y / 2, extent.y * 5 / 8);
@@ -2256,11 +2256,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(nearCascade >= 0);
     REQUIRE(farCascade >= 0);
 
-    CHECK_MESSAGE(nearCascade == 0, "the near (lower-frame) region must select cascade 0, got ",
-                  nearCascade);
     CHECK_MESSAGE(farCascade > nearCascade,
                   "the far (upper-frame) region must select a higher cascade than the "
-                  "near region (near ",
+                  "near (lower-frame) region (near ",
                   nearCascade, ", far ", farCascade, ")");
 
     std::filesystem::remove(outArchive);

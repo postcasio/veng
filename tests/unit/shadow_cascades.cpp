@@ -210,36 +210,66 @@ TEST_CASE("ComputeCascades: sub-texel camera translation yields a stable snapped
     }
 }
 
-TEST_CASE("ComputeCascades: scene bound extends the near plane, leaving XY untouched")
+TEST_CASE("ComputeCascades: scene bound clamps the split range to the scene")
+{
+    // A camera whose far plane sits far past the scene (an editor fly camera defaults
+    // to a 1000-unit far). Without the bound clamp the whole scene collapses into
+    // cascade 0; the bound pulls the far split in to the scene's view-depth extent.
+    const CameraView camera = MakeTestCamera(0.1f, 1000.0f);
+    const vec3 lightDir(0.3f, -1.0f, 0.2f);
+    const CascadeSettings settings{};
+
+    const AABB sceneBounds{.Min = vec3(-15.0f, -2.0f, -15.0f), .Max = vec3(15.0f, 8.0f, 15.0f)};
+    const CascadeData fitted = ComputeCascades(camera, lightDir, sceneBounds, settings);
+    const CascadeData unfitted = ComputeCascades(camera, lightDir, AABB::Empty(), settings);
+
+    // An empty bound keeps the camera's own far; a real bound fits the far split in.
+    CHECK(unfitted.SplitFar[unfitted.Count - 1] == camera.GetFar());
+    CHECK(fitted.SplitFar[fitted.Count - 1] < unfitted.SplitFar[unfitted.Count - 1]);
+    // The scene lies within a few tens of view-units, nowhere near the 1000 far plane.
+    CHECK(fitted.SplitFar[fitted.Count - 1] < 60.0f);
+    // The fitted splits stay strictly increasing inside the tightened range.
+    for (u32 i = 1; i < fitted.Count; ++i)
+    {
+        CHECK(fitted.SplitFar[i] > fitted.SplitFar[i - 1]);
+    }
+}
+
+TEST_CASE("ComputeCascades: a bound fully behind the camera leaves the range untouched")
 {
     const CameraView camera = MakeTestCamera(0.1f, 100.0f);
     const vec3 lightDir(0.3f, -1.0f, 0.2f);
     const CascadeSettings settings{};
 
-    // A scene bound tall along the light axis (a tower of casters above the
-    // ground) extends the cascade near plane toward the light.
-    const AABB sceneBounds{.Min = vec3(-20.0f, -1.0f, -20.0f), .Max = vec3(20.0f, 30.0f, 20.0f)};
+    // The camera sits at z=10 looking toward the origin (−Z); a bound entirely behind
+    // it (large +Z) has no view-depth extent in front, so the clamp degrades to a
+    // no-op — the camera's own range — rather than a degenerate near==far.
+    const AABB behind{.Min = vec3(-5.0f, -5.0f, 30.0f), .Max = vec3(5.0f, 5.0f, 40.0f)};
+    const CascadeData data = ComputeCascades(camera, lightDir, behind, settings);
+    const CascadeData empty = ComputeCascades(camera, lightDir, AABB::Empty(), settings);
 
-    const CascadeData withBounds = ComputeCascades(camera, lightDir, sceneBounds, settings);
-    const CascadeData noBounds = ComputeCascades(camera, lightDir, AABB::Empty(), settings);
-
-    // XY is provably untouched: the linear X/Y projection scale (rows 0 and 1)
-    // is identical with and without the scene bound — only the near plane moved.
-    for (u32 k = 0; k < withBounds.Count; ++k)
+    CHECK(data.SplitFar[data.Count - 1] == camera.GetFar());
+    for (u32 i = 0; i < data.Count; ++i)
     {
-        for (int c = 0; c < 4; ++c)
-        {
-            CHECK(withBounds.ViewProj[k][c][0] ==
-                  doctest::Approx(noBounds.ViewProj[k][c][0]).epsilon(1e-5));
-            CHECK(withBounds.ViewProj[k][c][1] ==
-                  doctest::Approx(noBounds.ViewProj[k][c][1]).epsilon(1e-5));
-        }
+        CHECK(data.SplitFar[i] == doctest::Approx(empty.SplitFar[i]).epsilon(1e-5));
     }
+}
 
-    // A caster high above the slice, inside the bound, projects within z ∈ [0,1]
-    // of cascade 0 thanks to the near-plane extension.
+TEST_CASE("ComputeCascades: scene bound extends cascade 0's near plane toward the light")
+{
+    const CameraView camera = MakeTestCamera(0.1f, 100.0f);
+    const vec3 lightDir(0.3f, -1.0f, 0.2f);
+    const CascadeSettings settings{};
+
+    // A bound tall along the light axis (a tower of casters above the ground) extends
+    // cascade 0's near plane toward the light, so a caster above the frustum slice
+    // still projects within the cascade's depth range rather than being clipped at the
+    // near plane (ndc.z < 0).
+    const AABB tall{.Min = vec3(-20.0f, -1.0f, -20.0f), .Max = vec3(20.0f, 30.0f, 20.0f)};
+    const CascadeData data = ComputeCascades(camera, lightDir, tall, settings);
+
     const vec3 highCaster(0.0f, 25.0f, 0.0f);
-    const vec4 clip = withBounds.ViewProj[0] * vec4(highCaster, 1.0f);
+    const vec4 clip = data.ViewProj[0] * vec4(highCaster, 1.0f);
     const vec3 ndc = vec3(clip) / clip.w;
     CHECK(ndc.z >= -1e-3f);
     CHECK(ndc.z <= 1.0f + 1e-3f);

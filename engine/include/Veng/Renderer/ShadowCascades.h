@@ -48,8 +48,10 @@ namespace Veng::Renderer
     /// @brief Computes per-cascade fit-to-frustum light matrices.
     ///
     /// lightDir is the light's travel direction. sceneBounds (world space, possibly
-    /// empty) extends each cascade's near plane toward the light so off-screen casters
-    /// are included.
+    /// empty) does two things: it clamps the split range to the scene's view-depth
+    /// extent so the cascades fit real receivers rather than the camera's full clip
+    /// range, and it extends each cascade's near plane toward the light so off-screen
+    /// casters are included.
     /// @param camera       The view camera that defines the split frustum.
     /// @param lightDir     World-space direction the light travels (toward receivers).
     /// @param sceneBounds  World-space scene bound; may be empty.

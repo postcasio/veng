@@ -60,8 +60,30 @@ namespace Veng::Renderer
     CascadeData ComputeCascades(const CameraView& camera, vec3 lightDir, const AABB& sceneBounds,
                                 const CascadeSettings& settings)
     {
-        const f32 near = camera.GetNear();
-        const f32 far = camera.GetFar();
+        f32 near = camera.GetNear();
+        f32 far = camera.GetFar();
+
+        // Fit the split range to where scene geometry actually sits in front of the
+        // camera. The camera's own far plane may sit far past the scene (an editor fly
+        // camera defaults to a 1000-unit far); splitting that whole range collapses the
+        // scene into cascade 0 and spends the rest on empty space, starving texel
+        // density. Intersecting the camera range with the scene bound's view-depth
+        // extent fits every cascade to real receivers regardless of the camera's clip
+        // range. View looks down -Z, so a corner's view depth is the negated z.
+        if (!sceneBounds.IsEmpty())
+        {
+            const AABB boundsView = sceneBounds.Transformed(camera.View());
+            const f32 fitNear = std::clamp(-boundsView.Max.z, camera.GetNear(), camera.GetFar());
+            const f32 fitFar = std::clamp(-boundsView.Min.z, camera.GetNear(), camera.GetFar());
+            // Adopt the tighter range only when it is non-degenerate; a scene fully
+            // behind or beyond the camera keeps the camera's own range.
+            if (fitFar > fitNear)
+            {
+                near = fitNear;
+                far = fitFar;
+            }
+        }
+
         VE_ASSERT(far > near && near > 0.0f,
                   "ComputeCascades needs far > near > 0 (got near={}, far={})", near, far);
 
