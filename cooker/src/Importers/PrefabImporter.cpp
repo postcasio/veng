@@ -41,6 +41,34 @@ namespace Veng::Cook
             return std::nullopt;
         }
 
+        // Finds a field of `info` by name, or nullptr if none matches.
+        const FieldDescriptor* FindField(const TypeInfo& info, const string& name)
+        {
+            for (const FieldDescriptor& field : info.Fields)
+            {
+                if (field.Name == name)
+                {
+                    return &field;
+                }
+            }
+            return nullptr;
+        }
+
+        // Matches `name` against the registered TypeInfo.Name of each of the
+        // variant's alternatives, returning the matched TypeId or InvalidTypeId.
+        TypeId MatchAlternativeByName(const TypeInfo& variant, const string& name,
+                                      const TypeRegistry& registry)
+        {
+            for (const TypeId altId : variant.VariantAlternatives)
+            {
+                if (registry.Info(altId).Name == name)
+                {
+                    return altId;
+                }
+            }
+            return InvalidTypeId;
+        }
+
         // Located-error prefix for a field within an entity's component.
         string Located(const string& file, usize entityIndex, const string& entityName,
                        const string& typeName, const string& field, const string& reason)
@@ -263,6 +291,67 @@ namespace Veng::Cook
                     if (!bound)
                     {
                         return bound;
+                    }
+                }
+                return {};
+            }
+
+            case FieldClass::Variant:
+            {
+                // A variant is authored as { "type": <registered name>, "value": {…} }.
+                // The cooked bytes carry the active TypeId tag; the shared WriteFields
+                // (not this binder) emits them, so binding only selects the active
+                // alternative on the live instance and recurses into its fields.
+                if (!value.is_object() || !value.contains("type") || !value["type"].is_string())
+                {
+                    return err("expected an object with a string 'type' key");
+                }
+
+                const TypeInfo& info = registry.Info(field.Type);
+                const string typeName = value["type"].get<string>();
+
+                // The empty selection: leave the default-constructed (empty) variant,
+                // which WriteFields emits as the InvalidTypeId tag.
+                if (typeName.empty())
+                {
+                    return {};
+                }
+
+                const TypeId chosen = MatchAlternativeByName(info, typeName, registry);
+                if (chosen == InvalidTypeId)
+                {
+                    return err(fmt::format("'{}' is not an alternative of variant '{}'", typeName,
+                                           info.Name));
+                }
+
+                void* memberPtr = info.VariantSetActive(fieldPtr, chosen);
+                // chosen came from this variant's alternative list, so SetActive succeeds.
+
+                if (value.contains("value"))
+                {
+                    const json& inner = value["value"];
+                    if (!inner.is_object())
+                    {
+                        return err("variant 'value' must be an object");
+                    }
+
+                    const TypeInfo& alt = registry.Info(chosen);
+                    for (auto it = inner.begin(); it != inner.end(); ++it)
+                    {
+                        const FieldDescriptor* match = FindField(alt, it.key());
+                        if (match == nullptr)
+                        {
+                            return err(fmt::format("nested field '{}' is not in alternative '{}'",
+                                                   it.key(), alt.Name));
+                        }
+
+                        const VoidResult bound =
+                            BindField(memberPtr, *match, it.value(), registry, entityCount, resolve,
+                                      file, entityIndex, entityName, typeName);
+                        if (!bound)
+                        {
+                            return bound;
+                        }
                     }
                 }
                 return {};
