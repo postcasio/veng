@@ -64,7 +64,7 @@ TEST_CASE_FIXTURE(
         pixels[i * 4 + 3] = 255;
     }
 
-    const TextureInfo info{
+    const TextureData info{
         .Name = "Async Build Texture",
         .Extent = {Size, Size},
         .Format = Format::RGBA8Unorm,
@@ -93,6 +93,44 @@ TEST_CASE_FIXTURE(
     CHECK(texture->GetFormat() == Format::RGBA8Unorm);
 
     // The main-thread continuation finalized it, so its bindless view/sampler slots are allocated.
+    CHECK(texture->GetHandle().IsValid());
+    CHECK(texture->GetSamplerHandle().IsValid());
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "AssetManager::BuildSync<Texture>: a runtime texture is resident immediately")
+{
+    AssetManager assets(Context, Tasks, Types);
+
+    std::array<u8, static_cast<usize>(Size) * Size * 4> pixels{};
+    for (usize i = 0; i < static_cast<usize>(Size) * Size; i++)
+    {
+        pixels[i * 4 + 0] = 255;
+        pixels[i * 4 + 3] = 255;
+    }
+
+    const TextureData data{
+        .Name = "Sync Build Texture",
+        .Extent = {Size, Size},
+        .Format = Format::RGBA8Unorm,
+        .Pixels = pixels,
+        .Sampler =
+            {
+                .AddressModeU = AddressMode::ClampToEdge,
+                .AddressModeV = AddressMode::ClampToEdge,
+                .AddressModeW = AddressMode::ClampToEdge,
+            },
+    };
+
+    // BuildSync runs the upload and the bindless registration inline, so the handle is
+    // resident on return — no continuation pump.
+    const AssetHandle<Texture> handle = assets.BuildSync<Texture>(data);
+
+    REQUIRE(handle.IsLoaded());
+    CHECK_FALSE(handle.Id().IsValid());
+    const Texture* texture = handle.Get();
+    REQUIRE(texture != nullptr);
+    CHECK(texture->GetExtent() == uvec2(Size, Size));
     CHECK(texture->GetHandle().IsValid());
     CHECK(texture->GetSamplerHandle().IsValid());
 }

@@ -162,6 +162,11 @@ namespace Veng
         return Mesh::Create(UploadMesh(context, data, name, BuildSubMeshes(data)));
     }
 
+    Ref<Mesh> Detail::BuildAssetSync(Context& context, const MeshData& data, const string& name)
+    {
+        return Mesh::BuildSync(context, data, name);
+    }
+
     Task<Detail::BuiltAsset<Mesh>> Detail::SubmitAssetBuild(Context& context, TaskSystem& tasks,
                                                             MeshData data, string name)
     {

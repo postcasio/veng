@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include <Veng/Veng.h>
+#include <Veng/Asset/AssetBuild.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/Shader.h>
@@ -102,30 +103,10 @@ namespace Veng
         /// @brief SelectorOffset sentinel: the material pushes no selector (it reads its index from the DrawData SSBO).
         static constexpr u32 NoSelectorPush = ~0u;
 
-        /// @brief Creates a Material from the given info.
-        ///
-        /// The low-level GPU-object construction step from a MaterialInfo, distinct from the
-        /// async build that streams a runtime material in (see AssetManager::Build).
-        static Ref<Material> Create(const MaterialInfo& info)
-        {
-            return Ref<Material>(new Material(info));
-        }
-
         ~Material();
 
         Material(const Material&) = delete;
         Material& operator=(const Material&) = delete;
-
-        /// @brief Patches bindless indices, allocates the per-material SSBO slot, and uploads.
-        ///
-        /// Runs on the main thread. The layout and pipeline are supplied here because their GPU
-        /// build is also deferred main-thread work. A PostProcess material is finalized with a
-        /// null pipeline — its GraphicsPipeline is built later by the PostProcessScenePass
-        /// against the renderer's color format; Bind() then only pushes the selector.
-        /// @param layout   The reflected pipeline layout (set 0 reserved for bindless).
-        /// @param pipeline The built graphics pipeline, or null for PostProcess materials.
-        void Finalize(Ref<Renderer::PipelineLayout> layout,
-                      Ref<Renderer::GraphicsPipeline> pipeline);
 
         /// @brief Binds the material's pipeline and pushes its index as the per-draw selector.
         ///
@@ -222,6 +203,36 @@ namespace Veng
         [[nodiscard]] std::span<const MaterialField> GetFields() const { return m_Fields; }
 
     private:
+        friend class MaterialLoader;
+        friend Task<Detail::BuiltAsset<Material>>
+        Detail::SubmitAssetBuild(Renderer::Context& context, TaskSystem& tasks, MaterialInfo data,
+                                 Ref<Renderer::PipelineLayout> layout);
+        friend Ref<Material> Detail::BuildAssetSync(Renderer::Context& context,
+                                                    const MaterialInfo& data,
+                                                    Ref<Renderer::PipelineLayout> layout);
+
+        /// @brief Constructs an unfinalized Material from the given info.
+        ///
+        /// The worker-legal construction step; the result must be Finalize()d on the render thread
+        /// (bindless registration + parameter-block write) before use.
+        /// @param info Material description (shaders, textures, parameter block, fields).
+        /// @return The unfinalized material.
+        static Ref<Material> Prepare(const MaterialInfo& info)
+        {
+            return Ref<Material>(new Material(info));
+        }
+
+        /// @brief Patches bindless indices, allocates the per-material SSBO slot, and uploads.
+        ///
+        /// Runs on the render thread. The layout and pipeline are supplied here because their GPU
+        /// build is also deferred render-thread work. A PostProcess material is finalized with a
+        /// null pipeline — its GraphicsPipeline is built later by the PostProcessScenePass
+        /// against the renderer's color format; Bind() then only pushes the selector.
+        /// @param layout   The reflected pipeline layout (set 0 reserved for bindless).
+        /// @param pipeline The built graphics pipeline, or null for PostProcess materials.
+        void Finalize(Ref<Renderer::PipelineLayout> layout,
+                      Ref<Renderer::GraphicsPipeline> pipeline);
+
         explicit Material(const MaterialInfo& info);
 
         [[nodiscard]] const MaterialField* FindField(std::string_view name) const;

@@ -214,11 +214,11 @@ namespace Veng
         /// (bindless registration) lands on the main-thread continuation pump, after which
         /// IsLoaded() is true. Like Adopt, the handle carries the invalid AssetId and its cache
         /// entry is detached — a runtime resource has no content identity. Supported for Texture,
-        /// Mesh, and Material; the arguments are the asset's build description (a TextureInfo, a
+        /// Mesh, and Material; the arguments are the asset's build description (a TextureData, a
         /// MeshData + name, or a MaterialInfo + pipeline layout).
         /// @tparam T     The asset resource type to build.
         /// @tparam Args  The asset's build-description arguments.
-        /// @param args   Forwarded to the per-type build (e.g. a TextureInfo, or a MeshData + name).
+        /// @param args   Forwarded to the per-type build (e.g. a TextureData, or a MeshData + name).
         /// @return A pending handle that becomes resident through PumpMainThread().
         template <typename T, typename... Args>
         [[nodiscard]] AssetHandle<T> Build(Args&&... args)
@@ -257,6 +257,23 @@ namespace Veng
                     });
 
             return AssetHandle<T>(AssetId{}, std::move(entry));
+        }
+
+        /// @brief Builds a runtime asset inline on the calling thread, returning a resident handle.
+        ///
+        /// The blocking sibling of Build<T>: it constructs, uploads, and finalizes the asset inline
+        /// (the finalize — bindless registration — runs on the calling thread, so call this on the
+        /// render thread), then adopts the ready resource. Like Build, the handle carries the
+        /// invalid AssetId and its cache entry is detached. Supported for Texture, Mesh, and
+        /// Material.
+        /// @tparam T     The asset resource type to build.
+        /// @tparam Args  The asset's build-description arguments.
+        /// @param args   Forwarded to the per-type build (e.g. a TextureData, or a MeshData + name).
+        /// @return A resident handle (IsLoaded() == true).
+        template <typename T, typename... Args>
+        [[nodiscard]] AssetHandle<T> BuildSync(Args&&... args)
+        {
+            return Adopt<T>(Detail::BuildAssetSync(m_Context, std::forward<Args>(args)...));
         }
 
         /// @brief Returns the cache entry for an id, or null if it is not cached.

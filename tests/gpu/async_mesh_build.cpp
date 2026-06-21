@@ -121,3 +121,17 @@ TEST_CASE_FIXTURE(
     CHECK(async->GetBounds().Min == sync->GetBounds().Min);
     CHECK(async->GetBounds().Max == sync->GetBounds().Max);
 }
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "AssetManager::BuildSync<Mesh>: a runtime mesh is resident immediately")
+{
+    AssetManager assets(Context, Tasks, Types);
+
+    // A Mesh has no bindless step, so BuildSync returns a resident handle with no pump.
+    const AssetHandle<Mesh> handle = assets.BuildSync<Mesh>(TwoTriangleQuad(), string("Sync Quad"));
+
+    REQUIRE(handle.IsLoaded());
+    CHECK_FALSE(handle.Id().IsValid());
+    REQUIRE(handle.Get() != nullptr);
+    CHECK(handle->GetIndexCount() == 6);
+}

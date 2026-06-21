@@ -37,7 +37,7 @@ namespace Veng
         return tasks.Submit(
             [info = std::move(info), layout = std::move(layout)]() mutable
             {
-                const Ref<Material> material = Material::Create(info);
+                const Ref<Material> material = Material::Prepare(info);
 
                 // The bindless RegisterMaterial + parameter-block write is render-thread-only, so
                 // it is deferred to the main-thread continuation.
@@ -51,6 +51,18 @@ namespace Veng
                     },
                 };
             });
+    }
+
+    Ref<Material> Detail::BuildAssetSync(Renderer::Context&, const MaterialInfo& data,
+                                         Ref<Renderer::PipelineLayout> layout)
+    {
+        VE_ASSERT(layout != nullptr,
+                  "AssetManager::BuildSync<Material>: '{}' given a null pipeline layout",
+                  data.Name);
+
+        const Ref<Material> material = Material::Prepare(data);
+        material->Finalize(std::move(layout), data.Pipeline);
+        return material;
     }
 
     Material::~Material()

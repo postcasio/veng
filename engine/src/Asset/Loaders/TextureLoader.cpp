@@ -130,7 +130,7 @@ namespace Veng
             });
         }
 
-        const TextureInfo info{
+        const TextureData info{
             .Name = fmt::format("Texture {}", id.Value),
             .Extent = {header.Width, header.Height},
             .Format = *format,
@@ -152,11 +152,11 @@ namespace Veng
         if (async)
         {
             Task<void> upload;
-            texture = Veng::Texture::CreateAsync(context, info, tasks, upload);
+            texture = Veng::Texture::PrepareAsync(context, info, tasks, upload);
         }
         else
         {
-            texture = Veng::Texture::BuildSync(context, info);
+            texture = Veng::Texture::PrepareSync(context, info);
         }
 
         return Detail::LoadJob{

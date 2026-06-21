@@ -464,7 +464,7 @@ namespace Veng
             .SelectorOffset = SelectorPushOffsetFor(domain),
         };
 
-        const Ref<Veng::Material> material = Veng::Material::Create(info);
+        const Ref<Veng::Material> material = Veng::Material::Prepare(info);
 
         // ── 7. The main-thread finalize ──────────────────────────────────────
         return Detail::LoadJob{

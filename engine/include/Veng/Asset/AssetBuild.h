@@ -13,7 +13,7 @@ namespace Veng::Renderer
 namespace Veng
 {
     class Texture;
-    struct TextureInfo;
+    struct TextureData;
     class Material;
     struct MaterialInfo;
     class Mesh;
@@ -47,7 +47,7 @@ namespace Veng::Detail
     /// @param info    Texture description; its pixels are copied into the worker job.
     /// @return A Task yielding the unfinalized texture and its finalize step.
     [[nodiscard]] Task<BuiltAsset<Texture>> SubmitAssetBuild(Renderer::Context& context,
-                                                             TaskSystem& tasks, TextureInfo info);
+                                                             TaskSystem& tasks, TextureData info);
 
     /// @brief Submits the worker-legal build of a Mesh, returning its streaming result.
     ///
@@ -75,4 +75,37 @@ namespace Veng::Detail
     [[nodiscard]] Task<BuiltAsset<Material>> SubmitAssetBuild(Renderer::Context& context,
                                                               TaskSystem& tasks, MaterialInfo info,
                                                               Ref<Renderer::PipelineLayout> layout);
+
+    /// @brief Builds and finalizes a Texture inline on the calling thread.
+    ///
+    /// The synchronous sibling of SubmitAssetBuild: prepares the texture with a blocking upload
+    /// and registers it into the bindless registry, returning a ready resource. Runs the
+    /// render-thread-only registration on the calling thread, so call it on the render thread.
+    /// @param context Render context the texture is created on.
+    /// @param data    Texture description (extent, format, pixels, sampler settings).
+    /// @return A ready, finalized texture.
+    [[nodiscard]] Ref<Texture> BuildAssetSync(Renderer::Context& context, const TextureData& data);
+
+    /// @brief Builds a Mesh inline on the calling thread.
+    ///
+    /// The synchronous sibling of SubmitAssetBuild. A Mesh has no bindless step, so the returned
+    /// resource is ready as built.
+    /// @param context Render context the buffers are created on.
+    /// @param data    CPU geometry.
+    /// @param name    Debug name for the mesh and its buffers.
+    /// @return A ready mesh.
+    [[nodiscard]] Ref<Mesh> BuildAssetSync(Renderer::Context& context, const MeshData& data,
+                                           const string& name);
+
+    /// @brief Builds and finalizes a Material inline on the calling thread.
+    ///
+    /// The synchronous sibling of SubmitAssetBuild: constructs the material and finalizes it
+    /// against the layout (and the info's pipeline) on the calling thread, so call it on the
+    /// render thread.
+    /// @param context Unused; the material's context rides MaterialInfo::Context.
+    /// @param data    Material description; its shaders and textures must already be resident.
+    /// @param layout  The reflected pipeline layout passed to Finalize.
+    /// @return A ready, finalized material.
+    [[nodiscard]] Ref<Material> BuildAssetSync(Renderer::Context& context, const MaterialInfo& data,
+                                               Ref<Renderer::PipelineLayout> layout);
 }

@@ -13,7 +13,7 @@ namespace Veng
 {
     using namespace Renderer;
 
-    Texture::Texture(Context& context, const TextureInfo& info)
+    Texture::Texture(Context& context, const TextureData& info)
         : m_Context(context), m_Name(info.Name), m_Extent(info.Extent), m_Format(info.Format)
     {
         m_Image = Image::Create(context, {
@@ -33,35 +33,35 @@ namespace Veng
         m_Sampler = Sampler::Create(context, samplerInfo);
     }
 
-    Ref<Texture> Texture::BuildSync(Context& context, const TextureInfo& info)
+    Ref<Texture> Texture::PrepareSync(Context& context, const TextureData& data)
     {
-        Ref<Texture> texture(new Texture(context, info));
-        texture->m_Image->UploadSync(info.Pixels);
+        Ref<Texture> texture(new Texture(context, data));
+        texture->m_Image->UploadSync(data.Pixels);
         return texture;
     }
 
-    Ref<Texture> Texture::CreateAsync(Context& context, const TextureInfo& info, TaskSystem& tasks,
-                                      Task<void>& outUpload)
+    Ref<Texture> Texture::PrepareAsync(Context& context, const TextureData& data, TaskSystem& tasks,
+                                       Task<void>& outUpload)
     {
-        Ref<Texture> texture(new Texture(context, info));
-        outUpload = texture->m_Image->Upload(tasks, info.Pixels);
+        Ref<Texture> texture(new Texture(context, data));
+        outUpload = texture->m_Image->Upload(tasks, data.Pixels);
         return texture;
     }
 
     Task<Detail::BuiltAsset<Texture>> Detail::SubmitAssetBuild(Context& context, TaskSystem& tasks,
-                                                               TextureInfo info)
+                                                               TextureData data)
     {
-        // The caller's TextureInfo::Pixels is a non-owning span; copy the source bytes into the
+        // The caller's TextureData::Pixels is a non-owning span; copy the source bytes into the
         // worker job so they outlive the caller's frame.
-        vector<u8> pixels(info.Pixels.begin(), info.Pixels.end());
+        vector<u8> pixels(data.Pixels.begin(), data.Pixels.end());
 
         return tasks.Submit(
-            [&context, &tasks, info = std::move(info), pixels = std::move(pixels)]() mutable
+            [&context, &tasks, data = std::move(data), pixels = std::move(pixels)]() mutable
             {
-                info.Pixels = pixels;
+                data.Pixels = pixels;
 
                 Task<void> upload;
-                const Ref<Texture> texture = Texture::CreateAsync(context, info, tasks, upload);
+                const Ref<Texture> texture = Texture::PrepareAsync(context, data, tasks, upload);
 
                 // Block on the transfer-queue submit here on the worker; the staging buffer retires
                 // on the transfer timeline, so the frame that first samples this view folds in the
@@ -77,6 +77,13 @@ namespace Veng
                     },
                 };
             });
+    }
+
+    Ref<Texture> Detail::BuildAssetSync(Context& context, const TextureData& data)
+    {
+        const Ref<Texture> texture = Texture::PrepareSync(context, data);
+        texture->Finalize();
+        return texture;
     }
 
     Texture::~Texture()

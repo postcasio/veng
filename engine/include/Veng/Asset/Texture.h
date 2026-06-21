@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Asset/AssetBuild.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Renderer/BindlessRegistry.h>
@@ -27,7 +28,7 @@ namespace Veng::Renderer
 namespace Veng
 {
     /// @brief Construction parameters for a Texture.
-    struct TextureInfo
+    struct TextureData
     {
         /// @brief Debug name for the texture.
         string Name;
@@ -50,31 +51,10 @@ namespace Veng
     class Texture
     {
     public:
-        /// @brief Synchronous build + blocking UploadSync. Unregistered; the caller must call Finalize() on the main thread.
-        ///
-        /// @see AssetManager::Build  The async sibling that streams the texture in off the render thread.
-        static Ref<Texture> BuildSync(Renderer::Context& context, const TextureInfo& info);
-
-        /// @brief Worker-legal create + async upload recorded on the transfer queue.
-        ///
-        /// Returns the unregistered texture and a Task that completes once the upload is submitted.
-        /// The caller waits for the task and calls Finalize() on the main thread.
-        /// @param context    Render context the image/view/sampler are created on.
-        /// @param info       Texture description (extent, format, pixels, sampler settings).
-        /// @param tasks      Task system the async upload is recorded through.
-        /// @param outUpload  Receives the upload task to wait on before calling Finalize().
-        static Ref<Texture> CreateAsync(Renderer::Context& context, const TextureInfo& info,
-                                        TaskSystem& tasks, Task<void>& outUpload);
-
         ~Texture();
 
         Texture(const Texture&) = delete;
         Texture& operator=(const Texture&) = delete;
-
-        /// @brief Registers the view and sampler into the bindless registry (set 0).
-        ///
-        /// Runs on the main thread. Asserts against double-registration.
-        void Finalize();
 
         /// @brief Returns the texture's debug name.
         [[nodiscard]] const string& GetName() const { return m_Name; }
@@ -101,7 +81,40 @@ namespace Veng
         [[nodiscard]] Renderer::SamplerHandle GetSamplerHandle() const { return m_SamplerHandle; }
 
     private:
-        Texture(Renderer::Context& context, const TextureInfo& info);
+        friend class TextureLoader;
+        friend Task<Detail::BuiltAsset<Texture>>
+        Detail::SubmitAssetBuild(Renderer::Context& context, TaskSystem& tasks, TextureData data);
+        friend Ref<Texture> Detail::BuildAssetSync(Renderer::Context& context,
+                                                   const TextureData& data);
+
+        /// @brief Prepares a Texture with a blocking upload, leaving it unregistered.
+        ///
+        /// Constructs the image/view/sampler and uploads the pixels through the blocking
+        /// UploadSync path. The result must be Finalize()d on the render thread before sampling.
+        /// @param context Render context the image/view/sampler are created on.
+        /// @param data    Texture description (extent, format, pixels, sampler settings).
+        /// @return The unregistered texture.
+        static Ref<Texture> PrepareSync(Renderer::Context& context, const TextureData& data);
+
+        /// @brief Prepares a Texture with an async transfer-queue upload, leaving it unregistered.
+        ///
+        /// Constructs the image/view/sampler and records the upload on the transfer queue,
+        /// returning the unregistered texture and a Task that completes once the upload is
+        /// submitted. The result must be Finalize()d on the render thread before sampling.
+        /// @param context    Render context the image/view/sampler are created on.
+        /// @param data       Texture description (extent, format, pixels, sampler settings).
+        /// @param tasks      Task system the async upload is recorded through.
+        /// @param outUpload  Receives the upload task to wait on before Finalize().
+        /// @return The unregistered texture.
+        static Ref<Texture> PrepareAsync(Renderer::Context& context, const TextureData& data,
+                                         TaskSystem& tasks, Task<void>& outUpload);
+
+        /// @brief Registers the view and sampler into the bindless registry (set 0).
+        ///
+        /// Runs on the render thread. Asserts against double-registration.
+        void Finalize();
+
+        Texture(Renderer::Context& context, const TextureData& data);
 
         /// @brief Back-reference for deferred destruction; resource must not outlive its context.
         Renderer::Context& m_Context;
