@@ -205,11 +205,11 @@ namespace Veng
         colors[ImGuiCol_HeaderHovered] = alpha(theme.Accent, 0.40f);
         colors[ImGuiCol_HeaderActive] = alpha(theme.Accent, 0.55f);
         colors[ImGuiCol_Separator] = theme.Border;
-        colors[ImGuiCol_SeparatorHovered] = theme.AccentHovered;
-        colors[ImGuiCol_SeparatorActive] = theme.Accent;
-        colors[ImGuiCol_ResizeGrip] = alpha(theme.Accent, 0.20f);
-        colors[ImGuiCol_ResizeGripHovered] = alpha(theme.Accent, 0.55f);
-        colors[ImGuiCol_ResizeGripActive] = alpha(theme.Accent, 0.85f);
+        colors[ImGuiCol_SeparatorHovered] = theme.BorderStrong;
+        colors[ImGuiCol_SeparatorActive] = theme.BorderStrong;
+        colors[ImGuiCol_ResizeGrip] = alpha(theme.Border, 0.20f);
+        colors[ImGuiCol_ResizeGripHovered] = alpha(theme.BorderStrong, 0.55f);
+        colors[ImGuiCol_ResizeGripActive] = alpha(theme.BorderStrong, 0.85f);
         colors[ImGuiCol_InputTextCursor] = theme.Text;
         colors[ImGuiCol_Tab] = theme.Background;
         colors[ImGuiCol_TabHovered] = theme.SurfaceHovered;
