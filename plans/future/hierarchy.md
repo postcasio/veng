@@ -1,9 +1,12 @@
-# Scene hierarchy — intrusive sibling-linked representation (DRAFT / vision)
+# Scene hierarchy — intrusive sibling-linked representation (DELIVERED)
 
-> Direction for a redesign of the scene hierarchy, an increment of **area 7 (scene /
-> entity model)**. Not a planset and not scheduled — captured so the surrounding work
-> (recursive destroy, the broadphase change-tick, the scene editor) stays coherent with
-> where the hierarchy is going.
+> **Delivered.** The representation redesign described here has landed: the `Hierarchy`
+> component (replacing the up-link `Parent`), the `SetParent`/`Detach`/`MoveBefore` +
+> `GetParent`/`ForEachChild` operations, the `Parent`→`Hierarchy` migration across
+> `WorldMatrix`/`ComputeWorldMatrices`/prefab spawn/every caller, the O(subtree) recursive
+> destroy, and device-free unit + death coverage. An increment of **area 7 (scene / entity
+> model)**. The cached depth-sorted propagation and the incremental broadphase it unlocks
+> remain the named follow-ons below.
 
 ## The problem with the up-link `Parent`
 
@@ -60,16 +63,19 @@ lacked:
 
 ```cpp
 void   SetParent(Entity child, Entity parent); // detach from old siblings, attach under new (append); O(1)
-void   Detach(Entity child);                   // reparent to root (Parent = Null)
-[[nodiscard]] ChildRange Children(Entity) const;      // forward range: FirstChild → NextSibling…
-void   ForEachChild(Entity, const function<void(Entity)>&) const;
+void   Detach(Entity child);                    // reparent to root (Parent = Null)
+void   MoveBefore(Entity child, Entity sibling);// drag-reorder / insert-at; O(1)
+[[nodiscard]] Entity GetParent(Entity) const;   // up-edge, or Null
+void   ForEachChild(Entity, const function<void(Entity)>&) const; // FirstChild → NextSibling…, insertion order
 ```
 
 `SetParent` unlinks the child from its current sibling list, links it into the new parent's
 list, and fixes all four affected links in O(1); it validates that `parent` is not a
 descendant of `child` (a cycle is misuse — fatal assert) and bumps the spatial version (and,
-once cached propagation lands, marks the moved subtree dirty). `Children` is the
-down-traversal the up-link never offered — a sibling walk, O(children), in insertion order.
+once cached propagation lands, marks the moved subtree dirty). `ForEachChild` is the
+down-traversal the up-link never offered — a sibling walk, O(children), in insertion order;
+the down-traversal ships as `ForEachChild` rather than a range type. `MoveBefore` is the
+editor's drag-reorder / insert-at primitive.
 
 ### What it fixes, and what it enables
 

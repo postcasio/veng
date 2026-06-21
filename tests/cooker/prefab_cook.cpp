@@ -131,7 +131,7 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
 
     CHECK(header.Version == CookedPrefabVersion);
     CHECK(header.EntityCount == 2);
-    // Root: Name + Transform + MeshRenderer + Spinner (4); Child: Transform + Parent (2).
+    // Root: Name + Transform + MeshRenderer + Spinner (4); Child: Transform + Hierarchy (2).
     CHECK(header.ComponentCount == 6);
 
     const u8* cursor = blob.data() + sizeof(CookedPrefabHeader);
@@ -192,15 +192,15 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
                &decodedSpinner, types.Info(SpinnerTypeId), types);
     CHECK(decodedSpinner.SpeedRadiansPerSec == doctest::Approx(1.5f));
 
-    // --- Child's Parent reference cooks to {Index = 0 (prefab-local), Generation = 0} ---
-    const CookedPrefabComponent* parent = findComponent(
-        entityTable[1].FirstComponent, entityTable[1].ComponentCount, TypeIdOf<Parent>());
-    REQUIRE(parent != nullptr);
-    Parent decodedParent;
-    ReadFields(std::span<const u8>(records + parent->RecordOffset, parent->RecordSize),
-               &decodedParent, types.Info(TypeIdOf<Parent>()), types);
-    CHECK(decodedParent.Value.Index == 0u);
-    CHECK(decodedParent.Value.Generation == 0u);
+    // --- Child's Hierarchy parent edge cooks to {Index = 0 (prefab-local), Generation = 0} ---
+    const CookedPrefabComponent* hierarchy = findComponent(
+        entityTable[1].FirstComponent, entityTable[1].ComponentCount, TypeIdOf<Hierarchy>());
+    REQUIRE(hierarchy != nullptr);
+    Hierarchy decodedHierarchy;
+    ReadFields(std::span<const u8>(records + hierarchy->RecordOffset, hierarchy->RecordSize),
+               &decodedHierarchy, types.Info(TypeIdOf<Hierarchy>()), types);
+    CHECK(decodedHierarchy.Parent.Index == 0u);
+    CHECK(decodedHierarchy.Parent.Generation == 0u);
 }
 
 TEST_CASE("prefab cook: unknown component is a located error")
@@ -298,10 +298,10 @@ TEST_CASE("prefab cook: an omitted field keeps its default value")
 TEST_CASE("prefab cook: an out-of-range entity reference is a located error")
 {
     const LoadedModuleTypes module = LoadRegistry();
-    json parent;
-    parent["Value"] = 5; // only one entity in this prefab, so index 5 is out of range
+    json hierarchy;
+    hierarchy["Parent"] = 5; // only one entity in this prefab, so index 5 is out of range
     json components;
-    components["::Veng::Parent"] = parent;
+    components["::Veng::Hierarchy"] = hierarchy;
     const path packJson = WriteInlinePrefab("prefab_ref_oob", components);
 
     const Result<vector<u8>> blob = CookPrefab(packJson, &module.Types, {}, AssetId{4242});
@@ -314,10 +314,10 @@ TEST_CASE("prefab cook: a null entity reference stays Entity::Null")
     const LoadedModuleTypes module = LoadRegistry();
     const TypeRegistry& types = module.Types;
 
-    json parent;
-    parent["Value"] = nullptr;
+    json hierarchy;
+    hierarchy["Parent"] = nullptr;
     json components;
-    components["::Veng::Parent"] = parent;
+    components["::Veng::Hierarchy"] = hierarchy;
     const path packJson = WriteInlinePrefab("prefab_ref_null", components);
 
     const Result<vector<u8>> blobResult = CookPrefab(packJson, &types, {}, AssetId{4242});
@@ -329,10 +329,10 @@ TEST_CASE("prefab cook: a null entity reference stays Entity::Null")
     const u8* records = blob.data() + sizeof(CookedPrefabHeader) + sizeof(CookedPrefabEntity) +
                         sizeof(CookedPrefabComponent);
 
-    Parent decoded;
+    Hierarchy decoded;
     ReadFields(std::span<const u8>(records + component->RecordOffset, component->RecordSize),
-               &decoded, types.Info(TypeIdOf<Parent>()), types);
-    CHECK(decoded.Value == Entity::Null);
+               &decoded, types.Info(TypeIdOf<Hierarchy>()), types);
+    CHECK(decoded.Parent == Entity::Null);
 }
 
 TEST_CASE("prefab cook: an AssetHandle id resolving to the wrong type is a located error")

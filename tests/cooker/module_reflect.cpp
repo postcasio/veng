@@ -41,7 +41,7 @@ TEST_CASE("module reflect: LoadModuleTypes reflects builtins + the game's Spinne
     // Engine builtins, pre-registered GPU-free.
     CHECK(types.IsRegistered(TypeIdOf<Transform>()));
     CHECK(types.IsRegistered(TypeIdOf<Name>()));
-    CHECK(types.IsRegistered(TypeIdOf<Parent>()));
+    CHECK(types.IsRegistered(TypeIdOf<Hierarchy>()));
     CHECK(types.IsRegistered(TypeIdOf<MeshRenderer>()));
     CHECK(types.IsRegistered(TypeIdOf<CameraComponent>()));
 

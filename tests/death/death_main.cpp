@@ -188,7 +188,7 @@ namespace
         TypeRegistry registry;
         registry.Register<Name>("Name");
         registry.Register<Transform>("Transform");
-        registry.Register<Parent>("Parent");
+        registry.Register<Hierarchy>("Hierarchy");
         return registry;
     }
 
@@ -201,11 +201,10 @@ namespace
         const Entity b = scene->CreateEntity();
         scene->Add<Transform>(a);
         scene->Add<Transform>(b);
-        // a → b → a forms a cycle; the walk detects revisiting an entity.
-        scene->Add<Parent>(a, Parent{b});
-        scene->Add<Parent>(b, Parent{a});
-
-        (void)WorldMatrix(*scene, a);
+        // b becomes a child of a, then re-parenting a under b closes a cycle:
+        // SetParent rejects a descendant adopting its ancestor.
+        scene->SetParent(b, a);
+        scene->SetParent(a, b);
     }
 
     void RunTransformParentDead()
@@ -216,8 +215,10 @@ namespace
         const Entity child = scene->CreateEntity();
         const Entity parent = scene->CreateEntity();
         scene->Add<Transform>(child);
-        scene->Add<Parent>(child, Parent{parent});
-        // Kill the parent: the walk hits a Parent referencing a dead entity.
+        // Build a dangling parent edge directly (not via SetParent): the parent's
+        // child list never references child, so destroying parent does not cascade
+        // to it, leaving child's up-link pointing at a dead entity for the walk.
+        scene->Add<Hierarchy>(child, Hierarchy{.Parent = parent});
         scene->DestroyEntity(parent);
 
         (void)WorldMatrix(*scene, child);

@@ -13,7 +13,7 @@
       "name": "Child",
       "components": {
         "::Veng::Transform": { "Position": [0, 0, 0] },
-        "::Veng::Parent":    { "Value": 0 }
+        "::Veng::Hierarchy": { "Parent": 0 }
       }
     }
   ]

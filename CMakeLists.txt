@@ -294,6 +294,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/scene_ecs.cpp
             tests/unit/scene_queries.cpp
             tests/unit/scene_version.cpp
+            tests/unit/hierarchy.cpp
             tests/unit/scene_broadphase.cpp
             tests/unit/reflection.cpp
             tests/unit/camera.cpp
@@ -384,11 +385,11 @@ if (VENG_BUILD_TESTS)
 
     add_test(NAME death.transform_parent_cycle COMMAND veng_death transform_parent_cycle)
     set_tests_properties(death.transform_parent_cycle PROPERTIES LABELS death
-            PASS_REGULAR_EXPRESSION "Parent chain forms a cycle")
+            PASS_REGULAR_EXPRESSION "parent is a descendant of child")
 
     add_test(NAME death.transform_parent_dead COMMAND veng_death transform_parent_dead)
     set_tests_properties(death.transform_parent_dead PROPERTIES LABELS death
-            PASS_REGULAR_EXPRESSION "Parent references a dead or stale entity")
+            PASS_REGULAR_EXPRESSION "Hierarchy references a dead or stale entity")
 
     add_test(NAME death.spot_shadow_range_nonpositive COMMAND veng_death spot_shadow_range_nonpositive)
     set_tests_properties(death.spot_shadow_range_nonpositive PROPERTIES LABELS death

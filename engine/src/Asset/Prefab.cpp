@@ -97,7 +97,6 @@ namespace Veng
     vector<Entity> Prefab::SpawnInto(Scene& scene, AssetManager& manager) const
     {
         const TypeRegistry& registry = scene.GetTypeRegistry();
-        const TypeId parentId = registry.IdOf<Parent>();
 
         // 1. Create every entity first, so a Reference field (which may point
         //    forward) always resolves to a created handle.
@@ -108,16 +107,14 @@ namespace Veng
             spawned.push_back(scene.CreateEntity());
         }
 
-        vector<Entity> roots;
-
         // 2. Populate each entity's components, then remap references / rehydrate
-        //    handles once every entity exists.
+        //    handles once every entity exists. A Hierarchy component's serialized
+        //    Parent edge now holds the remapped spawned entity; its sibling/child
+        //    links are derived and rebuilt below.
         for (usize i = 0; i < m_Entities.size(); ++i)
         {
             const PrefabEntity& prefabEntity = m_Entities[i];
             const Entity entity = spawned[i];
-
-            bool hasParent = false;
 
             for (const Component& component : prefabEntity.Components)
             {
@@ -130,11 +127,6 @@ namespace Veng
 
                 const TypeInfo& typeInfo = registry.Info(component.Type);
 
-                if (component.Type == parentId)
-                {
-                    hasParent = true;
-                }
-
                 void* slot = scene.AddComponent(entity, component.Type);
 
                 // The prefab loader validated this record at load; a read failure
@@ -142,12 +134,23 @@ namespace Veng
                 ReadFields(component.Record, slot, typeInfo, registry).value();
                 Resolve(slot, typeInfo, registry, spawned, manager);
             }
+        }
 
-            // A root carries no in-prefab Parent component. Returned in authoring
-            // order.
-            if (!hasParent)
+        // 3. Rebuild the intrusive sibling/child links from the parent edges, in
+        //    authoring order so appending preserves authored child order. SetParent
+        //    detaches the (empty) old links and appends each child under its parent.
+        //    Roots — no Hierarchy or a null parent edge — are returned in order.
+        vector<Entity> roots;
+        for (const Entity entity : spawned)
+        {
+            const Entity parent = scene.GetParent(entity);
+            if (parent.IsNull())
             {
                 roots.push_back(entity);
+            }
+            else
+            {
+                scene.SetParent(entity, parent);
             }
         }
 

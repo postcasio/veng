@@ -90,14 +90,18 @@ Runtime half delivered by planset-10; the cooked prefab asset + module-ABI seam 
 planset-11 (area 10). **The scene editor (area 6, sub-D) consumes the runtime scene
 model directly.**
 
+**Delivered:**
+
+- The **hierarchy representation redesign** — the up-link `Parent` is replaced by an intrusive
+  sibling-linked `Hierarchy` (`Parent` / `FirstChild` / `PrevSibling` / `NextSibling`): O(1)
+  attach/detach/reparent through `SetParent`/`Detach`/`MoveBefore` operations, ordered children,
+  O(children) down-traversal (`GetParent`/`ForEachChild`), and O(subtree) recursive destroy —
+  closing the up-link's no-down-traversal / no-order / unmanaged-reference limits and giving
+  transform propagation and the broadphase a precise change signal. **Design overview:**
+  [hierarchy.md](hierarchy.md).
+
 **Still future:**
 
-- A **hierarchy representation redesign** — replace the up-link `Parent` with an intrusive
-  sibling-linked `Hierarchy` (`Parent` / `FirstChild` / `PrevSibling` / `NextSibling`): O(1)
-  attach/detach/reparent through `SetParent`/`Detach` operations, ordered children, O(children)
-  down-traversal, and O(subtree) recursive destroy — closing the up-link's
-  no-down-traversal / no-order / unmanaged-reference limits and giving transform propagation
-  and the broadphase a precise change signal. **Design overview:** [hierarchy.md](hierarchy.md).
 - A **systems** framework (planset-10 ships storage + queries; the app writes its
   own update loops over `Each`/`View`).
 - **Archetype storage** and **dirty-flag, depth-sorted** transform propagation (perf
@@ -420,7 +424,7 @@ codegen precursor that can fold into that planset). Whichever the next planset t
 increments of the
 areas done in part — area 1's
 **hot-reload**, area 2's task graph / staging pool / cancellation, area 7's
-**systems framework** + the **hierarchy representation redesign** + perf follow-ons +
+**systems framework** + perf follow-ons +
 the `ShaderInterface`/`MaterialField`
 unification + container/array fields, area 8's **transparent/forward pass** +
 **clustered/tiled light culling** + **cached/static shadow maps** + **per-light dynamic

@@ -15,6 +15,7 @@ namespace Veng
 
     class Scene;
     struct AABB;
+    struct Hierarchy;
     struct VisibleMesh;
     void ComputeWorldMatrices(const Scene& scene, vector<mat4>& out);
     AABB SceneBounds(const Scene& scene);
@@ -56,8 +57,57 @@ namespace Veng
         /// @brief Destroys the entity and all components it holds, recycling its slot.
         ///
         /// Bumps the slot's generation so existing handles to it go stale.
-        /// Also recursively destroys the entity's Parent subtree.
+        /// Recursively destroys the entity's whole Hierarchy subtree, walking the
+        /// FirstChild → NextSibling links in O(subtree). Detaches the destroyed
+        /// root from any surviving parent's child list first, so siblings stay
+        /// consistent.
         void DestroyEntity(Entity entity);
+
+        /// @brief Reparents `child` under `parent`, appending it to `parent`'s child list.
+        ///
+        /// Detaches `child` from its current sibling list, then links it as the
+        /// last child of `parent`, maintaining all four Hierarchy links in O(1).
+        /// Adds a Hierarchy component to `child` (and to `parent` when non-null) if
+        /// absent. Passing Entity::Null as `parent` reparents `child` to the root
+        /// (clears its up-link and detaches it from siblings). Bumps the spatial
+        /// version.
+        /// @param child   The entity to reparent; must be alive.
+        /// @param parent  The new parent, or Entity::Null for the root; must be alive when non-null.
+        /// @pre `parent` is not a descendant of `child`.
+        /// @warning A cycle (`parent` a descendant of `child`) is API misuse and a fatal VE_ASSERT.
+        void SetParent(Entity child, Entity parent);
+
+        /// @brief Detaches `child` from its parent, reparenting it to the root.
+        ///
+        /// Equivalent to SetParent(child, Entity::Null): clears the up-link and
+        /// unlinks `child` from its sibling list. Bumps the spatial version.
+        /// @param child  The entity to detach; must be alive.
+        void Detach(Entity child);
+
+        /// @brief Re-links `child` immediately before `sibling` in `sibling`'s parent's child list.
+        ///
+        /// The editor's drag-reorder / insert-at primitive: reparents `child`
+        /// under `sibling`'s parent if they differ, then inserts it directly
+        /// before `sibling` in the ordered child list, maintaining all links in
+        /// O(1). Bumps the spatial version.
+        /// @param child    The entity to move; must be alive.
+        /// @param sibling  The entity to insert before; must be alive and non-null.
+        /// @pre `sibling`'s parent is not a descendant of `child`.
+        /// @warning A cycle is API misuse and a fatal VE_ASSERT.
+        void MoveBefore(Entity child, Entity sibling);
+
+        /// @brief Returns the parent of `entity`, or Entity::Null if it is a root or has no Hierarchy.
+        /// @param entity  The entity to query; must be alive.
+        [[nodiscard]] Entity GetParent(Entity entity) const;
+
+        /// @brief Visits each direct child of `entity` in insertion order, calling fn(child).
+        ///
+        /// Walks the sibling list FirstChild → NextSibling…; O(children). Visits
+        /// nothing for a leaf or an entity with no Hierarchy. The visitor must not
+        /// mutate the topology of `entity`'s child list during the walk.
+        /// @param entity  The entity whose children to visit; must be alive.
+        /// @param fn      Visitor invoked once per direct child.
+        void ForEachChild(Entity entity, const function<void(Entity)>& fn) const;
 
         /// @brief Returns true if the entity handle is live (not destroyed or stale).
         [[nodiscard]] bool IsAlive(Entity entity) const;
@@ -74,7 +124,7 @@ namespace Veng
         /// @brief Returns the number of live entities.
         [[nodiscard]] usize EntityCount() const { return m_LiveCount; }
 
-        /// @brief Monotonic counter bumped whenever a spatial pool (Transform, Parent, MeshRenderer) changes.
+        /// @brief Monotonic counter bumped whenever a spatial pool (Transform, Hierarchy, MeshRenderer) changes.
         ///
         /// A broadphase compares it against the version it last built against:
         /// equal means nothing spatial moved; changed means rebuild. A non-const
@@ -335,10 +385,22 @@ namespace Veng
         /// @brief Returns the pool for id, or nullptr if none exists (const overload).
         const ComponentPool* TryPoolFor(TypeId id) const;
 
-        /// @brief Returns true if id names a spatial pool (Transform, Parent, or MeshRenderer).
+        /// @brief Returns true if id names a spatial pool (Transform, Hierarchy, or MeshRenderer).
         [[nodiscard]] static bool IsSpatialId(TypeId id);
         /// @brief Advances the spatial version counter.
         void BumpSpatial() { ++m_SpatialVersion; }
+
+        /// @brief Returns the entity's Hierarchy component, creating it if absent.
+        ///
+        /// Used by the topology operations to materialize the link record on first
+        /// attach. Bumps the spatial version when it adds the component.
+        Hierarchy& HierarchyOf(Entity entity);
+        /// @brief Returns the entity's Hierarchy component, or nullptr if it has none.
+        [[nodiscard]] const Hierarchy* TryHierarchy(Entity entity) const;
+        /// @brief Unlinks `child` from its current parent's child list, leaving its Parent edge intact.
+        void UnlinkFromSiblings(Entity child);
+        /// @brief Returns true if `candidate` is `entity` or one of its descendants.
+        [[nodiscard]] bool IsDescendantOf(Entity candidate, Entity entity) const;
 
         /// @brief Borrowed registry; must outlive this Scene.
         TypeRegistry* m_Registry;

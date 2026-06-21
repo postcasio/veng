@@ -18,25 +18,26 @@ namespace Veng
 
     mat4 WorldMatrix(const Scene& scene, Entity entity)
     {
-        // Walk the Parent chain entity → root, collecting it so the cycle/dead-
+        // Walk the Hierarchy chain entity → root, collecting it so the cycle/dead-
         // entity checks can run before composing. A revisited entity is a cycle;
-        // a Parent pointing at a dead entity is a dangling link — both API misuse.
+        // a parent link pointing at a dead entity is a dangling link — both API
+        // misuse.
         vector<Entity> chain;
         Entity current = entity;
         while (!current.IsNull())
         {
             VE_ASSERT(scene.IsAlive(current),
-                      "WorldMatrix: Parent references a dead or stale entity");
+                      "WorldMatrix: Hierarchy references a dead or stale entity");
 
             for (const Entity seen : chain)
             {
-                VE_ASSERT(seen != current, "WorldMatrix: Parent chain forms a cycle");
+                VE_ASSERT(seen != current, "WorldMatrix: Hierarchy chain forms a cycle");
             }
             chain.push_back(current);
 
-            if (const auto* parent = scene.TryGet<Parent>(current))
+            if (const auto* hierarchy = scene.TryGet<Hierarchy>(current))
             {
-                current = parent->Value;
+                current = hierarchy->Parent;
             }
             else
             {

@@ -20,9 +20,9 @@ namespace Veng
         string Value;
     };
 
-    /// @brief Local TRS — relative to the entity's Parent, or to world for a root.
+    /// @brief Local TRS — relative to the entity's Hierarchy parent, or to world for a root.
     ///
-    /// World matrices are derived by the Parent-chain walk in Transforms.h;
+    /// World matrices are derived by the Hierarchy-chain walk in Transforms.h;
     /// this struct never stores a world matrix.
     struct Transform
     {
@@ -34,14 +34,25 @@ namespace Veng
         vec3 Scale{1.0f};
     };
 
-    /// @brief Links an entity to its parent.
+    /// @brief Intrusive scene-graph link for one entity: up-edge plus a doubly-linked sibling list.
     ///
-    /// The world transform composes parent.world * local up this chain.
-    /// Entity::Null (the default) marks a root.
-    struct Parent
+    /// Parent is the up-edge (Entity::Null = root); FirstChild heads an ordered,
+    /// doubly-linked sibling list (Entity::Null = leaf); PrevSibling / NextSibling
+    /// thread that list. All four are maintained together by the Scene's
+    /// SetParent / Detach / MoveBefore operations and are never written directly,
+    /// so the structure stays consistent. Only Parent is persisted (the reflected
+    /// edge); the three list links are derived and rebuilt on spawn, so they carry
+    /// no reflected field.
+    struct Hierarchy
     {
         /// @brief The parent entity, or Entity::Null for a root.
-        Entity Value = Entity::Null;
+        Entity Parent = Entity::Null;
+        /// @brief First child in the sibling list, or Entity::Null for a leaf.
+        Entity FirstChild = Entity::Null;
+        /// @brief Previous sibling in the parent's child list, or Entity::Null at the head.
+        Entity PrevSibling = Entity::Null;
+        /// @brief Next sibling in the parent's child list, or Entity::Null at the tail.
+        Entity NextSibling = Entity::Null;
     };
 
     /// @brief Component that binds a scene entity to a renderable mesh.
@@ -110,8 +121,8 @@ VE_FIELD(Rotation, .DisplayName = "Rotation")
 VE_FIELD(Scale, .DisplayName = "Scale", .Min = 0.001)
 VE_REFLECT_END();
 
-VE_REFLECT(::Veng::Parent, 0x5C9855E287465C5EULL)
-VE_FIELD(Value, .DisplayName = "Parent", .ReadOnly = true)
+VE_REFLECT(::Veng::Hierarchy, 0x5C9855E287465C5EULL)
+VE_FIELD(Parent, .DisplayName = "Parent", .ReadOnly = true)
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::MeshRenderer, 0x3C5CB13E46E0450BULL)

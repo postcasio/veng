@@ -11,7 +11,7 @@ namespace Veng
         // Builtins go through the same Register<T> path as game types; no special-casing.
         registry.Register<Name>();
         registry.Register<Transform>();
-        registry.Register<Parent>();
+        registry.Register<Hierarchy>();
         registry.Register<CameraComponent>();
         registry.Register<MeshRenderer>();
         registry.Register<LightType>();

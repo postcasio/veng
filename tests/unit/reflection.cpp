@@ -198,7 +198,7 @@ namespace
         TypeRegistry registry;
         registry.Register<Name>();
         registry.Register<Transform>();
-        registry.Register<Parent>();
+        registry.Register<Hierarchy>();
         registry.Register<Light>();
         registry.Register<Inner>();
         registry.Register<Outer>();

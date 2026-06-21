@@ -92,13 +92,14 @@ TEST_CASE_FIXTURE(PrefabFixture, "SpawnInto populates components and returns the
     CHECK(Stage->Get<Transform>(roots[0]).Position == vec3{1.0f, 2.0f, 3.0f});
 }
 
-TEST_CASE_FIXTURE(PrefabFixture, "Roots are entities with no in-prefab Parent, in authoring order")
+TEST_CASE_FIXTURE(PrefabFixture, "Roots are entities with no parent link, in authoring order")
 {
     // idx 0 root "a", idx 1 child of 0 "b", idx 2 root "c".
     vector<Prefab::PrefabEntity> entities;
     entities.push_back({{MakeComponent(Types, Name{"a"})}});
-    entities.push_back({{MakeComponent(Types, Name{"b"}),
-                         MakeComponent(Types, Parent{Entity{.Index = 0, .Generation = 0}})}});
+    entities.push_back(
+        {{MakeComponent(Types, Name{"b"}),
+          MakeComponent(Types, Hierarchy{.Parent = Entity{.Index = 0, .Generation = 0}})}});
     entities.push_back({{MakeComponent(Types, Name{"c"})}});
 
     const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
@@ -108,18 +109,25 @@ TEST_CASE_FIXTURE(PrefabFixture, "Roots are entities with no in-prefab Parent, i
     CHECK(Stage->Get<Name>(roots[0]).Value == "a");
     CHECK(Stage->Get<Name>(roots[1]).Value == "c");
 
-    // The child's Parent (a Reference) was remapped from prefab index 0 to the
-    // freshly spawned root — roots[0] is the spawned entity for prefab idx 0.
+    // The child's Hierarchy parent edge (a Reference) was remapped from prefab
+    // index 0 to the freshly spawned root, and the spawn rebuilt the intrusive
+    // links — so the parent's child list contains the child.
     bool sawChild = false;
-    for (auto [entity, name, parent] : Stage->View<Name, Parent>())
+    for (auto [entity, name, hierarchy] : Stage->View<Name, Hierarchy>())
     {
         if (name.Value == "b")
         {
             sawChild = true;
-            CHECK(parent.Value == roots[0]);
+            CHECK(hierarchy.Parent == roots[0]);
         }
     }
     CHECK(sawChild);
+
+    // The rebuilt links round-trip: roots[0]'s sole child is the spawned "b".
+    vector<Entity> children;
+    Stage->ForEachChild(roots[0], [&](Entity child) { children.push_back(child); });
+    REQUIRE(children.size() == 1);
+    CHECK(Stage->Get<Name>(children[0]).Value == "b");
 }
 
 TEST_CASE_FIXTURE(PrefabFixture,

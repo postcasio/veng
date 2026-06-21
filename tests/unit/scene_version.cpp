@@ -1,7 +1,7 @@
 // The Scene spatial-version counter, the const iteration path, and recursive
 // DestroyEntity: pure ECS, device-free. The broadphase reads GetSpatialVersion()
 // to decide "did anything spatial move?" — so this pins which mutations and
-// accesses bump it (the three spatial pools: Transform, Parent, MeshRenderer),
+// accesses bump it (the three spatial pools: Transform, Hierarchy, MeshRenderer),
 // which leave it alone (Light, every const read), and that destroying a parent
 // takes its whole subtree with it.
 
@@ -22,7 +22,7 @@ namespace
     {
         TypeRegistry types;
         types.Register<Transform>("Transform");
-        types.Register<Parent>("Parent");
+        types.Register<Hierarchy>("Hierarchy");
         types.Register<MeshRenderer>("MeshRenderer");
         types.Register<Light>("Light");
         return types;
@@ -42,11 +42,11 @@ TEST_CASE("Adding each spatial component bumps the spatial version")
         CHECK(scene->GetSpatialVersion() > before);
     }
 
-    SUBCASE("Parent")
+    SUBCASE("Hierarchy")
     {
         const Entity e = scene->CreateEntity();
         const u64 before = scene->GetSpatialVersion();
-        scene->Add<Parent>(e);
+        scene->Add<Hierarchy>(e);
         CHECK(scene->GetSpatialVersion() > before);
     }
 
@@ -55,6 +55,30 @@ TEST_CASE("Adding each spatial component bumps the spatial version")
         const Entity e = scene->CreateEntity();
         const u64 before = scene->GetSpatialVersion();
         scene->Add<MeshRenderer>(e);
+        CHECK(scene->GetSpatialVersion() > before);
+    }
+}
+
+TEST_CASE("SetParent and Detach bump the spatial version")
+{
+    TypeRegistry types = MakeRegistry();
+    Unique<Scene> scene = Scene::Create(types);
+
+    const Entity parent = scene->CreateEntity();
+    const Entity child = scene->CreateEntity();
+
+    SUBCASE("SetParent")
+    {
+        const u64 before = scene->GetSpatialVersion();
+        scene->SetParent(child, parent);
+        CHECK(scene->GetSpatialVersion() > before);
+    }
+
+    SUBCASE("Detach")
+    {
+        scene->SetParent(child, parent);
+        const u64 before = scene->GetSpatialVersion();
+        scene->Detach(child);
         CHECK(scene->GetSpatialVersion() > before);
     }
 }
@@ -83,12 +107,12 @@ TEST_CASE("Removing each spatial component bumps the spatial version")
         CHECK(scene->GetSpatialVersion() > before);
     }
 
-    SUBCASE("Parent")
+    SUBCASE("Hierarchy")
     {
         const Entity e = scene->CreateEntity();
-        scene->Add<Parent>(e);
+        scene->Add<Hierarchy>(e);
         const u64 before = scene->GetSpatialVersion();
-        scene->Remove<Parent>(e);
+        scene->Remove<Hierarchy>(e);
         CHECK(scene->GetSpatialVersion() > before);
     }
 
@@ -257,18 +281,18 @@ TEST_CASE("DestroyEntity is recursive — it destroys the whole subtree")
 
     const Entity child = scene->CreateEntity();
     scene->Add<Transform>(child);
-    scene->Add<Parent>(child, Parent{.Value = root});
+    scene->SetParent(child, root);
 
     const Entity grandchild = scene->CreateEntity();
     scene->Add<Transform>(grandchild);
-    scene->Add<Parent>(grandchild, Parent{.Value = child});
+    scene->SetParent(grandchild, child);
 
     const Entity otherRoot = scene->CreateEntity();
     scene->Add<Transform>(otherRoot);
 
     const Entity otherChild = scene->CreateEntity();
     scene->Add<Transform>(otherChild);
-    scene->Add<Parent>(otherChild, Parent{.Value = otherRoot});
+    scene->SetParent(otherChild, otherRoot);
 
     const u64 before = scene->GetSpatialVersion();
     scene->DestroyEntity(root);
@@ -297,7 +321,7 @@ TEST_CASE("Destroying a leaf entity destroys only itself")
 
     const Entity child = scene->CreateEntity();
     scene->Add<Transform>(child);
-    scene->Add<Parent>(child, Parent{.Value = root});
+    scene->SetParent(child, root);
 
     scene->DestroyEntity(child);
 

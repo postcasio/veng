@@ -207,7 +207,7 @@ TEST_CASE("SceneBounds: union of two primitives at known transforms")
     TypeRegistry types;
     types.Register<Name>("Name");
     types.Register<Transform>("Transform");
-    types.Register<Parent>("Parent");
+    types.Register<Hierarchy>("Hierarchy");
     types.Register<MeshRenderer>("MeshRenderer");
 
     AssetManager manager(context, tasks, types);
@@ -244,7 +244,7 @@ TEST_CASE("SceneBounds: a non-resident mesh contributes nothing")
     TypeRegistry types;
     types.Register<Name>("Name");
     types.Register<Transform>("Transform");
-    types.Register<Parent>("Parent");
+    types.Register<Hierarchy>("Hierarchy");
     types.Register<MeshRenderer>("MeshRenderer");
 
     Unique<Scene> scene = Scene::Create(types);
@@ -262,7 +262,7 @@ TEST_CASE("SceneBounds: an empty scene returns AABB::Empty")
     TypeRegistry types;
     types.Register<Name>("Name");
     types.Register<Transform>("Transform");
-    types.Register<Parent>("Parent");
+    types.Register<Hierarchy>("Hierarchy");
     types.Register<MeshRenderer>("MeshRenderer");
 
     const Unique<Scene> scene = Scene::Create(types);

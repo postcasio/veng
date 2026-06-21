@@ -24,7 +24,7 @@ namespace
     {
         types.Register<Name>("Name");
         types.Register<Transform>("Transform");
-        types.Register<Parent>("Parent");
+        types.Register<Hierarchy>("Hierarchy");
         types.Register<MeshRenderer>("MeshRenderer");
     }
 

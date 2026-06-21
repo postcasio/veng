@@ -33,7 +33,7 @@ namespace
     {
         types.Register<Name>("Name");
         types.Register<Transform>("Transform");
-        types.Register<Parent>("Parent");
+        types.Register<Hierarchy>("Hierarchy");
         types.Register<MeshRenderer>("MeshRenderer");
         types.Register<Light>("Light");
     }
@@ -293,9 +293,9 @@ TEST_CASE("SceneBroadphase: every spatial mutation rebuilds and the tree stays c
         CHECK(broadphase.GetCandidates().size() == 2);
     }
 
-    SUBCASE("reparent (add a Parent link)")
+    SUBCASE("reparent (SetParent link)")
     {
-        scene->Add<Parent>(b, Parent{.Value = a});
+        scene->SetParent(b, a);
         broadphase.Sync(*scene);
         CheckConverges();
     }

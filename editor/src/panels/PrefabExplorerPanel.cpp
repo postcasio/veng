@@ -26,10 +26,10 @@ namespace VengEditor
         scene->ForEachEntity(
             [&](Entity entity)
             {
-                const Parent* parent = scene->TryGet<Parent>(entity);
-                if (parent != nullptr && !parent->Value.IsNull() && scene->IsAlive(parent->Value))
+                const Entity parent = scene->GetParent(entity);
+                if (!parent.IsNull() && scene->IsAlive(parent))
                 {
-                    m_Children[parent->Value].push_back(entity);
+                    m_Children[parent].push_back(entity);
                 }
                 else
                 {

@@ -47,9 +47,11 @@ namespace Veng
 
         /// @brief Spawns this prefab's entities and components into `scene`.
         ///
-        /// Returns the spawned root entities (those with no in-prefab Parent), in authoring order.
-        /// Remaps intra-prefab Entity references to freshly created handles and rehydrates
-        /// AssetHandle fields via `manager`. Spawning twice produces two independent copies.
+        /// Returns the spawned root entities (those with no parent link — no Hierarchy or a null
+        /// Hierarchy parent), in authoring order. Remaps intra-prefab Entity references to freshly
+        /// created handles, rehydrates AssetHandle fields via `manager`, and rebuilds the intrusive
+        /// Hierarchy sibling/child links from each entity's parent edge (children kept in authored
+        /// order). Spawning twice produces two independent copies.
         [[nodiscard]] vector<Entity> SpawnInto(Scene& scene, AssetManager& manager) const;
 
         /// @brief Returns the list of prefab entities.

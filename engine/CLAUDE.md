@@ -595,13 +595,25 @@ drives off the smallest participating pool. **Structural changes during iteratio
 illegal** — adding/removing components or destroying entities mid-`View`/`Each` is API
 misuse; the single-threaded model offers no re-entrancy guard. A stale `Entity` (its
 slot recycled, generation bumped) accessed through the API is a fatal `VE_ASSERT`, not
-silent UB. `DestroyEntity` is **recursive** — it destroys the entity's whole `Parent`
-subtree, so no child is left with a dangling parent link. A **component is just a reflected
-type a `Scene` pools** — pools are made lazily on first `Add` of a type; there is no
-separate component-id space.
+silent UB. `DestroyEntity` is **recursive** — it walks the `Hierarchy` `FirstChild` →
+`NextSibling` links to destroy the entity's whole subtree in **O(subtree)**, detaching the
+destroyed root from any surviving parent's child list first so no sibling is left dangling.
+A **component is just a reflected type a `Scene` pools** — pools are made lazily on first
+`Add` of a type; there is no separate component-id space.
+
+The scene hierarchy is an intrusive, sibling-linked **`Hierarchy`** component: a `Parent`
+up-edge plus a doubly-linked, ordered child list (`FirstChild`/`PrevSibling`/`NextSibling`).
+Topology is mutated **only** through `Scene` operations — `SetParent(child, parent)` (detach
+from the old list, append under the new in O(1); `Entity::Null` parent re-parents to root),
+`Detach(child)`, and `MoveBefore(child, sibling)` (the editor's drag-reorder / insert-at) —
+which maintain all four links as a set and bump the spatial version. `GetParent(entity)` and
+`ForEachChild(entity, fn)` (forward, insertion order) are the read side. A cycle (a descendant
+adopting an ancestor) is API misuse and a fatal `VE_ASSERT`. Only `Parent` is a reflected,
+persisted field; the three list links are derived and rebuilt on prefab spawn, so the
+serializer and cooker never touch them.
 
 A `Scene` carries a monotonic **spatial version counter** (`GetSpatialVersion()`): it bumps
-on any change to a **spatial pool** (`Transform`/`Parent`/`MeshRenderer`) — a structural
+on any change to a **spatial pool** (`Transform`/`Hierarchy`/`MeshRenderer`) — a structural
 `Add`/`Remove`, a `DestroyEntity` touching one, a **non-`const`** access (the mutable
 `Get`/`View`/`Each` path, a potential in-place edit), or a `ForEachComponent` visit (the
 editor inspector's erased-`void*` edit path). A **`const`** `View`/`Each` does **not** bump it,
@@ -654,9 +666,10 @@ compatibility: **on-disk type identity is the `TypeId`, field identity is the na
 
 The builtins are plain reflected components, pre-registered identically to a game's
 own: `Name` (a display label), `Transform` (**local** TRS — `Position`/`Rotation`/
-`Scale`, never a world matrix), `Parent` (the hierarchy link; `WorldMatrix`/
-`ComputeWorldMatrices` walk it as `parent.world * local`, recomputed on demand with no
-dirty-flag cache), `Camera` (a value type building view/projection — Y flipped for
+`Scale`, never a world matrix), `Hierarchy` (the intrusive scene-graph link — a `Parent`
+up-edge plus the ordered child list, mutated through `SetParent`/`Detach`/`MoveBefore`;
+`WorldMatrix`/`ComputeWorldMatrices` walk the `Parent` edge as `parent.world * local`,
+recomputed on demand with no dirty-flag cache), `Camera` (a value type building view/projection — Y flipped for
 Vulkan clip space) plus `CameraComponent`, `MeshRenderer` (holds the
 `AssetHandle<Mesh>` a draw queries — the mesh owns its materials, so a renderer queries
 `(Transform, MeshRenderer)` and draws each submesh with its material), and `Light` (a

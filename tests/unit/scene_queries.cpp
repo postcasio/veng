@@ -46,7 +46,7 @@ namespace
         registry.Register<C>("C");
         registry.Register<Name>("Name");
         registry.Register<Transform>("Transform");
-        registry.Register<Parent>("Parent");
+        registry.Register<Hierarchy>("Hierarchy");
         return registry;
     }
 
@@ -333,8 +333,8 @@ TEST_CASE("WorldMatrix composes a 3-deep parent chain")
     scene->Add<Transform>(root).Position = vec3(10.0f, 0.0f, 0.0f);
     scene->Add<Transform>(mid).Position = vec3(0.0f, 5.0f, 0.0f);
     scene->Add<Transform>(leaf).Position = vec3(0.0f, 0.0f, 2.0f);
-    scene->Add<Parent>(mid, Parent{root});
-    scene->Add<Parent>(leaf, Parent{mid});
+    scene->SetParent(mid, root);
+    scene->SetParent(leaf, mid);
 
     const mat4 world = WorldMatrix(*scene, leaf);
     const vec3 origin = vec3(world * vec4(0.0f, 0.0f, 0.0f, 1.0f));
@@ -360,11 +360,11 @@ TEST_CASE("Reparenting changes the world matrix")
     scene->Add<Transform>(b).Position = vec3(0.0f, 200.0f, 0.0f);
     scene->Add<Transform>(child).Position = vec3(1.0f, 1.0f, 1.0f);
 
-    scene->Add<Parent>(child, Parent{a});
+    scene->SetParent(child, a);
     const vec3 underA = vec3(WorldMatrix(*scene, child) * vec4(0, 0, 0, 1));
     CHECK(VecApproxEqual(underA, vec3(101.0f, 1.0f, 1.0f)));
 
-    scene->Get<Parent>(child).Value = b;
+    scene->SetParent(child, b);
     const vec3 underB = vec3(WorldMatrix(*scene, child) * vec4(0, 0, 0, 1));
     CHECK(VecApproxEqual(underB, vec3(1.0f, 201.0f, 1.0f)));
 }
@@ -383,7 +383,7 @@ TEST_CASE("ComputeWorldMatrices matches per-entity WorldMatrix for a forest")
     scene->Add<Transform>(r1).Position = vec3(1.0f, 0.0f, 0.0f);
     scene->Add<Transform>(c1).Position = vec3(0.0f, 1.0f, 0.0f);
     scene->Add<Transform>(r2).Position = vec3(0.0f, 0.0f, 1.0f);
-    scene->Add<Parent>(c1, Parent{r1});
+    scene->SetParent(c1, r1);
     scene->Add<A>(noTransform);
 
     std::vector<mat4> all;
