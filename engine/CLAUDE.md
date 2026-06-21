@@ -490,9 +490,10 @@ smoke render use.
   `Plane` / `Sphere` (`Veng/Asset/Primitives.h`) generate CPU-side `MeshData`
   (canonical-layout vertices + `u32` indices + a resident material list + an
   indexed submesh table) with analytic normals/tangents/UVs and an optional
-  `AssetHandle<Material>`; `Mesh::Create(Renderer::Context&, const MeshData&,
+  `AssetHandle<Material>`; `Mesh::BuildSync(Renderer::Context&, const MeshData&,
   const string&)` uploads that into a resident `Ref<Mesh>` via the blocking
-  `UploadSync`. A runtime primitive is **not** an `AssetId`-addressable asset and
+  `UploadSync` (its async sibling `Mesh::Build` streams the same geometry in off the
+  render thread). A runtime primitive is **not** an `AssetId`-addressable asset and
   never touches an archive — it is owned by whoever calls the factory and retires
   through the per-frame deferred-destruction path like any other `Mesh`. It is
   interchangeable with a cooked mesh at every pipeline and draw call, both being in
@@ -510,14 +511,14 @@ smoke render use.
   renderable mesh **automatically at spawn**: `Primitive` declares a
   spawn-resolve thunk (`VE_RESOLVE` in `Veng/Scene/Components.h`, the resolver body in
   `Veng/Scene/Resolve.{h,cpp}`), and `Prefab::SpawnInto` fires it after populating the
-  component. The resolver calls `CreatePrimitiveMesh(AssetManager&, const
+  component. The resolver calls `BuildPrimitiveMesh(AssetManager&, const
   PrimitiveShapeVariant&) → AssetHandle<Mesh>` — which builds the active shape's CPU
-  geometry (`BuildShapeMeshData`) and streams it in via `AssetManager::CreateAsync` —
+  geometry (`BuildShapeMeshData`) and streams it in via `AssetManager::Adopt(Task<Ref<T>>)` —
   then adds (if absent) and sets the entity's `MeshRenderer.Mesh`, so the primitive
   **appears** a few frames after spawn exactly as a cooked mesh would (the renderer
   skips a not-yet-resident mesh). There is no caller-driven resolve pass and no dedup
   cache: identical recipes build independent meshes, and a consumer wanting N entities
-  on one mesh calls `CreatePrimitiveMesh` once and assigns the shared handle N times.
+  on one mesh calls `BuildPrimitiveMesh` once and assigns the shared handle N times.
   The hand-built `Primitives::`/`Adopt` path above stays public for tests and tools.
 - **A mesh owns its materials; submeshes index them.** A `Mesh` holds a resident
   `vector<AssetHandle<Material>>` (`GetMaterials()`) and each `SubMesh` carries a

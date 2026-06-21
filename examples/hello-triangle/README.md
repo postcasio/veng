@@ -22,7 +22,7 @@ cmake --build build --target hello_triangle
 ```
 
 The scene geometry is a UV sphere built at runtime with `Primitives::Sphere` and
-uploaded via `Mesh::Create` — no cooked mesh is loaded to put it on screen. It
+streamed in via `Mesh::Build` — no cooked mesh is loaded to put it on screen. It
 carries the brick material instance on its submesh and is drawn through the same
 pipeline a cooked mesh would use.
 

@@ -321,7 +321,7 @@ namespace Veng
             {
                 PendingLoad& pending = m_Pending[i];
 
-                // A CreateAsync keep-alive rides this list with no Finalize; its own
+                // A pending-Adopt keep-alive rides this list with no Finalize; its own
                 // factory continuation resolves the entry, so step over it here.
                 if (!pending.Finalize)
                 {
@@ -386,7 +386,7 @@ namespace Veng
     void AssetManager::FailPendingCreate(const Ref<Detail::AssetCacheEntry>& entry,
                                          const string& error)
     {
-        Log::Error("AssetManager: async CreateAsync factory failed: {}", error);
+        Log::Error("AssetManager: async Adopt factory failed: {}", error);
         std::erase_if(m_Pending,
                       [&entry](const PendingLoad& pending) { return pending.Entry == entry; });
     }

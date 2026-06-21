@@ -32,7 +32,7 @@ namespace Veng
         m_Sampler = Sampler::Create(context, samplerInfo);
     }
 
-    Ref<Texture> Texture::Create(Context& context, const TextureInfo& info)
+    Ref<Texture> Texture::BuildSync(Context& context, const TextureInfo& info)
     {
         Ref<Texture> texture(new Texture(context, info));
         texture->m_Image->UploadSync(info.Pixels);
@@ -47,7 +47,7 @@ namespace Veng
         return texture;
     }
 
-    Task<Ref<Texture>> Texture::CreateAsync(Context& context, TaskSystem& tasks, TextureInfo info)
+    Task<Ref<Texture>> Texture::Build(Context& context, TaskSystem& tasks, TextureInfo info)
     {
         // The caller's TextureInfo::Pixels is a non-owning span; copy the source bytes into the
         // worker job so they outlive the caller's frame.

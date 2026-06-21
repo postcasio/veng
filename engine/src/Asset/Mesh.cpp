@@ -155,14 +155,13 @@ namespace Veng
         return bounds;
     }
 
-    Ref<Mesh> Mesh::Create(Context& context, const MeshData& data, const string& name)
+    Ref<Mesh> Mesh::BuildSync(Context& context, const MeshData& data, const string& name)
     {
         ValidateMeshData(data, name);
         return Mesh::Create(UploadMesh(context, data, name, BuildSubMeshes(data)));
     }
 
-    Task<Ref<Mesh>> Mesh::CreateAsync(Context& context, TaskSystem& tasks, MeshData data,
-                                      string name)
+    Task<Ref<Mesh>> Mesh::Build(Context& context, TaskSystem& tasks, MeshData data, string name)
     {
         // Validate eagerly on the calling thread: a misuse fatal is clearer here than buried
         // inside a worker job.

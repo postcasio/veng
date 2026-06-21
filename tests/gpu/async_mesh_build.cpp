@@ -1,4 +1,4 @@
-// Async mesh build: a hand-built MeshData is uploaded through Mesh::CreateAsync,
+// Async mesh build: a hand-built MeshData is uploaded through Mesh::Build,
 // proving the worker job builds a drawable Ref<Mesh> off the render thread (the
 // geometry copy is a host-visible memcpy, no transfer queue) and that the async
 // path produces a mesh identical in index count, submesh table, and bounds to the
@@ -45,11 +45,11 @@ namespace
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "Mesh::CreateAsync: a worker builds a drawable mesh with correct bounds")
+                  "Mesh::Build: a worker builds a drawable mesh with correct bounds")
 {
     const MeshData data = TwoTriangleQuad();
 
-    Task<Ref<Mesh>> factory = Mesh::CreateAsync(Context, Tasks, data, "Async Quad");
+    Task<Ref<Mesh>> factory = Mesh::Build(Context, Tasks, data, "Async Quad");
 
     const Result<Ref<Mesh>> built = factory.Get();
     REQUIRE(built.has_value());
@@ -85,14 +85,14 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "Mesh::CreateAsync matches the blocking Create (index count, submeshes, bounds)")
+                  "Mesh::Build matches the blocking BuildSync (index count, submeshes, bounds)")
 {
     const MeshData data = TwoTriangleQuad();
 
-    const Ref<Mesh> sync = Mesh::Create(Context, data, "Sync Quad");
+    const Ref<Mesh> sync = Mesh::BuildSync(Context, data, "Sync Quad");
     REQUIRE(sync != nullptr);
 
-    Task<Ref<Mesh>> factory = Mesh::CreateAsync(Context, Tasks, data, "Async Quad");
+    Task<Ref<Mesh>> factory = Mesh::Build(Context, Tasks, data, "Async Quad");
     const Result<Ref<Mesh>> built = factory.Get();
     REQUIRE(built.has_value());
     const Ref<Mesh> async = *built;

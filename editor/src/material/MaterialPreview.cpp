@@ -74,7 +74,7 @@ namespace VengEditor
         m_Scene = Scene::Create(*m_Types);
 
         m_Sphere =
-            Mesh::Create(m_Context, Primitives::Icosphere(0.85f, 4), "Material Preview Sphere");
+            Mesh::BuildSync(m_Context, Primitives::Icosphere(0.85f, 4), "Material Preview Sphere");
 
         m_SphereEntity = m_Scene->CreateEntity();
         m_Scene->Add<Transform>(m_SphereEntity);
@@ -98,8 +98,8 @@ namespace VengEditor
 
         // Rebuild the sphere on the new material so the mesh owns it and the draw
         // loop binds it; the old mesh retires through the per-frame path.
-        m_Sphere = Mesh::Create(m_Context, Primitives::Icosphere(0.85f, 4, m_Material),
-                                "Material Preview Sphere");
+        m_Sphere = Mesh::BuildSync(m_Context, Primitives::Icosphere(0.85f, 4, m_Material),
+                                   "Material Preview Sphere");
         m_Scene->Get<MeshRenderer>(m_SphereEntity).Mesh = m_Assets.Adopt(m_Sphere);
     }
 

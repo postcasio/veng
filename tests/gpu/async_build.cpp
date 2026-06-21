@@ -1,6 +1,6 @@
 // Async build factories for Texture and Material: the Task<Ref<T>> siblings of
-// Mesh::CreateAsync. Each builds a runtime resource off the render thread and
-// streams it in through AssetManager::CreateAsync, proving the worker job yields
+// Mesh::Build. Each builds a runtime resource off the render thread and
+// streams it in through AssetManager::Adopt, proving the worker job yields
 // a finalized, resident resource the main-thread continuation pump publishes.
 //
 // The Texture case uploads CPU pixels through the transfer queue and asserts the
@@ -39,7 +39,7 @@ namespace
     constexpr u32 Size = 4;
 
     // Drains the worker pool and pumps the main-thread continuation so a pending
-    // CreateAsync handle finalizes.
+    // Adopt handle finalizes.
     void PumpToResidency(TaskSystem& tasks)
     {
         tasks.WaitForAll();
@@ -48,7 +48,7 @@ namespace
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "Texture::CreateAsync: a runtime texture streams in finalized and resident")
+                  "Texture::Build: a runtime texture streams in finalized and resident")
 {
     // The async upload records on the transfer queue, so the per-worker transfer
     // pools the Application normally wires up must be initialized here.
@@ -76,8 +76,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             },
     };
 
-    const AssetHandle<Texture> handle =
-        assets.CreateAsync<Texture>(Texture::CreateAsync(Context, Tasks, info));
+    const AssetHandle<Texture> handle = assets.Adopt<Texture>(Texture::Build(Context, Tasks, info));
 
     // Pending: the handle exists but is not yet resident, and carries the invalid id.
     CHECK_FALSE(handle.IsLoaded());
@@ -98,7 +97,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "Material::CreateAsync: a runtime material streams in with its authored block")
+                  "Material::Build: a runtime material streams in with its authored block")
 {
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
@@ -153,7 +152,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     };
 
     const AssetHandle<Material> handle =
-        assets.CreateAsync<Material>(Material::CreateAsync(Tasks, std::move(info), layout));
+        assets.Adopt<Material>(Material::Build(Tasks, std::move(info), layout));
 
     CHECK_FALSE(handle.IsLoaded());
     CHECK_FALSE(handle.Id().IsValid());

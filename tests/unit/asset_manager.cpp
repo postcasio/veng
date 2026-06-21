@@ -116,7 +116,7 @@ TEST_CASE("AssetManager: Mount is idempotent, Unmount drops resolution for uncac
 }
 
 TEST_CASE(
-    "AssetManager: CreateAsync returns a pending handle that becomes resident through the pump")
+    "AssetManager: Adopt(Task) returns a pending handle that becomes resident through the pump")
 {
     Renderer::Context context;
     TaskSystem tasks;
@@ -133,7 +133,7 @@ TEST_CASE(
             return raw;
         });
 
-    const AssetHandle<RawAsset> handle = manager.CreateAsync<RawAsset>(std::move(factory));
+    const AssetHandle<RawAsset> handle = manager.Adopt<RawAsset>(std::move(factory));
 
     // Pending: not resident, null pointer, and the invalid (runtime) id.
     CHECK_FALSE(handle.IsLoaded());
@@ -150,7 +150,7 @@ TEST_CASE(
     CHECK(std::ranges::equal(handle->Bytes, Bytes({7, 8, 9})));
 }
 
-TEST_CASE("AssetManager: a pending CreateAsync entry is detached and survives CollectGarbage")
+TEST_CASE("AssetManager: a pending Adopt entry is detached and survives CollectGarbage")
 {
     Renderer::Context context;
     TaskSystem tasks;
@@ -165,7 +165,7 @@ TEST_CASE("AssetManager: a pending CreateAsync entry is detached and survives Co
             return raw;
         });
 
-    const AssetHandle<RawAsset> handle = manager.CreateAsync<RawAsset>(std::move(factory));
+    const AssetHandle<RawAsset> handle = manager.Adopt<RawAsset>(std::move(factory));
 
     // Detached: the invalid id is never inserted into the AssetId map.
     CHECK(manager.CachedEntry(AssetId{}) == nullptr);
@@ -184,7 +184,7 @@ TEST_CASE("AssetManager: a pending CreateAsync entry is detached and survives Co
     CHECK(handle.IsLoaded());
 }
 
-TEST_CASE("AssetManager: a resolved CreateAsync entry is freed once its last handle drops")
+TEST_CASE("AssetManager: a resolved Adopt entry is freed once its last handle drops")
 {
     Renderer::Context context;
     TaskSystem tasks;
@@ -201,7 +201,7 @@ TEST_CASE("AssetManager: a resolved CreateAsync entry is freed once its last han
                 return raw;
             });
 
-        const AssetHandle<RawAsset> handle = manager.CreateAsync<RawAsset>(std::move(factory));
+        const AssetHandle<RawAsset> handle = manager.Adopt<RawAsset>(std::move(factory));
         weak = WeakAssetHandle<RawAsset>(handle);
 
         tasks.WaitForAll();

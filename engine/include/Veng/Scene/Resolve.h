@@ -36,13 +36,13 @@ namespace Veng
     /// @brief Builds the active shape into a streaming Mesh and returns its pending handle.
     ///
     /// Generates the CPU geometry (BuildShapeMeshData) and uploads it through the async
-    /// Mesh::CreateAsync path; the handle is !IsLoaded() until the build lands a few frames
+    /// Mesh::Build path; the handle is !IsLoaded() until the build lands a few frames
     /// later, exactly as a cooked-mesh Load. Returns an empty handle for an empty variant.
     /// Does not dedup — identical recipes build independent meshes; share the returned
     /// handle to reuse one.
     /// @param manager  The asset manager the async mesh streams through.
     /// @param shape    The shape recipe; its active alternative selects the geometry.
     /// @return The pending mesh handle, or an empty handle for an empty variant.
-    [[nodiscard]] AssetHandle<Mesh> CreatePrimitiveMesh(AssetManager& manager,
-                                                        const PrimitiveShapeVariant& shape);
+    [[nodiscard]] AssetHandle<Mesh> BuildPrimitiveMesh(AssetManager& manager,
+                                                       const PrimitiveShapeVariant& shape);
 }

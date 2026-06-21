@@ -186,7 +186,7 @@ namespace Veng
     /// @brief Resolver for Primitive: builds the active shape's mesh and points the
     ///        entity's MeshRenderer at it.
     ///
-    /// Builds the active shape through CreatePrimitiveMesh, adding a MeshRenderer when the
+    /// Builds the active shape through BuildPrimitiveMesh, adding a MeshRenderer when the
     /// entity has none. An empty Shape leaves the renderer untouched. Wired onto the type by
     /// VE_RESOLVE; fired by Prefab::SpawnInto and ResolveComponents.
     /// @param primitive  The component carrying the shape recipe.

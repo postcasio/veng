@@ -8,7 +8,7 @@
 /// @brief Runtime primitive mesh generators.
 ///
 /// Each function returns CPU-side MeshData in the canonical vertex layout
-/// (Mesh::CanonicalLayout()); upload with Mesh::Create(context, data, name).
+/// (Mesh::CanonicalLayout()); upload with Mesh::BuildSync(context, data, name).
 /// Geometry is generated with analytic normals, tangents (xyz + handedness w),
 /// and UVs. A valid material handle is recorded on the produced submesh
 /// (the mesh owns it; the draw loop binds it); an empty handle leaves the

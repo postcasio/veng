@@ -135,7 +135,7 @@ int main()
         // two-renderer handoff the validation gate must exercise. Disjoint targets,
         // each bracketing its own output.
         constexpr uvec2 viewportExtent{320, 240};
-        const Ref<Mesh> viewportSphere = Mesh::Create(
+        const Ref<Mesh> viewportSphere = Mesh::BuildSync(
             context,
             Primitives::Icosphere(0.85f, 4, brick.has_value() ? *brick : AssetHandle<Material>{}),
             "Viewport Sphere");

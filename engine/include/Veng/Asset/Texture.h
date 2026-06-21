@@ -50,8 +50,10 @@ namespace Veng
     class Texture
     {
     public:
-        /// @brief Synchronous create + blocking UploadSync. Unregistered; the caller must call Finalize() on the main thread.
-        static Ref<Texture> Create(Renderer::Context& context, const TextureInfo& info);
+        /// @brief Synchronous build + blocking UploadSync. Unregistered; the caller must call Finalize() on the main thread.
+        ///
+        /// @see Build  The async sibling that streams the texture in off the render thread.
+        static Ref<Texture> BuildSync(Renderer::Context& context, const TextureInfo& info);
 
         /// @brief Worker-legal create + async upload recorded on the transfer queue.
         ///
@@ -70,20 +72,19 @@ namespace Veng
         /// upload, waits for that upload to submit, then registers the view and sampler into the
         /// bindless registry — so the yielded Texture is ready to sample. The returned Task yields
         /// that Ref; a caller publishes it to the render thread through the continuation pump (see
-        /// AssetManager::CreateAsync). It is the high-level Task<Ref<Texture>> sibling of the
-        /// two-phase CreateAsync(context, info, tasks, outUpload) the TextureLoader uses; the
-        /// blocking sibling is Texture::Create(context, info) + Finalize().
+        /// AssetManager::Adopt(Task<Ref<T>>)). It is the high-level Task<Ref<Texture>> sibling of
+        /// the two-phase CreateAsync(context, info, tasks, outUpload) the TextureLoader uses.
         /// @param context Render context the image/view/sampler are created on; must outlive the texture.
         /// @param tasks   The task system the worker job and the transfer upload run on.
         /// @param info    Texture description; its pixels are copied into the worker job, so the
         ///                caller's backing storage need not outlive the call.
         /// @return A Task yielding the resident, finalized Ref<Texture>.
-        /// @warning Finalize() (the bindless registration) runs inside the worker job, matching
-        ///          Mesh::CreateAsync's all-on-worker shape; the BindlessRegistry is otherwise
-        ///          render-thread-only, so a caller must not have a frame in flight concurrently
-        ///          registering bindless resources while this job runs.
-        [[nodiscard]] static Task<Ref<Texture>> CreateAsync(Renderer::Context& context,
-                                                            TaskSystem& tasks, TextureInfo info);
+        /// @warning Finalize() (the bindless registration) runs inside the worker job; the
+        ///          BindlessRegistry is otherwise render-thread-only, so a caller must not have a
+        ///          frame in flight concurrently registering bindless resources while this job runs.
+        /// @see BuildSync  The blocking sibling that builds inline (the caller calls Finalize()).
+        [[nodiscard]] static Task<Ref<Texture>> Build(Renderer::Context& context, TaskSystem& tasks,
+                                                      TextureInfo info);
 
         ~Texture();
 

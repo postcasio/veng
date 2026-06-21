@@ -156,7 +156,7 @@ namespace Veng
         }
         else
         {
-            texture = Veng::Texture::Create(context, info);
+            texture = Veng::Texture::BuildSync(context, info);
         }
 
         return Detail::LoadJob{

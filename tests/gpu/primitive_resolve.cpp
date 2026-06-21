@@ -1,5 +1,5 @@
 // The Primitive resolver end to end: ResolveComponents builds the active
-// shape into a streamed Mesh through CreatePrimitiveMesh and stores it in the entity's
+// shape into a streamed Mesh through BuildPrimitiveMesh and stores it in the entity's
 // MeshRenderer. Covers residency after pumping, that identical shapes resolve to
 // distinct meshes (no dedup), re-resolution swapping the handle, and an empty variant
 // leaving the renderer untouched.
@@ -23,7 +23,7 @@ using namespace Veng;
 namespace
 {
     // Pumps the worker drain + main-thread continuation + finalize so pending
-    // CreateAsync handles flip resident.
+    // Adopt handles flip resident.
     void PumpUntilResident(TaskSystem& tasks, AssetManager& manager)
     {
         tasks.WaitForAll();

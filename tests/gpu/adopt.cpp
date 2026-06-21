@@ -22,7 +22,7 @@ TEST_CASE_FIXTURE(
 
     // A runtime primitive — built and uploaded with no cooker, no AssetId, no
     // material (the empty handle leaves the submesh unassigned).
-    const Ref<Mesh> mesh = Mesh::Create(Context, Primitives::Cube(1.0f), "Adopted Cube");
+    const Ref<Mesh> mesh = Mesh::BuildSync(Context, Primitives::Cube(1.0f), "Adopted Cube");
     REQUIRE(mesh != nullptr);
 
     const AssetHandle<Mesh> handle = assets.Adopt(mesh);

@@ -1,4 +1,4 @@
-// CreateAsync smoke: a runtime Mesh streams in through AssetManager::CreateAsync,
+// Adopt(Task) smoke: a runtime Mesh streams in through AssetManager::Adopt,
 // proving the detached-but-pending cache-entry lifecycle end to end — the handle
 // is returned not-yet-resident, the factory's Ref<Mesh> lands through the
 // main-thread continuation pump, and IsLoaded() then flips to a drawable mesh.
@@ -16,18 +16,18 @@
 using namespace Veng;
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "AssetManager::CreateAsync: a runtime mesh streams in as a pending handle")
+                  "AssetManager::Adopt: a runtime mesh streams in as a pending handle")
 {
     AssetManager assets(Context, Tasks, Types);
 
     // The geometry build + GPU upload run on the render thread; the factory task
-    // hands the finished Ref<Mesh> to CreateAsync's main-thread continuation.
-    const Ref<Mesh> mesh = Mesh::Create(Context, Primitives::Cube(1.0f), "Async Cube");
+    // hands the finished Ref<Mesh> to Adopt's main-thread continuation.
+    const Ref<Mesh> mesh = Mesh::BuildSync(Context, Primitives::Cube(1.0f), "Async Cube");
     REQUIRE(mesh != nullptr);
 
     Task<Ref<Mesh>> factory = Tasks.Submit([mesh] { return mesh; });
 
-    const AssetHandle<Mesh> handle = assets.CreateAsync<Mesh>(std::move(factory));
+    const AssetHandle<Mesh> handle = assets.Adopt<Mesh>(std::move(factory));
 
     // Pending: the handle exists but is not yet resident, and carries the invalid id.
     CHECK_FALSE(handle.IsLoaded());

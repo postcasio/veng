@@ -95,7 +95,7 @@ namespace Veng
         return std::nullopt;
     }
 
-    AssetHandle<Mesh> CreatePrimitiveMesh(AssetManager& manager, const PrimitiveShapeVariant& shape)
+    AssetHandle<Mesh> BuildPrimitiveMesh(AssetManager& manager, const PrimitiveShapeVariant& shape)
     {
         optional<MeshData> data = BuildShapeMeshData(shape);
         if (!data)
@@ -104,8 +104,8 @@ namespace Veng
         }
 
         const string name = fmt::format("Primitive {:#018x}", shape.ActiveType());
-        return manager.CreateAsync<Mesh>(
-            Mesh::CreateAsync(manager.GetContext(), manager.GetTasks(), std::move(*data), name));
+        return manager.Adopt<Mesh>(
+            Mesh::Build(manager.GetContext(), manager.GetTasks(), std::move(*data), name));
     }
 
     void ResolvePrimitive(Primitive& primitive, Scene& scene, Entity entity, AssetManager& manager)
@@ -116,7 +116,7 @@ namespace Veng
             return;
         }
 
-        AssetHandle<Mesh> mesh = CreatePrimitiveMesh(manager, primitive.Shape);
+        AssetHandle<Mesh> mesh = BuildPrimitiveMesh(manager, primitive.Shape);
         if (scene.TryGet<MeshRenderer>(entity) == nullptr)
         {
             scene.Add<MeshRenderer>(entity);

@@ -24,10 +24,10 @@ namespace Veng
         // Unregistered at construction: handle indices and the SSBO slot are assigned in Finalize().
     }
 
-    Task<Ref<Material>> Material::CreateAsync(TaskSystem& tasks, MaterialInfo info,
-                                              Ref<Renderer::PipelineLayout> layout)
+    Task<Ref<Material>> Material::Build(TaskSystem& tasks, MaterialInfo info,
+                                        Ref<Renderer::PipelineLayout> layout)
     {
-        VE_ASSERT(layout != nullptr, "Material::CreateAsync: '{}' given a null pipeline layout",
+        VE_ASSERT(layout != nullptr, "Material::Build: '{}' given a null pipeline layout",
                   info.Name);
 
         return tasks.Submit(

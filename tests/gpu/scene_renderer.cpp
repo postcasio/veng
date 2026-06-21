@@ -61,7 +61,7 @@ namespace
     // caller keeps it resident for the renderer's lifetime.
     Ref<Mesh> PopulateCubeScene(Context& context, AssetManager& assets, Scene& scene)
     {
-        const Ref<Mesh> cube = Mesh::Create(context, Primitives::Cube(1.0f), "Test Cube");
+        const Ref<Mesh> cube = Mesh::BuildSync(context, Primitives::Cube(1.0f), "Test Cube");
 
         const Entity entity = scene.CreateEntity();
         scene.Add<Transform>(entity);
@@ -415,7 +415,7 @@ namespace
                     .IndexCount = static_cast<u32>(near.Indices.size())},
         };
 
-        return Mesh::Create(context, data, "Two-SubMesh");
+        return Mesh::BuildSync(context, data, "Two-SubMesh");
     }
 }
 
@@ -436,7 +436,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     constexpr uvec2 extent{64, 64};
 
-    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.0f), "Cull Cube");
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.0f), "Cull Cube");
 
     CameraView camera;
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
@@ -606,7 +606,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         // above it — the near-plane extension toward the light is what catches it.
         const Unique<Scene> scene = Scene::Create(Types);
         const Ref<Mesh> ground =
-            Mesh::Create(Context, Primitives::Plane(vec2(20.0f), uvec2(1)), "Cull Ground");
+            Mesh::BuildSync(Context, Primitives::Plane(vec2(20.0f), uvec2(1)), "Cull Ground");
         const Entity groundEntity = scene->CreateEntity();
         scene->Add<Transform>(groundEntity);
         scene->Add<MeshRenderer>(groundEntity).Mesh = assets.Adopt(ground);
@@ -670,7 +670,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         // down-range (large view depth → beyond cascade 0's near slice, inside the
         // far cascade's).
         const Ref<Mesh> ground =
-            Mesh::Create(Context, Primitives::Plane(vec2(120.0f), uvec2(1)), "Indep Ground");
+            Mesh::BuildSync(Context, Primitives::Plane(vec2(120.0f), uvec2(1)), "Indep Ground");
         const Entity groundEntity = scene->CreateEntity();
         scene->Add<Transform>(groundEntity);
         scene->Add<MeshRenderer>(groundEntity).Mesh = assets.Adopt(ground);
@@ -852,7 +852,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // A cube filling the view, the brick material on its single submesh, its front
     // face squarely toward the camera (world normal +Z).
-    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Oracle Cube");
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Oracle Cube");
 
     const Unique<Scene> scene = Scene::Create(Types);
     const Entity entity = scene->CreateEntity();
@@ -1020,7 +1021,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "scene renderer: two renderers (differ
     const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
     REQUIRE(material.has_value());
 
-    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "N-Test Cube");
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "N-Test Cube");
 
     const Unique<Scene> scene = Scene::Create(Types);
     const Entity entity = scene->CreateEntity();
@@ -1122,7 +1124,7 @@ TEST_CASE_FIXTURE(
     const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
     REQUIRE(material.has_value());
 
-    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Mode Cube");
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Mode Cube");
 
     const Unique<Scene> scene = Scene::Create(Types);
     const Entity entity = scene->CreateEntity();
@@ -1238,7 +1240,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(material.has_value());
 
     const Ref<Mesh> cube =
-        Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Exposure Cube");
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Exposure Cube");
 
     const Unique<Scene> scene = Scene::Create(Types);
     const Entity entity = scene->CreateEntity();
@@ -1301,7 +1303,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
     REQUIRE(material.has_value());
 
-    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "BRDF Cube");
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "BRDF Cube");
 
     const Unique<Scene> scene = Scene::Create(Types);
     const Entity entity = scene->CreateEntity();
@@ -1377,7 +1379,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(material.has_value());
 
     const Ref<Mesh> cube =
-        Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Multi-Light Cube");
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Multi-Light Cube");
 
     const Unique<Scene> scene = Scene::Create(Types);
     const Entity entity = scene->CreateEntity();
@@ -1476,7 +1478,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     mat.SetParam("RoughnessFactor", 0.08f);
     mat.SetParam("MetallicFactor", 1.0f);
 
-    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.4f, *material), "Bloom Cube");
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Bloom Cube");
 
     const Unique<Scene> scene = Scene::Create(Types);
     const Entity entity = scene->CreateEntity();
@@ -1597,10 +1600,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // A large receiver plane in the XZ plane (world normal +Y) at the origin, and a
     // caster cube floating above its center. Both share the brick material.
-    const Ref<Mesh> plane =
-        Mesh::Create(Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Shadow Plane");
+    const Ref<Mesh> plane = Mesh::BuildSync(
+        Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Shadow Plane");
     const Ref<Mesh> caster =
-        Mesh::Create(Context, Primitives::Cube(1.2f, *material), "Shadow Caster");
+        Mesh::BuildSync(Context, Primitives::Cube(1.2f, *material), "Shadow Caster");
 
     const Unique<Scene> scene = Scene::Create(Types);
 
@@ -1710,9 +1713,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // A sphere resting on a plane: the plane's +Y face is the receiver, the sphere
     // sits just above the origin so its lower hemisphere creases into the plane.
     const Ref<Mesh> plane =
-        Mesh::Create(Context, Primitives::Plane(vec2(6.0f), uvec2(1), *material), "SSAO Plane");
+        Mesh::BuildSync(Context, Primitives::Plane(vec2(6.0f), uvec2(1), *material), "SSAO Plane");
     const Ref<Mesh> sphere =
-        Mesh::Create(Context, Primitives::Sphere(0.7f, 24, 32, *material), "SSAO Sphere");
+        Mesh::BuildSync(Context, Primitives::Sphere(0.7f, 24, 32, *material), "SSAO Sphere");
 
     const Unique<Scene> scene = Scene::Create(Types);
 
@@ -1816,9 +1819,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(material.has_value());
 
     const Ref<Mesh> plane =
-        Mesh::Create(Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Ring Plane");
+        Mesh::BuildSync(Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Ring Plane");
     const Ref<Mesh> caster =
-        Mesh::Create(Context, Primitives::Cube(1.2f, *material), "Ring Caster");
+        Mesh::BuildSync(Context, Primitives::Cube(1.2f, *material), "Ring Caster");
 
     const Unique<Scene> scene = Scene::Create(Types);
 
@@ -1975,8 +1978,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // A long receiver plane in the XZ plane, big enough that its visible length spans
     // multiple cascade depth ranges when viewed down its length.
-    const Ref<Mesh> plane =
-        Mesh::Create(Context, Primitives::Plane(vec2(80.0f), uvec2(1), *material), "Cascade Plane");
+    const Ref<Mesh> plane = Mesh::BuildSync(
+        Context, Primitives::Plane(vec2(80.0f), uvec2(1), *material), "Cascade Plane");
 
     const Unique<Scene> scene = Scene::Create(Types);
     const Entity planeEntity = scene->CreateEntity();
@@ -2116,10 +2119,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // A caster cube and a receiver plane below it, both brick (so the depth pass
     // actually draws their submeshes — a materialless mesh records no DrawIndexed).
-    const Ref<Mesh> plane =
-        Mesh::Create(Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Punctual Plane");
+    const Ref<Mesh> plane = Mesh::BuildSync(
+        Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Punctual Plane");
     const Ref<Mesh> caster =
-        Mesh::Create(Context, Primitives::Cube(1.0f, *material), "Punctual Caster");
+        Mesh::BuildSync(Context, Primitives::Cube(1.0f, *material), "Punctual Caster");
 
     const Unique<Scene> scene = Scene::Create(Types);
 
@@ -2250,7 +2253,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(material.has_value());
 
     const Ref<Mesh> cube =
-        Mesh::Create(Context, Primitives::Cube(1.0f, *material), "Punctual Cull Cube");
+        Mesh::BuildSync(Context, Primitives::Cube(1.0f, *material), "Punctual Cull Cube");
 
     constexpr uvec2 extent{96, 96};
 
@@ -2461,9 +2464,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(material.has_value());
 
     const Ref<Mesh> plane =
-        Mesh::Create(Context, Primitives::Plane(vec2(12.0f), uvec2(1), *material), "Spot Floor");
+        Mesh::BuildSync(Context, Primitives::Plane(vec2(12.0f), uvec2(1), *material), "Spot Floor");
     const Ref<Mesh> occluder =
-        Mesh::Create(Context, Primitives::Cube(1.5f, *material), "Spot Occluder");
+        Mesh::BuildSync(Context, Primitives::Cube(1.5f, *material), "Spot Occluder");
 
     const Unique<Scene> scene = Scene::Create(Types);
 
@@ -2582,10 +2585,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
     REQUIRE(material.has_value());
 
-    const Ref<Mesh> floor =
-        Mesh::Create(Context, Primitives::Plane(vec2(16.0f), uvec2(1), *material), "Point Floor");
+    const Ref<Mesh> floor = Mesh::BuildSync(
+        Context, Primitives::Plane(vec2(16.0f), uvec2(1), *material), "Point Floor");
     const Ref<Mesh> occluder =
-        Mesh::Create(Context, Primitives::Cube(1.5f, *material), "Point Occluder");
+        Mesh::BuildSync(Context, Primitives::Cube(1.5f, *material), "Point Occluder");
 
     const Unique<Scene> scene = Scene::Create(Types);
 
@@ -2703,9 +2706,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(material.has_value());
 
     const Ref<Mesh> floor =
-        Mesh::Create(Context, Primitives::Plane(vec2(12.0f), uvec2(1), *material), "Gate Floor");
+        Mesh::BuildSync(Context, Primitives::Plane(vec2(12.0f), uvec2(1), *material), "Gate Floor");
     const Ref<Mesh> occluder =
-        Mesh::Create(Context, Primitives::Cube(1.5f, *material), "Gate Occluder");
+        Mesh::BuildSync(Context, Primitives::Cube(1.5f, *material), "Gate Occluder");
 
     const Unique<Scene> scene = Scene::Create(Types);
 
@@ -2963,7 +2966,7 @@ TEST_CASE_FIXTURE(
     const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
     REQUIRE(material.has_value());
 
-    const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.0f, *material), "Cull Cube");
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.0f, *material), "Cull Cube");
 
     constexpr uvec2 extent{128, 128};
 
@@ -3036,7 +3039,7 @@ TEST_CASE_FIXTURE(
         // A large occluder between the camera and a small cube far behind it on the same
         // axis, sized to fill the screen so the cube's whole footprint is behind it.
         const Ref<Mesh> occluder =
-            Mesh::Create(Context, Primitives::Cube(10.0f, *material), "Occluder");
+            Mesh::BuildSync(Context, Primitives::Cube(10.0f, *material), "Occluder");
         const Entity occluderEntity = scene->CreateEntity();
         scene->Add<Transform>(occluderEntity).Position = vec3(0.0f, 0.0f, 0.0f);
         scene->Add<MeshRenderer>(occluderEntity).Mesh = assets.Adopt(occluder);
