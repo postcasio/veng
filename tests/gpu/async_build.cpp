@@ -1,7 +1,7 @@
-// Async build factories for Texture and Material: the Task<Ref<T>> siblings of
-// Mesh::Build. Each builds a runtime resource off the render thread and
-// streams it in through AssetManager::Adopt, proving the worker job yields
-// a finalized, resident resource the main-thread continuation pump publishes.
+// AssetManager::Build for Texture and Material: the async-default verb that builds a
+// runtime resource off the render thread and returns a pending AssetHandle, proving the
+// worker job's create+upload and the main-thread continuation's finalize together yield
+// a finalized, resident resource.
 //
 // The Texture case uploads CPU pixels through the transfer queue and asserts the
 // streamed-in texture has the expected extent/format and a valid bindless handle.
@@ -47,8 +47,9 @@ namespace
     }
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "Texture::Build: a runtime texture streams in finalized and resident")
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "AssetManager::Build<Texture>: a runtime texture streams in finalized and resident")
 {
     // The async upload records on the transfer queue, so the per-worker transfer
     // pools the Application normally wires up must be initialized here.
@@ -76,7 +77,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             },
     };
 
-    const AssetHandle<Texture> handle = assets.Adopt<Texture>(Texture::Build(Context, Tasks, info));
+    const AssetHandle<Texture> handle = assets.Build<Texture>(info);
 
     // Pending: the handle exists but is not yet resident, and carries the invalid id.
     CHECK_FALSE(handle.IsLoaded());
@@ -91,13 +92,14 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(texture->GetExtent() == uvec2(Size, Size));
     CHECK(texture->GetFormat() == Format::RGBA8Unorm);
 
-    // The worker finalized it, so its bindless view/sampler slots are allocated.
+    // The main-thread continuation finalized it, so its bindless view/sampler slots are allocated.
     CHECK(texture->GetHandle().IsValid());
     CHECK(texture->GetSamplerHandle().IsValid());
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "Material::Build: a runtime material streams in with its authored block")
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "AssetManager::Build<Material>: a runtime material streams in with its authored block")
 {
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
@@ -151,8 +153,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .SelectorOffset = 0,
     };
 
-    const AssetHandle<Material> handle =
-        assets.Adopt<Material>(Material::Build(Tasks, std::move(info), layout));
+    const AssetHandle<Material> handle = assets.Build<Material>(std::move(info), layout);
 
     CHECK_FALSE(handle.IsLoaded());
     CHECK_FALSE(handle.Id().IsValid());

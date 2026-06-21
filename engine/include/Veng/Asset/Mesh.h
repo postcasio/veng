@@ -118,7 +118,7 @@ namespace Veng
         /// @brief Creates a Mesh directly from a MeshInfo (GPU buffers already uploaded).
         ///
         /// The low-level GPU-object construction step from already-uploaded handles, distinct
-        /// from building the asset from CPU geometry (see Build / BuildSync).
+        /// from building the asset from CPU geometry (see BuildSync / AssetManager::Build).
         static Ref<Mesh> Create(const MeshInfo& info) { return Ref<Mesh>(new Mesh(info)); }
 
         /// @brief Uploads CPU-side geometry into a resident GPU Mesh in the canonical layout, blocking.
@@ -126,26 +126,9 @@ namespace Veng
         /// Carries data.Materials onto the mesh. An empty SubMeshes list synthesizes one
         /// unassigned submesh over the whole index range. Uses the blocking UploadSync path,
         /// so the returned Mesh is immediately ready to draw.
-        /// @see Build  The async sibling that streams the geometry in off the render thread.
+        /// @see AssetManager::Build  The async sibling that streams the geometry in off the render thread.
         [[nodiscard]] static Ref<Mesh> BuildSync(Renderer::Context& context, const MeshData& data,
                                                  const string& name);
-
-        /// @brief Builds a resident Mesh from CPU geometry off the render thread.
-        ///
-        /// Submits one worker job that creates the canonical vertex + index buffers, memcpys the
-        /// geometry into them (the buffers are HOST_VISIBLE | HOST_COHERENT, so the copy is a
-        /// plain memcpy — no staging, no transfer-queue command, no device wait), folds the
-        /// bounds, and assembles the Ref<Mesh>. The returned Task yields that Ref; a caller
-        /// publishes it to the render thread through the continuation pump (see
-        /// AssetManager::Adopt(Task<Ref<T>>)).
-        /// @param context The owning render context; the buffers are created on it and must not outlive it.
-        /// @param tasks   The task system the worker job runs on.
-        /// @param data    CPU geometry, moved into the worker job so it outlives the caller's frame.
-        /// @param name    Debug name for the mesh and its buffers.
-        /// @return A Task yielding the resident Ref<Mesh>.
-        /// @see BuildSync  The blocking sibling that uploads inline and returns a ready Mesh.
-        [[nodiscard]] static Task<Ref<Mesh>> Build(Renderer::Context& context, TaskSystem& tasks,
-                                                   MeshData data, string name);
 
         /// @brief Returns the fixed canonical vertex layout (position/normal/tangent/uv, 48-byte stride).
         ///

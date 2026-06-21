@@ -36,7 +36,7 @@ namespace Veng
     /// @brief Builds the active shape into a streaming Mesh and returns its pending handle.
     ///
     /// Generates the CPU geometry (BuildShapeMeshData) and uploads it through the async
-    /// Mesh::Build path; the handle is !IsLoaded() until the build lands a few frames
+    /// AssetManager::Build path; the handle is !IsLoaded() until the build lands a few frames
     /// later, exactly as a cooked-mesh Load. Returns an empty handle for an empty variant.
     /// Does not dedup — identical recipes build independent meshes; share the returned
     /// handle to reuse one.

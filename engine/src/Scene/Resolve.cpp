@@ -104,8 +104,7 @@ namespace Veng
         }
 
         const string name = fmt::format("Primitive {:#018x}", shape.ActiveType());
-        return manager.Adopt<Mesh>(
-            Mesh::Build(manager.GetContext(), manager.GetTasks(), std::move(*data), name));
+        return manager.Build<Mesh>(std::move(*data), name);
     }
 
     void ResolvePrimitive(Primitive& primitive, Scene& scene, Entity entity, AssetManager& manager)

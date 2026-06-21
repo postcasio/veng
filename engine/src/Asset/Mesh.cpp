@@ -5,6 +5,7 @@
 #include <utility>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/AssetBuild.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/TypedBuffers.h>
@@ -161,7 +162,8 @@ namespace Veng
         return Mesh::Create(UploadMesh(context, data, name, BuildSubMeshes(data)));
     }
 
-    Task<Ref<Mesh>> Mesh::Build(Context& context, TaskSystem& tasks, MeshData data, string name)
+    Task<Detail::BuiltAsset<Mesh>> Detail::SubmitAssetBuild(Context& context, TaskSystem& tasks,
+                                                            MeshData data, string name)
     {
         // Validate eagerly on the calling thread: a misuse fatal is clearer here than buried
         // inside a worker job.
@@ -169,6 +171,12 @@ namespace Veng
 
         return tasks.Submit(
             [&context, data = std::move(data), name = std::move(name)]
-            { return Mesh::Create(UploadMesh(context, data, name, BuildSubMeshes(data))); });
+            {
+                // A Mesh has no bindless step, so the worker yields it resident with a null
+                // finalize — the main-thread continuation only swaps it into the cache.
+                Ref<Mesh> mesh =
+                    Mesh::Create(UploadMesh(context, data, name, BuildSubMeshes(data)));
+                return Detail::BuiltAsset<Mesh>{.Resource = std::move(mesh), .Finalize = {}};
+            });
     }
 }

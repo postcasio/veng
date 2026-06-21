@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/Archive.h>
+#include <Veng/Asset/AssetBuild.h>
 #include <Veng/Asset/AssetError.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetId.h>
@@ -206,6 +207,58 @@ namespace Veng
             return AssetHandle<T>(AssetId{}, std::move(entry));
         }
 
+        /// @brief Builds a runtime asset off the render thread, returning a pending handle.
+        ///
+        /// The async-default sibling of the synchronous X::BuildSync factories: the worker-legal
+        /// construction (decode/upload) runs on the task system and the render-thread-only finalize
+        /// (bindless registration) lands on the main-thread continuation pump, after which
+        /// IsLoaded() is true. Like Adopt, the handle carries the invalid AssetId and its cache
+        /// entry is detached — a runtime resource has no content identity. Supported for Texture,
+        /// Mesh, and Material; the arguments are the asset's build description (a TextureInfo, a
+        /// MeshData + name, or a MaterialInfo + pipeline layout).
+        /// @tparam T     The asset resource type to build.
+        /// @tparam Args  The asset's build-description arguments.
+        /// @param args   Forwarded to the per-type build (e.g. a TextureInfo, or a MeshData + name).
+        /// @return A pending handle that becomes resident through PumpMainThread().
+        template <typename T, typename... Args>
+        [[nodiscard]] AssetHandle<T> Build(Args&&... args)
+        {
+            auto entry = CreateRef<Detail::AssetCacheEntry>(Detail::AssetCacheEntry{
+                .Id = AssetId{},
+                .Type = AssetTypeTrait<T>::Type,
+                .Resource = nullptr,
+            });
+
+            AddPendingCreate(entry);
+
+            Detail::SubmitAssetBuild(m_Context, m_Tasks, std::forward<Args>(args)...)
+                .Then(
+                    [this, entry](Result<Detail::BuiltAsset<T>> result) mutable
+                    {
+                        if (!result)
+                        {
+                            FailPendingCreate(entry, result.error());
+                            return;
+                        }
+
+                        // The render-thread-only bindless registration runs here on the main-thread
+                        // continuation, never on the worker that built the resource.
+                        if (result->Finalize)
+                        {
+                            if (const VoidResult finalized = result->Finalize(); !finalized)
+                            {
+                                FailPendingCreate(entry, finalized.error());
+                                return;
+                            }
+                        }
+
+                        FinalizePendingCreate(
+                            entry, std::static_pointer_cast<void>(std::move(result->Resource)));
+                    });
+
+            return AssetHandle<T>(AssetId{}, std::move(entry));
+        }
+
         /// @brief Returns the cache entry for an id, or null if it is not cached.
         ///
         /// Untyped — the prefab loader uses it to rehydrate an embedded handle without naming
@@ -231,16 +284,6 @@ namespace Veng
 
         /// @brief Returns the type registry the prefab loader and editor reflect components through.
         [[nodiscard]] TypeRegistry& GetTypeRegistry() const { return m_Types; }
-
-        /// @brief Returns the render context the manager uploads assets on.
-        ///
-        /// BuildPrimitiveMesh builds its async meshes on this context.
-        [[nodiscard]] Renderer::Context& GetContext() const { return m_Context; }
-
-        /// @brief Returns the task system the manager runs async work on.
-        ///
-        /// BuildPrimitiveMesh runs its geometry build on this task system.
-        [[nodiscard]] TaskSystem& GetTasks() const { return m_Tasks; }
 
         /// @brief Runs any pending async finalizes whose uploads completed and whose dependencies are resident.
         ///

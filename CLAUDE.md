@@ -403,16 +403,19 @@ pipelines, `DescriptorSet`, `Fence`, `Semaphore` — is constructed from its des
 through `X::Create(const XInfo&)`: synchronous, returning a ready `Ref<T>`, because
 constructing the object is immediate and has no async form. A higher-level engine
 **asset** that carries CPU source data and *uploads* it — `Mesh` (from `MeshData`),
-`Texture` (from pixels), `Material` — is produced through `Build(...)`, **async by
-default** (returns a `Task<Ref<T>>` / lands a pending handle), with `BuildSync(...)` the
-blocking sibling — the async-default rule of `Load`/`LoadSync` and `Upload`/`UploadSync`.
-So the verb tells you the tier *and* the sync/async expectation: `Create` → a GPU object,
-now; `Build` → an asset, streaming (`BuildSync` to block). The low-level
-`Create(const XInfo&)` constructors these assets *also* expose — `Mesh::Create(MeshInfo)`,
-`Material::Create(MaterialInfo)`, the GPU-object construction step from already-uploaded
-handles — stay `Create`, distinct from building the asset from data. A runtime resource
-enters the `AssetManager` cache through **`Adopt`** — `Adopt(Ref<T>)` for a resident one,
-`Adopt(Task<Ref<T>>)` for a streaming one.
+`Texture` (from pixels), `Material` — is built **async by default** through
+`AssetManager::Build<T>(...)`: it runs the worker-legal upload off the render thread,
+lands the render-thread-only finalize (bindless registration) on the continuation pump,
+and returns a pending `AssetHandle<T>`. The per-type `X::BuildSync(...)` is the blocking
+sibling, returning a ready `Ref<T>` — the async-default rule of `Load`/`LoadSync` and
+`Upload`/`UploadSync`. So the verb tells you the tier *and* the sync/async expectation:
+`Create` → a GPU object, now; `Build` → an asset, streaming (`BuildSync` to block). The
+low-level `Create(const XInfo&)` constructors these assets *also* expose —
+`Mesh::Create(MeshInfo)`, `Material::Create(MaterialInfo)`, the GPU-object construction
+step from already-uploaded handles — stay `Create`, distinct from building the asset from
+data. A runtime resource enters the `AssetManager` cache through **`Adopt`** —
+`Adopt(Ref<T>)` for a resident one, `Adopt(Task<Ref<T>>)` for a streaming one;
+`AssetManager::Build<T>` is the convenience that builds *and* adopts in one call.
 
 The pointer type follows one rule:
 - **`Ref<T>`** (`shared_ptr`) — genuinely shared GPU resources others hold

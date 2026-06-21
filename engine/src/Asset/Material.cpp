@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/AssetBuild.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -24,18 +25,31 @@ namespace Veng
         // Unregistered at construction: handle indices and the SSBO slot are assigned in Finalize().
     }
 
-    Task<Ref<Material>> Material::Build(TaskSystem& tasks, MaterialInfo info,
-                                        Ref<Renderer::PipelineLayout> layout)
+    Task<Detail::BuiltAsset<Material>>
+    Detail::SubmitAssetBuild(Renderer::Context&, TaskSystem& tasks, MaterialInfo info,
+                             Ref<Renderer::PipelineLayout> layout)
     {
-        VE_ASSERT(layout != nullptr, "Material::Build: '{}' given a null pipeline layout",
+        VE_ASSERT(layout != nullptr,
+                  "AssetManager::Build<Material>: '{}' given a null pipeline "
+                  "layout",
                   info.Name);
 
         return tasks.Submit(
             [info = std::move(info), layout = std::move(layout)]() mutable
             {
-                Ref<Material> material(new Material(info));
-                material->Finalize(std::move(layout), info.Pipeline);
-                return material;
+                const Ref<Material> material = Material::Create(info);
+
+                // The bindless RegisterMaterial + parameter-block write is render-thread-only, so
+                // it is deferred to the main-thread continuation.
+                return Detail::BuiltAsset<Material>{
+                    .Resource = material,
+                    .Finalize = [material, layout = std::move(layout),
+                                 pipeline = info.Pipeline]() mutable -> VoidResult
+                    {
+                        material->Finalize(std::move(layout), pipeline);
+                        return {};
+                    },
+                };
             });
     }
 

@@ -1,6 +1,7 @@
 #include <Veng/Asset/Texture.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/AssetBuild.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
@@ -47,28 +48,34 @@ namespace Veng
         return texture;
     }
 
-    Task<Ref<Texture>> Texture::Build(Context& context, TaskSystem& tasks, TextureInfo info)
+    Task<Detail::BuiltAsset<Texture>> Detail::SubmitAssetBuild(Context& context, TaskSystem& tasks,
+                                                               TextureInfo info)
     {
         // The caller's TextureInfo::Pixels is a non-owning span; copy the source bytes into the
         // worker job so they outlive the caller's frame.
         vector<u8> pixels(info.Pixels.begin(), info.Pixels.end());
 
         return tasks.Submit(
-            [&context, &tasks, info = std::move(info), pixels = std::move(pixels)]
+            [&context, &tasks, info = std::move(info), pixels = std::move(pixels)]() mutable
             {
-                TextureInfo workerInfo = info;
-                workerInfo.Pixels = pixels;
+                info.Pixels = pixels;
 
-                Ref<Texture> texture(new Texture(context, workerInfo));
+                Task<void> upload;
+                const Ref<Texture> texture = Texture::CreateAsync(context, info, tasks, upload);
 
-                // Record the transfer-queue copy and block on its submit; the staging buffer
-                // retires on the transfer timeline, so the frame that first samples this view
-                // folds in the timeline wait.
-                Task<void> upload = texture->m_Image->Upload(tasks, workerInfo.Pixels);
+                // Block on the transfer-queue submit here on the worker; the staging buffer retires
+                // on the transfer timeline, so the frame that first samples this view folds in the
+                // timeline wait. Finalize (bindless registration) is deferred to the main thread.
                 (void)upload.Get();
 
-                texture->Finalize();
-                return texture;
+                return Detail::BuiltAsset<Texture>{
+                    .Resource = texture,
+                    .Finalize = [texture]() -> VoidResult
+                    {
+                        texture->Finalize();
+                        return {};
+                    },
+                };
             });
     }
 

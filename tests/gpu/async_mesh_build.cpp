@@ -1,11 +1,12 @@
-// Async mesh build: a hand-built MeshData is uploaded through Mesh::Build,
-// proving the worker job builds a drawable Ref<Mesh> off the render thread (the
-// geometry copy is a host-visible memcpy, no transfer queue) and that the async
-// path produces a mesh identical in index count, submesh table, and bounds to the
-// blocking Mesh::Create sibling — differing only in *when*, not *what*.
+// Async mesh build: a hand-built MeshData is streamed in through AssetManager::Build<Mesh>,
+// proving the worker job builds a drawable mesh off the render thread (the geometry copy is
+// a host-visible memcpy, no transfer queue) and that the async path produces a mesh identical
+// in index count, submesh table, and bounds to the blocking Mesh::BuildSync sibling —
+// differing only in *when*, not *what*.
 
 #include <doctest/doctest.h>
 
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Renderer/Buffer.h>
@@ -18,6 +19,14 @@ using namespace Veng::Renderer;
 
 namespace
 {
+    // Drains the worker pool and pumps the main-thread continuation so a pending Build handle
+    // finalizes into residency.
+    void PumpToResidency(TaskSystem& tasks)
+    {
+        tasks.WaitForAll();
+        tasks.PumpMainThread();
+    }
+
     // A unit quad in the XY plane: four corners, two triangles, one submesh — the
     // smallest geometry that exercises the vertex + index upload and a non-empty bound.
     MeshData TwoTriangleQuad()
@@ -45,16 +54,17 @@ namespace
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "Mesh::Build: a worker builds a drawable mesh with correct bounds")
+                  "AssetManager::Build<Mesh>: a worker builds a drawable mesh with correct bounds")
 {
-    const MeshData data = TwoTriangleQuad();
+    AssetManager assets(Context, Tasks, Types);
 
-    Task<Ref<Mesh>> factory = Mesh::Build(Context, Tasks, data, "Async Quad");
+    const AssetHandle<Mesh> handle = assets.Build<Mesh>(TwoTriangleQuad(), string("Async Quad"));
+    CHECK_FALSE(handle.IsLoaded());
 
-    const Result<Ref<Mesh>> built = factory.Get();
-    REQUIRE(built.has_value());
+    PumpToResidency(Tasks);
 
-    const Ref<Mesh> mesh = *built;
+    REQUIRE(handle.IsLoaded());
+    const Mesh* mesh = handle.Get();
     REQUIRE(mesh != nullptr);
 
     CHECK(mesh->GetIndexType() == IndexType::U32);
@@ -78,24 +88,22 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // The worker folded ComputeBounds over the CPU geometry, so the streamed mesh is
     // broadphase-correct the instant it goes resident.
     CHECK_FALSE(mesh->GetBounds().IsEmpty());
-
-    // Drain the worker before the fixture tears the Context down: a live worker must
-    // not outlive the device.
-    Tasks.WaitForAll();
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "Mesh::Build matches the blocking BuildSync (index count, submeshes, bounds)")
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "AssetManager::Build<Mesh> matches the blocking BuildSync (index count, submeshes, bounds)")
 {
     const MeshData data = TwoTriangleQuad();
 
     const Ref<Mesh> sync = Mesh::BuildSync(Context, data, "Sync Quad");
     REQUIRE(sync != nullptr);
 
-    Task<Ref<Mesh>> factory = Mesh::Build(Context, Tasks, data, "Async Quad");
-    const Result<Ref<Mesh>> built = factory.Get();
-    REQUIRE(built.has_value());
-    const Ref<Mesh> async = *built;
+    AssetManager assets(Context, Tasks, Types);
+    const AssetHandle<Mesh> handle = assets.Build<Mesh>(data, string("Async Quad"));
+    PumpToResidency(Tasks);
+    REQUIRE(handle.IsLoaded());
+    const Mesh* async = handle.Get();
     REQUIRE(async != nullptr);
 
     CHECK(async->GetIndexCount() == sync->GetIndexCount());
@@ -112,6 +120,4 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     CHECK(async->GetBounds().Min == sync->GetBounds().Min);
     CHECK(async->GetBounds().Max == sync->GetBounds().Max);
-
-    Tasks.WaitForAll();
 }
