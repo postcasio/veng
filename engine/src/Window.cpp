@@ -197,7 +197,15 @@ namespace Veng
 
     bool Window::KeyPressed(const Key key) const
     {
-        return glfwGetKey(m_Handle, static_cast<i32>(key)) == GLFW_PRESS;
+        // glfwGetKey raises GLFW_INVALID_ENUM (a fatal error through our callback) for
+        // any code outside [GLFW_KEY_SPACE, GLFW_KEY_LAST]; Input sweeps every key slot,
+        // so reject the gaps and out-of-range slots here rather than at the call site.
+        const auto code = static_cast<i32>(key);
+        if (code < GLFW_KEY_SPACE || code > GLFW_KEY_LAST)
+        {
+            return false;
+        }
+        return glfwGetKey(m_Handle, code) == GLFW_PRESS;
     }
 
     bool Window::MouseButtonPressed(const MouseButton button) const
