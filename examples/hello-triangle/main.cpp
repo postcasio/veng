@@ -20,6 +20,9 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Transforms.h>
+#include <Veng/Scene/SceneSystem.h>
+#include <Veng/Scene/SystemRegistry.h>
+#include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Task/TaskSystem.h>
 
 #include <glm/gtc/packing.hpp>
@@ -44,10 +47,33 @@ VE_REFLECT(Spinner, 0xAEF00D5EFC2444DAULL)
 VE_FIELD(SpeedRadiansPerSec, .DisplayName = "Speed", .Tooltip = "Radians per second", .Min = 0.0)
 VE_REFLECT_END();
 
+// The light-orbit pivot spins about Y, so its child lights circle horizontally above the
+// grid. Shared by the windowed SpinnerSystem and the smoke fixed-pose write.
+static inline const vec3 SpinAxis = vec3(0.0f, 1.0f, 0.0f);
+
+// Advances every Spinner each frame — the gameplay tick the windowed app drives through
+// a SceneSimulation. Registered into the host SystemRegistry alongside the Spinner type.
+class SpinnerSystem final : public SceneSystem
+{
+public:
+    void OnUpdate(Scene& scene, const f32 delta, const SystemContext&) override
+    {
+        scene.Each<Transform, Spinner>(
+            [delta](Entity, Transform& transform, Spinner& spinner)
+            {
+                const quat step = glm::angleAxis(spinner.SpeedRadiansPerSec * delta, SpinAxis);
+                transform.Rotation = glm::normalize(step * transform.Rotation);
+            });
+    }
+};
+
 class HelloTriangleApp final : public Application
 {
 public:
-    HelloTriangleApp(const ApplicationInfo& info, TypeRegistry& types) : Application(info, types) {}
+    HelloTriangleApp(const ApplicationInfo& info, TypeRegistry& types, SystemRegistry& systems)
+        : Application(info, types, systems)
+    {
+    }
 
 protected:
     void OnInitialize() override
@@ -138,28 +164,36 @@ protected:
         {
             m_CompositeGraph = BuildCompositeGraph();
         }
+
+        // Smoke mode has no window, so Input is null and the gameplay tick is skipped;
+        // it writes a fixed pose in OnUpdate instead. The windowed app drives the
+        // registered systems through the simulation.
+        if (!m_SmokeOutput)
+        {
+            m_Simulation = CreateUnique<SceneSimulation>(GetSystemRegistry());
+            m_Simulation->Start(*m_Scene,
+                                SystemContext{.Assets = GetAssetManager(), .Input = GetInput()});
+        }
     }
 
     void OnUpdate(const f32 delta) override
     {
         m_LastDelta = delta;
 
-        // Smoke mode pins a fixed pose for golden comparison; otherwise advance each spinner.
+        // Smoke mode pins a fixed pose for golden comparison and never ticks the simulation,
+        // so the capture is byte-identical run to run; the windowed app advances the spinners
+        // through the registered systems.
         if (m_SmokeOutput)
         {
             m_Scene->Each<Transform, Spinner>(
                 [](Entity, Transform& transform, Spinner&)
                 { transform.Rotation = glm::angleAxis(SmokeAngle, SpinAxis); });
         }
-        else if (!m_PauseSpin)
+        else if (!m_PauseSpin && m_Simulation)
         {
-            // Skipping this non-const Each stops the spatial version, so the broadphase reads `static`.
-            m_Scene->Each<Transform, Spinner>(
-                [delta](Entity, Transform& transform, Spinner& spinner)
-                {
-                    const quat step = glm::angleAxis(spinner.SpeedRadiansPerSec * delta, SpinAxis);
-                    transform.Rotation = glm::normalize(step * transform.Rotation);
-                });
+            // Skipping the tick stops every Transform write, so the broadphase reads `static`.
+            m_Simulation->Update(*m_Scene, delta,
+                                 SystemContext{.Assets = GetAssetManager(), .Input = GetInput()});
         }
 
         // Runs before this frame's commands record, so the image holds the previous frame's contents.
@@ -201,6 +235,7 @@ protected:
 
     void OnDispose() override
     {
+        m_Simulation.reset();
         m_SceneRenderer.reset();
         m_CompositeGraph.reset();
         m_Composite.reset();
@@ -459,11 +494,12 @@ private:
 
     // Fixed rotation for the smoke capture, in radians.
     static constexpr f32 SmokeAngle = 0.9f;
-    // The light-orbit pivot spins about Y, so its child lights circle horizontally above the grid.
-    static inline const vec3 SpinAxis = vec3(0.0f, 1.0f, 0.0f);
 
     Unique<Scene> m_Scene;
     CameraView m_Camera;
+
+    // Drives the registered scene systems in the windowed path; null in smoke mode.
+    Unique<SceneSimulation> m_Simulation;
 
     f32 m_LastDelta = 0.0f;
     u32 m_FrameCount = 0;
@@ -484,12 +520,13 @@ private:
 extern "C" void VengModuleRegister(VengModuleHost* host)
 {
     host->Types.Register<Spinner>();
+    host->Systems.Register<SpinnerSystem>();
 
     // Smoke mode: no window or swapchain, render off-screen and dump — the display-free CI path.
     const bool smoke = std::getenv("HT_SMOKE") != nullptr;
 
     host->App.RegisterApplication(
-        [smoke](TypeRegistry& types)
+        [smoke](TypeRegistry& types, SystemRegistry& systems)
         {
             return Unique<Application>(new HelloTriangleApp(
                 ApplicationInfo{
@@ -508,7 +545,7 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                     // executable-relative resolution the asset pack uses.
                     .PipelineCachePath = ExecutableDirectory() / "pipeline_cache.bin",
                 },
-                types));
+                types, systems));
         });
 }
 

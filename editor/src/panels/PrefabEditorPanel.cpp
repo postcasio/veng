@@ -4,8 +4,12 @@
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
+#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SceneSimulation.h>
+#include <Veng/Scene/SceneSystem.h>
+#include <Veng/Time.h>
 #include <Veng/UI/UI.h>
 #include <Veng/Vendor/ImGuiInternal.h>
 
@@ -20,8 +24,10 @@ namespace VengEditor
     PrefabEditorPanel::PrefabEditorPanel(AssetId id, Renderer::Context& context,
                                          AssetManager& assets, ImGuiLayer& imgui,
                                          TypeRegistry& types, EditorRegistry& editors,
-                                         const AssetSourceIndex& sources)
-        : m_Id(id), m_Title(fmt::format("Prefab 0x{:X}", id.Value))
+                                         const AssetSourceIndex& sources, Input& input,
+                                         SystemRegistry& systems)
+        : m_Id(id), m_Title(fmt::format("Prefab 0x{:X}", id.Value)), m_Assets(assets),
+          m_Input(input), m_Systems(systems)
     {
         m_Scene = Scene::Create(types);
         m_Context.Scene = m_Scene.get();
@@ -29,7 +35,8 @@ namespace VengEditor
 
         BuildScene(context, assets);
 
-        auto viewport = CreateUnique<SceneViewportPanel>(context, assets, imgui, m_Context);
+        auto viewport =
+            CreateUnique<SceneViewportPanel>(context, assets, imgui, m_Context, input, *this);
         auto explorer = CreateUnique<PrefabExplorerPanel>(m_Context);
         auto inspector = CreateUnique<InspectorPanel>(assets, editors, sources, m_Context);
 
@@ -41,18 +48,89 @@ namespace VengEditor
     PrefabEditorPanel::~PrefabEditorPanel()
     {
         // Children (which hold m_Context and m_Scene by reference) are released by the
-        // base before the scene and prefab handle drop here.
+        // base before the scenes, simulation, and prefab handle drop here.
+        m_Simulation.reset();
+        m_PlayScene.reset();
         m_Scene.reset();
         m_Prefab = {};
     }
 
-    void PrefabEditorPanel::OnImGui()
+    void PrefabEditorPanel::Play()
     {
-        if (m_Scene == nullptr)
+        if (m_Context.IsPlaying() || m_Scene == nullptr)
         {
             return;
         }
-        UI::TextDisabled(fmt::format("{} entities", m_Scene->EntityCount()));
+
+        // Run the systems over an independent clone so the authored scene is never
+        // mutated; the selection's handles index the edit scene, so drop it.
+        m_PlayScene = m_Scene->Clone();
+        m_Context.Clear();
+        m_Context.Scene = m_PlayScene.get();
+        m_Context.Play = PlayState::Playing;
+
+        if (m_Simulation == nullptr)
+        {
+            m_Simulation = CreateUnique<SceneSimulation>(m_Systems);
+        }
+        m_Simulation->Start(*m_PlayScene, SystemContext{.Assets = m_Assets, .Input = m_Input});
+    }
+
+    void PrefabEditorPanel::Stop()
+    {
+        if (!m_Context.IsPlaying())
+        {
+            return;
+        }
+
+        if (m_Simulation != nullptr && m_PlayScene != nullptr)
+        {
+            m_Simulation->Stop(*m_PlayScene, SystemContext{.Assets = m_Assets, .Input = m_Input});
+        }
+
+        m_Context.Clear();
+        m_PlayScene.reset();
+        m_Context.Scene = m_Scene.get();
+        m_Context.Play = PlayState::Editing;
+    }
+
+    void PrefabEditorPanel::Pause()
+    {
+        if (m_Context.Play == PlayState::Playing)
+        {
+            m_Context.Play = PlayState::Paused;
+        }
+    }
+
+    void PrefabEditorPanel::Resume()
+    {
+        if (m_Context.Play == PlayState::Paused)
+        {
+            m_Context.Play = PlayState::Playing;
+        }
+    }
+
+    void PrefabEditorPanel::OnRender(Renderer::CommandBuffer& cmd)
+    {
+        if (m_Context.Play == PlayState::Playing && m_PlayScene != nullptr &&
+            m_Simulation != nullptr)
+        {
+            m_Simulation->Update(*m_PlayScene, Time::GetDeltaTime(),
+                                 SystemContext{.Assets = m_Assets, .Input = m_Input});
+        }
+
+        // Forward to the children after the tick so the viewport renders this frame's
+        // advanced scene.
+        AssetEditorPanel::OnRender(cmd);
+    }
+
+    void PrefabEditorPanel::OnImGui()
+    {
+        if (m_Context.Scene == nullptr)
+        {
+            return;
+        }
+        UI::TextDisabled(fmt::format("{} entities", m_Context.Scene->EntityCount()));
     }
 
     void PrefabEditorPanel::BuildScene(Renderer::Context& context, AssetManager& assets)

@@ -7,6 +7,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SceneClone.h>
 
 #include <cstring>
 
@@ -14,87 +15,50 @@ namespace Veng
 {
     namespace
     {
-        // Post-ReadFields pass: remap Reference fields (prefab-local index → spawned Entity)
-        // and rehydrate AssetHandle fields (raw AssetId → cache entry). Recurses into structs.
+        // Post-ReadFields pass: remap Reference fields (prefab-local index → spawned
+        // Entity) and rehydrate AssetHandle fields (raw AssetId → cache entry).
+        // Shares its field walk with Scene::Clone via RemapComponentReferences.
         void Resolve(void* obj, const TypeInfo& type, const TypeRegistry& registry,
                      const vector<Entity>& spawned, AssetManager& manager)
         {
-            for (const FieldDescriptor& field : type.Fields)
+            const EntityRemap remap = [&spawned](Entity reference) -> Entity
             {
-                void* fieldPtr = static_cast<u8*>(obj) + field.Offset;
-
-                switch (field.Class)
+                // The null sentinel stays null; never a valid prefab-local index, so
+                // it cannot collide with an intra-prefab ref.
+                if (reference.Index == Entity::InvalidIndex)
                 {
-                case FieldClass::Reference:
-                {
-                    Entity& entity = *static_cast<Entity*>(fieldPtr);
-
-                    // The null sentinel stays null; never a valid prefab-local
-                    // index, so it cannot collide with an intra-prefab ref.
-                    if (entity.Index == Entity::InvalidIndex)
-                    {
-                        entity = Entity::Null;
-                        break;
-                    }
-
-                    // The cook bounds-checked the index against the entity
-                    // count, so an out-of-range value here is corruption past
-                    // the validated cook — fatal.
-                    VE_ASSERT(
-                        entity.Index < spawned.size(),
-                        "Prefab::SpawnInto: entity reference index {} out of range ({} entities)",
-                        entity.Index, spawned.size());
-
-                    entity = spawned[entity.Index];
-                    break;
+                    return Entity::Null;
                 }
 
-                case FieldClass::AssetHandle:
-                {
-                    // ReadFields wrote the raw AssetId at offset 0; the cache
-                    // entry is null. Resolve the id to the prefab's
-                    // already-resident dependency entry (loaded at load time).
-                    // An invalid id is the "no asset" value — leave it empty.
-                    AssetId id{};
-                    std::memcpy(&id, fieldPtr, sizeof(id));
-                    if (id.IsValid())
-                    {
-                        const Ref<Detail::AssetCacheEntry> entry = manager.CachedEntry(id);
-                        VE_ASSERT(entry != nullptr,
-                                  "Prefab::SpawnInto: embedded asset {} is not resident — "
-                                  "the prefab loader should have loaded it as a dependency",
-                                  id.Value);
-                        Detail::RehydrateHandleField(fieldPtr, id, entry);
-                    }
-                    break;
-                }
+                // The cook bounds-checked the index against the entity count, so an
+                // out-of-range value here is corruption past the validated cook — fatal.
+                VE_ASSERT(reference.Index < spawned.size(),
+                          "Prefab::SpawnInto: entity reference index {} out of range ({} entities)",
+                          reference.Index, spawned.size());
 
-                case FieldClass::Struct:
-                {
-                    const TypeInfo& nested = registry.Info(field.Type);
-                    Resolve(fieldPtr, nested, registry, spawned, manager);
-                    break;
-                }
+                return spawned[reference.Index];
+            };
 
-                case FieldClass::Variant:
+            const AssetHandleFixup rehydrate = [&manager](void* fieldPtr)
+            {
+                // ReadFields wrote the raw AssetId at offset 0; the cache entry is
+                // null. Resolve the id to the prefab's already-resident dependency
+                // entry (loaded at load time). An invalid id is the "no asset" value
+                // — leave it empty.
+                AssetId id{};
+                std::memcpy(&id, fieldPtr, sizeof(id));
+                if (id.IsValid())
                 {
-                    // Descend into the active alternative so an AssetHandle/Reference
-                    // field inside it rehydrates like one in a nested struct; an empty
-                    // variant has nothing to resolve.
-                    const TypeInfo& info = registry.Info(field.Type);
-                    void* memberPtr = info.VariantActivePtr(fieldPtr);
-                    if (memberPtr != nullptr)
-                    {
-                        const TypeId active = info.VariantActiveType(fieldPtr);
-                        Resolve(memberPtr, registry.Info(active), registry, spawned, manager);
-                    }
-                    break;
+                    const Ref<Detail::AssetCacheEntry> entry = manager.CachedEntry(id);
+                    VE_ASSERT(entry != nullptr,
+                              "Prefab::SpawnInto: embedded asset {} is not resident — "
+                              "the prefab loader should have loaded it as a dependency",
+                              id.Value);
+                    Detail::RehydrateHandleField(fieldPtr, id, entry);
                 }
+            };
 
-                default:
-                    break;
-                }
-            }
+            RemapComponentReferences(obj, type, registry, remap, rehydrate);
         }
     }
 

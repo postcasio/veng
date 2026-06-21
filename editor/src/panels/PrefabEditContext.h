@@ -14,6 +14,20 @@ namespace Veng
 
 namespace VengEditor
 {
+    /// @brief Lifecycle phase of a prefab document: authoring, or running its systems.
+    ///
+    /// Editing edits the authored scene; Playing/Paused run the registered SceneSystems
+    /// over a throwaway clone, so the authored scene is never mutated by play.
+    enum class PlayState
+    {
+        /// @brief Authoring the scene; no systems run.
+        Editing,
+        /// @brief Running the systems over the play clone, advancing each frame.
+        Playing,
+        /// @brief Holding the play clone without advancing it.
+        Paused,
+    };
+
     /// @brief Shared editing state of one open prefab document.
     ///
     /// Owned by the PrefabEditorPanel and referenced by its child panels: the explorer
@@ -46,6 +60,17 @@ namespace VengEditor
 
         /// @brief The entity the inspector edits — the last one clicked, or Null.
         Veng::Entity Active = Veng::Entity::Null;
+
+        /// @brief The document's current play phase.
+        ///
+        /// Editing while authoring; Playing/Paused while the document runs its systems
+        /// over the play clone. Scene repoints to the play clone for the duration of a
+        /// play session and back to the edit scene on Stop, so every child panel follows
+        /// the active scene through this one pointer.
+        PlayState Play = PlayState::Editing;
+
+        /// @brief Returns true while a play session is active (Playing or Paused).
+        [[nodiscard]] bool IsPlaying() const { return Play != PlayState::Editing; }
 
         /// @brief Returns true if @p entity is in the current selection.
         [[nodiscard]] bool IsSelected(Veng::Entity entity) const

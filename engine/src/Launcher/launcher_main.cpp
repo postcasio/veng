@@ -6,6 +6,7 @@
 #include <Veng/Module/ModuleLoader.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
+#include <Veng/Scene/SystemRegistry.h>
 
 // Generic launcher emitted by veng_add_game; VENG_GAME_MODULE is baked in at compile time.
 int main(const int argc, char** argv)
@@ -22,14 +23,15 @@ int main(const int argc, char** argv)
 
     Veng::ApplicationRegistry apps;
     Veng::TypeRegistry types;
+    Veng::SystemRegistry systems;
 
     // Builtins must be present before the module registers its types (game components may reference them).
     Veng::RegisterBuiltinTypes(types);
 
-    Veng::VengModuleHost host{.App = apps, .Types = types, .Editor = nullptr};
+    Veng::VengModuleHost host{.App = apps, .Types = types, .Systems = systems, .Editor = nullptr};
     module->Register(host);
 
-    Veng::Unique<Veng::Application> app = apps.Create(types);
+    Veng::Unique<Veng::Application> app = apps.Create(types, systems);
     VE_ASSERT(app, "module registered no Application");
     app->Run(Veng::vector<Veng::string>(argv, argv + argc));
 

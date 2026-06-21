@@ -15,6 +15,7 @@
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Scene/BuiltinTypes.h>
+#include <Veng/Scene/SystemRegistry.h>
 #include <Veng/UI/UI.h>
 #include <Veng/Vendor/ImGui.h>
 
@@ -123,16 +124,17 @@ namespace VengEditor
         public:
             PrefabEditorFactory(Renderer::Context& context, AssetManager& assets, ImGuiLayer& imgui,
                                 TypeRegistry& types, EditorRegistry& editors,
-                                const AssetSourceIndex& sources)
+                                const AssetSourceIndex& sources, Input& input,
+                                SystemRegistry& systems)
                 : m_Context(context), m_Assets(assets), m_ImGui(imgui), m_Types(types),
-                  m_Editors(editors), m_Sources(sources)
+                  m_Editors(editors), m_Sources(sources), m_Input(input), m_Systems(systems)
             {
             }
 
             [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
             {
                 return CreateUnique<PrefabEditorPanel>(id, m_Context, m_Assets, m_ImGui, m_Types,
-                                                       m_Editors, m_Sources);
+                                                       m_Editors, m_Sources, m_Input, m_Systems);
             }
 
         private:
@@ -142,6 +144,8 @@ namespace VengEditor
             TypeRegistry& m_Types;
             EditorRegistry& m_Editors;
             const AssetSourceIndex& m_Sources;
+            Input& m_Input;
+            SystemRegistry& m_Systems;
         };
     }
 
@@ -150,6 +154,7 @@ namespace VengEditor
     {
         ApplicationRegistry App;
         TypeRegistry Types;
+        SystemRegistry Systems;
         EditorRegistry Editor;
     };
 
@@ -175,6 +180,7 @@ namespace VengEditor
         VengModuleHost host{
             .App = registries->App,
             .Types = registries->Types,
+            .Systems = registries->Systems,
             .Editor = &registries->Editor,
         };
         gameModule->Register(host);
@@ -190,7 +196,7 @@ namespace VengEditor
 
     EditorHost::EditorHost(const EditorHostInfo& info, Unique<Registries> registries,
                            Unique<LoadedModule> gameModule, optional<LoadedModule> editorModule)
-        : Application(info.App, registries->Types), m_Info(info),
+        : Application(info.App, registries->Types, registries->Systems), m_Info(info),
           m_Registries(std::move(registries)), m_GameModule(std::move(gameModule)),
           m_EditorModule(std::move(editorModule))
     {
@@ -280,9 +286,10 @@ namespace VengEditor
         // A prefab is edited live in a spawned Scene, so its editor needs no manifest
         // source; register it unconditionally.
         m_Registries->Editor.RegisterAssetEditor(
-            AssetType::Prefab, CreateUnique<PrefabEditorFactory>(
-                                   GetRenderContext(), GetAssetManager(), *GetImGuiLayer(),
-                                   GetTypeRegistry(), m_Registries->Editor, *m_Sources));
+            AssetType::Prefab,
+            CreateUnique<PrefabEditorFactory>(
+                GetRenderContext(), GetAssetManager(), *GetImGuiLayer(), GetTypeRegistry(),
+                m_Registries->Editor, *m_Sources, GetInput(), GetSystemRegistry()));
 
         // try_emplace no-ops if the game module already registered a factory for these types.
         if (m_Info.AssetManifestPath)

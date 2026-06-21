@@ -209,6 +209,70 @@ namespace Veng::UI
             ImGui::BeginChild(label.c_str(), size, ImGuiChildFlags_None, ToImGui(flags)));
     }
 
+    ScopedWindow ViewportOverlay(string_view id, OverlayAnchor anchor, vec2 padding)
+    {
+        const string label = AsCStr(id);
+        const Theme& theme = GetTheme();
+
+        // The overlay pins to the parent window's content rect — the region the viewport
+        // image occupies — not the whole window, so the panel clears the title bar/borders.
+        const vec2 windowPos = ImGui::GetWindowPos();
+        const vec2 regionMin = ImGui::GetWindowContentRegionMin();
+        const vec2 regionMax = ImGui::GetWindowContentRegionMax();
+        const vec2 contentMin = windowPos + regionMin;
+        const vec2 contentMax = windowPos + regionMax;
+
+        // Pivot and anchor point pair up: pivot picks which corner of the panel lands on
+        // the anchor point, so the panel always stays inside the content rect.
+        vec2 anchorPoint{0.0f, 0.0f};
+        vec2 pivot{0.0f, 0.0f};
+        const f32 centerX = (contentMin.x + contentMax.x) * 0.5f;
+        switch (anchor)
+        {
+        case OverlayAnchor::TopLeft:
+            anchorPoint = vec2(contentMin.x + padding.x, contentMin.y + padding.y);
+            pivot = vec2(0.0f, 0.0f);
+            break;
+        case OverlayAnchor::TopCenter:
+            anchorPoint = vec2(centerX, contentMin.y + padding.y);
+            pivot = vec2(0.5f, 0.0f);
+            break;
+        case OverlayAnchor::TopRight:
+            anchorPoint = vec2(contentMax.x - padding.x, contentMin.y + padding.y);
+            pivot = vec2(1.0f, 0.0f);
+            break;
+        case OverlayAnchor::BottomLeft:
+            anchorPoint = vec2(contentMin.x + padding.x, contentMax.y - padding.y);
+            pivot = vec2(0.0f, 1.0f);
+            break;
+        case OverlayAnchor::BottomCenter:
+            anchorPoint = vec2(centerX, contentMax.y - padding.y);
+            pivot = vec2(0.5f, 1.0f);
+            break;
+        case OverlayAnchor::BottomRight:
+            anchorPoint = vec2(contentMax.x - padding.x, contentMax.y - padding.y);
+            pivot = vec2(1.0f, 1.0f);
+            break;
+        }
+
+        ImGui::SetNextWindowPos(anchorPoint, ImGuiCond_Always, pivot);
+
+        vec4 fill = theme.SurfaceRaised;
+        fill.a *= 0.85f;
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, SrgbToLinear(fill));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, theme.WindowRounding);
+
+        const ImGuiWindowFlags flags =
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoFocusOnAppearing;
+        const bool open = ImGui::Begin(label.c_str(), nullptr, flags);
+
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        return ScopedWindow(open);
+    }
+
     ScopedTree TreeNode(string_view label, TreeFlags flags)
     {
         const string id = AsCStr(label);

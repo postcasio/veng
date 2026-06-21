@@ -11,6 +11,9 @@ namespace Veng
     /// A non-editor host passes Editor = nullptr. Held by pointer so the incomplete type suffices.
     class EditorRegistry;
 
+    /// @brief Forward-declared so the reference member needs no include here.
+    class SystemRegistry;
+
     /// @brief The host-side module contract: the registries a loaded module writes into.
     ///
     /// The host owns these for the module's whole lifetime. Registration is GPU-free
@@ -22,6 +25,8 @@ namespace Veng
         ApplicationRegistry& App;
         /// @brief Receives the module's component/type descriptors.
         TypeRegistry& Types;
+        /// @brief Receives the module's SceneSystem registrations, in run order.
+        SystemRegistry& Systems;
         /// @brief Non-null only when loaded by the editor host.
         EditorRegistry* Editor;
     };
@@ -43,7 +48,7 @@ extern "C"
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 2u
+#define VENG_MODULE_ABI_VERSION 3u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

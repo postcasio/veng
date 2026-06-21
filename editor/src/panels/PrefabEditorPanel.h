@@ -11,12 +11,16 @@ namespace Veng
     class AssetManager;
     class EditorRegistry;
     class ImGuiLayer;
+    class Input;
     class Prefab;
     class Scene;
+    class SceneSimulation;
+    class SystemRegistry;
     class TypeRegistry;
 
     namespace Renderer
     {
+        class CommandBuffer;
         class Context;
     }
 }
@@ -44,13 +48,42 @@ namespace VengEditor
         /// @param types     Type registry the spawned Scene pools components against.
         /// @param editors   Editor registry for inspector field-widget overrides.
         /// @param sources   Manifest source index for the inspector's asset pickers.
+        /// @param input     Frame-coherent input service the viewport camera reads.
+        /// @param systems   System registry the play session instantiates its systems from.
         PrefabEditorPanel(Veng::AssetId id, Veng::Renderer::Context& context,
                           Veng::AssetManager& assets, Veng::ImGuiLayer& imgui,
                           Veng::TypeRegistry& types, Veng::EditorRegistry& editors,
-                          const AssetSourceIndex& sources);
+                          const AssetSourceIndex& sources, Veng::Input& input,
+                          Veng::SystemRegistry& systems);
         ~PrefabEditorPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
+
+        /// @brief Clones the edit scene and starts a play session running its systems over the clone.
+        ///
+        /// Repoints the shared context at the clone, builds the SceneSimulation on first
+        /// play, calls each system's OnStart, and clears the selection (its handles point
+        /// into the edit scene). A no-op while already playing.
+        void Play();
+
+        /// @brief Stops the play session: calls OnStop, drops the clone, and restores the edit scene.
+        ///
+        /// Repoints the shared context back at the edit scene, clears the selection, and
+        /// returns to Editing. A no-op while not playing.
+        void Stop();
+
+        /// @brief Pauses an active play session, holding the clone without advancing it. No-op unless Playing.
+        void Pause();
+
+        /// @brief Resumes a paused play session. No-op unless Paused.
+        void Resume();
+
+        /// @brief Ticks the play simulation (when playing), then forwards the render to the children.
+        ///
+        /// Advances the clone's systems before the base forwards OnRender so the viewport
+        /// renders the just-updated frame.
+        /// @param cmd  Command buffer for the current frame.
+        void OnRender(Veng::Renderer::CommandBuffer& cmd) override;
 
         /// @brief Draws the document toolbar above the dockspace: a live entity-count readout.
         void OnImGui() override;
@@ -66,8 +99,21 @@ namespace VengEditor
         Veng::AssetId m_Id;
         Veng::string m_Title;
 
+        Veng::AssetManager& m_Assets;
+        Veng::Input& m_Input;
+        Veng::SystemRegistry& m_Systems;
+
         Veng::AssetHandle<Veng::Prefab> m_Prefab;
+
+        /// @brief The authored scene, edited while not playing and cloned to start a play session.
         Veng::Unique<Veng::Scene> m_Scene;
+
+        /// @brief The throwaway play clone, non-null only during a play session.
+        Veng::Unique<Veng::Scene> m_PlayScene;
+
+        /// @brief The system driver, built lazily on the first Play and reused across sessions.
+        Veng::Unique<Veng::SceneSimulation> m_Simulation;
+
         PrefabEditContext m_Context;
 
         Veng::usize m_ExplorerChild = 0;

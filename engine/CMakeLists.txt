@@ -19,6 +19,7 @@ add_library(veng SHARED
         src/Asset/Loaders/TextureLoader.cpp
         src/Asset/Loaders/VertexLayoutLoader.cpp
         src/ExecutableDirectory.cpp
+        src/Input.cpp
         src/Log.cpp
         src/Math/AABB.cpp
         src/Math/BVH.cpp
@@ -41,6 +42,8 @@ add_library(veng SHARED
         src/Scene/Resolve.cpp
         src/Scene/Scene.cpp
         src/Scene/SceneBroadphase.cpp
+        src/Scene/SceneSimulation.cpp
+        src/Scene/SystemRegistry.cpp
         src/Scene/Transforms.cpp
         src/Scene/Visibility.cpp
         src/Renderer/SwapChainCompositePass.cpp

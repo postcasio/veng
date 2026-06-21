@@ -40,6 +40,11 @@ namespace Veng::UI
         return ImGui::IsItemHovered();
     }
 
+    bool WindowFocused()
+    {
+        return ImGui::IsWindowFocused();
+    }
+
     bool ItemEdited()
     {
         return ImGui::IsItemDeactivatedAfterEdit();

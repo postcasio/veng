@@ -109,6 +109,17 @@ namespace Veng::UI
     /// @return True the frame the button is clicked.
     [[nodiscard]] bool SmallButton(string_view label);
 
+    /// @brief Draws a button that renders in the accent state while toggled on.
+    ///
+    /// When `active` is true the button fills with the theme `Accent` (hover/press use
+    /// `AccentHovered`/`AccentActive`) so its on-state reads at a glance — a toolbar
+    /// toggle. A click flips `active` in place. Returns true only the frame the state
+    /// changes, matching the "changed" convention of every editable widget.
+    /// @param label   Button label and ImGui id.
+    /// @param active  Toggle state, flipped in place on click.
+    /// @return True the frame `active` changes.
+    [[nodiscard]] bool ToggleButton(string_view label, bool& active);
+
     /// @brief Draws a selectable row.
     /// @param label     Row label and ImGui id.
     /// @param selected  Whether the row appears highlighted.

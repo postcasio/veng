@@ -2,11 +2,13 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Window.h>
+#include <Veng/Input.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/SystemRegistry.h>
 
 namespace Veng
 {
@@ -45,14 +47,15 @@ namespace Veng
     class Application
     {
     public:
-        /// @brief Constructs the application with the given settings and a borrowed type registry.
+        /// @brief Constructs the application with the given settings and borrowed registries.
         ///
-        /// The TypeRegistry is borrowed, not owned: the host (launcher or cooker)
-        /// constructs it and pre-registers builtins before VengModuleRegister runs.
-        /// It must outlive this Application.
-        /// @param info   Application creation parameters.
-        /// @param types  Host-owned registry of reflected types; must outlive the app.
-        Application(ApplicationInfo info, TypeRegistry& types);
+        /// The TypeRegistry and SystemRegistry are borrowed, not owned: the host (launcher
+        /// or cooker) constructs them and fills them via VengModuleRegister before this
+        /// runs. Both must outlive this Application.
+        /// @param info     Application creation parameters.
+        /// @param types    Host-owned registry of reflected types; must outlive the app.
+        /// @param systems  Host-owned registry of scene systems; must outlive the app.
+        Application(ApplicationInfo info, TypeRegistry& types, SystemRegistry& systems);
         virtual ~Application() = default;
 
         /// @brief Enter the main loop, blocking until the app exits.
@@ -61,6 +64,12 @@ namespace Veng
 
         /// @brief Returns the application window.
         [[nodiscard]] Window& GetWindow() const { return *m_Window; }
+
+        /// @brief Returns the frame-coherent input service.
+        ///
+        /// Updated once per frame before OnUpdate/OnRender, so per-frame edges and
+        /// deltas reflect the current frame. Available only for windowed apps.
+        [[nodiscard]] Input& GetInput() const { return *m_Input; }
 
         /// @brief Returns the render context.
         [[nodiscard]] Renderer::Context& GetRenderContext() { return m_RenderContext; }
@@ -76,6 +85,13 @@ namespace Veng
         /// Borrowed: the host constructs it, pre-registers builtins, and calls
         /// VengModuleRegister before passing it here. Must outlive this Application.
         [[nodiscard]] TypeRegistry& GetTypeRegistry() { return m_TypeRegistry; }
+
+        /// @brief Returns the host-owned, process-wide registry of scene systems.
+        ///
+        /// Borrowed: the host constructs it and calls VengModuleRegister before passing
+        /// it here, so a module's SceneSystem registrations are present. A SceneSimulation
+        /// reads it to instantiate the running systems. Must outlive this Application.
+        [[nodiscard]] SystemRegistry& GetSystemRegistry() { return m_SystemRegistry; }
 
         /// @brief Returns the ImGui layer, or nullptr if the app opted out.
         [[nodiscard]] ImGuiLayer* GetImGuiLayer() const { return m_ImGuiLayer.get(); }
@@ -111,7 +127,13 @@ namespace Veng
         /// @brief Borrowed from the host; must outlive this app and every Scene it creates.
         TypeRegistry& m_TypeRegistry;
 
+        /// @brief Borrowed from the host; must outlive this app and every SceneSimulation it drives.
+        SystemRegistry& m_SystemRegistry;
+
         Unique<Window> m_Window;
+
+        /// @brief Frame-coherent input; borrows m_Window, so constructed after and reset before it.
+        Unique<Input> m_Input;
 
         Renderer::Context m_RenderContext;
 

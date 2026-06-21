@@ -1,7 +1,7 @@
 // Boundary regression test for the module ABI + ModuleLoader.
 //
 // Loads a real shared library through the real platform loader and proves the
-// whole path: load -> ABI-version check (now against host ABI 2) ->
+// whole path: load -> ABI-version check ->
 // VengModuleRegister -> both registrations (the Application factory and the
 // game's component type) land in the host. Also proves the builtins register
 // GPU-free + idempotently, that the host registry reflects the module's
@@ -19,6 +19,7 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/SystemRegistry.h>
 
 #include "probe_component.h"
 
@@ -69,14 +70,15 @@ int main()
     // destructor would call into an unloaded library.
     {
         Result<LoadedModule> loaded = ModuleLoader::Load(VENG_TEST_MODULE_PATH);
-        Check(loaded.has_value(), "good module loads (version handshake passes against ABI 2)");
+        Check(loaded.has_value(), "good module loads (version handshake passes)");
 
         if (loaded)
         {
             ApplicationRegistry app;
             TypeRegistry types;
+            SystemRegistry systems;
             RegisterBuiltinTypes(types);
-            VengModuleHost host{.App = app, .Types = types, .Editor = nullptr};
+            VengModuleHost host{.App = app, .Types = types, .Systems = systems, .Editor = nullptr};
 
             Check(!app.HasApplication(), "no Application before Register");
             Check(!types.IsRegistered(TypeIdOf<Probe>()), "game component absent before Register");

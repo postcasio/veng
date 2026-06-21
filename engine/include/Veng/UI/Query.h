@@ -34,6 +34,12 @@ namespace Veng::UI
     /// @brief Returns true if the last item is hovered.
     [[nodiscard]] bool ItemHovered();
 
+    /// @brief Returns true if the current window has interaction focus.
+    ///
+    /// For a panel gating its own input (e.g. a viewport driving an editor camera only
+    /// while focused) — distinct from item hover.
+    [[nodiscard]] bool WindowFocused();
+
     /// @brief Returns true the frame the last item was clicked with the given button.
     /// @param button  Mouse button to query.
     [[nodiscard]] bool IsItemClicked(MouseButton button = MouseButton::Left);

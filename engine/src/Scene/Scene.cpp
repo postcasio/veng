@@ -1,12 +1,68 @@
 #include <Veng/Scene/Scene.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/AssetHandle.h>
+#include <Veng/Reflection/Serialize.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/SceneClone.h>
 
 #include "ComponentPool.h"
 
+#include <cstring>
+
 namespace Veng
 {
+    void RemapComponentReferences(void* obj, const TypeInfo& type, const TypeRegistry& registry,
+                                  const EntityRemap& remap, const AssetHandleFixup& assetHandle)
+    {
+        for (const FieldDescriptor& field : type.Fields)
+        {
+            void* fieldPtr = static_cast<u8*>(obj) + field.Offset;
+
+            switch (field.Class)
+            {
+            case FieldClass::Reference:
+            {
+                Entity& entity = *static_cast<Entity*>(fieldPtr);
+                entity = remap(entity);
+                break;
+            }
+
+            case FieldClass::AssetHandle:
+            {
+                assetHandle(fieldPtr);
+                break;
+            }
+
+            case FieldClass::Struct:
+            {
+                const TypeInfo& nested = registry.Info(field.Type);
+                RemapComponentReferences(fieldPtr, nested, registry, remap, assetHandle);
+                break;
+            }
+
+            case FieldClass::Variant:
+            {
+                // Descend into the active alternative so a Reference or AssetHandle
+                // inside it is reached like one in a nested struct; an empty variant
+                // has nothing to fix up.
+                const TypeInfo& info = registry.Info(field.Type);
+                void* memberPtr = info.VariantActivePtr(fieldPtr);
+                if (memberPtr != nullptr)
+                {
+                    const TypeId active = info.VariantActiveType(fieldPtr);
+                    RemapComponentReferences(memberPtr, registry.Info(active), registry, remap,
+                                             assetHandle);
+                }
+                break;
+            }
+
+            default:
+                break;
+            }
+        }
+    }
+
     bool Scene::IsSpatialId(TypeId id)
     {
         // These three pools decide draw candidacy and world bounds; checking compile-time
@@ -23,6 +79,100 @@ namespace Veng
     {
         // Private constructor: raw new, not CreateUnique.
         return Unique<Scene>(new Scene(registry));
+    }
+
+    Unique<Scene> Scene::Clone() const
+    {
+        const TypeRegistry& registry = *m_Registry;
+        Unique<Scene> clone = Create(*m_Registry);
+
+        // 1. Recreate every live entity first, so a Reference field resolving
+        //    forward always lands on a created handle. The destination is empty, so
+        //    its slot order mirrors the source's live-slot order — but the remap is
+        //    keyed on the source handle, not on slot identity.
+        unordered_map<Entity, Entity> remap;
+        remap.reserve(m_LiveCount);
+        ForEachEntity([&](Entity source) { remap.emplace(source, clone->CreateEntity()); });
+
+        const EntityRemap remapFn = [&remap](Entity source) -> Entity
+        {
+            if (source.IsNull())
+            {
+                return Entity::Null;
+            }
+            const auto it = remap.find(source);
+            return it != remap.end() ? it->second : Entity::Null;
+        };
+
+        // 2. Copy every component. WriteFields/ReadFields round-trips the value
+        //    bytes; the post-pass remaps Reference fields to the cloned handles and
+        //    deep-copies AssetHandle fields directly. A serialized AssetHandle keeps
+        //    only the AssetId, so a runtime-adopted (id-less) handle would round-trip
+        //    to empty — copy the live cache-entry Ref straight across instead, so a
+        //    cloned scene still renders its already-resident meshes.
+        vector<u8> record;
+        for (const auto& [typeId, pool] : m_Pools)
+        {
+            // Hierarchy is a derived component: only its Parent edge persists, and the
+            // sibling/child links are rebuilt from the parent edges in pass 3. Copying
+            // it here would pre-set Parent without consistent links, so the SetParent
+            // rebuild would unlink against a corrupt list. Skip it and rebuild instead.
+            if (typeId == TypeIdOf<Hierarchy>())
+            {
+                continue;
+            }
+
+            const TypeInfo& typeInfo = registry.Info(typeId);
+            const usize count = pool->Count();
+            const Entity* dense = pool->DenseData();
+
+            for (usize i = 0; i < count; ++i)
+            {
+                const Entity source = dense[i];
+                const Entity target = remap.at(source);
+                const void* sourceComponent = pool->TryGet(source);
+
+                record.clear();
+                WriteFields(record, sourceComponent, typeInfo, registry);
+
+                void* targetComponent = clone->AddComponent(target, typeId);
+                ReadFields(record, targetComponent, typeInfo, registry).value();
+
+                const AssetHandleFixup copyHandle = [&](void* targetField)
+                {
+                    // The matching source field sits at the same offset within the
+                    // identically-laid-out source component; copy the whole handle
+                    // (AssetId + cache-entry Ref) so a resident handle survives.
+                    const usize offset =
+                        static_cast<u8*>(targetField) - static_cast<u8*>(targetComponent);
+                    const auto* sourceField = static_cast<const u8*>(sourceComponent) + offset;
+
+                    AssetId id{};
+                    std::memcpy(&id, sourceField, sizeof(id));
+                    const auto* sourceEntry = reinterpret_cast<const Ref<Detail::AssetCacheEntry>*>(
+                        sourceField + Detail::AssetHandleEntryOffset);
+                    Detail::RehydrateHandleField(targetField, id, *sourceEntry);
+                };
+
+                RemapComponentReferences(targetComponent, typeInfo, registry, remapFn, copyHandle);
+            }
+        }
+
+        // 3. Rebuild the intrusive sibling/child links from the remapped parent
+        //    edges, in source order so SetParent appends children in their original
+        //    order — the same derived-link rebuild Prefab::SpawnInto performs.
+        ForEachEntity(
+            [&](Entity source)
+            {
+                const Entity target = remap.at(source);
+                const Entity sourceParent = GetParent(source);
+                if (!sourceParent.IsNull())
+                {
+                    clone->SetParent(target, remap.at(sourceParent));
+                }
+            });
+
+        return clone;
     }
 
     Entity Scene::CreateEntity()

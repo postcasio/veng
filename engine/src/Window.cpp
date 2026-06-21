@@ -79,6 +79,15 @@ namespace Veng
                                      window->m_MousePosition = {xpos, ypos};
                                  });
 
+        glfwSetScrollCallback(m_Handle,
+                              [](GLFWwindow* glfwWindow, f64 xoffset, f64 yoffset)
+                              {
+                                  auto window =
+                                      static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
+                                  window->m_ScrollDelta +=
+                                      vec2{static_cast<f32>(xoffset), static_cast<f32>(yoffset)};
+                              });
+
         {
             int width, height;
             glfwGetFramebufferSize(m_Handle, &width, &height);
@@ -189,6 +198,18 @@ namespace Veng
     bool Window::KeyPressed(const Key key) const
     {
         return glfwGetKey(m_Handle, static_cast<i32>(key)) == GLFW_PRESS;
+    }
+
+    bool Window::MouseButtonPressed(const MouseButton button) const
+    {
+        return glfwGetMouseButton(m_Handle, static_cast<i32>(button)) == GLFW_PRESS;
+    }
+
+    vec2 Window::ConsumeScrollDelta()
+    {
+        const vec2 delta = m_ScrollDelta;
+        m_ScrollDelta = {0, 0};
+        return delta;
     }
 
     uvec2 Window::GetExtent() const

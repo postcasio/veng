@@ -7,6 +7,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Module/Module.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/SystemRegistry.h>
 
 #include "probe_component.h"
 
@@ -15,8 +16,8 @@ namespace
     class ProbeApp : public Veng::Application
     {
     public:
-        explicit ProbeApp(Veng::TypeRegistry& types)
-            : Veng::Application(Veng::ApplicationInfo{}, types)
+        ProbeApp(Veng::TypeRegistry& types, Veng::SystemRegistry& systems)
+            : Veng::Application(Veng::ApplicationInfo{}, types, systems)
         {
         }
     };
@@ -31,6 +32,7 @@ extern "C" VE_MODULE_EXPORT void VengModuleRegister(Veng::VengModuleHost* host)
 
     host->Types.Register<Probe>();
 
-    host->App.RegisterApplication([](Veng::TypeRegistry& types)
-                                  { return Veng::Unique<Veng::Application>(new ProbeApp(types)); });
+    host->App.RegisterApplication(
+        [](Veng::TypeRegistry& types, Veng::SystemRegistry& systems)
+        { return Veng::Unique<Veng::Application>(new ProbeApp(types, systems)); });
 }

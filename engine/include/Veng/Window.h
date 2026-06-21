@@ -107,6 +107,16 @@ namespace Veng
         /// @brief Returns true if the given key is currently held down.
         [[nodiscard]] bool KeyPressed(Key key) const;
 
+        /// @brief Returns true if the given mouse button is currently held down.
+        [[nodiscard]] bool MouseButtonPressed(MouseButton button) const;
+
+        /// @brief Returns the scroll wheel offset accumulated since the last call, then resets it.
+        ///
+        /// Scroll arrives through a GLFW callback that sums offsets into a member; this
+        /// drains and zeroes that accumulator, so consecutive calls partition the scroll.
+        /// @return Accumulated scroll offset as (x, y).
+        [[nodiscard]] vec2 ConsumeScrollDelta();
+
         /// @brief Returns the current window extent in pixels.
         [[nodiscard]] uvec2 GetExtent() const;
 
@@ -146,6 +156,7 @@ namespace Veng
         bool m_MouseCaptured;
         GLFWwindow* m_Handle = nullptr;
         vec2 m_MousePosition = {0, 0};
+        vec2 m_ScrollDelta = {0, 0};
 
         Unique<Native> m_Native;
     };

@@ -6,8 +6,8 @@
 
 namespace Veng
 {
-    Application::Application(ApplicationInfo info, TypeRegistry& types)
-        : m_Info(std::move(info)), m_TypeRegistry(types)
+    Application::Application(ApplicationInfo info, TypeRegistry& types, SystemRegistry& systems)
+        : m_Info(std::move(info)), m_TypeRegistry(types), m_SystemRegistry(systems)
     {
     }
 
@@ -16,6 +16,7 @@ namespace Veng
         if (!m_Info.Headless)
         {
             m_Window = Window::Create(m_Info.WindowInfo);
+            m_Input = CreateUnique<Input>(*m_Window);
         }
 
         m_RenderContext.Initialize(
@@ -93,6 +94,9 @@ namespace Veng
 
         m_RenderContext.DisposeResources();
         m_RenderContext.Dispose();
+
+        // Input borrows the window, so drop it before the window it points at.
+        m_Input.reset();
         m_Window.reset();
     }
 
@@ -116,6 +120,13 @@ namespace Veng
         if (m_Window)
         {
             m_Window->Update();
+        }
+
+        // After Window::Update polls GLFW events: Input snapshots the fresh key/
+        // button/cursor/scroll state, so per-frame edges and deltas precede OnUpdate.
+        if (m_Input)
+        {
+            m_Input->Update();
         }
 
         OnUpdate(delta);

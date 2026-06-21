@@ -46,6 +46,16 @@ namespace Veng
         /// @brief Creates a new Scene backed by the given TypeRegistry.
         static Unique<Scene> Create(TypeRegistry& registry);
 
+        /// @brief Deep-copies this scene into a new, independent Scene.
+        ///
+        /// Recreates every live entity, copies every component via the reflection
+        /// serializer, remaps intra-scene Entity reference fields from old to new
+        /// handles, and rebuilds the Hierarchy parent/child/sibling links so the
+        /// topology matches exactly. AssetHandle fields are deep-copied directly, so
+        /// a runtime-adopted (id-less) handle stays resident in the clone. The clone
+        /// borrows the same TypeRegistry and is wholly independent of this scene.
+        [[nodiscard]] Unique<Scene> Clone() const;
+
         Scene(const Scene&) = delete;
         Scene& operator=(const Scene&) = delete;
         /// @brief Destroys all component pools and entity state.

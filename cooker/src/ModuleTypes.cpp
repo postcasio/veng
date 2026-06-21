@@ -3,6 +3,7 @@
 #include <Veng/Module/ApplicationRegistry.h>
 #include <Veng/Module/Module.h>
 #include <Veng/Scene/BuiltinTypes.h>
+#include <Veng/Scene/SystemRegistry.h>
 
 #include <random>
 
@@ -23,7 +24,11 @@ namespace Veng::Cook
         RegisterBuiltinTypes(result.Types);
 
         ApplicationRegistry throwaway;
-        VengModuleHost host{.App = throwaway, .Types = result.Types, .Editor = nullptr};
+        SystemRegistry throwawaySystems;
+        VengModuleHost host{.App = throwaway,
+                            .Types = result.Types,
+                            .Systems = throwawaySystems,
+                            .Editor = nullptr};
         result.Module.Register(host);
 
         return result;

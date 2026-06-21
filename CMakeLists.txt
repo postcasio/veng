@@ -328,6 +328,8 @@ if (VENG_BUILD_TESTS)
             tests/unit/scene_ecs.cpp
             tests/unit/scene_queries.cpp
             tests/unit/scene_version.cpp
+            tests/unit/scene_clone.cpp
+            tests/unit/scene_simulation.cpp
             tests/unit/hierarchy.cpp
             tests/unit/scene_broadphase.cpp
             tests/unit/reflection.cpp
@@ -482,6 +484,7 @@ if (VENG_BUILD_TESTS)
             tests/editor/material_catalog_compile.cpp
             tests/editor/field_widget.cpp
             tests/editor/asset_source_index.cpp
+            tests/editor/editor_camera.cpp
     )
     # The serialization cases drive the JSON object directly, so the test target
     # links nlohmann/json (PRIVATE in libveng_editor — never exposed in a header).

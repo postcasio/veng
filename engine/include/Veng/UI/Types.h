@@ -130,4 +130,25 @@ namespace Veng::UI
         /// @brief Horizontal and vertical spacing between widgets.
         ItemSpacing,
     };
+
+    /// @brief Placement of a viewport overlay within its parent window's content region.
+    ///
+    /// Names one of the six edge/corner anchor points an overlay panel pins to. The
+    /// overlay sits inside the current window's content rect, offset from the chosen
+    /// edge or corner by its padding.
+    enum class OverlayAnchor : u32
+    {
+        /// @brief Pinned to the top-left corner.
+        TopLeft,
+        /// @brief Centered along the top edge.
+        TopCenter,
+        /// @brief Pinned to the top-right corner.
+        TopRight,
+        /// @brief Pinned to the bottom-left corner.
+        BottomLeft,
+        /// @brief Centered along the bottom edge.
+        BottomCenter,
+        /// @brief Pinned to the bottom-right corner.
+        BottomRight,
+    };
 }

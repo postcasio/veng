@@ -409,6 +409,25 @@ namespace Veng::UI
     [[nodiscard]] ScopedChild Child(string_view id, vec2 size = {},
                                     WindowFlags flags = WindowFlags::None);
 
+    /// @brief Pins a translucent, auto-sized overlay panel inside the current window.
+    ///
+    /// Opens a borderless, non-moving floating panel anchored to an edge or corner of the
+    /// current window's content region, offset by `padding`, for a toolbar drawn over the
+    /// scene viewport image. Its background is the theme `SurfaceRaised` at reduced alpha
+    /// with the theme window rounding, so the viewport reads through behind it. The panel
+    /// auto-resizes to its content; lay out widgets inside the returned scope:
+    /// `if (auto bar = UI::ViewportOverlay("toolbar", OverlayAnchor::TopCenter)) { ... }`.
+    ///
+    /// Call inside the window the overlay should pin to, after the viewport item is laid
+    /// out, so the content rect is the viewport's. The returned guard's destructor calls
+    /// `End` unconditionally, pairing the panel's `Begin`.
+    /// @param id       ImGui id string for the overlay panel.
+    /// @param anchor   Which edge or corner of the content region the panel pins to.
+    /// @param padding  Offset from the anchored edge/corner, in pixels.
+    /// @return A scope guard; true inside it when the panel body should be drawn.
+    [[nodiscard]] ScopedWindow ViewportOverlay(string_view id, OverlayAnchor anchor,
+                                               vec2 padding = {8, 8});
+
     /// @brief Opens a tree node and returns a scope guard that calls `TreePop` when the node is open.
     /// @param label  Display label and ImGui id.
     /// @param flags  Tree display flags.

@@ -205,6 +205,35 @@ namespace Veng::UI
         return ImGui::SmallButton(id.c_str());
     }
 
+    bool ToggleButton(string_view label, bool& active)
+    {
+        const string id = AsCStr(label);
+
+        // Only push the accent fill while on; an off toggle reads as a plain button.
+        // The authored theme colors are sRGB, linearized for the linear UI pipeline.
+        if (active)
+        {
+            const Theme& theme = GetTheme();
+            ImGui::PushStyleColor(ImGuiCol_Button, SrgbToLinear(theme.Accent));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SrgbToLinear(theme.AccentHovered));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, SrgbToLinear(theme.AccentActive));
+            ImGui::PushStyleColor(ImGuiCol_Text, SrgbToLinear(theme.TextOnAccent));
+        }
+
+        const bool clicked = ImGui::Button(id.c_str());
+
+        if (active)
+        {
+            ImGui::PopStyleColor(4);
+        }
+
+        if (clicked)
+        {
+            active = !active;
+        }
+        return clicked;
+    }
+
     bool Selectable(string_view label, bool selected)
     {
         const string id = AsCStr(label);
