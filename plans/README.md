@@ -485,6 +485,30 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   cooked-artifact change (`TypeId`s are stable across the renames); the only new
   persisted types are the four shape recipes.
 
+- **[planset-28](planset-28/README.md)** — mip-pyramid bloom (compute dual-filter)
+  (📝 proposed, 5 plans). Replaces the fixed single-level separable-Gaussian bloom
+  (planset-19's four full-resolution `PostProcessScenePass` material stages) with a
+  **compute mip-pyramid bloom** modeled on the delivered hi-Z compute mip reduction: a
+  bright-pass + **Karis-average** firefly suppression into mip 0, a progressive downsample
+  down an HDR mip chain, an in-place accumulating upsample, and a composite into linear HDR
+  ahead of tonemap — the wide, soft, energy-conserving multi-octave glow the single-level
+  blur cannot produce, for **less bandwidth** (one geometric pyramid vs. four full-res
+  images, almost all work at ≤¼ resolution). The down/up filter is a **selectable kernel** —
+  `BloomKernel::Cod` (the 13-tap/tent dual filter, default and the golden's kernel) or
+  `BloomKernel::Kawase` (the bandwidth-optimized Dual Kawase filter for tile-based GPUs) —
+  and `Threshold`/`Intensity`/`Radius` are per-frame `SceneView` knobs (`Bloom`/`BloomKernel`
+  the topology `SceneRendererSettings` knobs).
+  **Supersedes planset-19 decision 6** (bloom is a PostProcess material) and retires the
+  planset-18 "first multi-stage authorable post chain" framing — bloom becomes a fixed
+  compute battery like SSAO and the shadow atlas (tonemap stays the authorable-material
+  exemplar), with a `DebugView::Bloom` arm. Reuses the `CreateHiZ` pattern (one mip-chain
+  image, per-mip storage views, per-level dispatch + barriers). Also completes the
+  hello-triangle "Scene" debug window's coverage of the renderer's tunable surface — wiring
+  the previously-unexposed **Exposure** (relocated to `SceneView` for live tuning) and
+  **bloom** (toggle / threshold / intensity / radius / kernel) controls. **Single-pass
+  downsample (SPD)** and a separate **FFT/convolution lens bloom** are named future area-8
+  increments.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
