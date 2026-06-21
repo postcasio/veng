@@ -63,6 +63,7 @@ struct DrawData
     uint     Pad0;
     uint     Pad1;
     uint     Pad2;
+    float4x4 PrevWorld;      // previous frame's model matrix (TAA velocity; equals World with no motion)
 };
 
 // The per-draw data SSBO (set 1, binding 0). Off the set-0 bindless registry — a

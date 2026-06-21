@@ -49,6 +49,9 @@ namespace Veng::Renderer
         D32SfloatS8Uint,
         /// @brief 24-bit depth packed in 32 bits (8 bits unused).
         X8D24UnormPack32,
+        /// @brief 16-bit per channel RG float. Appended (not inserted) so the underlying
+        ///        enum values cooked blobs persist by integer stay stable.
+        RG16Sfloat,
     };
 
     /// @brief Dimensionality of an image resource.

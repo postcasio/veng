@@ -35,6 +35,7 @@
 #include <Veng/Renderer/PunctualShadows.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/ShadowCascades.h>
+#include <Veng/Renderer/TaaJitter.h>
 
 #include <Veng/Math/AABB.h>
 #include <Veng/Math/Frustum.h>
@@ -65,6 +66,14 @@ namespace Veng::Renderer
         constexpr AssetId OrmBlitFragId{0x7992B54A844CB1E1ULL};
         constexpr AssetId AoBlitFragId{0x97974B40192934E4ULL};
         constexpr AssetId ShadowBlitFragId{0x0B61D5D42DAEF190ULL};
+
+        // The TAA resolve and history-copy fragment shaders.
+        constexpr AssetId TaaResolveFragId{0xF277BB65AEDAC33EULL};
+        constexpr AssetId TaaHistoryCopyFragId{0x07F31C1EC98A29BFULL};
+
+        // The TAA velocity prepass shaders (per-object motion vectors).
+        constexpr AssetId VelocityVertId{0xDC863CDF7E432D28ULL};
+        constexpr AssetId VelocityFragId{0xB97B09A5C5BFC7CCULL};
 
         // The hi-Z max-Z reduction compute shader.
         constexpr AssetId HiZReduceCompId{0xCB20C4EF8A20ADBCULL};
@@ -136,6 +145,32 @@ namespace Veng::Renderer
             f32 Intensity;
         };
 
+        // The TAA resolve push block, matching taa_resolve.frag PushConstants: the
+        // current/history/depth bindless slots, the shared sampler, the view-constants
+        // region, the history-validity flag, and the target extent.
+        struct TaaResolvePush
+        {
+            u32 CurrentTexture;
+            u32 HistoryTexture;
+            u32 DepthTexture;
+            u32 VelocityTexture;
+            u32 Sampler;
+            u32 ViewConstantsIndex;
+            u32 HistoryValid;
+            // Pads to an even u32 count so the trailing uint2 lands at its 8-byte-aligned
+            // offset, matching the SPIR-V push block layout.
+            u32 Pad0;
+            uvec2 Extent;
+        };
+
+        // The TAA history-copy push block, matching taa_history_copy.frag PushConstants:
+        // the resolved source slot and the shared sampler.
+        struct TaaCopyPush
+        {
+            u32 SourceTexture;
+            u32 Sampler;
+        };
+
         // The surface push block (vertex stage), matching material.slang PushConstants:
         // FrameBase folds the ring-buffered DrawData region into the candidate id; the
         // view-constants index selects the per-frame set-0 view block the vertex stage
@@ -159,10 +194,11 @@ namespace Veng::Renderer
             u32 Pad0;
             u32 Pad1;
             u32 Pad2;
+            mat4 PrevWorld;
         };
 
-        static_assert(sizeof(GpuDrawData) == 128,
-                      "GpuDrawData must match the shader DrawData (128 bytes)");
+        static_assert(sizeof(GpuDrawData) == 192,
+                      "GpuDrawData must match the shader DrawData (192 bytes)");
 
         // One uploaded camera-frustum survivor; std430-identical to the cull shader's
         // CullCandidate: world AABB plus the indexed-draw args its command needs.
@@ -257,10 +293,12 @@ namespace Veng::Renderer
         // Mirrors material.slang ViewConstants byte-for-byte.
         struct ViewConstantsBlock
         {
-            mat4 InvViewProj;    // world-position reconstruction from depth
+            mat4 InvViewProj;    // world-position reconstruction from depth (jittered under TAA)
             vec4 CameraPosition; // xyz; w unused
             mat4 View;           // world → view (the SSAO pass reconstructs view space)
-            mat4 Proj;           // view → clip
+            mat4 Proj;           // view → clip (jittered under TAA)
+            mat4 PrevViewProj;   // previous frame's unjittered world → clip (TAA reprojection)
+            mat4 CurViewProj;    // this frame's unjittered world → clip (TAA velocity)
         };
 
         static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,
@@ -524,6 +562,122 @@ namespace Veng::Renderer
             uvec2 m_Extent;
             const GBufferDrawPlan* m_Plan = nullptr;
             SceneRendererSettings::CullMode m_Cull = SceneRendererSettings::CullMode::CPU;
+            ResourceId m_IndirectId;
+        };
+
+        // TAA velocity prepass: re-rasterizes the geometry pass's draws with the velocity
+        // pipeline, depth-tested against the populated g-buffer depth (no write), so only the
+        // visible surface writes its per-object screen-space motion vector. Drives the same
+        // per-frame plan as the geometry pass, differing only in the bound pipeline and target.
+        class VelocityScenePass final : public ScenePass
+        {
+        public:
+            VelocityScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent,
+                              const GBufferDrawPlan* plan, SceneRendererSettings::CullMode cull,
+                              ResourceId velocityId, ResourceId depthId, ResourceId indirectId)
+                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent),
+                  m_Plan(plan), m_Cull(cull), m_VelocityId(velocityId), m_DepthId(depthId),
+                  m_IndirectId(indirectId)
+            {
+            }
+
+            void Resize(const uvec2 extent) override { m_Extent = extent; }
+
+            void Declare(RenderGraph& graph, const PassIO& /*io*/) override
+            {
+                RenderGraph::PassBuilder builder = graph.AddPass("TAA Velocity");
+                builder
+                    .Color({
+                        .Resource = m_VelocityId,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        // Zero motion for the background; the resolve falls back to depth
+                        // reprojection wherever no geometry overwrote this.
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
+                    })
+                    .Depth({
+                        // Load the geometry pass's depth and test against it (write off) so the
+                        // velocity of the front surface alone survives; the lighting pass still
+                        // samples this depth afterward, so it is stored.
+                        .Resource = m_DepthId,
+                        .Load = LoadOp::Load,
+                        .Store = StoreOp::Store,
+                    });
+
+                if (m_Cull == SceneRendererSettings::CullMode::GPU)
+                {
+                    builder.IndirectRead(m_IndirectId);
+                }
+
+                builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
+            }
+
+        private:
+            void Record(const ScenePassContext& ctx) const
+            {
+                CommandBuffer& cmd = ctx.Cmd();
+                const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+                const GBufferDrawPlan& plan = *m_Plan;
+
+                cmd.SetViewport({0, 0}, m_Extent);
+                cmd.SetScissor({0, 0}, m_Extent);
+
+                if (plan.Slots.empty())
+                {
+                    return;
+                }
+
+                // The velocity pipeline replaces the per-material surface pipeline; set 0
+                // (bindless) and set 1 (DrawData) and the push are the same surface path.
+                cmd.BindPipeline(m_Pipeline);
+                registry.Bind(cmd);
+                cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                    .Sets = {plan.DrawDataSet},
+                    .FirstSet = 1,
+                    .PipelineBindPoint = PipelineBindPoint::Graphics,
+                });
+                cmd.PushConstants(plan.Push);
+
+                cmd.GetNative().CommandBuffer.bindVertexBuffers(
+                    1, GetVkBuffer(*plan.CandidateIdBuffer), {0});
+
+                const Mesh* lastBound = nullptr;
+                for (const DrawGroup& group : plan.Groups)
+                {
+                    if (lastBound != group.SourceMesh)
+                    {
+                        cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
+                        cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
+                        lastBound = group.SourceMesh;
+                    }
+
+                    if (m_Cull == SceneRendererSettings::CullMode::GPU)
+                    {
+                        const u64 offset =
+                            plan.IndirectRegionOffset +
+                            static_cast<u64>(group.FirstSlot) * sizeof(DrawIndexedIndirectCommand);
+                        cmd.DrawIndexedIndirect(plan.IndirectBuffer, offset, group.SlotCount,
+                                                sizeof(DrawIndexedIndirectCommand));
+                    }
+                    else
+                    {
+                        for (u32 s = 0; s < group.SlotCount; ++s)
+                        {
+                            const DrawSlot& slot = plan.Slots[group.FirstSlot + s];
+                            cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex, slot.VertexOffset,
+                                            slot.CandidateId);
+                        }
+                    }
+                }
+            }
+
+            Context& m_Context;
+            Ref<GraphicsPipeline> m_Pipeline;
+            uvec2 m_Extent;
+            const GBufferDrawPlan* m_Plan = nullptr;
+            SceneRendererSettings::CullMode m_Cull = SceneRendererSettings::CullMode::CPU;
+            ResourceId m_VelocityId;
+            ResourceId m_DepthId;
             ResourceId m_IndirectId;
         };
 
@@ -876,6 +1030,119 @@ namespace Veng::Renderer
             Ref<DescriptorSet> m_ShadowSet;
             Source m_Source;
         };
+
+        // Temporal anti-aliasing: a resolve pass that reprojects the persisted history
+        // against this frame's depth and blends it with the lit color, then a history-copy
+        // pass that refreshes the history from the resolved result for next frame.
+        //
+        // The renderer routes the lighting pass into a separate lit target (litId); this
+        // pass reads it as the current frame, writes the resolved color into the HDR target
+        // (hdrId) the rest of the chain already samples, and copies that back into historyId.
+        class TaaScenePass final : public ScenePass
+        {
+        public:
+            TaaScenePass(Context& context, Ref<GraphicsPipeline> resolvePipeline,
+                         Ref<GraphicsPipeline> copyPipeline, ResourceId litId, ResourceId historyId,
+                         ResourceId hdrId, ResourceId depthId, ResourceId velocityId,
+                         TextureHandle litHandle, TextureHandle historyHandle,
+                         TextureHandle velocityHandle, const bool* historyResetPtr, uvec2 extent)
+                : m_Context(context), m_ResolvePipeline(std::move(resolvePipeline)),
+                  m_CopyPipeline(std::move(copyPipeline)), m_LitId(litId), m_HistoryId(historyId),
+                  m_HdrId(hdrId), m_DepthId(depthId), m_VelocityId(velocityId),
+                  m_LitHandle(litHandle), m_HistoryHandle(historyHandle),
+                  m_VelocityHandle(velocityHandle), m_HistoryResetPtr(historyResetPtr),
+                  m_Extent(extent)
+            {
+            }
+
+            void Resize(const uvec2 extent) override { m_Extent = extent; }
+
+            void Declare(RenderGraph& graph, const PassIO& io) override
+            {
+                const TextureHandle depthHandle = io.DepthHandle;
+                const TextureHandle hdrHandle = io.HdrHandle;
+                const SamplerHandle samplerHandle = io.SamplerHandle;
+
+                // Resolve: read the lit color (current), the reprojected history, and depth;
+                // write the resolved color into the HDR target downstream passes sample.
+                graph.AddPass("TAA Resolve")
+                    .Color({
+                        .Resource = m_HdrId,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                    })
+                    .Sample(m_LitId)
+                    .Sample(m_HistoryId)
+                    .Sample(m_DepthId)
+                    .Sample(m_VelocityId)
+                    .Execute(
+                        [this, depthHandle, samplerHandle](PassContext& inner)
+                        {
+                            CommandBuffer& cmd = inner.Cmd();
+                            const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+                            cmd.BindPipeline(m_ResolvePipeline);
+                            cmd.SetViewport({0, 0}, m_Extent);
+                            cmd.SetScissor({0, 0}, m_Extent);
+                            registry.Bind(cmd);
+                            cmd.PushConstants(TaaResolvePush{
+                                .CurrentTexture = m_LitHandle.Index,
+                                .HistoryTexture = m_HistoryHandle.Index,
+                                .DepthTexture = depthHandle.Index,
+                                .VelocityTexture = m_VelocityHandle.Index,
+                                .Sampler = samplerHandle.Index,
+                                .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
+                                .HistoryValid = *m_HistoryResetPtr ? 0u : 1u,
+                                .Extent = m_Extent,
+                            });
+                            cmd.DrawFullscreenTriangle();
+                        });
+
+                // History copy: refresh the persisted history from the resolved HDR for the
+                // next frame's reprojection. The graph orders it after the resolve's write of
+                // the HDR target and after the resolve's read of the history (write-after-read).
+                graph.AddPass("TAA History Copy")
+                    .Color({
+                        .Resource = m_HistoryId,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                    })
+                    .Sample(m_HdrId)
+                    .Execute(
+                        [this, hdrHandle, samplerHandle](PassContext& inner)
+                        {
+                            CommandBuffer& cmd = inner.Cmd();
+                            const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+                            cmd.BindPipeline(m_CopyPipeline);
+                            cmd.SetViewport({0, 0}, m_Extent);
+                            cmd.SetScissor({0, 0}, m_Extent);
+                            registry.Bind(cmd);
+                            cmd.PushConstants(TaaCopyPush{
+                                .SourceTexture = hdrHandle.Index,
+                                .Sampler = samplerHandle.Index,
+                            });
+                            cmd.DrawFullscreenTriangle();
+                        });
+            }
+
+        private:
+            Context& m_Context;
+            Ref<GraphicsPipeline> m_ResolvePipeline;
+            Ref<GraphicsPipeline> m_CopyPipeline;
+            ResourceId m_LitId;
+            ResourceId m_HistoryId;
+            ResourceId m_HdrId;
+            ResourceId m_DepthId;
+            ResourceId m_VelocityId;
+            TextureHandle m_LitHandle;
+            TextureHandle m_HistoryHandle;
+            TextureHandle m_VelocityHandle;
+            // Points at SceneRenderer::m_TaaHistoryReset, read at record time (the graph
+            // executes before Execute clears the flag, so it reflects this frame's validity).
+            const bool* m_HistoryResetPtr;
+            uvec2 m_Extent;
+        };
     }
 
     PostProcessScenePass::PostProcessScenePass(Context& context, AssetHandle<Material> material,
@@ -992,7 +1259,10 @@ namespace Veng::Renderer
         CreateOutput();
         CreateGBuffer();
         CreateCullResources();
+        // After CreateCullResources: the velocity pipeline binds the DrawData set layout.
+        CreateVelocityPipeline();
         CreateHdr();
+        CreateTaa();
         CreateBloom();
         Rebuild();
     }
@@ -1007,6 +1277,9 @@ namespace Veng::Renderer
         bindless.Release(m_DepthHandle);
         bindless.Release(m_HiZSampleHandle);
         bindless.Release(m_HdrHandle);
+        bindless.Release(m_LitHandle);
+        bindless.Release(m_TaaHistoryHandle);
+        bindless.Release(m_VelocityHandle);
         bindless.Release(m_BloomResultHandle);
         bindless.Release(m_BloomMip0Handle);
         bindless.Release(m_SamplerHandle);
@@ -1031,6 +1304,10 @@ namespace Veng::Renderer
         const AssetHandle<Veng::Shader> cascadeDebugFs =
             LoadShader(DeferredLightingCascadesFragId, "deferred-lighting cascade-debug fragment");
         const AssetHandle<Veng::Shader> ssaoFs = LoadShader(SsaoFragId, "SSAO fragment");
+        const AssetHandle<Veng::Shader> taaResolveFs =
+            LoadShader(TaaResolveFragId, "TAA resolve fragment");
+        const AssetHandle<Veng::Shader> taaCopyFs =
+            LoadShader(TaaHistoryCopyFragId, "TAA history-copy fragment");
         const AssetHandle<Veng::Shader> albedoBlitFs =
             LoadShader(AlbedoBlitFragId, "albedo-blit fragment");
         const AssetHandle<Veng::Shader> normalBlitFs =
@@ -1100,6 +1377,27 @@ namespace Veng::Renderer
                        });
         m_SsaoPipeline =
             MakePipeline("SceneRenderer SSAO Pipeline", m_SsaoLayout, ssaoFs, SsaoFormat);
+
+        // TAA resolve writes the HDR target (the resolved color the rest of the chain reads);
+        // its push carries the bindless slots, view-constants region, history flag, and extent.
+        m_TaaResolveLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer TAA Resolve Layout",
+                           .PushConstantRanges = {PushConstantRange::Of<TaaResolvePush>(
+                               ShaderStage::Fragment)},
+                       });
+        m_TaaResolvePipeline = MakePipeline("SceneRenderer TAA Resolve Pipeline",
+                                            m_TaaResolveLayout, taaResolveFs, HdrFormat);
+
+        // TAA history-copy writes the persisted history target (HDR, unclamped).
+        m_TaaCopyLayout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer TAA History Copy Layout",
+                .PushConstantRanges = {PushConstantRange::Of<TaaCopyPush>(ShaderStage::Fragment)},
+            });
+        m_TaaCopyPipeline = MakePipeline("SceneRenderer TAA History Copy Pipeline", m_TaaCopyLayout,
+                                         taaCopyFs, HdrFormat);
 
         // Loaded resident so the PostProcessScenePass builds its pipeline against the output format.
         const AssetResult<AssetHandle<Material>> tonemap =
@@ -1850,6 +2148,110 @@ namespace Veng::Renderer
         m_HdrHandle = bindless.Register(m_HdrView);
     }
 
+    void SceneRenderer::CreateTaa()
+    {
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+
+        // Recreating (or releasing) invalidates the persisted history, so the next resolve
+        // must ignore it until a frame repopulates it.
+        m_TaaHistoryReset = true;
+
+        bindless.Release(m_LitHandle);
+        bindless.Release(m_TaaHistoryHandle);
+        bindless.Release(m_VelocityHandle);
+        m_LitHandle = {};
+        m_TaaHistoryHandle = {};
+        m_VelocityHandle = {};
+
+        if (!m_Settings.TAA)
+        {
+            // Drop the targets when TAA is off so the memory is not held for an unused path.
+            m_LitImage.reset();
+            m_LitView.reset();
+            m_TaaHistoryImage.reset();
+            m_TaaHistoryView.reset();
+            m_VelocityImage.reset();
+            m_VelocityView.reset();
+            return;
+        }
+
+        m_LitImage = Image::Create(m_Context, {
+                                                  .Name = "SceneRenderer Lit",
+                                                  .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                  .Format = HdrFormat,
+                                                  .Usage = HdrUsage,
+                                              });
+        m_LitView =
+            ImageView::Create(m_Context, {.Name = "SceneRenderer Lit View", .Image = m_LitImage});
+        m_LitHandle = bindless.Register(m_LitView);
+
+        m_TaaHistoryImage = Image::Create(m_Context, {
+                                                         .Name = "SceneRenderer TAA History",
+                                                         .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                         .Format = HdrFormat,
+                                                         .Usage = HdrUsage,
+                                                     });
+        m_TaaHistoryView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer TAA History View", .Image = m_TaaHistoryImage});
+        m_TaaHistoryHandle = bindless.Register(m_TaaHistoryView);
+
+        m_VelocityImage = Image::Create(m_Context, {
+                                                       .Name = "SceneRenderer Velocity",
+                                                       .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                       .Format = GBuffer::VelocityFormat,
+                                                       .Usage = GBuffer::ColorUsage,
+                                                   });
+        m_VelocityView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer Velocity View", .Image = m_VelocityImage});
+        m_VelocityHandle = bindless.Register(m_VelocityView);
+    }
+
+    void SceneRenderer::CreateVelocityPipeline()
+    {
+        const AssetResult<AssetHandle<Veng::Shader>> vs =
+            m_Assets.LoadSync<Veng::Shader>(VelocityVertId);
+        VE_ASSERT(vs.has_value(), "SceneRenderer: velocity vertex shader load failed: {}",
+                  vs.error().Detail);
+        const AssetResult<AssetHandle<Veng::Shader>> fs =
+            m_Assets.LoadSync<Veng::Shader>(VelocityFragId);
+        VE_ASSERT(fs.has_value(), "SceneRenderer: velocity fragment shader load failed: {}",
+                  fs.error().Detail);
+
+        // Shares set 1 (the per-draw DrawData SSBO) and the surface push with the geometry
+        // pass, so the same plan drives both draws.
+        m_VelocityLayout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer Velocity Layout",
+                .DescriptorSetLayouts = {m_DrawDataSetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<SurfacePush>(ShaderStage::Vertex)},
+            });
+
+        m_VelocityPipeline = GraphicsPipeline::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer Velocity Pipeline",
+                .ColorAttachments = {{.Format = GBuffer::VelocityFormat,
+                                      .Blend = BlendState::Opaque()}},
+                .DepthAttachmentFormat = GBuffer::DepthFormat,
+                .VertexBufferLayout = Mesh::CanonicalLayout(),
+                // The candidate id arrives as an instance-rate attribute on binding 1,
+                // exactly as the surface pipeline reads it.
+                .InstanceCandidateId = true,
+                // Test against the populated g-buffer depth without writing it, so only the
+                // visible surface's velocity survives.
+                .DepthTestEnable = true,
+                .DepthWriteEnable = false,
+                .DepthCompareOp = CompareOp::LessOrEqual,
+                .PipelineLayout = m_VelocityLayout,
+                .ShaderStages =
+                    {
+                        {.Stage = ShaderStage::Vertex, .Module = vs->Get()->Module},
+                        {.Stage = ShaderStage::Fragment, .Module = fs->Get()->Module},
+                    },
+            });
+    }
+
     void SceneRenderer::CreateBloom()
     {
         // Bloom operates in linear HDR space before tonemap, sampling bilinearly: the wide
@@ -1990,6 +2392,11 @@ namespace Veng::Renderer
             (m_Settings.Mode == DebugView::Final && m_Settings.Bloom) || debugBloom;
         m_BloomActive = bloomActive;
 
+        // TAA is a Final-only resolve: it inserts the resolve + history-copy passes between
+        // lighting and the tonemap tail and routes lighting into a separate lit target.
+        const bool taaActive = m_Settings.Mode == DebugView::Final && m_Settings.TAA;
+        m_TaaActive = taaActive;
+
         const bool debugShadow = m_Settings.Mode == DebugView::Shadows;
         const bool debugAo = m_Settings.Mode == DebugView::AO;
         // Cascades debug needs the shadow pass wired so cascade constants are written.
@@ -2024,6 +2431,23 @@ namespace Veng::Renderer
         m_OrmId = ormId;
         m_DepthId = depthId;
         m_HdrId = hdrId;
+
+        // When TAA is active the lighting pass writes a separate lit target the resolve
+        // reads; the resolve then writes hdrId, so bloom/tonemap sample the resolved result.
+        ResourceId litId{};
+        ResourceId taaHistoryId{};
+        ResourceId velocityId{};
+        if (taaActive)
+        {
+            litId = graph.Import("SceneRenderer Lit");
+            taaHistoryId = graph.Import("SceneRenderer TAA History");
+            velocityId = graph.Import("SceneRenderer Velocity");
+        }
+        m_LitId = litId;
+        m_TaaHistoryId = taaHistoryId;
+        m_VelocityId = velocityId;
+        m_VelocityActive = taaActive;
+        const ResourceId lightingTargetId = taaActive ? litId : hdrId;
 
         ResourceId shadowId{};
         if (shadowActive)
@@ -2094,6 +2518,15 @@ namespace Veng::Renderer
                                                           m_ActiveCull, m_IndirectId);
         m_Passes.push_back(std::move(gbufferPass));
 
+        // The velocity prepass runs right after the g-buffer pass (it needs the populated
+        // depth) and before the TAA resolve. It reuses the geometry pass's draw plan.
+        if (taaActive)
+        {
+            m_Passes.push_back(CreateUnique<VelocityScenePass>(
+                m_Context, m_VelocityPipeline, m_Extent, &m_Internal->Plan, m_ActiveCull,
+                velocityId, depthId, m_IndirectId));
+        }
+
         // Created before the tail switch so ssaoHandle is set when the Final arm reads it.
         if (ssaoActive)
         {
@@ -2111,6 +2544,16 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
                 ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride));
+
+            // TAA resolves the lit target into the HDR target the tail samples, so it sits
+            // between lighting and the bloom/tonemap tail.
+            if (taaActive)
+            {
+                m_Passes.push_back(CreateUnique<TaaScenePass>(
+                    m_Context, m_TaaResolvePipeline, m_TaaCopyPipeline, litId, taaHistoryId, hdrId,
+                    depthId, velocityId, m_LitHandle, m_TaaHistoryHandle, m_VelocityHandle,
+                    &m_TaaHistoryReset, m_Extent));
+            }
 
             // Tonemap source: bloom composite when bloom is on, raw HDR otherwise.
             ResourceId tonemapSourceId = m_HdrId;
@@ -2213,7 +2656,7 @@ namespace Veng::Renderer
             .NormalHandle = m_NormalHandle,
             .OrmHandle = m_OrmHandle,
             .DepthHandle = m_DepthHandle,
-            .Hdr = hdrId,
+            .Hdr = lightingTargetId,
             .HdrHandle = m_HdrHandle,
             .BloomMip0 = bloomActive ? m_BloomChainId.Level(0) : ResourceId{},
             .BloomMip0Handle = m_BloomMip0Handle,
@@ -2558,6 +3001,20 @@ namespace Veng::Renderer
         m_FrustumSurvivedCount = static_cast<u32>(m_CullScratch.size());
         m_LastDrawnCount = m_FrustumSurvivedCount;
 
+        // Per-object velocity needs each drawn entity's previous-frame world matrix. Record
+        // this frame's worlds (swapped to "previous" after Execute) and look the prior one up
+        // when filling DrawData. Maintained only while the velocity pass is wired.
+        const auto PackEntity = [](Entity e) -> u64
+        { return (static_cast<u64>(e.Index) << 32) | static_cast<u64>(e.Generation); };
+        if (m_VelocityActive)
+        {
+            m_CurrentWorlds.clear();
+            for (const VisibleMesh& vm : view.Visible)
+            {
+                m_CurrentWorlds[PackEntity(vm.Owner)] = vm.World;
+            }
+        }
+
         auto* drawData = static_cast<GpuDrawData*>(m_DrawDataBuffer->GetMappedData());
         GpuCullCandidate* cullData =
             m_CullCandidateBuffer
@@ -2601,12 +3058,24 @@ namespace Veng::Renderer
             // transpose of the upper 3×3, correct under non-uniform scale), and the
             // frame-folded material selector.
             const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
+            // Previous world for velocity: last frame's matrix for this entity, or the
+            // current one (zero object motion) when first seen or velocity is inactive.
+            mat4 prevWorld = item.World;
+            if (m_VelocityActive)
+            {
+                const auto it = m_PreviousWorlds.find(PackEntity(item.Owner));
+                if (it != m_PreviousWorlds.end())
+                {
+                    prevWorld = it->second;
+                }
+            }
             drawData[frameBase + slot] = GpuDrawData{
                 .World = item.World,
                 .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
                 .NormalColumn1 = vec4(normalMatrix[1], 0.0f),
                 .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
                 .MaterialIndex = material.GetMaterialSelector(),
+                .PrevWorld = prevWorld,
             };
 
             if (cullData != nullptr)
@@ -2674,6 +3143,7 @@ namespace Veng::Renderer
         CreateOutput();
         CreateGBuffer();
         CreateHdr();
+        CreateTaa();
         CreateBloom();
         CreatePunctualShadowAtlas();
         Rebuild();
@@ -2709,6 +3179,7 @@ namespace Veng::Renderer
         m_Settings = settings;
         ClampShadowResolutions();
         ResolveActiveCullMode();
+        CreateTaa();
         CreatePunctualShadowAtlas();
         Rebuild();
     }
@@ -2842,12 +3313,28 @@ namespace Veng::Renderer
         registry.WriteLights(std::as_bytes(std::span(packedLights.data(), lightCount)));
 
         // Pack view constants (camera/view state only; shadow system rides set-1).
+        // The unjittered view-projection drives the frustum cull, hi-Z, and next frame's
+        // reprojection matrix; the jittered one (TAA only) is what the geometry and
+        // lighting actually render through.
         const mat4 viewProj = view.Camera.ViewProjection();
+        mat4 renderProj = view.Camera.Projection();
+        if (m_TaaActive && m_Extent.x > 0 && m_Extent.y > 0)
+        {
+            // Sub-pixel projection shear; sign is irrelevant to quality (the sequence is
+            // symmetric) and cancels between render and reconstruction, which share this
+            // matrix. The reprojection uses the separate unjittered PrevViewProj.
+            const vec2 jitterPixel = TaaJitterOffset(m_FrameIndex);
+            renderProj[2][0] += 2.0f * jitterPixel.x / static_cast<f32>(m_Extent.x);
+            renderProj[2][1] += 2.0f * jitterPixel.y / static_cast<f32>(m_Extent.y);
+        }
+        const mat4 renderViewProj = renderProj * view.Camera.View();
         const ViewConstantsBlock viewConstants{
-            .InvViewProj = glm::inverse(viewProj),
+            .InvViewProj = glm::inverse(renderViewProj),
             .CameraPosition = vec4(view.Camera.GetPosition(), 0.0f),
             .View = view.Camera.View(),
-            .Proj = view.Camera.Projection(),
+            .Proj = renderProj,
+            .PrevViewProj = m_PreviousViewProj,
+            .CurViewProj = viewProj,
         };
         registry.WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
 
@@ -2922,6 +3409,12 @@ namespace Veng::Renderer
             {m_AlbedoId, m_AlbedoView}, {m_NormalId, m_NormalView}, {m_OrmId, m_OrmView},
             {m_DepthId, m_DepthView},   {m_HdrId, m_HdrView},       {m_OutputId, m_OutputView},
         };
+        if (m_TaaActive)
+        {
+            bindings.push_back({m_LitId, m_LitView});
+            bindings.push_back({m_TaaHistoryId, m_TaaHistoryView});
+            bindings.push_back({m_VelocityId, m_VelocityView});
+        }
         if (m_ShadowActive && m_ShadowPass)
         {
             bindings.push_back({m_ShadowId, m_ShadowPass->GetShadowView()});
@@ -2965,6 +3458,18 @@ namespace Veng::Renderer
         // The pyramid now holds this frame's depth, so the next Execute may test against
         // it (subject to the view-delta metric).
         m_HiZHistoryReset = false;
+
+        // The history-copy pass populated the history this frame, so the next resolve may
+        // reproject against it. Advance the jitter sequence regardless of the TAA toggle so
+        // enabling it mid-run does not restart the phase.
+        m_TaaHistoryReset = false;
+        ++m_FrameIndex;
+
+        // This frame's worlds become next frame's "previous" for the velocity prepass.
+        if (m_VelocityActive)
+        {
+            m_PreviousWorlds.swap(m_CurrentWorlds);
+        }
     }
 
     Ref<ImageView> SceneRenderer::GetOutput() const
@@ -3065,6 +3570,14 @@ namespace Veng::Renderer
     Ref<ImageView> SceneRenderer::GetBloomResultView() const
     {
         return m_BloomResultView;
+    }
+    Ref<ImageView> SceneRenderer::GetTaaHistoryView() const
+    {
+        return m_TaaHistoryView;
+    }
+    Ref<ImageView> SceneRenderer::GetVelocityView() const
+    {
+        return m_VelocityView;
     }
     Ref<ImageView> SceneRenderer::GetPunctualShadowView() const
     {

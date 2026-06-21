@@ -182,6 +182,15 @@ namespace Veng::Renderer
         /// default is the golden's kernel; Kawase is the bandwidth-optimized alternative.
         BloomKernel Kernel = BloomKernel::Cod;
 
+        /// @brief Whether temporal anti-aliasing resolves the lit image.
+        ///
+        /// A topology change: it jitters the projection, inserts the TAA resolve and
+        /// history-copy passes between lighting and tonemap, and routes lighting into a
+        /// separate target the resolve reads. Off by default. Motion vectors are
+        /// camera-only (reconstructed from depth), so a moving camera over static
+        /// geometry resolves exactly while dynamic objects ghost.
+        bool TAA = false;
+
         /// @brief Whether the directional light casts a shadow.
         ///
         /// A topology change: it inserts/removes the depth-only ShadowScenePass and the
@@ -542,6 +551,18 @@ namespace Veng::Renderer
         /// Null when Bloom is off (tonemap reads the raw HDR target instead). Exposed for tests.
         [[nodiscard]] Ref<ImageView> GetBloomResultView() const;
 
+        /// @brief Returns the persisted TAA history target, or null when TAA is off.
+        ///
+        /// Holds the previous frame's resolved HDR. Renderer-owned; invalidated by Resize
+        /// and Configure. Exposed for tests inspecting temporal accumulation.
+        [[nodiscard]] Ref<ImageView> GetTaaHistoryView() const;
+
+        /// @brief Returns the per-object velocity target, or null when TAA is off.
+        ///
+        /// RG screen-space motion vectors written by the velocity prepass. Renderer-owned;
+        /// invalidated by Resize and Configure. Exposed for tests.
+        [[nodiscard]] Ref<ImageView> GetVelocityView() const;
+
         /// @brief Returns the punctual shadow atlas view (set 1 binding 4).
         ///
         /// A 2D depth atlas of MaxShadowedPunctual·CubeFaceCount tiles, SampleCmp'd by the
@@ -578,6 +599,18 @@ namespace Veng::Renderer
         void DeclareBloom(RenderGraph& graph);
         /// @brief Recreates the HDR image/view at the current extent and (re-)registers it into bindless.
         void CreateHdr();
+        /// @brief Recreates the TAA lit + history targets, or releases them when TAA is off.
+        ///
+        /// Allocates m_LitImage and m_TaaHistoryImage (both HdrFormat, full extent) and
+        /// registers their bindless slots when Settings.TAA is set; otherwise releases any
+        /// previously-created ones. Sets m_TaaHistoryReset so the next resolve ignores the
+        /// freshly-created history. Called from Create and every Resize/Configure.
+        void CreateTaa();
+        /// @brief Builds the velocity prepass pipeline once at Create (after the DrawData set layout exists).
+        ///
+        /// The pipeline shares the per-draw DrawData set and surface push block with the geometry
+        /// pass, so it must build after CreateCullResources. Depth-tested, depth-write off.
+        void CreateVelocityPipeline();
         /// @brief Recreates the bloom mip-pyramid + result image, their views, and the per-level sets.
         ///
         /// Builds m_BloomImage (one HDR mip chain), the per-mip storage views, the whole-chain
@@ -722,6 +755,41 @@ namespace Veng::Renderer
         /// @brief View over m_HdrImage.
         Ref<ImageView> m_HdrView;
 
+        /// @brief Lighting target when TAA is active (the resolve's current-frame input).
+        ///
+        /// HdrFormat, full extent. With TAA on, the lighting pass writes here and the TAA
+        /// resolve reads it as the current frame; the resolve then writes m_HdrImage, so
+        /// bloom and tonemap read the resolved result unchanged. Null when TAA is off
+        /// (lighting writes m_HdrImage directly). Recreated on Resize/Configure.
+        Ref<Image> m_LitImage;
+        /// @brief View over m_LitImage.
+        Ref<ImageView> m_LitView;
+        /// @brief Bindless slot for the lit view; the resolve samples the current frame through it.
+        TextureHandle m_LitHandle;
+
+        /// @brief Persisted previous-frame resolved HDR the TAA resolve reprojects against.
+        ///
+        /// HdrFormat, full extent, carried across frames (not cleared per frame): the
+        /// history-copy pass refreshes it from m_HdrImage at the end of each Execute.
+        /// Null when TAA is off. Recreated on Resize/Configure, which invalidates its
+        /// contents (m_TaaHistoryReset forces the next resolve to ignore it).
+        Ref<Image> m_TaaHistoryImage;
+        /// @brief View over m_TaaHistoryImage.
+        Ref<ImageView> m_TaaHistoryView;
+        /// @brief Bindless slot for the history view; the resolve samples it at the reprojected UV.
+        TextureHandle m_TaaHistoryHandle;
+
+        /// @brief Per-object screen-space motion vector target (the velocity prepass writes it).
+        ///
+        /// RG16Sfloat, full extent. The velocity pass renders geometry with current and
+        /// previous transforms into this; the resolve reprojects geometry pixels through it.
+        /// Null when TAA is off. Recreated on Resize/Configure alongside the TAA targets.
+        Ref<Image> m_VelocityImage;
+        /// @brief View over m_VelocityImage.
+        Ref<ImageView> m_VelocityView;
+        /// @brief Bindless slot for the velocity view; the resolve samples per-object motion through it.
+        TextureHandle m_VelocityHandle;
+
         /// @brief Bloom mip-pyramid image: an HDR mip chain the compute down/up sweep operates on.
         ///
         /// HdrFormat, sized to m_Extent with a mip chain stopping ~3 levels short of 1×1
@@ -799,6 +867,24 @@ namespace Veng::Renderer
         /// Tint fragment shader over the plain lighting layout (set 1 + non-SSAO push block),
         /// writing the output format directly. Reuses m_LightingLayout.
         Ref<class GraphicsPipeline> m_CascadeDebugPipeline;
+
+        /// @brief TAA resolve pipeline (reproject + neighborhood-clip + blend), writing HdrFormat.
+        Ref<class GraphicsPipeline> m_TaaResolvePipeline;
+        /// @brief Layout for m_TaaResolvePipeline: the resolve push block (no extra sets).
+        Ref<class PipelineLayout> m_TaaResolveLayout;
+        /// @brief TAA history-copy pipeline (unclamped passthrough into the history), writing HdrFormat.
+        Ref<class GraphicsPipeline> m_TaaCopyPipeline;
+        /// @brief Layout for m_TaaCopyPipeline: a texture + sampler push block.
+        Ref<class PipelineLayout> m_TaaCopyLayout;
+
+        /// @brief TAA velocity prepass pipeline (per-object motion vectors), writing VelocityFormat.
+        ///
+        /// Depth-tested against the g-buffer depth (no write) so only the visible surface
+        /// writes its motion. Drives the same per-draw DrawData/candidate path as the
+        /// geometry pass, so it shares the DrawData set layout and the surface push block.
+        Ref<class GraphicsPipeline> m_VelocityPipeline;
+        /// @brief Layout for m_VelocityPipeline: set 1 (DrawData SSBO) + the surface push block.
+        Ref<class PipelineLayout> m_VelocityLayout;
 
         /// @brief SSAO fullscreen pipeline writing the R8 AO target.
         Ref<class GraphicsPipeline> m_SsaoPipeline;
@@ -1074,6 +1160,12 @@ namespace Veng::Renderer
         ResourceId m_DepthId;
         /// @brief Imported id for the HDR target.
         ResourceId m_HdrId;
+        /// @brief Imported id for the lighting target under TAA (the resolve's current input).
+        ResourceId m_LitId;
+        /// @brief Imported id for the persisted TAA history target.
+        ResourceId m_TaaHistoryId;
+        /// @brief Imported id for the velocity target under TAA.
+        ResourceId m_VelocityId;
         /// @brief Per-mip subresource handle for the bloom pyramid the down/up sweep reads and writes.
         MipChainId m_BloomChainId;
         /// @brief Imported id for the bloom composite result.
@@ -1093,6 +1185,40 @@ namespace Veng::Renderer
         ///
         /// Execute binds the bloom imports and writes the bloom params only when true.
         bool m_BloomActive = false;
+
+        /// @brief True when the last Rebuild wired the TAA passes (Final mode + Settings.TAA).
+        ///
+        /// Execute jitters the projection, binds the lit/history imports, and pushes the
+        /// resolve's history-validity flag only when true.
+        bool m_TaaActive = false;
+
+        /// @brief True when the last Rebuild wired the velocity prepass (Final mode + Settings.TAA).
+        ///
+        /// Execute binds the velocity import and maintains the previous-transform maps only when true.
+        bool m_VelocityActive = false;
+
+        /// @brief Forces the next resolve to ignore history (frame 0 and after Resize/Configure).
+        ///
+        /// The history image holds undefined or stale-extent content after creation, so the
+        /// resolve must fall back to the current color until one frame has populated it. Set
+        /// by CreateTaa, cleared after each Execute, mirroring m_HiZHistoryReset.
+        bool m_TaaHistoryReset = true;
+
+        /// @brief Monotonic frame counter driving the Halton jitter sequence.
+        ///
+        /// Incremented every Execute (independent of the TAA toggle so toggling on does not
+        /// snap the sequence). Folds into TaaJitterSampleCount.
+        u64 m_FrameIndex = 0;
+
+        /// @brief Previous frame's world matrix per entity, keyed by a packed Entity id.
+        ///
+        /// The velocity prepass needs each drawn object's prior transform; PrepareDraws looks
+        /// it up here and writes it into the per-draw record. An entity absent (first seen, or
+        /// after a TAA toggle) reprojects with zero object motion. Maintained only while TAA is
+        /// active; swapped from m_CurrentWorlds at the end of each Execute.
+        unordered_map<u64, mat4> m_PreviousWorlds;
+        /// @brief This frame's world matrix per entity; swapped into m_PreviousWorlds after Execute.
+        unordered_map<u64, mat4> m_CurrentWorlds;
 
         /// @brief True when the last Rebuild wired the directional shadow pass (Final mode + Settings.Shadows).
         ///
