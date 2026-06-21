@@ -2,10 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <span>
+#include <utility>
 
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <Veng/Assert.h>
+#include <Veng/Math/Frustum.h>
 
 namespace Veng::Renderer
 {
@@ -55,32 +59,171 @@ namespace Veng::Renderer
         {
             return std::abs(dir.y) > 0.99f ? vec3(0.0f, 0.0f, 1.0f) : vec3(0.0f, 1.0f, 0.0f);
         }
+
+        // Clips a segment a→b against a set of inward half-spaces (a point p is inside
+        // when dot(plane.xyz, p) + plane.w >= 0, the Frustum/AABB convention). On a
+        // surviving segment, writes the inside sub-segment endpoints and returns true;
+        // returns false when the segment lies wholly outside.
+        bool ClipSegment(vec3 a, vec3 b, std::span<const vec4> planes, vec3& outA, vec3& outB)
+        {
+            const vec3 dir = b - a;
+            f32 t0 = 0.0f;
+            f32 t1 = 1.0f;
+            for (const vec4& plane : planes)
+            {
+                const vec3 normal = vec3(plane);
+                const f32 denom = glm::dot(normal, dir);
+                const f32 dist = glm::dot(normal, a) + plane.w; // signed distance of a
+                if (std::abs(denom) < 1e-12f)
+                {
+                    if (dist < 0.0f)
+                    {
+                        return false; // parallel to the plane and outside it
+                    }
+                    continue;
+                }
+                const f32 t = -dist / denom;
+                if (denom > 0.0f)
+                {
+                    t0 = std::max(t0, t); // crossing into the half-space
+                }
+                else
+                {
+                    t1 = std::min(t1, t); // crossing out of the half-space
+                }
+                if (t0 > t1)
+                {
+                    return false;
+                }
+            }
+            outA = a + dir * t0;
+            outB = a + dir * t1;
+            return true;
+        }
+
+        // The [min, max] view-space depth (-z) of the intersection of the camera frustum
+        // and the scene AABB, or nullopt when they do not intersect. The intersection of
+        // two convex polyhedra has its extreme points at a vertex of one inside the other
+        // or an edge of one crossing a face of the other; clipping each frustum edge to
+        // the AABB and each AABB edge to the frustum yields exactly those points, so their
+        // view depths bracket the intersection's depth extent.
+        std::optional<vec2> FrustumSceneDepthRange(const mat4& invViewProj, const mat4& viewProj,
+                                                   const mat4& view, const AABB& bounds)
+        {
+            const std::array<vec3, 8> frustumCorners = SliceCorners(invViewProj, 0.0f, 1.0f);
+            // Frustum edges: the near quad (0-3), the far quad (4-7), and the four
+            // connectors. SliceCorners orders each quad around the ndcXY ring.
+            static constexpr std::array<std::pair<int, int>, 12> frustumEdges = {{{0, 1},
+                                                                                  {1, 2},
+                                                                                  {2, 3},
+                                                                                  {3, 0},
+                                                                                  {4, 5},
+                                                                                  {5, 6},
+                                                                                  {6, 7},
+                                                                                  {7, 4},
+                                                                                  {0, 4},
+                                                                                  {1, 5},
+                                                                                  {2, 6},
+                                                                                  {3, 7}}};
+
+            // AABB corners indexed by axis bits (x<<2 | y<<1 | z); edges join corners
+            // differing in exactly one bit.
+            std::array<vec3, 8> aabbCorners{};
+            for (int i = 0; i < 8; ++i)
+            {
+                aabbCorners[i] = vec3((i & 4) != 0 ? bounds.Max.x : bounds.Min.x,
+                                      (i & 2) != 0 ? bounds.Max.y : bounds.Min.y,
+                                      (i & 1) != 0 ? bounds.Max.z : bounds.Min.z);
+            }
+            static constexpr std::array<std::pair<int, int>, 12> aabbEdges = {{{0, 1},
+                                                                               {2, 3},
+                                                                               {4, 5},
+                                                                               {6, 7},
+                                                                               {0, 2},
+                                                                               {1, 3},
+                                                                               {4, 6},
+                                                                               {5, 7},
+                                                                               {0, 4},
+                                                                               {1, 5},
+                                                                               {2, 6},
+                                                                               {3, 7}}};
+
+            const std::array<vec4, 6> frustumPlanes = Frustum::FromViewProjection(viewProj).Planes;
+            const std::array<vec4, 6> aabbPlanes = {
+                vec4(1.0f, 0.0f, 0.0f, -bounds.Min.x), vec4(-1.0f, 0.0f, 0.0f, bounds.Max.x),
+                vec4(0.0f, 1.0f, 0.0f, -bounds.Min.y), vec4(0.0f, -1.0f, 0.0f, bounds.Max.y),
+                vec4(0.0f, 0.0f, 1.0f, -bounds.Min.z), vec4(0.0f, 0.0f, -1.0f, bounds.Max.z)};
+
+            f32 depthMin = std::numeric_limits<f32>::max();
+            f32 depthMax = std::numeric_limits<f32>::lowest();
+            bool any = false;
+            const auto consider = [&](vec3 point)
+            {
+                const f32 depth = -(view * vec4(point, 1.0f)).z; // view looks down -Z
+                depthMin = std::min(depthMin, depth);
+                depthMax = std::max(depthMax, depth);
+                any = true;
+            };
+
+            vec3 clipA;
+            vec3 clipB;
+            for (const auto& [i, j] : frustumEdges)
+            {
+                if (ClipSegment(frustumCorners[i], frustumCorners[j], aabbPlanes, clipA, clipB))
+                {
+                    consider(clipA);
+                    consider(clipB);
+                }
+            }
+            for (const auto& [i, j] : aabbEdges)
+            {
+                if (ClipSegment(aabbCorners[i], aabbCorners[j], frustumPlanes, clipA, clipB))
+                {
+                    consider(clipA);
+                    consider(clipB);
+                }
+            }
+
+            if (!any)
+            {
+                return std::nullopt;
+            }
+            return vec2(depthMin, depthMax);
+        }
     }
 
     CascadeData ComputeCascades(const CameraView& camera, vec3 lightDir, const AABB& sceneBounds,
                                 const CascadeSettings& settings)
     {
+        const mat4 view = camera.View();
+        const mat4 viewProj = camera.ViewProjection();
+        const mat4 invViewProj = glm::inverse(viewProj);
+
         f32 near = camera.GetNear();
         f32 far = camera.GetFar();
 
-        // Fit the split range to where scene geometry actually sits in front of the
-        // camera. The camera's own far plane may sit far past the scene (an editor fly
-        // camera defaults to a 1000-unit far); splitting that whole range collapses the
-        // scene into cascade 0 and spends the rest on empty space, starving texel
-        // density. Intersecting the camera range with the scene bound's view-depth
-        // extent fits every cascade to real receivers regardless of the camera's clip
-        // range. View looks down -Z, so a corner's view depth is the negated z.
+        // Fit the split range to the *visible* scene: the view-depth extent of the
+        // intersection of the camera frustum and the scene bound, not the whole bound.
+        // The camera's own far plane may sit far past the scene (an editor fly camera
+        // defaults to a 1000-unit far), and a large scene the camera only partly sees
+        // (zoomed into one corner, or a long view down a corridor) would otherwise spread
+        // its cascades across the scene's full depth. Fitting to the visible slab packs
+        // every cascade onto on-screen receivers, lifting texel density where it shows. A
+        // bound the frustum misses keeps the camera's own range.
         if (!sceneBounds.IsEmpty())
         {
-            const AABB boundsView = sceneBounds.Transformed(camera.View());
-            const f32 fitNear = std::clamp(-boundsView.Max.z, camera.GetNear(), camera.GetFar());
-            const f32 fitFar = std::clamp(-boundsView.Min.z, camera.GetNear(), camera.GetFar());
-            // Adopt the tighter range only when it is non-degenerate; a scene fully
-            // behind or beyond the camera keeps the camera's own range.
-            if (fitFar > fitNear)
+            const std::optional<vec2> visibleDepth =
+                FrustumSceneDepthRange(invViewProj, viewProj, view, sceneBounds);
+            if (visibleDepth.has_value())
             {
-                near = fitNear;
-                far = fitFar;
+                const f32 fitNear = std::clamp(visibleDepth->x, camera.GetNear(), camera.GetFar());
+                const f32 fitFar = std::clamp(visibleDepth->y, camera.GetNear(), camera.GetFar());
+                // Adopt the tighter range only when it is non-degenerate.
+                if (fitFar > fitNear)
+                {
+                    near = fitNear;
+                    far = fitFar;
+                }
             }
         }
 
@@ -92,7 +235,6 @@ namespace Veng::Renderer
 
         const vec3 dir = glm::normalize(lightDir);
         const vec3 up = StableUp(dir);
-        const mat4 invViewProj = glm::inverse(camera.ViewProjection());
 
         // PSSM split distances: blend logarithmic and uniform splits by Lambda.
         // d[0] is the near plane; d[Count] is the far plane. Cascade k spans

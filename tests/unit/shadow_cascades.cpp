@@ -274,3 +274,26 @@ TEST_CASE("ComputeCascades: scene bound extends cascade 0's near plane toward th
     CHECK(ndc.z >= -1e-3f);
     CHECK(ndc.z <= 1.0f + 1e-3f);
 }
+
+TEST_CASE("ComputeCascades: split range fits the frustum-visible slab, not the whole bound")
+{
+    // A camera at the origin looking down −Z; a wide bound offset hard to the +X side so
+    // its nearest corner lies OUTSIDE the narrow near frustum. The visible part of the
+    // bound only begins deeper, where the frustum has widened to reach X=20 (depth ~35
+    // at a 60° square FOV) — so fitting to the frustum∩bound intersection places cascade
+    // 0 far deeper than fitting to the whole bound's view-depth extent, whose nearest
+    // corner sits at depth ~1, would.
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 1000.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f), vec3(0.0f, 1.0f, 0.0f));
+    const vec3 lightDir(0.3f, -1.0f, 0.2f);
+    const CascadeSettings settings{};
+
+    const AABB offset{.Min = vec3(20.0f, -5.0f, -100.0f), .Max = vec3(60.0f, 5.0f, -1.0f)};
+    const CascadeData data = ComputeCascades(camera, lightDir, offset, settings);
+
+    // Fitting the whole bound's view-depth extent (nearest corner at depth ~1) would put
+    // cascade 0's far split near ~6.5; fitting only the frustum-visible slab (near ~35)
+    // pushes it well past 25.
+    CHECK(data.SplitFar[0] > 25.0f);
+}
