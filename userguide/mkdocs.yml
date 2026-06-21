@@ -1,0 +1,141 @@
+site_name: veng
+site_description: "A modern C++26 Vulkan rendering engine — user guide and API reference."
+site_author: veng
+docs_dir: docs
+
+# Clean URLs (/getting-started/building/ rather than .../building.html).
+use_directory_urls: true
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - navigation.tracking
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/git-alt
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+  # Drives Doxygen over veng's public headers and renders the API reference
+  # natively into the Material theme. The `veng` project name keys the page
+  # paths the API nav section links to (veng/annotated.md, …).
+  - mkdoxy:
+      projects:
+        veng:
+          src-dirs: >-
+            ../engine/include/Veng
+            ../assetpack/include/Veng
+            ../cooker/include/Veng
+            ../editor/include/VengEditor
+          full-doc: true
+          doxy-cfg:
+            FILE_PATTERNS: "*.h *.hpp"
+            RECURSIVE: true
+            # The backend headers expose vk::/VMA types and are not part of the
+            # consumer-facing surface — keep them out, matching cmake/Docs.cmake.
+            EXCLUDE: "../engine/include/Veng/Renderer/Backend"
+            # VE_API and the module ABI macro carry no documentation value;
+            # expand them to nothing so they stay out of every signature.
+            MACRO_EXPANSION: true
+            EXPAND_ONLY_PREDEF: true
+            PREDEFINED: "VE_API= VE_EXPORT_MODULE_ABI()="
+            BUILTIN_STL_SUPPORT: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - getting-started/index.md
+      - Requirements: getting-started/requirements.md
+      - Building: getting-started/building.md
+      - Running the sample: getting-started/running-the-sample.md
+      - Your first application: getting-started/your-first-app.md
+  - Concepts:
+      - concepts/index.md
+      - How an application is structured: concepts/architecture-overview.md
+      - The threading model: concepts/threading-model.md
+      - Resource lifetime: concepts/resource-ownership.md
+      - Error handling: concepts/error-handling.md
+      - API conventions: concepts/conventions.md
+  - Rendering:
+      - rendering/index.md
+      - The render graph: rendering/render-graph.md
+      - The scene renderer: rendering/scene-renderer.md
+      - Bindless resources: rendering/bindless.md
+      - Shaders & materials: rendering/materials.md
+  - Scene & ECS:
+      - scene/index.md
+      - Entities & components: scene/ecs.md
+      - Reflection & type registration: scene/reflection.md
+      - Prefabs & spawning: scene/prefabs.md
+  - Assets:
+      - assets/index.md
+      - Cooking asset packs: assets/cooking.md
+      - Loading at runtime: assets/loading.md
+  - Tools:
+      - tools/index.md
+      - The vengc cooker: tools/vengc.md
+      - The editor: tools/editor.md
+      - Debug UI (Veng::UI): ui.md
+  - API reference:
+      - api/index.md
+      - Links: veng/links.md
+      - Namespaces:
+          - Namespace List: veng/namespaces.md
+          - Namespace Members: veng/namespace_members.md
+          - Functions: veng/namespace_member_functions.md
+          - Variables: veng/namespace_member_variables.md
+          - Typedefs: veng/namespace_member_typedefs.md
+          - Enums: veng/namespace_member_enums.md
+      - Classes:
+          - Class List: veng/annotated.md
+          - Class Index: veng/classes.md
+          - Class Hierarchy: veng/hierarchy.md
+          - Class Members: veng/class_members.md
+          - Member Functions: veng/class_member_functions.md
+          - Member Variables: veng/class_member_variables.md
+      - Files: veng/files.md

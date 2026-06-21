@@ -1,0 +1,12 @@
+# Toolchain for building the veng user guide.
+#
+#   python3 -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+#   mkdocs serve            # live-reload preview on http://127.0.0.1:8000
+#   mkdocs build            # render the static site into ./site
+#
+# Building the API reference also requires `doxygen` on PATH (mkdoxy drives it).
+
+mkdocs-material>=9.5
+mkdoxy>=1.2.0
+pymdown-extensions>=10.7

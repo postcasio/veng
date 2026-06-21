@@ -1,0 +1,8 @@
+# Rendered static site.
+/site/
+
+# Python virtualenv used to run mkdocs locally.
+/.venv/
+
+# mkdoxy's intermediate Doxygen + generated-Markdown output.
+/.mkdoxy/
