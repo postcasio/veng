@@ -460,6 +460,31 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   on **planset-7** (the `Primitives::` generators) and **planset-6** (async upload + pump);
   `MeshRenderer` and the cooked mesh format are unchanged.
 
+- **[planset-27](planset-27/README.md)** — self-resolving components (the spawn-resolve
+  thunk) (📝 proposed, 7 plans). Closes the one gap in "load an asset or spawn a prefab
+  and every dependent streams in with no further intervention": a cooked dependency graph
+  already auto-streams, but a **generated** resource (a `PrimitiveComponent`'s mesh — a
+  recipe, not an `AssetId`) cannot ride the cascade. The deliverable is a generic
+  **per-component spawn-resolve thunk** on `TypeInfo` — the same optional-function-pointer
+  mechanism as the variant thunks — that `Prefab::SpawnInto` fires automatically after a
+  component is populated, with a public `ResolveComponents(Scene&, Entity, AssetManager&)`
+  for the editor's add/edit paths. `PrimitiveComponent` becomes the first rider over a free
+  `CreatePrimitiveMesh(AssetManager&, const PrimitiveShapeVariant&)`, and
+  [planset-26](planset-26/README.md)'s `ResolvePrimitiveMeshes` scan + caller-owned
+  `PrimitiveMeshCache` + orphan-prune are **deleted** (dedup becomes the consumer's to
+  share; the editor moves from a per-frame scan to event-driven triggers). Folds in
+  the four deferred primitive shapes — **cylinder, cone, torus, capsule** — and a
+  **component naming pass** (every component a bare noun: `PrimitiveComponent` →
+  `Primitive`, `CameraComponent` → `Camera`, the value-type `Camera` → `CameraView`,
+  the rule codified in CLAUDE.md). Finishes and splits the asset-factory surface:
+  **runtime async build factories for `Texture`/`Material`** (the `Task<Ref<T>>`
+  siblings of `Mesh`'s), then the **`Create` / `Build`** line — low-level GPU resources
+  construct from a descriptor (`Create(const XInfo&)`, sync), higher-level engine
+  assets are produced from CPU data (`Build` async / `BuildSync` blocking), and
+  `AssetManager::CreateAsync` folds into an `Adopt(Task)` overload. No on-disk format or
+  cooked-artifact change (`TypeId`s are stable across the renames); the only new
+  persisted types are the four shape recipes.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
