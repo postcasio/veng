@@ -1225,11 +1225,14 @@ TEST_CASE_FIXTURE(
     std::filesystem::remove(outArchive);
 }
 
-// Exposure proof: a higher exposure brightens the tonemapped Final result. The same
-// scene rendered at exposure 0.25 vs 4.0 produces a measurably darker vs brighter
-// center texel — the Exposure setting flows into the tonemap pass.
+// Exposure proof: a higher per-frame Exposure brightens the tonemapped Final result.
+// The same scene rendered at SceneView.Exposure 0.25 vs 4.0 produces a measurably
+// darker vs brighter center texel — with NO Configure between the two renders, so the
+// change is purely the per-frame value the tonemap reads, proving exposure tunes live
+// without a recompile.
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "scene renderer: Exposure setting changes the tonemapped result")
+                  "scene renderer: per-frame Exposure changes the tonemapped result without "
+                  "a recompile")
 {
     RegisterBuiltinTypes(Types);
 
@@ -1265,19 +1268,27 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Assets = assets,
         .OutputFormat = Context.GetOutputFormat(),
         .Extent = extent,
-        .Settings = {.Mode = DebugView::Final, .Exposure = 0.25f},
+        .Settings = {.Mode = DebugView::Final},
     });
 
-    auto CenterLuma = [&]() -> f32
+    auto CenterLuma = [&](f32 exposure) -> f32
     {
-        const vector<u8> pixels = RenderOutput(Context, *renderer, *scene, camera);
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .Exposure = exposure});
+            });
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
         const vec3 c = DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
         return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
     };
 
-    const f32 dim = CenterLuma();
-    renderer->Configure({.Mode = DebugView::Final, .Exposure = 4.0f});
-    const f32 bright = CenterLuma();
+    // No Configure between these two renders: only the per-frame Exposure differs.
+    const f32 dim = CenterLuma(0.25f);
+    const f32 bright = CenterLuma(4.0f);
 
     CHECK(bright > dim + 0.05f);
 

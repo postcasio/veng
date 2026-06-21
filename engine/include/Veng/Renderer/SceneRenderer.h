@@ -150,12 +150,6 @@ namespace Veng::Renderer
         /// @brief Selects which result the renderer produces; re-wires the pass set on change.
         DebugView Mode = DebugView::Final;
 
-        /// @brief Exposure scale applied before the tone curve.
-        ///
-        /// Recompile-safe: it never changes topology, so it could ride SceneView, but
-        /// lives here to exercise the Settings surface.
-        f32 Exposure = 1.0f;
-
         /// @brief Whether the bloom post chain runs ahead of tonemap.
         ///
         /// A topology change: it inserts/removes the four bloom stages (bright-pass →
@@ -280,6 +274,11 @@ namespace Veng::Renderer
 
         /// @brief Maximum number of lights the renderer packs per frame.
         static constexpr u32 MaxLights = BindlessRegistry::MaxLights;
+
+        /// @brief Exposure scale applied before the tone curve; written into the tonemap material's param block each Execute.
+        ///
+        /// Read fresh every Execute, so tuning it never triggers a recompile.
+        f32 Exposure = 1.0f;
 
         /// @brief Bloom bright-pass luminance knee; written into the bloom material's param block each Execute.
         ///

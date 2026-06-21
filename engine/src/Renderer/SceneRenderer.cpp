@@ -2390,8 +2390,7 @@ namespace Veng::Renderer
         // Per-frame param writes land in the ring-buffered block's current region (no stall).
         if (m_TonemapMaterial.IsLoaded())
         {
-            const_cast<Material&>(*m_TonemapMaterial.Get())
-                .SetParam("Exposure", m_Settings.Exposure);
+            const_cast<Material&>(*m_TonemapMaterial.Get()).SetParam("Exposure", view.Exposure);
         }
 
         if (m_BloomActive)

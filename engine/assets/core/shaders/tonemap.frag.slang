@@ -20,7 +20,7 @@ struct MaterialParams
 {
     uint  Hdr;        // bindless sampled-image index (runtime-bound each frame)
     uint  HdrSampler; // bindless sampler index (runtime-bound each frame)
-    float Exposure;   // authored param, set per frame from the renderer settings
+    float Exposure;   // authored param, set per frame from the SceneView
 };
 
 static const uint MaterialParamStride = 256;

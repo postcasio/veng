@@ -187,6 +187,7 @@ protected:
             .World = *m_Scene,
             .Camera = m_Camera,
             .Delta = m_LastDelta,
+            .Exposure = 1.0f,
             .BloomThreshold = 0.5f,
             .BloomIntensity = 1.5f,
         };
