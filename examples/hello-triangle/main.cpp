@@ -73,6 +73,20 @@ protected:
 
         if (GetImGuiLayer())
         {
+            // Translucent debug windows so the lit scene shows through behind the
+            // overlay. The window chrome (WindowBg, title bars, popups, frames) reads
+            // its fill from the Background/Surface roles, so scaling their alpha is the
+            // whole effect; accent and text roles stay opaque for legibility.
+            UI::Theme theme = UI::BuiltInDarkTheme();
+            const auto translucent = [](vec4& role, f32 alpha) { role.a *= alpha; };
+            translucent(theme.Background, 0.78f);
+            translucent(theme.Surface, 0.78f);
+            translucent(theme.SurfaceRaised, 0.78f);
+            translucent(theme.SurfaceHovered, 0.78f);
+            translucent(theme.SurfaceActive, 0.78f);
+            UI::SetTheme(theme);
+            GetImGuiLayer()->ApplyTheme();
+
             // Edge-clamped so the "Scene" window's UI::Image never samples past the
             // renderer output.
             m_SceneSampler = Renderer::Sampler::Create(
