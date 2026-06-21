@@ -661,15 +661,24 @@ namespace Veng::Renderer
 
     void Context::AcquireNextImage(Semaphore& semaphore)
     {
+        // On eErrorOutOfDateKHR the semaphore is left unsignaled and no image index
+        // is produced, so the swap chain must be recreated and the image re-acquired
+        // before submit — submitting a frame whose wait is this unsignaled semaphore
+        // deadlocks the queue (its fence never signals, hanging the next frame's wait).
         auto result = m_Native->SwapChain->AcquireNextImage(semaphore);
 
-        if (result == vk::Result::eErrorOutOfDateKHR)
+        while (result == vk::Result::eErrorOutOfDateKHR)
         {
             Log::Warn("Out of date swap chain image!");
 
+            m_Window->SpinUntilValidSize();
+            WaitIdle();
             UpdateRenderExtent();
+
+            result = m_Native->SwapChain->AcquireNextImage(semaphore);
         }
-        else if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
+
+        if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
         {
             VE_ASSERT(false, "failed to acquire swap chain image!");
         }
