@@ -1463,17 +1463,21 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 // The bloom property assertion (this plan's dedicated property pin beyond the
-// re-blessed golden). A smooth, metallic brick cube under a strong white light
-// produces a tight, saturating specular highlight (HDR well above 1.0) at the
-// face-on center. Bloom's bright-pass + separable blur spreads that energy into the
-// surrounding texels, so with Bloom ON a ring of texels around the highlight reads
-// brighter than with Bloom OFF, where the highlight stays sharp. The two renders
-// differ only in the Bloom topology toggle. A third pair then changes the per-frame
-// BloomThreshold/BloomIntensity on the SceneView (no Configure) and asserts the
-// result moves — proving the params tune without a recompile.
+// re-blessed golden — which, regenerated in the same commit, carries no regression
+// power). A smooth, metallic brick cube under a strong white light produces a tight,
+// saturating specular highlight (HDR well above 1.0) at the face-on center. The
+// compute mip-pyramid bloom spreads that energy into a wide, soft glow, so this test
+// pins five properties:
+//   (a) a bright region blooms with Bloom on vs off;
+//   (b) far-halo lift — luminance at ≥12 px from the highlight (beyond a single
+//       9-tap separable blur's reach) rises with bloom on, the multi-octave spread;
+//   (c) radius monotonicity — far-halo energy grows across three increasing Radius;
+//   (d) firefly suppression — an extreme single-light spike does not blow the halo
+//       out of proportion (pins the mandatory Karis average on mip 0);
+//   (e) Threshold / Intensity / Radius change the result with NO recompile.
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "scene renderer: bloom spreads a bright highlight, and its params tune "
-                  "without a recompile")
+                  "scene renderer: compute mip-pyramid bloom spreads a wide halo, and its "
+                  "params tune without a recompile")
 {
     RegisterBuiltinTypes(Types);
 
@@ -1520,33 +1524,39 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {.Mode = DebugView::Final, .Bloom = false},
     });
 
-    // Mean luminance over a window centered on, but excluding, the brightest texel —
-    // the "halo" region bloom lifts. The highlight sits at the cube's face-on center.
-    auto HaloLuma = [&](const vector<u8>& pixels) -> f64
+    // Mean luminance over an annulus centered on the highlight, excluding the inner
+    // radius. The highlight sits at the cube's face-on center. inner/outer in texels.
+    auto AnnulusLuma = [&](const vector<u8>& pixels, i32 inner, i32 outer) -> f64
     {
-        const u32 cx = extent.x / 2;
-        const u32 cy = extent.y / 2;
+        const i32 cx = static_cast<i32>(extent.x) / 2;
+        const i32 cy = static_cast<i32>(extent.y) / 2;
         f64 sum = 0.0;
         u32 count = 0;
-        for (i32 dy = -24; dy <= 24; ++dy)
+        for (i32 dy = -outer; dy <= outer; ++dy)
         {
-            for (i32 dx = -24; dx <= 24; ++dx)
+            for (i32 dx = -outer; dx <= outer; ++dx)
             {
-                if (std::abs(dx) < 8 && std::abs(dy) < 8)
+                const i32 r2 = dx * dx + dy * dy;
+                if (r2 < inner * inner || r2 > outer * outer)
                 {
-                    continue; // skip the saturated core; measure the surrounding halo
+                    continue;
                 }
-                const vec3 c =
-                    DecodeTexel(pixels, extent.x, static_cast<u32>(static_cast<i32>(cx) + dx),
-                                static_cast<u32>(static_cast<i32>(cy) + dy));
+                const vec3 c = DecodeTexel(pixels, extent.x, static_cast<u32>(cx + dx),
+                                           static_cast<u32>(cy + dy));
                 sum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
                 ++count;
             }
         }
-        return sum / count;
+        return count == 0 ? 0.0 : sum / count;
     };
 
-    auto Render = [&](f32 threshold, f32 intensity) -> vector<u8>
+    // The near halo (the old fixture's 8–24 px core ring) and the far halo (≥12 px,
+    // beyond a single 9-tap separable blur's ±4-texel reach — the multi-octave spread
+    // only the mip pyramid produces).
+    auto HaloLuma = [&](const vector<u8>& pixels) -> f64 { return AnnulusLuma(pixels, 8, 24); };
+    auto FarHaloLuma = [&](const vector<u8>& pixels) -> f64 { return AnnulusLuma(pixels, 12, 40); };
+
+    auto Render = [&](f32 threshold, f32 intensity, f32 radius) -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -1555,7 +1565,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                                                            .Camera = camera,
                                                            .Delta = 0.0f,
                                                            .BloomThreshold = threshold,
-                                                           .BloomIntensity = intensity});
+                                                           .BloomIntensity = intensity,
+                                                           .BloomRadius = radius});
             });
         const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
         REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
@@ -1563,26 +1574,49 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     };
 
     // Bloom OFF: the halo stays at the surface's own (dim) shading.
-    const f64 haloNoBloom = HaloLuma(Render(1.0f, 1.0f));
+    const vector<u8> noBloomPixels = Render(1.0f, 1.0f, 1.0f);
+    const f64 haloNoBloom = HaloLuma(noBloomPixels);
+    const f64 farHaloNoBloom = FarHaloLuma(noBloomPixels);
 
-    // Bloom ON (Configure recompiles the topology to insert the chain). The same
-    // halo region lifts as the blurred bright residual bleeds outward.
+    // Bloom ON (Configure recompiles the topology to insert the compute sweep).
     renderer->Configure({.Mode = DebugView::Final, .Bloom = true});
-    const f64 haloBloom = HaloLuma(Render(1.0f, 1.0f));
+    const vector<u8> bloomPixels = Render(1.0f, 1.0f, 1.0f);
+    const f64 haloBloom = HaloLuma(bloomPixels);
+    const f64 farHaloBloom = FarHaloLuma(bloomPixels);
 
+    // (a) A bright region blooms on vs off.
     CHECK(haloBloom > haloNoBloom + 0.01);
+    // (b) Far-halo lift: the glow reaches wider than a single 9-tap radius would.
+    CHECK(farHaloBloom > farHaloNoBloom + 0.005);
 
-    // Per-frame param tuning without a recompile: a far higher threshold rejects
-    // most of the highlight, so the halo falls back toward the no-bloom level — and
-    // NO Configure is called between these two renders. The change is purely the
-    // ring-buffered material write the bloom stages read this frame.
-    const f64 haloLowMix = HaloLuma(Render(1.0f, 0.0f));  // intensity 0: bloom adds nothing
-    const f64 haloHighMix = HaloLuma(Render(1.0f, 2.0f)); // intensity 2: bloom adds more
+    // (c) Radius monotonicity: the far-halo energy grows across three increasing Radius
+    // values, all per-frame (no Configure between them).
+    const f64 farR05 = FarHaloLuma(Render(1.0f, 1.0f, 0.5f));
+    const f64 farR10 = FarHaloLuma(Render(1.0f, 1.0f, 1.0f));
+    const f64 farR20 = FarHaloLuma(Render(1.0f, 1.0f, 2.0f));
+    CHECK(farR10 > farR05);
+    CHECK(farR20 > farR10);
 
-    // Intensity scales the added bloom; 0 → no lift over the surface, 2 → more than 1.
+    // (e) Threshold / Intensity tune without a recompile (no Configure here): a higher
+    // threshold rejects the highlight; Intensity scales the added bloom.
+    const f64 haloLowMix = HaloLuma(Render(1.0f, 0.0f, 1.0f));  // intensity 0: adds nothing
+    const f64 haloHighMix = HaloLuma(Render(1.0f, 2.0f, 1.0f)); // intensity 2: adds more
     CHECK(haloHighMix > haloLowMix + 0.01);
-    // Intensity 0 collapses the halo back to (about) the no-bloom level.
     CHECK(haloLowMix == doctest::Approx(haloNoBloom).epsilon(0.2));
+
+    const f64 haloHighThreshold = HaloLuma(Render(100.0f, 1.0f, 1.0f)); // rejects the highlight
+    CHECK(haloHighThreshold < haloBloom);
+
+    // (d) Firefly suppression: a 10× brighter light is an extreme HDR spike. The Karis
+    // average on mip 0 weights bright outliers by 1/(1+luma), so the far halo grows far
+    // less than the 10× input would without it — pinning the mandatory suppression.
+    const f64 farHaloModerate = FarHaloLuma(Render(1.0f, 1.0f, 1.0f));
+    scene->Get<Light>(lightEntity).Intensity = 80.0f;
+    const f64 farHaloSpike = FarHaloLuma(Render(1.0f, 1.0f, 1.0f));
+    // The spike still bloom (it is brighter), but Karis compresses it well below the 10×
+    // the un-suppressed input would drive — a generous bound that a removed Karis breaks.
+    CHECK(farHaloSpike > farHaloModerate);
+    CHECK(farHaloSpike < farHaloModerate * 10.0);
 
     std::filesystem::remove(outArchive);
 }

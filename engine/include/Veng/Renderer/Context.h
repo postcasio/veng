@@ -123,6 +123,15 @@ namespace Veng::Renderer
         /// CullMode::GPU is unavailable otherwise and the CPU path is the fallback.
         [[nodiscard]] bool IsGpuDrivenCullingSupported() const;
 
+        /// @brief Returns true when the device can linearly filter a sampled image of @p format.
+        ///
+        /// Queries the format's optimal-tiling feature flags for
+        /// SampledImageFilterLinear — the capability a bilinear Sample() of that format
+        /// needs. The bloom pyramid asserts it for its HDR format, since point Load()
+        /// reductions (hi-Z) never exercise it.
+        /// @param format The image format to query.
+        [[nodiscard]] bool IsFormatLinearFilterSupported(Format format) const;
+
         /// @brief Returns the borrowed window.
         [[nodiscard]] Window& GetWindow() const { return *m_Window; }
 

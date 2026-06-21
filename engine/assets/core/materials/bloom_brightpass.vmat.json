@@ -1,9 +1,0 @@
-{
-  "domain": "postprocess",
-  "shaders": { "vertex": 17612966569144354344, "fragment": 5869798064254398663 },
-  "fields": [
-    { "name": "Hdr",        "type": "texture" },
-    { "name": "HdrSampler", "type": "sampler", "texture": "Hdr" },
-    { "name": "Threshold",  "type": "float", "value": 1.0 }
-  ]
-}

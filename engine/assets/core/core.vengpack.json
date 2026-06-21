@@ -20,16 +20,12 @@
     { "id": 10923282159882548452, "type": "shader", "source": "shaders/ao_blit.frag.shader.json" },
     { "id": 820171714434363792, "type": "shader", "source": "shaders/shadow_blit.frag.shader.json" },
     { "id": 5462853072295605294, "type": "shader", "source": "shaders/composite.frag.shader.json" },
-    { "id": 5869798064254398663, "type": "shader", "source": "shaders/bloom_brightpass.frag.shader.json" },
-    { "id": 17076675692748364383, "type": "shader", "source": "shaders/bloom_blur.frag.shader.json" },
-    { "id": 2003080298304761885, "type": "shader", "source": "shaders/bloom_composite.frag.shader.json" },
+    { "id": 6595541164917365819, "type": "shader", "source": "shaders/bloom_down.comp.shader.json" },
+    { "id": 5703853090831845874, "type": "shader", "source": "shaders/bloom_up.comp.shader.json" },
+    { "id": 5994913674751862095, "type": "shader", "source": "shaders/bloom_composite.comp.shader.json" },
     { "id": 14636915322047737276, "type": "shader", "source": "shaders/hi_z_reduce.comp.shader.json" },
     { "id": 4658282122408301406, "type": "shader", "source": "shaders/hi_z_occlusion_test.comp.shader.json" },
     { "id": 6908974071528311634, "type": "shader", "source": "shaders/occlusion_cull.comp.shader.json" },
-    { "id": 13589203438992884788, "type": "material", "source": "materials/tonemap.vmat.json" },
-    { "id": 12810382439826585239, "type": "material", "source": "materials/bloom_brightpass.vmat.json" },
-    { "id": 8097762669847173119, "type": "material", "source": "materials/bloom_blur_horizontal.vmat.json" },
-    { "id": 57471388334686040, "type": "material", "source": "materials/bloom_blur_vertical.vmat.json" },
-    { "id": 1872458781727456876, "type": "material", "source": "materials/bloom_composite.vmat.json" }
+    { "id": 13589203438992884788, "type": "material", "source": "materials/tonemap.vmat.json" }
   ]
 }

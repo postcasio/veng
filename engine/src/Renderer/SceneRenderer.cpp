@@ -72,17 +72,23 @@ namespace Veng::Renderer
         // The GPU occlusion-cull → indirect-draw compute shader.
         constexpr AssetId OcclusionCullCompId{0x5FE19B500FD44B52ULL};
 
-        // The core bloom PostProcess materials.
-        constexpr AssetId BloomBrightMaterialId{0xB1C79EF4EAC3F697ULL};
-        constexpr AssetId BloomBlurHMaterialId{0x7061083E93A8D7FFULL};
-        constexpr AssetId BloomBlurVMaterialId{0x00CC2DEC566FFF58ULL};
-        constexpr AssetId BloomCompositeMaterialId{0x19FC4F575D6CFE6CULL};
+        // The core bloom compute shaders (downsample, upsample-accumulate, composite).
+        constexpr AssetId BloomDownCompId{0x5B8811BEAC5D9C3BULL};
+        constexpr AssetId BloomUpCompId{0x4F28282A720BC9F2ULL};
+        constexpr AssetId BloomCompositeCompId{0x533236398AB7654FULL};
 
-        // Linear float HDR format for the lighting target and bloom intermediates.
+        // Linear float HDR format for the lighting target and bloom pyramid.
         // G1 uses the same format as a sampled color target, establishing RGBA16F
         // color-attachment + sampled support on the platform.
         constexpr Format HdrFormat = Format::RGBA16Sfloat;
         constexpr ImageUsage HdrUsage = ImageUsage::ColorAttachment | ImageUsage::Sampled;
+
+        // The bloom pyramid's image usage: a compute-written, compute-read mip chain.
+        constexpr ImageUsage BloomPyramidUsage = ImageUsage::Storage | ImageUsage::Sampled;
+
+        // The coarsest pyramid level holds a ~8 px edge (2^3) rather than a degenerate
+        // 1×1 contributing nothing: the chain stops BloomTileShift levels short.
+        constexpr u32 BloomTileShift = 3;
 
         // Single-channel unorm format for the SSAO target; the renderer builds the
         // SSAO pipeline against this format, and SsaoScenePass owns the image.
@@ -98,6 +104,32 @@ namespace Veng::Renderer
         {
             uvec2 DestExtent;
             uvec2 SourceExtent;
+        };
+
+        // The bloom downsample push: the destination mip extent, a level-0 bright-pass
+        // flag (1.0 enables bright-pass + Karis), and the soft-knee threshold. Matches
+        // bloom_down.comp.
+        struct BloomDownPush
+        {
+            uvec2 DestExtent;
+            f32 BrightPass;
+            f32 Threshold;
+        };
+
+        // The bloom upsample push: the destination (finer) mip extent and the spread
+        // scale. Matches bloom_up.comp.
+        struct BloomUpPush
+        {
+            uvec2 DestExtent;
+            f32 Radius;
+        };
+
+        // The bloom composite push: the result extent and the bloom mix. Matches
+        // bloom_composite.comp.
+        struct BloomCompositePush
+        {
+            uvec2 DestExtent;
+            f32 Intensity;
         };
 
         // The surface push block (vertex stage), matching material.slang PushConstants:
@@ -966,9 +998,6 @@ namespace Veng::Renderer
         bindless.Release(m_DepthHandle);
         bindless.Release(m_HiZSampleHandle);
         bindless.Release(m_HdrHandle);
-        bindless.Release(m_BloomBrightHandle);
-        bindless.Release(m_BloomBlurHHandle);
-        bindless.Release(m_BloomBlurVHandle);
         bindless.Release(m_BloomResultHandle);
         bindless.Release(m_SamplerHandle);
     }
@@ -1069,19 +1098,6 @@ namespace Veng::Renderer
                   tonemap.error().Detail);
         m_TonemapMaterial = *tonemap;
 
-        // Bloom materials loaded resident for the same reason (pipeline against HdrFormat).
-        auto LoadMaterial = [this](const AssetId id, const char* what) -> AssetHandle<Material>
-        {
-            const AssetResult<AssetHandle<Material>> result = m_Assets.LoadSync<Material>(id);
-            VE_ASSERT(result.has_value(), "SceneRenderer: {} material load failed: {}", what,
-                      result.error().Detail);
-            return *result;
-        };
-        m_BloomBrightMaterial = LoadMaterial(BloomBrightMaterialId, "bloom bright-pass");
-        m_BloomBlurHMaterial = LoadMaterial(BloomBlurHMaterialId, "bloom blur horizontal");
-        m_BloomBlurVMaterial = LoadMaterial(BloomBlurVMaterialId, "bloom blur vertical");
-        m_BloomCompositeMaterial = LoadMaterial(BloomCompositeMaterialId, "bloom composite");
-
         // The g-buffer debug blits share the BlitPushConstants layout; only the
         // fragment shader differs.
         const PushConstantRange blitRange =
@@ -1174,6 +1190,96 @@ namespace Veng::Renderer
                 .PipelineLayout = m_HiZReduceLayout,
                 .ShaderStage = {.Stage = ShaderStage::Compute, .Module = hiZReduceCs.Get()->Module},
             });
+
+        // The bloom compute pipelines. Set 1 is off bindless (the closed bloom chain needs
+        // no global registration, and a dedicated set sidesteps the set-0 storage-image
+        // argument-buffer path on MoltenVK). Down/up share one set layout (sampled source +
+        // linear sampler + storage dest); composite needs a distinct one (two sampled inputs).
+        const AssetHandle<Veng::Shader> bloomDownCs =
+            LoadShader(BloomDownCompId, "bloom downsample");
+        const AssetHandle<Veng::Shader> bloomUpCs = LoadShader(BloomUpCompId, "bloom upsample");
+        const AssetHandle<Veng::Shader> bloomCompositeCs =
+            LoadShader(BloomCompositeCompId, "bloom composite");
+
+        m_BloomDownUpSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Bloom DownUp Set Layout",
+                           .Bindings =
+                               {
+                                   {.Binding = 0,
+                                    .Type = DescriptorType::SampledImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                                   {.Binding = 1,
+                                    .Type = DescriptorType::Sampler,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                                   {.Binding = 2,
+                                    .Type = DescriptorType::StorageImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                               },
+                       });
+        m_BloomCompositeSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Bloom Composite Set Layout",
+                           .Bindings =
+                               {
+                                   {.Binding = 0,
+                                    .Type = DescriptorType::SampledImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                                   {.Binding = 1,
+                                    .Type = DescriptorType::SampledImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                                   {.Binding = 2,
+                                    .Type = DescriptorType::Sampler,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                                   {.Binding = 3,
+                                    .Type = DescriptorType::StorageImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                               },
+                       });
+
+        m_BloomDownUpLayout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer Bloom DownUp Layout",
+                .DescriptorSetLayouts = {m_BloomDownUpSetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<BloomDownPush>(ShaderStage::Compute)},
+            });
+        m_BloomCompositeLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Bloom Composite Layout",
+                           .DescriptorSetLayouts = {m_BloomCompositeSetLayout},
+                           .PushConstantRanges = {PushConstantRange::Of<BloomCompositePush>(
+                               ShaderStage::Compute)},
+                       });
+
+        m_BloomDownPipeline = ComputePipeline::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer Bloom Down Pipeline",
+                .PipelineLayout = m_BloomDownUpLayout,
+                .ShaderStage = {.Stage = ShaderStage::Compute, .Module = bloomDownCs.Get()->Module},
+            });
+        m_BloomUpPipeline = ComputePipeline::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer Bloom Up Pipeline",
+                .PipelineLayout = m_BloomDownUpLayout,
+                .ShaderStage = {.Stage = ShaderStage::Compute, .Module = bloomUpCs.Get()->Module},
+            });
+        m_BloomCompositePipeline = ComputePipeline::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Bloom Composite Pipeline",
+                           .PipelineLayout = m_BloomCompositeLayout,
+                           .ShaderStage = {.Stage = ShaderStage::Compute,
+                                           .Module = bloomCompositeCs.Get()->Module},
+                       });
     }
 
     void SceneRenderer::CreateShadowSystem()
@@ -1718,34 +1824,126 @@ namespace Veng::Renderer
 
     void SceneRenderer::CreateBloom()
     {
-        // Bloom intermediates use HdrFormat: bloom operates in linear HDR space before tonemap.
+        // Bloom operates in linear HDR space before tonemap, sampling bilinearly: the wide
+        // COD/tent taps land between texels, so the pyramid's HdrFormat must advertise linear
+        // filtering — a capability the point-Load hi-Z reduction never exercises.
+        VE_ASSERT(m_Context.IsFormatLinearFilterSupported(HdrFormat),
+                  "SceneRenderer: bloom needs SampledImageFilterLinear on the HDR format");
+
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
-        bindless.Release(m_BloomBrightHandle);
-        bindless.Release(m_BloomBlurHHandle);
-        bindless.Release(m_BloomBlurVHandle);
         bindless.Release(m_BloomResultHandle);
 
-        auto MakeTarget = [this](const char* name) -> std::pair<Ref<Image>, Ref<ImageView>>
+        // The pyramid stops BloomTileShift levels short of 1×1 so the coarsest level holds a
+        // ~8 px edge; the max(1u, …) floor guards a tiny extent (mirroring hi-Z's guard).
+        const u32 maxDim = std::max(m_Extent.x, m_Extent.y);
+        const u32 mipCount =
+            maxDim == 0 ? 1u : std::max(1u, std::bit_width(maxDim) - BloomTileShift);
+
+        m_BloomImage = Image::Create(m_Context, {
+                                                    .Name = "SceneRenderer Bloom Pyramid",
+                                                    .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                    .MipLevels = mipCount,
+                                                    .Format = HdrFormat,
+                                                    .Usage = BloomPyramidUsage,
+                                                });
+
+        // One single-mip storage view per level (the down/up dispatches write each), plus a
+        // whole-chain sampled view for the bilinear reads. Storage and sampled access to one
+        // mip need distinct views.
+        m_BloomMips.clear();
+        m_BloomMips.reserve(mipCount);
+        for (u32 level = 0; level < mipCount; level++)
         {
-            Ref<Image> image = Image::Create(m_Context, {
-                                                            .Name = name,
-                                                            .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                            .Format = HdrFormat,
-                                                            .Usage = HdrUsage,
-                                                        });
-            Ref<ImageView> view = ImageView::Create(m_Context, {.Name = name, .Image = image});
-            return {std::move(image), std::move(view)};
-        };
+            m_BloomMips.push_back(ImageView::Create(
+                m_Context, {
+                               .Name = fmt::format("SceneRenderer Bloom Mip {} View", level),
+                               .Image = m_BloomImage,
+                               .BaseMipLevel = level,
+                               .MipLevels = 1,
+                           }));
+        }
+        m_BloomSampleView =
+            ImageView::Create(m_Context, {
+                                             .Name = "SceneRenderer Bloom Sample View",
+                                             .Image = m_BloomImage,
+                                             .MipLevels = mipCount,
+                                         });
 
-        std::tie(m_BloomBrightImage, m_BloomBrightView) = MakeTarget("SceneRenderer Bloom Bright");
-        std::tie(m_BloomBlurHImage, m_BloomBlurHView) = MakeTarget("SceneRenderer Bloom Blur H");
-        std::tie(m_BloomBlurVImage, m_BloomBlurVView) = MakeTarget("SceneRenderer Bloom Blur V");
-        std::tie(m_BloomResultImage, m_BloomResultView) = MakeTarget("SceneRenderer Bloom Result");
+        // Clamp-to-edge linear sampler for the bilinear taps; MaxLod covers every level so a
+        // per-mip sampled source view's level 0 always resolves.
+        m_BloomSampler = Sampler::Create(m_Context, {
+                                                        .Name = "SceneRenderer Bloom Sampler",
+                                                        .MagFilter = Filter::Linear,
+                                                        .MinFilter = Filter::Linear,
+                                                        .MipmapMode = MipmapMode::Nearest,
+                                                        .AddressModeU = AddressMode::ClampToEdge,
+                                                        .AddressModeV = AddressMode::ClampToEdge,
+                                                        .AddressModeW = AddressMode::ClampToEdge,
+                                                        .AnisotropyEnabled = false,
+                                                        .MaxLod = static_cast<f32>(mipCount),
+                                                    });
 
-        m_BloomBrightHandle = bindless.Register(m_BloomBrightView);
-        m_BloomBlurHHandle = bindless.Register(m_BloomBlurHView);
-        m_BloomBlurVHandle = bindless.Register(m_BloomBlurVView);
+        // The full-resolution composite result the tonemap samples; registered into bindless.
+        m_BloomResultImage = Image::Create(m_Context, {
+                                                          .Name = "SceneRenderer Bloom Result",
+                                                          .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                          .Format = HdrFormat,
+                                                          .Usage = HdrUsage | ImageUsage::Storage,
+                                                      });
+        m_BloomResultView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer Bloom Result", .Image = m_BloomResultImage});
         m_BloomResultHandle = bindless.Register(m_BloomResultView);
+
+        // Per-level descriptor sets. A down step binds the source (HDR for level 0, mip k-1
+        // otherwise) + sampler + the destination mip; an up step binds the coarser mip k+1 +
+        // sampler + the finer destination mip k. The HDR source is bound per Execute by the
+        // down-set-0 write below (it re-registers each Resize/Configure too).
+        m_BloomDownSets.clear();
+        m_BloomDownSets.reserve(mipCount);
+        for (u32 level = 0; level < mipCount; level++)
+        {
+            Ref<DescriptorSet> set = DescriptorSet::Create(
+                m_Context, {
+                               .Name = fmt::format("SceneRenderer Bloom Down Set {}", level),
+                               .Layout = m_BloomDownUpSetLayout,
+                           });
+            const Ref<ImageView>& source = level == 0 ? m_HdrView : m_BloomMips[level - 1];
+            set->Write(0, source);
+            set->Write(1, m_BloomSampler);
+            set->Write(2, m_BloomMips[level]);
+            m_BloomDownSets.push_back(std::move(set));
+        }
+
+        // Up sets indexed by the finer destination level k (0..mipCount-2): read mip k+1,
+        // write mip k.
+        m_BloomUpSets.clear();
+        if (mipCount > 1)
+        {
+            m_BloomUpSets.reserve(mipCount - 1);
+            for (u32 level = 0; level + 1 < mipCount; level++)
+            {
+                Ref<DescriptorSet> set = DescriptorSet::Create(
+                    m_Context, {
+                                   .Name = fmt::format("SceneRenderer Bloom Up Set {}", level),
+                                   .Layout = m_BloomDownUpSetLayout,
+                               });
+                set->Write(0, m_BloomMips[level + 1]);
+                set->Write(1, m_BloomSampler);
+                set->Write(2, m_BloomMips[level]);
+                m_BloomUpSets.push_back(std::move(set));
+            }
+        }
+
+        // Composite: HDR + bloom mip 0 sampled inputs, the linear sampler, and the result dest.
+        m_BloomCompositeSet =
+            DescriptorSet::Create(m_Context, {
+                                                 .Name = "SceneRenderer Bloom Composite Set",
+                                                 .Layout = m_BloomCompositeSetLayout,
+                                             });
+        m_BloomCompositeSet->Write(0, m_HdrView);
+        m_BloomCompositeSet->Write(1, m_BloomMips[0]);
+        m_BloomCompositeSet->Write(2, m_BloomSampler);
+        m_BloomCompositeSet->Write(3, m_BloomResultView);
     }
 
     void SceneRenderer::Rebuild()
@@ -1808,9 +2006,10 @@ namespace Veng::Renderer
 
         if (bloomActive)
         {
-            m_BloomBrightId = graph.Import("SceneRenderer Bloom Bright");
-            m_BloomBlurHId = graph.Import("SceneRenderer Bloom Blur H");
-            m_BloomBlurVId = graph.Import("SceneRenderer Bloom Blur V");
+            // The pyramid imports one per-mip slot per level (the down/up sweep declares
+            // per-level access on these); the result is a single full-resolution import.
+            m_BloomChainId = graph.ImportImageMips("SceneRenderer Bloom Pyramid",
+                                                   static_cast<u32>(m_BloomMips.size()));
             m_BloomResultId = graph.Import("SceneRenderer Bloom Result");
         }
 
@@ -1884,62 +2083,8 @@ namespace Veng::Renderer
 
             if (bloomActive)
             {
-                // Bright-pass: HDR → Bright.
-                m_Passes.push_back(
-                    CreateUnique<PostProcessScenePass>(m_Context, m_BloomBrightMaterial,
-                                                       PostProcessInput{
-                                                           .Source = m_HdrId,
-                                                           .SourceTexture = m_HdrHandle,
-                                                           .Sampler = m_SamplerHandle,
-                                                           .TextureField = "Hdr",
-                                                           .SamplerField = "HdrSampler",
-                                                       },
-                                                       m_BloomBrightId, HdrFormat, m_Extent));
-
-                // Blur horizontal: Bright → BlurH.
-                m_Passes.push_back(
-                    CreateUnique<PostProcessScenePass>(m_Context, m_BloomBlurHMaterial,
-                                                       PostProcessInput{
-                                                           .Source = m_BloomBrightId,
-                                                           .SourceTexture = m_BloomBrightHandle,
-                                                           .Sampler = m_SamplerHandle,
-                                                           .TextureField = "Source",
-                                                           .SamplerField = "SourceSampler",
-                                                       },
-                                                       m_BloomBlurHId, HdrFormat, m_Extent));
-
-                // Blur vertical: BlurH → BlurV.
-                m_Passes.push_back(
-                    CreateUnique<PostProcessScenePass>(m_Context, m_BloomBlurVMaterial,
-                                                       PostProcessInput{
-                                                           .Source = m_BloomBlurHId,
-                                                           .SourceTexture = m_BloomBlurHHandle,
-                                                           .Sampler = m_SamplerHandle,
-                                                           .TextureField = "Source",
-                                                           .SamplerField = "SourceSampler",
-                                                       },
-                                                       m_BloomBlurVId, HdrFormat, m_Extent));
-
-                // Composite: HDR + BlurV*Intensity → Result, sampling two inputs.
-                auto composite =
-                    CreateUnique<PostProcessScenePass>(m_Context, m_BloomCompositeMaterial,
-                                                       PostProcessInput{
-                                                           .Source = m_HdrId,
-                                                           .SourceTexture = m_HdrHandle,
-                                                           .Sampler = m_SamplerHandle,
-                                                           .TextureField = "Hdr",
-                                                           .SamplerField = "HdrSampler",
-                                                       },
-                                                       m_BloomResultId, HdrFormat, m_Extent);
-                composite->SetExtraInput(PostProcessExtraInput{
-                    .Source = m_BloomBlurVId,
-                    .Texture = m_BloomBlurVHandle,
-                    .Sampler = m_SamplerHandle,
-                    .TextureField = "Bloom",
-                    .SamplerField = "BloomSampler",
-                });
-                m_Passes.push_back(std::move(composite));
-
+                // The bloom down/up/composite compute sweep is declared into the graph by
+                // DeclareBloom (after the pass loop); here the tonemap just reads its result.
                 tonemapSourceId = m_BloomResultId;
                 tonemapSourceHandle = m_BloomResultHandle;
             }
@@ -2053,6 +2198,17 @@ namespace Veng::Renderer
         {
             pass->Configure(m_Settings);
             pass->Resize(m_Extent);
+
+            // The bloom compute sweep reads the lit HDR and writes the result the tonemap
+            // samples, so it is declared between the lighting pass and the terminal tonemap
+            // pass. The tonemap is the last pass when bloom is active; declare bloom just
+            // before it so the graph orders down-sweep(HDR) after lighting and tonemap after
+            // the composite.
+            if (bloomActive && &pass == &m_Passes.back())
+            {
+                DeclareBloom(graph);
+            }
+
             pass->Declare(graph, io);
         }
 
@@ -2116,6 +2272,127 @@ namespace Veng::Renderer
                     });
                     cmd.PushConstants(push);
                     cmd.Dispatch((push.DestExtent.x + 7) / 8, (push.DestExtent.y + 7) / 8, 1);
+                });
+        }
+    }
+
+    void SceneRenderer::DeclareBloom(RenderGraph& graph)
+    {
+        const u32 mipCount = static_cast<u32>(m_BloomMips.size());
+
+        // Down-sweep: dispatch k samples level k's source (HDR for k=0, mip k-1 otherwise)
+        // and writes mip k. Mip 0 fuses the bright-pass + Karis; deeper levels are the plain
+        // 13-tap. The per-mip graph surface derives the read-after-write barrier between
+        // dispatch k's write and dispatch k+1's read.
+        for (u32 level = 0; level < mipCount; level++)
+        {
+            const u32 dstW = std::max(m_Extent.x >> level, 1u);
+            const u32 dstH = std::max(m_Extent.y >> level, 1u);
+
+            RenderGraph::PassBuilder builder =
+                graph.AddComputePass(fmt::format("Bloom Down Mip {}", level));
+            if (level == 0)
+            {
+                builder.Sample(m_HdrId);
+            }
+            else
+            {
+                builder.Sample(m_BloomChainId.Level(level - 1));
+            }
+            builder.StorageWrite(m_BloomChainId.Level(level));
+
+            const Ref<ComputePipeline> pipeline = m_BloomDownPipeline;
+            const Ref<DescriptorSet> set = m_BloomDownSets[level];
+            const uvec2 dstExtent{dstW, dstH};
+            const f32 brightPass = level == 0 ? 1.0f : 0.0f;
+            builder.Execute(
+                [pipeline, set, dstExtent, brightPass](PassContext& inner)
+                {
+                    const auto* view = static_cast<const SceneView*>(inner.UserData());
+                    VE_ASSERT(view != nullptr, "Bloom down pass: null SceneView");
+                    CommandBuffer& cmd = inner.Cmd();
+                    cmd.BindPipeline(pipeline);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {set},
+                        .FirstSet = 1, // set 0 is reserved for the bindless registry
+                        .PipelineBindPoint = PipelineBindPoint::Compute,
+                    });
+                    cmd.PushConstants(BloomDownPush{
+                        .DestExtent = dstExtent,
+                        .BrightPass = brightPass,
+                        .Threshold = view->BloomThreshold,
+                    });
+                    cmd.Dispatch((dstExtent.x + 7) / 8, (dstExtent.y + 7) / 8, 1);
+                });
+        }
+
+        // Up-sweep: from the coarsest finer level down to mip 0, dispatch k samples the
+        // coarser mip k+1 (ShaderReadOnly) and read-modify-writes mip k (General) — two
+        // subresources of one image in one pass. The pass declares both a Sample on mip k+1
+        // and a StorageWrite on mip k; the StorageWrite orders it after the down-sweep that
+        // wrote mip k (a General→General write-after-write barrier the graph derives), and a
+        // per-level barrier before the next finer up-step reads mip k.
+        for (u32 level = mipCount - 1; level-- > 0;)
+        {
+            const u32 dstW = std::max(m_Extent.x >> level, 1u);
+            const u32 dstH = std::max(m_Extent.y >> level, 1u);
+
+            RenderGraph::PassBuilder builder =
+                graph.AddComputePass(fmt::format("Bloom Up Mip {}", level));
+            builder.Sample(m_BloomChainId.Level(level + 1));
+            builder.StorageWrite(m_BloomChainId.Level(level));
+
+            const Ref<ComputePipeline> pipeline = m_BloomUpPipeline;
+            const Ref<DescriptorSet> set = m_BloomUpSets[level];
+            const uvec2 dstExtent{dstW, dstH};
+            builder.Execute(
+                [pipeline, set, dstExtent](PassContext& inner)
+                {
+                    const auto* view = static_cast<const SceneView*>(inner.UserData());
+                    VE_ASSERT(view != nullptr, "Bloom up pass: null SceneView");
+                    CommandBuffer& cmd = inner.Cmd();
+                    cmd.BindPipeline(pipeline);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {set},
+                        .FirstSet = 1,
+                        .PipelineBindPoint = PipelineBindPoint::Compute,
+                    });
+                    cmd.PushConstants(BloomUpPush{
+                        .DestExtent = dstExtent,
+                        .Radius = view->BloomRadius,
+                    });
+                    cmd.Dispatch((dstExtent.x + 7) / 8, (dstExtent.y + 7) / 8, 1);
+                });
+        }
+
+        // Composite over the full extent: result = hdr + mip0 * Intensity. Samples the HDR
+        // target and bloom mip 0, stores into the result the tonemap reads.
+        {
+            RenderGraph::PassBuilder builder = graph.AddComputePass("Bloom Composite");
+            builder.Sample(m_HdrId);
+            builder.Sample(m_BloomChainId.Level(0));
+            builder.StorageWrite(m_BloomResultId);
+
+            const Ref<ComputePipeline> pipeline = m_BloomCompositePipeline;
+            const Ref<DescriptorSet> set = m_BloomCompositeSet;
+            const uvec2 dstExtent = m_Extent;
+            builder.Execute(
+                [pipeline, set, dstExtent](PassContext& inner)
+                {
+                    const auto* view = static_cast<const SceneView*>(inner.UserData());
+                    VE_ASSERT(view != nullptr, "Bloom composite pass: null SceneView");
+                    CommandBuffer& cmd = inner.Cmd();
+                    cmd.BindPipeline(pipeline);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {set},
+                        .FirstSet = 1,
+                        .PipelineBindPoint = PipelineBindPoint::Compute,
+                    });
+                    cmd.PushConstants(BloomCompositePush{
+                        .DestExtent = dstExtent,
+                        .Intensity = view->BloomIntensity,
+                    });
+                    cmd.Dispatch((dstExtent.x + 7) / 8, (dstExtent.y + 7) / 8, 1);
                 });
         }
     }
@@ -2393,20 +2670,6 @@ namespace Veng::Renderer
             const_cast<Material&>(*m_TonemapMaterial.Get()).SetParam("Exposure", view.Exposure);
         }
 
-        if (m_BloomActive)
-        {
-            if (m_BloomBrightMaterial.IsLoaded())
-            {
-                const_cast<Material&>(*m_BloomBrightMaterial.Get())
-                    .SetParam("Threshold", view.BloomThreshold);
-            }
-            if (m_BloomCompositeMaterial.IsLoaded())
-            {
-                const_cast<Material&>(*m_BloomCompositeMaterial.Get())
-                    .SetParam("Intensity", view.BloomIntensity);
-            }
-        }
-
         // The first MaxShadowedPunctual point/spot lights are assigned a shadow slot
         // (Cone.z carries it, -1 = unshadowed); their records ride set-1 binding 3.
         std::array<GpuLight, SceneView::MaxLights> packedLights{};
@@ -2618,9 +2881,12 @@ namespace Veng::Renderer
         }
         if (m_BloomActive)
         {
-            bindings.push_back({m_BloomBrightId, m_BloomBrightView});
-            bindings.push_back({m_BloomBlurHId, m_BloomBlurHView});
-            bindings.push_back({m_BloomBlurVId, m_BloomBlurVView});
+            // Each pyramid mip binds its per-frame storage view to its per-mip import slot
+            // (the down/up sweep declared per-level access on these); the result is one slot.
+            for (u32 level = 0; level < m_BloomMips.size(); level++)
+            {
+                bindings.push_back({m_BloomChainId.Level(level), m_BloomMips[level]});
+            }
             bindings.push_back({m_BloomResultId, m_BloomResultView});
         }
         if (m_SsaoActive && m_SsaoPass != nullptr)

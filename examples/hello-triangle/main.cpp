@@ -190,6 +190,7 @@ protected:
             .Exposure = 1.0f,
             .BloomThreshold = 0.5f,
             .BloomIntensity = 1.5f,
+            .BloomRadius = 1.0f,
         };
         m_SceneRenderer->Execute(cmd, view);
 
