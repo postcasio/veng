@@ -306,13 +306,15 @@ still means dropping to `RenderGraph` directly (the composite path the sample
 retains). `SceneRendererSettings` carries the topology/sizing knobs — `DebugView Mode`
 (Final, plus the `Albedo` / `Normal` / `Depth` g-buffer arms, the `Roughness` /
 `Metallic` / `Occlusion` packed-ORM-channel arms, and the `AO` / `Shadows` / `Cascades` /
-`PunctualShadows` / `Bloom` battery-target arms) re-wires the pass set through `Configure`, the
-recompile seam; the `Bloom` / `Shadows` / `PunctualShadows` / `AO` battery toggles, the bloom
-`Kernel`, and `ShadowResolution` / `PunctualShadowResolution` are the other recompile knobs. A
-debug arm terminates the chain after the g-buffer (and, for `AO` / `Shadows` /
+`PunctualShadows` / `Bloom` / `MotionVectors` battery-target arms) re-wires the pass set through
+`Configure`, the recompile seam; the `Bloom` / `Shadows` / `PunctualShadows` / `AO` battery
+toggles, the bloom `Kernel`, and `ShadowResolution` / `PunctualShadowResolution` are the other
+recompile knobs. A debug arm terminates the chain after the g-buffer (and, for `AO` / `Shadows` /
 `PunctualShadows`, the force-wired producing battery pass) with a single fullscreen debug blit;
 the `Bloom` arm additionally runs the lighting pass and the force-wired bloom sweep and blits
-pyramid mip 0 after the up-sweep. Per-frame values (`Exposure`, the bloom
+pyramid mip 0 after the up-sweep, and the `MotionVectors` arm force-wires the TAA velocity prepass
+(regardless of `Settings.TAA`) and blits the per-object velocity target colorized as an optical-flow
+field (hue = direction, brightness = magnitude). Per-frame values (`Exposure`, the bloom
 `Threshold` / `Intensity` / `Radius`, the camera, the lights) ride `SceneView`, so tuning them
 never recompiles.
 

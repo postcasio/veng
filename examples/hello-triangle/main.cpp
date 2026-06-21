@@ -286,9 +286,10 @@ private:
         if (auto sceneWindow = UI::Window("Scene"))
         {
             // Entries mirror the DebugView enum in declaration order; combo index == enum value.
-            static constexpr std::array<string_view, 11> modeNames{
-                "Final",     "Albedo", "Normal",  "Depth",    "Roughness",       "Metallic",
-                "Occlusion", "AO",     "Shadows", "Cascades", "Punctual shadows"};
+            static constexpr std::array<string_view, 13> modeNames{
+                "Final",         "Albedo", "Normal",  "Depth",    "Roughness",        "Metallic",
+                "Occlusion",     "AO",     "Shadows", "Cascades", "Punctual shadows", "Bloom",
+                "Motion vectors"};
             i32 mode = static_cast<i32>(m_SceneSettings.Mode);
             if (UI::Combo("View", mode, modeNames))
             {

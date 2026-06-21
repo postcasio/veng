@@ -116,6 +116,16 @@ namespace Veng::Renderer
         /// @brief Bindless slot for the bloom pyramid mip 0 view; invalid when bloom is off.
         TextureHandle BloomMip0Handle;
 
+        /// @brief Per-object screen-space velocity target written by the velocity prepass.
+        ///
+        /// Valid only when the velocity prepass is wired (Final + Settings.TAA, or the
+        /// MotionVectors debug mode). The MotionVectors debug blit declares .Sample so the
+        /// graph derives the ColorAttachment → ShaderReadOnly transition. An invalid handle
+        /// means no velocity prepass is active.
+        ResourceId Velocity;
+        /// @brief Bindless slot for the velocity target; invalid when the velocity prepass is off.
+        TextureHandle VelocityHandle;
+
         /// @brief Shared sampler bindless slot used by fullscreen passes.
         SamplerHandle SamplerHandle;
 

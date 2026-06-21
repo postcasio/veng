@@ -1227,6 +1227,21 @@ TEST_CASE_FIXTURE(
     CHECK(std::isfinite(bloomCenter.g));
     CHECK(std::isfinite(bloomCenter.b));
 
+    // The MotionVectors arm force-wires the TAA velocity prepass regardless of Settings.TAA
+    // (off here) and colorizes the velocity target as an optical-flow field. It allocates the
+    // velocity target, recompiles, and renders without error.
+    renderer->Configure(
+        {.Mode = DebugView::MotionVectors, .Bloom = false, .Shadows = false, .AO = false});
+    REQUIRE(renderer->GetVelocityView() != nullptr);
+    const vec3 motionCenter = Center();
+    CHECK(std::isfinite(motionCenter.r));
+    CHECK(std::isfinite(motionCenter.g));
+    CHECK(std::isfinite(motionCenter.b));
+
+    // Leaving the arm releases the velocity target (no TAA, no MotionVectors view).
+    renderer->Configure({.Mode = DebugView::Albedo, .Bloom = false, .Shadows = false, .AO = false});
+    CHECK(renderer->GetVelocityView() == nullptr);
+
     // Configure back to Final restores the lit result.
     renderer->Configure({.Mode = DebugView::Final, .Bloom = false});
     const vec3 restored = Center();

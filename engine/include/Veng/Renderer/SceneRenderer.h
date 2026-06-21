@@ -99,7 +99,9 @@ namespace Veng::Renderer
     /// blits the punctual shadow atlas (raw depth), force-wiring the punctual shadow pass.
     /// Bloom runs the lighting pass and the bloom pyramid sweep, then blits pyramid mip 0
     /// after the up-sweep — the accumulated bloom contribution before composite —
-    /// force-wiring the bloom pass regardless of the Settings.Bloom toggle.
+    /// force-wiring the bloom pass regardless of the Settings.Bloom toggle. MotionVectors blits
+    /// the per-object velocity target colorized as an optical-flow field, force-wiring the TAA
+    /// velocity prepass regardless of the Settings.TAA toggle.
     enum class DebugView : u8
     {
         /// @brief Full deferred pipeline output.
@@ -126,6 +128,8 @@ namespace Veng::Renderer
         PunctualShadows,
         /// @brief Accumulated bloom pyramid mip 0 after the up-sweep (force-wires the bloom pass).
         Bloom,
+        /// @brief Per-object velocity as an optical-flow field (force-wires the TAA velocity prepass).
+        MotionVectors,
     };
 
     /// @brief Selects the bloom pyramid's down/up filter kernel.
@@ -961,6 +965,9 @@ namespace Veng::Renderer
         /// @brief Debug blit for the SSAO target.
         Ref<class GraphicsPipeline> m_AoBlitPipeline;
         Ref<class PipelineLayout> m_AoBlitLayout;
+        /// @brief Debug blit colorizing the per-object velocity target (DebugView::MotionVectors).
+        Ref<class GraphicsPipeline> m_MotionBlitPipeline;
+        Ref<class PipelineLayout> m_MotionBlitLayout;
         /// @brief Debug blit for the directional shadow atlas.
         Ref<class GraphicsPipeline> m_ShadowBlitPipeline;
         Ref<class PipelineLayout> m_ShadowBlitLayout;

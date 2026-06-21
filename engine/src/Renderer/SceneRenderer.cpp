@@ -65,6 +65,7 @@ namespace Veng::Renderer
         constexpr AssetId DepthBlitFragId{0xE05F5F86E72F96D5ULL};
         constexpr AssetId OrmBlitFragId{0x7992B54A844CB1E1ULL};
         constexpr AssetId AoBlitFragId{0x97974B40192934E4ULL};
+        constexpr AssetId MotionBlitFragId{0xCCD40C76935382FDULL};
         constexpr AssetId ShadowBlitFragId{0x0B61D5D42DAEF190ULL};
 
         // The TAA resolve and history-copy fragment shaders.
@@ -832,7 +833,8 @@ namespace Veng::Renderer
                 Normal,
                 Depth,
                 Ao,
-                Bloom
+                Bloom,
+                MotionVectors
             };
 
             FullscreenBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent,
@@ -889,6 +891,8 @@ namespace Veng::Renderer
                     return io.Ssao;
                 case Source::Bloom:
                     return io.BloomMip0;
+                case Source::MotionVectors:
+                    return io.Velocity;
                 }
                 VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
             }
@@ -907,6 +911,8 @@ namespace Veng::Renderer
                     return io.SsaoHandle;
                 case Source::Bloom:
                     return io.BloomMip0Handle;
+                case Source::MotionVectors:
+                    return io.VelocityHandle;
                 }
                 VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
             }
@@ -1316,6 +1322,8 @@ namespace Veng::Renderer
             LoadShader(DepthBlitFragId, "depth-blit fragment");
         const AssetHandle<Veng::Shader> ormBlitFs = LoadShader(OrmBlitFragId, "ORM-blit fragment");
         const AssetHandle<Veng::Shader> aoBlitFs = LoadShader(AoBlitFragId, "AO-blit fragment");
+        const AssetHandle<Veng::Shader> motionBlitFs =
+            LoadShader(MotionBlitFragId, "motion-vector-blit fragment");
         const AssetHandle<Veng::Shader> shadowBlitFs =
             LoadShader(ShadowBlitFragId, "shadow-blit fragment");
 
@@ -1443,6 +1451,16 @@ namespace Veng::Renderer
                                               });
         m_AoBlitPipeline = MakePipeline("SceneRenderer AO Blit Pipeline", m_AoBlitLayout, aoBlitFs,
                                         m_OutputFormat);
+
+        // Motion-vector blit: samples the velocity target through the same texture+sampler
+        // push as the g-buffer blits.
+        m_MotionBlitLayout =
+            PipelineLayout::Create(m_Context, {
+                                                  .Name = "SceneRenderer Motion Blit Layout",
+                                                  .PushConstantRanges = {blitRange},
+                                              });
+        m_MotionBlitPipeline = MakePipeline("SceneRenderer Motion Blit Pipeline",
+                                            m_MotionBlitLayout, motionBlitFs, m_OutputFormat);
 
         // Shadow blit reads raw depth through a dedicated set 1, not bindless,
         // so its layout carries that set and no push block.
@@ -2163,47 +2181,59 @@ namespace Veng::Renderer
         m_TaaHistoryHandle = {};
         m_VelocityHandle = {};
 
-        if (!m_Settings.TAA)
+        // The lit + history targets serve the resolve and exist only under TAA; the velocity
+        // target additionally feeds the MotionVectors debug view, which force-wires the
+        // velocity prepass with the resolve off.
+        const bool needVelocity = m_Settings.TAA || m_Settings.Mode == DebugView::MotionVectors;
+
+        if (m_Settings.TAA)
         {
-            // Drop the targets when TAA is off so the memory is not held for an unused path.
+            m_LitImage = Image::Create(m_Context, {
+                                                      .Name = "SceneRenderer Lit",
+                                                      .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                      .Format = HdrFormat,
+                                                      .Usage = HdrUsage,
+                                                  });
+            m_LitView = ImageView::Create(m_Context,
+                                          {.Name = "SceneRenderer Lit View", .Image = m_LitImage});
+            m_LitHandle = bindless.Register(m_LitView);
+
+            m_TaaHistoryImage = Image::Create(m_Context, {
+                                                             .Name = "SceneRenderer TAA History",
+                                                             .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                             .Format = HdrFormat,
+                                                             .Usage = HdrUsage,
+                                                         });
+            m_TaaHistoryView = ImageView::Create(
+                m_Context, {.Name = "SceneRenderer TAA History View", .Image = m_TaaHistoryImage});
+            m_TaaHistoryHandle = bindless.Register(m_TaaHistoryView);
+        }
+        else
+        {
+            // Drop the resolve targets when TAA is off so the memory is not held for an unused path.
             m_LitImage.reset();
             m_LitView.reset();
             m_TaaHistoryImage.reset();
             m_TaaHistoryView.reset();
-            m_VelocityImage.reset();
-            m_VelocityView.reset();
-            return;
         }
 
-        m_LitImage = Image::Create(m_Context, {
-                                                  .Name = "SceneRenderer Lit",
-                                                  .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                  .Format = HdrFormat,
-                                                  .Usage = HdrUsage,
-                                              });
-        m_LitView =
-            ImageView::Create(m_Context, {.Name = "SceneRenderer Lit View", .Image = m_LitImage});
-        m_LitHandle = bindless.Register(m_LitView);
-
-        m_TaaHistoryImage = Image::Create(m_Context, {
-                                                         .Name = "SceneRenderer TAA History",
-                                                         .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                         .Format = HdrFormat,
-                                                         .Usage = HdrUsage,
-                                                     });
-        m_TaaHistoryView = ImageView::Create(
-            m_Context, {.Name = "SceneRenderer TAA History View", .Image = m_TaaHistoryImage});
-        m_TaaHistoryHandle = bindless.Register(m_TaaHistoryView);
-
-        m_VelocityImage = Image::Create(m_Context, {
-                                                       .Name = "SceneRenderer Velocity",
-                                                       .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                       .Format = GBuffer::VelocityFormat,
-                                                       .Usage = GBuffer::ColorUsage,
-                                                   });
-        m_VelocityView = ImageView::Create(
-            m_Context, {.Name = "SceneRenderer Velocity View", .Image = m_VelocityImage});
-        m_VelocityHandle = bindless.Register(m_VelocityView);
+        if (needVelocity)
+        {
+            m_VelocityImage = Image::Create(m_Context, {
+                                                           .Name = "SceneRenderer Velocity",
+                                                           .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                           .Format = GBuffer::VelocityFormat,
+                                                           .Usage = GBuffer::ColorUsage,
+                                                       });
+            m_VelocityView = ImageView::Create(
+                m_Context, {.Name = "SceneRenderer Velocity View", .Image = m_VelocityImage});
+            m_VelocityHandle = bindless.Register(m_VelocityView);
+        }
+        else
+        {
+            m_VelocityImage.reset();
+            m_VelocityView.reset();
+        }
     }
 
     void SceneRenderer::CreateVelocityPipeline()
@@ -2397,6 +2427,11 @@ namespace Veng::Renderer
         const bool taaActive = m_Settings.Mode == DebugView::Final && m_Settings.TAA;
         m_TaaActive = taaActive;
 
+        // The MotionVectors debug arm force-wires the velocity prepass so the target it
+        // visualizes exists with the TAA resolve off.
+        const bool debugMotion = m_Settings.Mode == DebugView::MotionVectors;
+        const bool velocityActive = taaActive || debugMotion;
+
         const bool debugShadow = m_Settings.Mode == DebugView::Shadows;
         const bool debugAo = m_Settings.Mode == DebugView::AO;
         // Cascades debug needs the shadow pass wired so cascade constants are written.
@@ -2441,12 +2476,17 @@ namespace Veng::Renderer
         {
             litId = graph.Import("SceneRenderer Lit");
             taaHistoryId = graph.Import("SceneRenderer TAA History");
+        }
+        // The velocity target is imported whenever the velocity prepass is wired — under TAA
+        // (the resolve reads it) or the MotionVectors debug arm (the blit reads it).
+        if (velocityActive)
+        {
             velocityId = graph.Import("SceneRenderer Velocity");
         }
         m_LitId = litId;
         m_TaaHistoryId = taaHistoryId;
         m_VelocityId = velocityId;
-        m_VelocityActive = taaActive;
+        m_VelocityActive = velocityActive;
         const ResourceId lightingTargetId = taaActive ? litId : hdrId;
 
         ResourceId shadowId{};
@@ -2519,8 +2559,9 @@ namespace Veng::Renderer
         m_Passes.push_back(std::move(gbufferPass));
 
         // The velocity prepass runs right after the g-buffer pass (it needs the populated
-        // depth) and before the TAA resolve. It reuses the geometry pass's draw plan.
-        if (taaActive)
+        // depth) and before the TAA resolve or the MotionVectors blit. It reuses the geometry
+        // pass's draw plan.
+        if (velocityActive)
         {
             m_Passes.push_back(CreateUnique<VelocityScenePass>(
                 m_Context, m_VelocityPipeline, m_Extent, &m_Internal->Plan, m_ActiveCull,
@@ -2638,6 +2679,13 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_AlbedoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Bloom));
             break;
+        case DebugView::MotionVectors:
+            // The force-wired velocity prepass (above) writes the velocity target; this blit
+            // colorizes it as an optical-flow field.
+            m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
+                m_Context, m_MotionBlitPipeline, m_Extent,
+                FullscreenBlitScenePass::Source::MotionVectors));
+            break;
         }
 
         // Point binding 0 at the punctual atlas for the debug blit (overwrites the
@@ -2660,6 +2708,8 @@ namespace Veng::Renderer
             .HdrHandle = m_HdrHandle,
             .BloomMip0 = bloomActive ? m_BloomChainId.Level(0) : ResourceId{},
             .BloomMip0Handle = m_BloomMip0Handle,
+            .Velocity = velocityId,
+            .VelocityHandle = m_VelocityHandle,
             .Ssao = m_SsaoId,
             .SsaoHandle = ssaoHandle,
             .SamplerHandle = m_SamplerHandle,
@@ -3413,6 +3463,10 @@ namespace Veng::Renderer
         {
             bindings.push_back({m_LitId, m_LitView});
             bindings.push_back({m_TaaHistoryId, m_TaaHistoryView});
+        }
+        // The velocity import is also live under the MotionVectors debug arm (no resolve).
+        if (m_VelocityActive)
+        {
             bindings.push_back({m_VelocityId, m_VelocityView});
         }
         if (m_ShadowActive && m_ShadowPass)
