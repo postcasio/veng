@@ -108,6 +108,27 @@ namespace Veng
             return Ref<Material>(new Material(info));
         }
 
+        /// @brief Builds a resident, finalized Material off the render thread.
+        ///
+        /// Submits one worker job that constructs the material from the info and finalizes it
+        /// against the given pipeline layout and info.Pipeline — patching the bindless handle
+        /// fields, allocating the per-material SSBO slot, and writing the parameter block (a
+        /// host-visible write, no transfer-queue copy). The returned Task yields the resident Ref;
+        /// a caller publishes it to the render thread through the continuation pump (see
+        /// AssetManager::CreateAsync). It is the Task<Ref<Material>> sibling of the synchronous
+        /// Create(info) + Finalize(layout, pipeline) path the MaterialLoader uses.
+        /// @param tasks   The task system the worker job runs on.
+        /// @param info    Material description (shaders, textures, parameter block, fields); its
+        ///                shaders and textures must already be resident.
+        /// @param layout  The reflected pipeline layout passed to Finalize (set 0 reserved for bindless).
+        /// @return A Task yielding the resident, finalized Ref<Material>.
+        /// @warning Finalize() (the bindless RegisterMaterial) runs inside the worker job, matching
+        ///          Mesh::CreateAsync's all-on-worker shape; the BindlessRegistry is otherwise
+        ///          render-thread-only, so a caller must not have a frame in flight concurrently
+        ///          registering bindless resources while this job runs.
+        [[nodiscard]] static Task<Ref<Material>> CreateAsync(TaskSystem& tasks, MaterialInfo info,
+                                                             Ref<Renderer::PipelineLayout> layout);
+
         ~Material();
 
         Material(const Material&) = delete;

@@ -47,6 +47,31 @@ namespace Veng
         return texture;
     }
 
+    Task<Ref<Texture>> Texture::CreateAsync(Context& context, TaskSystem& tasks, TextureInfo info)
+    {
+        // The caller's TextureInfo::Pixels is a non-owning span; copy the source bytes into the
+        // worker job so they outlive the caller's frame.
+        vector<u8> pixels(info.Pixels.begin(), info.Pixels.end());
+
+        return tasks.Submit(
+            [&context, &tasks, info = std::move(info), pixels = std::move(pixels)]
+            {
+                TextureInfo workerInfo = info;
+                workerInfo.Pixels = pixels;
+
+                Ref<Texture> texture(new Texture(context, workerInfo));
+
+                // Record the transfer-queue copy and block on its submit; the staging buffer
+                // retires on the transfer timeline, so the frame that first samples this view
+                // folds in the timeline wait.
+                Task<void> upload = texture->m_Image->Upload(tasks, workerInfo.Pixels);
+                (void)upload.Get();
+
+                texture->Finalize();
+                return texture;
+            });
+    }
+
     Texture::~Texture()
     {
         if (!m_Registered)

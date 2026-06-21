@@ -64,6 +64,27 @@ namespace Veng
         static Ref<Texture> CreateAsync(Renderer::Context& context, const TextureInfo& info,
                                         TaskSystem& tasks, Task<void>& outUpload);
 
+        /// @brief Builds a resident, finalized Texture off the render thread.
+        ///
+        /// Submits one worker job that creates the image/view/sampler, records the transfer-queue
+        /// upload, waits for that upload to submit, then registers the view and sampler into the
+        /// bindless registry — so the yielded Texture is ready to sample. The returned Task yields
+        /// that Ref; a caller publishes it to the render thread through the continuation pump (see
+        /// AssetManager::CreateAsync). It is the high-level Task<Ref<Texture>> sibling of the
+        /// two-phase CreateAsync(context, info, tasks, outUpload) the TextureLoader uses; the
+        /// blocking sibling is Texture::Create(context, info) + Finalize().
+        /// @param context Render context the image/view/sampler are created on; must outlive the texture.
+        /// @param tasks   The task system the worker job and the transfer upload run on.
+        /// @param info    Texture description; its pixels are copied into the worker job, so the
+        ///                caller's backing storage need not outlive the call.
+        /// @return A Task yielding the resident, finalized Ref<Texture>.
+        /// @warning Finalize() (the bindless registration) runs inside the worker job, matching
+        ///          Mesh::CreateAsync's all-on-worker shape; the BindlessRegistry is otherwise
+        ///          render-thread-only, so a caller must not have a frame in flight concurrently
+        ///          registering bindless resources while this job runs.
+        [[nodiscard]] static Task<Ref<Texture>> CreateAsync(Renderer::Context& context,
+                                                            TaskSystem& tasks, TextureInfo info);
+
         ~Texture();
 
         Texture(const Texture&) = delete;

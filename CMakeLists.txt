@@ -589,6 +589,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/transfer_retire.cpp
             tests/gpu/async_upload.cpp
             tests/gpu/async_mesh_build.cpp
+            tests/gpu/async_build.cpp
             tests/gpu/transient_aliasing.cpp
             tests/gpu/indirect_draw.cpp
             tests/gpu/adopt.cpp

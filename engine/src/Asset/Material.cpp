@@ -8,6 +8,8 @@
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/PipelineLayout.h>
+#include <Veng/Task/TaskSystem.h>
 
 namespace Veng
 {
@@ -20,6 +22,21 @@ namespace Veng
           m_Fields(info.Fields), m_SelectorOffset(info.SelectorOffset)
     {
         // Unregistered at construction: handle indices and the SSBO slot are assigned in Finalize().
+    }
+
+    Task<Ref<Material>> Material::CreateAsync(TaskSystem& tasks, MaterialInfo info,
+                                              Ref<Renderer::PipelineLayout> layout)
+    {
+        VE_ASSERT(layout != nullptr, "Material::CreateAsync: '{}' given a null pipeline layout",
+                  info.Name);
+
+        return tasks.Submit(
+            [info = std::move(info), layout = std::move(layout)]() mutable
+            {
+                Ref<Material> material(new Material(info));
+                material->Finalize(std::move(layout), info.Pipeline);
+                return material;
+            });
     }
 
     Material::~Material()
