@@ -1,8 +1,8 @@
-// ResolvePrimitiveMeshes end to end: a PrimitiveComponent's active shape is generated
-// into a streamed Mesh through CreateAsync and stored in the entity's MeshRenderer.
-// Covers residency after pumping, dedup of identical shapes through the
-// PrimitiveMeshCache, idempotence of a second scan, and re-resolution + prune after
-// an entity's shape changes.
+// The PrimitiveComponent resolver end to end: ResolveComponents builds the active
+// shape into a streamed Mesh through CreatePrimitiveMesh and stores it in the entity's
+// MeshRenderer. Covers residency after pumping, that identical shapes resolve to
+// distinct meshes (no dedup), re-resolution swapping the handle, and an empty variant
+// leaving the renderer untouched.
 
 #include <doctest/doctest.h>
 
@@ -12,7 +12,7 @@
 #include <Veng/Math/AABB.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
-#include <Veng/Scene/PrimitiveResolve.h>
+#include <Veng/Scene/Resolve.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Task/TaskSystem.h>
 
@@ -47,7 +47,7 @@ namespace
     }
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "ResolvePrimitiveMeshes streams in a primitive mesh")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "ResolveComponents streams in a primitive mesh")
 {
     RegisterBuiltinTypes(Types);
     AssetManager assets(Context, Tasks, Types);
@@ -55,8 +55,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "ResolvePrimitiveMeshes streams in a p
 
     const Entity entity = SpawnPrimitive(*scene, CubeVariant(1.0f));
 
-    PrimitiveMeshCache cache;
-    ResolvePrimitiveMeshes(*scene, assets, cache);
+    ResolveComponents(*scene, entity, assets);
 
     // The MeshRenderer was added and holds a pending (not-yet-resident) handle.
     const MeshRenderer* renderer = scene->TryGet<MeshRenderer>(entity);
@@ -70,8 +69,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "ResolvePrimitiveMeshes streams in a p
           Primitives::Cube(1.0f).Indices.size());
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "Identical shapes dedup to one mesh; a re-scan is a no-op")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "Identical shapes resolve to distinct meshes")
 {
     RegisterBuiltinTypes(Types);
     AssetManager assets(Context, Tasks, Types);
@@ -80,30 +78,19 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Entity a = SpawnPrimitive(*scene, CubeVariant(1.0f));
     const Entity b = SpawnPrimitive(*scene, CubeVariant(1.0f));
 
-    PrimitiveMeshCache cache;
-    ResolvePrimitiveMeshes(*scene, assets, cache);
-
-    // One cache entry feeds both entities (dedup).
-    CHECK(cache.Entries.size() == 1);
-
+    ResolveComponents(*scene, a, assets);
+    ResolveComponents(*scene, b, assets);
     PumpUntilResident(Tasks, assets);
 
     const MeshRenderer& ra = scene->Get<MeshRenderer>(a);
     const MeshRenderer& rb = scene->Get<MeshRenderer>(b);
     REQUIRE(ra.Mesh.IsLoaded());
     REQUIRE(rb.Mesh.IsLoaded());
-    // Both entities share one underlying Ref<Mesh>.
-    CHECK(ra.Mesh.Get() == rb.Mesh.Get());
-
-    // Idempotence: a second scan creates nothing new and leaves the handles alone.
-    const Mesh* before = ra.Mesh.Get();
-    ResolvePrimitiveMeshes(*scene, assets, cache);
-    CHECK(cache.Entries.size() == 1);
-    CHECK(scene->Get<MeshRenderer>(a).Mesh.Get() == before);
+    // No dedup cache: each entity builds its own mesh.
+    CHECK(ra.Mesh.Get() != rb.Mesh.Get());
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "Changing a shape re-resolves the handle and prunes the orphaned key")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "Re-resolving a changed shape swaps the handle")
 {
     RegisterBuiltinTypes(Types);
     AssetManager assets(Context, Tasks, Types);
@@ -111,28 +98,37 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const Entity entity = SpawnPrimitive(*scene, CubeVariant(1.0f));
 
-    PrimitiveMeshCache cache;
-    ResolvePrimitiveMeshes(*scene, assets, cache);
+    ResolveComponents(*scene, entity, assets);
     PumpUntilResident(Tasks, assets);
 
-    // Hold the first mesh so dropping the cache entry does not free it (and the
-    // allocator cannot reuse its address for the second mesh).
+    // Hold the first mesh so it does not free (and the allocator cannot reuse its
+    // address for the second mesh).
     const AssetHandle<Mesh> firstHandle = scene->Get<MeshRenderer>(entity).Mesh;
     REQUIRE(firstHandle.IsLoaded());
     const AABB firstBounds = firstHandle->GetBounds();
 
-    // Edit the shape: a different extent yields a different ShapeKey.
     scene->Get<PrimitiveComponent>(entity).Shape = CubeVariant(2.0f);
-    ResolvePrimitiveMeshes(*scene, assets, cache);
-
-    // The orphaned 1.0f key was pruned; only the new key remains.
-    CHECK(cache.Entries.size() == 1);
-
+    ResolveComponents(*scene, entity, assets);
     PumpUntilResident(Tasks, assets);
+
     const AssetHandle<Mesh> secondHandle = scene->Get<MeshRenderer>(entity).Mesh;
     REQUIRE(secondHandle.IsLoaded());
 
     // The handle swapped to the new shape's mesh: a 2.0 cube is larger than a 1.0 cube.
     CHECK(secondHandle.Get() != firstHandle.Get());
     CHECK(secondHandle->GetBounds().Max.x > firstBounds.Max.x);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "An empty variant leaves the renderer empty")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity entity = SpawnPrimitive(*scene, PrimitiveShapeVariant{});
+
+    ResolveComponents(*scene, entity, assets);
+
+    // No shape to build: no MeshRenderer is added.
+    CHECK(scene->TryGet<MeshRenderer>(entity) == nullptr);
 }

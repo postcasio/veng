@@ -1,5 +1,8 @@
 #include <Veng/Scene/Resolve.h>
 
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/Primitives.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Scene.h>
@@ -33,5 +36,69 @@ namespace Veng
                 registry.Info(id).SpawnResolve(slot, scene, entity, manager);
             }
         }
+    }
+
+    optional<MeshData> BuildShapeMeshData(const PrimitiveShapeVariant& shape)
+    {
+        const TypeId kind = shape.ActiveType();
+        const void* member = shape.ActivePtr();
+        if (kind == InvalidTypeId || member == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        if (kind == TypeIdOf<CubeShape>())
+        {
+            const auto& cube = *static_cast<const CubeShape*>(member);
+            return Primitives::Cube(cube.Extent, cube.Material);
+        }
+        if (kind == TypeIdOf<PlaneShape>())
+        {
+            const auto& plane = *static_cast<const PlaneShape*>(member);
+            return Primitives::Plane(plane.Size, plane.Subdivisions, plane.Material);
+        }
+        if (kind == TypeIdOf<SphereShape>())
+        {
+            const auto& sphere = *static_cast<const SphereShape*>(member);
+            return Primitives::Sphere(sphere.Radius, sphere.Rings, sphere.Segments,
+                                      sphere.Material);
+        }
+        if (kind == TypeIdOf<IcosphereShape>())
+        {
+            const auto& ico = *static_cast<const IcosphereShape*>(member);
+            return Primitives::Icosphere(ico.Radius, ico.Subdivisions, ico.Material);
+        }
+
+        return std::nullopt;
+    }
+
+    AssetHandle<Mesh> CreatePrimitiveMesh(AssetManager& manager, const PrimitiveShapeVariant& shape)
+    {
+        optional<MeshData> data = BuildShapeMeshData(shape);
+        if (!data)
+        {
+            return {};
+        }
+
+        const string name = fmt::format("Primitive {:#018x}", shape.ActiveType());
+        return manager.CreateAsync<Mesh>(
+            Mesh::CreateAsync(manager.GetContext(), manager.GetTasks(), std::move(*data), name));
+    }
+
+    void ResolvePrimitiveComponent(PrimitiveComponent& primitive, Scene& scene, Entity entity,
+                                   AssetManager& manager)
+    {
+        // An empty variant has no shape to build; leave the renderer untouched.
+        if (primitive.Shape.ActiveType() == InvalidTypeId)
+        {
+            return;
+        }
+
+        AssetHandle<Mesh> mesh = CreatePrimitiveMesh(manager, primitive.Shape);
+        if (scene.TryGet<MeshRenderer>(entity) == nullptr)
+        {
+            scene.Add<MeshRenderer>(entity);
+        }
+        scene.Get<MeshRenderer>(entity).Mesh = std::move(mesh);
     }
 }

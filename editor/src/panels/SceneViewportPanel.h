@@ -2,7 +2,6 @@
 
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Scene/Camera.h>
-#include <Veng/Scene/PrimitiveResolve.h>
 
 #include <VengEditor/EditorPanel.h>
 
@@ -64,10 +63,6 @@ namespace VengEditor
 
         Veng::Unique<Veng::Renderer::SceneRenderer> m_SceneRenderer;
         Veng::Camera m_Camera;
-
-        /// @brief Shape-keyed dedup cache for the document's streamed primitive meshes;
-        /// retained across frames so re-resolving an unedited shape is a no-op.
-        Veng::PrimitiveMeshCache m_PrimitiveCache;
 
         /// @brief Orbit camera state about m_Target.
         Veng::f32 m_Yaw = 0.6f;

@@ -232,12 +232,12 @@ namespace Veng
 
         /// @brief Returns the render context the manager uploads assets on.
         ///
-        /// ResolvePrimitiveMeshes builds its async meshes on this context.
+        /// CreatePrimitiveMesh builds its async meshes on this context.
         [[nodiscard]] Renderer::Context& GetContext() const { return m_Context; }
 
         /// @brief Returns the task system the manager runs async work on.
         ///
-        /// ResolvePrimitiveMeshes runs its geometry build on this task system.
+        /// CreatePrimitiveMesh runs its geometry build on this task system.
         [[nodiscard]] TaskSystem& GetTasks() const { return m_Tasks; }
 
         /// @brief Runs any pending async finalizes whose uploads completed and whose dependencies are resident.

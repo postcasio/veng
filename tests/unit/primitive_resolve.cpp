@@ -9,7 +9,7 @@
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Components.h>
-#include <Veng/Scene/PrimitiveResolve.h>
+#include <Veng/Scene/Resolve.h>
 
 using namespace Veng;
 

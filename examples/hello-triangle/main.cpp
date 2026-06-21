@@ -19,7 +19,6 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
-#include <Veng/Scene/PrimitiveResolve.h>
 #include <Veng/Scene/Transforms.h>
 #include <Veng/Task/TaskSystem.h>
 
@@ -109,10 +108,6 @@ protected:
         const vector<Entity> roots = prefab->Get()->SpawnInto(*m_Scene, GetAssetManager());
         VE_ASSERT(roots.size() >= 2,
                   "prefab spawned fewer than the expected sphere + receiver-plane roots");
-
-        // The prefab's PrimitiveComponents carry the shape recipes; resolve them once to
-        // stream each generated mesh into its entity's MeshRenderer.
-        ResolvePrimitiveMeshes(*m_Scene, GetAssetManager(), m_PrimitiveCache);
 
         // Smoke renders a fixed pose, so block until the streamed primitives are resident
         // before the capture frame; the windowed app lets them appear over a few frames.
@@ -216,8 +211,6 @@ protected:
         m_SceneTexture.reset();
         m_SceneSampler.reset();
         m_Scene.reset();
-        // Dropping the cache's handles retires the streamed primitive meshes.
-        m_PrimitiveCache.Entries.clear();
     }
 
 private:
@@ -445,8 +438,6 @@ private:
     static inline const vec3 SpinAxis = glm::normalize(vec3(0.5f, 1.0f, 0.2f));
 
     Unique<Scene> m_Scene;
-    // Shape-keyed dedup for the prefab's streamed primitive meshes; retained for the scene's life.
-    PrimitiveMeshCache m_PrimitiveCache;
     Camera m_Camera;
 
     f32 m_LastDelta = 0.0f;

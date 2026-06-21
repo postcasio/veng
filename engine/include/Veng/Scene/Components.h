@@ -117,14 +117,27 @@ namespace Veng
     /// @brief A procedural-mesh recipe: regenerated into the entity's MeshRenderer at spawn.
     ///
     /// The active alternative of Shape is the primitive kind and carries that kind's
-    /// parameters plus its material. ResolvePrimitiveMeshes turns the active shape into a
-    /// streamed Mesh and stores the handle in the entity's MeshRenderer; an empty Shape
-    /// produces no mesh.
+    /// parameters plus its material. A registered resolver turns the active shape into a
+    /// streamed Mesh at spawn/edit and stores the handle in the entity's MeshRenderer; an
+    /// empty Shape produces no mesh.
     struct PrimitiveComponent
     {
         /// @brief The active shape recipe, or empty for no mesh.
         PrimitiveShapeVariant Shape;
     };
+
+    /// @brief Resolver for PrimitiveComponent: builds the active shape's mesh and points the
+    ///        entity's MeshRenderer at it.
+    ///
+    /// Builds the active shape through CreatePrimitiveMesh, adding a MeshRenderer when the
+    /// entity has none. An empty Shape leaves the renderer untouched. Wired onto the type by
+    /// VE_RESOLVE; fired by Prefab::SpawnInto and ResolveComponents.
+    /// @param primitive  The component carrying the shape recipe.
+    /// @param scene      The scene holding the entity.
+    /// @param entity     The entity whose MeshRenderer receives the mesh.
+    /// @param manager    The asset manager the generated mesh streams through.
+    void ResolvePrimitiveComponent(PrimitiveComponent& primitive, Scene& scene, Entity entity,
+                                   AssetManager& manager);
 
     /// @brief Selects how the deferred lighting pass attenuates a light.
     ///
@@ -219,6 +232,8 @@ VE_VARIANT(::Veng::PrimitiveShapeVariant, 0xC64CE2B415C54D22ULL);
 VE_REFLECT(::Veng::PrimitiveComponent, 0x491B7EC1B0DF276BULL)
 VE_FIELD(Shape, .DisplayName = "Shape")
 VE_REFLECT_END();
+
+VE_RESOLVE(::Veng::PrimitiveComponent, ::Veng::ResolvePrimitiveComponent);
 
 VE_REFLECT(::Veng::Light, 0xECF6442708DF7C00ULL)
 VE_FIELD(Type, .DisplayName = "Type")

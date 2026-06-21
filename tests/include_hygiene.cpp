@@ -73,7 +73,7 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
-#include <Veng/Scene/PrimitiveResolve.h>
+#include <Veng/Scene/Resolve.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
 
