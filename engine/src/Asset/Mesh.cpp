@@ -8,10 +8,97 @@
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/TypedBuffers.h>
+#include <Veng/Task/TaskSystem.h>
 
 namespace Veng
 {
     using namespace Renderer;
+
+    namespace
+    {
+        // Validates a MeshData against the canonical-layout contract the factories assert on:
+        // non-empty geometry, in-range indices, and valid submesh material indices. Misuse is a
+        // fatal, run on the calling thread so the abort is eager — clearer than inside a worker.
+        void ValidateMeshData(const MeshData& data, const string& name)
+        {
+            VE_ASSERT(!data.Vertices.empty(), "Mesh::Create: '{}' has no vertices", name);
+            VE_ASSERT(!data.Indices.empty(), "Mesh::Create: '{}' has no indices", name);
+
+            const u32 vertexCount = static_cast<u32>(data.Vertices.size());
+            for (const u32 index : data.Indices)
+            {
+                VE_ASSERT(index < vertexCount,
+                          "Mesh::Create: '{}' index {} out of range ({} vertices)", name, index,
+                          vertexCount);
+            }
+
+            for (const SubMesh& subMesh : data.SubMeshes)
+            {
+                VE_ASSERT(subMesh.MaterialIndex == SubMesh::NoMaterial ||
+                              subMesh.MaterialIndex < data.Materials.size(),
+                          "Mesh::Create: '{}' submesh MaterialIndex {} out of range ({} materials)",
+                          name, subMesh.MaterialIndex, data.Materials.size());
+            }
+        }
+
+        // Resolves the submesh table — synthesizing one unassigned whole-range submesh when the
+        // source has none — and folds each range's local-space bound over the canonical vertices.
+        // The bounds are derived at load, never serialized.
+        vector<SubMesh> BuildSubMeshes(const MeshData& data)
+        {
+            vector<SubMesh> subMeshes;
+            if (data.SubMeshes.empty())
+            {
+                subMeshes.push_back(SubMesh{
+                    .IndexOffset = 0,
+                    .IndexCount = static_cast<u32>(data.Indices.size()),
+                    .MaterialIndex = SubMesh::NoMaterial,
+                });
+            }
+            else
+            {
+                subMeshes = data.SubMeshes;
+            }
+
+            for (SubMesh& subMesh : subMeshes)
+            {
+                subMesh.Bounds = Mesh::ComputeSubMeshBounds(
+                    std::span<const CanonicalVertex>(data.Vertices),
+                    std::span<const u32>(data.Indices), subMesh.IndexOffset, subMesh.IndexCount);
+            }
+            return subMeshes;
+        }
+
+        // Creates the canonical vertex + index buffers and memcpys the geometry into them through
+        // the blocking host-visible path. A Buffer is HOST_VISIBLE | HOST_COHERENT, so this is a
+        // plain memcpy with no staging or device wait — legal to run on a worker thread.
+        MeshInfo UploadMesh(Context& context, const MeshData& data, const string& name,
+                            vector<SubMesh> subMeshes)
+        {
+            const Ref<Buffer> vertexBuffer =
+                Buffer::Create(context, {
+                                            .Name = name + " Vertices",
+                                            .Size = data.Vertices.size() * sizeof(CanonicalVertex),
+                                            .Usage = BufferUsage::Vertex | BufferUsage::TransferDst,
+                                        });
+            vertexBuffer->UploadSync({reinterpret_cast<const u8*>(data.Vertices.data()),
+                                      data.Vertices.size() * sizeof(CanonicalVertex)});
+
+            IndexBuffer indexBuffer =
+                IndexBuffer::Create(context, name + " Indices", data.Indices.size());
+            indexBuffer.UploadSync(std::span<const u32>(data.Indices));
+
+            return MeshInfo{
+                .Name = name,
+                .VertexBuffer = vertexBuffer,
+                .IndexBuffer = std::move(indexBuffer),
+                .Layout = Mesh::CanonicalLayout(),
+                .SubMeshes = std::move(subMeshes),
+                .Materials = data.Materials,
+                .Bounds = Mesh::ComputeBounds(std::span<const CanonicalVertex>(data.Vertices)),
+            };
+        }
+    }
 
     AABB Mesh::ComputeBounds(std::span<const CanonicalVertex> vertices)
     {
@@ -70,68 +157,19 @@ namespace Veng
 
     Ref<Mesh> Mesh::Create(Context& context, const MeshData& data, const string& name)
     {
-        VE_ASSERT(!data.Vertices.empty(), "Mesh::Create: '{}' has no vertices", name);
-        VE_ASSERT(!data.Indices.empty(), "Mesh::Create: '{}' has no indices", name);
+        ValidateMeshData(data, name);
+        return Mesh::Create(UploadMesh(context, data, name, BuildSubMeshes(data)));
+    }
 
-        const u32 vertexCount = static_cast<u32>(data.Vertices.size());
-        for (const u32 index : data.Indices)
-        {
-            VE_ASSERT(index < vertexCount, "Mesh::Create: '{}' index {} out of range ({} vertices)",
-                      name, index, vertexCount);
-        }
+    Task<Ref<Mesh>> Mesh::CreateAsync(Context& context, TaskSystem& tasks, MeshData data,
+                                      string name)
+    {
+        // Validate eagerly on the calling thread: a misuse fatal is clearer here than buried
+        // inside a worker job.
+        ValidateMeshData(data, name);
 
-        for (const SubMesh& subMesh : data.SubMeshes)
-        {
-            VE_ASSERT(subMesh.MaterialIndex == SubMesh::NoMaterial ||
-                          subMesh.MaterialIndex < data.Materials.size(),
-                      "Mesh::Create: '{}' submesh MaterialIndex {} out of range ({} materials)",
-                      name, subMesh.MaterialIndex, data.Materials.size());
-        }
-
-        vector<SubMesh> subMeshes;
-        if (data.SubMeshes.empty())
-        {
-            subMeshes.push_back(SubMesh{
-                .IndexOffset = 0,
-                .IndexCount = static_cast<u32>(data.Indices.size()),
-                .MaterialIndex = SubMesh::NoMaterial,
-            });
-        }
-        else
-        {
-            subMeshes = data.SubMeshes;
-        }
-
-        // Fold each resolved submesh's local-space bound over its index range, including
-        // a synthesized whole-range submesh — derived at load, never serialized.
-        for (SubMesh& subMesh : subMeshes)
-        {
-            subMesh.Bounds = Mesh::ComputeSubMeshBounds(
-                std::span<const CanonicalVertex>(data.Vertices), std::span<const u32>(data.Indices),
-                subMesh.IndexOffset, subMesh.IndexCount);
-        }
-
-        const Ref<Buffer> vertexBuffer =
-            Buffer::Create(context, {
-                                        .Name = name + " Vertices",
-                                        .Size = data.Vertices.size() * sizeof(CanonicalVertex),
-                                        .Usage = BufferUsage::Vertex | BufferUsage::TransferDst,
-                                    });
-        vertexBuffer->UploadSync({reinterpret_cast<const u8*>(data.Vertices.data()),
-                                  data.Vertices.size() * sizeof(CanonicalVertex)});
-
-        IndexBuffer indexBuffer =
-            IndexBuffer::Create(context, name + " Indices", data.Indices.size());
-        indexBuffer.UploadSync(std::span<const u32>(data.Indices));
-
-        return Mesh::Create(MeshInfo{
-            .Name = name,
-            .VertexBuffer = vertexBuffer,
-            .IndexBuffer = std::move(indexBuffer),
-            .Layout = Mesh::CanonicalLayout(),
-            .SubMeshes = std::move(subMeshes),
-            .Materials = data.Materials,
-            .Bounds = Mesh::ComputeBounds(std::span<const CanonicalVertex>(data.Vertices)),
-        });
+        return tasks.Submit(
+            [&context, data = std::move(data), name = std::move(name)]
+            { return Mesh::Create(UploadMesh(context, data, name, BuildSubMeshes(data))); });
     }
 }

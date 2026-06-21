@@ -126,6 +126,22 @@ namespace Veng
         [[nodiscard]] static Ref<Mesh> Create(Renderer::Context& context, const MeshData& data,
                                               const string& name);
 
+        /// @brief Builds a resident Mesh from CPU geometry off the render thread.
+        ///
+        /// Submits one worker job that creates the canonical vertex + index buffers, memcpys the
+        /// geometry into them (the buffers are HOST_VISIBLE | HOST_COHERENT, so the copy is a
+        /// plain memcpy — no staging, no transfer-queue command, no device wait), folds the
+        /// bounds, and assembles the Ref<Mesh>. The returned Task yields that Ref; a caller
+        /// publishes it to the render thread through the continuation pump (see
+        /// AssetManager::CreateAsync). The blocking sibling is Mesh::Create(context, data, name).
+        /// @param context The owning render context; the buffers are created on it and must not outlive it.
+        /// @param tasks   The task system the worker job runs on.
+        /// @param data    CPU geometry, moved into the worker job so it outlives the caller's frame.
+        /// @param name    Debug name for the mesh and its buffers.
+        /// @return A Task yielding the resident Ref<Mesh>.
+        [[nodiscard]] static Task<Ref<Mesh>>
+        CreateAsync(Renderer::Context& context, TaskSystem& tasks, MeshData data, string name);
+
         /// @brief Returns the fixed canonical vertex layout (position/normal/tangent/uv, 48-byte stride).
         ///
         /// Tangent is a vec4: xyz is the tangent, w is the bitangent handedness sign (±1).
