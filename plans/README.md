@@ -509,6 +509,29 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   downsample (SPD)** and a separate **FFT/convolution lens bloom** are named future area-8
   increments.
 
+- **[planset-29](planset-29/README.md)** — gameplay control: cameras, input→intent, sim/view
+  split, game modes, levels (📝 proposed, 10 plans). Builds the gameplay layer **and the authoring
+  surface to wire an actual game**, **from ECS first principles** — shaped by veng's data-oriented
+  grain and the **networking it anticipates**, not by an actor hierarchy. *Runtime primitives
+  (00–04):* a `Camera` entity selected per **`Viewer`** seat and resolved by a pure
+  **`ResolveCameraView`** into the `CameraView` the renderer already consumes (renderer untouched);
+  player control as **Input → Intent → Movement** (`PlayerInput` → `Intent` → movement, so AI and
+  remote players are drop-in intent producers and the sim is a pure function of state + intents); a
+  **Sim / View tick split** separating deterministic/replicable simulation from client-local view
+  derivation; an **`Authority`** annotation marking ownership ahead of the net layer; and a **game
+  mode** as a **`Session`** state component + **rule systems** + a config field (no object, no
+  registry, no ABI bump). *Authoring layer (05–08):* gameplay systems written in code and
+  discoverable through a **`SystemRegistry` catalog** (`VE_SYSTEM`/`SystemId`), a thin **`Level`**
+  asset wrapping a world prefab with the level-scoped wiring (game mode, ordered system set, render
+  settings) that **loads into play**, a **`LevelEditorPanel`** that authors it, and a
+  **`docs/guides/`** tutorial for writing gameplay systems — so a game is assembled as data, not
+  hardcoded in `main.cpp`. (Re-cut from an Unreal-derived first draft — a
+  `PlayerCameraManager`/`PlayerController`/`GameMode` trinity with a registered `GameMode` type and
+  an ABI bump — which imported actor-network structure into an ECS and froze the most
+  net-model-specific layer ahead of any net decision.) **Multi-seat input routing** (split-screen,
+  AI-vs-player) and the **networking layer** that consumes intent / authority / the sim-view split
+  stay named **future area 4** increments behind the seams this planset establishes.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
