@@ -16,9 +16,53 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
   OS windows are not built — they conflict with the single-offscreen-composite model),
   owns the panel set (open/close state, Window menu, dock layout), and loads the game
   module with `Editor = &m_EditorRegistry`.
-- **`EditorPanel`** is the panel base class: a `Title()` / `OnImGui()` virtual interface;
-  the host drives it each frame and owns its visibility. Built-in panels: scene viewport,
-  asset browser, inspector, console/log.
+- **`EditorPanel`** is the panel base class: a `GetTitle()` / `OnImGui()` virtual interface,
+  plus a `Draw(bool* open)` seam (default wraps `OnImGui` in one `UI::Window`) and an
+  `OnRender(CommandBuffer&)` seam for a render-owning panel (a viewport records its scene
+  render here, before the ImGui frame, so the output is sampleable when `OnImGui` draws it).
+  The host drives each open panel and owns its visibility. Top-level host panels: asset
+  browser, console/log, and the per-asset editors below.
+- **`AssetEditorPanel` hosts a private, class-restricted dockspace.** An asset editor is a
+  top-level panel whose window hosts a per-instance ImGui dockspace; its child panels are
+  submitted as separate windows tagged with a per-instance `ImGuiWindowClass`, so only that
+  editor's children dock into its area and cannot stray into the host dockspace (two open
+  editors of the same asset stay isolated by a monotonic instance id). A subclass adds
+  children with `AddChild` and arranges the initial split in `BuildDefaultLayout`; it
+  overrides `Draw` to submit the document window + dockspace + the class-tagged children, and
+  forwards `OnRender` to each child.
+- **The prefab editor is the scene-editing surface.** `PrefabEditorPanel` (registered for
+  `AssetType::Prefab`) loads + `SpawnInto`s the prefab into a document-owned live `Scene`
+  (adding a default directional light when the prefab carries none) and hosts three children
+  over one shared `PrefabEditContext` (`Scene*` + a multi-entity `Selection` + the `Active`
+  entity + the `EntityPayload` drag tag): `SceneViewportPanel` (renders the scene from an
+  orbit camera via a `SceneRenderer` into a `UI::Image`, with the `DebugView` dropdown),
+  `PrefabExplorerPanel`, and `InspectorPanel`. The host opens the sample prefab as the initial
+  document; double-clicking a prefab in the asset browser opens another.
+- **`PrefabExplorerPanel` is a full scene-graph tree** over the intrusive `Hierarchy`
+  ([engine/CLAUDE.md](../engine/CLAUDE.md)): roots are entities with a null parent, children
+  walk `ForEachChild` in order. It drives the shared selection (click / Ctrl-click toggle),
+  inline-renames (double-click), drag-reparents (`Scene::SetParent`) and reorders siblings
+  (`Scene::MoveBefore`) — both with a cycle pre-check so the engine's fatal cycle assert is
+  never reached — and creates / adds-child / duplicates / deletes entities, plus a name
+  filter and row/empty-space context menus. Every structural edit is **queued during the
+  draw and applied after** the snapshot walk returns, so nothing mutates the scene
+  mid-iteration (the `Scene` contract).
+- **Reflection-driven inspector.** `InspectorPanel` edits `PrefabEditContext::Active`: an
+  editable name header, a searchable **Add Component** picker (every registered
+  `FieldClass::Struct` type not already present, minus the hierarchy-owned `Hierarchy`), and
+  per-component remove / reset-to-default — the remove queued and applied after the
+  `Scene::ForEachComponent` walk. Each component's fields render in a two-column
+  `UI::PropertyTable` via the shared `DrawFieldWidget` helper (`editor/src/FieldWidget.{h,cpp}`,
+  taking a `FieldWidgetContext { AssetManager&, const AssetSourceIndex&, const EditorRegistry& }`),
+  which draws a built-in widget per `FieldClass`
+  (Scalar/Vector/Quaternion/String/AssetHandle/Enum/Reference/Struct/Matrix), honors
+  `FieldDescriptor::ReadOnly`/`Hidden`/`Tooltip`, recurses nested structs as flattened indented
+  rows, makes enums editable (with a registered `LightType` combo), and turns `Reference`
+  fields into Entity drop targets. A `RegisterFieldWidget` entry overrides the built-in for a
+  given `TypeId`; the entity inspector and the node-property inspector both call
+  `DrawFieldWidget`, so the two share identical widget behavior. The `AssetHandle` widget is an
+  asset **picker** (a combo over the `AssetSourceIndex` entries of the field's `AssetType`),
+  not a read-only label.
 - **`EditorRegistry`** is defined in `libveng_editor` and **forward-declared** in
   `engine/include/Veng/Module/Module.h` (so `libveng` stays clean). It holds the
   `AssetType`→editor-factory map (double-click an asset opens its editor),

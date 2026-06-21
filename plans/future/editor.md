@@ -306,9 +306,15 @@ device-free `VengEditor/NodeGraph/` surface (topology core + data-driven `NodeTy
 canvas, node-property inspector reusing the per-`FieldClass` widgets, live
 compile→cook→hot-reload→preview), a reusable `MaterialPreview` sphere, and the precursor
 engine/authored material-param split that lets a graph author parameters at all. **Sub-area
-D (the scene editor) is the remaining editor work** — its scene-model, cooked-prefab, and
-`SceneRenderer` gates are all met, and the generic `VengEditor/NodeGraph/` surface is
-reusable by it and by game editor modules; it lands last.
+D (the scene editor) is in progress.** Its scene-model, cooked-prefab, and `SceneRenderer`
+gates are all met, the generic `VengEditor/NodeGraph/` surface is reusable by it, and the
+**prefab editing surface is delivered**: per-asset-editor dockspaces (`AssetEditorPanel` — a
+private, class-restricted dock area per editor), a `PrefabEditorPanel` that spawns a prefab
+into a live `Scene` and hosts a viewport + a full scene-graph **hierarchy panel** (drag
+reparent/reorder, rename, create/duplicate/delete over the intrusive `Hierarchy`) + a
+**reflection inspector** (add/remove component, all `FieldClass` widgets). The remaining
+scene-editor work is a cooked **`.scene`** asset (vs. an in-memory prefab document), a
+save-back path, manipulation **gizmos**, and an undo/redo command stack.
 
 ## Open decisions
 
