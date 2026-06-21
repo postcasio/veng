@@ -7,6 +7,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetLoader.h>
 #include <Veng/Asset/AssetType.h>
+#include <Veng/Task/TaskSystem.h>
 
 namespace Veng::Renderer
 {
@@ -161,6 +162,48 @@ namespace Veng
             return AssetHandle<T>(AssetId{}, std::move(entry));
         }
 
+        /// @brief Wraps a not-yet-built runtime resource in an AssetHandle<T> that becomes
+        ///        resident when `factory` completes.
+        ///
+        /// Returns immediately with a pending handle (IsLoaded() == false). The factory's Task
+        /// runs on the task system; its result is assigned into a detached cache entry through
+        /// the main-thread continuation pump, after which IsLoaded() is true. Like Adopt, the
+        /// entry carries the invalid AssetId and is never inserted into the AssetId map, so a
+        /// reflective serializer records it as "no asset" and CollectGarbage() leaves it alone;
+        /// it stays alive exactly as long as a handle references it.
+        ///
+        /// While pending, a manager-owned keep-alive Ref holds the entry off CollectGarbage()'s
+        /// use_count() == 1 eviction; the continuation drops it once the resource lands.
+        /// @tparam T  The asset resource type the factory produces.
+        /// @param factory  Task producing the resource; its continuation runs on the main thread.
+        /// @return A pending handle that becomes resident through PumpMainThread().
+        template <typename T>
+        [[nodiscard]] AssetHandle<T> CreateAsync(Task<Ref<T>> factory)
+        {
+            auto entry = CreateRef<Detail::AssetCacheEntry>(Detail::AssetCacheEntry{
+                .Id = AssetId{},
+                .Type = AssetTypeTrait<T>::Type,
+                .Resource = nullptr,
+            });
+
+            AddPendingCreate(entry);
+
+            factory.Then(
+                [this, entry](Result<Ref<T>> result) mutable
+                {
+                    if (!result)
+                    {
+                        FailPendingCreate(entry, result.error());
+                        return;
+                    }
+
+                    FinalizePendingCreate(entry,
+                                          std::static_pointer_cast<void>(std::move(*result)));
+                });
+
+            return AssetHandle<T>(AssetId{}, std::move(entry));
+        }
+
         /// @brief Returns the cache entry for an id, or null if it is not cached.
         ///
         /// Untyped — the prefab loader uses it to rehydrate an embedded handle without naming
@@ -221,25 +264,47 @@ namespace Veng
         /// Invoked by MountHandle on destruction; a token with no live mount is a no-op.
         void UnmountMemory(u64 token);
 
-        /// @brief A submitted-but-not-yet-finalized async load.
+        /// @brief A submitted-but-not-yet-finalized async load, or a CreateAsync keep-alive.
         ///
         /// The cache entry exists with a null Resource (pending); Finalize swaps the resource in
         /// once every Dependency is resident and finalized. The render graph folds the
         /// transfer-timeline wait into the first frame that samples the resource, so registration
-        /// is safe before the GPU copy lands.
+        /// is safe before the GPU copy lands. A CreateAsync entry rides this list as a bare
+        /// keep-alive — null Finalize, finalized by its own factory continuation — so
+        /// PumpFinalizes() steps over it.
         struct PendingLoad
         {
-            /// @brief The asset being loaded.
+            /// @brief The asset being loaded; invalid for a CreateAsync keep-alive.
             AssetId Id;
             /// @brief The cache slot (Resource is null until finalized).
             Ref<Detail::AssetCacheEntry> Entry;
-            /// @brief The created-but-unregistered resource.
+            /// @brief The created-but-unregistered resource; null for a CreateAsync keep-alive.
             Detail::RefAny Resource;
             /// @brief Kept alive until Finalize runs.
             vector<Ref<Detail::AssetCacheEntry>> Dependencies;
-            /// @brief Main-thread registration step; null if not needed.
+            /// @brief Main-thread registration step; null for a CreateAsync keep-alive or when not needed.
             function<VoidResult()> Finalize;
         };
+
+        /// @brief Registers a manager-owned keep-alive for a pending CreateAsync entry.
+        ///
+        /// The Ref holds the detached entry off CollectGarbage()'s use_count() == 1 eviction
+        /// until its continuation resolves it. The keep-alive carries no Finalize, so
+        /// PumpFinalizes() steps over it — its own continuation does the finalization.
+        void AddPendingCreate(Ref<Detail::AssetCacheEntry> entry);
+
+        /// @brief Resolves a pending CreateAsync entry, swapping in its resource and dropping the keep-alive.
+        ///
+        /// Runs on the main thread from the factory task's continuation; after it, IsLoaded()
+        /// is true and the entry reverts to the Adopt lifetime (alive only while a handle holds it).
+        void FinalizePendingCreate(const Ref<Detail::AssetCacheEntry>& entry,
+                                   Detail::RefAny resource);
+
+        /// @brief Drops a pending CreateAsync entry's keep-alive after its factory failed.
+        ///
+        /// Runs on the main thread; the entry stays permanently pending (null Resource) and is
+        /// freed once the last handle drops — mirroring an async Load's deferred-failure behavior.
+        void FailPendingCreate(const Ref<Detail::AssetCacheEntry>& entry, const string& error);
 
         [[nodiscard]] Ref<Detail::AssetCacheEntry> LoadUntyped(AssetType type, AssetId id);
         [[nodiscard]] AssetResult<Ref<Detail::AssetCacheEntry>> LoadSyncUntyped(AssetType type,

@@ -321,6 +321,14 @@ namespace Veng
             {
                 PendingLoad& pending = m_Pending[i];
 
+                // A CreateAsync keep-alive rides this list with no Finalize; its own
+                // factory continuation resolves the entry, so step over it here.
+                if (!pending.Finalize)
+                {
+                    ++i;
+                    continue;
+                }
+
                 bool depsReady = true;
                 for (const Ref<Detail::AssetCacheEntry>& dep : pending.Dependencies)
                 {
@@ -354,6 +362,33 @@ namespace Veng
                 progressed = true;
             }
         }
+    }
+
+    void AssetManager::AddPendingCreate(Ref<Detail::AssetCacheEntry> entry)
+    {
+        m_Pending.push_back(PendingLoad{
+            .Id = AssetId{},
+            .Entry = std::move(entry),
+            .Resource = nullptr,
+            .Dependencies = {},
+            .Finalize = nullptr,
+        });
+    }
+
+    void AssetManager::FinalizePendingCreate(const Ref<Detail::AssetCacheEntry>& entry,
+                                             Detail::RefAny resource)
+    {
+        entry->Resource = std::move(resource);
+        std::erase_if(m_Pending,
+                      [&entry](const PendingLoad& pending) { return pending.Entry == entry; });
+    }
+
+    void AssetManager::FailPendingCreate(const Ref<Detail::AssetCacheEntry>& entry,
+                                         const string& error)
+    {
+        Log::Error("AssetManager: async CreateAsync factory failed: {}", error);
+        std::erase_if(m_Pending,
+                      [&entry](const PendingLoad& pending) { return pending.Entry == entry; });
     }
 
     AssetResult<Ref<Detail::AssetCacheEntry>> AssetManager::LoadSyncUntyped(AssetType type,
