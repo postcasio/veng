@@ -52,10 +52,6 @@ These four hooks are the whole lifecycle:
 | `OnRender()` | once per frame | Recording draw work for the frame. |
 | `OnDispose()` | once, at shutdown | Releasing every resource you created. |
 
-!!! warning "Release your resources in `OnDispose()`"
-    Reset every `Ref` and `Unique` you created. A resource that outlives the
-    engine fails on destruction.
-
 `Application` owns the major subsystems and hands them to you:
 
 - `GetAssetManager()` — load and build assets.
