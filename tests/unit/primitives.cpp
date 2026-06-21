@@ -226,3 +226,140 @@ TEST_CASE("Icosphere: vertex count grows with subdivisions")
     CHECK(once > base);
     CHECK(twice > once);
 }
+
+TEST_CASE("Cylinder: invariants, radius/height AABB")
+{
+    const f32 radius = 0.75f;
+    const f32 height = 2.0f;
+    const u32 segments = 24;
+    const MeshData data = Primitives::Cylinder(radius, height, segments);
+
+    CheckCommonInvariants(data);
+
+    const Aabb box = ComputeAabb(data);
+    CHECK(box.Min.x == doctest::Approx(-radius).epsilon(0.001f));
+    CHECK(box.Max.x == doctest::Approx(+radius).epsilon(0.001f));
+    CHECK(box.Min.z == doctest::Approx(-radius).epsilon(0.001f));
+    CHECK(box.Max.z == doctest::Approx(+radius).epsilon(0.001f));
+    CHECK(box.Min.y == doctest::Approx(-height * 0.5f).epsilon(0.001f));
+    CHECK(box.Max.y == doctest::Approx(+height * 0.5f).epsilon(0.001f));
+}
+
+TEST_CASE("Cylinder: segments clamp to a minimum of 3")
+{
+    const MeshData clamped = Primitives::Cylinder(0.5f, 1.0f, 0);
+    const MeshData explicitMin = Primitives::Cylinder(0.5f, 1.0f, 3);
+
+    CHECK(clamped.Vertices.size() == explicitMin.Vertices.size());
+    CHECK(clamped.Indices.size() == explicitMin.Indices.size());
+}
+
+TEST_CASE("Cylinder: vertex count grows with segments")
+{
+    const usize coarse = Primitives::Cylinder(0.5f, 1.0f, 6).Vertices.size();
+    const usize fine = Primitives::Cylinder(0.5f, 1.0f, 16).Vertices.size();
+    CHECK(fine > coarse);
+}
+
+TEST_CASE("Cone: invariants, radius/height AABB, apex on +Y")
+{
+    const f32 radius = 0.6f;
+    const f32 height = 1.5f;
+    const u32 segments = 24;
+    const MeshData data = Primitives::Cone(radius, height, segments);
+
+    CheckCommonInvariants(data);
+
+    const Aabb box = ComputeAabb(data);
+    CHECK(box.Min.x == doctest::Approx(-radius).epsilon(0.001f));
+    CHECK(box.Max.x == doctest::Approx(+radius).epsilon(0.001f));
+    CHECK(box.Min.z == doctest::Approx(-radius).epsilon(0.001f));
+    CHECK(box.Max.z == doctest::Approx(+radius).epsilon(0.001f));
+    CHECK(box.Min.y == doctest::Approx(-height * 0.5f).epsilon(0.001f));
+    CHECK(box.Max.y == doctest::Approx(+height * 0.5f).epsilon(0.001f));
+}
+
+TEST_CASE("Cone: segments clamp to a minimum of 3")
+{
+    const MeshData clamped = Primitives::Cone(0.5f, 1.0f, 0);
+    const MeshData explicitMin = Primitives::Cone(0.5f, 1.0f, 3);
+
+    CHECK(clamped.Vertices.size() == explicitMin.Vertices.size());
+    CHECK(clamped.Indices.size() == explicitMin.Indices.size());
+}
+
+TEST_CASE("Torus: invariants, outer/inner radius AABB")
+{
+    const f32 major = 0.8f;
+    const f32 minor = 0.25f;
+    const MeshData data = Primitives::Torus(major, minor, 24, 12);
+
+    CheckCommonInvariants(data);
+
+    // Every vertex is minor away from a point on the major circle in the XZ plane.
+    for (const CanonicalVertex& v : data.Vertices)
+    {
+        const f32 r = std::sqrt(v.Position.x * v.Position.x + v.Position.z * v.Position.z);
+        const f32 dx = r - major;
+        const f32 dist = std::sqrt(dx * dx + v.Position.y * v.Position.y);
+        CHECK(dist == doctest::Approx(minor).epsilon(0.01f));
+    }
+
+    const Aabb box = ComputeAabb(data);
+    CHECK(box.Max.x == doctest::Approx(major + minor).epsilon(0.001f));
+    CHECK(box.Min.x == doctest::Approx(-(major + minor)).epsilon(0.001f));
+    CHECK(box.Max.y == doctest::Approx(minor).epsilon(0.001f));
+    CHECK(box.Min.y == doctest::Approx(-minor).epsilon(0.001f));
+}
+
+TEST_CASE("Torus: segments clamp to a minimum of 3")
+{
+    const MeshData clamped = Primitives::Torus(0.5f, 0.2f, 0, 0);
+    const MeshData explicitMin = Primitives::Torus(0.5f, 0.2f, 3, 3);
+
+    CHECK(clamped.Vertices.size() == explicitMin.Vertices.size());
+    CHECK(clamped.Indices.size() == explicitMin.Indices.size());
+}
+
+TEST_CASE("Torus: vertex count grows with segments")
+{
+    const usize coarse = Primitives::Torus(0.5f, 0.2f, 8, 6).Vertices.size();
+    const usize moreMajor = Primitives::Torus(0.5f, 0.2f, 16, 6).Vertices.size();
+    const usize moreMinor = Primitives::Torus(0.5f, 0.2f, 8, 12).Vertices.size();
+    CHECK(moreMajor > coarse);
+    CHECK(moreMinor > coarse);
+}
+
+TEST_CASE("Capsule: invariants, radius/full-extent AABB, surface distance")
+{
+    const f32 radius = 0.4f;
+    const f32 height = 1.0f;
+    const MeshData data = Primitives::Capsule(radius, height, 24, 6);
+
+    CheckCommonInvariants(data);
+
+    const f32 halfH = height * 0.5f;
+
+    // Every vertex is `radius` from the nearer hemisphere center on the Y axis.
+    for (const CanonicalVertex& v : data.Vertices)
+    {
+        const f32 centerY = v.Position.y >= 0.0f ? +halfH : -halfH;
+        const vec3 toCenter = v.Position - vec3(0.0f, centerY, 0.0f);
+        CHECK(glm::length(toCenter) == doctest::Approx(radius).epsilon(0.01f));
+    }
+
+    const Aabb box = ComputeAabb(data);
+    CHECK(box.Max.x == doctest::Approx(radius).epsilon(0.001f));
+    CHECK(box.Min.x == doctest::Approx(-radius).epsilon(0.001f));
+    CHECK(box.Max.y == doctest::Approx(halfH + radius).epsilon(0.001f));
+    CHECK(box.Min.y == doctest::Approx(-(halfH + radius)).epsilon(0.001f));
+}
+
+TEST_CASE("Capsule: segments and rings clamp to minimums")
+{
+    const MeshData clamped = Primitives::Capsule(0.5f, 1.0f, 0, 0);
+    const MeshData explicitMin = Primitives::Capsule(0.5f, 1.0f, 3, 1);
+
+    CHECK(clamped.Vertices.size() == explicitMin.Vertices.size());
+    CHECK(clamped.Indices.size() == explicitMin.Indices.size());
+}

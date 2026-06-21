@@ -40,4 +40,37 @@ namespace Veng::Primitives
     /// One submesh.
     [[nodiscard]] MeshData Icosphere(f32 radius = 0.5f, u32 subdivisions = 3,
                                      AssetHandle<Material> material = {});
+
+    /// @brief Capped cylinder about the Y axis, `radius` across and `height` tall, centered at the origin.
+    ///
+    /// A radial side band of `segments` longitude columns (min 3) plus a top and bottom cap fan,
+    /// each with its own hard +Y / -Y normal. Side normals point radially outward; side UVs are
+    /// (longitude, height). One submesh.
+    [[nodiscard]] MeshData Cylinder(f32 radius = 0.5f, f32 height = 1.0f, u32 segments = 32,
+                                    AssetHandle<Material> material = {});
+
+    /// @brief Cone about the Y axis: a circular base of `radius` and an apex `height` above it, centered at the origin.
+    ///
+    /// A side band of `segments` longitude columns (min 3) whose apex ring duplicates the apex
+    /// per segment so each side face carries its own slanted normal, plus a bottom cap fan with a
+    /// hard -Y normal. One submesh.
+    [[nodiscard]] MeshData Cone(f32 radius = 0.5f, f32 height = 1.0f, u32 segments = 32,
+                                AssetHandle<Material> material = {});
+
+    /// @brief Torus in the XZ plane: a tube of `minorRadius` swept around `majorRadius`, centered at the origin.
+    ///
+    /// `majorSegments` columns around the ring and `minorSegments` columns around the tube (min 3
+    /// each); seam columns duplicate so UVs do not wrap. Smooth normals point away from the tube
+    /// center circle; UVs are (major angle, minor angle). One submesh.
+    [[nodiscard]] MeshData Torus(f32 majorRadius = 0.5f, f32 minorRadius = 0.2f,
+                                 u32 majorSegments = 32, u32 minorSegments = 16,
+                                 AssetHandle<Material> material = {});
+
+    /// @brief Capsule about the Y axis: a cylinder of `height` capped by two hemispheres of `radius`, centered at the origin.
+    ///
+    /// `segments` longitude columns (min 3) shared by the band and both caps; each hemisphere has
+    /// `rings` latitude bands (min 1). The cylinder spans the central `height`; the hemisphere
+    /// centers sit at ±height/2, so the full extent is height + 2*radius. Smooth normals; one submesh.
+    [[nodiscard]] MeshData Capsule(f32 radius = 0.5f, f32 height = 1.0f, u32 segments = 32,
+                                   u32 rings = 8, AssetHandle<Material> material = {});
 }

@@ -111,8 +111,65 @@ namespace Veng
         AssetHandle<Material> Material;
     };
 
+    /// @brief Cylinder shape recipe: the parameters of Primitives::Cylinder plus its material.
+    struct CylinderShape
+    {
+        /// @brief Cylinder radius.
+        f32 Radius = 0.5f;
+        /// @brief Full height along the Y axis.
+        f32 Height = 1.0f;
+        /// @brief Longitude band count around the side.
+        u32 Segments = 32;
+        /// @brief Material recorded on the generated submesh.
+        AssetHandle<Material> Material;
+    };
+
+    /// @brief Cone shape recipe: the parameters of Primitives::Cone plus its material.
+    struct ConeShape
+    {
+        /// @brief Base radius.
+        f32 Radius = 0.5f;
+        /// @brief Full height from base to apex along the Y axis.
+        f32 Height = 1.0f;
+        /// @brief Longitude band count around the base.
+        u32 Segments = 32;
+        /// @brief Material recorded on the generated submesh.
+        AssetHandle<Material> Material;
+    };
+
+    /// @brief Torus shape recipe: the parameters of Primitives::Torus plus its material.
+    struct TorusShape
+    {
+        /// @brief Distance from the center to the tube center.
+        f32 MajorRadius = 0.5f;
+        /// @brief Tube radius.
+        f32 MinorRadius = 0.2f;
+        /// @brief Band count around the ring.
+        u32 MajorSegments = 32;
+        /// @brief Band count around the tube.
+        u32 MinorSegments = 16;
+        /// @brief Material recorded on the generated submesh.
+        AssetHandle<Material> Material;
+    };
+
+    /// @brief Capsule shape recipe: the parameters of Primitives::Capsule plus its material.
+    struct CapsuleShape
+    {
+        /// @brief Cap radius and cylinder radius.
+        f32 Radius = 0.5f;
+        /// @brief Height of the central cylinder along the Y axis (excludes the caps).
+        f32 Height = 1.0f;
+        /// @brief Longitude band count shared by the band and caps.
+        u32 Segments = 32;
+        /// @brief Latitude band count per hemisphere cap.
+        u32 Rings = 8;
+        /// @brief Material recorded on the generated submesh.
+        AssetHandle<Material> Material;
+    };
+
     /// @brief The tagged union of shape recipes a PrimitiveComponent can hold.
-    using PrimitiveShapeVariant = Variant<CubeShape, PlaneShape, SphereShape, IcosphereShape>;
+    using PrimitiveShapeVariant = Variant<CubeShape, PlaneShape, SphereShape, IcosphereShape,
+                                          CylinderShape, ConeShape, TorusShape, CapsuleShape>;
 
     /// @brief A procedural-mesh recipe: regenerated into the entity's MeshRenderer at spawn.
     ///
@@ -224,6 +281,36 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::IcosphereShape, 0x7D9FC0055D5978BBULL)
 VE_FIELD(Radius, .DisplayName = "Radius", .Min = 0.001)
 VE_FIELD(Subdivisions, .DisplayName = "Subdivisions", .Min = 1)
+VE_FIELD(Material, .DisplayName = "Material")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::CylinderShape, 0x3BB833585C0DAD4CULL)
+VE_FIELD(Radius, .DisplayName = "Radius", .Min = 0.001)
+VE_FIELD(Height, .DisplayName = "Height", .Min = 0.001)
+VE_FIELD(Segments, .DisplayName = "Segments", .Min = 3)
+VE_FIELD(Material, .DisplayName = "Material")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::ConeShape, 0x64D0B47E06329960ULL)
+VE_FIELD(Radius, .DisplayName = "Radius", .Min = 0.001)
+VE_FIELD(Height, .DisplayName = "Height", .Min = 0.001)
+VE_FIELD(Segments, .DisplayName = "Segments", .Min = 3)
+VE_FIELD(Material, .DisplayName = "Material")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::TorusShape, 0xFF864410096026A2ULL)
+VE_FIELD(MajorRadius, .DisplayName = "Major Radius", .Min = 0.001)
+VE_FIELD(MinorRadius, .DisplayName = "Minor Radius", .Min = 0.001)
+VE_FIELD(MajorSegments, .DisplayName = "Major Segments", .Min = 3)
+VE_FIELD(MinorSegments, .DisplayName = "Minor Segments", .Min = 3)
+VE_FIELD(Material, .DisplayName = "Material")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::CapsuleShape, 0xDECC3D44F06725DCULL)
+VE_FIELD(Radius, .DisplayName = "Radius", .Min = 0.001)
+VE_FIELD(Height, .DisplayName = "Height", .Min = 0.001)
+VE_FIELD(Segments, .DisplayName = "Segments", .Min = 3)
+VE_FIELD(Rings, .DisplayName = "Rings", .Min = 1)
 VE_FIELD(Material, .DisplayName = "Material")
 VE_REFLECT_END();
 

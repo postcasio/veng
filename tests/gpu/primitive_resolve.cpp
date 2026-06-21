@@ -45,6 +45,16 @@ namespace
         static_cast<CubeShape*>(variant.SetActive(TypeIdOf<CubeShape>()))->Extent = extent;
         return variant;
     }
+
+    PrimitiveShapeVariant CylinderVariant(f32 radius, f32 height, u32 segments)
+    {
+        PrimitiveShapeVariant variant;
+        auto* shape = static_cast<CylinderShape*>(variant.SetActive(TypeIdOf<CylinderShape>()));
+        shape->Radius = radius;
+        shape->Height = height;
+        shape->Segments = segments;
+        return variant;
+    }
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "ResolveComponents streams in a primitive mesh")
@@ -67,6 +77,24 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "ResolveComponents streams in a primit
     REQUIRE(scene->Get<MeshRenderer>(entity).Mesh.IsLoaded());
     CHECK(scene->Get<MeshRenderer>(entity).Mesh->GetIndexCount() ==
           Primitives::Cube(1.0f).Indices.size());
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "ResolveComponents streams in a new-shape primitive mesh")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity entity = SpawnPrimitive(*scene, CylinderVariant(0.5f, 1.0f, 24));
+
+    ResolveComponents(*scene, entity, assets);
+    PumpUntilResident(Tasks, assets);
+
+    // A cylinder rides the unchanged resolve path; its mesh streams to residency
+    // with the generator's index count.
+    REQUIRE(scene->Get<MeshRenderer>(entity).Mesh.IsLoaded());
+    CHECK(scene->Get<MeshRenderer>(entity).Mesh->GetIndexCount() ==
+          Primitives::Cylinder(0.5f, 1.0f, 24).Indices.size());
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "Identical shapes resolve to distinct meshes")

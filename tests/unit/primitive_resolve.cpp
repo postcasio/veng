@@ -77,6 +77,54 @@ TEST_CASE("BuildShapeMeshData(Icosphere) matches Primitives::Icosphere")
     CHECK(built->Indices.size() == expected.Indices.size());
 }
 
+TEST_CASE("BuildShapeMeshData(Cylinder) matches Primitives::Cylinder")
+{
+    const PrimitiveShapeVariant variant =
+        MakeVariant(CylinderShape{.Radius = 0.6f, .Height = 1.5f, .Segments = 20});
+    const optional<MeshData> built = BuildShapeMeshData(variant);
+    REQUIRE(built.has_value());
+
+    const MeshData expected = Primitives::Cylinder(0.6f, 1.5f, 20);
+    CHECK(built->Vertices.size() == expected.Vertices.size());
+    CHECK(built->Indices.size() == expected.Indices.size());
+}
+
+TEST_CASE("BuildShapeMeshData(Cone) matches Primitives::Cone")
+{
+    const PrimitiveShapeVariant variant =
+        MakeVariant(ConeShape{.Radius = 0.7f, .Height = 1.2f, .Segments = 18});
+    const optional<MeshData> built = BuildShapeMeshData(variant);
+    REQUIRE(built.has_value());
+
+    const MeshData expected = Primitives::Cone(0.7f, 1.2f, 18);
+    CHECK(built->Vertices.size() == expected.Vertices.size());
+    CHECK(built->Indices.size() == expected.Indices.size());
+}
+
+TEST_CASE("BuildShapeMeshData(Torus) matches Primitives::Torus")
+{
+    const PrimitiveShapeVariant variant = MakeVariant(TorusShape{
+        .MajorRadius = 0.8f, .MinorRadius = 0.25f, .MajorSegments = 20, .MinorSegments = 10});
+    const optional<MeshData> built = BuildShapeMeshData(variant);
+    REQUIRE(built.has_value());
+
+    const MeshData expected = Primitives::Torus(0.8f, 0.25f, 20, 10);
+    CHECK(built->Vertices.size() == expected.Vertices.size());
+    CHECK(built->Indices.size() == expected.Indices.size());
+}
+
+TEST_CASE("BuildShapeMeshData(Capsule) matches Primitives::Capsule")
+{
+    const PrimitiveShapeVariant variant =
+        MakeVariant(CapsuleShape{.Radius = 0.4f, .Height = 1.0f, .Segments = 16, .Rings = 6});
+    const optional<MeshData> built = BuildShapeMeshData(variant);
+    REQUIRE(built.has_value());
+
+    const MeshData expected = Primitives::Capsule(0.4f, 1.0f, 16, 6);
+    CHECK(built->Vertices.size() == expected.Vertices.size());
+    CHECK(built->Indices.size() == expected.Indices.size());
+}
+
 TEST_CASE("PrimitiveComponent round-trips its active shape through reflection")
 {
     TypeRegistry registry;

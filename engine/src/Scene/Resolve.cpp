@@ -68,6 +68,29 @@ namespace Veng
             const auto& ico = *static_cast<const IcosphereShape*>(member);
             return Primitives::Icosphere(ico.Radius, ico.Subdivisions, ico.Material);
         }
+        if (kind == TypeIdOf<CylinderShape>())
+        {
+            const auto& cylinder = *static_cast<const CylinderShape*>(member);
+            return Primitives::Cylinder(cylinder.Radius, cylinder.Height, cylinder.Segments,
+                                        cylinder.Material);
+        }
+        if (kind == TypeIdOf<ConeShape>())
+        {
+            const auto& cone = *static_cast<const ConeShape*>(member);
+            return Primitives::Cone(cone.Radius, cone.Height, cone.Segments, cone.Material);
+        }
+        if (kind == TypeIdOf<TorusShape>())
+        {
+            const auto& torus = *static_cast<const TorusShape*>(member);
+            return Primitives::Torus(torus.MajorRadius, torus.MinorRadius, torus.MajorSegments,
+                                     torus.MinorSegments, torus.Material);
+        }
+        if (kind == TypeIdOf<CapsuleShape>())
+        {
+            const auto& capsule = *static_cast<const CapsuleShape*>(member);
+            return Primitives::Capsule(capsule.Radius, capsule.Height, capsule.Segments,
+                                       capsule.Rings, capsule.Material);
+        }
 
         return std::nullopt;
     }
