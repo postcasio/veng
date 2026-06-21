@@ -120,8 +120,7 @@ protected:
         VE_ASSERT(prefab.has_value(), "{}", prefab.error().Detail);
 
         const vector<Entity> roots = prefab->Get()->SpawnInto(*m_Scene, GetAssetManager());
-        VE_ASSERT(roots.size() >= 2,
-                  "prefab spawned fewer than the expected sphere + receiver-plane roots");
+        VE_ASSERT(!roots.empty(), "prefab spawned no entities");
 
         // Smoke renders a fixed pose, so block until the streamed primitives are resident
         // before the capture frame; the windowed app lets them appear over a few frames.
@@ -130,29 +129,10 @@ protected:
             WaitForPrimitiveResidency();
         }
 
-        // Fixed direction for a reproducible smoke pose; intensity pushes facets past 1.0
-        // in linear HDR so bloom has something to act on.
-        const Entity lightEntity = m_Scene->CreateEntity();
-        m_Scene->Add<Light>(lightEntity) = Light{
-            .Type = LightType::Directional,
-            .Direction = glm::normalize(vec3(-0.4f, -0.7f, -0.5f)),
-            .Color = vec3(1.0f, 1.0f, 1.0f),
-            .Intensity = 4.0f,
-        };
-
-        // Warm point light: exercises distance-attenuated accumulation alongside the directional.
-        const Entity pointEntity = m_Scene->CreateEntity();
-        m_Scene->Add<Transform>(pointEntity).Position = vec3(1.5f, 0.5f, 1.5f);
-        m_Scene->Add<Light>(pointEntity) = Light{
-            .Type = LightType::Point,
-            .Color = vec3(1.0f, 0.6f, 0.3f),
-            .Intensity = 6.0f,
-            .Range = 6.0f,
-        };
-
         const f32 aspect = static_cast<f32>(sceneExtent.x) / static_cast<f32>(sceneExtent.y);
         m_Camera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
-        m_Camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+        // Pulled back and elevated to frame the whole 10x10 grid from above.
+        m_Camera.SetView(vec3(0.0f, 10.0f, 14.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
         if (GetImGuiLayer())
         {
@@ -479,7 +459,8 @@ private:
 
     // Fixed rotation for the smoke capture, in radians.
     static constexpr f32 SmokeAngle = 0.9f;
-    static inline const vec3 SpinAxis = glm::normalize(vec3(0.5f, 1.0f, 0.2f));
+    // The light-orbit pivot spins about Y, so its child lights circle horizontally above the grid.
+    static inline const vec3 SpinAxis = vec3(0.0f, 1.0f, 0.0f);
 
     Unique<Scene> m_Scene;
     CameraView m_Camera;
@@ -489,7 +470,8 @@ private:
     const char* m_SmokeOutput = nullptr;
 
     // Per-frame tonemap/bloom knobs the "Scene" window edits, fed into each frame's SceneView.
-    f32 m_Exposure = 1.0f;
+    // Lifted from 1.0 so the weak directional + orbiting point lights read on the grid.
+    f32 m_Exposure = 2.5f;
     f32 m_BloomThreshold = 0.5f;
     f32 m_BloomIntensity = 1.5f;
     f32 m_BloomRadius = 1.0f;

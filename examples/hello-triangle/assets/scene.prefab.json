@@ -1,0 +1,3563 @@
+{
+  "entities": [
+    {
+      "name": "Primitive 0-0",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -5.625,
+            0.0,
+            -5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.9752412347424851,
+            0.0,
+            -0.22114369549673565
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::ConeShape",
+            "value": {
+              "Radius": 0.439,
+              "Height": 0.884,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 0-1",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -5.625,
+            0.0,
+            -4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.9339980146624696,
+            0.0,
+            0.35727819497775865
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.317,
+              "MinorRadius": 0.166,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 0-2",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -5.625,
+            0.0,
+            -3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.9425204936637581,
+            0.0,
+            0.33414834882702266
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.256,
+              "Height": 0.699,
+              "Segments": 20,
+              "Rings": 6,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 0-3",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -5.625,
+            0.0,
+            -1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.27202897254641345,
+            0.0,
+            -0.9622890616105655
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.32,
+              "MinorRadius": 0.153,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 0-4",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -5.625,
+            0.0,
+            -0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.911147770013627,
+            0.0,
+            -0.4120797752853136
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.628,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 0-5",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -5.625,
+            0.0,
+            0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.8637300981113663,
+            0.0,
+            -0.5039546781373594
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.652,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 0-6",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -5.625,
+            0.0,
+            1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.8285786494921104,
+            0.0,
+            0.5598726833895636
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.311,
+              "Height": 0.895,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 0-7",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -5.625,
+            0.0,
+            3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.9562933994680732,
+            0.0,
+            -0.2924088475641529
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.75,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 0-8",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -5.625,
+            0.0,
+            4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.44881486440405755,
+            0.0,
+            -0.8936247632479571
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.287,
+              "Height": 0.668,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 0-9",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -5.625,
+            0.0,
+            5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.9909559721858682,
+            0.0,
+            0.13418741069549261
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.369,
+              "MinorRadius": 0.173,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 1-0",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -4.375,
+            0.0,
+            -5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.9887658843973914,
+            0.0,
+            -0.14947249195702955
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::IcosphereShape",
+            "value": {
+              "Radius": 0.421,
+              "Subdivisions": 2,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 1-1",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -4.375,
+            0.0,
+            -4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.9706594569795213,
+            0.0,
+            -0.2404583510220031
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.353,
+              "MinorRadius": 0.149,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 1-2",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -4.375,
+            0.0,
+            -3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.117519604910768,
+            0.0,
+            -0.9930705626800228
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.522,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 1-3",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -4.375,
+            0.0,
+            -1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.5796731311012372,
+            0.0,
+            0.814849103257338
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::ConeShape",
+            "value": {
+              "Radius": 0.308,
+              "Height": 0.607,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 1-4",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -4.375,
+            0.0,
+            -0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.9888061139124282,
+            0.0,
+            0.14920612953026455
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.585,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 1-5",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -4.375,
+            0.0,
+            0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.1970349954216933,
+            0.0,
+            -0.9803964558173256
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.277,
+              "Height": 0.404,
+              "Segments": 20,
+              "Rings": 6,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 1-6",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -4.375,
+            0.0,
+            1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.6118450388914181,
+            0.0,
+            -0.7909776535300849
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::IcosphereShape",
+            "value": {
+              "Radius": 0.365,
+              "Subdivisions": 2,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 1-7",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -4.375,
+            0.0,
+            3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.7572519947381122,
+            0.0,
+            -0.6531228188213531
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::ConeShape",
+            "value": {
+              "Radius": 0.307,
+              "Height": 0.991,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 1-8",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -4.375,
+            0.0,
+            4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.6219283490490695,
+            0.0,
+            0.7830741527142233
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::IcosphereShape",
+            "value": {
+              "Radius": 0.427,
+              "Subdivisions": 2,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 1-9",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -4.375,
+            0.0,
+            5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.9960089501618502,
+            0.0,
+            -0.08925341000482306
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::SphereShape",
+            "value": {
+              "Radius": 0.379,
+              "Rings": 16,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 2-0",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -3.125,
+            0.0,
+            -5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.8022438659799722,
+            0.0,
+            -0.5969964652303298
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.286,
+              "Height": 0.624,
+              "Segments": 20,
+              "Rings": 6,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 2-1",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -3.125,
+            0.0,
+            -4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.5750334315254608,
+            0.0,
+            -0.8181299118282213
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::ConeShape",
+            "value": {
+              "Radius": 0.368,
+              "Height": 0.96,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 2-2",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -3.125,
+            0.0,
+            -3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.20898265166982266,
+            0.0,
+            -0.977919348055375
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.331,
+              "Height": 0.862,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 2-3",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -3.125,
+            0.0,
+            -1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.7231091467915837,
+            0.0,
+            0.690733785062196
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.356,
+              "MinorRadius": 0.146,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 2-4",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -3.125,
+            0.0,
+            -0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.1631407566422514,
+            0.0,
+            -0.9866028043352572
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.713,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 2-5",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -3.125,
+            0.0,
+            0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.24389654918240578,
+            0.0,
+            0.9698012545346156
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::SphereShape",
+            "value": {
+              "Radius": 0.347,
+              "Rings": 16,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 2-6",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -3.125,
+            0.0,
+            1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.3751740811791595,
+            0.0,
+            -0.9269543725617639
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.393,
+              "Height": 0.933,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 2-7",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -3.125,
+            0.0,
+            3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.7765514365928657,
+            0.0,
+            -0.6300538598608506
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::ConeShape",
+            "value": {
+              "Radius": 0.322,
+              "Height": 0.74,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 2-8",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -3.125,
+            0.0,
+            4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.7266375753306834,
+            0.0,
+            -0.6870209852090003
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.629,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 2-9",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -3.125,
+            0.0,
+            5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.9926252927175501,
+            0.0,
+            0.1212230516749931
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::SphereShape",
+            "value": {
+              "Radius": 0.308,
+              "Rings": 16,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 3-0",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -1.875,
+            0.0,
+            -5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.8495672261082916,
+            0.0,
+            -0.5274803582339944
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.26,
+              "Height": 0.741,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 3-1",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -1.875,
+            0.0,
+            -4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.4147540593078793,
+            0.0,
+            0.909933552677137
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::ConeShape",
+            "value": {
+              "Radius": 0.34,
+              "Height": 0.686,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 3-2",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -1.875,
+            0.0,
+            -3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.48100008520409027,
+            0.0,
+            0.8767205472861109
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.342,
+              "Height": 0.821,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 3-3",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -1.875,
+            0.0,
+            -1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.9246395402204274,
+            0.0,
+            -0.3808434332648478
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.399,
+              "MinorRadius": 0.127,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 3-4",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -1.875,
+            0.0,
+            -0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.9666222492583081,
+            0.0,
+            0.25620582982986423
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.296,
+              "Height": 0.587,
+              "Segments": 20,
+              "Rings": 6,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 3-5",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -1.875,
+            0.0,
+            0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.9274734331358195,
+            0.0,
+            -0.3738890621925929
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::SphereShape",
+            "value": {
+              "Radius": 0.408,
+              "Rings": 16,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 3-6",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -1.875,
+            0.0,
+            1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.9511087009188824,
+            0.0,
+            -0.3088563404503717
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.332,
+              "MinorRadius": 0.102,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 3-7",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -1.875,
+            0.0,
+            3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.12759159089255137,
+            0.0,
+            -0.9918267923047389
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.344,
+              "MinorRadius": 0.161,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 3-8",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -1.875,
+            0.0,
+            4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.3855942488204697,
+            0.0,
+            -0.9226684536043148
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::IcosphereShape",
+            "value": {
+              "Radius": 0.417,
+              "Subdivisions": 2,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 3-9",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -1.875,
+            0.0,
+            5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.33318920624927084,
+            0.0,
+            -0.9428599858085933
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::SphereShape",
+            "value": {
+              "Radius": 0.438,
+              "Rings": 16,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 4-0",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -0.625,
+            0.0,
+            -5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.4373116416798657,
+            0.0,
+            0.8993100288839554
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::ConeShape",
+            "value": {
+              "Radius": 0.357,
+              "Height": 0.855,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 4-1",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -0.625,
+            0.0,
+            -4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.9359119741656095,
+            0.0,
+            0.3522339799244695
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.248,
+              "Height": 0.624,
+              "Segments": 20,
+              "Rings": 6,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 4-2",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -0.625,
+            0.0,
+            -3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.8800607446026031,
+            0.0,
+            0.4748611226553632
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.309,
+              "MinorRadius": 0.156,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 4-3",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -0.625,
+            0.0,
+            -1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.537096397863685,
+            0.0,
+            -0.8435208707565297
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.313,
+              "Height": 0.548,
+              "Segments": 20,
+              "Rings": 6,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 4-4",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -0.625,
+            0.0,
+            -0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.17734687491978152,
+            0.0,
+            -0.9841484064693634
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.399,
+              "Height": 0.615,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 4-5",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -0.625,
+            0.0,
+            0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.3496041632413386,
+            0.0,
+            0.936897501888186
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::ConeShape",
+            "value": {
+              "Radius": 0.357,
+              "Height": 0.856,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 4-6",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -0.625,
+            0.0,
+            1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.9996553429593111,
+            0.0,
+            0.026252529266757394
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::SphereShape",
+            "value": {
+              "Radius": 0.345,
+              "Rings": 16,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 4-7",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -0.625,
+            0.0,
+            3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.22141862026081796,
+            0.0,
+            -0.9751788526223257
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.321,
+              "MinorRadius": 0.143,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 4-8",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -0.625,
+            0.0,
+            4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.8558389360899334,
+            0.0,
+            -0.5172424146108389
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::ConeShape",
+            "value": {
+              "Radius": 0.445,
+              "Height": 0.872,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 4-9",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -0.625,
+            0.0,
+            5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.9594496960360941,
+            0.0,
+            -0.28187990488193143
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::SphereShape",
+            "value": {
+              "Radius": 0.376,
+              "Rings": 16,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 5-0",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            0.625,
+            0.0,
+            -5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.8020618316344362,
+            0.0,
+            0.5972410051522026
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.304,
+              "MinorRadius": 0.145,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 5-1",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            0.625,
+            0.0,
+            -4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.06972956887010455,
+            0.0,
+            -0.9975659312672969
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::SphereShape",
+            "value": {
+              "Radius": 0.322,
+              "Rings": 16,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 5-2",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            0.625,
+            0.0,
+            -3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.21665350182646767,
+            0.0,
+            -0.9762485647345807
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.285,
+              "Height": 0.585,
+              "Segments": 20,
+              "Rings": 6,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 5-3",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            0.625,
+            0.0,
+            -1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.5693504500182928,
+            0.0,
+            0.822094924606622
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.372,
+              "MinorRadius": 0.114,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 5-4",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            0.625,
+            0.0,
+            -0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.8941441704559521,
+            0.0,
+            -0.44777918937757416
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::SphereShape",
+            "value": {
+              "Radius": 0.413,
+              "Rings": 16,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 5-5",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            0.625,
+            0.0,
+            0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.7851415502431195,
+            0.0,
+            -0.6193163537981466
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.363,
+              "MinorRadius": 0.135,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 5-6",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            0.625,
+            0.0,
+            1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.07863959852526309,
+            0.0,
+            0.9969031114124308
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.351,
+              "Height": 0.901,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 5-7",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            0.625,
+            0.0,
+            3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.6252782643017414,
+            0.0,
+            -0.7804018786444594
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.303,
+              "Height": 0.852,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 5-8",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            0.625,
+            0.0,
+            4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.28624179876460865,
+            0.0,
+            -0.958157415375992
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.715,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 5-9",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            0.625,
+            0.0,
+            5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.8370906824547679,
+            0.0,
+            -0.547064154690664
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.366,
+              "MinorRadius": 0.115,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 6-0",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            1.875,
+            0.0,
+            -5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.9876672911455612,
+            0.0,
+            -0.15656730821339854
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.523,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 6-1",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            1.875,
+            0.0,
+            -4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.26587773587214747,
+            0.0,
+            -0.9640067580507413
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.337,
+              "Height": 0.698,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 6-2",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            1.875,
+            0.0,
+            -3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.8433666776535447,
+            0.0,
+            -0.5373384845919954
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.629,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 6-3",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            1.875,
+            0.0,
+            -1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.9964269572006492,
+            0.0,
+            0.08445897799438212
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.299,
+              "Height": 0.821,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 6-4",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            1.875,
+            0.0,
+            -0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.21088356005586817,
+            0.0,
+            0.9775111887329797
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::SphereShape",
+            "value": {
+              "Radius": 0.311,
+              "Rings": 16,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 6-5",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            1.875,
+            0.0,
+            0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.9683497670184187,
+            0.0,
+            -0.24959713282683021
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.366,
+              "MinorRadius": 0.129,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 6-6",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            1.875,
+            0.0,
+            1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.565754263720734,
+            0.0,
+            -0.8245738978901831
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.5,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 6-7",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            1.875,
+            0.0,
+            3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.987584961592641,
+            0.0,
+            -0.1570857843220126
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::SphereShape",
+            "value": {
+              "Radius": 0.309,
+              "Rings": 16,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 6-8",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            1.875,
+            0.0,
+            4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.08328752748338947,
+            0.0,
+            -0.9965255580092783
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.754,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 6-9",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            1.875,
+            0.0,
+            5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.25904680328316493,
+            0.0,
+            -0.9658647698869512
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::IcosphereShape",
+            "value": {
+              "Radius": 0.378,
+              "Subdivisions": 2,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 7-0",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            3.125,
+            0.0,
+            -5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.022074947713597432,
+            0.0,
+            0.9997563186514211
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::SphereShape",
+            "value": {
+              "Radius": 0.403,
+              "Rings": 16,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 7-1",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            3.125,
+            0.0,
+            -4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.12119463901928056,
+            0.0,
+            0.9926287621628673
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.261,
+              "Height": 0.546,
+              "Segments": 20,
+              "Rings": 6,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 7-2",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            3.125,
+            0.0,
+            -3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.17679425831347642,
+            0.0,
+            0.9842478296787796
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.332,
+              "MinorRadius": 0.16,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 7-3",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            3.125,
+            0.0,
+            -1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.922777917570956,
+            0.0,
+            0.38533221360718073
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.299,
+              "Height": 0.646,
+              "Segments": 20,
+              "Rings": 6,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 7-4",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            3.125,
+            0.0,
+            -0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.5190887733216678,
+            0.0,
+            0.8547203316941783
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.343,
+              "Height": 0.759,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 7-5",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            3.125,
+            0.0,
+            0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.5608306720728962,
+            0.0,
+            0.8279305268331779
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.395,
+              "Height": 0.941,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 7-6",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            3.125,
+            0.0,
+            1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.9052374272252722,
+            0.0,
+            -0.42490610768800435
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.278,
+              "Height": 0.987,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 7-7",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            3.125,
+            0.0,
+            3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.353546478230685,
+            0.0,
+            -0.93541695929178
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.301,
+              "Height": 0.525,
+              "Segments": 20,
+              "Rings": 6,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 7-8",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            3.125,
+            0.0,
+            4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.551779108726922,
+            0.0,
+            0.8339902968095754
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.228,
+              "Height": 0.467,
+              "Segments": 20,
+              "Rings": 6,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 7-9",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            3.125,
+            0.0,
+            5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.15584762200352997,
+            0.0,
+            -0.9877811087056914
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.628,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 8-0",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            4.375,
+            0.0,
+            -5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.2352870614679218,
+            0.0,
+            -0.9719259224373997
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::ConeShape",
+            "value": {
+              "Radius": 0.413,
+              "Height": 0.642,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 8-1",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            4.375,
+            0.0,
+            -4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.010126714412376258,
+            0.0,
+            -0.999948723512966
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::IcosphereShape",
+            "value": {
+              "Radius": 0.342,
+              "Subdivisions": 2,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 8-2",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            4.375,
+            0.0,
+            -3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.07756585518688952,
+            0.0,
+            0.9969872306650304
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.305,
+              "Height": 0.998,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 8-3",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            4.375,
+            0.0,
+            -1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.861656355247281,
+            0.0,
+            0.5074921925133149
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::IcosphereShape",
+            "value": {
+              "Radius": 0.388,
+              "Subdivisions": 2,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 8-4",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            4.375,
+            0.0,
+            -0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.08554133795706412,
+            0.0,
+            0.9963346222532444
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.322,
+              "MinorRadius": 0.172,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 8-5",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            4.375,
+            0.0,
+            0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.9959608899708232,
+            0.0,
+            -0.08978811529665702
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.621,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 8-6",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            4.375,
+            0.0,
+            1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.00038206691844934747,
+            0.0,
+            0.9999999270124322
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.74,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 8-7",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            4.375,
+            0.0,
+            3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.9785991954282908,
+            0.0,
+            0.20577564167583573
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.304,
+              "MinorRadius": 0.149,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 8-8",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            4.375,
+            0.0,
+            4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.9972360593770848,
+            0.0,
+            -0.07429833025084379
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.262,
+              "Height": 0.729,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 8-9",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            4.375,
+            0.0,
+            5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.2775088899147993,
+            0.0,
+            0.9607230693692412
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CylinderShape",
+            "value": {
+              "Radius": 0.334,
+              "Height": 0.983,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 9-0",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            5.625,
+            0.0,
+            -5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.7170542164392064,
+            0.0,
+            -0.69701739625834
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::ConeShape",
+            "value": {
+              "Radius": 0.401,
+              "Height": 0.909,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 9-1",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            5.625,
+            0.0,
+            -4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.3319236703161694,
+            0.0,
+            0.943306247771021
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.543,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 9-2",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            5.625,
+            0.0,
+            -3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.5912043623018096,
+            0.0,
+            0.8065217926350847
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.282,
+              "Height": 0.449,
+              "Segments": 20,
+              "Rings": 6,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 9-3",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            5.625,
+            0.0,
+            -1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.21833467081690047,
+            0.0,
+            0.9758739526799943
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.247,
+              "Height": 0.545,
+              "Segments": 20,
+              "Rings": 6,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 9-4",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            5.625,
+            0.0,
+            -0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.37427848646732664,
+            0.0,
+            -0.9273163508575308
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::ConeShape",
+            "value": {
+              "Radius": 0.332,
+              "Height": 0.93,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 9-5",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            5.625,
+            0.0,
+            0.625
+          ],
+          "Rotation": [
+            0.0,
+            0.5825302376263447,
+            0.0,
+            -0.8128090318463461
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::IcosphereShape",
+            "value": {
+              "Radius": 0.421,
+              "Subdivisions": 2,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 9-6",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            5.625,
+            0.0,
+            1.875
+          ],
+          "Rotation": [
+            0.0,
+            0.45754431196666073,
+            0.0,
+            0.8891868209701238
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::TorusShape",
+            "value": {
+              "MajorRadius": 0.393,
+              "MinorRadius": 0.139,
+              "MajorSegments": 24,
+              "MinorSegments": 12,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 9-7",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            5.625,
+            0.0,
+            3.125
+          ],
+          "Rotation": [
+            0.0,
+            0.38257567475113285,
+            0.0,
+            -0.923924159814384
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.729,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 9-8",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            5.625,
+            0.0,
+            4.375
+          ],
+          "Rotation": [
+            0.0,
+            0.49030953726461496,
+            0.0,
+            0.8715483679448658
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::SphereShape",
+            "value": {
+              "Radius": 0.406,
+              "Rings": 16,
+              "Segments": 24,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Primitive 9-9",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            5.625,
+            0.0,
+            5.625
+          ],
+          "Rotation": [
+            0.0,
+            0.17380505639930433,
+            0.0,
+            0.9847800781748353
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.698,
+              "Material": 1003
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Light": {
+          "Type": 0,
+          "Direction": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "Color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "Intensity": 0.8
+        }
+      }
+    },
+    {
+      "name": "Light Orbit",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            3.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.7
+        }
+      }
+    },
+    {
+      "name": "Red Light",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            4.5,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Light": {
+          "Type": 1,
+          "Color": [
+            1.0,
+            0.1,
+            0.1
+          ],
+          "Intensity": 28.0,
+          "Range": 16.0
+        },
+        "::Veng::Hierarchy": {
+          "Parent": 101
+        }
+      }
+    },
+    {
+      "name": "Green Light",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -2.25,
+            0.0,
+            3.897
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Light": {
+          "Type": 1,
+          "Color": [
+            0.1,
+            1.0,
+            0.1
+          ],
+          "Intensity": 28.0,
+          "Range": 16.0
+        },
+        "::Veng::Hierarchy": {
+          "Parent": 101
+        }
+      }
+    },
+    {
+      "name": "Blue Light",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            -2.25,
+            0.0,
+            -3.897
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Light": {
+          "Type": 1,
+          "Color": [
+            0.15,
+            0.35,
+            1.0
+          ],
+          "Intensity": 28.0,
+          "Range": 16.0
+        },
+        "::Veng::Hierarchy": {
+          "Parent": 101
+        }
+      }
+    }
+  ]
+}

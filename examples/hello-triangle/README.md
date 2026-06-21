@@ -21,10 +21,13 @@ cmake --build build --target hello_triangle
 ./build/examples/hello-triangle/hello_triangle
 ```
 
-The scene geometry is a UV sphere built at runtime from a `Primitive` component and
-streamed in via `AssetManager::Build<Mesh>` — no cooked mesh is loaded to put it on screen. It
-carries the brick material instance on its submesh and is drawn through the same
-pipeline a cooked mesh would use.
+The scene is a cooked prefab (`assets/scene.prefab.json`): a 10×10 grid of random
+`Primitive` components — cubes, spheres, cylinders, cones, tori, capsules — each
+streamed in at spawn via `AssetManager::Build<Mesh>` (no cooked mesh is loaded to put
+it on screen) and carrying the brick material on its submesh. The prefab also owns the
+lighting: a weak directional light from straight above, plus red, green, and blue
+point lights parented to a `Spinner` pivot so they circle above the grid. Every
+primitive is drawn through the same pipeline a cooked mesh would use.
 
 Assets — the brick material + texture, and every shader (the material's two
 stages and the composite pass) — are authored as a JSON pack under `assets/`,
