@@ -4,12 +4,14 @@
 #include <Veng/Scene/Entity.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Reflection/Reflect.h>
+#include <Veng/Reflection/Variant.h>
 
 #include <Veng/Asset/AssetHandle.h>
 
 namespace Veng
 {
     class Mesh;
+    class Material;
 
     /// @brief Human-readable label for an entity.
     ///
@@ -63,6 +65,65 @@ namespace Veng
     {
         /// @brief The mesh this entity draws.
         AssetHandle<Mesh> Mesh;
+    };
+
+    /// @brief Cube shape recipe: the parameters of Primitives::Cube plus its material.
+    struct CubeShape
+    {
+        /// @brief Full width across each axis, in units.
+        f32 Extent = 1.0f;
+        /// @brief Material recorded on the generated submesh.
+        AssetHandle<Material> Material;
+    };
+
+    /// @brief Plane shape recipe: the parameters of Primitives::Plane plus its material.
+    struct PlaneShape
+    {
+        /// @brief Plane dimensions in the XZ axes.
+        vec2 Size = vec2(1.0f);
+        /// @brief Quad count per axis.
+        uvec2 Subdivisions = uvec2(1);
+        /// @brief Material recorded on the generated submesh.
+        AssetHandle<Material> Material;
+    };
+
+    /// @brief UV-sphere shape recipe: the parameters of Primitives::Sphere plus its material.
+    struct SphereShape
+    {
+        /// @brief Sphere radius.
+        f32 Radius = 0.5f;
+        /// @brief Latitude band count.
+        u32 Rings = 16;
+        /// @brief Longitude band count.
+        u32 Segments = 32;
+        /// @brief Material recorded on the generated submesh.
+        AssetHandle<Material> Material;
+    };
+
+    /// @brief Icosphere shape recipe: the parameters of Primitives::Icosphere plus its material.
+    struct IcosphereShape
+    {
+        /// @brief Sphere radius.
+        f32 Radius = 0.5f;
+        /// @brief Icosahedron subdivision count.
+        u32 Subdivisions = 3;
+        /// @brief Material recorded on the generated submesh.
+        AssetHandle<Material> Material;
+    };
+
+    /// @brief The tagged union of shape recipes a PrimitiveComponent can hold.
+    using PrimitiveShapeVariant = Variant<CubeShape, PlaneShape, SphereShape, IcosphereShape>;
+
+    /// @brief A procedural-mesh recipe: regenerated into the entity's MeshRenderer at spawn.
+    ///
+    /// The active alternative of Shape is the primitive kind and carries that kind's
+    /// parameters plus its material. ResolvePrimitiveMeshes turns the active shape into a
+    /// streamed Mesh and stores the handle in the entity's MeshRenderer; an empty Shape
+    /// produces no mesh.
+    struct PrimitiveComponent
+    {
+        /// @brief The active shape recipe, or empty for no mesh.
+        PrimitiveShapeVariant Shape;
     };
 
     /// @brief Selects how the deferred lighting pass attenuates a light.
@@ -127,6 +188,36 @@ VE_REFLECT_END();
 
 VE_REFLECT(::Veng::MeshRenderer, 0x3C5CB13E46E0450BULL)
 VE_FIELD(Mesh, .DisplayName = "Mesh")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::CubeShape, 0x2B758A3FE238BAA5ULL)
+VE_FIELD(Extent, .DisplayName = "Extent", .Min = 0.001)
+VE_FIELD(Material, .DisplayName = "Material")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::PlaneShape, 0xE53DEFF5662A295ULL)
+VE_FIELD(Size, .DisplayName = "Size", .Min = 0.001)
+VE_FIELD(Subdivisions, .DisplayName = "Subdivisions", .Min = 1)
+VE_FIELD(Material, .DisplayName = "Material")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::SphereShape, 0xCF4BE61837AB5179ULL)
+VE_FIELD(Radius, .DisplayName = "Radius", .Min = 0.001)
+VE_FIELD(Rings, .DisplayName = "Rings", .Min = 3)
+VE_FIELD(Segments, .DisplayName = "Segments", .Min = 3)
+VE_FIELD(Material, .DisplayName = "Material")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::IcosphereShape, 0x7D9FC0055D5978BBULL)
+VE_FIELD(Radius, .DisplayName = "Radius", .Min = 0.001)
+VE_FIELD(Subdivisions, .DisplayName = "Subdivisions", .Min = 1)
+VE_FIELD(Material, .DisplayName = "Material")
+VE_REFLECT_END();
+
+VE_VARIANT(::Veng::PrimitiveShapeVariant, 0xC64CE2B415C54D22ULL);
+
+VE_REFLECT(::Veng::PrimitiveComponent, 0x491B7EC1B0DF276BULL)
+VE_FIELD(Shape, .DisplayName = "Shape")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Light, 0xECF6442708DF7C00ULL)
