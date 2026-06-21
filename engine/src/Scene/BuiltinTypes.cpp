@@ -16,5 +16,9 @@ namespace Veng
         registry.Register<MeshRenderer>();
         registry.Register<LightType>();
         registry.Register<Light>();
+
+        // Registering PrimitiveComponent transitively registers its shape variant and
+        // the four shape alternatives through the dependency recursion.
+        registry.Register<PrimitiveComponent>();
     }
 }

@@ -94,6 +94,7 @@ namespace Veng
     VE_LEAF(vec2, 0xB9A6A5F871901160ULL, FieldClass::Vector);
     VE_LEAF(vec3, 0xA9A78263CAA293E7ULL, FieldClass::Vector);
     VE_LEAF(vec4, 0xA936BFC80085F684ULL, FieldClass::Vector);
+    VE_LEAF(uvec2, 0x2113083C89AF9C6CULL, FieldClass::Vector);
     VE_LEAF(quat, 0xFD92495C91720213ULL, FieldClass::Quaternion);
     VE_LEAF(mat4, 0x8ABB4818B9CC633EULL, FieldClass::Matrix);
     VE_LEAF(string, 0x2E46B7DE1FFC7DFCULL, FieldClass::String);

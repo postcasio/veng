@@ -298,6 +298,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/scene_broadphase.cpp
             tests/unit/reflection.cpp
             tests/unit/reflection_variant.cpp
+            tests/unit/primitive_resolve.cpp
             tests/unit/camera.cpp
             tests/unit/material_params.cpp
     )
@@ -557,6 +558,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/indirect_draw.cpp
             tests/gpu/adopt.cpp
             tests/gpu/create_async.cpp
+            tests/gpu/primitive_resolve.cpp
             tests/gpu/scene_renderer.cpp
             tests/gpu/hi_z_pyramid.cpp
             tests/gpu/occlusion_test.cpp

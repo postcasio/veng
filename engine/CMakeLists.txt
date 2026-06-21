@@ -38,6 +38,7 @@ add_library(veng SHARED
         src/Reflection/Serialize.cpp
         src/Scene/BuiltinTypes.cpp
         src/Scene/ComponentPool.cpp
+        src/Scene/PrimitiveResolve.cpp
         src/Scene/Scene.cpp
         src/Scene/SceneBroadphase.cpp
         src/Scene/Transforms.cpp
