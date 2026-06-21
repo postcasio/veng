@@ -1,5 +1,6 @@
 #include "FieldWidget.h"
 
+#include "AssetDragPayload.h"
 #include "AssetSourceIndex.h"
 #include "panels/PrefabEditContext.h"
 
@@ -90,6 +91,7 @@ namespace VengEditor
                 }
             }
 
+            bool changed = false;
             if (UI::Combo(label, index, items))
             {
                 if (index == 0)
@@ -100,9 +102,25 @@ namespace VengEditor
                 {
                     ApplyAssetPick(fieldPtr, candidates[static_cast<usize>(index) - 1]);
                 }
-                return true;
+                changed = true;
             }
-            return false;
+
+            // Accept an asset dragged from the browser when its type matches this field.
+            if (auto target = UI::DragDropTarget())
+            {
+                if (const void* payload = UI::AcceptDragDropPayload(AssetPayload))
+                {
+                    AssetDragPayload dropped{};
+                    std::memcpy(&dropped, payload, sizeof(dropped));
+                    if (dropped.Type == *assetType)
+                    {
+                        ApplyAssetPick(fieldPtr, dropped.Id);
+                        changed = true;
+                    }
+                }
+            }
+
+            return changed;
         }
 
         // Reads an Entity drop on the previous widget; returns the dropped entity or nullopt.
@@ -208,6 +226,20 @@ namespace VengEditor
 
     namespace
     {
+        // Returns the alternative's AssetHandle<Material> field, or nullptr if it has none.
+        // Every primitive shape carries one, so it is the field preserved across a type switch.
+        const FieldDescriptor* MaterialField(const TypeInfo& info)
+        {
+            for (const FieldDescriptor& field : info.Fields)
+            {
+                if (field.Type == TypeIdOf<AssetHandle<Material>>())
+                {
+                    return &field;
+                }
+            }
+            return nullptr;
+        }
+
         // Combo over the variant's alternatives (plus "(none)"); switching activates a
         // default-constructed alternative or clears to empty, then the active member's fields
         // recurse as indented rows beneath the combo. Returns true when the active alternative
@@ -245,6 +277,22 @@ namespace VengEditor
             bool changed = false;
             if (UI::Combo(label, index, items))
             {
+                // Carry the material across the switch: a default-constructed alternative has a
+                // null material, and the renderer skips a submesh that has none — so without this
+                // a type change would rebuild a mesh that renders nothing. The handle is copied
+                // out before SetActive destructs the outgoing alternative; shared scalar
+                // parameters intentionally reset to the new shape's defaults.
+                AssetHandle<Material> carried;
+                if (const void* oldActive = info.VariantActivePtrConst(fieldPtr))
+                {
+                    const TypeInfo& oldInfo = registry.Info(info.VariantActiveType(fieldPtr));
+                    if (const FieldDescriptor* matField = MaterialField(oldInfo))
+                    {
+                        carried = *reinterpret_cast<const AssetHandle<Material>*>(
+                            static_cast<const u8*>(oldActive) + matField->Offset);
+                    }
+                }
+
                 if (index == 0)
                 {
                     info.VariantClear(fieldPtr);
@@ -254,6 +302,16 @@ namespace VengEditor
                     info.VariantSetActive(fieldPtr, alternatives[static_cast<usize>(index) - 1]);
                 }
                 changed = true;
+
+                if (void* newActive = info.VariantActivePtr(fieldPtr))
+                {
+                    const TypeInfo& newInfo = registry.Info(info.VariantActiveType(fieldPtr));
+                    if (const FieldDescriptor* matField = MaterialField(newInfo))
+                    {
+                        *reinterpret_cast<AssetHandle<Material>*>(
+                            static_cast<u8*>(newActive) + matField->Offset) = std::move(carried);
+                    }
+                }
             }
 
             void* activePtr = info.VariantActivePtr(fieldPtr);

@@ -14,13 +14,18 @@ namespace VengEditor
     class AssetSourceIndex
     {
     public:
-        /// @brief One manifest entry: asset type and absolute source path.
+        /// @brief One manifest entry: asset type and source paths.
         struct Entry
         {
             /// @brief Asset type of this entry.
             Veng::AssetType Type{};
             /// @brief Absolute path to the per-asset JSON source (e.g. brick.tex.json).
             Veng::path Source;
+            /// @brief Source path as written in the manifest, relative to its directory.
+            ///
+            /// The folder structure the asset browser builds its tree from
+            /// (e.g. textures/brick_basecolor.tex.json).
+            Veng::path RelativeSource;
         };
 
         /// @brief Parses the manifest at manifestPath and returns the resulting index.
@@ -39,6 +44,12 @@ namespace VengEditor
         /// Returned by value so the caller can sort/filter without holding the index's storage.
         /// Used by the inspector's AssetHandle picker to enumerate candidates.
         [[nodiscard]] Veng::vector<Veng::AssetId> EntriesOfType(Veng::AssetType type) const;
+
+        /// @brief Invokes @p fn for every manifest entry, in unspecified order.
+        ///
+        /// The asset browser enumerates the manifest to build its source-path folder tree.
+        /// @param fn  Visitor called with each entry's id and its Entry record.
+        void ForEachEntry(const Veng::function<void(Veng::AssetId, const Entry&)>& fn) const;
 
     private:
         Veng::unordered_map<Veng::u64, Entry> m_Entries;

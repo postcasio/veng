@@ -136,6 +136,17 @@ namespace Veng::UI
     /// @return True the frame the row is clicked.
     [[nodiscard]] bool Selectable(string_view label, bool selected, bool spanAllColumns);
 
+    /// @brief Draws a selectable of a fixed size.
+    ///
+    /// The sized variant: the highlight and hit area fill the requested rectangle rather
+    /// than one text line, so a caller can overlay its own content (an icon-grid cell). A
+    /// zero component fills the available width / takes the line height, matching ImGui.
+    /// @param label     Row label and ImGui id.
+    /// @param selected  Whether the cell appears highlighted.
+    /// @param size      Hit-area size in pixels.
+    /// @return True the frame the cell is clicked.
+    [[nodiscard]] bool Selectable(string_view label, bool selected, vec2 size);
+
     /// @brief Draws preformatted text.
     /// @param text  Text to display.
     void Text(string_view text);
@@ -164,4 +175,15 @@ namespace Veng::UI
     /// @param tex   Engine wrapper around the registered descriptor set.
     /// @param size  Display size in pixels.
     void Image(const Ref<ImGuiTexture>& tex, vec2 size);
+
+    /// @brief Draws a filled, rounded badge with centered glyph text.
+    ///
+    /// A status/type chip: a rounded-rect fill in `color` with `text` centered over it in
+    /// the theme's on-accent color. With `size == {}` the badge auto-sizes to the text plus
+    /// frame padding (an inline chip); an explicit `size` draws a fixed tile (an icon-grid
+    /// glyph). Advances the cursor by the badge's size as a non-interactive layout item.
+    /// @param color  Fill color, authored sRGB (linearized for the UI pipeline).
+    /// @param text   Glyph text drawn centered over the fill.
+    /// @param size   Fixed badge size in pixels; `{}` auto-sizes to the text.
+    void Badge(string_view text, vec4 color, vec2 size = {});
 }

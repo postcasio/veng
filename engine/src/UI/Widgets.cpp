@@ -4,6 +4,8 @@
 #include <imgui.h>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <limits>
+
 namespace Veng::UI
 {
     namespace
@@ -29,45 +31,56 @@ namespace Veng::UI
             return (options.Min || options.Max) ? ImGuiSliderFlags_AlwaysClamp
                                                 : ImGuiSliderFlags_None;
         }
+
+        // A missing bound widens to the type's extreme rather than 0: a one-sided clamp
+        // (e.g. .Min = 0 with no .Max) must not collapse to the degenerate [0, 0] range,
+        // which AlwaysClamp's ClampZeroRange would otherwise pin every value to 0.
+        float FloatMin(const DragOptions& options)
+        {
+            return options.Min.value_or(std::numeric_limits<float>::lowest());
+        }
+
+        float FloatMax(const DragOptions& options)
+        {
+            return options.Max.value_or(std::numeric_limits<float>::max());
+        }
     }
 
     bool Drag(string_view label, f32& v, DragOptions options)
     {
         const string id = AsCStr(label);
-        return ImGui::DragFloat(id.c_str(), &v, options.Speed, options.Min.value_or(0.0f),
-                                options.Max.value_or(0.0f), FloatFormat(options),
-                                DragClampFlags(options));
+        return ImGui::DragFloat(id.c_str(), &v, options.Speed, FloatMin(options), FloatMax(options),
+                                FloatFormat(options), DragClampFlags(options));
     }
 
     bool Drag(string_view label, vec2& v, DragOptions options)
     {
         const string id = AsCStr(label);
-        return ImGui::DragFloat2(id.c_str(), glm::value_ptr(v), options.Speed,
-                                 options.Min.value_or(0.0f), options.Max.value_or(0.0f),
-                                 FloatFormat(options), DragClampFlags(options));
+        return ImGui::DragFloat2(id.c_str(), glm::value_ptr(v), options.Speed, FloatMin(options),
+                                 FloatMax(options), FloatFormat(options), DragClampFlags(options));
     }
 
     bool Drag(string_view label, vec3& v, DragOptions options)
     {
         const string id = AsCStr(label);
-        return ImGui::DragFloat3(id.c_str(), glm::value_ptr(v), options.Speed,
-                                 options.Min.value_or(0.0f), options.Max.value_or(0.0f),
-                                 FloatFormat(options), DragClampFlags(options));
+        return ImGui::DragFloat3(id.c_str(), glm::value_ptr(v), options.Speed, FloatMin(options),
+                                 FloatMax(options), FloatFormat(options), DragClampFlags(options));
     }
 
     bool Drag(string_view label, vec4& v, DragOptions options)
     {
         const string id = AsCStr(label);
-        return ImGui::DragFloat4(id.c_str(), glm::value_ptr(v), options.Speed,
-                                 options.Min.value_or(0.0f), options.Max.value_or(0.0f),
-                                 FloatFormat(options), DragClampFlags(options));
+        return ImGui::DragFloat4(id.c_str(), glm::value_ptr(v), options.Speed, FloatMin(options),
+                                 FloatMax(options), FloatFormat(options), DragClampFlags(options));
     }
 
     bool Drag(string_view label, i32& v, DragOptions options)
     {
         const string id = AsCStr(label);
-        const i32 min = options.Min ? static_cast<i32>(*options.Min) : 0;
-        const i32 max = options.Max ? static_cast<i32>(*options.Max) : 0;
+        const i32 min =
+            options.Min ? static_cast<i32>(*options.Min) : std::numeric_limits<i32>::min();
+        const i32 max =
+            options.Max ? static_cast<i32>(*options.Max) : std::numeric_limits<i32>::max();
         return ImGui::DragInt(id.c_str(), &v, options.Speed, min, max, IntFormat(options),
                               DragClampFlags(options));
     }
@@ -248,6 +261,12 @@ namespace Veng::UI
         return ImGui::Selectable(id.c_str(), selected, flags);
     }
 
+    bool Selectable(string_view label, bool selected, vec2 size)
+    {
+        const string id = AsCStr(label);
+        return ImGui::Selectable(id.c_str(), selected, ImGuiSelectableFlags_None, size);
+    }
+
     void Text(string_view text)
     {
         ImGui::TextUnformatted(text.data(), text.data() + text.size());
@@ -284,5 +303,37 @@ namespace Veng::UI
     void Image(const Ref<ImGuiTexture>& tex, vec2 size)
     {
         ImGui::Image(static_cast<ImTextureID>(tex->GetTextureId()), size);
+    }
+
+    void Badge(string_view text, vec4 color, vec2 size)
+    {
+        const string str = AsCStr(text);
+        const ImVec2 textSize = ImGui::CalcTextSize(str.c_str());
+        const ImGuiStyle& style = ImGui::GetStyle();
+
+        vec2 badgeSize = size;
+        if (badgeSize.x <= 0.0f)
+        {
+            badgeSize.x = textSize.x + (style.FramePadding.x * 2.0f);
+        }
+        if (badgeSize.y <= 0.0f)
+        {
+            badgeSize.y = textSize.y + (style.FramePadding.y * 2.0f);
+        }
+
+        const ImVec2 pos = ImGui::GetCursorScreenPos();
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+        // Authored colors are sRGB; linearize for the linear UI pipeline.
+        const ImU32 fillCol = ImGui::GetColorU32(SrgbToLinear(color));
+        drawList->AddRectFilled(pos, ImVec2(pos.x + badgeSize.x, pos.y + badgeSize.y), fillCol,
+                                GetTheme().FrameRounding);
+
+        const ImU32 textCol = ImGui::GetColorU32(SrgbToLinear(GetTheme().TextOnAccent));
+        const ImVec2 textPos = ImVec2(pos.x + ((badgeSize.x - textSize.x) * 0.5f),
+                                      pos.y + ((badgeSize.y - textSize.y) * 0.5f));
+        drawList->AddText(textPos, textCol, str.c_str());
+
+        ImGui::Dummy(badgeSize);
     }
 }

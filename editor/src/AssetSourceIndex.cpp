@@ -86,9 +86,11 @@ namespace VengEditor
             }
 
             const u64 id = entry["id"].get<u64>();
+            const std::string source = entry["source"].get<std::string>();
             index.m_Entries[id] = Entry{
                 .Type = *type,
-                .Source = manifestDir / entry["source"].get<std::string>(),
+                .Source = manifestDir / source,
+                .RelativeSource = path{source},
             };
         }
 
@@ -112,5 +114,13 @@ namespace VengEditor
             }
         }
         return ids;
+    }
+
+    void AssetSourceIndex::ForEachEntry(const function<void(AssetId, const Entry&)>& fn) const
+    {
+        for (const auto& [id, entry] : m_Entries)
+        {
+            fn(AssetId{id}, entry);
+        }
     }
 }

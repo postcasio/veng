@@ -19,6 +19,16 @@ namespace Veng::UI
     /// @brief Returns the space remaining in the current content region.
     [[nodiscard]] vec2 ContentRegionAvail();
 
+    /// @brief Returns the cursor position, in window-local content coordinates.
+    ///
+    /// Pairs with `SetCursorPos` to lay a later widget back over an earlier one — an
+    /// icon-grid cell overlays its badge and label inside a sized selectable's rect.
+    [[nodiscard]] vec2 CursorPos();
+
+    /// @brief Sets the cursor position, in window-local content coordinates.
+    /// @param pos  Position in the same space `CursorPos` returns.
+    void SetCursorPos(vec2 pos);
+
     /// @brief Scrolls so the current cursor position is visible.
     void ScrollToHere();
 

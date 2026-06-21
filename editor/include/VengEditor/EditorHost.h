@@ -70,6 +70,9 @@ namespace VengEditor
         /// adoption into the panel set at the next safe point in the frame.
         void OpenAssetEditor(Veng::AssetType type, Veng::AssetId id) override;
 
+        /// @brief Returns whether the editor registry has a factory for the asset type.
+        [[nodiscard]] bool HasAssetEditor(Veng::AssetType type) const override;
+
         /// @brief Cooks a source asset on demand through the injected cook backend
         /// and shadow-mounts the result so Load<T>(request.TargetId) resolves it.
         ///

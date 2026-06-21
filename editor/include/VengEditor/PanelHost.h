@@ -22,5 +22,13 @@ namespace VengEditor
         /// @param type The asset type determining which editor factory to use.
         /// @param id   The asset to open in the editor.
         virtual void OpenAssetEditor(Veng::AssetType type, Veng::AssetId id) = 0;
+
+        /// @brief Returns whether an asset type has a registered editor.
+        ///
+        /// A panel uses this to gate the double-click-to-open affordance — an asset of a
+        /// type with no editor opens nothing.
+        /// @param type The asset type to query.
+        /// @return True when a factory is registered for the type.
+        [[nodiscard]] virtual bool HasAssetEditor(Veng::AssetType type) const = 0;
     };
 }

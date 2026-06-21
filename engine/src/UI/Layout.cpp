@@ -35,6 +35,16 @@ namespace Veng::UI
         return ImGui::GetContentRegionAvail();
     }
 
+    vec2 CursorPos()
+    {
+        return ImGui::GetCursorPos();
+    }
+
+    void SetCursorPos(vec2 pos)
+    {
+        ImGui::SetCursorPos(pos);
+    }
+
     void ScrollToHere()
     {
         ImGui::SetScrollHereY(1.0f);

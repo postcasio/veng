@@ -212,6 +212,11 @@ namespace VengEditor
         }
     }
 
+    bool EditorHost::HasAssetEditor(AssetType type) const
+    {
+        return m_Registries->Editor.AssetEditorFor(type) != nullptr;
+    }
+
     void EditorHost::OnInitialize()
     {
         VE_ASSERT(GetImGuiLayer() != nullptr, "editor host requires the ImGui layer");
@@ -312,9 +317,9 @@ namespace VengEditor
                                          *GetImGuiLayer(), m_Registries->Editor, cookFor()));
         }
 
-        m_Panels.push_back(
-            {CreateUnique<AssetBrowserPanel>(ExecutableDirectory() / "sample.vengpack", *this),
-             true});
+        m_Panels.push_back({CreateUnique<AssetBrowserPanel>(
+                                ExecutableDirectory() / "sample.vengpack", *m_Sources, *this),
+                            true});
         m_Panels.push_back({CreateUnique<ConsolePanel>(), true});
 
         for (Unique<EditorPanel>& panel : m_Registries->Editor.Panels())
