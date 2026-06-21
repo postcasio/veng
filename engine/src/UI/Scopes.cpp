@@ -55,6 +55,10 @@ namespace Veng::UI
             {
                 out |= ImGuiTreeNodeFlags_OpenOnArrow;
             }
+            if ((flags & TreeFlags::AllowOverlap) != TreeFlags::None)
+            {
+                out |= ImGuiTreeNodeFlags_AllowOverlap;
+            }
             return out;
         }
 
@@ -220,6 +224,18 @@ namespace Veng::UI
     {
         const string label = AsCStr(id);
         return ScopedTable(ImGui::BeginTable(label.c_str(), columns));
+    }
+
+    ScopedTable PropertyTable(string_view id)
+    {
+        const string label = AsCStr(id);
+        const bool open = ImGui::BeginTable(label.c_str(), 2);
+        if (open)
+        {
+            ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed);
+            ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+        }
+        return ScopedTable(open);
     }
 
     void TableSetupColumn(string_view label)

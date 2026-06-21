@@ -87,6 +87,8 @@ namespace Veng::UI
         Leaf = 8,
         /// @brief Only the arrow toggles expansion; a label click is a plain selection.
         OpenOnArrow = 16,
+        /// @brief Lets a later widget overlap the node's span (a button drawn over the row).
+        AllowOverlap = 32,
     };
 
     /// @brief Bitwise OR of two `TreeFlags` values.

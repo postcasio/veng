@@ -45,6 +45,11 @@ namespace Veng::UI
         return ImGui::IsItemDeactivatedAfterEdit();
     }
 
+    bool IsItemToggledOpen()
+    {
+        return ImGui::IsItemToggledOpen();
+    }
+
     bool IsItemClicked(MouseButton button)
     {
         return ImGui::IsItemClicked(ToImGui(button));

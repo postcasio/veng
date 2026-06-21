@@ -41,6 +41,11 @@ namespace Veng::UI
     /// @brief Returns true the frame the last item was deactivated after an edit.
     [[nodiscard]] bool ItemEdited();
 
+    /// @brief Returns true the frame the last tree node's open state toggled.
+    ///
+    /// Lets a hierarchy panel tell an arrow-expand from a selection click on the same row.
+    [[nodiscard]] bool IsItemToggledOpen();
+
     /// @brief Shows a tooltip with text when the last item is hovered.
     /// @param text  Tooltip content.
     void Tooltip(string_view text);

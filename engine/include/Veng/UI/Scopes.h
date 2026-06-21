@@ -426,6 +426,15 @@ namespace Veng::UI
     /// @param columns  Number of columns.
     [[nodiscard]] ScopedTable Table(string_view id, i32 columns);
 
+    /// @brief Opens a two-column property table for aligned `label : widget` inspector rows.
+    ///
+    /// Column 0 (labels) is auto-sized to its content; column 1 (the widget) stretches to
+    /// fill the rest. Drive it with `PropertyLabel` per row, which advances the row, draws
+    /// the label in column 0, and stretches the next widget across column 1. The returned
+    /// guard calls `EndTable` when the table opened.
+    /// @param id  ImGui id string for the table.
+    [[nodiscard]] ScopedTable PropertyTable(string_view id);
+
     /// @brief Declares a column with a header label.
     /// @param label  Column header text.
     void TableSetupColumn(string_view label);
