@@ -176,6 +176,79 @@ namespace VengEditor
         }
     }
 
+    // Recurses each non-hidden field of a struct/active-alternative as an indented row;
+    // shared by the Struct and Variant cases.
+    static void DrawStructFields(void* base, const TypeInfo& info, const FieldWidgetContext& ctx)
+    {
+        UI::Indent();
+        for (const FieldDescriptor& nestedField : info.Fields)
+        {
+            if (nestedField.Hidden)
+            {
+                continue;
+            }
+            void* nestedPtr = static_cast<u8*>(base) + nestedField.Offset;
+            DrawFieldWidget(nestedPtr, nestedField, ctx);
+        }
+        UI::Unindent();
+    }
+
+    namespace
+    {
+        // Combo over the variant's alternatives (plus "(none)"); switching activates a
+        // default-constructed alternative or clears to empty, then the active member's fields
+        // recurse as indented rows beneath the combo.
+        void DrawVariant(void* fieldPtr, const FieldDescriptor& field, string_view label,
+                         const FieldWidgetContext& ctx)
+        {
+            const TypeRegistry& registry = ctx.Assets.GetTypeRegistry();
+            const TypeInfo& info = registry.Info(field.Type);
+
+            // Index 0 is "(none)" (clears the variant); index N activates alternative N-1.
+            const vector<TypeId>& alternatives = info.VariantAlternatives;
+
+            vector<string> labels;
+            labels.reserve(alternatives.size() + 1);
+            labels.emplace_back("(none)");
+            for (const TypeId altId : alternatives)
+            {
+                labels.push_back(registry.Info(altId).Name);
+            }
+
+            vector<string_view> items(labels.begin(), labels.end());
+
+            const TypeId activeType = info.VariantActiveType(fieldPtr);
+            i32 index = 0;
+            for (usize i = 0; i < alternatives.size(); ++i)
+            {
+                if (alternatives[i] == activeType)
+                {
+                    index = static_cast<i32>(i) + 1;
+                    break;
+                }
+            }
+
+            if (UI::Combo(label, index, items))
+            {
+                if (index == 0)
+                {
+                    info.VariantClear(fieldPtr);
+                }
+                else
+                {
+                    info.VariantSetActive(fieldPtr, alternatives[static_cast<usize>(index) - 1]);
+                }
+            }
+
+            void* activePtr = info.VariantActivePtr(fieldPtr);
+            if (activePtr != nullptr)
+            {
+                const TypeInfo& activeInfo = registry.Info(info.VariantActiveType(fieldPtr));
+                DrawStructFields(activePtr, activeInfo, ctx);
+            }
+        }
+    }
+
     void DrawFieldWidget(void* fieldPtr, const FieldDescriptor& field,
                          const FieldWidgetContext& ctx)
     {
@@ -208,17 +281,21 @@ namespace VengEditor
             // an outer field keeps a distinct widget id.
             auto structScope = UI::PushId(valueLabel);
             const TypeInfo& nested = ctx.Assets.GetTypeRegistry().Info(field.Type);
-            UI::Indent();
-            for (const FieldDescriptor& nestedField : nested.Fields)
+            DrawStructFields(fieldPtr, nested, ctx);
+            return;
+        }
+
+        // A variant draws an alternative-picker combo on its own row, then flattens the active
+        // alternative's fields into indented rows the same way a nested struct does.
+        if (field.Class == FieldClass::Variant)
+        {
+            UI::PropertyLabel(displayName);
+            auto variantScope = UI::PushId(valueLabel);
+            DrawVariant(fieldPtr, field, valueLabel, ctx);
+            if (!field.Tooltip.empty())
             {
-                if (nestedField.Hidden)
-                {
-                    continue;
-                }
-                void* nestedPtr = static_cast<u8*>(fieldPtr) + nestedField.Offset;
-                DrawFieldWidget(nestedPtr, nestedField, ctx);
+                UI::Tooltip(field.Tooltip);
             }
-            UI::Unindent();
             return;
         }
 
@@ -341,6 +418,7 @@ namespace VengEditor
         }
         case FieldClass::Reference:
         case FieldClass::Struct:
+        case FieldClass::Variant:
         {
             // Handled above the switch; unreachable here.
             break;
