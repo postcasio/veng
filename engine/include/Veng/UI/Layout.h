@@ -21,4 +21,34 @@ namespace Veng::UI
 
     /// @brief Scrolls so the current cursor position is visible.
     void ScrollToHere();
+
+    /// @brief Increases the cursor indentation for following widgets.
+    void Indent();
+
+    /// @brief Decreases the cursor indentation back toward the margin.
+    void Unindent();
+
+    /// @brief Reserves an empty rectangle of layout space.
+    ///
+    /// Advances the cursor without drawing, leaving a gap (a drop-target row between
+    /// tree entries, for instance).
+    /// @param size  Width and height of the reserved space in pixels.
+    void Dummy(vec2 size);
+
+    /// @brief Sets the width of the next widget.
+    ///
+    /// A negative width fills the remaining content region (e.g. a full-width search box);
+    /// a positive width is taken in pixels.
+    /// @param width  Next-item width in pixels, or negative to fill the remaining space.
+    void SetNextItemWidth(f32 width);
+
+    /// @brief Begins a property-table row: a label in column 0, the next widget in column 1.
+    ///
+    /// Call inside a `PropertyTable` scope. Advances to a new row, draws `label`
+    /// left-aligned and frame-aligned in the label column, then moves to the value column
+    /// and sets the next item to fill it — so the caller's following `UI::Drag(...)` /
+    /// `UI::InputText(...)` lands stretched in column 1:
+    /// `if (auto t = UI::PropertyTable("xform")) { UI::PropertyLabel("Position"); UI::Drag("##pos", pos); }`
+    /// @param label  Property name drawn in the label column.
+    void PropertyLabel(string_view label);
 }

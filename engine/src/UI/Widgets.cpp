@@ -89,57 +89,76 @@ namespace Veng::UI
         return ImGui::Checkbox(id.c_str(), &v);
     }
 
+    namespace
+    {
+        // Shared scratch-buffered text edit. Write-back happens only on Enter or
+        // deactivate-after-edit. A single static scratch is safe: ImGui activates at most
+        // one input item at a time, so the scratch is owned by whichever item's id matches
+        // s_ActiveId. A null hint draws a plain field; a non-null hint draws the placeholder.
+        bool InputTextImpl(string_view label, const char* hint, string& v)
+        {
+            const string id = AsCStr(label);
+
+            static vector<char> s_Scratch;
+            static ImGuiID s_ActiveId = 0;
+
+            const ImGuiID itemId = ImGui::GetID(id.c_str());
+
+            if (s_ActiveId != itemId)
+            {
+                s_Scratch.assign(v.begin(), v.end());
+                s_Scratch.push_back('\0');
+            }
+
+            const auto resizeCallback = [](ImGuiInputTextCallbackData* data) -> int
+            {
+                if (data->EventFlag == ImGuiInputTextFlags_CallbackResize)
+                {
+                    auto* scratch = static_cast<vector<char>*>(data->UserData);
+                    scratch->resize(static_cast<usize>(data->BufTextLen) + 1);
+                    data->Buf = scratch->data();
+                }
+                return 0;
+            };
+
+            const ImGuiInputTextFlags flags =
+                ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackResize;
+            const bool entered =
+                hint != nullptr
+                    ? ImGui::InputTextWithHint(id.c_str(), hint, s_Scratch.data(), s_Scratch.size(),
+                                               flags, resizeCallback, &s_Scratch)
+                    : ImGui::InputText(id.c_str(), s_Scratch.data(), s_Scratch.size(), flags,
+                                       resizeCallback, &s_Scratch);
+
+            // ImGui::IsItemActive is valid only after the widget is submitted, so the
+            // scratch's owning id is updated here, after InputText.
+            if (ImGui::IsItemActive())
+            {
+                s_ActiveId = itemId;
+            }
+            else if (s_ActiveId == itemId)
+            {
+                s_ActiveId = 0;
+            }
+
+            if (entered || ImGui::IsItemDeactivatedAfterEdit())
+            {
+                v = s_Scratch.data();
+                return true;
+            }
+            return false;
+        }
+    }
+
     bool InputText(string_view label, string& v)
     {
-        const string id = AsCStr(label);
+        return InputTextImpl(label, nullptr, v);
+    }
 
-        // Write-back happens only on Enter or deactivate-after-edit. A single
-        // static scratch is safe: ImGui activates at most one input item at a time,
-        // so the scratch is owned by whichever item's id matches s_ActiveId.
-        static vector<char> s_Scratch;
-        static ImGuiID s_ActiveId = 0;
-
-        const ImGuiID itemId = ImGui::GetID(id.c_str());
-
-        if (s_ActiveId != itemId)
-        {
-            s_Scratch.assign(v.begin(), v.end());
-            s_Scratch.push_back('\0');
-        }
-
-        const auto resizeCallback = [](ImGuiInputTextCallbackData* data) -> int
-        {
-            if (data->EventFlag == ImGuiInputTextFlags_CallbackResize)
-            {
-                auto* scratch = static_cast<vector<char>*>(data->UserData);
-                scratch->resize(static_cast<usize>(data->BufTextLen) + 1);
-                data->Buf = scratch->data();
-            }
-            return 0;
-        };
-
-        const bool entered = ImGui::InputText(id.c_str(), s_Scratch.data(), s_Scratch.size(),
-                                              ImGuiInputTextFlags_EnterReturnsTrue |
-                                                  ImGuiInputTextFlags_CallbackResize,
-                                              resizeCallback, &s_Scratch);
-
-        // ImGui::IsItemActive is valid only after the widget is submitted, so the
-        // scratch's owning id is updated here, after InputText.
-        if (ImGui::IsItemActive())
-        {
-            s_ActiveId = itemId;
-        }
-        else if (s_ActiveId == itemId)
-        {
-            s_ActiveId = 0;
-        }
-
-        if (entered || ImGui::IsItemDeactivatedAfterEdit())
-        {
-            v = s_Scratch.data();
-            return true;
-        }
-        return false;
+    bool InputTextWithHint(string_view label, string_view hint, string& v)
+    {
+        const string hintStr = AsCStr(hint);
+        return InputTextImpl(label, hintStr.c_str(), v);
     }
 
     bool Combo(string_view label, i32& index, std::span<const string_view> items)
@@ -179,10 +198,24 @@ namespace Veng::UI
         return ImGui::Button(id.c_str());
     }
 
+    bool SmallButton(string_view label)
+    {
+        const string id = AsCStr(label);
+        return ImGui::SmallButton(id.c_str());
+    }
+
     bool Selectable(string_view label, bool selected)
     {
         const string id = AsCStr(label);
         return ImGui::Selectable(id.c_str(), selected);
+    }
+
+    bool Selectable(string_view label, bool selected, bool spanAllColumns)
+    {
+        const string id = AsCStr(label);
+        const ImGuiSelectableFlags flags =
+            spanAllColumns ? ImGuiSelectableFlags_SpanAllColumns : ImGuiSelectableFlags_None;
+        return ImGui::Selectable(id.c_str(), selected, flags);
     }
 
     void Text(string_view text)
@@ -209,6 +242,12 @@ namespace Veng::UI
         // LabelText is printf-only; pass the string_view value via "%.*s".
         const string id = AsCStr(label);
         ImGui::LabelText(id.c_str(), "%.*s", static_cast<int>(value.size()), value.data());
+    }
+
+    void SeparatorText(string_view text)
+    {
+        const string label = AsCStr(text);
+        ImGui::SeparatorText(label.c_str());
     }
 
     void Image(const Ref<ImGuiTexture>& tex, vec2 size)

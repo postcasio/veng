@@ -80,6 +80,18 @@ namespace Veng::UI
     /// @return True the frame a new value was committed to `v`.
     [[nodiscard]] bool InputText(string_view label, string& v);
 
+    /// @brief Edits a string value, showing greyed hint text while empty.
+    ///
+    /// Behaves exactly like `InputText` — the same internal scratch buffer, the same
+    /// commit-on-Enter-or-deactivate semantics, the same "committed" return — but draws
+    /// `hint` placeholder text whenever the field is empty. Used for rename fields and
+    /// search boxes.
+    /// @param label  Widget label and ImGui id.
+    /// @param hint   Placeholder text shown while the field is empty.
+    /// @param v      Value written back on commit.
+    /// @return True the frame a new value was committed to `v`.
+    [[nodiscard]] bool InputTextWithHint(string_view label, string_view hint, string& v);
+
     /// @brief Dropdown that selects among a fixed list of string items.
     /// @param label  Widget label and ImGui id.
     /// @param index  Current selection index, updated in place.
@@ -92,11 +104,26 @@ namespace Veng::UI
     /// @return True the frame the button is clicked.
     [[nodiscard]] bool Button(string_view label);
 
+    /// @brief Draws a compact, frame-padding-free button for per-row controls.
+    /// @param label  Button label and ImGui id.
+    /// @return True the frame the button is clicked.
+    [[nodiscard]] bool SmallButton(string_view label);
+
     /// @brief Draws a selectable row.
     /// @param label     Row label and ImGui id.
     /// @param selected  Whether the row appears highlighted.
     /// @return True the frame the row is clicked.
     [[nodiscard]] bool Selectable(string_view label, bool selected = false);
+
+    /// @brief Draws a selectable row that can span every column of the enclosing table.
+    ///
+    /// The table-spanning variant: a selection in a multi-column tree or list row whose
+    /// highlight covers the whole row rather than the first column.
+    /// @param label           Row label and ImGui id.
+    /// @param selected        Whether the row appears highlighted.
+    /// @param spanAllColumns  When true, the row spans all table columns.
+    /// @return True the frame the row is clicked.
+    [[nodiscard]] bool Selectable(string_view label, bool selected, bool spanAllColumns);
 
     /// @brief Draws preformatted text.
     /// @param text  Text to display.
@@ -115,6 +142,12 @@ namespace Veng::UI
     /// @param label  Left-column label text.
     /// @param value  Right-column value text.
     void Label(string_view label, string_view value);
+
+    /// @brief Draws a horizontal separator with a centered text label.
+    ///
+    /// A labeled section divider, used to head a group of inspector rows.
+    /// @param text  Section label drawn within the separator.
+    void SeparatorText(string_view text);
 
     /// @brief Draws a registered ImGui texture at the specified size.
     /// @param tex   Engine wrapper around the registered descriptor set.
