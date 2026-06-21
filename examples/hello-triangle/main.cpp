@@ -214,7 +214,7 @@ protected:
     }
 
 private:
-    // Drains the task system until every PrimitiveComponent's streamed mesh is resident.
+    // Drains the task system until every Primitive's streamed mesh is resident.
     // The async build finalizes on the main-thread continuation pump, so each iteration
     // pumps it and yields the worker a moment to complete the upload.
     void WaitForPrimitiveResidency()
@@ -222,8 +222,8 @@ private:
         const auto allResident = [this]
         {
             bool resident = true;
-            m_Scene->Each<PrimitiveComponent, MeshRenderer>(
-                [&resident](Entity, PrimitiveComponent&, MeshRenderer& renderer)
+            m_Scene->Each<Primitive, MeshRenderer>(
+                [&resident](Entity, Primitive&, MeshRenderer& renderer)
                 {
                     if (!renderer.Mesh.IsLoaded())
                     {
@@ -438,7 +438,7 @@ private:
     static inline const vec3 SpinAxis = glm::normalize(vec3(0.5f, 1.0f, 0.2f));
 
     Unique<Scene> m_Scene;
-    Camera m_Camera;
+    CameraView m_Camera;
 
     f32 m_LastDelta = 0.0f;
     u32 m_FrameCount = 0;

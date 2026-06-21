@@ -43,7 +43,7 @@ TEST_CASE("module reflect: LoadModuleTypes reflects builtins + the game's Spinne
     CHECK(types.IsRegistered(TypeIdOf<Name>()));
     CHECK(types.IsRegistered(TypeIdOf<Hierarchy>()));
     CHECK(types.IsRegistered(TypeIdOf<MeshRenderer>()));
-    CHECK(types.IsRegistered(TypeIdOf<CameraComponent>()));
+    CHECK(types.IsRegistered(TypeIdOf<Camera>()));
 
     // The Light builtin, with its authored TypeId and field set — reflected from
     // the loaded module with no device.

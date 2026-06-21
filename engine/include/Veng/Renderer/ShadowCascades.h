@@ -55,7 +55,7 @@ namespace Veng::Renderer
     /// @param sceneBounds  World-space scene bound; may be empty.
     /// @param settings     Split count, lambda, and tile resolution.
     /// @return Per-cascade matrices and view-space split distances.
-    [[nodiscard]] CascadeData ComputeCascades(const Camera& camera, vec3 lightDir,
+    [[nodiscard]] CascadeData ComputeCascades(const CameraView& camera, vec3 lightDir,
                                               const AABB& sceneBounds,
                                               const CascadeSettings& settings);
 

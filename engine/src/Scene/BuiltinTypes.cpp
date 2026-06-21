@@ -12,13 +12,13 @@ namespace Veng
         registry.Register<Name>();
         registry.Register<Transform>();
         registry.Register<Hierarchy>();
-        registry.Register<CameraComponent>();
+        registry.Register<Camera>();
         registry.Register<MeshRenderer>();
         registry.Register<LightType>();
         registry.Register<Light>();
 
-        // Registering PrimitiveComponent transitively registers its shape variant and
-        // the four shape alternatives through the dependency recursion.
-        registry.Register<PrimitiveComponent>();
+        // Registering Primitive transitively registers its shape variant and the shape
+        // alternatives through the dependency recursion.
+        registry.Register<Primitive>();
     }
 }

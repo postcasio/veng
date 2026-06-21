@@ -62,7 +62,7 @@ namespace VengEditor
         PrefabEditContext& m_Ctx;
 
         Veng::Unique<Veng::Renderer::SceneRenderer> m_SceneRenderer;
-        Veng::Camera m_Camera;
+        Veng::CameraView m_Camera;
 
         /// @brief Orbit camera state about m_Target.
         Veng::f32 m_Yaw = 0.6f;

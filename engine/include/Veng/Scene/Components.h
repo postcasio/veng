@@ -167,7 +167,7 @@ namespace Veng
         AssetHandle<Material> Material;
     };
 
-    /// @brief The tagged union of shape recipes a PrimitiveComponent can hold.
+    /// @brief The tagged union of shape recipes a Primitive can hold.
     using PrimitiveShapeVariant = Variant<CubeShape, PlaneShape, SphereShape, IcosphereShape,
                                           CylinderShape, ConeShape, TorusShape, CapsuleShape>;
 
@@ -177,13 +177,13 @@ namespace Veng
     /// parameters plus its material. A registered resolver turns the active shape into a
     /// streamed Mesh at spawn/edit and stores the handle in the entity's MeshRenderer; an
     /// empty Shape produces no mesh.
-    struct PrimitiveComponent
+    struct Primitive
     {
         /// @brief The active shape recipe, or empty for no mesh.
         PrimitiveShapeVariant Shape;
     };
 
-    /// @brief Resolver for PrimitiveComponent: builds the active shape's mesh and points the
+    /// @brief Resolver for Primitive: builds the active shape's mesh and points the
     ///        entity's MeshRenderer at it.
     ///
     /// Builds the active shape through CreatePrimitiveMesh, adding a MeshRenderer when the
@@ -193,8 +193,7 @@ namespace Veng
     /// @param scene      The scene holding the entity.
     /// @param entity     The entity whose MeshRenderer receives the mesh.
     /// @param manager    The asset manager the generated mesh streams through.
-    void ResolvePrimitiveComponent(PrimitiveComponent& primitive, Scene& scene, Entity entity,
-                                   AssetManager& manager);
+    void ResolvePrimitive(Primitive& primitive, Scene& scene, Entity entity, AssetManager& manager);
 
     /// @brief Selects how the deferred lighting pass attenuates a light.
     ///
@@ -316,11 +315,11 @@ VE_REFLECT_END();
 
 VE_VARIANT(::Veng::PrimitiveShapeVariant, 0xC64CE2B415C54D22ULL);
 
-VE_REFLECT(::Veng::PrimitiveComponent, 0x491B7EC1B0DF276BULL)
+VE_REFLECT(::Veng::Primitive, 0x491B7EC1B0DF276BULL)
 VE_FIELD(Shape, .DisplayName = "Shape")
 VE_REFLECT_END();
 
-VE_RESOLVE(::Veng::PrimitiveComponent, ::Veng::ResolvePrimitiveComponent);
+VE_RESOLVE(::Veng::Primitive, ::Veng::ResolvePrimitive);
 
 VE_REFLECT(::Veng::Light, 0xECF6442708DF7C00ULL)
 VE_FIELD(Type, .DisplayName = "Type")

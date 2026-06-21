@@ -125,20 +125,20 @@ TEST_CASE("BuildShapeMeshData(Capsule) matches Primitives::Capsule")
     CHECK(built->Indices.size() == expected.Indices.size());
 }
 
-TEST_CASE("PrimitiveComponent round-trips its active shape through reflection")
+TEST_CASE("Primitive round-trips its active shape through reflection")
 {
     TypeRegistry registry;
-    registry.Register<PrimitiveComponent>();
-    const TypeInfo& info = registry.Info(TypeIdOf<PrimitiveComponent>());
+    registry.Register<Primitive>();
+    const TypeInfo& info = registry.Info(TypeIdOf<Primitive>());
 
-    PrimitiveComponent src;
+    Primitive src;
     *static_cast<SphereShape*>(src.Shape.SetActive(TypeIdOf<SphereShape>())) =
         SphereShape{.Radius = 1.5f, .Rings = 10, .Segments = 20};
 
     vector<u8> bytes;
     WriteFields(bytes, &src, info, registry);
 
-    PrimitiveComponent dst;
+    Primitive dst;
     REQUIRE(ReadFields(bytes, &dst, info, registry));
 
     REQUIRE(dst.Shape.ActiveType() == TypeIdOf<SphereShape>());

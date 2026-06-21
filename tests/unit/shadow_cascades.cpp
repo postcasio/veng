@@ -18,9 +18,9 @@ using namespace Veng::Renderer;
 
 namespace
 {
-    Camera MakeTestCamera(f32 near = 0.1f, f32 far = 100.0f)
+    CameraView MakeTestCamera(f32 near = 0.1f, f32 far = 100.0f)
     {
-        Camera camera;
+        CameraView camera;
         camera.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, near, far);
         camera.SetView(vec3(0.0f, 2.0f, 10.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
         return camera;
@@ -44,7 +44,7 @@ namespace
 
 TEST_CASE("ComputeCascades: SplitFar is strictly increasing and ends at far")
 {
-    const Camera camera = MakeTestCamera(0.1f, 100.0f);
+    const CameraView camera = MakeTestCamera(0.1f, 100.0f);
     const CascadeData data =
         ComputeCascades(camera, vec3(0.3f, -1.0f, 0.2f), AABB::Empty(), CascadeSettings{});
 
@@ -60,7 +60,7 @@ TEST_CASE("ComputeCascades: SplitFar is strictly increasing and ends at far")
 
 TEST_CASE("ComputeCascades: Count clamps to [1, MaxCascades]")
 {
-    const Camera camera = MakeTestCamera();
+    const CameraView camera = MakeTestCamera();
 
     const CascadeData zero = ComputeCascades(camera, vec3(0.0f, -1.0f, 0.0f), AABB::Empty(),
                                              CascadeSettings{.Count = 0});
@@ -73,7 +73,7 @@ TEST_CASE("ComputeCascades: Count clamps to [1, MaxCascades]")
 
 TEST_CASE("ComputeCascades: Lambda endpoints reproduce uniform and logarithmic splits")
 {
-    const Camera camera = MakeTestCamera(0.1f, 100.0f);
+    const CameraView camera = MakeTestCamera(0.1f, 100.0f);
     const f32 near = camera.GetNear();
     const f32 far = camera.GetFar();
     const u32 count = 4;
@@ -98,7 +98,7 @@ TEST_CASE("ComputeCascades: Lambda endpoints reproduce uniform and logarithmic s
 
 TEST_CASE("ComputeCascades: interior slice points project inside their cascade")
 {
-    const Camera camera = MakeTestCamera(0.1f, 100.0f);
+    const CameraView camera = MakeTestCamera(0.1f, 100.0f);
     const f32 near = camera.GetNear();
     const f32 far = camera.GetFar();
     const CascadeData data =
@@ -142,7 +142,7 @@ TEST_CASE("ComputeCascades: interior slice points project inside their cascade")
 
 TEST_CASE("ComputeCascades: straight-down light yields finite matrices")
 {
-    const Camera camera = MakeTestCamera();
+    const CameraView camera = MakeTestCamera();
     const CascadeData data =
         ComputeCascades(camera, vec3(0.0f, -1.0f, 0.0f), AABB::Empty(), CascadeSettings{});
 
@@ -156,11 +156,11 @@ TEST_CASE("ComputeCascades: cascade extent is rotation-invariant")
 {
     // Two cameras at the same position, different yaw. The bounding-sphere fit
     // makes each cascade's extent (sphere diameter) independent of orientation.
-    Camera a;
+    CameraView a;
     a.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 100.0f);
     a.SetView(vec3(0.0f, 2.0f, 10.0f), vec3(0.0f, 2.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
 
-    Camera b;
+    CameraView b;
     b.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 100.0f);
     b.SetView(vec3(0.0f, 2.0f, 10.0f), vec3(5.0f, 2.0f, 5.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -185,14 +185,14 @@ TEST_CASE("ComputeCascades: sub-texel camera translation yields a stable snapped
     const vec3 lightDir(0.3f, -1.0f, 0.2f);
     const CascadeSettings settings{.Count = 4, .Lambda = 0.85f, .Resolution = 1024};
 
-    Camera a;
+    CameraView a;
     a.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 100.0f);
     a.SetView(vec3(0.0f, 2.0f, 10.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     // Translate the camera by a tiny amount — well under a texel for the near
     // cascade — and re-fit. The snapped light-space box (its XY scale) should be
     // identical within a tight epsilon.
-    Camera b;
+    CameraView b;
     b.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 100.0f);
     b.SetView(vec3(0.0001f, 2.0f, 10.0001f), vec3(0.0001f, 0.0f, 0.0001f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -212,7 +212,7 @@ TEST_CASE("ComputeCascades: sub-texel camera translation yields a stable snapped
 
 TEST_CASE("ComputeCascades: scene bound extends the near plane, leaving XY untouched")
 {
-    const Camera camera = MakeTestCamera(0.1f, 100.0f);
+    const CameraView camera = MakeTestCamera(0.1f, 100.0f);
     const vec3 lightDir(0.3f, -1.0f, 0.2f);
     const CascadeSettings settings{};
 

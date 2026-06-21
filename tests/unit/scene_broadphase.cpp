@@ -83,9 +83,9 @@ namespace
         return ids; // already ascending — i is monotonic
     }
 
-    Camera MakeCameraAt(const vec3& eye, const vec3& target)
+    CameraView MakeCameraAt(const vec3& eye, const vec3& target)
     {
-        Camera camera;
+        CameraView camera;
         camera.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.5f, 500.0f);
         camera.SetView(eye, target, vec3(0.0f, 1.0f, 0.0f));
         return camera;

@@ -36,7 +36,7 @@ namespace
 
 TEST_CASE("SetPerspective flips Y for Vulkan clip space and carries near/far")
 {
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.25f, 250.0f);
 
     // glm::perspective yields a positive [1][1]; the engine negates it so clip
@@ -51,7 +51,7 @@ TEST_CASE("SetPerspective flips Y for Vulkan clip space and carries near/far")
 
 TEST_CASE("Y-flip maps a world-up point to negative clip Y")
 {
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(90.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3{0.0f}, vec3{0.0f, 0.0f, -1.0f}, vec3{0.0f, 1.0f, 0.0f});
 
@@ -69,7 +69,7 @@ TEST_CASE("Y-flip maps a world-up point to negative clip Y")
 
 TEST_CASE("SetView places the camera; GetPosition recovers the eye")
 {
-    Camera camera;
+    CameraView camera;
     const vec3 eye{3.0f, 4.0f, 5.0f};
     camera.SetView(eye, vec3{0.0f}, vec3{0.0f, 1.0f, 0.0f});
 
@@ -82,7 +82,7 @@ TEST_CASE("SetViewFromWorld is the world matrix's inverse and recovers position"
     const mat4 world = glm::translate(mat4{1.0f}, eye) *
                        glm::rotate(mat4{1.0f}, glm::radians(35.0f), vec3{0.0f, 1.0f, 0.0f});
 
-    Camera camera;
+    CameraView camera;
     camera.SetViewFromWorld(world);
 
     CHECK(MatrixApprox(camera.View(), glm::inverse(world)));
@@ -92,16 +92,16 @@ TEST_CASE("SetViewFromWorld is the world matrix's inverse and recovers position"
 
 TEST_CASE("ViewProjection composes Projection * View")
 {
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(50.0f), 4.0f / 3.0f, 0.1f, 80.0f);
     camera.SetView(vec3{1.0f, 2.0f, 6.0f}, vec3{0.0f}, vec3{0.0f, 1.0f, 0.0f});
 
     CHECK(MatrixApprox(camera.ViewProjection(), camera.Projection() * camera.View()));
 }
 
-TEST_CASE("MakeCamera composes a CameraComponent, aspect, and world matrix")
+TEST_CASE("MakeCameraView composes a Camera component, aspect, and world matrix")
 {
-    CameraComponent component;
+    Camera component;
     component.FovY = glm::radians(70.0f);
     component.Near = 0.2f;
     component.Far = 120.0f;
@@ -110,9 +110,9 @@ TEST_CASE("MakeCamera composes a CameraComponent, aspect, and world matrix")
     const vec3 eye{0.0f, 3.0f, 9.0f};
     const mat4 world = glm::translate(mat4{1.0f}, eye);
 
-    const Camera made = MakeCamera(component, aspect, world);
+    const CameraView made = MakeCameraView(component, aspect, world);
 
-    Camera expected;
+    CameraView expected;
     expected.SetPerspective(component.FovY, aspect, component.Near, component.Far);
     expected.SetViewFromWorld(world);
 

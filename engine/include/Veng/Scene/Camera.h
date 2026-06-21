@@ -8,10 +8,13 @@ namespace Veng
 {
     /// @brief Plain CPU value type that builds the view and projection matrices a SceneView carries.
     ///
-    /// Pure math, no backend handles. Projection follows the engine's Vulkan clip
-    /// conventions: a column-major GLM perspective with Y flipped (Vulkan clip space
-    /// has Y pointing down). Matrices are recomputed on demand from stored parameters.
-    class Camera
+    /// The render-ready view-projection the renderer consumes through SceneView, the
+    /// resolved side of the recipe→resolved pairing (a Camera component produces a
+    /// CameraView, as a Primitive produces a Mesh). Pure math, no backend handles.
+    /// Projection follows the engine's Vulkan clip conventions: a column-major GLM
+    /// perspective with Y flipped (Vulkan clip space has Y pointing down). Matrices are
+    /// recomputed on demand from stored parameters.
+    class CameraView
     {
     public:
         /// @brief Sets a perspective projection.
@@ -68,7 +71,7 @@ namespace Veng
     };
 
     /// @brief Camera component for an entity whose view derives from its world transform.
-    struct CameraComponent
+    struct Camera
     {
         /// @brief Vertical field of view in radians.
         f32 FovY = glm::radians(60.0f);
@@ -78,21 +81,21 @@ namespace Veng
         f32 Far = 100.0f;
     };
 
-    /// @brief Builds a Camera from a CameraComponent, an aspect ratio, and the camera entity's world matrix.
+    /// @brief Builds a CameraView from a Camera component, an aspect ratio, and the camera entity's world matrix.
     /// @param camera  The component supplying FovY/Near/Far.
     /// @param aspect  Viewport width divided by height.
     /// @param world   The camera entity's world matrix (from WorldMatrix in Transforms.h).
-    [[nodiscard]] inline Camera MakeCamera(const CameraComponent& camera, f32 aspect,
-                                           const mat4& world)
+    [[nodiscard]] inline CameraView MakeCameraView(const Camera& camera, f32 aspect,
+                                                   const mat4& world)
     {
-        Camera result;
+        CameraView result;
         result.SetPerspective(camera.FovY, aspect, camera.Near, camera.Far);
         result.SetViewFromWorld(world);
         return result;
     }
 }
 
-VE_REFLECT(::Veng::CameraComponent, 0x6598EF5F5C0A7B10ULL)
+VE_REFLECT(::Veng::Camera, 0x6598EF5F5C0A7B10ULL)
 VE_FIELD(FovY, .DisplayName = "Field of View", .Min = 0.01)
 VE_FIELD(Near, .DisplayName = "Near", .Min = 0.001)
 VE_FIELD(Far, .DisplayName = "Far")

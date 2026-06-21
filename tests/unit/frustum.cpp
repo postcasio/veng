@@ -1,6 +1,6 @@
 // Frustum extraction + AABB intersection: pure CPU math, no Context, no Vulkan
 // symbol touched. Pins the Gribb-Hartmann extraction against the engine's real
-// Y-flipped Camera::ViewProjection() (Vulkan ZO, not a bare glm::perspective),
+// Y-flipped CameraView::ViewProjection() (Vulkan ZO, not a bare glm::perspective),
 // the ZO near-plane discriminator that separates the Vulkan form from the GL
 // form, the conservative p-vertex AABB test, and ortho extraction.
 
@@ -41,9 +41,9 @@ namespace
     // The engine's real camera: a Y-flipped Vulkan perspective looking down -Z
     // from the origin. The test pins extraction against this, not a bare
     // glm::perspective, so a Y-flip or ZO transcription slip surfaces here.
-    Camera MakeTestCamera()
+    CameraView MakeTestCamera()
     {
-        Camera camera;
+        CameraView camera;
         camera.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 1.0f, 100.0f);
         camera.SetView(vec3(0.0f), vec3(0.0f, 0.0f, -1.0f), vec3(0.0f, 1.0f, 0.0f));
         return camera;
@@ -52,7 +52,7 @@ namespace
 
 TEST_CASE("FromViewProjection yields inward normals against the Y-flipped camera")
 {
-    const Camera camera = MakeTestCamera();
+    const CameraView camera = MakeTestCamera();
     const Frustum frustum = Frustum::FromViewProjection(camera.ViewProjection());
 
     // A point dead-center in the view (on the -Z axis, between near and far) is
@@ -75,7 +75,7 @@ TEST_CASE("FromViewProjection yields inward normals against the Y-flipped camera
 
 TEST_CASE("The ZO near plane is the Vulkan/GL discriminator")
 {
-    const Camera camera = MakeTestCamera();
+    const CameraView camera = MakeTestCamera();
     const mat4 viewProj = camera.ViewProjection();
     const Frustum frustum = Frustum::FromViewProjection(viewProj);
 
@@ -99,7 +99,7 @@ TEST_CASE("The ZO near plane is the Vulkan/GL discriminator")
 
 TEST_CASE("Intersects: box wholly inside, wholly outside each plane, straddling")
 {
-    const Camera camera = MakeTestCamera();
+    const CameraView camera = MakeTestCamera();
     const Frustum frustum = Frustum::FromViewProjection(camera.ViewProjection());
 
     // Wholly inside.
@@ -121,7 +121,7 @@ TEST_CASE("Intersects: box wholly inside, wholly outside each plane, straddling"
 
 TEST_CASE("Intersects is conservative — no false cull near the frustum boundary")
 {
-    const Camera camera = MakeTestCamera();
+    const CameraView camera = MakeTestCamera();
     const Frustum frustum = Frustum::FromViewProjection(camera.ViewProjection());
 
     // Sweep boxes across a slab of the view volume. Any box that contains a point

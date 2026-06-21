@@ -1,4 +1,4 @@
-// The PrimitiveComponent resolver end to end: ResolveComponents builds the active
+// The Primitive resolver end to end: ResolveComponents builds the active
 // shape into a streamed Mesh through CreatePrimitiveMesh and stores it in the entity's
 // MeshRenderer. Covers residency after pumping, that identical shapes resolve to
 // distinct meshes (no dedup), re-resolution swapping the handle, and an empty variant
@@ -35,7 +35,7 @@ namespace
     {
         const Entity entity = scene.CreateEntity();
         scene.Add<Transform>(entity);
-        scene.Add<PrimitiveComponent>(entity).Shape = shape;
+        scene.Add<Primitive>(entity).Shape = shape;
         return entity;
     }
 
@@ -135,7 +135,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "Re-resolving a changed shape swaps th
     REQUIRE(firstHandle.IsLoaded());
     const AABB firstBounds = firstHandle->GetBounds();
 
-    scene->Get<PrimitiveComponent>(entity).Shape = CubeVariant(2.0f);
+    scene->Get<Primitive>(entity).Shape = CubeVariant(2.0f);
     ResolveComponents(*scene, entity, assets);
     PumpUntilResident(Tasks, assets);
 

@@ -88,7 +88,7 @@ namespace VengEditor
         /// @brief SceneRenderer sized to the preview extent.
         Veng::Unique<Veng::Renderer::SceneRenderer> m_SceneRenderer;
         /// @brief Preview camera (fixed perspective, updated on Resize).
-        Veng::Camera m_Camera;
+        Veng::CameraView m_Camera;
 
         /// @brief Owned sphere mesh, kept resident for the renderer's lifetime.
         Veng::Ref<Veng::Mesh> m_Sphere;

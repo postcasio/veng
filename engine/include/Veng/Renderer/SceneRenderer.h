@@ -268,7 +268,7 @@ namespace Veng::Renderer
         /// @brief The scene to render.
         const Scene& World;
         /// @brief The viewpoint to render from.
-        const Camera& Camera;
+        const CameraView& Camera;
         /// @brief Frame delta time in seconds.
         f32 Delta = 0.0f;
 

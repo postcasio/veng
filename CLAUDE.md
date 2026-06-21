@@ -249,6 +249,13 @@ The **only** prefixes allowed are *scope* prefixes, which encode storage/linkage
 not type: `m_` for members, `g_` for globals, `s_` for file-statics. These are
 deliberate house style — keep them.
 
+**A component is named as a bare noun**, not suffixed with its kind: `Transform`,
+`Light`, `Camera`, `Primitive` — never `TransformComponent` / `PrimitiveComponent`.
+`Component` is a kind tag, and the type system already says it is a component; the name
+says *what* it is. When a value type would own the bare name, **the value type takes the
+precise role-name** so the component keeps the natural noun — the render-ready
+view-projection is `CameraView`, leaving `Camera` for the component.
+
 The sole exception is **the Vulkan API itself**: vulkan.hpp struct fields and
 callback parameters (`pNext`, `pWaitSemaphores`, `pUserData`, …) carry upstream
 Hungarian we don't control. Never rename those — match the API as given.

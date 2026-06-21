@@ -186,7 +186,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Unique<Scene> scene = Scene::Create(Types);
     const Ref<Mesh> cube = PopulateCubeScene(Context, assets, *scene);
 
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(45.0f),
                           static_cast<f32>(initialExtent.x) / static_cast<f32>(initialExtent.y),
                           0.1f, 100.0f);
@@ -311,7 +311,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Intensity = 1.0f,
     };
 
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -438,7 +438,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const Ref<Mesh> cube = Mesh::Create(Context, Primitives::Cube(1.0f), "Cull Cube");
 
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 0.0f, 6.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -615,7 +615,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
         // A camera looking forward along the ground; the high caster is above the
         // frustum's top plane (off-screen) but on the light-ward side.
-        Camera shadowCamera;
+        CameraView shadowCamera;
         shadowCamera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
         shadowCamera.SetView(vec3(0.0f, 1.0f, 8.0f), vec3(0.0f, 0.0f, -4.0f),
                              vec3(0.0f, 1.0f, 0.0f));
@@ -676,7 +676,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         scene->Add<MeshRenderer>(groundEntity).Mesh = assets.Adopt(ground);
         const Entity farEntity = AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.5f, -55.0f));
 
-        Camera grazing;
+        CameraView grazing;
         grazing.SetPerspective(glm::radians(55.0f), 1.0f, 0.1f, 100.0f);
         grazing.SetView(vec3(0.0f, 1.2f, 4.0f), vec3(0.0f, 0.0f, -40.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -740,7 +740,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {.Mode = DebugView::Albedo, .FrustumCull = true},
     });
 
-    auto Render = [&](const Camera& camera)
+    auto Render = [&](const CameraView& camera)
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -754,7 +754,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // count is fixed at the mesh's submesh count.
     SUBCASE("the camera frames the near submesh — one of two draws")
     {
-        Camera camera;
+        CameraView camera;
         camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
         camera.SetView(vec3(0.0f, 0.0f, 6.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -767,7 +767,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         // Pull the eye far back along +Z and widen the FOV so both well-separated
         // submeshes fall inside the frustum.
-        Camera camera;
+        CameraView camera;
         camera.SetPerspective(glm::radians(100.0f), 1.0f, 0.1f, 5000.0f);
         camera.SetView(vec3(500.0f, 0.0f, 1200.0f), vec3(500.0f, 0.0f, 0.0f),
                        vec3(0.0f, 1.0f, 0.0f));
@@ -859,7 +859,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Transform>(entity);
     scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
 
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -990,7 +990,7 @@ namespace
 
     // Renders a renderer once over the scene/camera and downloads its RGBA16F output.
     vector<u8> RenderOutput(Context& context, SceneRenderer& renderer, const Scene& scene,
-                            const Camera& camera)
+                            const CameraView& camera)
     {
         context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -1039,12 +1039,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "scene renderer: two renderers (differ
     constexpr uvec2 extentA{96, 96};
     constexpr uvec2 extentB{64, 48};
 
-    Camera cameraA;
+    CameraView cameraA;
     cameraA.SetPerspective(glm::radians(45.0f), static_cast<f32>(extentA.x) / extentA.y, 0.1f,
                            100.0f);
     cameraA.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
-    Camera cameraB;
+    CameraView cameraB;
     cameraB.SetPerspective(glm::radians(45.0f), static_cast<f32>(extentB.x) / extentB.y, 0.1f,
                            100.0f);
     cameraB.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
@@ -1138,7 +1138,7 @@ TEST_CASE_FIXTURE(
 
     constexpr uvec2 extent{128, 128};
 
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -1254,7 +1254,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     constexpr uvec2 extent{128, 128};
 
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -1319,7 +1319,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     constexpr uvec2 extent{128, 128};
 
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -1386,7 +1386,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     constexpr uvec2 extent{128, 128};
 
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -1494,7 +1494,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     constexpr uvec2 extent{128, 128};
 
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -1626,7 +1626,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // Look down at the plane from above-front, so the plane fills the frame and the
     // shadow falls near the image center.
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 5.0f, 5.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -1737,7 +1737,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // Look down at the contact from a shallow angle so the crease around the
     // sphere's base fills a band of the frame.
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 1.6f, 3.2f), vec3(0.0f, 0.4f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -1842,7 +1842,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // An oblique top-front view so the plane fills the frame and the cast shadow
     // sweeps across it as the light tilts.
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 5.0f, 5.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -2000,7 +2000,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // 0: ~2.3, below the ~4.2 cascade-0 split) and the frame recedes toward the
     // horizon (large view-depth → a higher cascade) above it. With near 0.1 / far 100
     // the default-count splits are ≈ 4.2 / 10.2 / 26.4 / 100.
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(55.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 1.2f, 4.0f), vec3(0.0f, 0.0f, -40.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -2133,7 +2133,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     constexpr uvec2 extent{128, 128};
 
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 4.0f, 5.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -2254,7 +2254,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     constexpr uvec2 extent{96, 96};
 
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 2.0f, 6.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -2493,7 +2493,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // A top-down-ish view so the floor fills the frame: +X is image-right, the
     // occluder's shadow falls on the image-right half, an unoccluded patch on the left.
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 9.0f, 0.01f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f));
 
@@ -2613,7 +2613,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     constexpr uvec2 extent{128, 128};
 
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 9.0f, 0.01f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f));
 
@@ -2748,7 +2748,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     constexpr uvec2 extent{128, 128};
 
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 9.0f, 0.01f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f));
 
@@ -2967,7 +2967,7 @@ TEST_CASE_FIXTURE(
 
     constexpr uvec2 extent{128, 128};
 
-    auto RenderGpu = [&](SceneRenderer& renderer, const Scene& scene, const Camera& camera)
+    auto RenderGpu = [&](SceneRenderer& renderer, const Scene& scene, const CameraView& camera)
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -2985,7 +2985,7 @@ TEST_CASE_FIXTURE(
         AddCubeAt(*scene, assets, cube, vec3(2.0f, 0.0f, 0.0f));    // in view
         AddCubeAt(*scene, assets, cube, vec3(1000.0f, 0.0f, 0.0f)); // off-frustum
 
-        Camera camera;
+        CameraView camera;
         camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
         camera.SetView(vec3(0.0f, 0.0f, 8.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
@@ -3044,7 +3044,7 @@ TEST_CASE_FIXTURE(
         const Entity hiddenEntity = AddCubeAt(*scene, assets, cube, vec3(0.0f, 0.0f, -20.0f));
         (void)hiddenEntity;
 
-        Camera camera;
+        CameraView camera;
         camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
         camera.SetView(vec3(0.0f, 0.0f, 12.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
 

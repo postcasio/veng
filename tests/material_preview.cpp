@@ -152,7 +152,7 @@ int main()
             .Intensity = 1.5f,
         };
 
-        Camera viewportCamera;
+        CameraView viewportCamera;
         viewportCamera.SetPerspective(glm::radians(45.0f),
                                       static_cast<f32>(viewportExtent.x) / viewportExtent.y, 0.1f,
                                       100.0f);

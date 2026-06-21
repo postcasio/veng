@@ -127,9 +127,9 @@ namespace
         CHECK(reached == all); // each leaf exactly once — no dup, no drop
     }
 
-    Camera MakeCameraAt(const vec3& eye, const vec3& target)
+    CameraView MakeCameraAt(const vec3& eye, const vec3& target)
     {
-        Camera camera;
+        CameraView camera;
         camera.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.5f, 500.0f);
         camera.SetView(eye, target, vec3(0.0f, 1.0f, 0.0f));
         return camera;
@@ -166,7 +166,7 @@ TEST_CASE("BVH equivalence: Query == linear tight scan over randomized builds an
         // Degenerate: a razor-thin perspective and an enormous one.
         frustums.push_back(Frustum::FromViewProjection(
             MakeCameraAt(vec3(0.0f, 0.0f, 60.0f), vec3(0.0f)).ViewProjection()));
-        Camera narrow;
+        CameraView narrow;
         narrow.SetPerspective(glm::radians(2.0f), 1.0f, 0.5f, 500.0f);
         narrow.SetView(vec3(0.0f, 0.0f, 80.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
         frustums.push_back(Frustum::FromViewProjection(narrow.ViewProjection()));

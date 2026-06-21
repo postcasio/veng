@@ -108,8 +108,7 @@ namespace Veng
             Mesh::CreateAsync(manager.GetContext(), manager.GetTasks(), std::move(*data), name));
     }
 
-    void ResolvePrimitiveComponent(PrimitiveComponent& primitive, Scene& scene, Entity entity,
-                                   AssetManager& manager)
+    void ResolvePrimitive(Primitive& primitive, Scene& scene, Entity entity, AssetManager& manager)
     {
         // An empty variant has no shape to build; leave the renderer untouched.
         if (primitive.Shape.ActiveType() == InvalidTypeId)

@@ -192,7 +192,7 @@ still an `Import`ed, graph-declared resource (the lighting pass's `.Sample` driv
 graph-derived `DepthAttachment → ShaderReadOnly` barrier); only its *binding* sits off
 bindless.
 
-The per-frame `SceneView { const Scene& World; const Camera& Camera; Light Light;
+The per-frame `SceneView { const Scene& World; const CameraView& Camera; Light Light;
 f32 Delta; }` reaches pass callbacks through an **opaque `void* userData`** channel
 on `RenderGraph::PassContext` / `CompiledGraph::Execute` — so `RenderGraph` stays
 scene-agnostic. A `ScenePass` reads it back through a typed `ScenePassContext`
@@ -500,14 +500,14 @@ smoke render use.
   wraps its `Ref<Mesh>` in an (id-less) `AssetHandle<Mesh>` so it is equally usable
   anywhere a cooked handle is — e.g. a `MeshRenderer`.
 - **A primitive is also a persistable, prefab-authored component.** A
-  `PrimitiveComponent` (`Veng/Scene/Components.h`) stores the *recipe* of a procedural
+  `Primitive` (`Veng/Scene/Components.h`) stores the *recipe* of a procedural
   mesh — a `PrimitiveShapeVariant` (`Variant<CubeShape, PlaneShape, SphereShape,
   IcosphereShape>`, each alternative carrying that shape's parameters plus an
   `AssetHandle<Material>`) — so a prefab persists "icosphere, radius 0.8, 4
   subdivisions, brick material" rather than an unaddressable runtime handle. The
   recipe cooks and loads through the ordinary prefab path; the embedded material in the
   active alternative resolves as an ordinary load-time dependency. The recipe becomes a
-  renderable mesh **automatically at spawn**: `PrimitiveComponent` declares a
+  renderable mesh **automatically at spawn**: `Primitive` declares a
   spawn-resolve thunk (`VE_RESOLVE` in `Veng/Scene/Components.h`, the resolver body in
   `Veng/Scene/Resolve.{h,cpp}`), and `Prefab::SpawnInto` fires it after populating the
   component. The resolver calls `CreatePrimitiveMesh(AssetManager&, const
@@ -557,7 +557,7 @@ smoke render use.
   component after the spawn populates the subtree, and the public
   `ResolveComponents(Scene&, Entity, AssetManager&)` (`Veng/Scene/Resolve.h`) is the
   single resolve code path a runtime caller uses after adding or editing such a
-  component. `PrimitiveComponent` is the first rider; any future resolve-time component
+  component. `Primitive` is the first rider; any future resolve-time component
   (a mesh-baking spline, a buffer-allocating emitter) reuses the same seam.
 
 ## Shaders & materials
@@ -718,8 +718,9 @@ own: `Name` (a display label), `Transform` (**local** TRS — `Position`/`Rotati
 `Scale`, never a world matrix), `Hierarchy` (the intrusive scene-graph link — a `Parent`
 up-edge plus the ordered child list, mutated through `SetParent`/`Detach`/`MoveBefore`;
 `WorldMatrix`/`ComputeWorldMatrices` walk the `Parent` edge as `parent.world * local`,
-recomputed on demand with no dirty-flag cache), `Camera` (a value type building view/projection — Y flipped for
-Vulkan clip space) plus `CameraComponent`, `MeshRenderer` (holds the
+recomputed on demand with no dirty-flag cache), `Camera` (the component whose
+FovY/Near/Far and world transform build a `CameraView`, the value type carrying the
+view/projection — Y flipped for Vulkan clip space), `MeshRenderer` (holds the
 `AssetHandle<Mesh>` a draw queries — the mesh owns its materials, so a renderer queries
 `(Transform, MeshRenderer)` and draws each submesh with its material), and `Light` (a
 directional light — `Direction`/`Color`/`Intensity`; `SceneRenderer::Execute` selects

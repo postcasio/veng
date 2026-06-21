@@ -57,7 +57,7 @@ namespace Veng::Renderer
         }
     }
 
-    CascadeData ComputeCascades(const Camera& camera, vec3 lightDir, const AABB& sceneBounds,
+    CascadeData ComputeCascades(const CameraView& camera, vec3 lightDir, const AABB& sceneBounds,
                                 const CascadeSettings& settings)
     {
         const f32 near = camera.GetNear();

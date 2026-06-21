@@ -51,7 +51,7 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
   the copy but builds no derived resource, so `DuplicateSubtree` calls `ResolveEntity` on each
   copy after its children recurse.
 - **Resolver-bearing components are resolved on every editing path.** A component that carries
-  a recipe whose resources are generated (a `PrimitiveComponent`) builds its mesh through a
+  a recipe whose resources are generated (a `Primitive`) builds its mesh through a
   spawn-resolve thunk ([engine/CLAUDE.md](../engine/CLAUDE.md)). Spawning a prefab resolves
   automatically inside `Prefab::SpawnInto`; there is no per-frame scan. **Any editor path that
   adds or edits a resolver-bearing component must call `ResolveComponents` on the touched
@@ -72,7 +72,7 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
   rows, makes enums editable (with a registered `LightType` combo), and turns `Reference`
   fields into Entity drop targets. The **`Variant` widget** is a combo over the alternatives'
   display names (plus "(none)") that `SetActive`s the chosen alternative on change and recurses
-  the active member's fields as indented rows — so a `PrimitiveComponent`'s shape variant gives
+  the active member's fields as indented rows — so a `Primitive`'s shape variant gives
   primitive-kind selection and per-shape parameter editing for free. `DrawFieldWidget` returns a
   `bool changed` (accumulated through its nested-struct/variant recursion); `DrawComponent` ORs it
   across the component's fields and, when true, calls `PrefabEditContext::ResolveEntity` so an edit

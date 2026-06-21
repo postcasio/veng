@@ -117,7 +117,7 @@ TEST_CASE_FIXTURE(Test::GpuFixture, "Hi-Z occlusion test reports occluded vs vis
     REQUIRE_MESSAGE(occlusionCs.has_value(), "load hi_z_occlusion_test.comp from the core pack");
 
     // The previous-frame camera: at the origin looking down -Z, Y-flipped Vulkan clip.
-    Camera camera;
+    CameraView camera;
     camera.SetPerspective(glm::radians(60.0f), static_cast<f32>(FieldWidth) / FieldHeight, 0.1f,
                           100.0f);
     camera.SetView(vec3(0.0f), vec3(0.0f, 0.0f, -1.0f), vec3(0.0f, 1.0f, 0.0f));
