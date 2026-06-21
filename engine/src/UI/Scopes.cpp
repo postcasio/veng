@@ -218,7 +218,23 @@ namespace Veng::UI
     ScopedTree CollapsingHeader(string_view label, TreeFlags flags)
     {
         const string id = AsCStr(label);
-        return ScopedTree(ImGui::CollapsingHeader(id.c_str(), ToImGui(flags)), false);
+        const Theme& theme = GetTheme();
+
+        // A collapsing header reads as a neutral surface button, not an accent-filled band, and
+        // tightens its horizontal frame padding so the arrow and label sit close to the edge —
+        // both scoped to this widget rather than the global Header slots (shared by selectables,
+        // tree-node selection, and menu items).
+        ImGui::PushStyleColor(ImGuiCol_Header, SrgbToLinear(theme.SurfaceRaised));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, SrgbToLinear(theme.SurfaceHovered));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, SrgbToLinear(theme.SurfaceActive));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            ImVec2(theme.FramePadding.x * 0.5f, theme.FramePadding.y));
+
+        const bool open = ImGui::CollapsingHeader(id.c_str(), ToImGui(flags));
+
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(3);
+        return ScopedTree(open, false);
     }
 
     ScopedTable Table(string_view id, i32 columns)
