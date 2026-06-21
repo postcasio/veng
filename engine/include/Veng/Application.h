@@ -67,8 +67,9 @@ namespace Veng
 
         /// @brief Returns the frame-coherent input service.
         ///
-        /// Updated once per frame before OnUpdate/OnRender, so per-frame edges and
-        /// deltas reflect the current frame. Available only for windowed apps.
+        /// Always present, updated once per frame before OnUpdate/OnRender so per-frame
+        /// edges and deltas reflect the current frame. A headless run reports the neutral
+        /// all-zeros state rather than being absent.
         [[nodiscard]] Input& GetInput() const { return *m_Input; }
 
         /// @brief Returns the render context.

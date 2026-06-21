@@ -13,6 +13,7 @@ namespace Veng
         registry.Register<Transform>();
         registry.Register<Hierarchy>();
         registry.Register<Camera>();
+        registry.Register<Viewer>();
         registry.Register<MeshRenderer>();
         registry.Register<LightType>();
         registry.Register<Light>();

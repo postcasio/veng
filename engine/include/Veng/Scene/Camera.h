@@ -3,9 +3,12 @@
 #include <Veng/Veng.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Reflection/Reflect.h>
+#include <Veng/Scene/Entity.h>
 
 namespace Veng
 {
+    class Scene;
+
     /// @brief Plain CPU value type that builds the view and projection matrices a SceneView carries.
     ///
     /// The render-ready view-projection the renderer consumes through SceneView, the
@@ -111,10 +114,51 @@ namespace Veng
         result.SetViewFromWorld(world);
         return result;
     }
+
+    /// @brief Seat-to-camera selection: names the camera entity a seat renders through.
+    ///
+    /// A seat — a local player, a render target, the editor — carries a Viewer naming
+    /// the camera entity it looks through, separating the seat from the camera: the
+    /// camera is (Transform, Camera) data, the Viewer is "this seat sees through that
+    /// one." The Camera field is a reflected Entity reference, so it remaps on prefab
+    /// spawn like any intra-prefab reference.
+    struct Viewer
+    {
+        /// @brief The camera entity this seat renders through.
+        Entity Camera = Entity::Null;
+    };
+
+    /// @brief Resolves the CameraView a seat renders through, at the caller's aspect.
+    ///
+    /// Reads the Viewer on viewer, looks up its named Camera entity, and projects the
+    /// camera through its world matrix (WorldMatrix walks the Parent edge, so a camera
+    /// parented under a rig resolves correctly).
+    /// @param scene   The scene the seat and camera live in.
+    /// @param viewer  The seat entity carrying the Viewer component.
+    /// @param aspect  Viewport width divided by height; the render target owns aspect.
+    /// @return The resolved view, or nullopt if the seat has no Viewer, names
+    ///         Entity::Null, or the named entity lacks (Transform, Camera).
+    [[nodiscard]] VE_API optional<CameraView> ResolveCameraView(const Scene& scene, Entity viewer,
+                                                                f32 aspect);
+
+    /// @brief Resolves the single-output CameraView for a one-seat scene, at the caller's aspect.
+    ///
+    /// Resolves through the first Viewer entity; failing that, falls back to the first
+    /// bare (Transform, Camera) entity, so a one-camera scene with no explicit seat
+    /// still renders. More than one Viewer is fine — this convenience takes the first.
+    /// @param scene   The scene to resolve a view from.
+    /// @param aspect  Viewport width divided by height; the render target owns aspect.
+    /// @return The resolved view, or nullopt if the scene has no resolvable camera.
+    [[nodiscard]] VE_API optional<CameraView> ResolvePrimaryCameraView(const Scene& scene,
+                                                                       f32 aspect);
 }
 
 VE_REFLECT(::Veng::Camera, 0x6598EF5F5C0A7B10ULL)
 VE_FIELD(FovY, .DisplayName = "Field of View", .Min = 0.01)
 VE_FIELD(Near, .DisplayName = "Near", .Min = 0.001)
 VE_FIELD(Far, .DisplayName = "Far")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::Viewer, 0x879A9712E090AC19ULL)
+VE_FIELD(Camera, .DisplayName = "Camera")
 VE_REFLECT_END();

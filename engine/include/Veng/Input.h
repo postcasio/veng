@@ -106,24 +106,30 @@ namespace Veng
 
     class Window;
 
-    /// @brief Frame-coherent input service, owned by Application and updated once per frame.
+    /// @brief Frame-coherent input service, always present, updated once per frame.
     ///
     /// Mirrors Time: a per-frame service the run loop pumps before OnUpdate/OnRender.
     /// It snapshots current and previous key/button state each frame so callers get
     /// per-frame edges (WasKeyPressed/WasKeyReleased) and deltas (mouse + scroll) on
-    /// top of the level queries the Window exposes. It borrows the Window and reads
-    /// state from it; it is driven from the single render thread like the rest of veng.
+    /// top of the level queries the Window exposes. It is driven from the single render
+    /// thread like the rest of veng. The borrowed window is nullable: with no window
+    /// (a headless run) Update leaves the zero-initialized state, so a headless reading
+    /// is the neutral all-zeros input a windowed app produces with nothing pressed.
     class Input
     {
     public:
         /// @brief Constructs the input service borrowing the given window.
-        /// @param window  Window polled for key/button/mouse state; must outlive this.
-        explicit Input(Window& window);
+        /// @param window  Window polled for key/button/mouse state; nullptr for a
+        ///                headless run that reports the neutral all-zeros state. Must
+        ///                outlive this when non-null.
+        explicit Input(Window* window);
 
         /// @brief Snapshots input state for the new frame; called once at the top of the frame loop.
         ///
         /// Copies current state to previous, re-polls current key/button/mouse state from
         /// the window, computes the mouse delta, and consumes the accumulated scroll delta.
+        /// With no window it leaves the zero-initialized state untouched (nothing pressed,
+        /// no mouse/scroll delta).
         /// @pre Must run before OnUpdate/OnRender so per-frame edges and deltas are current.
         void Update();
 
@@ -160,7 +166,8 @@ namespace Veng
         /// @brief Captures or releases the mouse cursor.
         ///
         /// Captured hides and locks the OS cursor and accumulates relative motion,
-        /// the mode a fly camera drives in. Delegates to the window.
+        /// the mode a fly camera drives in. Delegates to the window; no-ops with no
+        /// window.
         /// @param captured  True to capture, false to release.
         void SetMouseCaptured(bool captured);
 
@@ -173,8 +180,8 @@ namespace Veng
         /// @brief Number of tracked mouse buttons.
         static constexpr usize MaxMouseButtons = 8;
 
-        /// @brief Borrowed window polled for input state; must outlive this.
-        Window& m_Window;
+        /// @brief Borrowed window polled for input state; nullptr in a headless run.
+        Window* m_Window;
 
         /// @brief Per-key held state this frame, indexed by key code.
         std::array<bool, MaxKeys> m_Keys{};

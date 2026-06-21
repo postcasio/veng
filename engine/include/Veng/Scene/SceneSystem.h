@@ -11,13 +11,14 @@ namespace Veng
     /// @brief Per-tick services handed to every SceneSystem.
     ///
     /// Borrowed for the duration of the call: a system reads from these but does
-    /// not own them. The Input reference is the frame-coherent input service, null
-    /// in headless mode.
+    /// not own them. The Input reference is the always-present frame-coherent input
+    /// service; in headless mode it reports the neutral all-zeros state rather than
+    /// being absent, so an input-reading system needs no null-guard.
     struct SystemContext
     {
         /// @brief The asset manager a system loads or builds resources through.
         AssetManager& Assets;
-        /// @brief The frame-coherent input service; unavailable (null) in headless mode.
+        /// @brief The always-present frame-coherent input service; present-but-neutral (all zeros) in headless mode.
         const Input& Input;
     };
 

@@ -16,8 +16,11 @@ namespace Veng
         if (!m_Info.Headless)
         {
             m_Window = Window::Create(m_Info.WindowInfo);
-            m_Input = CreateUnique<Input>(*m_Window);
         }
+
+        // Always present: a headless run borrows no window and reports the neutral
+        // all-zeros state, so GetInput() and SystemContext::Input are never null.
+        m_Input = CreateUnique<Input>(m_Window.get());
 
         m_RenderContext.Initialize(
             {
@@ -124,10 +127,8 @@ namespace Veng
 
         // After Window::Update polls GLFW events: Input snapshots the fresh key/
         // button/cursor/scroll state, so per-frame edges and deltas precede OnUpdate.
-        if (m_Input)
-        {
-            m_Input->Update();
-        }
+        // Headless leaves the neutral all-zeros reading.
+        m_Input->Update();
 
         OnUpdate(delta);
 
