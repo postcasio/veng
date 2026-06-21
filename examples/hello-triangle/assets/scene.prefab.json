@@ -1,7 +1,7 @@
 {
   "entities": [
     {
-      "name": "Primitive 0-0",
+      "name": "Cone 0-0",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -35,7 +35,7 @@
       }
     },
     {
-      "name": "Primitive 0-1",
+      "name": "Torus 0-1",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -70,7 +70,7 @@
       }
     },
     {
-      "name": "Primitive 0-2",
+      "name": "Capsule 0-2",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -105,7 +105,7 @@
       }
     },
     {
-      "name": "Primitive 0-3",
+      "name": "Torus 0-3",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -140,7 +140,7 @@
       }
     },
     {
-      "name": "Primitive 0-4",
+      "name": "Cube 0-4",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -172,7 +172,7 @@
       }
     },
     {
-      "name": "Primitive 0-5",
+      "name": "Cube 0-5",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -204,7 +204,7 @@
       }
     },
     {
-      "name": "Primitive 0-6",
+      "name": "Cylinder 0-6",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -238,7 +238,7 @@
       }
     },
     {
-      "name": "Primitive 0-7",
+      "name": "Cube 0-7",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -270,7 +270,7 @@
       }
     },
     {
-      "name": "Primitive 0-8",
+      "name": "Cylinder 0-8",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -304,7 +304,7 @@
       }
     },
     {
-      "name": "Primitive 0-9",
+      "name": "Torus 0-9",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -339,7 +339,7 @@
       }
     },
     {
-      "name": "Primitive 1-0",
+      "name": "Icosphere 1-0",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -372,7 +372,7 @@
       }
     },
     {
-      "name": "Primitive 1-1",
+      "name": "Torus 1-1",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -407,7 +407,7 @@
       }
     },
     {
-      "name": "Primitive 1-2",
+      "name": "Cube 1-2",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -439,7 +439,7 @@
       }
     },
     {
-      "name": "Primitive 1-3",
+      "name": "Cone 1-3",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -473,7 +473,7 @@
       }
     },
     {
-      "name": "Primitive 1-4",
+      "name": "Cube 1-4",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -505,7 +505,7 @@
       }
     },
     {
-      "name": "Primitive 1-5",
+      "name": "Capsule 1-5",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -540,7 +540,7 @@
       }
     },
     {
-      "name": "Primitive 1-6",
+      "name": "Icosphere 1-6",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -573,7 +573,7 @@
       }
     },
     {
-      "name": "Primitive 1-7",
+      "name": "Cone 1-7",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -607,7 +607,7 @@
       }
     },
     {
-      "name": "Primitive 1-8",
+      "name": "Icosphere 1-8",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -640,7 +640,7 @@
       }
     },
     {
-      "name": "Primitive 1-9",
+      "name": "Sphere 1-9",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -674,7 +674,7 @@
       }
     },
     {
-      "name": "Primitive 2-0",
+      "name": "Capsule 2-0",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -709,7 +709,7 @@
       }
     },
     {
-      "name": "Primitive 2-1",
+      "name": "Cone 2-1",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -743,7 +743,7 @@
       }
     },
     {
-      "name": "Primitive 2-2",
+      "name": "Cylinder 2-2",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -777,7 +777,7 @@
       }
     },
     {
-      "name": "Primitive 2-3",
+      "name": "Torus 2-3",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -812,7 +812,7 @@
       }
     },
     {
-      "name": "Primitive 2-4",
+      "name": "Cube 2-4",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -844,7 +844,7 @@
       }
     },
     {
-      "name": "Primitive 2-5",
+      "name": "Sphere 2-5",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -878,7 +878,7 @@
       }
     },
     {
-      "name": "Primitive 2-6",
+      "name": "Cylinder 2-6",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -912,7 +912,7 @@
       }
     },
     {
-      "name": "Primitive 2-7",
+      "name": "Cone 2-7",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -946,7 +946,7 @@
       }
     },
     {
-      "name": "Primitive 2-8",
+      "name": "Cube 2-8",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -978,7 +978,7 @@
       }
     },
     {
-      "name": "Primitive 2-9",
+      "name": "Sphere 2-9",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1012,7 +1012,7 @@
       }
     },
     {
-      "name": "Primitive 3-0",
+      "name": "Cylinder 3-0",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1046,7 +1046,7 @@
       }
     },
     {
-      "name": "Primitive 3-1",
+      "name": "Cone 3-1",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1080,7 +1080,7 @@
       }
     },
     {
-      "name": "Primitive 3-2",
+      "name": "Cylinder 3-2",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1114,7 +1114,7 @@
       }
     },
     {
-      "name": "Primitive 3-3",
+      "name": "Torus 3-3",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1149,7 +1149,7 @@
       }
     },
     {
-      "name": "Primitive 3-4",
+      "name": "Capsule 3-4",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1184,7 +1184,7 @@
       }
     },
     {
-      "name": "Primitive 3-5",
+      "name": "Sphere 3-5",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1218,7 +1218,7 @@
       }
     },
     {
-      "name": "Primitive 3-6",
+      "name": "Torus 3-6",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1253,7 +1253,7 @@
       }
     },
     {
-      "name": "Primitive 3-7",
+      "name": "Torus 3-7",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1288,7 +1288,7 @@
       }
     },
     {
-      "name": "Primitive 3-8",
+      "name": "Icosphere 3-8",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1321,7 +1321,7 @@
       }
     },
     {
-      "name": "Primitive 3-9",
+      "name": "Sphere 3-9",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1355,7 +1355,7 @@
       }
     },
     {
-      "name": "Primitive 4-0",
+      "name": "Cone 4-0",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1389,7 +1389,7 @@
       }
     },
     {
-      "name": "Primitive 4-1",
+      "name": "Capsule 4-1",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1424,7 +1424,7 @@
       }
     },
     {
-      "name": "Primitive 4-2",
+      "name": "Torus 4-2",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1459,7 +1459,7 @@
       }
     },
     {
-      "name": "Primitive 4-3",
+      "name": "Capsule 4-3",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1494,7 +1494,7 @@
       }
     },
     {
-      "name": "Primitive 4-4",
+      "name": "Cylinder 4-4",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1528,7 +1528,7 @@
       }
     },
     {
-      "name": "Primitive 4-5",
+      "name": "Cone 4-5",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1562,7 +1562,7 @@
       }
     },
     {
-      "name": "Primitive 4-6",
+      "name": "Sphere 4-6",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1596,7 +1596,7 @@
       }
     },
     {
-      "name": "Primitive 4-7",
+      "name": "Torus 4-7",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1631,7 +1631,7 @@
       }
     },
     {
-      "name": "Primitive 4-8",
+      "name": "Cone 4-8",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1665,7 +1665,7 @@
       }
     },
     {
-      "name": "Primitive 4-9",
+      "name": "Sphere 4-9",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1699,7 +1699,7 @@
       }
     },
     {
-      "name": "Primitive 5-0",
+      "name": "Torus 5-0",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1734,7 +1734,7 @@
       }
     },
     {
-      "name": "Primitive 5-1",
+      "name": "Sphere 5-1",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1768,7 +1768,7 @@
       }
     },
     {
-      "name": "Primitive 5-2",
+      "name": "Capsule 5-2",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1803,7 +1803,7 @@
       }
     },
     {
-      "name": "Primitive 5-3",
+      "name": "Torus 5-3",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1838,7 +1838,7 @@
       }
     },
     {
-      "name": "Primitive 5-4",
+      "name": "Sphere 5-4",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1872,7 +1872,7 @@
       }
     },
     {
-      "name": "Primitive 5-5",
+      "name": "Torus 5-5",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1907,7 +1907,7 @@
       }
     },
     {
-      "name": "Primitive 5-6",
+      "name": "Cylinder 5-6",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1941,7 +1941,7 @@
       }
     },
     {
-      "name": "Primitive 5-7",
+      "name": "Cylinder 5-7",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -1975,7 +1975,7 @@
       }
     },
     {
-      "name": "Primitive 5-8",
+      "name": "Cube 5-8",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2007,7 +2007,7 @@
       }
     },
     {
-      "name": "Primitive 5-9",
+      "name": "Torus 5-9",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2042,7 +2042,7 @@
       }
     },
     {
-      "name": "Primitive 6-0",
+      "name": "Cube 6-0",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2074,7 +2074,7 @@
       }
     },
     {
-      "name": "Primitive 6-1",
+      "name": "Cylinder 6-1",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2108,7 +2108,7 @@
       }
     },
     {
-      "name": "Primitive 6-2",
+      "name": "Cube 6-2",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2140,7 +2140,7 @@
       }
     },
     {
-      "name": "Primitive 6-3",
+      "name": "Cylinder 6-3",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2174,7 +2174,7 @@
       }
     },
     {
-      "name": "Primitive 6-4",
+      "name": "Sphere 6-4",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2208,7 +2208,7 @@
       }
     },
     {
-      "name": "Primitive 6-5",
+      "name": "Torus 6-5",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2243,7 +2243,7 @@
       }
     },
     {
-      "name": "Primitive 6-6",
+      "name": "Cube 6-6",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2275,7 +2275,7 @@
       }
     },
     {
-      "name": "Primitive 6-7",
+      "name": "Sphere 6-7",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2309,7 +2309,7 @@
       }
     },
     {
-      "name": "Primitive 6-8",
+      "name": "Cube 6-8",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2341,7 +2341,7 @@
       }
     },
     {
-      "name": "Primitive 6-9",
+      "name": "Icosphere 6-9",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2374,7 +2374,7 @@
       }
     },
     {
-      "name": "Primitive 7-0",
+      "name": "Sphere 7-0",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2408,7 +2408,7 @@
       }
     },
     {
-      "name": "Primitive 7-1",
+      "name": "Capsule 7-1",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2443,7 +2443,7 @@
       }
     },
     {
-      "name": "Primitive 7-2",
+      "name": "Torus 7-2",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2478,7 +2478,7 @@
       }
     },
     {
-      "name": "Primitive 7-3",
+      "name": "Capsule 7-3",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2513,7 +2513,7 @@
       }
     },
     {
-      "name": "Primitive 7-4",
+      "name": "Cylinder 7-4",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2547,7 +2547,7 @@
       }
     },
     {
-      "name": "Primitive 7-5",
+      "name": "Cylinder 7-5",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2581,7 +2581,7 @@
       }
     },
     {
-      "name": "Primitive 7-6",
+      "name": "Cylinder 7-6",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2615,7 +2615,7 @@
       }
     },
     {
-      "name": "Primitive 7-7",
+      "name": "Capsule 7-7",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2650,7 +2650,7 @@
       }
     },
     {
-      "name": "Primitive 7-8",
+      "name": "Capsule 7-8",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2685,7 +2685,7 @@
       }
     },
     {
-      "name": "Primitive 7-9",
+      "name": "Cube 7-9",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2717,7 +2717,7 @@
       }
     },
     {
-      "name": "Primitive 8-0",
+      "name": "Cone 8-0",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2751,7 +2751,7 @@
       }
     },
     {
-      "name": "Primitive 8-1",
+      "name": "Icosphere 8-1",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2784,7 +2784,7 @@
       }
     },
     {
-      "name": "Primitive 8-2",
+      "name": "Cylinder 8-2",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2818,7 +2818,7 @@
       }
     },
     {
-      "name": "Primitive 8-3",
+      "name": "Icosphere 8-3",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2851,7 +2851,7 @@
       }
     },
     {
-      "name": "Primitive 8-4",
+      "name": "Torus 8-4",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2886,7 +2886,7 @@
       }
     },
     {
-      "name": "Primitive 8-5",
+      "name": "Cube 8-5",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2918,7 +2918,7 @@
       }
     },
     {
-      "name": "Primitive 8-6",
+      "name": "Cube 8-6",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2950,7 +2950,7 @@
       }
     },
     {
-      "name": "Primitive 8-7",
+      "name": "Torus 8-7",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -2985,7 +2985,7 @@
       }
     },
     {
-      "name": "Primitive 8-8",
+      "name": "Cylinder 8-8",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -3019,7 +3019,7 @@
       }
     },
     {
-      "name": "Primitive 8-9",
+      "name": "Cylinder 8-9",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -3053,7 +3053,7 @@
       }
     },
     {
-      "name": "Primitive 9-0",
+      "name": "Cone 9-0",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -3087,7 +3087,7 @@
       }
     },
     {
-      "name": "Primitive 9-1",
+      "name": "Cube 9-1",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -3119,7 +3119,7 @@
       }
     },
     {
-      "name": "Primitive 9-2",
+      "name": "Capsule 9-2",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -3154,7 +3154,7 @@
       }
     },
     {
-      "name": "Primitive 9-3",
+      "name": "Capsule 9-3",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -3189,7 +3189,7 @@
       }
     },
     {
-      "name": "Primitive 9-4",
+      "name": "Cone 9-4",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -3223,7 +3223,7 @@
       }
     },
     {
-      "name": "Primitive 9-5",
+      "name": "Icosphere 9-5",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -3256,7 +3256,7 @@
       }
     },
     {
-      "name": "Primitive 9-6",
+      "name": "Torus 9-6",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -3291,7 +3291,7 @@
       }
     },
     {
-      "name": "Primitive 9-7",
+      "name": "Cube 9-7",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -3323,7 +3323,7 @@
       }
     },
     {
-      "name": "Primitive 9-8",
+      "name": "Sphere 9-8",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -3357,7 +3357,7 @@
       }
     },
     {
-      "name": "Primitive 9-9",
+      "name": "Cube 9-9",
       "components": {
         "::Veng::Transform": {
           "Position": [
@@ -3556,6 +3556,45 @@
         },
         "::Veng::Hierarchy": {
           "Parent": 101
+        }
+      }
+    },
+    {
+      "name": "Ground Plane",
+      "components": {
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            -0.6,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::PlaneShape",
+            "value": {
+              "Size": [
+                16.0,
+                16.0
+              ],
+              "Subdivisions": [
+                1,
+                1
+              ],
+              "Material": 1003
+            }
+          }
         }
       }
     }
