@@ -129,8 +129,22 @@ namespace VengEditor
             m_SceneTexture = m_ImGui.CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
         }
 
+        // Play with the toggle on previews the scene's authored Viewer camera (what the
+        // player sees); edit mode, Stop, and an unauthored scene use the editor camera.
+        CameraView camera = m_View;
+        if (m_Ctx.IsPlaying() && m_ViewThroughScene)
+        {
+            const f32 aspect =
+                static_cast<f32>(m_RenderExtent.x) / static_cast<f32>(m_RenderExtent.y);
+            if (const optional<CameraView> resolved =
+                    ResolvePrimaryCameraView(*m_Ctx.Scene, aspect))
+            {
+                camera = *resolved;
+            }
+        }
+
         const Renderer::SceneView view{
-            .World = *m_Ctx.Scene, .Camera = m_View, .Delta = Time::GetDeltaTime()};
+            .World = *m_Ctx.Scene, .Camera = camera, .Delta = Time::GetDeltaTime()};
         m_SceneRenderer->Execute(cmd, view);
 
         // ImGui's sampled read of the output is recorded outside the graph by
@@ -181,6 +195,10 @@ namespace VengEditor
                 }
                 UI::Tooltip(paused ? "Resume the paused play session"
                                    : "Pause the play session (hold the current frame)");
+
+                UI::SameLine();
+                (void)UI::ToggleButton("Game view", m_ViewThroughScene);
+                UI::Tooltip("Render through the scene's Viewer camera (what the player sees)");
             }
 
             UI::Separator();

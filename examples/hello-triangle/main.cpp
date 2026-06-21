@@ -156,11 +156,6 @@ protected:
             WaitForPrimitiveResidency();
         }
 
-        const f32 aspect = static_cast<f32>(sceneExtent.x) / static_cast<f32>(sceneExtent.y);
-        m_Camera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
-        // Pulled back and elevated to frame the whole 10x10 grid from above.
-        m_Camera.SetView(vec3(0.0f, 10.0f, 14.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
-
         if (GetImGuiLayer())
         {
             m_CompositeGraph = BuildCompositeGraph();
@@ -210,11 +205,19 @@ protected:
         auto& context = GetRenderContext();
         auto& cmd = context.GetCurrentCommandBuffer();
 
+        // Aspect comes from the scene-render target the camera projects into, not the
+        // swapchain; the camera lives in the scene and is resolved through its Viewer seat.
+        const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
+        const f32 aspect = static_cast<f32>(output->GetImage()->GetWidth()) /
+                           static_cast<f32>(output->GetImage()->GetHeight());
+        const CameraView camera =
+            ResolvePrimaryCameraView(*m_Scene, aspect).value_or(DefaultCameraView(aspect));
+
         // Per-frame tonemap/bloom knobs read straight off the app-side members the
         // "Scene" window edits; no Configure on these paths.
         const Renderer::SceneView view{
             .World = *m_Scene,
-            .Camera = m_Camera,
+            .Camera = camera,
             .Delta = m_LastDelta,
             .Exposure = m_Exposure,
             .BloomThreshold = m_BloomThreshold,
@@ -246,6 +249,16 @@ protected:
     }
 
 private:
+    // The fallback view when the scene resolves no camera: the fixed pose that frames the
+    // 10x10 grid from above, pulled back and elevated.
+    static CameraView DefaultCameraView(const f32 aspect)
+    {
+        CameraView view;
+        view.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+        view.SetView(vec3(0.0f, 10.0f, 14.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+        return view;
+    }
+
     // Drains the task system until every Primitive's streamed mesh is resident.
     // The async build finalizes on the main-thread continuation pump, so each iteration
     // pumps it and yields the worker a moment to complete the upload.
@@ -505,7 +518,6 @@ private:
     static constexpr f32 SmokeAngle = 0.9f;
 
     Unique<Scene> m_Scene;
-    CameraView m_Camera;
 
     // Drives the registered scene systems in the windowed path; null in smoke mode.
     Unique<SceneSimulation> m_Simulation;
