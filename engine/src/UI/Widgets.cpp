@@ -1,4 +1,5 @@
 #include <Veng/UI/Widgets.h>
+#include <Veng/UI/Theme.h>
 
 #include <imgui.h>
 #include <glm/gtc/type_ptr.hpp>
@@ -232,7 +233,8 @@ namespace Veng::UI
 
     void TextColored(vec4 color, string_view text)
     {
-        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        // The caller's color is authored sRGB; linearize for the linear UI pipeline.
+        ImGui::PushStyleColor(ImGuiCol_Text, SrgbToLinear(color));
         ImGui::TextUnformatted(text.data(), text.data() + text.size());
         ImGui::PopStyleColor();
     }

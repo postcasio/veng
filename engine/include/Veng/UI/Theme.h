@@ -114,4 +114,15 @@ namespace Veng::UI
     /// that afterward to push the change into the live style.
     /// @param theme  The new active theme.
     void SetTheme(const Theme& theme);
+
+    /// @brief Converts an sRGB-encoded color to linear, leaving alpha untouched.
+    ///
+    /// Theme and widget colors are authored in sRGB (the universal hex convention), but the
+    /// engine's UI flows through a linear pipeline: ImGui renders into a linear float target
+    /// the display re-encodes to sRGB at scanout. So every authored color is linearized at
+    /// the ImGui boundary (the style/imnodes setup and the color-taking widgets) to round-trip
+    /// to its intended brightness. UI code computing a raw color to hand to ImGui uses this.
+    /// @param color  An sRGB color (RGB encoded, A linear coverage).
+    /// @return The color with its RGB linearized and its alpha preserved.
+    [[nodiscard]] vec4 SrgbToLinear(vec4 color);
 }

@@ -1,4 +1,5 @@
 #include <Veng/UI/Scopes.h>
+#include <Veng/UI/Theme.h>
 
 #include <Veng/Assert.h>
 
@@ -349,7 +350,8 @@ namespace Veng::UI
 
     StyleColorScope StyleColor(StyleColorId id, vec4 color)
     {
-        ImGui::PushStyleColor(ToImGui(id), color);
+        // The caller's color is authored sRGB; linearize for the linear UI pipeline.
+        ImGui::PushStyleColor(ToImGui(id), SrgbToLinear(color));
         return StyleColorScope{};
     }
 

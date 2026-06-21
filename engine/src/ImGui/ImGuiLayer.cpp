@@ -171,6 +171,11 @@ namespace Veng
         style.SeparatorTextBorderSize = 1.0f;
         style.DockingSeparatorSize = 1.0f;
 
+        // Reset every slot to ImGui's sRGB defaults first, so the slots not overridden below
+        // still get linearized from a known sRGB value and the linearize pass stays idempotent
+        // across repeated ApplyTheme calls.
+        ImGui::StyleColorsDark(&style);
+
         ImVec4* colors = style.Colors;
         colors[ImGuiCol_Text] = theme.Text;
         colors[ImGuiCol_TextDisabled] = theme.TextDisabled;
@@ -234,22 +239,31 @@ namespace Veng
         colors[ImGuiCol_NavWindowingDimBg] = alpha(theme.Background, 0.60f);
         colors[ImGuiCol_ModalWindowDimBg] = alpha(theme.Background, 0.60f);
 
+        // The UI flows through a linear pipeline (linear float overlay, display re-encodes to
+        // sRGB at scanout), so every sRGB-authored slot is linearized to round-trip correctly.
+        for (int i = 0; i < ImGuiCol_COUNT; ++i)
+        {
+            colors[i] = UI::SrgbToLinear(colors[i]);
+        }
+
+        // imnodes colors take the same linearization before packing to ImU32.
+        const auto node = [](vec4 color) { return ImColor(UI::SrgbToLinear(color)); };
         ImNodesStyle& imnodesStyle = ImNodes::GetStyle();
-        imnodesStyle.Colors[ImNodesCol_NodeBackground] = ImColor(theme.Surface);
-        imnodesStyle.Colors[ImNodesCol_NodeBackgroundHovered] = ImColor(theme.SurfaceRaised);
-        imnodesStyle.Colors[ImNodesCol_NodeBackgroundSelected] = ImColor(theme.SurfaceRaised);
-        imnodesStyle.Colors[ImNodesCol_NodeOutline] = ImColor(theme.Border);
-        imnodesStyle.Colors[ImNodesCol_TitleBar] = ImColor(theme.SurfaceRaised);
-        imnodesStyle.Colors[ImNodesCol_TitleBarHovered] = ImColor(theme.SurfaceHovered);
-        imnodesStyle.Colors[ImNodesCol_TitleBarSelected] = ImColor(theme.SurfaceHovered);
-        imnodesStyle.Colors[ImNodesCol_Link] = ImColor(theme.Accent);
-        imnodesStyle.Colors[ImNodesCol_LinkHovered] = ImColor(theme.AccentHovered);
-        imnodesStyle.Colors[ImNodesCol_LinkSelected] = ImColor(theme.AccentHovered);
-        imnodesStyle.Colors[ImNodesCol_Pin] = ImColor(theme.Accent);
-        imnodesStyle.Colors[ImNodesCol_PinHovered] = ImColor(theme.AccentHovered);
-        imnodesStyle.Colors[ImNodesCol_GridBackground] = ImColor(theme.Background);
-        imnodesStyle.Colors[ImNodesCol_GridLine] = ImColor(theme.Border);
-        imnodesStyle.Colors[ImNodesCol_GridLinePrimary] = ImColor(theme.BorderStrong);
+        imnodesStyle.Colors[ImNodesCol_NodeBackground] = node(theme.Surface);
+        imnodesStyle.Colors[ImNodesCol_NodeBackgroundHovered] = node(theme.SurfaceRaised);
+        imnodesStyle.Colors[ImNodesCol_NodeBackgroundSelected] = node(theme.SurfaceRaised);
+        imnodesStyle.Colors[ImNodesCol_NodeOutline] = node(theme.Border);
+        imnodesStyle.Colors[ImNodesCol_TitleBar] = node(theme.SurfaceRaised);
+        imnodesStyle.Colors[ImNodesCol_TitleBarHovered] = node(theme.SurfaceHovered);
+        imnodesStyle.Colors[ImNodesCol_TitleBarSelected] = node(theme.SurfaceHovered);
+        imnodesStyle.Colors[ImNodesCol_Link] = node(theme.Accent);
+        imnodesStyle.Colors[ImNodesCol_LinkHovered] = node(theme.AccentHovered);
+        imnodesStyle.Colors[ImNodesCol_LinkSelected] = node(theme.AccentHovered);
+        imnodesStyle.Colors[ImNodesCol_Pin] = node(theme.Accent);
+        imnodesStyle.Colors[ImNodesCol_PinHovered] = node(theme.AccentHovered);
+        imnodesStyle.Colors[ImNodesCol_GridBackground] = node(theme.Background);
+        imnodesStyle.Colors[ImNodesCol_GridLine] = node(theme.Border);
+        imnodesStyle.Colors[ImNodesCol_GridLinePrimary] = node(theme.BorderStrong);
     }
 
     ImGuiLayer::~ImGuiLayer()

@@ -1,5 +1,7 @@
 #include <Veng/UI/Theme.h>
 
+#include <cmath>
+
 namespace Veng::UI
 {
     namespace
@@ -82,5 +84,12 @@ namespace Veng::UI
     void SetTheme(const Theme& theme)
     {
         g_ActiveTheme = theme;
+    }
+
+    vec4 SrgbToLinear(vec4 color)
+    {
+        const auto channel = [](f32 c)
+        { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); };
+        return vec4(channel(color.r), channel(color.g), channel(color.b), color.a);
     }
 }
