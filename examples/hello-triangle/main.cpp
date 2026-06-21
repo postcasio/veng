@@ -36,23 +36,23 @@
 
 using namespace Veng;
 
-// A game-defined component spun about a fixed axis; registered through the public
-// TypeRegistry so the scene stores, queries, and serializes it without engine knowledge.
+// A game-defined component that spins its entity about its own axis at its own speed;
+// registered through the public TypeRegistry so the scene stores, queries, and serializes
+// it without engine knowledge.
 struct Spinner
 {
     f32 SpeedRadiansPerSec = 1.0f;
+    vec3 Axis = vec3(0.0f, 1.0f, 0.0f);
 };
 
 VE_REFLECT(Spinner, 0xAEF00D5EFC2444DAULL)
 VE_FIELD(SpeedRadiansPerSec, .DisplayName = "Speed", .Tooltip = "Radians per second", .Min = 0.0)
+VE_FIELD(Axis, .DisplayName = "Axis", .Tooltip = "Spin axis (normalized at runtime)")
 VE_REFLECT_END();
 
-// The light-orbit pivot spins about Y, so its child lights circle horizontally above the
-// grid. Shared by the windowed SpinnerSystem and the smoke fixed-pose write.
-static inline const vec3 SpinAxis = vec3(0.0f, 1.0f, 0.0f);
-
-// Advances every Spinner each frame — the gameplay tick the windowed app drives through
-// a SceneSimulation. Registered into the host SystemRegistry alongside the Spinner type.
+// Advances every Spinner each frame about its own axis — the gameplay tick the windowed
+// app drives through a SceneSimulation. Registered into the host SystemRegistry alongside
+// the Spinner type.
 class SpinnerSystem final : public SceneSystem
 {
 public:
@@ -61,7 +61,8 @@ public:
         scene.Each<Transform, Spinner>(
             [delta](Entity, Transform& transform, Spinner& spinner)
             {
-                const quat step = glm::angleAxis(spinner.SpeedRadiansPerSec * delta, SpinAxis);
+                const quat step = glm::angleAxis(spinner.SpeedRadiansPerSec * delta,
+                                                 glm::normalize(spinner.Axis));
                 transform.Rotation = glm::normalize(step * transform.Rotation);
             });
     }
@@ -186,8 +187,8 @@ protected:
         if (m_SmokeOutput)
         {
             m_Scene->Each<Transform, Spinner>(
-                [](Entity, Transform& transform, Spinner&)
-                { transform.Rotation = glm::angleAxis(SmokeAngle, SpinAxis); });
+                [](Entity, Transform& transform, Spinner& spinner)
+                { transform.Rotation = glm::angleAxis(SmokeAngle, glm::normalize(spinner.Axis)); });
         }
         else if (!m_PauseSpin && m_Simulation)
         {

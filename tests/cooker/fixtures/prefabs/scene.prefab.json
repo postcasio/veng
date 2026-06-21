@@ -6,7 +6,7 @@
         "::Veng::Name":         { "Value": "Root" },
         "::Veng::Transform":    { "Position": [1, 2, 3], "Rotation": [0, 0, 0, 1], "Scale": [1, 1, 1] },
         "::Veng::MeshRenderer": { "Mesh": 8001 },
-        "Spinner":              { "SpeedRadiansPerSec": 1.5 }
+        "Spinner":              { "SpeedRadiansPerSec": 1.5, "Axis": [0, 0, 1] }
       }
     },
     {

@@ -66,8 +66,9 @@ TEST_CASE("module reflect: LoadModuleTypes reflects builtins + the game's Spinne
     const TypeInfo& spinner = types.Info(SpinnerTypeId);
     CHECK(spinner.Name == "Spinner");
     CHECK(spinner.Id == SpinnerTypeId);
-    REQUIRE(spinner.Fields.size() == 1);
+    REQUIRE(spinner.Fields.size() == 2);
     CHECK(spinner.Fields[0].Name == "SpeedRadiansPerSec");
+    CHECK(spinner.Fields[1].Name == "Axis");
 }
 
 TEST_CASE("module reflect: an ABI-mismatched module is a located Result error")

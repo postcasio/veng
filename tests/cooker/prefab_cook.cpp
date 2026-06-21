@@ -31,9 +31,11 @@ namespace
     const path FixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
     constexpr TypeId SpinnerTypeId = 0xAEF00D5EFC2444DAULL;
 
+    // Mirrors the hello-triangle Spinner's layout so ReadFields can decode by offset.
     struct SpinnerMirror
     {
         f32 SpeedRadiansPerSec = 0.0f;
+        vec3 Axis = vec3(0.0f);
     };
 
     // Loads the reflected hello-triangle registry (builtins + Spinner). The
@@ -191,6 +193,7 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
     ReadFields(std::span<const u8>(records + spinner->RecordOffset, spinner->RecordSize),
                &decodedSpinner, types.Info(SpinnerTypeId), types);
     CHECK(decodedSpinner.SpeedRadiansPerSec == doctest::Approx(1.5f));
+    CHECK(decodedSpinner.Axis == vec3(0, 0, 1));
 
     // --- Child's Hierarchy parent edge cooks to {Index = 0 (prefab-local), Generation = 0} ---
     const CookedPrefabComponent* hierarchy = findComponent(

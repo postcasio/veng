@@ -33,6 +33,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.762,
+          "Axis": [
+            -0.6758,
+            -0.1402,
+            0.7236
+          ]
         }
       }
     },
@@ -70,6 +78,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.0022,
+          "Axis": [
+            0.6469,
+            -0.3708,
+            0.6664
+          ]
         }
       }
     },
@@ -107,6 +123,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.3278,
+          "Axis": [
+            -0.3783,
+            0.2713,
+            0.885
+          ]
         }
       }
     },
@@ -144,6 +168,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.7025,
+          "Axis": [
+            0.314,
+            0.0978,
+            0.9444
+          ]
         }
       }
     },
@@ -178,6 +210,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.41,
+          "Axis": [
+            -0.2979,
+            0.1468,
+            0.9432
+          ]
         }
       }
     },
@@ -212,6 +252,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.7812,
+          "Axis": [
+            -0.7152,
+            0.0528,
+            0.697
+          ]
         }
       }
     },
@@ -248,6 +296,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.6188,
+          "Axis": [
+            0.2972,
+            -0.6024,
+            -0.7408
+          ]
         }
       }
     },
@@ -282,6 +338,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.5818,
+          "Axis": [
+            0.5475,
+            0.7991,
+            0.2483
+          ]
         }
       }
     },
@@ -318,6 +382,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.6279,
+          "Axis": [
+            0.7746,
+            0.6078,
+            -0.1746
+          ]
         }
       }
     },
@@ -355,6 +427,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.789,
+          "Axis": [
+            -0.5768,
+            0.1962,
+            0.793
+          ]
         }
       }
     },
@@ -390,6 +470,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.4894,
+          "Axis": [
+            -0.8911,
+            0.4221,
+            -0.1665
+          ]
         }
       }
     },
@@ -427,6 +515,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.5736,
+          "Axis": [
+            -0.3778,
+            -0.9096,
+            0.1731
+          ]
         }
       }
     },
@@ -461,6 +557,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.9946,
+          "Axis": [
+            -0.3004,
+            -0.6864,
+            0.6623
+          ]
         }
       }
     },
@@ -497,6 +601,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.5279,
+          "Axis": [
+            -0.0346,
+            -0.2377,
+            0.9707
+          ]
         }
       }
     },
@@ -531,6 +643,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.1279,
+          "Axis": [
+            0.4349,
+            0.2233,
+            -0.8724
+          ]
         }
       }
     },
@@ -568,6 +688,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.5366,
+          "Axis": [
+            0.8665,
+            0.2434,
+            0.4358
+          ]
         }
       }
     },
@@ -603,6 +731,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.1882,
+          "Axis": [
+            -0.7552,
+            -0.2923,
+            -0.5867
+          ]
         }
       }
     },
@@ -639,6 +775,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.5928,
+          "Axis": [
+            -0.3881,
+            0.3988,
+            0.8309
+          ]
         }
       }
     },
@@ -674,6 +818,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.66,
+          "Axis": [
+            -0.5859,
+            -0.4137,
+            0.6968
+          ]
         }
       }
     },
@@ -710,6 +862,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.2109,
+          "Axis": [
+            -0.2086,
+            -0.4443,
+            -0.8713
+          ]
         }
       }
     },
@@ -747,6 +907,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.4033,
+          "Axis": [
+            0.3093,
+            -0.8084,
+            0.5008
+          ]
         }
       }
     },
@@ -783,6 +951,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.6644,
+          "Axis": [
+            0.446,
+            0.8596,
+            0.2494
+          ]
         }
       }
     },
@@ -819,6 +995,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.7016,
+          "Axis": [
+            0.8397,
+            0.4866,
+            -0.2411
+          ]
         }
       }
     },
@@ -856,6 +1040,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.905,
+          "Axis": [
+            -0.0965,
+            -0.983,
+            0.1564
+          ]
         }
       }
     },
@@ -890,6 +1082,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.4117,
+          "Axis": [
+            0.0009,
+            0.599,
+            0.8007
+          ]
         }
       }
     },
@@ -926,6 +1126,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.4929,
+          "Axis": [
+            -0.5194,
+            -0.5966,
+            0.6118
+          ]
         }
       }
     },
@@ -962,6 +1170,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.5355,
+          "Axis": [
+            -0.2123,
+            -0.085,
+            -0.9735
+          ]
         }
       }
     },
@@ -998,6 +1214,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.6741,
+          "Axis": [
+            0.7621,
+            -0.566,
+            0.3143
+          ]
         }
       }
     },
@@ -1032,6 +1256,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.5549,
+          "Axis": [
+            -0.3572,
+            0.2811,
+            0.8907
+          ]
         }
       }
     },
@@ -1068,6 +1300,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.5483,
+          "Axis": [
+            0.0685,
+            -0.9363,
+            -0.3444
+          ]
         }
       }
     },
@@ -1104,6 +1344,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.993,
+          "Axis": [
+            0.7358,
+            -0.0524,
+            0.6752
+          ]
         }
       }
     },
@@ -1140,6 +1388,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.6775,
+          "Axis": [
+            0.6014,
+            0.6548,
+            -0.4578
+          ]
         }
       }
     },
@@ -1176,6 +1432,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.4849,
+          "Axis": [
+            -0.2766,
+            0.3511,
+            -0.8946
+          ]
         }
       }
     },
@@ -1213,6 +1477,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.2949,
+          "Axis": [
+            0.363,
+            0.4408,
+            -0.8209
+          ]
         }
       }
     },
@@ -1250,6 +1522,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.9686,
+          "Axis": [
+            -0.157,
+            0.9858,
+            -0.0599
+          ]
         }
       }
     },
@@ -1286,6 +1566,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.1859,
+          "Axis": [
+            0.6446,
+            0.3995,
+            0.6518
+          ]
         }
       }
     },
@@ -1323,6 +1611,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.6424,
+          "Axis": [
+            0.6385,
+            -0.5097,
+            -0.5766
+          ]
         }
       }
     },
@@ -1360,6 +1656,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.8878,
+          "Axis": [
+            -0.3979,
+            -0.6954,
+            0.5984
+          ]
         }
       }
     },
@@ -1395,6 +1699,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.006,
+          "Axis": [
+            0.0405,
+            0.9053,
+            -0.4228
+          ]
         }
       }
     },
@@ -1431,6 +1743,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.6084,
+          "Axis": [
+            -0.2056,
+            -0.1124,
+            -0.9722
+          ]
         }
       }
     },
@@ -1467,6 +1787,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.5289,
+          "Axis": [
+            0.2675,
+            0.6295,
+            0.7295
+          ]
         }
       }
     },
@@ -1504,6 +1832,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.0391,
+          "Axis": [
+            0.0681,
+            0.9729,
+            0.2209
+          ]
         }
       }
     },
@@ -1541,6 +1877,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.7427,
+          "Axis": [
+            -0.733,
+            0.633,
+            0.2489
+          ]
         }
       }
     },
@@ -1578,6 +1922,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.7218,
+          "Axis": [
+            0.0231,
+            -0.6207,
+            0.7837
+          ]
         }
       }
     },
@@ -1614,6 +1966,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.982,
+          "Axis": [
+            0.3719,
+            0.9149,
+            0.1572
+          ]
         }
       }
     },
@@ -1650,6 +2010,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.691,
+          "Axis": [
+            0.3653,
+            0.6375,
+            0.6784
+          ]
         }
       }
     },
@@ -1686,6 +2054,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.2854,
+          "Axis": [
+            0.4232,
+            0.5345,
+            -0.7316
+          ]
         }
       }
     },
@@ -1723,6 +2099,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.4262,
+          "Axis": [
+            -0.8758,
+            0.2864,
+            0.3884
+          ]
         }
       }
     },
@@ -1759,6 +2143,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.5997,
+          "Axis": [
+            0.8757,
+            0.0623,
+            -0.4789
+          ]
         }
       }
     },
@@ -1795,6 +2187,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.7857,
+          "Axis": [
+            -0.2083,
+            0.9695,
+            0.1293
+          ]
         }
       }
     },
@@ -1832,6 +2232,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.4068,
+          "Axis": [
+            0.8638,
+            0.2107,
+            0.4578
+          ]
         }
       }
     },
@@ -1868,6 +2276,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.7987,
+          "Axis": [
+            0.392,
+            -0.8834,
+            -0.2568
+          ]
         }
       }
     },
@@ -1905,6 +2321,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.8645,
+          "Axis": [
+            0.2627,
+            0.0965,
+            0.9601
+          ]
         }
       }
     },
@@ -1942,6 +2366,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.7083,
+          "Axis": [
+            -0.3672,
+            -0.7959,
+            0.4814
+          ]
         }
       }
     },
@@ -1978,6 +2410,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.9863,
+          "Axis": [
+            0.0774,
+            -0.8388,
+            -0.539
+          ]
         }
       }
     },
@@ -2015,6 +2455,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.8039,
+          "Axis": [
+            0.8641,
+            0.2341,
+            -0.4455
+          ]
         }
       }
     },
@@ -2051,6 +2499,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.8857,
+          "Axis": [
+            0.4438,
+            0.8842,
+            -0.1457
+          ]
         }
       }
     },
@@ -2087,6 +2543,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.9735,
+          "Axis": [
+            -0.599,
+            0.4127,
+            0.6862
+          ]
         }
       }
     },
@@ -2121,6 +2585,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.8134,
+          "Axis": [
+            0.2428,
+            -0.9671,
+            -0.0756
+          ]
         }
       }
     },
@@ -2158,6 +2630,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.2299,
+          "Axis": [
+            0.4398,
+            0.7707,
+            0.4611
+          ]
         }
       }
     },
@@ -2192,6 +2672,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.7649,
+          "Axis": [
+            -0.762,
+            -0.5676,
+            0.3118
+          ]
         }
       }
     },
@@ -2228,6 +2716,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.9697,
+          "Axis": [
+            0.5671,
+            -0.8235,
+            0.0132
+          ]
         }
       }
     },
@@ -2262,6 +2758,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.1183,
+          "Axis": [
+            -0.3013,
+            0.4665,
+            -0.8316
+          ]
         }
       }
     },
@@ -2298,6 +2802,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.6997,
+          "Axis": [
+            -0.0041,
+            0.5435,
+            0.8394
+          ]
         }
       }
     },
@@ -2334,6 +2846,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.9477,
+          "Axis": [
+            -0.8733,
+            -0.4575,
+            -0.1677
+          ]
         }
       }
     },
@@ -2371,6 +2891,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.0133,
+          "Axis": [
+            0.9617,
+            -0.2109,
+            -0.1751
+          ]
         }
       }
     },
@@ -2405,6 +2933,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.4506,
+          "Axis": [
+            -0.3265,
+            0.8561,
+            -0.4005
+          ]
         }
       }
     },
@@ -2441,6 +2977,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.5253,
+          "Axis": [
+            0.4695,
+            0.5821,
+            -0.6639
+          ]
         }
       }
     },
@@ -2475,6 +3019,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.4445,
+          "Axis": [
+            -0.619,
+            0.7749,
+            -0.1281
+          ]
         }
       }
     },
@@ -2510,6 +3062,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.9048,
+          "Axis": [
+            -0.8691,
+            0.4787,
+            -0.1242
+          ]
         }
       }
     },
@@ -2546,6 +3106,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.9681,
+          "Axis": [
+            0.4241,
+            0.7325,
+            -0.5325
+          ]
         }
       }
     },
@@ -2583,6 +3151,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.8352,
+          "Axis": [
+            -0.6481,
+            -0.4325,
+            0.6269
+          ]
         }
       }
     },
@@ -2620,6 +3196,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.4858,
+          "Axis": [
+            -0.9754,
+            0.046,
+            -0.2157
+          ]
         }
       }
     },
@@ -2657,6 +3241,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.5561,
+          "Axis": [
+            -0.565,
+            0.7484,
+            -0.3473
+          ]
         }
       }
     },
@@ -2693,6 +3285,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.1764,
+          "Axis": [
+            -0.0131,
+            -0.9999,
+            -0.0047
+          ]
         }
       }
     },
@@ -2729,6 +3329,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.9448,
+          "Axis": [
+            0.9343,
+            0.2731,
+            0.2291
+          ]
         }
       }
     },
@@ -2765,6 +3373,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.2688,
+          "Axis": [
+            -0.2272,
+            0.3917,
+            0.8916
+          ]
         }
       }
     },
@@ -2802,6 +3418,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.6032,
+          "Axis": [
+            -0.219,
+            -0.4076,
+            -0.8865
+          ]
         }
       }
     },
@@ -2839,6 +3463,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.6121,
+          "Axis": [
+            0.2294,
+            -0.912,
+            -0.34
+          ]
         }
       }
     },
@@ -2873,6 +3505,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.3569,
+          "Axis": [
+            0.2783,
+            0.8687,
+            0.4098
+          ]
         }
       }
     },
@@ -2909,6 +3549,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.619,
+          "Axis": [
+            -0.4145,
+            -0.9067,
+            -0.0776
+          ]
         }
       }
     },
@@ -2944,6 +3592,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.6701,
+          "Axis": [
+            -0.7912,
+            0.5705,
+            0.2204
+          ]
         }
       }
     },
@@ -2980,6 +3636,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.222,
+          "Axis": [
+            0.0118,
+            0.9996,
+            -0.0241
+          ]
         }
       }
     },
@@ -3015,6 +3679,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.1994,
+          "Axis": [
+            -0.8145,
+            0.4348,
+            -0.3841
+          ]
         }
       }
     },
@@ -3052,6 +3724,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.6948,
+          "Axis": [
+            0.3713,
+            0.6357,
+            -0.6768
+          ]
         }
       }
     },
@@ -3086,6 +3766,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.8743,
+          "Axis": [
+            -0.2057,
+            -0.7485,
+            0.6304
+          ]
         }
       }
     },
@@ -3120,6 +3808,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.6445,
+          "Axis": [
+            -0.5227,
+            0.5397,
+            -0.6599
+          ]
         }
       }
     },
@@ -3157,6 +3853,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.6911,
+          "Axis": [
+            -0.4925,
+            -0.6795,
+            0.5438
+          ]
         }
       }
     },
@@ -3193,6 +3897,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.7994,
+          "Axis": [
+            -0.1348,
+            0.1033,
+            0.9855
+          ]
         }
       }
     },
@@ -3229,6 +3941,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.264,
+          "Axis": [
+            0.4033,
+            -0.591,
+            -0.6986
+          ]
         }
       }
     },
@@ -3265,6 +3985,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.7256,
+          "Axis": [
+            -0.4586,
+            0.8214,
+            -0.3392
+          ]
         }
       }
     },
@@ -3299,6 +4027,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.2964,
+          "Axis": [
+            -0.8181,
+            -0.0378,
+            0.5739
+          ]
         }
       }
     },
@@ -3336,6 +4072,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.7364,
+          "Axis": [
+            -0.6564,
+            -0.4726,
+            0.588
+          ]
         }
       }
     },
@@ -3373,6 +4117,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.7513,
+          "Axis": [
+            -0.4217,
+            0.0523,
+            -0.9052
+          ]
         }
       }
     },
@@ -3409,6 +4161,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.5156,
+          "Axis": [
+            0.3438,
+            0.5382,
+            -0.7695
+          ]
         }
       }
     },
@@ -3444,6 +4204,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.5702,
+          "Axis": [
+            0.4861,
+            0.1651,
+            0.8582
+          ]
         }
       }
     },
@@ -3481,6 +4249,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.6416,
+          "Axis": [
+            -0.9582,
+            -0.253,
+            0.1333
+          ]
         }
       }
     },
@@ -3515,6 +4291,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.9366,
+          "Axis": [
+            0.1446,
+            0.9822,
+            -0.1202
+          ]
         }
       }
     },
@@ -3551,6 +4335,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.693,
+          "Axis": [
+            0.2284,
+            0.7423,
+            0.6299
+          ]
         }
       }
     },
@@ -3585,6 +4377,14 @@
               "Material": 1003
             }
           }
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 0.9324,
+          "Axis": [
+            -0.9053,
+            0.0417,
+            0.4227
+          ]
         }
       }
     },
