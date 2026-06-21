@@ -55,14 +55,18 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
   `UI::PropertyTable` via the shared `DrawFieldWidget` helper (`editor/src/FieldWidget.{h,cpp}`,
   taking a `FieldWidgetContext { AssetManager&, const AssetSourceIndex&, const EditorRegistry& }`),
   which draws a built-in widget per `FieldClass`
-  (Scalar/Vector/Quaternion/String/AssetHandle/Enum/Reference/Struct/Matrix), honors
+  (Scalar/Vector/Quaternion/String/AssetHandle/Enum/Reference/Struct/Matrix/Variant), honors
   `FieldDescriptor::ReadOnly`/`Hidden`/`Tooltip`, recurses nested structs as flattened indented
   rows, makes enums editable (with a registered `LightType` combo), and turns `Reference`
-  fields into Entity drop targets. A `RegisterFieldWidget` entry overrides the built-in for a
-  given `TypeId`; the entity inspector and the node-property inspector both call
-  `DrawFieldWidget`, so the two share identical widget behavior. The `AssetHandle` widget is an
-  asset **picker** (a combo over the `AssetSourceIndex` entries of the field's `AssetType`),
-  not a read-only label.
+  fields into Entity drop targets. The **`Variant` widget** is a combo over the alternatives'
+  display names (plus "(none)") that `SetActive`s the chosen alternative on change and recurses
+  the active member's fields as indented rows — so a `PrimitiveComponent`'s shape variant gives
+  primitive-kind selection and per-shape parameter editing for free, and editing re-resolves the
+  mesh through the editor's per-frame `ResolvePrimitiveMeshes`. A `RegisterFieldWidget` entry
+  overrides the built-in for a given `TypeId`; the entity inspector and the node-property
+  inspector both call `DrawFieldWidget`, so the two share identical widget behavior. The
+  `AssetHandle` widget is an asset **picker** (a combo over the `AssetSourceIndex` entries of the
+  field's `AssetType`), not a read-only label.
 - **`EditorRegistry`** is defined in `libveng_editor` and **forward-declared** in
   `engine/include/Veng/Module/Module.h` (so `libveng` stays clean). It holds the
   `AssetType`→editor-factory map (double-click an asset opens its editor),

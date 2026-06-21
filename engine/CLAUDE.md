@@ -499,6 +499,24 @@ smoke render use.
   the canonical layout (`Mesh::CanonicalLayout()`), and `AssetManager::Adopt`
   wraps its `Ref<Mesh>` in an (id-less) `AssetHandle<Mesh>` so it is equally usable
   anywhere a cooked handle is — e.g. a `MeshRenderer`.
+- **A primitive is also a persistable, prefab-authored component.** A
+  `PrimitiveComponent` (`Veng/Scene/Components.h`) stores the *recipe* of a procedural
+  mesh — a `PrimitiveShapeVariant` (`Variant<CubeShape, PlaneShape, SphereShape,
+  IcosphereShape>`, each alternative carrying that shape's parameters plus an
+  `AssetHandle<Material>`) — so a prefab persists "icosphere, radius 0.8, 4
+  subdivisions, brick material" rather than an unaddressable runtime handle. The
+  recipe cooks and loads through the ordinary prefab path; the embedded material in the
+  active alternative resolves as an ordinary load-time dependency.
+  `ResolvePrimitiveMeshes(Scene&, AssetManager&, PrimitiveMeshCache&)`
+  (`Veng/Scene/PrimitiveResolve.h`) turns each `PrimitiveComponent`'s active shape into
+  a `Mesh` streamed in via `AssetManager::CreateAsync` and stores the pending handle in
+  the entity's `MeshRenderer.Mesh`, so the primitive **appears** a few frames after
+  spawn exactly as a cooked mesh would (the renderer skips a not-yet-resident mesh). It
+  is idempotent — an entity already pointing at its current shape's mesh is skipped — so
+  the app calls it once after `SpawnInto` and the prefab editor calls it every frame; a
+  caller-owned `PrimitiveMeshCache` (keyed on the shape value) dedups identical recipes
+  to one GPU mesh. The hand-built `Primitives::`/`Adopt` path above stays public for
+  tests and tools.
 - **A mesh owns its materials; submeshes index them.** A `Mesh` holds a resident
   `vector<AssetHandle<Material>>` (`GetMaterials()`) and each `SubMesh` carries a
   `u32 MaterialIndex` into it (`SubMesh::NoMaterial` = unassigned). The cooked
@@ -654,7 +672,19 @@ The reflection layer (`Veng/Reflection/`): an **open** `TypeId` space (a game ad
 leaf/struct/component with no engine change — a leaf or enum through the `VE_LEAF` seam)
 and a **closed** `FieldClass`
 (`Scalar`/`Vector`/`Quaternion`/`Matrix`/`String`/`AssetHandle`/`Reference`/`Struct`/
-`Enum`) a generic walker switches on. `FieldDescriptor`s — authored via
+`Enum`/`Variant`) a generic walker switches on. **`FieldClass::Variant`** is the
+tagged-union meta-kind: a `Variant<Ts...>` field (`Veng/Reflection/Variant.h`,
+authored with `VE_VARIANT`) holds one of several registered struct alternatives, and
+reflection reaches its active member only through type-erased thunks on the variant's
+`TypeInfo` (`VariantActiveType`/`VariantActivePtr`/`VariantSetActive`/…), never by
+offset. It **serializes as a `TypeId` tag** (the active alternative's id, `InvalidTypeId`
+for empty) followed by that member's record; an unknown or unregistered tag leaves the
+variant empty and skips the record, the same schema-drift tolerance an unknown field
+name gets. It is **authored in JSON as `{ "type": <registered name>, "value": {…} }`**,
+the cooker matching `"type"` against an alternative's registered `TypeInfo.Name`. The
+prefab loader's dependency walk and `Prefab::SpawnInto`'s rehydration both recurse into
+the active alternative, so an embedded `AssetHandle` inside a variant (a shape's
+material) loads as an ordinary dependency. `FieldDescriptor`s — authored via
 `VE_REFLECT`/`VE_FIELD`, each deriving its `Offset` (`offsetof`) and its field type's
 `TypeId`/`FieldClass` at compile time, restating only the field *name* — drive a
 tolerant, name-keyed, recursive generic serialization (and, later, editor inspectors).

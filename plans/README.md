@@ -442,7 +442,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   next; the GPU candidate set is the natural consumer of the BVH broadphase. **Independent of
   planset-24**; builds on planset-23.
 
-- **[planset-26](planset-26/README.md)** — primitive recipes in prefabs (📝 ready,
+- **[planset-26](planset-26/README.md)** — primitive recipes in prefabs (✅ done,
   8 plans). Lets a prefab store the **recipe** of a procedural mesh ("icosphere, radius
   0.8, brick material") rather than a baked mesh or a dangling runtime handle, load it
   through the ordinary asset/prefab path, select it in the editor, and **async-stream** the

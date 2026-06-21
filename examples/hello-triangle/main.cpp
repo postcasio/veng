@@ -10,10 +10,7 @@
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/ImGui/ImGuiLayer.h>
-#include <Veng/Asset/Material.h>
-#include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Prefab.h>
-#include <Veng/Asset/Primitives.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Asset/Texture.h>
@@ -22,14 +19,18 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/PrimitiveResolve.h>
 #include <Veng/Scene/Transforms.h>
+#include <Veng/Task/TaskSystem.h>
 
 #include <glm/gtc/packing.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
+#include <thread>
 
 using namespace Veng;
 
@@ -71,17 +72,6 @@ protected:
             GetAssetManager().Mount(ExecutableDirectory() / "sample.vengpack");
         VE_ASSERT(mountResult, "{}", mountResult.error());
 
-        // Must be resident before Mesh::Create so the primitive generator can record
-        // the material on the produced submesh.
-        const AssetResult<AssetHandle<Veng::Material>> brickMaterial =
-            GetAssetManager().LoadSync<Veng::Material>(AssetId{0x3EB});
-        VE_ASSERT(brickMaterial.has_value(), "{}", brickMaterial.error().Detail);
-        m_BrickMaterial = *brickMaterial;
-
-        // Icosphere: near-uniform tessellation avoids the pole clustering of a UV sphere.
-        const Ref<Veng::Mesh> sphere = Veng::Mesh::Create(
-            context, Veng::Primitives::Icosphere(0.8f, 4, m_BrickMaterial), "Demo Sphere");
-
         if (GetImGuiLayer())
         {
             // Edge-clamped so the "Scene" window's UI::Image never samples past the
@@ -120,14 +110,16 @@ protected:
         VE_ASSERT(roots.size() >= 2,
                   "prefab spawned fewer than the expected sphere + receiver-plane roots");
 
-        // Receiver plane: gives the shadow passes a surface beneath the sphere.
-        const Ref<Veng::Mesh> plane = Veng::Mesh::Create(
-            context, Veng::Primitives::Plane(vec2(4.0f), uvec2(1), m_BrickMaterial),
-            "Receiver Plane");
+        // The prefab's PrimitiveComponents carry the shape recipes; resolve them once to
+        // stream each generated mesh into its entity's MeshRenderer.
+        ResolvePrimitiveMeshes(*m_Scene, GetAssetManager(), m_PrimitiveCache);
 
-        // Wire the runtime meshes in code: a prefab cannot reference a runtime resource by id.
-        m_Scene->Get<MeshRenderer>(roots[0]).Mesh = GetAssetManager().Adopt(sphere);
-        m_Scene->Get<MeshRenderer>(roots[1]).Mesh = GetAssetManager().Adopt(plane);
+        // Smoke renders a fixed pose, so block until the streamed primitives are resident
+        // before the capture frame; the windowed app lets them appear over a few frames.
+        if (m_SmokeOutput)
+        {
+            WaitForPrimitiveResidency();
+        }
 
         // Fixed direction for a reproducible smoke pose; intensity pushes facets past 1.0
         // in linear HDR so bloom has something to act on.
@@ -224,10 +216,37 @@ protected:
         m_SceneTexture.reset();
         m_SceneSampler.reset();
         m_Scene.reset();
-        m_BrickMaterial = {};
+        // Dropping the cache's handles retires the streamed primitive meshes.
+        m_PrimitiveCache.Entries.clear();
     }
 
 private:
+    // Drains the task system until every PrimitiveComponent's streamed mesh is resident.
+    // The async build finalizes on the main-thread continuation pump, so each iteration
+    // pumps it and yields the worker a moment to complete the upload.
+    void WaitForPrimitiveResidency()
+    {
+        const auto allResident = [this]
+        {
+            bool resident = true;
+            m_Scene->Each<PrimitiveComponent, MeshRenderer>(
+                [&resident](Entity, PrimitiveComponent&, MeshRenderer& renderer)
+                {
+                    if (!renderer.Mesh.IsLoaded())
+                    {
+                        resident = false;
+                    }
+                });
+            return resident;
+        };
+
+        while (!allResident())
+        {
+            GetTaskSystem().PumpMainThread();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
     // Configure can recreate the output image, so the ImGui texture and composite
     // scene source must be re-fetched after each call.
     void ReconfigureScene()
@@ -412,8 +431,6 @@ private:
     Unique<Renderer::SceneRenderer> m_SceneRenderer;
     Renderer::SceneRendererSettings m_SceneSettings;
 
-    AssetHandle<Veng::Material> m_BrickMaterial;
-
     // Recreated when Configure invalidates the output image.
     Ref<Renderer::Sampler> m_SceneSampler;
     Ref<ImGuiTexture> m_SceneTexture;
@@ -428,6 +445,8 @@ private:
     static inline const vec3 SpinAxis = glm::normalize(vec3(0.5f, 1.0f, 0.2f));
 
     Unique<Scene> m_Scene;
+    // Shape-keyed dedup for the prefab's streamed primitive meshes; retained for the scene's life.
+    PrimitiveMeshCache m_PrimitiveCache;
     Camera m_Camera;
 
     f32 m_LastDelta = 0.0f;

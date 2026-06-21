@@ -45,6 +45,8 @@ namespace VengEditor
 
     SceneViewportPanel::~SceneViewportPanel()
     {
+        // Dropping the cache's handles retires the streamed primitive meshes.
+        m_PrimitiveCache.Entries.clear();
         m_SceneTexture.reset();
         m_SceneSampler.reset();
         m_SceneRenderer.reset();
@@ -91,6 +93,10 @@ namespace VengEditor
         {
             m_SceneTexture = m_ImGui.CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
         }
+
+        // Re-resolve every frame so editing a PrimitiveComponent's shape streams in the new
+        // mesh; idempotent for unedited shapes, deduped through the retained cache.
+        ResolvePrimitiveMeshes(*m_Ctx.Scene, m_Assets, m_PrimitiveCache);
 
         const Renderer::SceneView view{
             .World = *m_Ctx.Scene, .Camera = m_Camera, .Delta = Time::GetDeltaTime()};

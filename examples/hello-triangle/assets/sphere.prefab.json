@@ -8,7 +8,16 @@
           "Rotation": [0.0, 0.0, 0.0, 1.0],
           "Scale": [1.0, 1.0, 1.0]
         },
-        "::Veng::MeshRenderer": {},
+        "::Veng::PrimitiveComponent": {
+          "Shape": {
+            "type": "::Veng::IcosphereShape",
+            "value": {
+              "Radius": 0.8,
+              "Subdivisions": 4,
+              "Material": 1003
+            }
+          }
+        },
         "Spinner": {
           "SpeedRadiansPerSec": 1.0
         }
@@ -22,7 +31,16 @@
           "Rotation": [0.0, 0.0, 0.0, 1.0],
           "Scale": [1.0, 1.0, 1.0]
         },
-        "::Veng::MeshRenderer": {}
+        "::Veng::PrimitiveComponent": {
+          "Shape": {
+            "type": "::Veng::PlaneShape",
+            "value": {
+              "Size": [4.0, 4.0],
+              "Subdivisions": [1, 1],
+              "Material": 1003
+            }
+          }
+        }
       }
     }
   ]

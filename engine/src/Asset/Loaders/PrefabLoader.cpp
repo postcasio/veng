@@ -131,6 +131,23 @@ namespace Veng
                         return nested;
                     }
                 }
+                else if (field.Class == FieldClass::Variant)
+                {
+                    // The active alternative carries its own embedded handles (a shape's
+                    // material); an empty variant has none.
+                    const TypeInfo& variant = registry.Info(field.Type);
+                    const TypeId active = variant.VariantActiveType(fieldPtr);
+                    if (active != InvalidTypeId)
+                    {
+                        const VoidResult nested =
+                            CollectHandleDeps(parentId, variant.VariantActivePtrConst(fieldPtr),
+                                              registry.Info(active), registry, out);
+                        if (!nested)
+                        {
+                            return nested;
+                        }
+                    }
+                }
             }
             return {};
         }

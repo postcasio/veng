@@ -149,27 +149,47 @@ namespace Veng::Cook
             case FieldClass::Quaternion:
             case FieldClass::Matrix:
             {
-                // All components are f32 in the field type's storage order.
-                // A quat is [x,y,z,w] (glm memory layout), so identity is [0,0,0,1].
+                // Components are written in the field's storage type — f32 for a
+                // float vector/quat/matrix, u32 for an unsigned-integer vector. A
+                // quat is [x,y,z,w] (glm memory layout), so identity is [0,0,0,1].
+                const bool unsignedVector = field.Type == TypeIdOf<uvec2>();
+                const usize componentSize = unsignedVector ? sizeof(u32) : sizeof(f32);
                 const usize size = registry.Info(field.Type).Size;
-                const usize arity = size / sizeof(f32);
+                const usize arity = size / componentSize;
 
                 if (!value.is_array() || value.size() != arity)
                 {
                     return err(fmt::format("expected an array of {} numbers", arity));
                 }
 
-                vector<f32> floats;
-                floats.reserve(arity);
                 for (const json& elem : value)
                 {
                     if (!elem.is_number())
                     {
                         return err("array contains a non-number element");
                     }
-                    floats.push_back(elem.get<f32>());
                 }
-                std::memcpy(fieldPtr, floats.data(), arity * sizeof(f32));
+
+                if (unsignedVector)
+                {
+                    vector<u32> components;
+                    components.reserve(arity);
+                    for (const json& elem : value)
+                    {
+                        components.push_back(elem.get<u32>());
+                    }
+                    std::memcpy(fieldPtr, components.data(), arity * sizeof(u32));
+                }
+                else
+                {
+                    vector<f32> components;
+                    components.reserve(arity);
+                    for (const json& elem : value)
+                    {
+                        components.push_back(elem.get<f32>());
+                    }
+                    std::memcpy(fieldPtr, components.data(), arity * sizeof(f32));
+                }
                 return {};
             }
 

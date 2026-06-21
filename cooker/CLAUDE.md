@@ -50,6 +50,13 @@ a wrong field type, or a malformed value is a located cook-time error. A field a
 from the source keeps its default-constructed value (schema tolerance): omission is
 allowed, type-mismatch is not.
 
+A **`FieldClass::Variant`** field is authored as `{ "type": <registered name>, "value":
+{…fields…} }`; the importer matches `"type"` against the registered `TypeInfo.Name` of
+the variant's alternatives (a name not among them is a located error), selects that
+alternative, and recurses `BindField` into `"value"`, emitting the same `TypeId`
+tag-plus-record bytes the engine reader expects. An absent or empty-`"type"` variant
+stays empty.
+
 This rests on the **GPU-free type-registration contract** (`RegisterBuiltinTypes`,
 `Register<T>()`, a module's `VengModuleRegister` touch no `Context`/device): the
 headless cooker reflects a module's types with no ICD present, and a no-device cooker
