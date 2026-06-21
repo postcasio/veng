@@ -297,6 +297,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/hierarchy.cpp
             tests/unit/scene_broadphase.cpp
             tests/unit/reflection.cpp
+            tests/unit/reflection_variant.cpp
             tests/unit/camera.cpp
             tests/unit/material_params.cpp
     )

@@ -122,3 +122,44 @@ namespace Veng::Detail
         Describe(registrar);                                                                       \
     }                                                                                              \
     }
+
+/// @brief Declares a Variant\<Ts...\>'s identity by specialising VengReflect\<T\>.
+///
+/// Type already is a Variant\<Ts...\> (or an alias of one), so the alternatives are
+/// reachable through the type's own static members — the macro never restates the pack.
+/// It emits Class = Variant, an empty Fields(), the type-erased variant thunks the
+/// registry records on the TypeInfo, and a RegisterDependencies that registers each
+/// alternative. The id is an authored 0x…ULL literal (engine builtins) or a
+/// `vengc generate-type-id` value (game types).
+#define VE_VARIANT(Type, TypeIdLiteral)                                                            \
+    template <>                                                                                    \
+    struct ::Veng::VengReflect<Type>                                                               \
+    {                                                                                              \
+        static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                                      \
+        static constexpr ::Veng::FieldClass Class = ::Veng::FieldClass::Variant;                   \
+        static ::Veng::string Name() { return #Type; }                                             \
+        static ::Veng::vector<::Veng::FieldDescriptor> Fields() { return {}; }                     \
+        static ::Veng::TypeId ActiveType(const void* p)                                            \
+        {                                                                                          \
+            return static_cast<const Type*>(p)->ActiveType();                                      \
+        }                                                                                          \
+        static void* ActivePtr(void* p) { return static_cast<Type*>(p)->ActivePtr(); }             \
+        static const void* ActivePtrConst(const void* p)                                           \
+        {                                                                                          \
+            return static_cast<const Type*>(p)->ActivePtr();                                       \
+        }                                                                                          \
+        static void* SetActive(void* p, ::Veng::TypeId id)                                         \
+        {                                                                                          \
+            return static_cast<Type*>(p)->SetActive(id);                                           \
+        }                                                                                          \
+        static void Clear(void* p) { static_cast<Type*>(p)->Clear(); }                             \
+        static ::Veng::vector<::Veng::TypeId> Alternatives()                                       \
+        {                                                                                          \
+            const auto s = Type::Alternatives();                                                   \
+            return {s.begin(), s.end()};                                                           \
+        }                                                                                          \
+        static void RegisterDependencies(::Veng::TypeRegistry& r)                                  \
+        {                                                                                          \
+            Type::RegisterAlternatives(r);                                                         \
+        }                                                                                          \
+    }

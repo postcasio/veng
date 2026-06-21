@@ -36,6 +36,31 @@ namespace Veng
         FieldClass Class = FieldClass::Struct;
         /// @brief Field descriptors for Struct-class types; empty for leaves.
         vector<FieldDescriptor> Fields;
+
+        /// @brief Variant-only: the alternative TypeIds, in declaration order.
+        ///
+        /// Empty for non-variant types.
+        vector<TypeId> VariantAlternatives;
+        /// @brief Variant-only: returns the active alternative's TypeId (InvalidTypeId = empty).
+        ///
+        /// Null for non-variant types.
+        TypeId (*VariantActiveType)(const void*) = nullptr;
+        /// @brief Variant-only: returns the active member's storage, or nullptr when empty.
+        ///
+        /// Null for non-variant types.
+        void* (*VariantActivePtr)(void*) = nullptr;
+        /// @brief Variant-only: returns the active member's const storage, or nullptr when empty.
+        ///
+        /// Null for non-variant types.
+        const void* (*VariantActivePtrConst)(const void*) = nullptr;
+        /// @brief Variant-only: activates `id`'s alternative (default-constructed); nullptr if `id` is not an alternative.
+        ///
+        /// Null for non-variant types.
+        void* (*VariantSetActive)(void*, TypeId) = nullptr;
+        /// @brief Variant-only: resets the variant to empty, destructing any active alternative.
+        ///
+        /// Null for non-variant types.
+        void (*VariantClear)(void*) = nullptr;
     };
 
     /// @brief Maps authored TypeIds to their TypeInfo records.
@@ -148,6 +173,18 @@ namespace Veng
             info.Id = id;
             info.Class = cls;
             info.Fields = std::move(fields);
+
+            // A variant's active member is reached through type-erased thunks, never by
+            // offset; record them off the VE_VARIANT specialisation for the generic walk.
+            if constexpr (VengReflect<T>::Class == FieldClass::Variant)
+            {
+                info.VariantActiveType = &VengReflect<T>::ActiveType;
+                info.VariantActivePtr = &VengReflect<T>::ActivePtr;
+                info.VariantActivePtrConst = &VengReflect<T>::ActivePtrConst;
+                info.VariantSetActive = &VengReflect<T>::SetActive;
+                info.VariantClear = &VengReflect<T>::Clear;
+                info.VariantAlternatives = VengReflect<T>::Alternatives();
+            }
 
             m_Types.emplace(id, std::move(info));
             return id;
