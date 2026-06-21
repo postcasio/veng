@@ -3411,4 +3411,105 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: TAA wires the resolve + history passes, populates "
+                  "history, and toggles cleanly")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
+    REQUIRE(mountResult.has_value());
+
+    constexpr uvec2 extent{96, 72};
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Ref<Mesh> cube = PopulateCubeScene(Context, assets, *scene);
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f),
+                          static_cast<f32>(extent.x) / static_cast<f32>(extent.y), 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    // TAA in isolation from the screen-space batteries (which are not bit-stable on
+    // MoltenVK); the resolve runs in HDR before the tonemap regardless.
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final,
+                     .Bloom = false,
+                     .TAA = true,
+                     .Shadows = false,
+                     .PunctualShadows = false,
+                     .AO = false},
+    });
+
+    // The history and velocity targets exist only when TAA is wired.
+    REQUIRE(renderer->GetTaaHistoryView() != nullptr);
+    CHECK(renderer->GetTaaHistoryView()->GetImage()->GetWidth() == extent.x);
+    REQUIRE(renderer->GetVelocityView() != nullptr);
+    CHECK(renderer->GetVelocityView()->GetImage()->GetFormat() ==
+          Renderer::GBuffer::VelocityFormat);
+
+    auto Render = [&]()
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.016f});
+            });
+    };
+
+    // Several frames: frame 0 falls back to the current color (history invalid), later
+    // frames reproject and accumulate. None crash and the output stays the right size.
+    for (u32 frame = 0; frame < 6; ++frame)
+    {
+        Render();
+    }
+
+    // The resolve + history-copy passes ran each frame (the internal targets are not
+    // transfer sources, so the output is what tests inspect); the scene rendered through
+    // the TAA chain, so the output carries content.
+    const vector<u8> output = renderer->GetOutput()->GetImage()->Download();
+    REQUIRE(output.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+    f64 outputMean = 0.0;
+    for (u32 y = 0; y < extent.y; ++y)
+    {
+        for (u32 x = 0; x < extent.x; ++x)
+        {
+            const vec3 c = DecodeTexel(output, extent.x, x, y);
+            outputMean += static_cast<f64>(c.r + c.g + c.b);
+        }
+    }
+    outputMean /= static_cast<f64>(extent.x) * extent.y;
+    CHECK(outputMean > 0.0);
+
+    // Toggling TAA off releases the history target; back on recreates it. Both Configures
+    // and a render across each must stay clean (the validation gate runs this binary).
+    renderer->Configure({.Mode = DebugView::Final,
+                         .Bloom = false,
+                         .TAA = false,
+                         .Shadows = false,
+                         .PunctualShadows = false,
+                         .AO = false});
+    CHECK(renderer->GetTaaHistoryView() == nullptr);
+    CHECK(renderer->GetVelocityView() == nullptr);
+    Render();
+
+    renderer->Configure({.Mode = DebugView::Final,
+                         .Bloom = false,
+                         .TAA = true,
+                         .Shadows = false,
+                         .PunctualShadows = false,
+                         .AO = false});
+    REQUIRE(renderer->GetTaaHistoryView() != nullptr);
+    Render();
+    Render();
+
+    CHECK(renderer->GetOutput()->GetImage()->GetWidth() == extent.x);
+}
+
 #endif // GPU_GBUFFER_FIXTURE_DIR

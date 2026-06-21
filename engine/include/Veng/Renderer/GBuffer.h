@@ -43,6 +43,15 @@ namespace Veng::Renderer
         /// is a low-dynamic scalar (the lighting pass scales albedo by it).
         inline constexpr Format ORMFormat = Format::RGBA8Unorm;
 
+        /// @brief Screen-space motion vector target written by the TAA velocity prepass.
+        ///
+        /// RG: the per-pixel UV displacement from the previous frame's screen position to
+        /// this frame's (curUV - prevUV). Not a g-buffer MRT channel — it is a separate,
+        /// TAA-only target written by a dedicated velocity pass, so the opaque material
+        /// contract (G0/G1/G2) is unchanged. Signed float to carry motion in either
+        /// direction across the full UV range.
+        inline constexpr Format VelocityFormat = Format::RG16Sfloat;
+
         /// @brief The depth attachment, also sampled by the lighting pass for world-position reconstruction.
         ///
         /// The lighting pass reconstructs world position via the camera's inverse view-projection.

@@ -122,8 +122,33 @@ over **multiple typed lights** (directional / point / spot) and reconstructing w
 position from depth, then tonemap to the output. The batteries hang off the g-buffer:
 **cascaded shadow maps** for the directional light and a **shared punctual shadow atlas**
 for a bounded set of point/spot lights, **SSAO** folded into the ambient/occlusion term,
-and a **compute mip-pyramid bloom** ahead of tonemap. Each battery is a
-`SceneRendererSettings` toggle driving the `Configure` recompile.
+a **compute mip-pyramid bloom** ahead of tonemap, and an optional **TAA** resolve (off by
+default) between lighting and tonemap. Each battery is a `SceneRendererSettings` toggle
+driving the `Configure` recompile.
+
+**TAA is an HDR-space temporal resolve** (`Settings.TAA`, off by default). It jitters the
+projection by a Halton(2, 3) sub-pixel offset each frame (`Renderer/TaaJitter.h`, a pure
+device-free helper), routes the lighting pass into a separate **lit** target, and inserts a
+**velocity prepass**, a **resolve** pass (lit + reprojected history + velocity/depth → the
+HDR target the bloom/tonemap tail already samples), and a **history-copy** pass (HDR → the
+persisted history for next frame). Motion is **per-object**: a dedicated `VelocityScenePass`
+re-rasterizes the geometry pass's draw plan with a velocity pipeline (depth-tested against
+the populated g-buffer depth, **depth-write off**, so only the visible surface writes) into a
+renderer-owned `RG16Sfloat` **velocity** target — `curUV - prevUV` from the per-vertex
+current and previous clip positions. The previous position comes from a per-draw `PrevWorld`
+matrix (`GpuDrawData` carries it; the renderer tracks each entity's prior world in
+`m_PreviousWorlds`, keyed by packed `Entity` and swapped each frame) and the unjittered
+`CurViewProj`/`PrevViewProj` (both added to the set-0 view-constants block). The resolve uses
+the velocity vector for geometry (camera **and** object motion) and falls back to depth-based
+camera reprojection for the cleared background. This is **TAA-only cost** — the velocity
+target, prepass, and transform tracking exist only while `Settings.TAA` is on, and the opaque
+g-buffer material contract (G0/G1/G2) is unchanged (velocity is a separate target, not an MRT
+channel). History is **YCoCg variance-clipped** to the 3×3 neighborhood, sampled with a
+**Catmull-Rom** filter, and blended with **luminance weighting** (Karis anti-flicker);
+offscreen reprojection and the first frame after a `Resize`/`Configure` fall back to the
+current color (`m_TaaHistoryReset`). The history is a renderer-owned persisted image written
+and read within the renderer's own single-queue graph each frame, so it needs no cross-frame
+ring or semaphore.
 
 The directional light is shadowed by **cascaded shadow maps**, and a **bounded set of
 punctual lights** (`MaxShadowedPunctual`) by a **shared punctual shadow atlas**. The
@@ -168,7 +193,8 @@ spot frustums + `6N` cube faces per frame, on top of the camera and cascade quer
 **Bloom is a compute mip-pyramid battery**, a fixed engine pass like SSAO and the shadow
 atlas — not a PostProcess material. The lit HDR target is bright-passed (a soft-knee
 `Threshold` with **Karis-average** firefly suppression on the first downsample, the
-stability mechanism in a renderer with no TAA) into a single `HdrFormat` mip-chain image's
+firefly-stability mechanism that holds whether or not the optional TAA resolve is on) into a
+single `HdrFormat` mip-chain image's
 mip 0, **progressively downsampled** through the chain, then **upsampled** with an
 accumulating dual filter (`mip[i] += upsample(mip[i+1]) * Radius`) and **composited** back
 into linear HDR (`hdr + mip0 * Intensity`) ahead of tonemap. The whole sweep is **compute**:
@@ -305,8 +331,9 @@ ring because both halves record on the single graphics queue in submission order
 the barrier's first synchronization scope reaches the prior frame's read; the internal
 targets (g-buffer, depth, HDR) are single-copy and serialized by the renderer's own
 graph. Ringing the output — or a cross-queue semaphore — is reserved for a future
-async/temporal consumer (TAA/history-buffer reads of an older frame) or a handoff side
-moving off the single graphics queue.
+async consumer or a handoff side moving off the single graphics queue. The TAA resolve
+needs neither: its history is a renderer-owned persisted image written and read inside the
+renderer's own single-queue graph each frame, ordered by the graph's derived barriers.
 
 **The deferred opaque material g-buffer contract.** An opaque (Surface-domain)
 material's **fragment shader outputs** are **g-buffer channels**, not final swapchain

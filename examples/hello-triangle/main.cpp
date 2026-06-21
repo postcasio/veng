@@ -302,6 +302,13 @@ private:
                 ReconfigureScene();
             }
 
+            // TAA is a topology change: it inserts the resolve/history passes and jitters
+            // the projection. Visible as the orbiting view converges to a crisp image.
+            if (UI::Checkbox("TAA", m_SceneSettings.TAA))
+            {
+                ReconfigureScene();
+            }
+
             // Shadows on/off and cascade count/resolution size the atlas; each requires ReconfigureScene.
             if (UI::Checkbox("Shadows", m_SceneSettings.Shadows))
             {
