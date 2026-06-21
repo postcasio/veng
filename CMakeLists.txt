@@ -192,6 +192,16 @@ if (PROJECT_IS_TOP_LEVEL)
 endif ()
 
 # ---------------------------------------------------------------------------
+# bin2cpp — host tool that embeds a binary file as a C++ source
+# ---------------------------------------------------------------------------
+
+# Built for the host and run during the build to generate the embedded core pack
+# and default font below. A standalone executable with no veng/third-party deps;
+# CXX_CLANG_TIDY is cleared because it is build infrastructure, not engine code.
+add_executable(bin2cpp ${CMAKE_CURRENT_SOURCE_DIR}/cmake/bin2cpp.cpp)
+set_target_properties(bin2cpp PROPERTIES CXX_CLANG_TIDY "")
+
+# ---------------------------------------------------------------------------
 # Core pack — cook built-in vertex layouts and embed into libveng
 # (only when vengc is available, i.e. veng is the top-level project)
 # ---------------------------------------------------------------------------
@@ -219,12 +229,8 @@ if (TARGET veng_cook_bootstrap)
 
     add_custom_command(
         OUTPUT ${VENG_CORE_PACK_CPP}
-        COMMAND ${CMAKE_COMMAND}
-                -DINPUT=${VENG_CORE_PACK_BIN}
-                -DOUTPUT=${VENG_CORE_PACK_CPP}
-                -DSYMBOL=g_CoreLayoutPack
-                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinary.cmake
-        DEPENDS ${VENG_CORE_PACK_BIN} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinary.cmake
+        COMMAND bin2cpp ${VENG_CORE_PACK_BIN} ${VENG_CORE_PACK_CPP} g_CoreLayoutPack
+        DEPENDS ${VENG_CORE_PACK_BIN} bin2cpp
         COMMENT "Embedding veng core pack")
 
     # GENERATED so the build doesn't expect it up front; SKIP_LINTING so the
@@ -254,12 +260,8 @@ set(VENG_DEFAULT_FONT_CPP ${CMAKE_CURRENT_BINARY_DIR}/generated/DefaultFont.cpp)
 
 add_custom_command(
     OUTPUT ${VENG_DEFAULT_FONT_CPP}
-    COMMAND ${CMAKE_COMMAND}
-            -DINPUT=${VENG_DEFAULT_FONT_TTF}
-            -DOUTPUT=${VENG_DEFAULT_FONT_CPP}
-            -DSYMBOL=g_DefaultFont
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinary.cmake
-    DEPENDS ${VENG_DEFAULT_FONT_TTF} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinary.cmake
+    COMMAND bin2cpp ${VENG_DEFAULT_FONT_TTF} ${VENG_DEFAULT_FONT_CPP} g_DefaultFont
+    DEPENDS ${VENG_DEFAULT_FONT_TTF} bin2cpp
     COMMENT "Embedding veng default font")
 
 # GENERATED so the build doesn't expect it up front; SKIP_LINTING so the
