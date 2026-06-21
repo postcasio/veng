@@ -18,6 +18,13 @@ namespace Veng
         registry.Register<LightType>();
         registry.Register<Light>();
 
+        // The control pipeline: per-player snapshot, abstract command, seat→pawn link,
+        // and per-pawn movement tuning.
+        registry.Register<PlayerInput>();
+        registry.Register<Intent>();
+        registry.Register<Possesses>();
+        registry.Register<Mover>();
+
         // Registering Primitive transitively registers its shape variant and the shape
         // alternatives through the dependency recursion.
         registry.Register<Primitive>();

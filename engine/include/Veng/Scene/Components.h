@@ -237,6 +237,65 @@ namespace Veng
         /// @brief Spot outer half-angle in radians; zero intensity beyond.
         f32 OuterCone{0.5f};
     };
+
+    /// @brief Per-player input snapshot — the serializable control chokepoint.
+    ///
+    /// Captures this tick's control state for one player: movement axes, look axes,
+    /// and a button bitset. For a local player it is filled each tick from the engine
+    /// Veng::Input service; a remote player's would be filled from the wire. It is a
+    /// component snapshot rather than a direct device read so the downstream control
+    /// system runs identically regardless of where the input originated — the seam a
+    /// net layer serializes and replays.
+    struct PlayerInput
+    {
+        /// @brief Movement axes this tick: X strafe, Y vertical, Z forward, each in [-1, 1].
+        vec3 Move{0.0f};
+        /// @brief Look axes this tick: X yaw, Y pitch, in arbitrary device units.
+        vec2 Look{0.0f};
+        /// @brief Pressed-button bitset; bit meanings are game policy.
+        u32 Buttons = 0;
+    };
+
+    /// @brief Abstract, source-agnostic command for what a pawn wants to do this tick.
+    ///
+    /// The interface between "who decides" (player, AI, remote) and "what happens"
+    /// (movement and gameplay systems). A control or AI system writes it; the movement
+    /// system consumes it. It is overwritten each tick by its producer, so a zero Intent
+    /// is a pawn at rest. Move is expressed in the pawn's local frame.
+    struct Intent
+    {
+        /// @brief Desired move direction in the pawn's local frame: X right, Y up, Z forward.
+        vec3 Move{0.0f};
+        /// @brief Desired look delta this tick: X yaw, Y pitch, in radians-scaling units.
+        vec2 Look{0.0f};
+        /// @brief Action-flag bitset (jump/fire/...); bit meanings are game policy.
+        u32 Actions = 0;
+    };
+
+    /// @brief Seat-to-pawn link: names the pawn entity a player/seat controls.
+    ///
+    /// Possession is just this reference — nothing inherits or owns through it, and it
+    /// is independent of the seat's Viewer.Camera (a spectator views without possessing;
+    /// a cutscene retargets the camera without un-possessing). The Pawn field is a
+    /// reflected Entity reference, so it remaps on prefab spawn like any intra-prefab
+    /// reference.
+    struct Possesses
+    {
+        /// @brief The pawn entity this seat controls.
+        Entity Pawn = Entity::Null;
+    };
+
+    /// @brief Per-pawn movement tuning the movement system scales its integration by.
+    ///
+    /// Authored data so a pawn's feel is tunable. A pawn without a Mover moves at the
+    /// component's default speeds.
+    struct Mover
+    {
+        /// @brief Local-space move speed in units per second.
+        f32 MoveSpeed = 4.0f;
+        /// @brief Look/turn speed scaling the Intent's look delta, in radians per unit.
+        f32 TurnSpeed = 2.0f;
+    };
 }
 
 VE_LEAF(::Veng::LightType, 0x6B1D62EF4B5A16ULL, FieldClass::Enum);
@@ -329,4 +388,25 @@ VE_FIELD(Intensity, .DisplayName = "Intensity", .Min = 0.0)
 VE_FIELD(Range, .DisplayName = "Range", .Min = 0.0, .Step = 0.1)
 VE_FIELD(InnerCone, .DisplayName = "Inner Cone", .Min = 0.0, .Max = 3.14159265, .Step = 0.01)
 VE_FIELD(OuterCone, .DisplayName = "Outer Cone", .Min = 0.0, .Max = 3.14159265, .Step = 0.01)
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::PlayerInput, 0x5401D36B1EF55045ULL)
+VE_FIELD(Move, .DisplayName = "Move")
+VE_FIELD(Look, .DisplayName = "Look")
+VE_FIELD(Buttons, .DisplayName = "Buttons")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::Intent, 0x27F416122B525965ULL)
+VE_FIELD(Move, .DisplayName = "Move")
+VE_FIELD(Look, .DisplayName = "Look")
+VE_FIELD(Actions, .DisplayName = "Actions")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::Possesses, 0xC7D4144C7DF95B9BULL)
+VE_FIELD(Pawn, .DisplayName = "Pawn")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::Mover, 0x7774F1C2B00DE07EULL)
+VE_FIELD(MoveSpeed, .DisplayName = "Move Speed", .Min = 0.0)
+VE_FIELD(TurnSpeed, .DisplayName = "Turn Speed", .Min = 0.0)
 VE_REFLECT_END();

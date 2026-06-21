@@ -13,12 +13,16 @@
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Asset/Material.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/UI/UI.h>
 
+#include <Veng/Input.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/Movement.h>
+#include <Veng/Scene/Resolve.h>
 #include <Veng/Scene/Transforms.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
@@ -64,6 +68,85 @@ public:
                 const quat step = glm::angleAxis(spinner.SpeedRadiansPerSec * delta,
                                                  glm::normalize(spinner.Axis));
                 transform.Rotation = glm::normalize(step * transform.Rotation);
+            });
+    }
+};
+
+// The game's button-bit layout for a PlayerInput's bitset. Bit meanings are game
+// policy; the engine treats the bitset as opaque.
+enum class PlayerButton : u32
+{
+    Jump = 1u << 0,
+};
+
+// Maps a captured PlayerInput snapshot to an abstract Intent — the game-specific control
+// policy. Pure: the same snapshot always yields the same Intent, whether it came from the
+// device, a recording, or the wire, so it is unit-testable without an Input or a scene.
+Intent MapInputToIntent(const PlayerInput& input)
+{
+    Intent intent;
+    intent.Move = input.Move;
+    // Look maps device deltas straight through; the Mover's TurnSpeed scales them.
+    intent.Look = input.Look;
+    intent.Actions = input.Buttons;
+    return intent;
+}
+
+// The game-specific control system: reads the always-present Veng::Input each tick into
+// the local player's PlayerInput snapshot, then maps that snapshot to the possessed pawn's
+// Intent through MapInputToIntent. It reads Input unconditionally — in headless the service
+// reports all-zeros, so it naturally produces a zero Intent and the pawn stays put, with no
+// null to guard. It writes Intent through the scene accessor, never a retained reference.
+class ControlSystem final : public SceneSystem
+{
+public:
+    void OnUpdate(Scene& scene, const f32, const SystemContext& context) override
+    {
+        const Input& input = context.Input;
+
+        // WASD strafes/advances in the pawn's local frame; Space requests a jump action.
+        vec3 move{0.0f};
+        if (input.IsKeyDown(Key::W))
+        {
+            move.z += 1.0f;
+        }
+        if (input.IsKeyDown(Key::S))
+        {
+            move.z -= 1.0f;
+        }
+        if (input.IsKeyDown(Key::D))
+        {
+            move.x += 1.0f;
+        }
+        if (input.IsKeyDown(Key::A))
+        {
+            move.x -= 1.0f;
+        }
+
+        u32 buttons = 0;
+        if (input.IsKeyDown(Key::Space))
+        {
+            buttons |= static_cast<u32>(PlayerButton::Jump);
+        }
+
+        const vec2 look = input.GetMouseDelta();
+
+        scene.Each<PlayerInput, Possesses>(
+            [&](Entity, PlayerInput& player, Possesses& possesses)
+            {
+                player.Move = move;
+                player.Look = look;
+                player.Buttons = buttons;
+
+                // The seat may possess no pawn, or one that lacks an Intent slot; skip
+                // rather than fault, so an unwired seat is inert.
+                if (possesses.Pawn == Entity::Null || !scene.IsAlive(possesses.Pawn) ||
+                    !scene.Has<Intent>(possesses.Pawn))
+                {
+                    return;
+                }
+
+                scene.Get<Intent>(possesses.Pawn) = MapInputToIntent(player);
             });
     }
 };
@@ -163,9 +246,12 @@ protected:
 
         // Smoke mode has no window, so Input is null and the gameplay tick is skipped;
         // it writes a fixed pose in OnUpdate instead. The windowed app drives the
-        // registered systems through the simulation.
+        // registered systems through the simulation, and gains a player-driven pawn —
+        // spawned only here so the pinned smoke capture stays byte-identical.
         if (!m_SmokeOutput)
         {
+            SpawnPlayer();
+
             m_Simulation = CreateUnique<SceneSimulation>(GetSystemRegistry());
             m_Simulation->Start(*m_Scene,
                                 SystemContext{.Assets = GetAssetManager(), .Input = GetInput()});
@@ -283,6 +369,38 @@ private:
             GetTaskSystem().PumpMainThread();
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
+    }
+
+    // Spawns the windowed-only player: a movable icosphere pawn carrying an Intent and
+    // a Mover, and a seat carrying a PlayerInput snapshot that possesses it. The control
+    // system fills the PlayerInput from device input and writes the pawn's Intent; the
+    // movement system integrates that Intent into the pawn's Transform.
+    void SpawnPlayer()
+    {
+        // Reuse the grid's material so the pawn shades like the rest of the scene.
+        const AssetResult<AssetHandle<Material>> material =
+            GetAssetManager().LoadSync<Material>(AssetId{0x3EBULL});
+        VE_ASSERT(material.has_value(), "{}", material.error().Detail);
+
+        const Entity pawn = m_Scene->CreateEntity();
+        m_Scene->Add<Name>(pawn, Name{.Value = "Player Pawn"});
+        Transform pawnTransform;
+        pawnTransform.Position = vec3(0.0f, 1.0f, 0.0f);
+        m_Scene->Add<Transform>(pawn, pawnTransform);
+        Primitive primitive;
+        *static_cast<IcosphereShape*>(primitive.Shape.SetActive(TypeIdOf<IcosphereShape>())) =
+            IcosphereShape{.Radius = 0.5f, .Subdivisions = 3, .Material = material.value()};
+        m_Scene->Add<Primitive>(pawn, primitive);
+        m_Scene->Add<Intent>(pawn, Intent{});
+        m_Scene->Add<Mover>(pawn, Mover{.MoveSpeed = 5.0f, .TurnSpeed = 2.0f});
+
+        // Stream the pawn's mesh in, exactly as a prefab-spawned Primitive resolves.
+        ResolveComponents(*m_Scene, pawn, GetAssetManager());
+
+        const Entity seat = m_Scene->CreateEntity();
+        m_Scene->Add<Name>(seat, Name{.Value = "Player Seat"});
+        m_Scene->Add<PlayerInput>(seat, PlayerInput{});
+        m_Scene->Add<Possesses>(seat, Possesses{.Pawn = pawn});
     }
 
     // Configure can recreate the output image, so the ImGui texture and composite
@@ -542,6 +660,12 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
 {
     host->Types.Register<Spinner>();
     host->Systems.Register<SpinnerSystem>();
+
+    // The control pipeline runs in order: the game-specific control mapping produces
+    // Intent, then the engine's generic movement system consumes it. Registration order
+    // is run order, so ControlSystem must precede MovementSystem.
+    host->Systems.Register<ControlSystem>();
+    host->Systems.Register<MovementSystem>();
 
     // Smoke mode: no window or swapchain, render off-screen and dump — the display-free CI path.
     const bool smoke = std::getenv("HT_SMOKE") != nullptr;

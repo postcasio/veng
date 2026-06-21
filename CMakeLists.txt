@@ -339,6 +339,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/primitive_resolve.cpp
             tests/unit/camera.cpp
             tests/unit/camera_resolve.cpp
+            tests/unit/control_movement.cpp
             tests/unit/material_params.cpp
     )
     target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
