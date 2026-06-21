@@ -332,6 +332,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/scene_broadphase.cpp
             tests/unit/reflection.cpp
             tests/unit/reflection_variant.cpp
+            tests/unit/spawn_resolve.cpp
             tests/unit/primitive_resolve.cpp
             tests/unit/camera.cpp
             tests/unit/material_params.cpp
@@ -597,6 +598,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/hi_z_pyramid.cpp
             tests/gpu/occlusion_test.cpp
             tests/gpu/prefab_spawn.cpp
+            tests/gpu/spawn_resolve.cpp
     )
     target_link_libraries(veng_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
     # transfer_retire.cpp reaches through Native.h (raw vk::/VMA handles via the

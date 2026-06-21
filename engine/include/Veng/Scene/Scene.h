@@ -324,6 +324,20 @@ namespace Veng
         /// Iteration order over pools is unspecified.
         void ForEachComponent(Entity entity, const function<void(TypeId, void*)>& fn);
 
+        /// @brief Type-erased component fetch: the storage for `id` on `entity`, or nullptr if absent.
+        ///
+        /// The TypeId sibling of TryGet\<T\>; used by the spawn-resolve pass, which
+        /// fetches a component fresh by TypeId at fire time (a resolver may Add a
+        /// component, dangling a held pool pointer across the pool growth).
+        /// @param entity  The entity to query; must be alive.
+        /// @param id      The TypeId of the component to fetch.
+        /// @return The component's storage, or nullptr if the entity lacks it.
+        [[nodiscard]] void* TryGetComponent(Entity entity, TypeId id)
+        {
+            VE_ASSERT(IsAlive(entity), "TryGetComponent on a dead or stale entity");
+            return TryGetRaw(entity, id);
+        }
+
         /// @brief Range-for form of Each, supporting break/early-out.
         ///
         /// Usage: `for (auto [entity, a, b] : scene.View<A, B>()) { … }`

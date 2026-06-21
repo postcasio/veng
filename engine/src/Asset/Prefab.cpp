@@ -151,6 +151,26 @@ namespace Veng
             }
         }
 
+        // 2b. Fire each spawned component's resolver, now that every entity and
+        //     component exists (a resolver may read sibling entities). A resolver may
+        //     add a component (a MeshRenderer), so iterate the prefab's authored
+        //     component list — not a live pool — and fetch storage fresh by TypeId.
+        //     This runs before the hierarchy rebuild; adding a renderable does not
+        //     affect parent edges.
+        for (usize i = 0; i < m_Entities.size(); ++i)
+        {
+            const Entity entity = spawned[i];
+            for (const Component& component : m_Entities[i].Components)
+            {
+                const TypeInfo& typeInfo = registry.Info(component.Type);
+                if (typeInfo.SpawnResolve != nullptr)
+                {
+                    void* slot = scene.TryGetComponent(entity, component.Type);
+                    typeInfo.SpawnResolve(slot, scene, entity, manager);
+                }
+            }
+        }
+
         // 3. Rebuild the intrusive sibling/child links from the parent edges, in
         //    authoring order so appending preserves authored child order. SetParent
         //    detaches the (empty) old links and appends each child under its parent.
