@@ -677,7 +677,8 @@ namespace Veng::Renderer
                 Albedo,
                 Normal,
                 Depth,
-                Ao
+                Ao,
+                Bloom
             };
 
             FullscreenBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent,
@@ -732,6 +733,8 @@ namespace Veng::Renderer
                     return io.GBufferDepth;
                 case Source::Ao:
                     return io.Ssao;
+                case Source::Bloom:
+                    return io.BloomMip0;
                 }
                 VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
             }
@@ -748,6 +751,8 @@ namespace Veng::Renderer
                     return io.DepthHandle;
                 case Source::Ao:
                     return io.SsaoHandle;
+                case Source::Bloom:
+                    return io.BloomMip0Handle;
                 }
                 VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
             }
@@ -1003,6 +1008,7 @@ namespace Veng::Renderer
         bindless.Release(m_HiZSampleHandle);
         bindless.Release(m_HdrHandle);
         bindless.Release(m_BloomResultHandle);
+        bindless.Release(m_BloomMip0Handle);
         bindless.Release(m_SamplerHandle);
     }
 
@@ -1854,6 +1860,7 @@ namespace Veng::Renderer
 
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_BloomResultHandle);
+        bindless.Release(m_BloomMip0Handle);
 
         // The pyramid stops BloomTileShift levels short of 1×1 so the coarsest level holds a
         // ~8 px edge; the max(1u, …) floor guards a tiny extent (mirroring hi-Z's guard).
@@ -1916,6 +1923,9 @@ namespace Veng::Renderer
             m_Context, {.Name = "SceneRenderer Bloom Result", .Image = m_BloomResultImage});
         m_BloomResultHandle = bindless.Register(m_BloomResultView);
 
+        // The DebugView::Bloom arm samples pyramid mip 0 (post up-sweep) as a bindless source.
+        m_BloomMip0Handle = bindless.Register(m_BloomMips[0]);
+
         // Per-level descriptor sets. A down step binds the source (HDR for level 0, mip k-1
         // otherwise) + sampler + the destination mip; an up step binds the coarser mip k+1 +
         // sampler + the finer destination mip k. The HDR source is bound per Execute by the
@@ -1972,11 +1982,14 @@ namespace Veng::Renderer
     {
         // Final is the full deferred chain; debug modes terminate after the g-buffer with one blit.
         // Bloom imports are declared only when active.
-        const bool bloomActive = m_Settings.Mode == DebugView::Final && m_Settings.Bloom;
-        m_BloomActive = bloomActive;
-
+        //
         // Debug arms force-wire their producing battery pass so the visualized target
         // exists regardless of the corresponding Settings toggle.
+        const bool debugBloom = m_Settings.Mode == DebugView::Bloom;
+        const bool bloomActive =
+            (m_Settings.Mode == DebugView::Final && m_Settings.Bloom) || debugBloom;
+        m_BloomActive = bloomActive;
+
         const bool debugShadow = m_Settings.Mode == DebugView::Shadows;
         const bool debugAo = m_Settings.Mode == DebugView::AO;
         // Cascades debug needs the shadow pass wired so cascade constants are written.
@@ -2172,6 +2185,16 @@ namespace Veng::Renderer
                 m_Context, m_CascadeDebugPipeline, m_Extent, /*useSsao=*/false, m_ShadowSet,
                 m_ShadowRingStride, m_PunctualRingStride, /*writeToOutput=*/true));
             break;
+        case DebugView::Bloom:
+            // Bloom samples the lit HDR, so the lighting pass runs first; the force-wired bloom
+            // sweep (DeclareBloom, after the last pass) writes the pyramid, and the terminal blit
+            // shows mip 0 after the up-sweep — the accumulated bloom before composite.
+            m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
+                m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
+                ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride));
+            m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
+                m_Context, m_AlbedoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Bloom));
+            break;
         }
 
         // Point binding 0 at the punctual atlas for the debug blit (overwrites the
@@ -2192,6 +2215,8 @@ namespace Veng::Renderer
             .DepthHandle = m_DepthHandle,
             .Hdr = hdrId,
             .HdrHandle = m_HdrHandle,
+            .BloomMip0 = bloomActive ? m_BloomChainId.Level(0) : ResourceId{},
+            .BloomMip0Handle = m_BloomMip0Handle,
             .Ssao = m_SsaoId,
             .SsaoHandle = ssaoHandle,
             .SamplerHandle = m_SamplerHandle,

@@ -155,9 +155,10 @@ tonemap) delivered by planset-12; frames-in-flight > 1 correctness by planset-13
 `SceneRenderer`.** **Design overview:** [scene-renderer.md](scene-renderer.md).
 
 The **authorable post stack has its mechanism** — PostProcess materials (area 13,
-planset-18): a tunable effect (grade, bloom-threshold, curve) is authored as a
-PostProcess-domain material run by a `PostProcessScenePass`, not a bespoke C++ pass.
-Tonemap is the first; bloom (planset-19) is the first multi-stage authorable chain.
+planset-18): a tunable effect (grade, curve) is authored as a PostProcess-domain
+material run by a `PostProcessScenePass`, not a bespoke C++ pass. **Tonemap** is the
+PostProcess material. Fixed-dataflow batteries — SSAO, the shadow atlas, and the
+**compute mip-pyramid bloom** — are hardcoded engine passes, not authorable materials.
 
 **Delivered — planset-19 (the batteries + the G2 PBR target):** the renderer went
 physically-based — a **metallic-roughness three-target g-buffer** (the G2 ORM target this
@@ -205,6 +206,17 @@ each shadow view culls its casters through `SceneBroadphase::Cull` against its o
 frame. `PunctualShadows`/`PunctualShadowResolution` are the knobs, `DebugView::PunctualShadows` the
 visualizer, and `Veng/Renderer/PunctualShadows.h` the device-free view math beside `ShadowCascades.h`.
 
+**Delivered — planset-28 (mip-pyramid bloom):** the single-level separable-Gaussian bloom is
+replaced by a **compute mip-pyramid bloom** battery — a fixed engine pass like SSAO, **not** a
+PostProcess material. The lit HDR is bright-passed with **Karis-average** firefly suppression into
+mip 0 of an `HdrFormat` mip chain, progressively downsampled, then upsampled with an accumulating
+dual filter and composited back into linear HDR ahead of tonemap (per-level compute dispatches
+mirroring the hi-Z reduction). The filter kernel is a `BloomKernel { Cod, Kawase }` topology knob
+(COD/Jimenez default; Dual Kawase the TBDR-optimized alternative); `Threshold`/`Intensity`/`Radius`
+are per-frame `SceneView` values and `Bloom`/`Kernel` the topology knobs, with a `DebugView::Bloom`
+arm blitting pyramid mip 0 after the up-sweep. The four bloom materials + their fragment shaders are
+deleted.
+
 **Still future:** a **transparent/forward pass** (a second material contract whose fragment
 outputs final color) and **MSAA**, reading the delivered `AABB`/`Frustum`/broadphase facility. The
 BVH broadphase's refinements, behind the same `Sync`/`Cull` + version-gate seam: **incremental tree
@@ -214,8 +226,12 @@ tree** (one tree across consumers). The shadow system's named next increments: *
 light culling** (the lighting loop stays a bounded linear loop until then), **cached/static shadow
 maps** (the highest-value — they retire the per-frame `6N` redraw for a static scene), and
 **per-light dynamic resolution / shadow LOD** (a variable tile rect in the set-1 records + a packer,
-sample shader unchanged; lands alongside clustered culling). Also named: **colored emissive** (a
-fourth g-buffer target). Also future: **history-buffer ringing** for
+sample shader unchanged; lands alongside clustered culling). The bloom battery's named follow-ons:
+**single-pass downsample (SPD)** (the whole downsample in one dispatch — a bandwidth win, same look,
+gated on validating `globallycoherent` + device-scope atomics under MoltenVK) and a separate
+**FFT/convolution lens bloom** (a GPU FFT convolution against a kernel texture for anamorphic
+streaks / aperture ghosts — a cinematic feature of its own, distinct from the everyday glow). Also
+named: **colored emissive** (a fourth g-buffer target). Also future: **history-buffer ringing** for
 temporal effects (TAA/motion-blur reading an older frame); **cross-queue synchronization** (an
 explicit semaphore once a handoff side moves off the single graphics queue); and **parallel
 pass recording** into secondary command buffers (area 2's seam — the user-pointer channel is
@@ -310,11 +326,11 @@ lands the foundational inversion it needs (a domain-correct output sink). What w
   parameter schema / bindless / authoring / inspector shared across domains. The
   PostProcess domain's **fullscreen material pipeline path** in `SceneRenderer`
   (a `ScenePass` building a pipeline from a postprocess material against one color
-  target) is the authorable **exposure / tonemap-curve / color-grading / bloom** stack
+  target) is the authorable **exposure / tonemap-curve / color-grading** stack
   named under [area 8](#8-scene-renderer--render-pipeline-architecture--remaining-the-über-pipeline-batteries),
-  expressed as materials. Fixed *plumbing* composites (`SwapChainCompositePass`) stay
-  hardcoded engine passes — a postprocess material is for *tunable effects*, not
-  plumbing.
+  expressed as materials. Fixed-dataflow batteries (bloom, SSAO, the shadow atlas) and
+  *plumbing* composites (`SwapChainCompositePass`) stay hardcoded engine passes — a
+  postprocess material is for *tunable effects*, not plumbing.
 - **Node→Slang codegen (the still-future follow-on).** The graph emits the fragment source instead
   of binding to a pre-authored one. The node catalog is **reshaped toward it**:
   `MaterialOutput` becomes a **domain-driven sink** (its pins are the domain's output

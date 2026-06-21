@@ -97,6 +97,9 @@ namespace Veng::Renderer
     /// cascade its view-space depth selects (0 red, 1 green, 2 blue, 3 yellow),
     /// force-wiring the shadow pass so cascade constants are present. PunctualShadows
     /// blits the punctual shadow atlas (raw depth), force-wiring the punctual shadow pass.
+    /// Bloom runs the lighting pass and the bloom pyramid sweep, then blits pyramid mip 0
+    /// after the up-sweep — the accumulated bloom contribution before composite —
+    /// force-wiring the bloom pass regardless of the Settings.Bloom toggle.
     enum class DebugView : u8
     {
         /// @brief Full deferred pipeline output.
@@ -121,6 +124,8 @@ namespace Veng::Renderer
         Cascades,
         /// @brief Punctual shadow atlas raw depth (force-wires the punctual shadow pass).
         PunctualShadows,
+        /// @brief Accumulated bloom pyramid mip 0 after the up-sweep (force-wires the bloom pass).
+        Bloom,
     };
 
     /// @brief Selects the bloom pyramid's down/up filter kernel.
@@ -765,6 +770,13 @@ namespace Veng::Renderer
         /// The tonemap samples the composite through this handle when bloom is on. The pyramid
         /// itself (mips + sample view) is bound off bindless on the bloom compute set 1.
         TextureHandle m_BloomResultHandle;
+
+        /// @brief Bindless slot for the bloom pyramid mip 0 view; registered in CreateBloom.
+        ///
+        /// The DebugView::Bloom arm blits the accumulated bloom contribution through this handle —
+        /// pyramid mip 0 after the up-sweep, before composite. Registered alongside the result so
+        /// the debug blit reads it like any other bindless source.
+        TextureHandle m_BloomMip0Handle;
 
         /// @brief Engine-owned lighting pipeline writing the HDR format.
         ///

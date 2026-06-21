@@ -122,7 +122,7 @@ over **multiple typed lights** (directional / point / spot) and reconstructing w
 position from depth, then tonemap to the output. The batteries hang off the g-buffer:
 **cascaded shadow maps** for the directional light and a **shared punctual shadow atlas**
 for a bounded set of point/spot lights, **SSAO** folded into the ambient/occlusion term,
-and **bloom authored as a PostProcess material** ahead of tonemap. Each battery is a
+and a **compute mip-pyramid bloom** ahead of tonemap. Each battery is a
 `SceneRendererSettings` toggle driving the `Configure` recompile.
 
 The directional light is shadowed by **cascaded shadow maps**, and a **bounded set of
@@ -165,6 +165,24 @@ knobs; `DebugView::Cascades` tints each fragment by the cascade it selects and
 **prime consumer of the delivered BVH broadphase** — one tree queried many times (`N`
 spot frustums + `6N` cube faces per frame, on top of the camera and cascade queries).
 
+**Bloom is a compute mip-pyramid battery**, a fixed engine pass like SSAO and the shadow
+atlas — not a PostProcess material. The lit HDR target is bright-passed (a soft-knee
+`Threshold` with **Karis-average** firefly suppression on the first downsample, the
+stability mechanism in a renderer with no TAA) into a single `HdrFormat` mip-chain image's
+mip 0, **progressively downsampled** through the chain, then **upsampled** with an
+accumulating dual filter (`mip[i] += upsample(mip[i+1]) * Radius`) and **composited** back
+into linear HDR (`hdr + mip0 * Intensity`) ahead of tonemap. The whole sweep is **compute**:
+per-level dispatches with a barrier between levels, mirroring the hi-Z reduction's mip-chain
+shape (one image with N mip levels, per-mip storage views for the writes, a whole-chain
+sampled view + a clamp-to-edge linear sampler for the bilinear taps, per-level descriptor
+sets, all off bindless). The filter kernel is a `BloomKernel { Cod, Kawase }` topology knob
+— the COD/Jimenez 13-tap-down / tent-up dual filter (the default and the golden's kernel)
+or the bandwidth-optimized **Dual Kawase** filter for the TBDR GPUs veng primarily targets.
+`Bloom` (on/off) and `Kernel` are `SceneRendererSettings` topology knobs (a `Configure`
+recompile); `Threshold` / `Intensity` / `Radius` are per-frame `SceneView` values that ride
+the compute push, so tuning them never recompiles. `DebugView::Bloom` blits pyramid mip 0
+after the up-sweep — the accumulated bloom contribution before composite.
+
 Per-view data rides a **ring-buffered view-constants buffer**, not push constants: the
 `InvViewProj`/`CameraPosition` (for world-position reconstruction), the view/projection,
 and the SSAO view/projection live in a per-frame set-0 buffer ringed for frames-in-flight
@@ -176,8 +194,8 @@ Push constants in the deferred path carry only
 small per-invocation bindless handle indices and the live light count; the typed lights
 ride a separate ring-buffered light buffer the lighting pass loops over.
 
-The renderer's pipeline images (g-buffer albedo / world-normal / ORM, depth, HDR, bloom
-intermediates, output) are **renderer-owned `Image`/`ImageView`s `Import`ed** into the internal graph — not
+The renderer's pipeline images (g-buffer albedo / world-normal / ORM, depth, HDR, the bloom
+mip pyramid + composite result, output) are **renderer-owned `Image`/`ImageView`s `Import`ed** into the internal graph — not
 graph transients — because a fullscreen pass samples an upstream target through the
 bindless set-0 array, which needs a `Ref<ImageView>` to `Register` (a transient
 exposes only a per-frame `ImageView&`). They are registered into bindless once at
@@ -262,13 +280,15 @@ still means dropping to `RenderGraph` directly (the composite path the sample
 retains). `SceneRendererSettings` carries the topology/sizing knobs — `DebugView Mode`
 (Final, plus the `Albedo` / `Normal` / `Depth` g-buffer arms, the `Roughness` /
 `Metallic` / `Occlusion` packed-ORM-channel arms, and the `AO` / `Shadows` / `Cascades` /
-`PunctualShadows` battery-target arms) re-wires the pass set through `Configure`, the
-recompile seam; `Exposure`, the `Bloom` / `Shadows` / `PunctualShadows` / `AO` battery
-toggles, and `ShadowResolution` / `PunctualShadowResolution` are the other recompile
-knobs. A debug arm terminates the chain after the g-buffer (and, for `AO` / `Shadows` /
-`PunctualShadows`, the force-wired producing battery pass) with a single fullscreen debug
-blit; per-frame values (bloom threshold/intensity, the camera, the lights) ride
-`SceneView`.
+`PunctualShadows` / `Bloom` battery-target arms) re-wires the pass set through `Configure`, the
+recompile seam; the `Bloom` / `Shadows` / `PunctualShadows` / `AO` battery toggles, the bloom
+`Kernel`, and `ShadowResolution` / `PunctualShadowResolution` are the other recompile knobs. A
+debug arm terminates the chain after the g-buffer (and, for `AO` / `Shadows` /
+`PunctualShadows`, the force-wired producing battery pass) with a single fullscreen debug blit;
+the `Bloom` arm additionally runs the lighting pass and the force-wired bloom sweep and blits
+pyramid mip 0 after the up-sweep. Per-frame values (`Exposure`, the bloom
+`Threshold` / `Intensity` / `Radius`, the camera, the lights) ride `SceneView`, so tuning them
+never recompiles.
 
 The renderer-owned images are **single-copy**: one `Execute` resolves and completes
 before the next begins, written-then-read images within a frame are ordered by the
@@ -314,16 +334,13 @@ target, no vertex inputs), binds set-0 bindless, runtime-binds an upstream targe
 material handle field (`Material::SetTextureHandle`/`SetSamplerHandle`, no resident asset),
 and drives the material's authored params. The loader builds the pipeline *layout* for both
 domains but the `GraphicsPipeline` only for Surface — a PostProcess material's pipeline is
-built by the pass, which alone knows the color format. **Tonemap is the first PostProcess
-material** (core `tonemap.vmat`): the HDR target is runtime-bound each frame and `Exposure`
-is an exposed param written per frame through the ring-buffered block. **Bloom is the
-first multi-stage PostProcess chain** (core bloom materials): a bright-pass → separable
-blur (H, V) → composite runs as four chained `PostProcessScenePass` stages over
-renderer-owned intermediates ahead of tonemap, with `Threshold`/`Intensity` exposed
-params. The fixed plumbing composites stay hardcoded engine passes —
+built by the pass, which alone knows the color format. **Tonemap is the PostProcess
+material** (core `tonemap.vmat`): the HDR (or bloom-composite) target is runtime-bound each
+frame and the per-frame `Exposure` from `SceneView` is written into the ring-buffered block
+each `Execute`. The fixed plumbing composites stay hardcoded engine passes —
 `SwapChainCompositePass` (scene behind, ImGui over) and the `DebugView` blits
-(albedo/normal/depth, the packed-ORM channels, the SSAO target, the directional and
-punctual shadow maps) have no
+(albedo/normal/depth, the packed-ORM channels, the SSAO target, the bloom pyramid, the
+directional and punctual shadow maps) have no
 authorable surface; a PostProcess material is for *tunable effects with exposed
 parameters*, not plumbing.
 

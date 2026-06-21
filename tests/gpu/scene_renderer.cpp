@@ -1217,6 +1217,15 @@ TEST_CASE_FIXTURE(
     CHECK(shadowCenter.r == doctest::Approx(shadowCenter.g).epsilon(0.02f));
     CHECK(shadowCenter.g == doctest::Approx(shadowCenter.b).epsilon(0.02f));
 
+    // The Bloom arm force-wires the bloom pyramid sweep regardless of Settings.Bloom (off
+    // here) and blits mip 0 after the up-sweep — the accumulated bloom contribution. It
+    // recompiles and renders without error.
+    renderer->Configure({.Mode = DebugView::Bloom, .Bloom = false, .Shadows = false, .AO = false});
+    const vec3 bloomCenter = Center();
+    CHECK(std::isfinite(bloomCenter.r));
+    CHECK(std::isfinite(bloomCenter.g));
+    CHECK(std::isfinite(bloomCenter.b));
+
     // Configure back to Final restores the lit result.
     renderer->Configure({.Mode = DebugView::Final, .Bloom = false});
     const vec3 restored = Center();

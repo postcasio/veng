@@ -14,9 +14,12 @@
 > `AABB` and a per-frame visibility gather so the g-buffer pass culls by the camera frustum and the
 > shadow pass by each cascade's light frustum. planset-24 generalized set 1 into a shadow system —
 > **shadowed punctual lights** (point/spot, a shared atlas) cast real shadows, the delivered
-> broadphase's prime consumer. What remains future is a transparent/forward pass, colored emissive,
-> clustered light culling, cached/static shadow maps, parallel pass recording, and on-tile deferred —
-> each behind the same mechanism. This
+> broadphase's prime consumer. planset-28 replaced the single-level bloom with a **compute
+> mip-pyramid bloom** battery — a progressive downsample + accumulating upsample over an HDR mip
+> chain, a fixed engine pass like SSAO rather than a PostProcess material. What remains future is a
+> transparent/forward pass, colored emissive, clustered light culling, cached/static shadow maps,
+> the **single-pass downsample (SPD)** and **FFT/convolution lens bloom** behind the delivered
+> pyramid, parallel pass recording, and on-tile deferred — each behind the same mechanism. This
 > document records **what shipped** against **what is still future**, so the direction stays legible. It builds on the
 > shipped renderer / bindless / material foundation (planset-5), the **compiled
 > [`RenderGraph`](compiled-rendergraph.md)** (area 9, planset-8), and the runtime
@@ -421,6 +424,28 @@ the increment planset-20 named beside CSM:
   only the draw calls issued change — so the `smoke_golden` never moved; a **draw-count** test over a
   fixture with an off-frustum mesh is the cull's guard.
 
+## Delivered mip-pyramid bloom — planset-28
+
+planset-28 replaced the single-level separable-Gaussian bloom with a **compute mip-pyramid bloom**,
+a fixed engine **battery** like SSAO and the shadow atlas — no longer a PostProcess material:
+
+- **A compute mip pyramid mirroring hi-Z.** One `HdrFormat` mip-chain image (`Storage | Sampled`,
+  stopping ~3 levels short of 1×1), per-mip storage views for the compute writes, one whole-chain
+  sampled view + a clamp-to-edge **linear sampler** for the bilinear taps, per-level descriptor sets,
+  and per-level dispatches with a barrier between levels — the hi-Z reduction's shape, with bloom's
+  two divergences (bilinear sampling, and an in-place accumulating up-sweep).
+- **Bright-pass + Karis on the first downsample.** Mip 0 samples the lit HDR, applies the soft-knee
+  `Threshold`, and weights the taps by `1/(1+luma)` — a partial Karis tonemap suppressing fireflies,
+  the temporal-stability mechanism in a renderer with no TAA. Deeper levels use the plain filter.
+- **An accumulating up-sweep, composited in linear HDR.** From the coarsest finer level down,
+  `mip[i] += upsample(mip[i+1]) * Radius` reads the coarser level and read-modify-writes its own, then
+  a composite adds `mip0 * Intensity` to the lit HDR ahead of tonemap. Compute throughout.
+- **A selectable kernel.** `BloomKernel { Cod, Kawase }` (a `Configure` topology knob): the COD/Jimenez
+  13-tap-down / 3×3-tent-up dual filter (the default, the golden's kernel) or the bandwidth-optimized
+  **Dual Kawase** 5-tap-down / 8-tap-up filter for the TBDR GPUs veng primarily targets. `Threshold` /
+  `Intensity` / `Radius` are per-frame `SceneView` values (no recompile); `Bloom` on/off + `Kernel`
+  are topology knobs. `DebugView::Bloom` blits pyramid mip 0 after the up-sweep.
+
 ## Still future — the named next increments
 
 Each is its own later increment behind the **same** `ScenePass` + `Configure`-recompile
@@ -428,6 +453,16 @@ mechanism:
 
 - **A transparent/forward pass** (a second material contract whose fragment shader outputs
   *final color*, not g-buffer channels), **MSAA**, and a deeper post stack.
+- **Bloom follow-ons behind the delivered mip pyramid.** Two named increments behind the compute
+  battery:
+  - **Single-pass downsample (SPD)** — AMD FidelityFX's whole-downsample-in-one-dispatch (threadgroup
+    memory + a device-scope atomic), replacing the per-level down dispatches. A **bandwidth win, not a
+    look change** (the golden does not move), gated on validating `globallycoherent` storage + a
+    device-scope atomic under MoltenVK.
+  - **FFT/convolution lens bloom** — a separate, cinematic feature: a GPU FFT convolution of the HDR
+    frame against a kernel texture for true lens character (anamorphic streaks, aperture ghosts, cf.
+    Unreal's Convolution bloom). A much larger compute feature of its own, aimed at lens flares, not
+    better everyday glow — distinct from the delivered pyramid, not a replacement for it.
 - **The BVH broadphase is delivered ([planset-23](../planset-23/README.md)).** A renderer-owned
   `SceneBroadphase` holds a BVH over the draw candidates, rebuilt from the scene's spatial version
   behind the `GatherMeshes`/broadphase seam — the gather stays the pure one-shot candidate set, the
@@ -607,12 +642,26 @@ only the provably hidden, so the golden does not move; draw-count fixtures and a
 set-equivalence readback are the guard. `Occlusion` toggles the GPU occlusion test;
 `GetFrustumSurvivedCount()`/`GetLastGpuSurvivorCount()` report the cull funnel.
 
+**Delivered — [planset-28](../planset-28/README.md):** **mip-pyramid bloom** — the single-level
+separable-Gaussian bloom is replaced by a **compute mip pyramid** battery (a fixed engine pass like
+SSAO, no longer a PostProcess material). The lit HDR is bright-passed with **Karis-average** firefly
+suppression into mip 0 of an `HdrFormat` mip chain, progressively downsampled, then upsampled with an
+accumulating dual filter and composited back into linear HDR ahead of tonemap — per-level compute
+dispatches mirroring the hi-Z reduction, with bilinear taps and an in-place up-sweep. The filter
+kernel is a `BloomKernel { Cod, Kawase }` topology knob (COD/Jimenez default, the golden's kernel;
+Dual Kawase the TBDR-optimized alternative); `Threshold`/`Intensity`/`Radius` are per-frame
+`SceneView` values and `Bloom`/`Kernel` the topology knobs. `DebugView::Bloom` blits pyramid mip 0
+after the up-sweep. The four bloom materials + their fragment shaders are deleted; the golden moved
+once for the wider, softer multi-octave glow.
+
 **Still future:** a transparent/forward pass, colored emissive, **clustered/tiled light culling**,
 **cached/static shadow maps** (the highest-value shadow follow-on — it retires the per-frame `6N`
 redraw for a static scene), **per-light dynamic resolution / shadow LOD**, the BVH broadphase's
 remaining refinements (**incremental tree maintenance**, **GPU-driven shadow-caster culling** — the
 highest-payoff next consumer of the delivered indirect/compute seam — **meshlet/cluster culling**,
-**two-pass occlusion**, **GPU count-buffer compaction**, a **Scene-shared tree**), history-buffer
-ringing for temporal effects, cross-queue synchronization, parallel pass recording, the single-pass
-depth-array CSM render path, and on-tile/subpass-fused deferred (a measure-first `RenderGraph`-core
-change) — each named above as a next increment behind the same mechanism.
+**two-pass occlusion**, **GPU count-buffer compaction**, a **Scene-shared tree**), the bloom
+follow-ons behind the delivered pyramid (**single-pass downsample (SPD)** — a bandwidth win, same
+look — and a separate **FFT/convolution lens bloom**), history-buffer ringing for temporal effects,
+cross-queue synchronization, parallel pass recording, the single-pass depth-array CSM render path,
+and on-tile/subpass-fused deferred (a measure-first `RenderGraph`-core change) — each named above as
+a next increment behind the same mechanism.

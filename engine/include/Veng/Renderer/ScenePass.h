@@ -107,6 +107,15 @@ namespace Veng::Renderer
         /// @brief Bindless slot for the SSAO target; invalid when AO is off.
         TextureHandle SsaoHandle;
 
+        /// @brief Bloom pyramid mip 0 after the up-sweep, blitted by the Bloom debug arm.
+        ///
+        /// Valid only when the bloom sweep is wired (Final + Settings.Bloom, or the Bloom debug
+        /// mode). The debug blit declares .Sample so the graph derives the General → ShaderReadOnly
+        /// transition after the up-sweep writes mip 0. An invalid handle means no bloom sweep is active.
+        ResourceId BloomMip0;
+        /// @brief Bindless slot for the bloom pyramid mip 0 view; invalid when bloom is off.
+        TextureHandle BloomMip0Handle;
+
         /// @brief Shared sampler bindless slot used by fullscreen passes.
         SamplerHandle SamplerHandle;
 
