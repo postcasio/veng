@@ -238,6 +238,36 @@ namespace Veng::UI
         bool m_Live = true;
     };
 
+    /// @brief Scope guard for `ImGui::BeginCombo`/`ImGui::EndCombo`.
+    ///
+    /// `EndCombo` runs only when the combo's dropdown is open.
+    class [[nodiscard]] ScopedCombo
+    {
+    public:
+        /// @brief Constructs the guard with the result of a prior `BeginCombo` call.
+        /// @param open  Whether the combo's dropdown is open this frame.
+        explicit ScopedCombo(bool open) : m_Open(open) {}
+
+        /// @brief Calls `ImGui::EndCombo` when the dropdown is open.
+        ~ScopedCombo();
+
+        ScopedCombo(const ScopedCombo&) = delete;
+        ScopedCombo& operator=(const ScopedCombo&) = delete;
+
+        /// @brief Move constructor; invalidates the source so its destructor is a no-op.
+        ScopedCombo(ScopedCombo&& other) noexcept : m_Open(other.m_Open) { other.m_Live = false; }
+        ScopedCombo& operator=(ScopedCombo&&) = delete;
+
+        /// @brief Returns true when the dropdown body should be drawn.
+        explicit operator bool() const { return m_Open; }
+
+    private:
+        /// @brief Whether the dropdown is open.
+        bool m_Open;
+        /// @brief False after a move; suppresses the destructor call.
+        bool m_Live = true;
+    };
+
     /// @brief Scope guard for `ImGui::BeginDragDropSource`/`EndDragDropSource`.
     ///
     /// `EndDragDropSource` runs only when the source began (an item is being dragged).
@@ -513,6 +543,15 @@ namespace Veng::UI
     /// the returned guard's destructor calls `EndPopup` when the popup is open.
     /// @param id  ImGui id string for the popup.
     [[nodiscard]] ScopedPopup PopupContextWindow(string_view id);
+
+    /// @brief Opens a combo box with an author-drawn dropdown and returns a scope guard.
+    ///
+    /// Unlike Combo(), the dropdown body is drawn by the caller, so it may hold any
+    /// widgets (checkboxes, selectables). The dropdown aligns to the combo frame and
+    /// carries the standard arrow; size the frame with `SetNextItemWidth` beforehand.
+    /// @param id       ImGui id; prefix with `##` to suppress the trailing label.
+    /// @param preview  Text shown inside the closed combo frame.
+    [[nodiscard]] ScopedCombo ComboBox(string_view id, string_view preview);
 
     /// @brief Begins a drag-drop source on the previous item.
     ///

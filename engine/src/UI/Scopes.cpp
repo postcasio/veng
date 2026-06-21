@@ -148,6 +148,14 @@ namespace Veng::UI
         }
     }
 
+    ScopedCombo::~ScopedCombo()
+    {
+        if (m_Live && m_Open)
+        {
+            ImGui::EndCombo();
+        }
+    }
+
     ScopedDragDropSource::~ScopedDragDropSource()
     {
         if (m_Live && m_Open)
@@ -390,6 +398,13 @@ namespace Veng::UI
     {
         const string label = AsCStr(id);
         return ScopedPopup(ImGui::BeginPopupContextWindow(label.c_str()));
+    }
+
+    ScopedCombo ComboBox(string_view id, string_view preview)
+    {
+        const string label = AsCStr(id);
+        const string previewText = AsCStr(preview);
+        return ScopedCombo(ImGui::BeginCombo(label.c_str(), previewText.c_str()));
     }
 
     ScopedDragDropSource DragDropSource()

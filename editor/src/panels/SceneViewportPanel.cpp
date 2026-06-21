@@ -233,9 +233,21 @@ namespace VengEditor
             UI::Tooltip("Debug visualization mode");
 
             UI::SameLine();
-            if (UI::ToggleButton("Shadows", m_Settings.Shadows))
+            // Shadows are two independent arms behind one combo: Settings.Shadows is the
+            // directional cascade, Settings.PunctualShadows the point/spot atlas. A scene's
+            // visible shadows can come from either, so both are exposed; each drives a
+            // Configure recompile.
+            UI::SetNextItemWidth(120.0f);
+            if (auto shadowMenu = UI::ComboBox("##shadows", "Shadows"))
             {
-                m_SettingsDirty = true;
+                if (UI::Checkbox("Directional", m_Settings.Shadows))
+                {
+                    m_SettingsDirty = true;
+                }
+                if (UI::Checkbox("Punctual", m_Settings.PunctualShadows))
+                {
+                    m_SettingsDirty = true;
+                }
             }
             UI::SameLine();
             if (UI::ToggleButton("AO", m_Settings.AO))
