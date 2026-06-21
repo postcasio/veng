@@ -109,6 +109,7 @@ nav:
   - Scene & ECS:
       - scene/index.md
       - Entities & components: scene/ecs.md
+      - Game systems: scene/systems.md
       - Reflection & type registration: scene/reflection.md
       - Prefabs & spawning: scene/prefabs.md
   - Assets:

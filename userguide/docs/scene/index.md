@@ -7,6 +7,7 @@ from one `VE_REFLECT` block next to the struct.
 
 - **[Entities & components](ecs.md)** — the scene, entities, queries, and the
   hierarchy.
+- **[Game systems](systems.md)** — where gameplay logic lives, and how it runs.
 - **[Reflection & type registration](reflection.md)** — how a struct becomes a
   serializable component, and how types are registered.
 - **[Prefabs & spawning](prefabs.md)** — cooked prefabs, `SpawnInto`, and recipe

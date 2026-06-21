@@ -55,12 +55,12 @@ public:
     using Application::Application;
 
 protected:
-    void OnInitialize() override { /* load assets, build your scene */ }
-    void OnUpdate(f32 delta) override { /* advance game state */ }
-    void OnRender() override { /* render your scene */ }
-    void OnDispose() override { /* release your resources */ }
+    void OnInitialize() override { /* set up the scene and renderer */ }
+    void OnUpdate(f32 delta) override { }
+    void OnRender() override { }
 };
 ```
 
+Gameplay logic goes in [scene systems](scene/systems.md), not the application.
 [Your first application](getting-started/your-first-app.md) covers the full
 example, including registering the module and wiring up the build.

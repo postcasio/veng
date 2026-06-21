@@ -44,9 +44,8 @@ structured error you can branch on.
 
 ## Asset handles
 
-An asset stays loaded as long as you hold an `AssetHandle` to it. Drop your handles
-in `OnDispose()` like any other resource; `CollectGarbage()` frees any asset no
-handle still references.
+An asset stays loaded as long as you hold an `AssetHandle` to it. Once nothing
+references it, `CollectGarbage()` frees it.
 
 ## Dependencies come along
 

@@ -1,12 +1,11 @@
 # Your first application
 
-A veng application is a **shared library** (your "game module") loaded by a small
-**launcher** executable. You subclass `Application`, override a few lifecycle
-hooks, and register your app through one C-ABI entry point. The engine owns the
-window, the render context, the asset manager, and the task system for you.
+A veng application is a shared library — your game module — loaded by a small
+launcher. You subclass `Application`, register it, and build the two together. The
+engine owns the window, render context, asset manager, and task system.
 
-This page walks through the smallest complete app. For *why* it is split this
-way, see [Architecture overview](../concepts/architecture-overview.md).
+The `Application` subclass stays thin: it sets up the scene and renderer and drives
+the frame. Gameplay logic lives in [scene systems](../scene/systems.md), not here.
 
 ## 1. Subclass `Application`
 
@@ -18,80 +17,64 @@ using namespace Veng;
 class MyApp final : public Application
 {
 public:
-    using Application::Application;
+    MyApp(const ApplicationInfo& info, TypeRegistry& types, SystemRegistry& systems)
+        : Application(info, types, systems) {}
 
 protected:
-    void OnInitialize() override
-    {
-        // Load assets, build your scene, create render resources.
-    }
-
-    void OnUpdate(f32 delta) override
-    {
-        // Advance game state. `delta` is seconds since the last frame.
-    }
-
-    void OnRender() override
-    {
-        // Record your rendering for this frame.
-    }
-
-    void OnDispose() override
-    {
-        // Release every engine resource you created (reset all Refs/Uniques).
-    }
+    void OnInitialize() override { /* create your scene, set up the renderer */ }
+    void OnUpdate(f32 delta) override { /* advance the frame */ }
+    void OnRender() override { /* record this frame's rendering */ }
+    void OnDispose() override { }
 };
 ```
 
-These four hooks are the whole lifecycle:
+The lifecycle methods:
 
-| Hook | When | Use it for |
-| --- | --- | --- |
-| `OnInitialize()` | once, after the engine is up | Loading assets, building the scene, creating render resources. |
-| `OnUpdate(delta)` | once per frame, before render | Advancing game state. |
-| `OnRender()` | once per frame | Recording draw work for the frame. |
-| `OnDispose()` | once, at shutdown | Releasing every resource you created. |
+| Method | Called |
+| --- | --- |
+| `OnInitialize()` | once, after the engine starts |
+| `OnUpdate(delta)` | once per frame, before rendering (`delta` in seconds) |
+| `OnRender()` | once per frame |
+| `OnDispose()` | once, at shutdown |
 
-`Application` owns the major subsystems and hands them to you:
-
-- `GetAssetManager()` — load and build assets.
-- `GetTaskSystem()` — run work off the render thread.
-- the render `Context` — threaded into every resource you create.
+`Application` hands you the systems you build on: `GetAssetManager()`,
+`GetTaskSystem()`, `GetRenderContext()`, and `GetSystemRegistry()`.
 
 ## 2. Register the module
 
-The launcher finds your application through one function the module exports. In it,
-you register a factory that constructs your `Application`:
+The launcher finds your application through one function the module exports. There
+you register your component types, your gameplay systems, and a factory that
+constructs your application:
 
 ```cpp
 #include <Veng/Module/Module.h>
 
 extern "C" void VengModuleRegister(VengModuleHost* host)
 {
-    host->App.RegisterApplication([](TypeRegistry& types) {
-        return Unique<Application>(new MyApp(
-            ApplicationInfo{
-                .Name = "My App",
-                .WindowInfo = { .Title = "My App" },
-            },
-            types));
-    });
+    host->Types.Register<MyComponent>();   // your component types
+    host->Systems.Register<MySystem>();    // your scene systems
+
+    host->App.RegisterApplication(
+        [](TypeRegistry& types, SystemRegistry& systems) {
+            return Unique<Application>(new MyApp(
+                ApplicationInfo{ .Name = "My App", .WindowInfo = { .Title = "My App" } },
+                types, systems));
+        });
 }
 
 VE_EXPORT_MODULE_ABI()
 ```
 
-`VE_EXPORT_MODULE_ABI()` stamps the module with the ABI version the launcher
-checks at load — a stale module is rejected loudly rather than crashing later.
+`VE_EXPORT_MODULE_ABI()` records the engine version the module was built against; a
+mismatched module is rejected at load.
 
-If your app defines its own components, this is also where you register their
-reflected descriptors into `host->Types` — see
-[Reflection & type registration](../scene/reflection.md).
+See [Reflection & type registration](../scene/reflection.md) for component types
+and [Game systems](../scene/systems.md) for systems.
 
 ## 3. Wire up the build
 
-`veng_add_game` emits the game library *and* its launcher from one declaration,
-and copies your cooked asset pack beside the launcher:
+`veng_add_game` builds the game library and its launcher from one declaration, and
+copies your cooked asset pack beside the launcher:
 
 ```cmake
 veng_add_game(my_app
@@ -99,12 +82,8 @@ veng_add_game(my_app
     ASSET_PACK my_app_assets)
 ```
 
-This builds `libmy_app` (your module) plus `my_app-launcher` (the exe that
-loads it), cooks your asset pack, and places all three next to each other so the
-result runs from any directory.
-
 If your pack contains prefabs that reference your own component types, name your
-module so the cook can reflect them:
+module so the cooker can read them:
 
 ```cmake
 add_asset_pack(my_app_assets
@@ -119,11 +98,12 @@ cmake --build build -j 4
 build/.../my_app-launcher
 ```
 
-## Where to go next
+## Next
 
+- Write gameplay: [Game systems](../scene/systems.md).
 - Put something on screen: [The scene renderer](../rendering/scene-renderer.md)
   and [Entities & components](../scene/ecs.md).
 - Give it assets: [Cooking asset packs](../assets/cooking.md) and
   [Loading at runtime](../assets/loading.md).
-- The `examples/hello-triangle` directory in the repo is a complete, working
-  version of everything above.
+- `examples/hello-triangle` in the repo is a complete, working version of all of
+  this.
