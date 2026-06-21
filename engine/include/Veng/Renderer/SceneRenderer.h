@@ -156,11 +156,11 @@ namespace Veng::Renderer
         /// lives here to exercise the Settings surface.
         f32 Exposure = 1.0f;
 
-        /// @brief Whether the bloom post chain runs ahead of tonemap.
+        /// @brief Whether the compute mip-pyramid bloom runs ahead of tonemap.
         ///
-        /// A topology change: it inserts/removes the four bloom stages (bright-pass →
-        /// blur H → blur V → composite). BloomThreshold and BloomIntensity are
-        /// per-frame values on SceneView and do not trigger a recompile.
+        /// A topology change: it inserts/removes the bloom down/up/composite compute sweep.
+        /// BloomThreshold, BloomIntensity, and BloomRadius are per-frame values on SceneView
+        /// and do not trigger a recompile.
         bool Bloom = true;
 
         /// @brief Whether the directional light casts a shadow.
@@ -281,14 +281,22 @@ namespace Veng::Renderer
         /// @brief Maximum number of lights the renderer packs per frame.
         static constexpr u32 MaxLights = BindlessRegistry::MaxLights;
 
-        /// @brief Bloom bright-pass luminance knee; written into the bloom material's param block each Execute.
+        /// @brief Bloom bright-pass luminance knee; pushed to the downsample compute each Execute.
         ///
-        /// Tuning this does not trigger a recompile. Ignored when the bloom chain is inactive.
+        /// The soft-knee threshold the HDR → mip 0 downsample applies. Tuning this rides the
+        /// compute push, so it does not trigger a recompile. Ignored when bloom is inactive.
         f32 BloomThreshold = 1.0f;
-        /// @brief Bloom composite mix intensity; written into the bloom material's param block each Execute.
+        /// @brief Bloom composite mix intensity; pushed to the composite compute each Execute.
         ///
-        /// Tuning this does not trigger a recompile. Ignored when the bloom chain is inactive.
+        /// Scales the accumulated bloom added back into the HDR. Tuning this rides the compute
+        /// push, so it does not trigger a recompile. Ignored when bloom is inactive.
         f32 BloomIntensity = 1.0f;
+        /// @brief Bloom upsample spread; pushed to the upsample compute each Execute.
+        ///
+        /// Scales each tent up-step's contribution as it accumulates back up the pyramid, so a
+        /// larger value spreads the glow wider. Rides the compute push (no recompile). Ignored
+        /// when bloom is inactive.
+        f32 BloomRadius = 1.0f;
 
         /// @brief RAW (non-tile-remapped) per-cascade world → light-clip transforms this frame.
         ///
@@ -537,13 +545,20 @@ namespace Veng::Renderer
         /// barriers.
         /// @param graph  The renderer's internal graph being rebuilt.
         void DeclareHiZReduction(RenderGraph& graph);
+        /// @brief Declares the bloom down/up/composite compute sweep into the graph ahead of tonemap.
+        ///
+        /// Down-sweep (level 0..N-1, barrier between levels), in-place tent up-sweep (level N-2..0,
+        /// barrier between levels), then the composite into the result. Per-frame Threshold /
+        /// Intensity / Radius ride the compute push, read from the SceneView at record time.
+        /// @param graph  The renderer's internal graph being rebuilt.
+        void DeclareBloom(RenderGraph& graph);
         /// @brief Recreates the HDR image/view at the current extent and (re-)registers it into bindless.
         void CreateHdr();
-        /// @brief Recreates the four bloom intermediate images/views and registers them into bindless.
+        /// @brief Recreates the bloom mip-pyramid + result image, their views, and the per-level sets.
         ///
-        /// The bright residual, two separable-blur ping-pong targets, and the composite result are
-        /// renderer-owned and imported; a later stage samples the prior stage's output through its
-        /// bindless handle, so each needs a Ref<ImageView> (a graph transient cannot be registered).
+        /// Builds m_BloomImage (one HDR mip chain), the per-mip storage views, the whole-chain
+        /// sampled view, the linear sampler, and the per-level down/up + composite descriptor sets,
+        /// mirroring CreateHiZ. The result view registers into bindless for the tonemap sample.
         void CreateBloom();
         /// @brief Builds the engine-owned fullscreen pipelines and loads the core PostProcess materials.
         ///
@@ -683,25 +698,28 @@ namespace Veng::Renderer
         /// @brief View over m_HdrImage.
         Ref<ImageView> m_HdrView;
 
-        /// @brief Bloom chain intermediates (linear HDR-format, same single-copy contract).
+        /// @brief Bloom mip-pyramid image: an HDR mip chain the compute down/up sweep operates on.
         ///
-        /// Bright-pass residual, two separable-blur ping-pong targets, and the composite result.
-        /// Imported into the internal graph; each needs a Ref<ImageView> so it can be registered
-        /// into the bindless set (a graph transient cannot be registered).
-        Ref<Image> m_BloomBrightImage;
-        /// @brief Bright-pass residual view.
-        Ref<ImageView> m_BloomBrightView;
-        /// @brief Horizontal blur ping-pong image.
-        Ref<Image> m_BloomBlurHImage;
-        /// @brief Horizontal blur view.
-        Ref<ImageView> m_BloomBlurHView;
-        /// @brief Vertical blur ping-pong image.
-        Ref<Image> m_BloomBlurVImage;
-        /// @brief Vertical blur view.
-        Ref<ImageView> m_BloomBlurVView;
-        /// @brief Bloom composite result image.
+        /// HdrFormat, sized to m_Extent with a mip chain stopping ~3 levels short of 1×1
+        /// (Storage | Sampled). The down-sweep produces each coarser level; the up-sweep
+        /// accumulates back up. Recreated on Resize/Configure through the retire path.
+        Ref<Image> m_BloomImage;
+        /// @brief One single-mip storage view per pyramid level (the down/up dispatches write each).
+        ///
+        /// m_BloomMips[k] views exactly mip k; storage and sampled access to one mip need distinct
+        /// views, so the reads go through m_BloomSampleView and the writes through these.
+        vector<Ref<ImageView>> m_BloomMips;
+        /// @brief Whole-chain sampled view of the bloom pyramid; the down/up dispatches read a level by LOD.
+        Ref<ImageView> m_BloomSampleView;
+        /// @brief Clamp-to-edge linear sampler for the bilinear down/up taps.
+        ///
+        /// Off bindless, bound on the bloom compute set 1. Bloom's bilinear taps need linear
+        /// filtering (hi-Z's point Load does not), so HdrFormat must advertise
+        /// SampledImageFilterLinear — asserted at CreateBloom.
+        Ref<Sampler> m_BloomSampler;
+        /// @brief Bloom composite result image (full m_Extent); the tonemap samples it when bloom is on.
         Ref<Image> m_BloomResultImage;
-        /// @brief Bloom composite result view.
+        /// @brief View over m_BloomResultImage.
         Ref<ImageView> m_BloomResultView;
 
         /// @brief Shared sampler fullscreen passes use to sample the g-buffer and HDR target.
@@ -723,13 +741,10 @@ namespace Veng::Renderer
         /// @brief Bindless slot for the shared sampler.
         SamplerHandle m_SamplerHandle;
 
-        /// @brief Bindless slots for the bloom intermediates; registered in CreateBloom.
-        TextureHandle m_BloomBrightHandle;
-        /// @brief Bindless slot for the horizontal blur view.
-        TextureHandle m_BloomBlurHHandle;
-        /// @brief Bindless slot for the vertical blur view.
-        TextureHandle m_BloomBlurVHandle;
-        /// @brief Bindless slot for the bloom composite view.
+        /// @brief Bindless slot for the bloom composite result view; registered in CreateBloom.
+        ///
+        /// The tonemap samples the composite through this handle when bloom is on. The pyramid
+        /// itself (mips + sample view) is bound off bindless on the bloom compute set 1.
         TextureHandle m_BloomResultHandle;
 
         /// @brief Engine-owned lighting pipeline writing the HDR format.
@@ -776,6 +791,36 @@ namespace Veng::Renderer
         /// Set k binds mip k's source (the depth target for k=0, hi-Z mip k-1 otherwise) and
         /// mip k's destination storage view. Recreated whenever the chain is (Resize/Configure).
         vector<Ref<DescriptorSet>> m_HiZReduceSets;
+
+        /// @brief Bloom downsample compute pipeline (bright-pass + Karis on mip 0, 13-tap below).
+        Ref<class ComputePipeline> m_BloomDownPipeline;
+        /// @brief Bloom upsample-accumulate compute pipeline (3×3 tent into the finer level).
+        Ref<class ComputePipeline> m_BloomUpPipeline;
+        /// @brief Bloom composite compute pipeline (hdr + mip0 * Intensity → result).
+        Ref<class ComputePipeline> m_BloomCompositePipeline;
+        /// @brief Shared layout for the down/up pipelines (the shared down/up set + push block).
+        Ref<class PipelineLayout> m_BloomDownUpLayout;
+        /// @brief Layout for the composite pipeline (the distinct composite set + push block).
+        Ref<class PipelineLayout> m_BloomCompositeLayout;
+        /// @brief Set-1 layout shared by down/up: sampled source (0) + linear sampler (1) + storage dest (2).
+        ///
+        /// Off bindless — the closed bloom chain needs no global registration, and a dedicated set
+        /// sidesteps the set-0 storage-image argument-buffer path on MoltenVK.
+        Ref<DescriptorSetLayout> m_BloomDownUpSetLayout;
+        /// @brief Set-1 layout for composite: two sampled inputs (0,1) + linear sampler (2) + storage dest (3).
+        Ref<DescriptorSetLayout> m_BloomCompositeSetLayout;
+        /// @brief One downsample set per level k, binding level k's source and destination.
+        ///
+        /// Set 0 binds the HDR target as the source; set k>0 binds mip k-1. Recreated with the
+        /// pyramid (Resize/Configure).
+        vector<Ref<DescriptorSet>> m_BloomDownSets;
+        /// @brief One upsample set per finer level k, binding the coarser source (k+1) and dest (k).
+        ///
+        /// Indexed by the destination (finer) level; m_BloomUpSets[k] reads mip k+1 and writes
+        /// mip k. Recreated with the pyramid (Resize/Configure).
+        vector<Ref<DescriptorSet>> m_BloomUpSets;
+        /// @brief Composite set: HDR + bloom mip 0 sampled inputs and the result storage dest.
+        Ref<DescriptorSet> m_BloomCompositeSet;
 
         /// @brief Debug blit for the albedo channel.
         Ref<class GraphicsPipeline> m_AlbedoBlitPipeline;
@@ -866,20 +911,6 @@ namespace Veng::Renderer
         /// The Final chain's terminal PostProcessScenePass drives it (HDR target as the
         /// runtime-bound input; Exposure written per Execute into its param block).
         AssetHandle<Material> m_TonemapMaterial;
-
-        /// @brief Core bloom PostProcess materials, loaded once at Create.
-        ///
-        /// The bloom chain drives four PostProcessScenePass stages ahead of tonemap:
-        /// bright-pass → blur H → blur V → composite. The two blur stages reuse one shader
-        /// through two materials differing only in the cooked Horizontal axis param.
-        /// BloomThreshold and BloomIntensity are written per Execute into their ring-buffered blocks.
-        AssetHandle<Material> m_BloomBrightMaterial;
-        /// @brief Horizontal blur material.
-        AssetHandle<Material> m_BloomBlurHMaterial;
-        /// @brief Vertical blur material.
-        AssetHandle<Material> m_BloomBlurVMaterial;
-        /// @brief Bloom composite material.
-        AssetHandle<Material> m_BloomCompositeMaterial;
 
         /// @brief Renderer-owned pass units; rebuilt per Settings.Mode on every Rebuild.
         ///
@@ -1008,12 +1039,8 @@ namespace Veng::Renderer
         ResourceId m_DepthId;
         /// @brief Imported id for the HDR target.
         ResourceId m_HdrId;
-        /// @brief Imported id for the bright-pass residual.
-        ResourceId m_BloomBrightId;
-        /// @brief Imported id for the horizontal blur target.
-        ResourceId m_BloomBlurHId;
-        /// @brief Imported id for the vertical blur target.
-        ResourceId m_BloomBlurVId;
+        /// @brief Per-mip subresource handle for the bloom pyramid the down/up sweep reads and writes.
+        MipChainId m_BloomChainId;
         /// @brief Imported id for the bloom composite result.
         ResourceId m_BloomResultId;
         /// @brief Imported id for the directional shadow atlas.

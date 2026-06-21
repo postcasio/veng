@@ -530,6 +530,14 @@ namespace Veng::Renderer
         return m_Native->GpuDrivenCullingSupported;
     }
 
+    bool Context::IsFormatLinearFilterSupported(const Format format) const
+    {
+        const vk::FormatProperties props =
+            m_Native->PhysicalDevice.getFormatProperties(ToVk(format));
+        return static_cast<bool>(props.optimalTilingFeatures &
+                                 vk::FormatFeatureFlagBits::eSampledImageFilterLinear);
+    }
+
     SynchronizationFrame& Context::GetCurrentFrame()
     {
         return m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight];
