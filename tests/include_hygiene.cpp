@@ -67,6 +67,7 @@
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Reflection/Variant.h>
 
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>

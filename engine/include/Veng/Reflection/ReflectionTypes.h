@@ -41,5 +41,7 @@ namespace Veng
         Struct,
         /// @brief An enum whose underlying type is a registered leaf.
         Enum,
+        /// @brief A tagged union — at most one of several registered alternatives, reached through the TypeInfo variant ops.
+        Variant,
     };
 }
