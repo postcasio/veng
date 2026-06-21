@@ -62,6 +62,16 @@ namespace Veng::UI
     /// @param key  Key to query.
     [[nodiscard]] bool IsKeyPressed(Key key);
 
+    /// @brief Returns true while either Ctrl key is held.
+    ///
+    /// For multi-select toggle modifiers in list/tree panels.
+    [[nodiscard]] bool IsCtrlDown();
+
+    /// @brief Returns true while either Shift key is held.
+    ///
+    /// For range-select modifiers in list/tree panels.
+    [[nodiscard]] bool IsShiftDown();
+
     /// @brief Returns the mouse position captured when the current popup was opened.
     ///
     /// Stable while the popup stays open, so newly placed content anchors to the open point.

@@ -40,15 +40,19 @@ namespace VengEditor
         const Veng::EditorRegistry& Editors;
     };
 
-    /// @brief Draws one field's inspector widget into the live ImGui frame.
+    /// @brief Draws one field as a property-table row: label in column 0, value in column 1.
     ///
-    /// Applies a RegisterFieldWidget override when one is registered for the field's
-    /// TypeId; otherwise uses the per-FieldClass built-in widget, recursing into
-    /// nested structs. Both the entity inspector and the node-property inspector
-    /// call this function, so they share identical widget behavior.
+    /// Emits a `UI::PropertyLabel(displayName)` then a label-less value widget filling the
+    /// value column, so the caller must be inside a `UI::PropertyTable` scope. Applies a
+    /// RegisterFieldWidget override when one is registered for the field's TypeId; otherwise
+    /// uses the per-FieldClass built-in widget. A nested struct flattens into further indented
+    /// rows of the same table (no nested table). Respects `ReadOnly` (disabled or read-only
+    /// value), `Hidden` (skipped), and `Tooltip`. Both the entity inspector and the
+    /// node-property inspector call this function, so they share identical widget behavior.
     /// @param fieldPtr Pointer to the field bytes (base + FieldDescriptor::Offset).
     /// @param field    Descriptor giving the field's type, class, and metadata.
     /// @param ctx      Dependencies: asset manager, source index, editor registry.
+    /// @pre Called inside an open `UI::PropertyTable` scope.
     void DrawFieldWidget(void* fieldPtr, const Veng::FieldDescriptor& field,
                          const FieldWidgetContext& ctx);
 }

@@ -78,6 +78,16 @@ namespace Veng::UI
         return ImGui::IsKeyPressed(ToImGui(key));
     }
 
+    bool IsCtrlDown()
+    {
+        return ImGui::GetIO().KeyCtrl;
+    }
+
+    bool IsShiftDown()
+    {
+        return ImGui::GetIO().KeyShift;
+    }
+
     vec2 PopupMousePosition()
     {
         return ImGui::GetMousePosOnOpeningCurrentPopup();

@@ -52,6 +52,9 @@ namespace VengEditor
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
 
+        /// @brief Draws the document toolbar above the dockspace: a live entity-count readout.
+        void OnImGui() override;
+
     protected:
         /// @brief Splits the dockspace into explorer (left), viewport (center), inspector (right).
         void BuildDefaultLayout(Veng::u32 dockspaceId) override;

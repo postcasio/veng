@@ -6,6 +6,7 @@
 #include <Veng/Log.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/UI/UI.h>
 #include <Veng/Vendor/ImGuiInternal.h>
 
 #include "panels/InspectorPanel.h"
@@ -44,6 +45,15 @@ namespace VengEditor
         m_Prefab = {};
     }
 
+    void PrefabEditorPanel::OnImGui()
+    {
+        if (m_Scene == nullptr)
+        {
+            return;
+        }
+        UI::TextDisabled(fmt::format("{} entities", m_Scene->EntityCount()));
+    }
+
     void PrefabEditorPanel::BuildScene(Renderer::Context& context, AssetManager& assets)
     {
         const AssetResult<AssetHandle<Prefab>> prefab = assets.LoadSync<Prefab>(m_Id);
@@ -58,7 +68,7 @@ namespace VengEditor
         const vector<Entity> roots = m_Prefab.Get()->SpawnInto(*m_Scene, assets);
         if (!roots.empty())
         {
-            m_Context.Selection = roots[0];
+            m_Context.SelectOnly(roots[0]);
         }
 
         // Light the scene when the prefab carries none, so the spawned content is visible.

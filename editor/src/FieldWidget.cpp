@@ -1,6 +1,7 @@
 #include "FieldWidget.h"
 
 #include "AssetSourceIndex.h"
+#include "panels/PrefabEditContext.h"
 
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetManager.h>
@@ -53,14 +54,14 @@ namespace VengEditor
             const optional<AssetType> assetType = AssetTypeOfHandle(field.Type);
             if (!assetType)
             {
-                // No enumeration for this handle type — fall back to the id label.
+                // No enumeration for this handle type — show the raw id read-only.
                 if (currentId == 0)
                 {
-                    UI::Label(label, "(none)");
+                    UI::TextDisabled("(none)");
                 }
                 else
                 {
-                    UI::Label(label, fmt::format("0x{:X}", currentId));
+                    UI::TextDisabled(fmt::format("0x{:X}", currentId));
                 }
                 return;
             }
@@ -100,6 +101,79 @@ namespace VengEditor
                 }
             }
         }
+
+        // Reads an Entity drop on the previous widget; returns the dropped entity or nullopt.
+        optional<Entity> AcceptEntityDrop()
+        {
+            auto target = UI::DragDropTarget();
+            if (!target)
+            {
+                return std::nullopt;
+            }
+            const void* payload = UI::AcceptDragDropPayload(PrefabEditContext::EntityPayload);
+            if (payload == nullptr)
+            {
+                return std::nullopt;
+            }
+            Entity dropped{};
+            std::memcpy(&dropped, payload, sizeof(dropped));
+            return dropped;
+        }
+
+        // A drop target plus a clear button for an intra-scene Entity reference field.
+        void DrawReference(void* fieldPtr, const FieldDescriptor& field, string_view label)
+        {
+            Entity& ref = *static_cast<Entity*>(fieldPtr);
+
+            if (field.ReadOnly)
+            {
+                if (ref.IsNull())
+                {
+                    UI::TextDisabled("(null)");
+                }
+                else
+                {
+                    UI::TextDisabled(fmt::format("Entity {}:{}", ref.Index, ref.Generation));
+                }
+                return;
+            }
+
+            const string text = ref.IsNull()
+                                    ? string{"(null)"}
+                                    : fmt::format("Entity {}:{}", ref.Index, ref.Generation);
+            // A label-less button is the drop surface; the id keeps it unique per field.
+            (void)UI::Button(fmt::format("{}##{}", text, label));
+            if (const optional<Entity> dropped = AcceptEntityDrop())
+            {
+                ref = *dropped;
+            }
+
+            if (!ref.IsNull())
+            {
+                UI::SameLine();
+                if (UI::SmallButton(fmt::format("x##clear{}", label)))
+                {
+                    ref = Entity::Null;
+                }
+            }
+        }
+
+        // Editable integer view over an enum's backing bytes (width from its TypeInfo).
+        void DrawEnum(void* fieldPtr, const FieldDescriptor& field, string_view label,
+                      const FieldWidgetContext& ctx)
+        {
+            const usize width = ctx.Assets.GetTypeRegistry().Info(field.Type).Size;
+
+            i64 value = 0;
+            std::memcpy(&value, fieldPtr, width < sizeof(value) ? width : sizeof(value));
+
+            i32 edited = static_cast<i32>(value);
+            if (UI::Drag(label, edited, UI::DragOptions{.Speed = 0.1f, .Min = 0.0f}))
+            {
+                const i64 clamped = edited < 0 ? 0 : edited;
+                std::memcpy(fieldPtr, &clamped, width < sizeof(clamped) ? width : sizeof(clamped));
+            }
+        }
     }
 
     void DrawFieldWidget(void* fieldPtr, const FieldDescriptor& field,
@@ -110,16 +184,61 @@ namespace VengEditor
             return;
         }
 
-        // A game-registered custom widget for this type overrides the built-in.
+        const string& displayName = field.DisplayName.empty() ? field.Name : field.DisplayName;
+        const string valueLabel = "##" + field.Name;
+
+        // A custom widget owns its whole row, including the property label.
         if (const FieldWidgetFn* custom = ctx.Editors.FieldWidgetFor(field.Type))
         {
+            UI::PropertyLabel(displayName);
             (*custom)(fieldPtr, field);
+            if (!field.Tooltip.empty())
+            {
+                UI::Tooltip(field.Tooltip);
+            }
             return;
         }
 
-        const string& label = field.DisplayName.empty() ? field.Name : field.DisplayName;
+        // A nested struct flattens into further indented rows in the same table — never a
+        // nested BeginTable inside a cell.
+        if (field.Class == FieldClass::Struct)
+        {
+            UI::PropertyLabel(displayName);
+            // Scope nested rows under the field name so a nested member sharing a name with
+            // an outer field keeps a distinct widget id.
+            auto structScope = UI::PushId(valueLabel);
+            const TypeInfo& nested = ctx.Assets.GetTypeRegistry().Info(field.Type);
+            UI::Indent();
+            for (const FieldDescriptor& nestedField : nested.Fields)
+            {
+                if (nestedField.Hidden)
+                {
+                    continue;
+                }
+                void* nestedPtr = static_cast<u8*>(fieldPtr) + nestedField.Offset;
+                DrawFieldWidget(nestedPtr, nestedField, ctx);
+            }
+            UI::Unindent();
+            return;
+        }
 
-        auto id = UI::PushId(label);
+        UI::PropertyLabel(displayName);
+
+        auto id = UI::PushId(valueLabel);
+
+        // The Reference field carries its own read-only handling (drop target vs. label);
+        // every other class shares one Disabled scope keyed on ReadOnly.
+        if (field.Class == FieldClass::Reference)
+        {
+            DrawReference(fieldPtr, field, valueLabel);
+            if (!field.Tooltip.empty())
+            {
+                UI::Tooltip(field.Tooltip);
+            }
+            return;
+        }
+
+        auto disabled = UI::Disabled(field.ReadOnly);
 
         // Drag speed and clamp range come from the field's optional editor metadata;
         // absent metadata leaves the DragOptions defaults (0.01f speed, unclamped).
@@ -143,28 +262,28 @@ namespace VengEditor
         {
             if (field.Type == TypeIdOf<f32>())
             {
-                UI::Drag(label, *static_cast<f32*>(fieldPtr), drag);
+                (void)UI::Drag(valueLabel, *static_cast<f32*>(fieldPtr), drag);
             }
             else if (field.Type == TypeIdOf<i32>())
             {
-                UI::Drag(label, *static_cast<i32*>(fieldPtr));
+                (void)UI::Drag(valueLabel, *static_cast<i32*>(fieldPtr));
             }
             else if (field.Type == TypeIdOf<u32>())
             {
                 // u32 has no Drag overload; edit through a signed view clamped to 0+.
                 i32 value = static_cast<i32>(*static_cast<u32*>(fieldPtr));
-                if (UI::Drag(label, value, UI::DragOptions{.Min = 0.0f}))
+                if (UI::Drag(valueLabel, value, UI::DragOptions{.Min = 0.0f}))
                 {
                     *static_cast<u32*>(fieldPtr) = static_cast<u32>(value < 0 ? 0 : value);
                 }
             }
             else if (field.Type == TypeIdOf<bool>())
             {
-                UI::Checkbox(label, *static_cast<bool*>(fieldPtr));
+                (void)UI::Checkbox(valueLabel, *static_cast<bool*>(fieldPtr));
             }
             else
             {
-                UI::Label(label, "(scalar)");
+                UI::TextDisabled("(scalar)");
             }
             break;
         }
@@ -172,15 +291,15 @@ namespace VengEditor
         {
             if (field.Type == TypeIdOf<vec2>())
             {
-                UI::Drag(label, *static_cast<vec2*>(fieldPtr), drag);
+                (void)UI::Drag(valueLabel, *static_cast<vec2*>(fieldPtr), drag);
             }
             else if (field.Type == TypeIdOf<vec3>())
             {
-                UI::Drag(label, *static_cast<vec3*>(fieldPtr), drag);
+                (void)UI::Drag(valueLabel, *static_cast<vec3*>(fieldPtr), drag);
             }
             else if (field.Type == TypeIdOf<vec4>())
             {
-                UI::Drag(label, *static_cast<vec4*>(fieldPtr), drag);
+                (void)UI::Drag(valueLabel, *static_cast<vec4*>(fieldPtr), drag);
             }
             break;
         }
@@ -188,8 +307,7 @@ namespace VengEditor
         {
             quat& q = *static_cast<quat*>(fieldPtr);
             vec3 euler = glm::degrees(glm::eulerAngles(q));
-            const string eulerLabel = label + " (Euler °)";
-            if (UI::Drag(eulerLabel, euler, UI::DragOptions{.Speed = 0.5f}))
+            if (UI::Drag(valueLabel, euler, UI::DragOptions{.Speed = 0.5f}))
             {
                 q = quat(glm::radians(euler));
             }
@@ -198,62 +316,33 @@ namespace VengEditor
         case FieldClass::String:
         {
             string& value = *static_cast<string*>(fieldPtr);
-            UI::InputText(label, value);
+            (void)UI::InputText(valueLabel, value);
             break;
         }
         case FieldClass::AssetHandle:
         {
-            DrawAssetPicker(fieldPtr, field, label, ctx);
-            break;
-        }
-        case FieldClass::Reference:
-        {
-            const Entity& ref = *static_cast<const Entity*>(fieldPtr);
-            if (ref.IsNull())
-            {
-                UI::Label(label, "(null)");
-            }
-            else
-            {
-                UI::Label(label, fmt::format("Entity {}:{}", ref.Index, ref.Generation));
-            }
+            DrawAssetPicker(fieldPtr, field, valueLabel, ctx);
             break;
         }
         case FieldClass::Matrix:
         {
             const mat4& m = *static_cast<const mat4*>(fieldPtr);
-            if (auto t = UI::TreeNode(label, UI::TreeFlags::SpanAvailWidth))
+            for (int row = 0; row < 4; ++row)
             {
-                for (int row = 0; row < 4; ++row)
-                {
-                    UI::Text(fmt::format("{: .3f}  {: .3f}  {: .3f}  {: .3f}", m[0][row], m[1][row],
-                                         m[2][row], m[3][row]));
-                }
+                UI::Text(fmt::format("{: .3f}  {: .3f}  {: .3f}  {: .3f}", m[0][row], m[1][row],
+                                     m[2][row], m[3][row]));
             }
             break;
         }
         case FieldClass::Enum:
         {
-            // The reflection layer records no enum-value table; show the backing integer read-only.
-            const i32 value = *static_cast<const i32*>(fieldPtr);
-            UI::Label(label, fmt::format("{}", value));
+            DrawEnum(fieldPtr, field, valueLabel, ctx);
             break;
         }
+        case FieldClass::Reference:
         case FieldClass::Struct:
         {
-            const TypeInfo& nested = ctx.Assets.GetTypeRegistry().Info(field.Type);
-            if (auto t = UI::TreeNode(label, UI::TreeFlags::SpanAvailWidth))
-            {
-                for (const FieldDescriptor& nestedField : nested.Fields)
-                {
-                    if (nestedField.Hidden)
-                    {
-                        continue;
-                    }
-                    void* nestedPtr = static_cast<u8*>(fieldPtr) + nestedField.Offset;
-                    DrawFieldWidget(nestedPtr, nestedField, ctx);
-                }
-            }
+            // Handled above the switch; unreachable here.
             break;
         }
         }
