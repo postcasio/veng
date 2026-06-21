@@ -455,10 +455,22 @@ namespace Veng::Cook
                     "prefab importer: '{}': entity[{}] is not an object", file, entityIndex));
             }
 
+            // Best-effort display name for diagnostics: the entity's Name component value
+            // if it carries one. The entity[index] locator is always present in the
+            // message, so an unnamed entity is still unambiguously identified.
             string entityName = "<unnamed>";
-            if (entityJson.contains("name") && entityJson["name"].is_string())
+            if (entityJson.contains("components") && entityJson["components"].is_object())
             {
-                entityName = entityJson["name"].get<string>();
+                const json& comps = entityJson["components"];
+                const auto nameIt = comps.find("::Veng::Name");
+                if (nameIt != comps.end() && nameIt->is_object())
+                {
+                    const auto valueIt = nameIt->find("Value");
+                    if (valueIt != nameIt->end() && valueIt->is_string())
+                    {
+                        entityName = valueIt->get<string>();
+                    }
+                }
             }
 
             CookedPrefabEntity cookedEntity{};
