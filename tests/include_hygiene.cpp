@@ -51,6 +51,7 @@
 
 #include <Veng/UI/UI.h>
 #include <Veng/UI/Types.h>
+#include <Veng/UI/Theme.h>
 #include <Veng/UI/Widgets.h>
 #include <Veng/UI/Layout.h>
 #include <Veng/UI/Scopes.h>

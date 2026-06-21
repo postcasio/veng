@@ -3,6 +3,7 @@
 #include <filesystem>
 
 #include <Veng/Window.h>
+#include <Veng/UI/Theme.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
@@ -104,103 +105,7 @@ namespace Veng
 
         ImGui_ImplVulkan_Init(&initInfo);
 
-        ImGuiStyle& style = ImGui::GetStyle();
-
-        style.TabRounding = 0.0f;
-        style.FrameRounding = 4.0f;
-        style.FrameBorderSize = 1.0f;
-        style.WindowRounding = 6.0f;
-        style.PopupRounding = 4.0f;
-        style.GrabRounding = 12.0f;
-        style.WindowTitleAlign = ImVec2(0.5f, 0.5f);
-        style.FramePadding = ImVec2(6.0f, 6.0f);
-
-        auto accentColor = ImVec4(0.2f, 0.7f, 0.7f, 1.00f);
-        auto grayDarkest = ImVec4(0.02f, 0.02f, 0.02f, 1.00f);
-        auto grayDarker = ImVec4(0.03f, 0.03f, 0.03f, 1.00f);
-        auto grayDark = ImVec4(0.08f, 0.08f, 0.08f, 1.00f);
-        auto grayMedium = ImVec4(0.16f, 0.16f, 0.16f, 1.00f);
-        auto grayLight = ImVec4(0.24f, 0.24f, 0.24f, 1.00f);
-
-        ImVec4* colors = style.Colors;
-        colors[ImGuiCol_Text] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-        colors[ImGuiCol_TextDisabled] = grayLight;
-        colors[ImGuiCol_WindowBg] = grayDarkest;
-        colors[ImGuiCol_ChildBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-        colors[ImGuiCol_PopupBg] = grayDarkest;
-        colors[ImGuiCol_Border] = grayMedium;
-        colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.4f);
-        colors[ImGuiCol_FrameBg] = grayDarker;
-        colors[ImGuiCol_FrameBgHovered] = grayMedium;
-        colors[ImGuiCol_FrameBgActive] = grayDarkest;
-        colors[ImGuiCol_TitleBg] = grayDarker;
-        colors[ImGuiCol_TitleBgActive] = grayDarker;
-        colors[ImGuiCol_TitleBgCollapsed] = grayDarker;
-        colors[ImGuiCol_MenuBarBg] = grayDarker;
-        colors[ImGuiCol_ScrollbarBg] = grayDarkest;
-        colors[ImGuiCol_ScrollbarGrab] = grayDark;
-        colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.41f, 0.41f, 0.41f, 1.00f);
-        colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.51f, 0.51f, 0.51f, 1.00f);
-        colors[ImGuiCol_CheckMark] = accentColor;
-        colors[ImGuiCol_SliderGrab] = accentColor;
-        colors[ImGuiCol_SliderGrabActive] = accentColor;
-        colors[ImGuiCol_Button] = grayDark;
-        colors[ImGuiCol_ButtonHovered] = grayMedium;
-        colors[ImGuiCol_ButtonActive] = grayDarkest;
-        colors[ImGuiCol_Header] = grayDark;
-        colors[ImGuiCol_HeaderHovered] = accentColor;
-        colors[ImGuiCol_HeaderActive] = accentColor;
-        colors[ImGuiCol_Separator] = ImVec4(0.43f, 0.43f, 0.50f, 0.50f);
-        colors[ImGuiCol_SeparatorHovered] = ImVec4(0.10f, 0.40f, 0.75f, 0.78f);
-        colors[ImGuiCol_SeparatorActive] = ImVec4(0.10f, 0.40f, 0.75f, 1.00f);
-        colors[ImGuiCol_ResizeGrip] = ImVec4(0.26f, 0.59f, 0.98f, 0.20f);
-        colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.26f, 0.59f, 0.98f, 0.67f);
-        colors[ImGuiCol_ResizeGripActive] = ImVec4(0.26f, 0.59f, 0.98f, 0.95f);
-        colors[ImGuiCol_InputTextCursor] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-        colors[ImGuiCol_TabHovered] = ImVec4(0.45f, 0.45f, 0.45f, 1.00f);
-        colors[ImGuiCol_Tab] = grayDarker;
-        colors[ImGuiCol_TabSelected] = grayDark;
-        colors[ImGuiCol_TabSelectedOverline] = ImVec4(0.93f, 0.93f, 0.93f, 0.61f);
-        colors[ImGuiCol_TabDimmed] = grayDarker;
-        colors[ImGuiCol_TabDimmedSelected] = grayDark;
-        colors[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0.93f, 0.93f, 0.93f, 0.61f);
-        colors[ImGuiCol_DockingPreview] = accentColor;
-        colors[ImGuiCol_DockingEmptyBg] = grayDarkest;
-        colors[ImGuiCol_PlotLines] = ImVec4(0.61f, 0.61f, 0.61f, 1.00f);
-        colors[ImGuiCol_PlotLinesHovered] = ImVec4(1.00f, 0.43f, 0.35f, 1.00f);
-        colors[ImGuiCol_PlotHistogram] = ImVec4(0.90f, 0.70f, 0.00f, 1.00f);
-        colors[ImGuiCol_PlotHistogramHovered] = ImVec4(1.00f, 0.60f, 0.00f, 1.00f);
-        colors[ImGuiCol_TableHeaderBg] = grayDarker;
-        colors[ImGuiCol_TableBorderStrong] = grayDark;
-        colors[ImGuiCol_TableBorderLight] = grayDarker;
-        colors[ImGuiCol_TableRowBg] = grayDarker;
-        colors[ImGuiCol_TableRowBgAlt] = grayDarker;
-        colors[ImGuiCol_TextLink] = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
-        colors[ImGuiCol_TextSelectedBg] = ImVec4(0.26f, 0.59f, 0.98f, 0.35f);
-        colors[ImGuiCol_TreeLines] = ImVec4(0.43f, 0.43f, 0.50f, 0.50f);
-        colors[ImGuiCol_DragDropTarget] = accentColor;
-        colors[ImGuiCol_UnsavedMarker] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-        colors[ImGuiCol_NavCursor] = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
-        colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
-        colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
-        colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.35f);
-
-        ImNodesStyle& imnodesStyle = ImNodes::GetStyle();
-        imnodesStyle.Colors[ImNodesCol_NodeBackground] = ImColor(grayDarkest);
-        imnodesStyle.Colors[ImNodesCol_NodeBackgroundHovered] = ImColor(grayDarkest);
-        imnodesStyle.Colors[ImNodesCol_NodeBackgroundSelected] = ImColor(grayDarkest);
-        imnodesStyle.Colors[ImNodesCol_NodeOutline] = ImColor(grayMedium);
-        imnodesStyle.Colors[ImNodesCol_TitleBar] = ImColor(grayDark);
-        imnodesStyle.Colors[ImNodesCol_TitleBarHovered] = ImColor(grayDark);
-        imnodesStyle.Colors[ImNodesCol_TitleBarSelected] = ImColor(grayDark);
-        imnodesStyle.Colors[ImNodesCol_Link] = ImColor(accentColor);
-        imnodesStyle.Colors[ImNodesCol_LinkHovered] = ImColor(accentColor);
-        imnodesStyle.Colors[ImNodesCol_LinkSelected] = ImColor(accentColor);
-        imnodesStyle.Colors[ImNodesCol_Pin] = ImColor(accentColor);
-        imnodesStyle.Colors[ImNodesCol_PinHovered] = ImColor(accentColor);
-        imnodesStyle.Colors[ImNodesCol_GridBackground] = ImColor(grayDarkest);
-        imnodesStyle.Colors[ImNodesCol_GridLine] = ImColor(grayDark);
-        imnodesStyle.Colors[ImNodesCol_GridLinePrimary] = ImColor(grayMedium);
+        ApplyTheme();
 
         if (info.DefaultFontPath && std::filesystem::exists(*info.DefaultFontPath))
         {
@@ -229,6 +134,122 @@ namespace Veng
                 ImGui::GetMainViewport()->Size = vec2(extent);
 #endif
             });
+    }
+
+    void ImGuiLayer::ApplyTheme()
+    {
+        const UI::Theme& theme = UI::GetTheme();
+
+        // Returns the role color with its alpha overridden — for the translucent overlays
+        // (selection bands, resize grips, dim layers) ImGui expects.
+        const auto alpha = [](vec4 color, f32 a)
+        {
+            color.a = a;
+            return color;
+        };
+
+        ImGuiStyle& style = ImGui::GetStyle();
+
+        style.WindowRounding = theme.WindowRounding;
+        style.ChildRounding = theme.ChildRounding;
+        style.FrameRounding = theme.FrameRounding;
+        style.PopupRounding = theme.PopupRounding;
+        style.GrabRounding = theme.GrabRounding;
+        style.TabRounding = theme.TabRounding;
+        style.ScrollbarRounding = theme.ScrollbarRounding;
+        style.WindowBorderSize = theme.BorderSize;
+        style.FrameBorderSize = theme.BorderSize;
+        style.PopupBorderSize = theme.BorderSize;
+        style.WindowPadding = theme.WindowPadding;
+        style.FramePadding = theme.FramePadding;
+        style.ItemSpacing = theme.ItemSpacing;
+        style.ItemInnerSpacing = theme.ItemInnerSpacing;
+        style.ScrollbarSize = theme.ScrollbarSize;
+        style.GrabMinSize = theme.GrabMinSize;
+        style.WindowTitleAlign = ImVec2(0.0f, 0.5f);
+        style.WindowMenuButtonPosition = ImGuiDir_None;
+        style.SeparatorTextBorderSize = 1.0f;
+        style.DockingSeparatorSize = 1.0f;
+
+        ImVec4* colors = style.Colors;
+        colors[ImGuiCol_Text] = theme.Text;
+        colors[ImGuiCol_TextDisabled] = theme.TextDisabled;
+        colors[ImGuiCol_WindowBg] = theme.Background;
+        colors[ImGuiCol_ChildBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        colors[ImGuiCol_PopupBg] = theme.Surface;
+        colors[ImGuiCol_Border] = theme.Border;
+        colors[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        colors[ImGuiCol_FrameBg] = theme.Surface;
+        colors[ImGuiCol_FrameBgHovered] = theme.SurfaceHovered;
+        colors[ImGuiCol_FrameBgActive] = theme.SurfaceActive;
+        colors[ImGuiCol_TitleBg] = theme.Background;
+        colors[ImGuiCol_TitleBgActive] = theme.Surface;
+        colors[ImGuiCol_TitleBgCollapsed] = theme.Background;
+        colors[ImGuiCol_MenuBarBg] = theme.Background;
+        colors[ImGuiCol_ScrollbarBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        colors[ImGuiCol_ScrollbarGrab] = theme.SurfaceRaised;
+        colors[ImGuiCol_ScrollbarGrabHovered] = theme.SurfaceHovered;
+        colors[ImGuiCol_ScrollbarGrabActive] = theme.SurfaceActive;
+        colors[ImGuiCol_CheckMark] = theme.Accent;
+        colors[ImGuiCol_SliderGrab] = theme.Accent;
+        colors[ImGuiCol_SliderGrabActive] = theme.AccentHovered;
+        colors[ImGuiCol_Button] = theme.SurfaceRaised;
+        colors[ImGuiCol_ButtonHovered] = theme.SurfaceHovered;
+        colors[ImGuiCol_ButtonActive] = theme.SurfaceActive;
+        colors[ImGuiCol_Header] = theme.AccentMuted;
+        colors[ImGuiCol_HeaderHovered] = alpha(theme.Accent, 0.40f);
+        colors[ImGuiCol_HeaderActive] = alpha(theme.Accent, 0.55f);
+        colors[ImGuiCol_Separator] = theme.Border;
+        colors[ImGuiCol_SeparatorHovered] = theme.AccentHovered;
+        colors[ImGuiCol_SeparatorActive] = theme.Accent;
+        colors[ImGuiCol_ResizeGrip] = alpha(theme.Accent, 0.20f);
+        colors[ImGuiCol_ResizeGripHovered] = alpha(theme.Accent, 0.55f);
+        colors[ImGuiCol_ResizeGripActive] = alpha(theme.Accent, 0.85f);
+        colors[ImGuiCol_InputTextCursor] = theme.Text;
+        colors[ImGuiCol_Tab] = theme.Background;
+        colors[ImGuiCol_TabHovered] = theme.SurfaceHovered;
+        colors[ImGuiCol_TabSelected] = theme.Surface;
+        colors[ImGuiCol_TabSelectedOverline] = theme.Accent;
+        colors[ImGuiCol_TabDimmed] = theme.Background;
+        colors[ImGuiCol_TabDimmedSelected] = theme.Surface;
+        colors[ImGuiCol_TabDimmedSelectedOverline] = alpha(theme.Accent, 0.40f);
+        colors[ImGuiCol_DockingPreview] = alpha(theme.Accent, 0.70f);
+        colors[ImGuiCol_DockingEmptyBg] = theme.Background;
+        colors[ImGuiCol_PlotLines] = theme.TextMuted;
+        colors[ImGuiCol_PlotLinesHovered] = theme.Accent;
+        colors[ImGuiCol_PlotHistogram] = theme.Accent;
+        colors[ImGuiCol_PlotHistogramHovered] = theme.AccentHovered;
+        colors[ImGuiCol_TableHeaderBg] = theme.Surface;
+        colors[ImGuiCol_TableBorderStrong] = theme.BorderStrong;
+        colors[ImGuiCol_TableBorderLight] = theme.Border;
+        colors[ImGuiCol_TableRowBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        colors[ImGuiCol_TableRowBgAlt] = alpha(theme.Surface, 0.40f);
+        colors[ImGuiCol_TextLink] = theme.Accent;
+        colors[ImGuiCol_TextSelectedBg] = alpha(theme.Accent, 0.35f);
+        colors[ImGuiCol_TreeLines] = theme.Border;
+        colors[ImGuiCol_DragDropTarget] = theme.Accent;
+        colors[ImGuiCol_UnsavedMarker] = theme.Warning;
+        colors[ImGuiCol_NavCursor] = theme.Accent;
+        colors[ImGuiCol_NavWindowingHighlight] = alpha(theme.Text, 0.70f);
+        colors[ImGuiCol_NavWindowingDimBg] = alpha(theme.Background, 0.60f);
+        colors[ImGuiCol_ModalWindowDimBg] = alpha(theme.Background, 0.60f);
+
+        ImNodesStyle& imnodesStyle = ImNodes::GetStyle();
+        imnodesStyle.Colors[ImNodesCol_NodeBackground] = ImColor(theme.Surface);
+        imnodesStyle.Colors[ImNodesCol_NodeBackgroundHovered] = ImColor(theme.SurfaceRaised);
+        imnodesStyle.Colors[ImNodesCol_NodeBackgroundSelected] = ImColor(theme.SurfaceRaised);
+        imnodesStyle.Colors[ImNodesCol_NodeOutline] = ImColor(theme.Border);
+        imnodesStyle.Colors[ImNodesCol_TitleBar] = ImColor(theme.SurfaceRaised);
+        imnodesStyle.Colors[ImNodesCol_TitleBarHovered] = ImColor(theme.SurfaceHovered);
+        imnodesStyle.Colors[ImNodesCol_TitleBarSelected] = ImColor(theme.SurfaceHovered);
+        imnodesStyle.Colors[ImNodesCol_Link] = ImColor(theme.Accent);
+        imnodesStyle.Colors[ImNodesCol_LinkHovered] = ImColor(theme.AccentHovered);
+        imnodesStyle.Colors[ImNodesCol_LinkSelected] = ImColor(theme.AccentHovered);
+        imnodesStyle.Colors[ImNodesCol_Pin] = ImColor(theme.Accent);
+        imnodesStyle.Colors[ImNodesCol_PinHovered] = ImColor(theme.AccentHovered);
+        imnodesStyle.Colors[ImNodesCol_GridBackground] = ImColor(theme.Background);
+        imnodesStyle.Colors[ImNodesCol_GridLine] = ImColor(theme.Border);
+        imnodesStyle.Colors[ImNodesCol_GridLinePrimary] = ImColor(theme.BorderStrong);
     }
 
     ImGuiLayer::~ImGuiLayer()

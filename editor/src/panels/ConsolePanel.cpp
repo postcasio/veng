@@ -39,14 +39,15 @@ namespace VengEditor
         {
             for (const Entry& entry : m_Entries)
             {
-                vec4 color{0.8f, 0.8f, 0.8f, 1.0f};
+                const UI::Theme& theme = UI::GetTheme();
+                vec4 color = theme.TextMuted;
                 switch (entry.Level)
                 {
                 case Log::Level::Warn:
-                    color = {1.0f, 0.8f, 0.2f, 1.0f};
+                    color = theme.Warning;
                     break;
                 case Log::Level::Error:
-                    color = {1.0f, 0.3f, 0.3f, 1.0f};
+                    color = theme.Error;
                     break;
                 case Log::Level::Info:
                     break;

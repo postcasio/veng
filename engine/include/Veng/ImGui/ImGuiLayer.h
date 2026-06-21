@@ -59,6 +59,12 @@ namespace Veng
         /// @param cmd  Command buffer the render pass is recorded into.
         void Render(Renderer::CommandBuffer& cmd);
 
+        /// @brief Pushes the active `UI::Theme` into the live ImGui and imnodes styles.
+        ///
+        /// Called once at construction. A host that swaps the theme at runtime
+        /// (`UI::SetTheme`) calls this afterward to refresh the rendered style.
+        void ApplyTheme();
+
         /// @brief Returns the offscreen image the UI is rendered into.
         [[nodiscard]] Ref<Renderer::Image> GetOutputImage() const { return m_Image; }
 

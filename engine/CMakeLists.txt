@@ -30,6 +30,7 @@ add_library(veng SHARED
         src/Window.cpp
         src/ImGui/ImGuiLayer.cpp
         src/ImGui/ImGuiTexture.cpp
+        src/UI/Theme.cpp
         src/UI/Widgets.cpp
         src/UI/Layout.cpp
         src/UI/Scopes.cpp
