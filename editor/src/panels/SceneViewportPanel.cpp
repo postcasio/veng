@@ -247,6 +247,12 @@ namespace VengEditor
             {
                 m_SettingsDirty = true;
             }
+            UI::SameLine();
+            if (UI::ToggleButton("TAA", m_Settings.TAA))
+            {
+                m_SettingsDirty = true;
+            }
+            UI::Tooltip("Temporal anti-aliasing");
         }
     }
 
