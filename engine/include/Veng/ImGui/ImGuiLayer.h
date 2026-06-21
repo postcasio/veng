@@ -23,7 +23,7 @@ namespace Veng
     /// @brief Construction parameters for `ImGuiLayer`.
     struct ImGuiLayerInfo
     {
-        /// @brief Path to the default UI font; uses the ImGui built-in when absent.
+        /// @brief Path to the default UI font; overrides the embedded engine default (Roboto) when set.
         optional<path> DefaultFontPath;
         /// @brief Path to an icon font merged on top of the default; omitted when absent.
         optional<path> IconFontPath;

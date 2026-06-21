@@ -243,6 +243,40 @@ if (TARGET veng_cook_bootstrap)
 endif ()
 
 # ---------------------------------------------------------------------------
+# Default UI font — embed Roboto into libveng as the engine default
+# ---------------------------------------------------------------------------
+
+# A plain file embed (no cook), so it has no dependency on the bootstrap cooker
+# and is always available. ImGuiLayer loads it from memory as the default UI font
+# when the consumer supplies no explicit font path.
+set(VENG_DEFAULT_FONT_TTF ${CMAKE_CURRENT_SOURCE_DIR}/engine/fonts/Roboto.ttf)
+set(VENG_DEFAULT_FONT_CPP ${CMAKE_CURRENT_BINARY_DIR}/generated/DefaultFont.cpp)
+
+add_custom_command(
+    OUTPUT ${VENG_DEFAULT_FONT_CPP}
+    COMMAND ${CMAKE_COMMAND}
+            -DINPUT=${VENG_DEFAULT_FONT_TTF}
+            -DOUTPUT=${VENG_DEFAULT_FONT_CPP}
+            -DSYMBOL=g_DefaultFont
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinary.cmake
+    DEPENDS ${VENG_DEFAULT_FONT_TTF} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinary.cmake
+    COMMENT "Embedding veng default font")
+
+# GENERATED so the build doesn't expect it up front; SKIP_LINTING so the
+# opt-in clang-tidy pass never walks the embedded byte array.
+set_source_files_properties(${VENG_DEFAULT_FONT_CPP} PROPERTIES
+        GENERATED TRUE
+        SKIP_LINTING TRUE)
+
+# Custom target so veng (in a subdirectory scope) can depend on the generated
+# file produced by a command in this (root) scope.
+add_custom_target(veng_default_font_gen DEPENDS ${VENG_DEFAULT_FONT_CPP})
+
+target_sources(veng PRIVATE ${VENG_DEFAULT_FONT_CPP})
+add_dependencies(veng veng_default_font_gen)
+target_compile_definitions(veng PRIVATE VENG_HAS_DEFAULT_FONT=1)
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 

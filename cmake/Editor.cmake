@@ -64,12 +64,6 @@ function(veng_add_editor NAME)
         add_dependencies(${NAME}-editor ${ARG_ASSET_PACK})
     endif ()
 
-    # Bake the fonts directory path into the editor exe so it can resolve the
-    # Roboto font at runtime. Like VENG_EDITOR_ASSET_MANIFEST, this is absolute
-    # and in-tree — the editor is a development tool, not a shipped binary.
-    target_compile_definitions(${NAME}-editor PRIVATE
-            VENG_EDITOR_FONTS_DIR="${CMAKE_SOURCE_DIR}/editor/fonts")
-
     if (ARG_EDITOR_MODULE)
         target_compile_definitions(${NAME}-editor PRIVATE
                 VENG_EDITOR_EDITOR_MODULE="$<TARGET_FILE_NAME:${ARG_EDITOR_MODULE}>")

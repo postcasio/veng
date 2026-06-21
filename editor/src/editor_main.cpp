@@ -29,12 +29,6 @@ int main(const int argc, char** argv)
                         .Title = "veng — Editor",
                         .CaptureMouse = false,
                     },
-#ifdef VENG_EDITOR_FONTS_DIR
-                .ImGui =
-                    Veng::ImGuiLayerInfo{
-                        .DefaultFontPath = Veng::path(VENG_EDITOR_FONTS_DIR) / "Roboto.ttf",
-                    },
-#endif
                 .PipelineCachePath = Veng::ExecutableDirectory() / "editor_pipeline_cache.bin",
             },
         // CookSession is stateless; build one per request.

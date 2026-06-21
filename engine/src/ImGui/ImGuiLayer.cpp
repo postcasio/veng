@@ -21,6 +21,14 @@
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
 
+#ifdef VENG_HAS_DEFAULT_FONT
+namespace Veng
+{
+    extern const unsigned char g_DefaultFont[];
+    extern const unsigned long g_DefaultFontSize;
+}
+#endif
+
 namespace Veng
 {
     using Renderer::Context;
@@ -111,6 +119,17 @@ namespace Veng
         {
             io.Fonts->AddFontFromFileTTF(info.DefaultFontPath->string().c_str(), 16.0f);
         }
+#ifdef VENG_HAS_DEFAULT_FONT
+        else
+        {
+            // Embedded Roboto is the engine default UI font; ImGui's built-in
+            // bitmap font is reached only when this embed is compiled out.
+            ImFontConfig config;
+            config.FontDataOwnedByAtlas = false; // static embed; the atlas must not free it
+            io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(g_DefaultFont),
+                                           static_cast<int>(g_DefaultFontSize), 16.0f, &config);
+        }
+#endif
 
         if (info.IconFontPath && std::filesystem::exists(*info.IconFontPath))
         {
