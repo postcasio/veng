@@ -98,7 +98,6 @@ nav:
       - concepts/index.md
       - How an application is structured: concepts/architecture-overview.md
       - The threading model: concepts/threading-model.md
-      - Resource lifetime: concepts/resource-ownership.md
       - Error handling: concepts/error-handling.md
       - API conventions: concepts/conventions.md
   - Rendering:

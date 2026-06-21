@@ -19,9 +19,7 @@ TextureHandle handle = Context.GetBindlessRegistry().Register(myImageView, mySam
 ```
 
 `Register` returns a typed handle (`TextureHandle`, `SamplerHandle`,
-`StorageImageHandle`, `MaterialHandle`); `Release` frees the slot, deferred the same
-way other resources are destroyed (see
-[Resource lifetime](../concepts/resource-ownership.md)).
+`StorageImageHandle`, `MaterialHandle`); `Release` frees the slot.
 
 ## Set 0 is reserved
 

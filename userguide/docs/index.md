@@ -30,7 +30,7 @@ It includes:
 -   :material-sitemap: **[Concepts](concepts/index.md)**
 
     The things to understand first: how an application is structured, the single
-    render thread, resource lifetime, and error handling.
+    render thread, and error handling.
 
 -   :material-cube-outline: **[Rendering](rendering/index.md)**
 

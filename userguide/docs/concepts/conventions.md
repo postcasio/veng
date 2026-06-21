@@ -43,6 +43,3 @@ The verb on the factory tells you what it does and whether it blocks:
 | `Build<T>` / `BuildSync<T>` | an asset, from data | async / blocking |
 | `Load<T>` / `LoadSync<T>` | an asset, from a pack | async / blocking |
 | `Upload` / `UploadSync` | uploads data into a resource | async / blocking |
-
-See [Resource lifetime](resource-ownership.md) for when it's safe to destroy what
-they return.

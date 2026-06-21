@@ -54,8 +54,7 @@ These four hooks are the whole lifecycle:
 
 !!! warning "Release your resources in `OnDispose()`"
     Reset every `Ref` and `Unique` you created. A resource that outlives the
-    render context fails on destruction — see
-    [Resource lifetime](../concepts/resource-ownership.md).
+    engine fails on destruction.
 
 `Application` owns the major subsystems and hands them to you:
 
