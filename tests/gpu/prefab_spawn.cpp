@@ -158,6 +158,38 @@ TEST_CASE_FIXTURE(PrefabFixture, "Roots are entities with no parent link, in aut
     CHECK(Stage->Get<Name>(children[0]).Value == "b");
 }
 
+TEST_CASE_FIXTURE(PrefabFixture, "Two children under one parent both survive the link rebuild")
+{
+    // idx 0 parent "p"; idx 1 "a" and idx 2 "b" both reference parent index 0.
+    // Both children's Hierarchy.Parent edges are pre-set by ReadFields; the rebuild
+    // must link both, not drop the first when the second is attached.
+    vector<Prefab::PrefabEntity> entities;
+    entities.push_back({{MakeComponent(Types, Name{"p"})}});
+    entities.push_back(
+        {{MakeComponent(Types, Name{"a"}),
+          MakeComponent(Types, Hierarchy{.Parent = Entity{.Index = 0, .Generation = 0}})}});
+    entities.push_back(
+        {{MakeComponent(Types, Name{"b"}),
+          MakeComponent(Types, Hierarchy{.Parent = Entity{.Index = 0, .Generation = 0}})}});
+
+    const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
+    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets);
+
+    REQUIRE(roots.size() == 1);
+    CHECK(Stage->Get<Name>(roots[0]).Value == "p");
+
+    // The parent keeps both children, in authoring order.
+    vector<Entity> children;
+    Stage->ForEachChild(roots[0], [&](Entity child) { children.push_back(child); });
+    REQUIRE(children.size() == 2);
+    CHECK(Stage->Get<Name>(children[0]).Value == "a");
+    CHECK(Stage->Get<Name>(children[1]).Value == "b");
+
+    // Each child's parent edge points back at the spawned parent.
+    CHECK(Stage->GetParent(children[0]) == roots[0]);
+    CHECK(Stage->GetParent(children[1]) == roots[0]);
+}
+
 TEST_CASE_FIXTURE(PrefabFixture,
                   "Intra-prefab entity references remap to the freshly spawned handles")
 {

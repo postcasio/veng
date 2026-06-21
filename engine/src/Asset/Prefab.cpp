@@ -136,20 +136,35 @@ namespace Veng
         }
 
         // 3. Rebuild the intrusive sibling/child links from the parent edges, in
-        //    authoring order so appending preserves authored child order. SetParent
-        //    detaches the (empty) old links and appends each child under its parent.
-        //    Roots — no Hierarchy or a null parent edge — are returned in order.
-        vector<Entity> roots;
-        for (const Entity entity : spawned)
+        //    authoring order so appending preserves authored child order.
+        //
+        //    ReadFields pre-set each Hierarchy's Parent (a reflected field) but left
+        //    the derived FirstChild/PrevSibling/NextSibling links null. Capture every
+        //    parent target, then clear the half-set Parent edges before linking: with
+        //    Parent still set but the links null, SetParent's UnlinkFromSiblings would
+        //    treat the child as the head of its parent's list and drop a prior sibling
+        //    sharing that parent. Clearing first lets SetParent build from a clean
+        //    slate. Roots — no Hierarchy or a null parent edge — are returned in order.
+        vector<Entity> parents(spawned.size());
+        for (usize i = 0; i < spawned.size(); ++i)
         {
-            const Entity parent = scene.GetParent(entity);
-            if (parent.IsNull())
+            parents[i] = scene.GetParent(spawned[i]);
+            if (auto* link = scene.TryGet<Hierarchy>(spawned[i]))
             {
-                roots.push_back(entity);
+                link->Parent = Entity::Null;
+            }
+        }
+
+        vector<Entity> roots;
+        for (usize i = 0; i < spawned.size(); ++i)
+        {
+            if (parents[i].IsNull())
+            {
+                roots.push_back(spawned[i]);
             }
             else
             {
-                scene.SetParent(entity, parent);
+                scene.SetParent(spawned[i], parents[i]);
             }
         }
 
