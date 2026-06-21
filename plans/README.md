@@ -486,7 +486,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   persisted types are the four shape recipes.
 
 - **[planset-28](planset-28/README.md)** — mip-pyramid bloom (compute dual-filter)
-  (📝 proposed, 5 plans). Replaces the fixed single-level separable-Gaussian bloom
+  (✅ done, 5 plans). Replaces the fixed single-level separable-Gaussian bloom
   (planset-19's four full-resolution `PostProcessScenePass` material stages) with a
   **compute mip-pyramid bloom** modeled on the delivered hi-Z compute mip reduction: a
   bright-pass + **Karis-average** firefly suppression into mip 0, a progressive downsample

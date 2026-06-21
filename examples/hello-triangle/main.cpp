@@ -181,16 +181,16 @@ protected:
         auto& context = GetRenderContext();
         auto& cmd = context.GetCurrentCommandBuffer();
 
-        // Knee just below the brightest facets; modest mix so highlights bloom without
-        // washing out the scene.
+        // Per-frame tonemap/bloom knobs read straight off the app-side members the
+        // "Scene" window edits; no Configure on these paths.
         const Renderer::SceneView view{
             .World = *m_Scene,
             .Camera = m_Camera,
             .Delta = m_LastDelta,
-            .Exposure = 1.0f,
-            .BloomThreshold = 0.5f,
-            .BloomIntensity = 1.5f,
-            .BloomRadius = 1.0f,
+            .Exposure = m_Exposure,
+            .BloomThreshold = m_BloomThreshold,
+            .BloomIntensity = m_BloomIntensity,
+            .BloomRadius = m_BloomRadius,
         };
         m_SceneRenderer->Execute(cmd, view);
 
@@ -342,6 +342,34 @@ private:
                 ReconfigureScene();
             }
 
+            // Tonemap exposure is a per-frame SceneView value; the drag edits the member.
+            (void)UI::Drag("Exposure", m_Exposure, {.Speed = 0.01f, .Min = 0.0f, .Max = 16.0f});
+
+            // Bloom on/off and the kernel are topology; threshold/intensity/radius are
+            // per-frame SceneView members. The per-bloom knobs grey out when bloom is off.
+            if (UI::Checkbox("Bloom", m_SceneSettings.Bloom))
+            {
+                ReconfigureScene();
+            }
+            {
+                auto bloomDisabled = UI::Disabled(!m_SceneSettings.Bloom);
+                (void)UI::Drag("Bloom threshold", m_BloomThreshold,
+                               {.Speed = 0.01f, .Min = 0.0f, .Max = 8.0f});
+                (void)UI::Drag("Bloom intensity", m_BloomIntensity,
+                               {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f});
+                (void)UI::Drag("Bloom radius", m_BloomRadius,
+                               {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f});
+
+                static constexpr std::array<string_view, 2> kernelNames{"COD (13-tap/tent)",
+                                                                        "Dual Kawase"};
+                i32 kernel = static_cast<i32>(m_SceneSettings.Kernel);
+                if (UI::Combo("Bloom kernel", kernel, kernelNames))
+                {
+                    m_SceneSettings.Kernel = static_cast<Renderer::BloomKernel>(kernel);
+                    ReconfigureScene();
+                }
+            }
+
             const vec2 available = UI::ContentRegionAvail();
             const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
             const f32 aspect = static_cast<f32>(output->GetImage()->GetHeight()) /
@@ -445,6 +473,12 @@ private:
     f32 m_LastDelta = 0.0f;
     u32 m_FrameCount = 0;
     const char* m_SmokeOutput = nullptr;
+
+    // Per-frame tonemap/bloom knobs the "Scene" window edits, fed into each frame's SceneView.
+    f32 m_Exposure = 1.0f;
+    f32 m_BloomThreshold = 0.5f;
+    f32 m_BloomIntensity = 1.5f;
+    f32 m_BloomRadius = 1.0f;
 
     // Skips the per-frame Transform write so the broadphase reads `static`; never set in smoke mode.
     bool m_PauseSpin = false;
