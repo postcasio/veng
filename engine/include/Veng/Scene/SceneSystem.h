@@ -8,6 +8,47 @@ namespace Veng
     class AssetManager;
     class Input;
 
+    /// @brief Stable identity of a registered SceneSystem, authored exactly like a TypeId/AssetId.
+    ///
+    /// A SceneSystem subclass declares one through VE_SYSTEM; SystemRegistry keys its
+    /// catalog on it and a Level names the active ordered set by it. It is a new id
+    /// space alongside AssetId/TypeId, minted with `vengc generate-id`.
+    using SystemId = u64;
+
+    /// @brief The empty SystemId, distinct from every authored id.
+    inline constexpr SystemId InvalidSystemId = 0;
+
+    /// @brief Identity trait every registered SceneSystem subclass specialises.
+    ///
+    /// Unspecialised by default — a SceneSystem subclass declares its identity by
+    /// specialising this trait through the VE_SYSTEM macro, which emits a stable
+    /// SystemId and a display name. SystemRegistry::Register reads the trait, so a
+    /// system registered without a VE_SYSTEM fails to compile. SystemIdOf and
+    /// SystemNameOf read the members directly.
+    /// @tparam T The concrete SceneSystem subclass.
+    template <class T>
+    struct VengSystem;
+
+    /// @brief The stable SystemId of a registered system, read as a compile-time constant off its trait.
+    ///
+    /// Independent of registration order and of any SystemRegistry instance.
+    /// @tparam T The concrete SceneSystem subclass.
+    /// @return The authored SystemId.
+    template <class T>
+    constexpr SystemId SystemIdOf()
+    {
+        return VengSystem<T>::Id;
+    }
+
+    /// @brief The display name of a registered system, read off its trait.
+    /// @tparam T The concrete SceneSystem subclass.
+    /// @return The authored display name.
+    template <class T>
+    string SystemNameOf()
+    {
+        return VengSystem<T>::Name();
+    }
+
     /// @brief Per-tick services handed to every SceneSystem.
     ///
     /// Borrowed for the duration of the call: a system reads from these but does
@@ -78,3 +119,21 @@ namespace Veng
         virtual void OnStop(Scene& scene, const SystemContext& context) {}
     };
 }
+
+/// @brief Declares a SceneSystem subclass's catalog identity by specialising VengSystem\<T\>.
+///
+/// Emits a stable SystemId and a display name, so SystemRegistry::Register stores
+/// `{ SystemId, Name, factory }` and the catalog enumerates and resolves the system
+/// without instantiating it. Authored exactly like a TypeId: the id is a hardcoded
+/// 0x…ULL literal for engine systems or a `vengc generate-id` value for game systems,
+/// and two systems claiming one id is a fatal collision assert at registration.
+/// @param Type        The concrete SceneSystem subclass.
+/// @param IdLiteral   The authored SystemId (uppercase hex 0x…ULL).
+/// @param NameLiteral The display name string literal.
+#define VE_SYSTEM(Type, IdLiteral, NameLiteral)                                                    \
+    template <>                                                                                    \
+    struct ::Veng::VengSystem<Type>                                                                \
+    {                                                                                              \
+        static constexpr ::Veng::SystemId Id = (IdLiteral);                                        \
+        static ::Veng::string Name() { return (NameLiteral); }                                     \
+    }

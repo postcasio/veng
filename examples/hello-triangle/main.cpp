@@ -72,6 +72,8 @@ public:
     }
 };
 
+VE_SYSTEM(SpinnerSystem, 0xB5BB5153EC6ACDDEULL, "Spinner");
+
 // The game's button-bit layout for a PlayerInput's bitset. Bit meanings are game
 // policy; the engine treats the bitset as opaque.
 enum class PlayerButton : u32
@@ -151,6 +153,8 @@ public:
     }
 };
 
+VE_SYSTEM(ControlSystem, 0x1C2F5C03357C19B2ULL, "Control");
+
 // The game mode's spawn rule: a Sim-phase system that instantiates the configured player
 // prefab when the Session is Playing, and tears it down when the session ends or play stops.
 // The player prefab authors its own Viewer/Possesses/Camera/CameraFollow wiring, so the
@@ -220,6 +224,8 @@ private:
 
     vector<Entity> m_Spawned;
 };
+
+VE_SYSTEM(SpawnPlayerRule, 0x70CCE23C99D1C3A1ULL, "Spawn Player Rule");
 
 class HelloTriangleApp final : public Application
 {

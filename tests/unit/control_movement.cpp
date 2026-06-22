@@ -218,6 +218,8 @@ namespace
     };
 }
 
+VE_SYSTEM(AiSystem, 0x5025CEE0E52DBA62ULL, "AI");
+
 TEST_CASE("AI uniformity: a system writing Intent directly drives the same movement")
 {
     TypeRegistry registry = MakeRegistry();

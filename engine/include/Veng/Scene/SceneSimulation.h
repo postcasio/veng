@@ -7,18 +7,32 @@ namespace Veng
 {
     class SystemRegistry;
 
-    /// @brief Drives the registered SceneSystems over a Scene.
+    /// @brief Drives a set of SceneSystems over a Scene.
     ///
     /// The single simulation driver both the runtime app and the editor's Play mode
-    /// own. Constructed from a SystemRegistry — it instantiates one of each registered
-    /// system at construction and holds them — then Start/Update/Stop each system in
-    /// registration order across a play session.
+    /// own. Constructed either from an ordered SystemId set selecting catalog entries —
+    /// it runs exactly those systems, in that order — or from a whole SystemRegistry as
+    /// the "all registered" convenience. It instantiates its systems at construction and
+    /// holds them, then Start/Update/Stop each across a play session, honoring the
+    /// Sim/View phase split each tick.
     class SceneSimulation
     {
     public:
-        /// @brief Instantiates the registered systems and holds them for the session.
-        /// @param registry  Host-owned registry whose factories produce the systems.
+        /// @brief Instantiates every registered system and holds it for the session.
+        ///
+        /// The "all registered" convenience: builds one of each catalog entry in
+        /// registration order. Used by tests and the no-level case.
+        /// @param registry  Host-owned catalog whose entries produce the systems.
         explicit SceneSimulation(const SystemRegistry& registry);
+
+        /// @brief Instantiates the named systems, in the given order, and holds them for the session.
+        ///
+        /// Resolves each SystemId against the catalog and builds the system it names, so
+        /// the simulation runs exactly the named set in the named order. An id absent
+        /// from the catalog is skipped.
+        /// @param registry  Host-owned catalog the ids resolve against.
+        /// @param systemIds The active ordered SystemId set.
+        SceneSimulation(const SystemRegistry& registry, const vector<SystemId>& systemIds);
 
         /// @brief Calls OnStart on each system, in registration order.
         /// @param scene    The scene the systems operate over.

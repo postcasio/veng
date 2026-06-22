@@ -457,6 +457,10 @@ if (VENG_BUILD_TESTS)
     set_tests_properties(death.type_id_collision PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "TypeId collision")
 
+    add_test(NAME death.system_id_collision COMMAND veng_death system_id_collision)
+    set_tests_properties(death.system_id_collision PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "SystemId collision")
+
     add_test(NAME death.transform_parent_cycle COMMAND veng_death transform_parent_cycle)
     set_tests_properties(death.transform_parent_cycle PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "parent is a descendant of child")

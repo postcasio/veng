@@ -61,6 +61,30 @@ namespace
         Phase GetPhase() const override { return Phase::View; }
         void OnUpdate(Scene&, f32, const SystemContext&) override { g_UpdateOrder.push_back(Tag); }
     };
+}
+
+// The catalog reads each registered system's identity off its VengSystem trait. The
+// counting systems are templates, so a partial specialisation derives a distinct
+// SystemId per Tag from a fixed base; the names embed the tag for readability.
+namespace Veng
+{
+    template <int Tag>
+    struct VengSystem<CountingSystem<Tag>>
+    {
+        static constexpr SystemId Id = 0x51110000000000F0ULL + static_cast<SystemId>(Tag);
+        static string Name() { return "CountingSystem"; }
+    };
+
+    template <int Tag>
+    struct VengSystem<ViewCountingSystem<Tag>>
+    {
+        static constexpr SystemId Id = 0x51220000000000F0ULL + static_cast<SystemId>(Tag);
+        static string Name() { return "ViewCountingSystem"; }
+    };
+}
+
+namespace
+{
 
     TypeRegistry MakeRegistry()
     {
@@ -204,4 +228,97 @@ TEST_CASE("A Sim-default system ticks unchanged when a View system is present")
 
     // The Sim-default SystemA ticks once per Update exactly as before the phase split.
     CHECK(SystemA::Updates == UpdateCount);
+}
+
+TEST_CASE("SystemRegistry catalog enumerates entries and resolves each id back to a system")
+{
+    SystemRegistry registry;
+    registry.Register<SystemA>();
+    registry.Register<ViewCountingSystem<3>>();
+
+    // Entries enumerate the catalog in registration order, carrying each system's id +
+    // name without instantiating anything.
+    const vector<SystemEntry>& entries = registry.Entries();
+    REQUIRE(entries.size() == 2);
+    CHECK(entries[0].Id == SystemIdOf<SystemA>());
+    CHECK(entries[0].Name == "CountingSystem");
+    CHECK(entries[1].Id == SystemIdOf<ViewCountingSystem<3>>());
+    CHECK(entries[1].Name == "ViewCountingSystem");
+
+    // Each registered id resolves to a freshly built system.
+    CHECK(registry.Instantiate(SystemIdOf<SystemA>()) != nullptr);
+    CHECK(registry.Instantiate(SystemIdOf<ViewCountingSystem<3>>()) != nullptr);
+
+    // An unknown id resolves to nothing.
+    CHECK(registry.Instantiate(0xDEADBEEFDEADBEEFULL) == nullptr);
+}
+
+TEST_CASE("SceneSimulation from an ordered id set runs exactly those systems, in that order")
+{
+    g_UpdateOrder.clear();
+
+    TypeRegistry types = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // Register four systems; the simulation selects a subset, ordered opposite to
+    // registration, proving the id list — not registration order — drives the run order.
+    SystemRegistry registry;
+    registry.Register<SystemA>();               // Sim, tag 1
+    registry.Register<SystemB>();               // Sim, tag 2
+    registry.Register<ViewCountingSystem<3>>(); // View, tag 3
+    registry.Register<ViewCountingSystem<4>>(); // View, tag 4
+
+    const vector<SystemId> active = {
+        SystemIdOf<ViewCountingSystem<4>>(),
+        SystemIdOf<SystemB>(),
+        SystemIdOf<ViewCountingSystem<3>>(),
+    };
+    SceneSimulation sim(registry, active);
+    ContextStorage storage;
+    sim.Update(*scene, 0.016f, storage.Make());
+
+    // SystemA (tag 1) was not named, so it never runs. The Sim phase runs first (tag 2),
+    // then the View phase in the named order (4 before 3).
+    REQUIRE(g_UpdateOrder.size() == 3);
+    CHECK(g_UpdateOrder[0] == 2);
+    CHECK(g_UpdateOrder[1] == 4);
+    CHECK(g_UpdateOrder[2] == 3);
+}
+
+TEST_CASE("SceneSimulation from an id set skips an id absent from the catalog")
+{
+    g_UpdateOrder.clear();
+
+    TypeRegistry types = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(types);
+
+    SystemRegistry registry;
+    registry.Register<SystemA>();
+
+    const vector<SystemId> active = {
+        0xCAFEBABECAFEBABEULL, // not in the catalog — skipped
+        SystemIdOf<SystemA>(),
+    };
+    const SceneSimulation sim(registry, active);
+    CHECK_FALSE(sim.IsEmpty());
+
+    SceneSimulation runnable(registry, active);
+    ContextStorage storage;
+    runnable.Update(*scene, 0.016f, storage.Make());
+
+    // Only the present id ran.
+    REQUIRE(g_UpdateOrder.size() == 1);
+    CHECK(g_UpdateOrder[0] == 1);
+}
+
+TEST_CASE("The all-registered convenience builds every registered system")
+{
+    SystemRegistry registry;
+    registry.Register<SystemA>();
+    registry.Register<SystemB>();
+    registry.Register<ViewCountingSystem<3>>();
+
+    const SceneSimulation sim(registry);
+    CHECK_FALSE(sim.IsEmpty());
+    CHECK(registry.Count() == 3);
 }

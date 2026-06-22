@@ -49,6 +49,8 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SceneSystem.h>
+#include <Veng/Scene/SystemRegistry.h>
 #include <Veng/Scene/Transforms.h>
 
 #include <support/GpuProbe.h>
@@ -74,11 +76,25 @@ namespace
     {
         float Value = 0.0f;
     };
+
+    // Two distinct SceneSystems that deliberately claim the same SystemId, to exercise
+    // the catalog's duplicate-id collision assert.
+    struct CollideSystemA final : SceneSystem
+    {
+        void OnUpdate(Scene&, f32, const SystemContext&) override {}
+    };
+    struct CollideSystemB final : SceneSystem
+    {
+        void OnUpdate(Scene&, f32, const SystemContext&) override {}
+    };
 }
 
 VE_TYPE(DeathPosition, 0x45680D614D2A8FE4ULL);
 VE_TYPE(CollideA, 0xB87E1263116E0707ULL);
 VE_TYPE(CollideB, 0xB87E1263116E0707ULL); // same id as CollideA — a collision
+
+VE_SYSTEM(CollideSystemA, 0x4DEAD51D00000001ULL, "CollideSystemA");
+VE_SYSTEM(CollideSystemB, 0x4DEAD51D00000001ULL, "CollideSystemB"); // same id — a collision
 
 namespace
 {
@@ -190,6 +206,14 @@ namespace
         registry.Register<Transform>("Transform");
         registry.Register<Hierarchy>("Hierarchy");
         return registry;
+    }
+
+    void RunSystemIdCollision()
+    {
+        SystemRegistry registry;
+        registry.Register<CollideSystemA>();
+        // CollideSystemB claims CollideSystemA's id — a fatal collision assert.
+        registry.Register<CollideSystemB>();
     }
 
     void RunTransformParentCycle()
@@ -384,6 +408,10 @@ int main(int argc, char** argv)
     else if (name == "type_id_collision")
     {
         RunTypeIdCollision();
+    }
+    else if (name == "system_id_collision")
+    {
+        RunSystemIdCollision();
     }
     else if (name == "transform_parent_cycle")
     {

@@ -9,6 +9,20 @@ namespace Veng
     {
     }
 
+    SceneSimulation::SceneSimulation(const SystemRegistry& registry,
+                                     const vector<SystemId>& systemIds)
+    {
+        m_Systems.reserve(systemIds.size());
+        for (const SystemId id : systemIds)
+        {
+            Unique<SceneSystem> system = registry.Instantiate(id);
+            if (system != nullptr)
+            {
+                m_Systems.emplace_back(std::move(system));
+            }
+        }
+    }
+
     void SceneSimulation::Start(Scene& scene, const SystemContext& context)
     {
         for (const Unique<SceneSystem>& system : m_Systems)

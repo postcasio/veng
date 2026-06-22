@@ -157,6 +157,8 @@ namespace
     }
 }
 
+VE_SYSTEM(TestSpawnPlayerRule, 0xEF01A0C1C1F79775ULL, "Test Spawn Player Rule");
+
 TEST_CASE("A spawn rule instantiates the possessed player when the Session is Playing")
 {
     TypeRegistry registry = MakeRegistry();
