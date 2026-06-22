@@ -35,7 +35,7 @@ namespace VengEditor
     /// frame); reads the live Scene from the shared PrefabEditContext. The toolbar overlay
     /// drives the document's play session and the camera/debug controls. The host records
     /// the scene render via OnRender before the ImGui frame is built, so the output is
-    /// sampleable when OnImGui draws it.
+    /// sampleable when OnUI draws it.
     class SceneViewportPanel final : public EditorPanel
     {
     public:
@@ -59,7 +59,7 @@ namespace VengEditor
 
         /// @brief Records this frame's scene render so the output is ready for UI::Image.
         void OnRender(Veng::Renderer::CommandBuffer& cmd) override;
-        void OnImGui() override;
+        void OnUI() override;
 
     private:
         /// @brief Draws the toolbar overlay (play/camera/debug controls) over the viewport image.
@@ -80,7 +80,7 @@ namespace VengEditor
         /// @brief The user-driven editor camera.
         EditorCamera m_Camera;
 
-        /// @brief The view the camera produced last OnImGui, consumed by OnRender (one-frame latency).
+        /// @brief The view the camera produced last OnUI, consumed by OnRender (one-frame latency).
         Veng::CameraView m_View;
 
         /// @brief While playing, render through the scene's authored Viewer camera instead of the editor camera.

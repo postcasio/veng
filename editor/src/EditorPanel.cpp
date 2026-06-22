@@ -22,7 +22,7 @@ namespace VengEditor
 
         if (auto window = UI::Window(GetTitle(), open, flags))
         {
-            OnImGui();
+            OnUI();
         }
     }
 }

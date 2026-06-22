@@ -322,7 +322,7 @@ namespace VengEditor
                        return;
                    }
 
-                   // Replace the mount and re-fetch; OnImGui swaps the handle into the
+                   // Replace the mount and re-fetch; OnUI swaps the handle into the
                    // preview once the async load lands resident.
                    m_Mount = std::move(*mount);
                    m_Handle = m_Assets.Load<Material>(m_Id);
@@ -575,7 +575,7 @@ namespace VengEditor
         return true;
     }
 
-    void MaterialEditorPanel::OnImGui()
+    void MaterialEditorPanel::OnUI()
     {
         // Debounce so a slider drag does not fire a cook per frame.
         if (m_CookPending)

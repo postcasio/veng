@@ -44,7 +44,7 @@ namespace VengEditor
         ~TextureEditorPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
-        void OnImGui() override;
+        void OnUI() override;
 
     private:
         /// @brief Sampler filter modes; ordinals match the importer's string vocabulary.
@@ -108,7 +108,7 @@ namespace VengEditor
         Veng::f32 m_DebounceRemaining = 0.0f;
 
         /// @brief Handle is resident but the preview ImGuiTexture has not been (re)created;
-        /// creation is deferred to OnImGui where the ImGui frame is live.
+        /// creation is deferred to OnUI where the ImGui frame is live.
         bool m_PreviewDirty = false;
 
         Veng::optional<Veng::string> m_CookError;

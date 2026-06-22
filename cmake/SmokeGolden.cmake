@@ -4,12 +4,12 @@
 # (see the `smoke_golden` test registration in the root CMakeLists.txt).
 #
 # Renders the hello-triangle scene headless to a temp PPM (HT_SMOKE), then
-# compares it against the checked-in golden with veng_golden_compare. Smoke mode
+# compares it against the checked-in golden with veng_test_golden_compare. Smoke mode
 # renders a fixed pose (HelloTriangleApp::SmokeAngle), so the capture is
 # reproducible run to run and a fuzzy compare catches render regressions.
 #
 # Skip contract: hello_triangle has no Vulkan-ICD probe of its own, so this
-# script runs veng_headless_smoke first purely as a probe — if it exits 77 (no
+# script runs veng_test_headless_smoke first purely as a probe — if it exits 77 (no
 # usable ICD) the golden check is skipped and the script succeeds, the same way
 # validation_gate treats a 77 from its binaries.
 

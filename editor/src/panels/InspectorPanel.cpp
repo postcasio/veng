@@ -57,7 +57,7 @@ namespace VengEditor
             });
     }
 
-    void InspectorPanel::OnImGui()
+    void InspectorPanel::OnUI()
     {
         Scene* scene = m_Ctx.Scene;
         const Entity entity = m_Ctx.Active;

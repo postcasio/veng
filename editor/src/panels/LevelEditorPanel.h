@@ -63,7 +63,7 @@ namespace VengEditor
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
 
         /// @brief Draws the document toolbar: the active-system-set readout above the dockspace.
-        void OnImGui() override;
+        void OnUI() override;
 
     protected:
         /// @brief Splits the dockspace: explorer + systems (left), viewport (center), inspector + settings (right).

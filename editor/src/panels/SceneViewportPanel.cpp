@@ -38,7 +38,7 @@ namespace VengEditor
             .Settings = m_Settings,
         });
 
-        // Seed a sensible opening view; the camera produces the live one each OnImGui.
+        // Seed a sensible opening view; the camera produces the live one each OnUI.
         m_View = m_Camera.GetView();
 
         // Edge clamping prevents sampling past the image boundary when the panel size
@@ -286,7 +286,7 @@ namespace VengEditor
         }
     }
 
-    void SceneViewportPanel::OnImGui()
+    void SceneViewportPanel::OnUI()
     {
         const vec2 available = UI::ContentRegionAvail();
         const uvec2 wanted{static_cast<u32>(available.x), static_cast<u32>(available.y)};

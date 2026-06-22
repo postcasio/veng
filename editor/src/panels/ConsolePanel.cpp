@@ -26,7 +26,7 @@ namespace VengEditor
         Log::SetSink(nullptr);
     }
 
-    void ConsolePanel::OnImGui()
+    void ConsolePanel::OnUI()
     {
         if (UI::Button("Clear"))
         {

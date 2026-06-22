@@ -32,7 +32,7 @@ namespace VengEditor
         /// @brief The document body drawn inside the dockspace host window, above the dockspace.
         ///
         /// Default is a no-op; a subclass overrides it for a document toolbar.
-        void OnImGui() override {}
+        void OnUI() override {}
 
     protected:
         /// @brief Constructs the base, assigning this instance its unique dock id and class.

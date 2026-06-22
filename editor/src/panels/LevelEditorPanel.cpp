@@ -47,7 +47,7 @@ namespace VengEditor
         }
 
         [[nodiscard]] string_view GetTitle() const override { return m_Title; }
-        void OnImGui() override { m_Draw(); }
+        void OnUI() override { m_Draw(); }
 
     private:
         string m_Title;
@@ -296,7 +296,7 @@ namespace VengEditor
         m_DebounceRemaining = DebounceSeconds;
     }
 
-    void LevelEditorPanel::OnImGui()
+    void LevelEditorPanel::OnUI()
     {
         // Debounce so a slider drag or a reorder does not fire a cook per frame.
         if (m_CookPending)

@@ -186,7 +186,7 @@ namespace VengEditor
                        return;
                    }
 
-                   // Replace the mount and re-fetch; OnImGui rebuilds the preview once
+                   // Replace the mount and re-fetch; OnUI rebuilds the preview once
                    // the async load lands resident.
                    m_Mount = std::move(*mount);
                    m_Handle = m_Assets.Load<Texture>(m_Id);
@@ -194,7 +194,7 @@ namespace VengEditor
                });
     }
 
-    void TextureEditorPanel::OnImGui()
+    void TextureEditorPanel::OnUI()
     {
         // Debounce so a slider drag does not fire a cook per frame.
         if (m_CookPending)

@@ -18,7 +18,7 @@ namespace VengEditor
         ///
         /// The host resolves the type's factory, constructs the panel, and adopts
         /// it into the panel set at the next safe point in the frame, so calling
-        /// this from inside OnImGui is safe. A no-op for a type with no registered editor.
+        /// this from inside OnUI is safe. A no-op for a type with no registered editor.
         /// @param type The asset type determining which editor factory to use.
         /// @param id   The asset to open in the editor.
         virtual void OpenAssetEditor(Veng::AssetType type, Veng::AssetId id) = 0;

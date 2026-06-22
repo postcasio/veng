@@ -29,7 +29,7 @@ namespace VengEditor
         AssetBrowserPanel(Veng::path packPath, const AssetSourceIndex& sources, PanelHost& host);
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return "Asset Browser"; }
-        void OnImGui() override;
+        void OnUI() override;
 
     private:
         /// @brief How the content view lays out the current folder's items.
@@ -85,7 +85,7 @@ namespace VengEditor
         /// @brief Case-insensitive name filter applied to the content view.
         Veng::string m_Filter;
 
-        /// @brief Reads the pack TOC into the folder tree; called once on first OnImGui.
+        /// @brief Reads the pack TOC into the folder tree; called once on first OnUI.
         void LoadTable();
         /// @brief Returns the node named by m_CurrentFolder, falling back to root on a stale path.
         FolderNode& CurrentFolder();

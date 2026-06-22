@@ -337,7 +337,7 @@ if (VENG_BUILD_TESTS)
     # veng::veng (which itself links veng::assetpack PUBLIC) + doctest. NOTE:
     # -fno-exceptions is PRIVATE to veng/assetpack, so this target compiles
     # with exceptions enabled (doctest needs them).
-    add_executable(veng_unit
+    add_executable(veng_test_unit
             tests/unit/main.cpp
             tests/unit/sanity.cpp
             tests/unit/pure_logic.cpp
@@ -378,12 +378,12 @@ if (VENG_BUILD_TESTS)
             tests/unit/game_mode.cpp
             tests/unit/material_params.cpp
     )
-    target_link_libraries(veng_unit PRIVATE veng::veng doctest::doctest)
+    target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
 
     # Some unit cases reach into engine internals under src/ (the backend
     # TypeMapping header below); that path is on the include search list so they
     # compile. The public reflection serializer is on the include/ tree.
-    target_include_directories(veng_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/engine/src)
+    target_include_directories(veng_test_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/engine/src)
 
 
     # The type-mapping (and barrier-decision, plan 04) cases include backend
@@ -392,7 +392,7 @@ if (VENG_BUILD_TESTS)
     # driver dependency, so the pure-logic cases still run with no ICD. This is
     # allowed: include-hygiene guards *public* headers, not test use of backend
     # headers.
-    target_link_libraries(veng_unit PRIVATE
+    target_link_libraries(veng_test_unit PRIVATE
             Vulkan::Vulkan
             glfw
             GPUOpen::VulkanMemoryAllocator
@@ -400,7 +400,7 @@ if (VENG_BUILD_TESTS)
 
     # Discover each TEST_CASE as its own ctest entry, labelled `unit` so
     # `ctest -L unit` is the fast, driver-free feedback loop.
-    doctest_discover_tests(veng_unit PROPERTIES LABELS unit)
+    doctest_discover_tests(veng_test_unit PROPERTIES LABELS unit)
 
     # ---- Shared GPU-band support (consumed by the death + GPU bands) --------
     # Vulkan-driver probe so a GPU test can skip (not fail) where no ICD exists.
@@ -422,91 +422,91 @@ if (VENG_BUILD_TESTS)
     # separate add_test pinned to that message via PASS_REGULAR_EXPRESSION (see
     # death_main.cpp for why this, and not WILL_FAIL). GPU-coupled cases link the
     # driver probe and use SKIP_RETURN_CODE so they skip (not fail) with no ICD.
-    add_executable(veng_death tests/death/death_main.cpp)
-    target_link_libraries(veng_death PRIVATE veng::veng veng_test_support)
+    add_executable(veng_test_death tests/death/death_main.cpp)
+    target_link_libraries(veng_test_death PRIVATE veng::veng veng_test_support)
     # tovk_unmapped includes TypeMapping.h (→ Backend/Vulkan.h → GLFW + VMA);
-    # headers only, like veng_unit.
-    target_link_libraries(veng_death PRIVATE
+    # headers only, like veng_test_unit.
+    target_link_libraries(veng_test_death PRIVATE
             Vulkan::Vulkan
             glfw
             GPUOpen::VulkanMemoryAllocator
     )
 
     # Pure-logic death cases (no device; run with no ICD).
-    add_test(NAME death.sentinel COMMAND veng_death sentinel)
+    add_test(NAME death.sentinel COMMAND veng_test_death sentinel)
     set_tests_properties(death.sentinel PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "sentinel death case")
 
-    add_test(NAME death.vertex_format_unknown COMMAND veng_death vertex_format_unknown)
+    add_test(NAME death.vertex_format_unknown COMMAND veng_test_death vertex_format_unknown)
     set_tests_properties(death.vertex_format_unknown PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "Unknown vertex element Format")
 
-    add_test(NAME death.tovk_unmapped COMMAND veng_death tovk_unmapped)
+    add_test(NAME death.tovk_unmapped COMMAND veng_test_death tovk_unmapped)
     set_tests_properties(death.tovk_unmapped PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "ToVk\\(Format\\): unmapped format")
 
-    add_test(NAME death.assert_message COMMAND veng_death assert_message)
+    add_test(NAME death.assert_message COMMAND veng_test_death assert_message)
     set_tests_properties(death.assert_message PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "assert_message case fired")
 
-    add_test(NAME death.scene_get_stale_entity COMMAND veng_death scene_get_stale_entity)
+    add_test(NAME death.scene_get_stale_entity COMMAND veng_test_death scene_get_stale_entity)
     set_tests_properties(death.scene_get_stale_entity PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "dead or stale entity")
 
-    add_test(NAME death.scene_get_missing_component COMMAND veng_death scene_get_missing_component)
+    add_test(NAME death.scene_get_missing_component COMMAND veng_test_death scene_get_missing_component)
     set_tests_properties(death.scene_get_missing_component PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "lacks the component")
 
-    add_test(NAME death.type_id_collision COMMAND veng_death type_id_collision)
+    add_test(NAME death.type_id_collision COMMAND veng_test_death type_id_collision)
     set_tests_properties(death.type_id_collision PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "TypeId collision")
 
-    add_test(NAME death.system_id_collision COMMAND veng_death system_id_collision)
+    add_test(NAME death.system_id_collision COMMAND veng_test_death system_id_collision)
     set_tests_properties(death.system_id_collision PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "SystemId collision")
 
-    add_test(NAME death.transform_parent_cycle COMMAND veng_death transform_parent_cycle)
+    add_test(NAME death.transform_parent_cycle COMMAND veng_test_death transform_parent_cycle)
     set_tests_properties(death.transform_parent_cycle PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "parent is a descendant of child")
 
-    add_test(NAME death.transform_parent_dead COMMAND veng_death transform_parent_dead)
+    add_test(NAME death.transform_parent_dead COMMAND veng_test_death transform_parent_dead)
     set_tests_properties(death.transform_parent_dead PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "Hierarchy references a dead or stale entity")
 
-    add_test(NAME death.spot_shadow_range_nonpositive COMMAND veng_death spot_shadow_range_nonpositive)
+    add_test(NAME death.spot_shadow_range_nonpositive COMMAND veng_test_death spot_shadow_range_nonpositive)
     set_tests_properties(death.spot_shadow_range_nonpositive PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "ComputeSpotShadowView needs range > 0")
 
-    add_test(NAME death.spot_shadow_cone_out_of_range COMMAND veng_death spot_shadow_cone_out_of_range)
+    add_test(NAME death.spot_shadow_cone_out_of_range COMMAND veng_test_death spot_shadow_cone_out_of_range)
     set_tests_properties(death.spot_shadow_cone_out_of_range PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "ComputeSpotShadowView needs outerCone")
 
-    add_test(NAME death.point_shadow_range_nonpositive COMMAND veng_death point_shadow_range_nonpositive)
+    add_test(NAME death.point_shadow_range_nonpositive COMMAND veng_test_death point_shadow_range_nonpositive)
     set_tests_properties(death.point_shadow_range_nonpositive PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "ComputePointShadowView needs range > 0")
 
-    add_test(NAME death.shader_set_zero_reserved COMMAND veng_death shader_set_zero_reserved)
+    add_test(NAME death.shader_set_zero_reserved COMMAND veng_test_death shader_set_zero_reserved)
     set_tests_properties(death.shader_set_zero_reserved PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "set 0 is reserved for the bindless registry")
 
-    add_test(NAME death.shader_non_contiguous_set COMMAND veng_death shader_non_contiguous_set)
+    add_test(NAME death.shader_non_contiguous_set COMMAND veng_test_death shader_non_contiguous_set)
     set_tests_properties(death.shader_non_contiguous_set PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "declared sets must be contiguous starting at 1")
 
     # GPU-coupled death cases (need a headless Context; skip with no driver).
-    add_test(NAME death.buffer_upload_overrun COMMAND veng_death buffer_upload_overrun)
+    add_test(NAME death.buffer_upload_overrun COMMAND veng_test_death buffer_upload_overrun)
     set_tests_properties(death.buffer_upload_overrun PROPERTIES LABELS "gpu;death"
             SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "upload out of range")
 
-    add_test(NAME death.index_u16_into_u32 COMMAND veng_death index_u16_into_u32)
+    add_test(NAME death.index_u16_into_u32 COMMAND veng_test_death index_u16_into_u32)
     set_tests_properties(death.index_u16_into_u32 PROPERTIES LABELS "gpu;death"
             SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "cannot upload u16 indices")
 
-    add_test(NAME death.index_u32_into_u16 COMMAND veng_death index_u32_into_u16)
+    add_test(NAME death.index_u32_into_u16 COMMAND veng_test_death index_u32_into_u16)
     set_tests_properties(death.index_u32_into_u16 PROPERTIES LABELS "gpu;death"
             SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "cannot upload u32 indices")
 
-    add_test(NAME death.descriptor_type_mismatch COMMAND veng_death descriptor_type_mismatch)
+    add_test(NAME death.descriptor_type_mismatch COMMAND veng_test_death descriptor_type_mismatch)
     set_tests_properties(death.descriptor_type_mismatch PROPERTIES LABELS "gpu;death"
             SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "not a sampled or storage image")
 
@@ -517,18 +517,18 @@ if (VENG_BUILD_TESTS)
     # public headers: it propagates their include dir and the editor's PUBLIC deps
     # (glm/fmt/ImGui via veng) while keeping imnodes and nlohmann PRIVATE, so a
     # leaked backend include in an editor public header fails this build too.
-    add_executable(veng_include_hygiene tests/include_hygiene.cpp)
-    target_link_libraries(veng_include_hygiene PRIVATE veng::veng veng_editor::veng_editor)
+    add_executable(veng_test_include_hygiene tests/include_hygiene.cpp)
+    target_link_libraries(veng_test_include_hygiene PRIVATE veng::veng veng_editor::veng_editor)
 
-    add_test(NAME include_hygiene COMMAND veng_include_hygiene)
+    add_test(NAME include_hygiene COMMAND veng_test_include_hygiene)
 
     # ---- Editor unit band (device-free) -------------------------------------
     # The NodeGraph topology core and the rest of libveng_editor's pure logic.
-    # veng_unit links only veng::veng, so the editor symbols need their own
+    # veng_test_unit links only veng::veng, so the editor symbols need their own
     # device-free target: it links veng_editor::veng_editor (which links veng::veng
     # PUBLIC) + doctest, with editor/src on the include path so cases can reach the
-    # editor's src-private headers. Runs under the same no-ICD band as veng_unit.
-    add_executable(veng_editor_unit
+    # editor's src-private headers. Runs under the same no-ICD band as veng_test_unit.
+    add_executable(veng_test_editor_unit
             tests/unit/main.cpp
             tests/editor/node_graph.cpp
             tests/editor/node_catalog_serialize.cpp
@@ -539,12 +539,12 @@ if (VENG_BUILD_TESTS)
     )
     # The serialization cases drive the JSON object directly, so the test target
     # links nlohmann/json (PRIVATE in libveng_editor — never exposed in a header).
-    target_link_libraries(veng_editor_unit PRIVATE veng_editor::veng_editor doctest::doctest
+    target_link_libraries(veng_test_editor_unit PRIVATE veng_editor::veng_editor doctest::doctest
             nlohmann_json::nlohmann_json)
-    target_compile_definitions(veng_editor_unit PRIVATE JSON_NOEXCEPTION)
-    target_include_directories(veng_editor_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
+    target_compile_definitions(veng_test_editor_unit PRIVATE JSON_NOEXCEPTION)
+    target_include_directories(veng_test_editor_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
 
-    doctest_discover_tests(veng_editor_unit PROPERTIES LABELS unit)
+    doctest_discover_tests(veng_test_editor_unit PROPERTIES LABELS unit)
 
     # ---- Module ABI + loader (plan 01, driver-free) -------------------------
     # A real game module and a wrong-version variant, each a SHARED library
@@ -555,33 +555,33 @@ if (VENG_BUILD_TESTS)
     add_library(veng_test_module SHARED tests/module/test_module.cpp)
     target_link_libraries(veng_test_module PRIVATE veng::veng)
 
-    add_library(veng_bad_version_module SHARED tests/module/bad_version_module.cpp)
-    target_link_libraries(veng_bad_version_module PRIVATE veng::veng)
-    target_compile_definitions(veng_bad_version_module PRIVATE VENG_MODULE_ABI_VERSION=999999u)
+    add_library(veng_test_bad_version_module SHARED tests/module/bad_version_module.cpp)
+    target_link_libraries(veng_test_bad_version_module PRIVATE veng::veng)
+    target_compile_definitions(veng_test_bad_version_module PRIVATE VENG_MODULE_ABI_VERSION=999999u)
 
-    add_executable(veng_loader_test tests/module/loader_test.cpp)
-    target_link_libraries(veng_loader_test PRIVATE veng::veng)
-    add_dependencies(veng_loader_test veng_test_module veng_bad_version_module)
-    target_compile_definitions(veng_loader_test PRIVATE
+    add_executable(veng_test_loader tests/module/loader_test.cpp)
+    target_link_libraries(veng_test_loader PRIVATE veng::veng)
+    add_dependencies(veng_test_loader veng_test_module veng_test_bad_version_module)
+    target_compile_definitions(veng_test_loader PRIVATE
             VENG_TEST_MODULE_PATH="$<TARGET_FILE:veng_test_module>"
-            VENG_BAD_VERSION_MODULE_PATH="$<TARGET_FILE:veng_bad_version_module>"
+            VENG_BAD_VERSION_MODULE_PATH="$<TARGET_FILE:veng_test_bad_version_module>"
     )
 
-    add_test(NAME loader_test COMMAND veng_loader_test)
+    add_test(NAME loader_test COMMAND veng_test_loader)
     set_tests_properties(loader_test PROPERTIES LABELS module)
 
     # Fuzzy image comparator for the golden smoke test (smoke_golden, registered
     # after the examples). Links no veng/Vulkan — just stb_image, which decodes
     # both the PPM capture and the PNG golden — so it runs with or without a GPU.
-    add_executable(veng_golden_compare tests/golden_compare.cpp)
-    target_include_directories(veng_golden_compare PRIVATE ${stb_SOURCE_DIR})
+    add_executable(veng_test_golden_compare tests/golden_compare.cpp)
+    target_include_directories(veng_test_golden_compare PRIVATE ${stb_SOURCE_DIR})
 
     # Headless smoke test: brings up a windowless context, renders off-screen and
     # verifies downloaded pixels. Skips (SKIP_RETURN_CODE 77) with no Vulkan ICD.
-    add_executable(veng_headless_smoke tests/headless_smoke.cpp)
-    target_link_libraries(veng_headless_smoke PRIVATE veng::veng veng_test_support)
+    add_executable(veng_test_headless_smoke tests/headless_smoke.cpp)
+    target_link_libraries(veng_test_headless_smoke PRIVATE veng::veng veng_test_support)
 
-    add_test(NAME headless_smoke COMMAND veng_headless_smoke)
+    add_test(NAME headless_smoke COMMAND veng_test_headless_smoke)
     set_tests_properties(headless_smoke PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
 
     # Compute dispatch test (plan 05): headless graphics -> compute -> graphics
@@ -611,14 +611,14 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_instance.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_cull.comp.shader.json)
 
-    add_executable(veng_compute_dispatch tests/compute_dispatch.cpp)
-    target_link_libraries(veng_compute_dispatch PRIVATE veng::veng veng_test_support)
-    add_dependencies(veng_compute_dispatch veng_test_shaders)
-    target_compile_definitions(veng_compute_dispatch PRIVATE
+    add_executable(veng_test_compute_dispatch tests/compute_dispatch.cpp)
+    target_link_libraries(veng_test_compute_dispatch PRIVATE veng::veng veng_test_support)
+    add_dependencies(veng_test_compute_dispatch veng_test_shaders)
+    target_compile_definitions(veng_test_compute_dispatch PRIVATE
             TEST_SHADER_PACK="${CMAKE_CURRENT_BINARY_DIR}/test_shaders.vengpack"
     )
 
-    add_test(NAME compute_dispatch COMMAND veng_compute_dispatch)
+    add_test(NAME compute_dispatch COMMAND veng_test_compute_dispatch)
     set_tests_properties(compute_dispatch PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
 
     # ---- In-process multi-case GPU integration suite (plan 05, area 5b) ----
@@ -630,7 +630,7 @@ if (VENG_BUILD_TESTS)
     # paths) plus a new per-case isolation proof. Custom main (tests/gpu/main.cpp)
     # checks Test::HasVulkanDriver() first and returns 77 with no ICD; one ctest
     # entry, labelled `gpu`, same skip contract as the rest of the band.
-    add_executable(veng_gpu
+    add_executable(veng_test_gpu
             tests/gpu/main.cpp
             tests/gpu/buffer_roundtrip.cpp
             tests/gpu/typed_buffer_roundtrip.cpp
@@ -656,35 +656,35 @@ if (VENG_BUILD_TESTS)
             tests/gpu/level_loader.cpp
             tests/gpu/spawn_resolve.cpp
     )
-    target_link_libraries(veng_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
+    target_link_libraries(veng_test_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
     # transfer_retire.cpp reaches through Native.h (raw vk::/VMA handles via the
     # public escape hatch) to drive RetireOnTransfer/ReleaseBuffer, so this target
     # needs the backend headers' *include dirs* (Vulkan + GLFW + VMA). Allowed:
     # include-hygiene guards public headers, not test use of the Native escape hatch.
-    target_link_libraries(veng_gpu PRIVATE
+    target_link_libraries(veng_test_gpu PRIVATE
             Vulkan::Vulkan
             glfw
             GPUOpen::VulkanMemoryAllocator
     )
     # bindless_registry.cpp and texture_loader.cpp draw with the test shaders
     # (fullscreen.vert + bindless_sample.frag), loaded by id from the cooked pack.
-    add_dependencies(veng_gpu veng_test_shaders)
-    target_compile_definitions(veng_gpu PRIVATE
+    add_dependencies(veng_test_gpu veng_test_shaders)
+    target_compile_definitions(veng_test_gpu PRIVATE
             TEST_SHADER_PACK="${CMAKE_CURRENT_BINARY_DIR}/test_shaders.vengpack"
     )
 
     # texture_loader.cpp cooks a fixture pack in-process (plan 06), so it needs
     # the cooker library and the cooker fixtures' directory.
     if (VENG_BUILD_TOOLS)
-        target_sources(veng_gpu PRIVATE
+        target_sources(veng_test_gpu PRIVATE
                 tests/gpu/texture_loader.cpp
                 tests/gpu/mesh_loader.cpp
                 tests/gpu/shader_loader.cpp
                 tests/gpu/material_loader.cpp
                 tests/gpu/vertex_layout_loader.cpp
         )
-        target_link_libraries(veng_gpu PRIVATE veng::cook)
-        target_compile_definitions(veng_gpu PRIVATE
+        target_link_libraries(veng_test_gpu PRIVATE veng::cook)
+        target_compile_definitions(veng_test_gpu PRIVATE
                 GPU_COOKER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
                 # The deferred g-buffer oracle (scene_renderer.cpp) cooks this pack
                 # in-process: a brick material on the core canonical layout, drawn
@@ -698,8 +698,8 @@ if (VENG_BUILD_TESTS)
         )
     endif ()
 
-    add_test(NAME veng_gpu COMMAND veng_gpu)
-    set_tests_properties(veng_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+    add_test(NAME veng_test_gpu COMMAND veng_test_gpu)
+    set_tests_properties(veng_test_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
 
     # ---- MaterialPreview surface (editor src) ------------------------------
     # The one GPU target that links libveng_editor: it constructs a
@@ -710,17 +710,17 @@ if (VENG_BUILD_TESTS)
     # the preview, so the two-renderer cross-graph handoff runs under the validation
     # gate. Skips (SKIP_RETURN_CODE 77) with no Vulkan ICD.
     if (VENG_BUILD_TOOLS AND TARGET veng_editor)
-        add_executable(veng_material_preview tests/material_preview.cpp)
-        target_link_libraries(veng_material_preview PRIVATE
+        add_executable(veng_test_material_preview tests/material_preview.cpp)
+        target_link_libraries(veng_test_material_preview PRIVATE
                 veng::veng veng_editor veng::cook veng_test_support)
         # The test includes the editor's src-private MaterialPreview.h.
-        target_include_directories(veng_material_preview PRIVATE
+        target_include_directories(veng_test_material_preview PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
-        target_compile_definitions(veng_material_preview PRIVATE
+        target_compile_definitions(veng_test_material_preview PRIVATE
                 GPU_GBUFFER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets")
 
-        add_test(NAME veng_material_preview COMMAND veng_material_preview)
-        set_tests_properties(veng_material_preview PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+        add_test(NAME veng_test_material_preview COMMAND veng_test_material_preview)
+        set_tests_properties(veng_test_material_preview PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
     endif ()
 endif ()
 
@@ -741,14 +741,14 @@ endif ()
 # hello_triangle-launcher. Labelled `gpu`; the script skips cleanly with no
 # Vulkan ICD.
 # ---- Cooker band (`-L cooker`) ------------------------------------------------
-# The cooker suite is its own executable + label, separate from `veng_unit`'s
+# The cooker suite is its own executable + label, separate from `veng_test_unit`'s
 # `unit` band: it links veng::cook (which links veng::veng for module reflection)
 # and the module-reflection test loads the real libhello_triangle, so it is
-# registered after the examples subdirectory defines that module. Like veng_unit
+# registered after the examples subdirectory defines that module. Like veng_test_unit
 # it compiles with exceptions (doctest needs them); -fno-exceptions is PRIVATE to
 # veng/cook.
 if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
-    add_executable(veng_cooker
+    add_executable(veng_test_cooker
             tests/unit/main.cpp
             tests/cooker/cook_roundtrip.cpp
             tests/cooker/texture_cook.cpp
@@ -768,26 +768,26 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
     # emitted .vmat through the real importer, so the suite links libveng_editor
     # in addition to libveng_cook (no cycle: the cooker is never linked by the
     # editor framework). editor/src is on the include path for the Layer-3 headers.
-    target_link_libraries(veng_cooker PRIVATE veng::cook veng_editor::veng_editor doctest::doctest)
-    target_include_directories(veng_cooker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
-    add_dependencies(veng_cooker hello_triangle veng_bad_version_module)
-    target_compile_definitions(veng_cooker PRIVATE
+    target_link_libraries(veng_test_cooker PRIVATE veng::cook veng_editor::veng_editor doctest::doctest)
+    target_include_directories(veng_test_cooker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
+    add_dependencies(veng_test_cooker hello_triangle veng_test_bad_version_module)
+    target_compile_definitions(veng_test_cooker PRIVATE
             VENG_COOKER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
             VENG_HELLO_TRIANGLE_MODULE_PATH="$<TARGET_FILE:hello_triangle>"
-            VENG_BAD_VERSION_MODULE_PATH="$<TARGET_FILE:veng_bad_version_module>"
+            VENG_BAD_VERSION_MODULE_PATH="$<TARGET_FILE:veng_test_bad_version_module>"
             VENG_HT_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/hello-triangle/assets"
             VENG_CORE_PACK_JSON="${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/core.vengpack.json"
     )
 
-    doctest_discover_tests(veng_cooker PROPERTIES LABELS cooker)
+    doctest_discover_tests(veng_test_cooker PROPERTIES LABELS cooker)
 endif ()
 
-if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_golden_compare)
+if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_golden_compare)
     add_test(NAME smoke_golden
         COMMAND ${CMAKE_COMMAND}
             -D VENG_SMOKE_BIN=$<TARGET_FILE:hello_triangle-launcher>
-            -D VENG_COMPARE_BIN=$<TARGET_FILE:veng_golden_compare>
-            -D VENG_PROBE_BIN=$<TARGET_FILE:veng_headless_smoke>
+            -D VENG_COMPARE_BIN=$<TARGET_FILE:veng_test_golden_compare>
+            -D VENG_PROBE_BIN=$<TARGET_FILE:veng_test_headless_smoke>
             -D VENG_GOLDEN=${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/hello_triangle_scene.png
             -D VENG_TMP=${CMAKE_CURRENT_BINARY_DIR}/smoke_golden_capture.ppm
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SmokeGolden.cmake
@@ -817,16 +817,16 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_golden_c
     # pass its path through only when the target was built so the gate runs the
     # two-renderer handoff there too.
     set(VENG_GATE_MATERIAL_PREVIEW_ARG)
-    if (TARGET veng_material_preview)
+    if (TARGET veng_test_material_preview)
         set(VENG_GATE_MATERIAL_PREVIEW_ARG
-            -D VENG_GATE_BIN_MATERIAL_PREVIEW=$<TARGET_FILE:veng_material_preview>)
+            -D VENG_GATE_BIN_MATERIAL_PREVIEW=$<TARGET_FILE:veng_test_material_preview>)
     endif ()
 
     add_test(NAME validation_gate
         COMMAND ${CMAKE_COMMAND}
-            -D VENG_GATE_BIN_HEADLESS_SMOKE=$<TARGET_FILE:veng_headless_smoke>
-            -D VENG_GATE_BIN_COMPUTE_DISPATCH=$<TARGET_FILE:veng_compute_dispatch>
-            -D VENG_GATE_BIN_GPU=$<TARGET_FILE:veng_gpu>
+            -D VENG_GATE_BIN_HEADLESS_SMOKE=$<TARGET_FILE:veng_test_headless_smoke>
+            -D VENG_GATE_BIN_COMPUTE_DISPATCH=$<TARGET_FILE:veng_test_compute_dispatch>
+            -D VENG_GATE_BIN_GPU=$<TARGET_FILE:veng_test_gpu>
             -D VENG_GATE_BIN_LAUNCHER=$<TARGET_FILE:hello_triangle-launcher>
             ${VENG_GATE_MATERIAL_PREVIEW_ARG}
             -D VENG_GATE_LAUNCHER_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/validation_gate_launcher.ppm

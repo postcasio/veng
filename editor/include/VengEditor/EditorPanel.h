@@ -30,11 +30,11 @@ namespace VengEditor
         }
 
         /// @brief Draws the panel's ImGui contents into the current frame.
-        virtual void OnImGui() = 0;
+        virtual void OnUI() = 0;
 
         /// @brief Submits this panel's top-level window(s) for the frame.
         ///
-        /// The host calls this once per open panel. The default wraps OnImGui in a
+        /// The host calls this once per open panel. The default wraps OnUI in a
         /// single UI::Window titled GetTitle() (with the panel's GetWindowFlags() and
         /// edge-to-edge padding for a NoScrollbar panel). An asset editor that hosts a
         /// private dockspace overrides this to submit its document window and the
@@ -45,7 +45,7 @@ namespace VengEditor
         /// @brief Records this frame's offscreen render into cmd.
         ///
         /// Called on every open panel before the ImGui frame is built, so the
-        /// output is sampleable when OnImGui draws it. Default is a no-op;
+        /// output is sampleable when OnUI draws it. Default is a no-op;
         /// only render-owning panels (e.g. scene viewport, material preview) override it.
         /// @param cmd Command buffer for the current frame.
         virtual void OnRender(Veng::Renderer::CommandBuffer& cmd) {}

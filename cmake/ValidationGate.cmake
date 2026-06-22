@@ -4,7 +4,7 @@
 # (see the `validation_gate` test registration in the root CMakeLists.txt).
 #
 # Runs each of the gpu-labelled binaries (headless_smoke, compute_dispatch,
-# veng_gpu) and inspects their combined stdout+stderr for lines matching
+# veng_test_gpu) and inspects their combined stdout+stderr for lines matching
 # `[ERROR] Vulkan validation: ...`. Under VE_DEBUG these binaries enable the
 # Vulkan validation layers; the debug messenger (engine/src/Renderer/Backend/Context.cpp)
 # logs validation ERRORs via Log::Error but never aborts (CLAUDE.md), so a green
@@ -78,9 +78,9 @@ endfunction()
 set(VENG_GATE_FAILED FALSE)
 
 set(VENG_GATE_NAMES
-    "veng_headless_smoke"
-    "veng_compute_dispatch"
-    "veng_gpu"
+    "veng_test_headless_smoke"
+    "veng_test_compute_dispatch"
+    "veng_test_gpu"
     "hello_triangle-launcher"
 )
 set(VENG_GATE_PATHS
@@ -104,7 +104,7 @@ set(VENG_GATE_ENVS
 # VENG_BUILD_TOOLS + the editor library, so it may not exist in every build. Add
 # it to the gate only when its path was passed in.
 if (VENG_GATE_BIN_MATERIAL_PREVIEW)
-    list(APPEND VENG_GATE_NAMES "veng_material_preview")
+    list(APPEND VENG_GATE_NAMES "veng_test_material_preview")
     list(APPEND VENG_GATE_PATHS "${VENG_GATE_BIN_MATERIAL_PREVIEW}")
     list(APPEND VENG_GATE_ENVS "")
 endif ()

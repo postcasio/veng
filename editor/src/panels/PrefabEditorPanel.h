@@ -89,7 +89,7 @@ namespace VengEditor
         void OnRender(Veng::Renderer::CommandBuffer& cmd) override;
 
         /// @brief Draws the document toolbar above the dockspace: a live entity-count readout.
-        void OnImGui() override;
+        void OnUI() override;
 
     protected:
         /// @brief Constructs the document over a world prefab id, deferring child wiring to a subclass.

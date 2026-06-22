@@ -54,7 +54,7 @@ namespace VengEditor
         ~MaterialEditorPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
-        void OnImGui() override;
+        void OnUI() override;
         void OnRender(Veng::Renderer::CommandBuffer& cmd) override;
 
     private:

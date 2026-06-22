@@ -137,7 +137,7 @@ namespace VengEditor
         Veng::vector<PanelSlot> m_Panels;
 
         /// @brief Panels opened via OpenAssetEditor since the last frame; adopted into
-        /// m_Panels outside panel-iteration so opening from OnImGui is safe.
+        /// m_Panels outside panel-iteration so opening from OnUI is safe.
         Veng::vector<Veng::Unique<EditorPanel>> m_PendingPanels;
 
         /// @brief Vertex shader for the fullscreen ImGui-to-swapchain blit.

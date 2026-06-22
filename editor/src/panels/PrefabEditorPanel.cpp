@@ -147,7 +147,7 @@ namespace VengEditor
         AssetEditorPanel::OnRender(cmd);
     }
 
-    void PrefabEditorPanel::OnImGui()
+    void PrefabEditorPanel::OnUI()
     {
         if (m_Context.Scene == nullptr)
         {

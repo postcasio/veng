@@ -28,7 +28,7 @@ namespace VengEditor
         [[nodiscard]] Veng::string_view GetTitle() const override { return "Hierarchy"; }
 
         /// @brief Builds the tree snapshot, draws it, then applies any queued mutation.
-        void OnImGui() override;
+        void OnUI() override;
 
     private:
         /// @brief A structural edit discovered during the draw, applied after the walk returns.
@@ -99,10 +99,10 @@ namespace VengEditor
         /// @brief The shared document edit context: the Scene and the selection.
         PrefabEditContext& m_Ctx;
 
-        /// @brief Per-frame root entities (live, parent-less), rebuilt each OnImGui.
+        /// @brief Per-frame root entities (live, parent-less), rebuilt each OnUI.
         Veng::vector<Veng::Entity> m_Roots;
 
-        /// @brief Per-frame parent → children adjacency, rebuilt each OnImGui from the scene.
+        /// @brief Per-frame parent → children adjacency, rebuilt each OnUI from the scene.
         Veng::unordered_map<Veng::Entity, Veng::vector<Veng::Entity>> m_Children;
 
         /// @brief Structural ops queued during the draw, applied after the walk returns.

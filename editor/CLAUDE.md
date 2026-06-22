@@ -16,10 +16,10 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
   OS windows are not built — they conflict with the single-offscreen-composite model),
   owns the panel set (open/close state, Window menu, dock layout), and loads the game
   module with `Editor = &m_EditorRegistry`.
-- **`EditorPanel`** is the panel base class: a `GetTitle()` / `OnImGui()` virtual interface,
-  plus a `Draw(bool* open)` seam (default wraps `OnImGui` in one `UI::Window`) and an
+- **`EditorPanel`** is the panel base class: a `GetTitle()` / `OnUI()` virtual interface,
+  plus a `Draw(bool* open)` seam (default wraps `OnUI` in one `UI::Window`) and an
   `OnRender(CommandBuffer&)` seam for a render-owning panel (a viewport records its scene
-  render here, before the ImGui frame, so the output is sampleable when `OnImGui` draws it).
+  render here, before the ImGui frame, so the output is sampleable when `OnUI` draws it).
   The host drives each open panel and owns its visibility. Top-level host panels: asset
   browser, console/log, and the per-asset editors below.
 - **`AssetEditorPanel` hosts a private, class-restricted dockspace.** An asset editor is a

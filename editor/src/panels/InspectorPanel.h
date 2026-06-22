@@ -37,7 +37,7 @@ namespace VengEditor
                        const AssetSourceIndex& sources, PrefabEditContext& ctx);
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return "Inspector"; }
-        void OnImGui() override;
+        void OnUI() override;
 
     private:
         /// @brief Draws the entity-name editor and id readout above the component list.

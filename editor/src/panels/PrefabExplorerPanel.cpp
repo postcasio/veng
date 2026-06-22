@@ -57,7 +57,7 @@ namespace VengEditor
 
     PrefabExplorerPanel::PrefabExplorerPanel(PrefabEditContext& ctx) : m_Ctx(ctx) {}
 
-    void PrefabExplorerPanel::OnImGui()
+    void PrefabExplorerPanel::OnUI()
     {
         const Scene* scene = m_Ctx.Scene;
         if (scene == nullptr)

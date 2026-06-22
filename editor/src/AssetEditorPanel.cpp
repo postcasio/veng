@@ -74,7 +74,7 @@ namespace VengEditor
                     m_LayoutBuilt = true;
                 }
 
-                OnImGui();
+                OnUI();
                 ImGui::DockSpace(dockspaceId, ImVec2(0, 0), ImGuiDockNodeFlags_None, &dockClass);
             }
         }
@@ -100,7 +100,7 @@ namespace VengEditor
 
             if (auto window = UI::Window(child.WindowName, &child.Open, flags))
             {
-                child.Panel->OnImGui();
+                child.Panel->OnUI();
             }
         }
     }

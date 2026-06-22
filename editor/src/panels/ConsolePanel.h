@@ -17,7 +17,7 @@ namespace VengEditor
         ~ConsolePanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return "Console"; }
-        void OnImGui() override;
+        void OnUI() override;
 
     private:
         /// @brief A single captured log entry.
