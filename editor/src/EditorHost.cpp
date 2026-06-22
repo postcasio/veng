@@ -22,6 +22,7 @@
 #include "AssetSourceIndex.h"
 #include "panels/AssetBrowserPanel.h"
 #include "panels/ConsolePanel.h"
+#include "panels/LevelEditorPanel.h"
 #include "panels/MaterialEditorPanel.h"
 #include "panels/PrefabEditorPanel.h"
 #include "panels/TextureEditorPanel.h"
@@ -146,6 +147,58 @@ namespace VengEditor
             const AssetSourceIndex& m_Sources;
             Input& m_Input;
             SystemRegistry& m_Systems;
+        };
+
+        // Resolves a level AssetId to its world prefab (by loading the level) and its
+        // .level.json source (through the manifest index), then opens a LevelEditorPanel.
+        class LevelEditorFactory final : public AssetEditorFactory
+        {
+        public:
+            LevelEditorFactory(const AssetSourceIndex& index, Renderer::Context& context,
+                               AssetManager& assets, ImGuiLayer& imgui, TypeRegistry& types,
+                               EditorRegistry& editors, Input& input, SystemRegistry& systems,
+                               VengEditor::CookDriver cook)
+                : m_Index(index), m_Context(context), m_Assets(assets), m_ImGui(imgui),
+                  m_Types(types), m_Editors(editors), m_Input(input), m_Systems(systems),
+                  m_Cook(std::move(cook))
+            {
+            }
+
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            {
+                const AssetSourceIndex::Entry* entry = m_Index.Find(id);
+                if (!entry)
+                {
+                    Log::Error("Level editor: no source manifest entry for asset 0x{:X}", id.Value);
+                    return nullptr;
+                }
+
+                // The level names its world prefab by id; load it to resolve the prefab the
+                // scene surface opens for layout editing.
+                const AssetResult<AssetHandle<Level>> level = m_Assets.LoadSync<Level>(id);
+                if (!level.has_value())
+                {
+                    Log::Error("Level editor: failed to load level 0x{:X}: {}", id.Value,
+                               level.error().Detail);
+                    return nullptr;
+                }
+                const AssetId worldPrefab = level->Get()->GetWorld().Id();
+
+                return CreateUnique<LevelEditorPanel>(id, worldPrefab, entry->Source, m_Context,
+                                                      m_Assets, m_ImGui, m_Types, m_Editors,
+                                                      m_Index, m_Input, m_Systems, m_Cook);
+            }
+
+        private:
+            const AssetSourceIndex& m_Index;
+            Renderer::Context& m_Context;
+            AssetManager& m_Assets;
+            ImGuiLayer& m_ImGui;
+            TypeRegistry& m_Types;
+            EditorRegistry& m_Editors;
+            Input& m_Input;
+            SystemRegistry& m_Systems;
+            VengEditor::CookDriver m_Cook;
         };
     }
 
@@ -315,6 +368,12 @@ namespace VengEditor
                 AssetType::Material, CreateUnique<MaterialEditorFactory>(
                                          *m_Sources, GetRenderContext(), GetAssetManager(),
                                          *GetImGuiLayer(), m_Registries->Editor, cookFor()));
+
+            m_Registries->Editor.RegisterAssetEditor(
+                AssetType::Level, CreateUnique<LevelEditorFactory>(
+                                      *m_Sources, GetRenderContext(), GetAssetManager(),
+                                      *GetImGuiLayer(), GetTypeRegistry(), m_Registries->Editor,
+                                      GetInput(), GetSystemRegistry(), cookFor()));
         }
 
         m_Panels.push_back({CreateUnique<AssetBrowserPanel>(
@@ -382,6 +441,10 @@ namespace VengEditor
         {
             resolved.ReferenceManifest = *m_Info.AssetManifestPath;
         }
+
+        // A level cook validates its system ids and config against the module's reflected
+        // catalogs, so inject the game module path; non-level cooks ignore an empty value.
+        resolved.ModulePath = m_Info.GameModulePath;
 
         Task<vector<u8>> task = m_Info.Cook(resolved, GetTaskSystem());
 

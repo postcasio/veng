@@ -26,19 +26,36 @@ namespace VengEditor
                                          TypeRegistry& types, EditorRegistry& editors,
                                          const AssetSourceIndex& sources, Input& input,
                                          SystemRegistry& systems)
-        : m_Id(id), m_Title(fmt::format("Prefab 0x{:X}", id.Value)), m_Assets(assets),
-          m_Input(input), m_Systems(systems)
+        : PrefabEditorPanel(id, fmt::format("Prefab 0x{:X}", id.Value), context, assets, imgui,
+                            types, editors, sources, input, systems)
+    {
+        AddSceneEditingChildren(context, imgui, editors, sources);
+    }
+
+    PrefabEditorPanel::PrefabEditorPanel(AssetId worldPrefab, string title,
+                                         Renderer::Context& context, AssetManager& assets,
+                                         ImGuiLayer& imgui, TypeRegistry& types,
+                                         EditorRegistry& /*editors*/,
+                                         const AssetSourceIndex& /*sources*/, Input& input,
+                                         SystemRegistry& systems)
+        : m_Id(worldPrefab), m_Title(std::move(title)), m_Assets(assets), m_Input(input),
+          m_Systems(systems)
     {
         m_Scene = Scene::Create(types);
         m_Context.Scene = m_Scene.get();
         m_Context.Assets = &assets;
 
         BuildScene(context, assets);
+    }
 
+    void PrefabEditorPanel::AddSceneEditingChildren(Renderer::Context& context, ImGuiLayer& imgui,
+                                                    EditorRegistry& editors,
+                                                    const AssetSourceIndex& sources)
+    {
         auto viewport =
-            CreateUnique<SceneViewportPanel>(context, assets, imgui, m_Context, input, *this);
+            CreateUnique<SceneViewportPanel>(context, m_Assets, imgui, m_Context, m_Input, *this);
         auto explorer = CreateUnique<PrefabExplorerPanel>(m_Context);
-        auto inspector = CreateUnique<InspectorPanel>(assets, editors, sources, m_Context);
+        auto inspector = CreateUnique<InspectorPanel>(m_Assets, editors, sources, m_Context);
 
         m_ViewportChild = AddChild(std::move(viewport));
         m_ExplorerChild = AddChild(std::move(explorer));
@@ -71,7 +88,13 @@ namespace VengEditor
 
         if (m_Simulation == nullptr)
         {
-            m_Simulation = CreateUnique<SceneSimulation>(m_Systems);
+            // A prefab document runs every registered system; a level document runs the
+            // ordered set GetPlaySystems() names, so Play matches exactly what the level
+            // authored.
+            const vector<SystemId>* playSystems = GetPlaySystems();
+            m_Simulation = playSystems != nullptr
+                               ? CreateUnique<SceneSimulation>(m_Systems, *playSystems)
+                               : CreateUnique<SceneSimulation>(m_Systems);
         }
         m_Simulation->Start(*m_PlayScene, SystemContext{.Assets = m_Assets, .Input = m_Input});
     }

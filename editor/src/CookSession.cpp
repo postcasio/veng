@@ -2,6 +2,7 @@
 
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
+#include <Veng/Cook/ModuleTypes.h>
 
 namespace VengEditor
 {
@@ -22,8 +23,28 @@ namespace VengEditor
                     referencePacks.push_back(request.ReferenceManifest);
                 }
 
+                // A level cook validates its system ids and config fields against the
+                // module's reflected catalogs; reflect the module on the worker when one
+                // is named. The handle must outlive CookSource (the registries point into
+                // the loaded image).
+                optional<Cook::LoadedModuleTypes> moduleTypes;
+                const TypeRegistry* types = nullptr;
+                const SystemRegistry* systems = nullptr;
+                if (!request.ModulePath.empty())
+                {
+                    Result<Cook::LoadedModuleTypes> loaded =
+                        Cook::LoadModuleTypes(request.ModulePath);
+                    if (!loaded)
+                    {
+                        return std::unexpected(loaded.error());
+                    }
+                    moduleTypes = std::move(*loaded);
+                    types = &moduleTypes->Types;
+                    systems = &moduleTypes->Systems;
+                }
+
                 return cooker.CookSource(request.SourcePath, request.TargetId, request.Type,
-                                         referencePacks);
+                                         referencePacks, types, systems);
             });
     }
 }

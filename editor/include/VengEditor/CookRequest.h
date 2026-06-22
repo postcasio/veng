@@ -34,6 +34,14 @@ namespace VengEditor
         /// Empty for a source with no cross-asset references. The host fills it from
         /// its configured manifest path; a panel leaves it empty.
         Veng::path ReferenceManifest;
+
+        /// @brief Game module reflected for type/system validation during the cook.
+        ///
+        /// A level cook validates its system ids and config fields against the module's
+        /// reflected SystemRegistry/TypeRegistry, so it requires this. Empty for a source
+        /// that needs no module reflection (texture, material). The host fills it from its
+        /// configured game-module path; a panel leaves it empty.
+        Veng::path ModulePath;
     };
 
     /// @brief Cook backend the editor exe injects into the host.

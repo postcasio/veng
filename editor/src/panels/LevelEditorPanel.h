@@ -1,0 +1,134 @@
+#pragma once
+
+#include <Veng/Asset/AssetHandle.h>
+#include <Veng/Asset/AssetId.h>
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Level.h>
+#include <Veng/Scene/Components.h>
+#include <Veng/Scene/SceneSystem.h>
+
+#include <VengEditor/CookRequest.h>
+
+#include "panels/PrefabEditorPanel.h"
+#include "panels/TextureEditorPanel.h"
+
+namespace Veng
+{
+    class SystemRegistry;
+}
+
+namespace VengEditor
+{
+    /// @brief Asset editor for a Level: the world-prefab scene surface plus level-scoped wiring.
+    ///
+    /// A level wraps a world prefab with the data that is not reusable-recipe data — the
+    /// ordered active system set, the game-mode/Session config, and the render settings.
+    /// This editor composes the prefab editing surface (it derives from PrefabEditorPanel,
+    /// so the viewport / explorer / inspector edit the world prefab without reimplementing
+    /// scene editing) and adds two level-scoped children:
+    ///
+    /// - a systems panel listing the SystemRegistry catalog with an enable toggle and
+    ///   drag-reorder over the active set, writing the level's ordered systems list, and
+    /// - a settings panel drawing the game-mode and render config through the shared
+    ///   reflection inspector (DrawFieldWidget).
+    ///
+    /// Editing the level recooks the *.level.json off the render thread and hot-reloads the
+    /// asset behind its stable handle, round-tripping the JSON (patching known keys,
+    /// preserving unknown ones). Play runs exactly the level's ordered system set through
+    /// the base's play machinery (GetPlaySystems), distinct from a prefab document's
+    /// "all registered" set.
+    class LevelEditorPanel final : public PrefabEditorPanel
+    {
+    public:
+        /// @brief Opens the level editor for the level at @p id with world prefab @p worldPrefab.
+        /// @param id          The level asset being edited.
+        /// @param worldPrefab The level's world prefab, opened in the scene surface.
+        /// @param sourcePath  The *.level.json source the editor round-trips and recooks.
+        /// @param context     Render context for the viewport's SceneRenderer.
+        /// @param assets      Asset manager the level and its dependencies load through.
+        /// @param imgui       ImGui layer the viewport registers its render target with.
+        /// @param types       Type registry the spawned Scene and config structs reflect against.
+        /// @param editors     Editor registry for inspector field-widget overrides.
+        /// @param sources     Manifest source index for the inspector's asset pickers.
+        /// @param input       Frame-coherent input service the viewport camera reads.
+        /// @param systems     System registry the systems panel lists and Play instantiates from.
+        /// @param cook        Cook driver that recooks the level source and shadow-mounts the result.
+        LevelEditorPanel(Veng::AssetId id, Veng::AssetId worldPrefab, Veng::path sourcePath,
+                         Veng::Renderer::Context& context, Veng::AssetManager& assets,
+                         Veng::ImGuiLayer& imgui, Veng::TypeRegistry& types,
+                         Veng::EditorRegistry& editors, const AssetSourceIndex& sources,
+                         Veng::Input& input, Veng::SystemRegistry& systems, CookDriver cook);
+        ~LevelEditorPanel() override;
+
+        [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
+
+        /// @brief Draws the document toolbar: the active-system-set readout above the dockspace.
+        void OnImGui() override;
+
+    protected:
+        /// @brief Splits the dockspace: explorer + systems (left), viewport (center), inspector + settings (right).
+        void BuildDefaultLayout(Veng::u32 dockspaceId) override;
+
+        /// @brief Returns the level's ordered active system set, so Play runs exactly it.
+        [[nodiscard]] const Veng::vector<Veng::SystemId>* GetPlaySystems() const override
+        {
+            return &m_Systems;
+        }
+
+    private:
+        /// @brief Reads the *.level.json into m_Systems / m_GameMode / m_Render; absent keys keep defaults.
+        void LoadConfig();
+
+        /// @brief Patches the systems/gameMode/render keys in the existing JSON (preserving
+        /// unknown keys) and writes it back with 4-space indent.
+        /// @return False (error recorded) on I/O or parse failure.
+        bool SaveConfig();
+
+        /// @brief Submits a recook of the current on-disk source through the cook driver.
+        void TriggerCook();
+
+        /// @brief Marks the level dirty: persists the edit and arms a debounced recook.
+        void MarkDirty();
+
+        /// @brief Draws the systems-catalog child: enable toggles, drag-reorder, phase labels.
+        void DrawSystemsPanel();
+
+        /// @brief Draws the level-settings child: game-mode and render config via the inspector.
+        void DrawSettingsPanel();
+
+        /// @brief Child panel forwarding its draw back to one of the level editor's draw methods.
+        class LevelChildPanel;
+
+        Veng::AssetId m_Id;
+        Veng::string m_Title;
+        Veng::path m_SourcePath;
+
+        Veng::AssetManager& m_AssetManager;
+        const Veng::SystemRegistry& m_Catalog;
+        Veng::EditorRegistry& m_Editors;
+        const AssetSourceIndex& m_Sources;
+        CookDriver m_Cook;
+
+        /// @brief The level's ordered active system set; Play runs exactly this.
+        Veng::vector<Veng::SystemId> m_Systems;
+        /// @brief The game-mode/Session config edited through the reflection inspector.
+        Veng::GameModeConfig m_GameMode;
+        /// @brief The render-settings subset edited through the reflection inspector.
+        Veng::LevelRenderSettings m_Render;
+
+        /// @brief The reloaded level handle, re-fetched behind the stable handle on each recook.
+        Veng::AssetHandle<Veng::Level> m_Handle;
+        /// @brief The shadow mount of the latest cook; dropped/replaced on the next recook.
+        Veng::MountHandle m_Mount;
+
+        /// @brief Cook submitted but not yet mounted; suppresses concurrent cooks.
+        bool m_Cooking = false;
+        /// @brief A config change is pending; fires TriggerCook when m_DebounceRemaining reaches zero.
+        bool m_CookPending = false;
+        Veng::f32 m_DebounceRemaining = 0.0f;
+        Veng::optional<Veng::string> m_CookError;
+
+        Veng::usize m_SystemsChild = 0;
+        Veng::usize m_SettingsChild = 0;
+    };
+}

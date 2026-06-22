@@ -19,6 +19,7 @@ add_library(veng_editor SHARED
         src/panels/AssetBrowserPanel.cpp
         src/panels/ConsolePanel.cpp
         src/panels/InspectorPanel.cpp
+        src/panels/LevelEditorPanel.cpp
         src/panels/MaterialEditorPanel.cpp
         src/panels/PrefabEditorPanel.cpp
         src/panels/PrefabExplorerPanel.cpp
