@@ -318,30 +318,6 @@ namespace Veng::Renderer
                       "PunctualShadowBlock must be the std140-packed record array (416 bytes per "
                       "record) plus the trailing AtlasParams vec4");
 
-        // Bakes an atlas-tile remap into a cascade view-proj: a fragment projected by the result
-        // lands in cascade k's tile, so the lighting pass samples the correct tile by construction.
-        mat4 ComposeTileRemap(const mat4& cascadeViewProj, u32 cascade, u32 columns, u32 rows)
-        {
-            const f32 sx = 1.0f / static_cast<f32>(columns);
-            const f32 sy = 1.0f / static_cast<f32>(rows);
-            const f32 col = static_cast<f32>(cascade % columns);
-            const f32 row = static_cast<f32>(cascade / columns);
-
-            // NDC.xy in [-1,1] → atlas UV in [0,1] → the tile's window, then back to
-            // the [-1,1] clip the sample's NDC.xy * 0.5 + 0.5 will undo. Z is left
-            // unchanged (the depth compare is per-tile-agnostic). Built column-major
-            // to match glm.
-            mat4 remap(1.0f);
-            // Scale NDC x,y by tile fraction.
-            remap[0][0] = sx;
-            remap[1][1] = sy;
-            // Translate into the tile: map x ∈ [-1,1] within the full atlas. The
-            // tile's NDC center is offset so the [0,1] UV lands in the tile window.
-            remap[3][0] = sx * (2.0f * col + 1.0f) - 1.0f;
-            remap[3][1] = sy * (2.0f * row + 1.0f) - 1.0f;
-            return remap * cascadeViewProj;
-        }
-
         // The punctual shadow atlas tile grid: CubeFaceCount columns × MaxShadowedPunctual
         // rows of PunctualShadowResolution² tiles. A shadowed light's slot s, face f maps
         // to tile (column f, row s) — linear index s·CubeFaceCount + f — so a spot uses

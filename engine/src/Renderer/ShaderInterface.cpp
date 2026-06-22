@@ -39,8 +39,7 @@ namespace Veng::Renderer
         return ranges;
     }
 
-    vector<Ref<DescriptorSetLayout>>
-    ShaderInterface::BuildDescriptorSetLayouts(Context& context, std::string_view namePrefix) const
+    vector<vector<DescriptorBinding>> ShaderInterface::GroupBindingsBySet() const
     {
         if (Bindings.empty())
         {
@@ -51,7 +50,7 @@ namespace Veng::Renderer
         for (const ShaderBinding& binding : Bindings)
         {
             VE_ASSERT(binding.Set >= 1,
-                      "ShaderInterface::BuildDescriptorSetLayouts: binding '{}' targets set {} — "
+                      "ShaderInterface::GroupBindingsBySet: binding '{}' targets set {} — "
                       "set 0 is reserved for the bindless registry",
                       binding.Name, binding.Set);
             maxSet = std::max(maxSet, binding.Set);
@@ -69,16 +68,28 @@ namespace Veng::Renderer
             });
         }
 
-        vector<Ref<DescriptorSetLayout>> layouts;
-        layouts.reserve(maxSet);
-
         for (u32 set = 1; set <= maxSet; ++set)
         {
             VE_ASSERT(!bindingsBySet[set - 1].empty(),
-                      "ShaderInterface::BuildDescriptorSetLayouts: set {} has no bindings — "
+                      "ShaderInterface::GroupBindingsBySet: set {} has no bindings — "
                       "declared sets must be contiguous starting at 1",
                       set);
+        }
 
+        return bindingsBySet;
+    }
+
+    vector<Ref<DescriptorSetLayout>>
+    ShaderInterface::BuildDescriptorSetLayouts(Context& context, std::string_view namePrefix) const
+    {
+        const vector<vector<DescriptorBinding>> bindingsBySet = GroupBindingsBySet();
+        const u32 setCount = static_cast<u32>(bindingsBySet.size());
+
+        vector<Ref<DescriptorSetLayout>> layouts;
+        layouts.reserve(setCount);
+
+        for (u32 set = 1; set <= setCount; ++set)
+        {
             layouts.push_back(DescriptorSetLayout::Create(
                 context, DescriptorSetLayoutInfo{
                              .Name = fmt::format("{} Set {}", namePrefix, set),
@@ -88,5 +99,4 @@ namespace Veng::Renderer
 
         return layouts;
     }
-
 }

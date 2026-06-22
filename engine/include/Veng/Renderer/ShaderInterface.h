@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetId.h>
+#include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/Types.h>
 
@@ -89,6 +90,17 @@ namespace Veng::Renderer
         ///
         /// The returned ranges are ready to append to PipelineLayoutInfo::PushConstantRanges.
         [[nodiscard]] vector<PushConstantRange> BuildPushConstantRanges() const;
+
+        /// @brief Groups the bindings by descriptor set, validating the set numbering.
+        ///
+        /// The device-free core of BuildDescriptorSetLayouts: returns one binding list
+        /// per declared set, indexed so element i holds set (i + 1)'s bindings. Enforces
+        /// the engine's set-numbering contract by fatal assert — every binding targets a
+        /// set >= 1 (set 0 is reserved for the bindless registry) and the declared sets
+        /// form a contiguous run starting at 1 (no gaps). Returns an empty vector when
+        /// this interface declares no bindings.
+        /// @return Per-set binding lists, element i for set (i + 1).
+        [[nodiscard]] vector<vector<DescriptorBinding>> GroupBindingsBySet() const;
 
         /// @brief Builds one DescriptorSetLayout per declared set, in set order.
         ///

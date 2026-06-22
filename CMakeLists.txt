@@ -347,6 +347,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/render_graph_schedule.cpp
             tests/unit/input_events.cpp
             tests/unit/light_packing.cpp
+            tests/unit/shader_interface.cpp
             tests/unit/transient_allocation.cpp
             tests/unit/asset_archive.cpp
             tests/unit/asset_manager.cpp
@@ -483,6 +484,14 @@ if (VENG_BUILD_TESTS)
     add_test(NAME death.point_shadow_range_nonpositive COMMAND veng_death point_shadow_range_nonpositive)
     set_tests_properties(death.point_shadow_range_nonpositive PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "ComputePointShadowView needs range > 0")
+
+    add_test(NAME death.shader_set_zero_reserved COMMAND veng_death shader_set_zero_reserved)
+    set_tests_properties(death.shader_set_zero_reserved PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "set 0 is reserved for the bindless registry")
+
+    add_test(NAME death.shader_non_contiguous_set COMMAND veng_death shader_non_contiguous_set)
+    set_tests_properties(death.shader_non_contiguous_set PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "declared sets must be contiguous starting at 1")
 
     # GPU-coupled death cases (need a headless Context; skip with no driver).
     add_test(NAME death.buffer_upload_overrun COMMAND veng_death buffer_upload_overrun)

@@ -40,6 +40,7 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/PunctualShadows.h>
+#include <Veng/Renderer/ShaderInterface.h>
 #include <Veng/Renderer/TypedBuffers.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>
@@ -363,6 +364,24 @@ namespace
                 set->Write(0, view);
             });
     }
+
+    void RunShaderSetZeroReserved()
+    {
+        // A binding targeting set 0 trips the reserved-set assert: set 0 is the
+        // bindless registry's. No device needed — grouping is pure logic.
+        ShaderInterface iface;
+        iface.Bindings = {{.Name = "Bad", .Set = 0, .Binding = 0}};
+        (void)iface.GroupBindingsBySet();
+    }
+
+    void RunShaderNonContiguousSet()
+    {
+        // Sets 1 and 3 declared with a gap at 2 trips the contiguous-set assert.
+        ShaderInterface iface;
+        iface.Bindings = {{.Name = "A", .Set = 1, .Binding = 0},
+                          {.Name = "C", .Set = 3, .Binding = 0}};
+        (void)iface.GroupBindingsBySet();
+    }
 }
 
 int main(int argc, char** argv)
@@ -432,6 +451,14 @@ int main(int argc, char** argv)
     else if (name == "point_shadow_range_nonpositive")
     {
         RunPointShadowRangeNonPositive();
+    }
+    else if (name == "shader_set_zero_reserved")
+    {
+        RunShaderSetZeroReserved();
+    }
+    else if (name == "shader_non_contiguous_set")
+    {
+        RunShaderNonContiguousSet();
         // GPU-coupled
     }
     else if (name == "buffer_upload_overrun")

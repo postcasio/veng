@@ -297,3 +297,71 @@ TEST_CASE("ComputeCascades: split range fits the frustum-visible slab, not the w
     // pushes it well past 25.
     CHECK(data.SplitFar[0] > 25.0f);
 }
+
+TEST_CASE("ComputeShadowAtlasGrid: tile layout scales with cascade count")
+{
+    // 1 -> 1x1, 2 -> 2x1, 3/4 -> 2x2; counts clamp to [1, MaxCascades].
+    CHECK(ComputeShadowAtlasGrid(1).Columns == 1);
+    CHECK(ComputeShadowAtlasGrid(1).Rows == 1);
+    CHECK(ComputeShadowAtlasGrid(2).Columns == 2);
+    CHECK(ComputeShadowAtlasGrid(2).Rows == 1);
+    CHECK(ComputeShadowAtlasGrid(3).Columns == 2);
+    CHECK(ComputeShadowAtlasGrid(3).Rows == 2);
+    CHECK(ComputeShadowAtlasGrid(4).Columns == 2);
+    CHECK(ComputeShadowAtlasGrid(4).Rows == 2);
+    // Clamp: 0 -> 1, oversized -> MaxCascades's layout.
+    CHECK(ComputeShadowAtlasGrid(0).Columns == 1);
+    CHECK(ComputeShadowAtlasGrid(99).Columns == 2);
+}
+
+TEST_CASE("ComposeTileRemap: a 1x1 grid leaves the matrix unchanged")
+{
+    // One cascade fills the whole atlas, so its remap is the identity.
+    const mat4 vp = glm::perspective(glm::radians(60.0f), 1.5f, 0.1f, 50.0f);
+    const mat4 remapped = ComposeTileRemap(vp, 0, 1, 1);
+    for (int c = 0; c < 4; ++c)
+    {
+        for (int r = 0; r < 4; ++r)
+        {
+            CHECK(remapped[c][r] == doctest::Approx(vp[c][r]));
+        }
+    }
+}
+
+TEST_CASE("ComposeTileRemap: each cascade's NDC center maps to its tile center in a 2x2 atlas")
+{
+    // With an identity view-proj, a clip point's NDC.xy passes straight through, so the
+    // remap of the NDC center (0,0) is exactly the tile center. Cascade k -> tile
+    // (k % 2, k / 2): centers at the four ±0.5 quadrant midpoints.
+    const mat4 id(1.0f);
+    const vec4 center(0.0f, 0.0f, 0.25f, 1.0f);
+
+    struct Expect
+    {
+        u32 cascade;
+        f32 x;
+        f32 y;
+    };
+    for (const Expect& e :
+         {Expect{.cascade = 0, .x = -0.5f, .y = -0.5f}, Expect{.cascade = 1, .x = 0.5f, .y = -0.5f},
+          Expect{.cascade = 2, .x = -0.5f, .y = 0.5f}, Expect{.cascade = 3, .x = 0.5f, .y = 0.5f}})
+    {
+        const vec4 p = ComposeTileRemap(id, e.cascade, 2, 2) * center;
+        CHECK(p.x == doctest::Approx(e.x));
+        CHECK(p.y == doctest::Approx(e.y));
+        // Z and W are untouched: the depth compare is tile-agnostic.
+        CHECK(p.z == doctest::Approx(0.25f));
+        CHECK(p.w == doctest::Approx(1.0f));
+    }
+}
+
+TEST_CASE("ComposeTileRemap: the NDC extent maps fully inside the cascade's tile")
+{
+    // Cascade 0 of a 2x2 atlas owns the lower-left quadrant: NDC x in [-1,0]. The two
+    // NDC.x corners (-1, +1) map to the tile's left and right edges (-1, 0).
+    const mat4 id(1.0f);
+    const vec4 left = ComposeTileRemap(id, 0, 2, 2) * vec4(-1.0f, 0.0f, 0.0f, 1.0f);
+    const vec4 right = ComposeTileRemap(id, 0, 2, 2) * vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    CHECK(left.x == doctest::Approx(-1.0f));
+    CHECK(right.x == doctest::Approx(0.0f));
+}

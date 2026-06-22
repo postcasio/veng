@@ -87,4 +87,20 @@ namespace Veng::Renderer
         const u32 rows = (count + 1) / 2;
         return {.Columns = columns, .Rows = rows};
     }
+
+    /// @brief Bakes an atlas-tile remap into a cascade's world → light-clip matrix.
+    ///
+    /// A fragment projected by the result lands in cascade @p cascade's tile of a
+    /// @p columns × @p rows atlas, so the lighting pass samples the correct tile by
+    /// construction. The transform maps NDC.xy in [-1,1] → the tile's window and back
+    /// to the [-1,1] clip the sample's `NDC.xy * 0.5 + 0.5` undoes; Z is left unchanged
+    /// (the depth compare is tile-agnostic). Cascade k maps to tile (k % columns,
+    /// k / columns), matching ComputeShadowAtlasGrid's layout.
+    /// @param cascadeViewProj  The cascade's world → light-clip matrix.
+    /// @param cascade          Cascade index, used to select the tile.
+    /// @param columns          Atlas tile columns.
+    /// @param rows             Atlas tile rows.
+    /// @return The tile-remapped world → light-clip matrix.
+    [[nodiscard]] mat4 ComposeTileRemap(const mat4& cascadeViewProj, u32 cascade, u32 columns,
+                                        u32 rows);
 }
