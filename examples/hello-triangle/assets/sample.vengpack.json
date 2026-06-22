@@ -7,8 +7,8 @@
     { "id": 1002, "type": "mesh",     "source": "meshes/cube.mesh.json" },
     { "id": 1005, "type": "shader",   "source": "shaders/brick.frag.shader.json" },
     { "id": 1003, "type": "material", "source": "materials/brick.vmat.json" },
-    { "id": 13493236524696338033, "type": "prefab", "source": "player.prefab.json" },
-    { "id": 11611391513566245589, "type": "prefab", "source": "scene.prefab.json" },
-    { "id": 10791442065337163528, "type": "level",  "source": "sample.level.json" }
+    { "id": 13493236524696338033, "type": "prefab", "source": "prefabs/player.prefab.json" },
+    { "id": 11611391513566245589, "type": "prefab", "source": "prefabs/scene.prefab.json" },
+    { "id": 10791442065337163528, "type": "level",  "source": "levels/sample.level.json" }
   ]
 }

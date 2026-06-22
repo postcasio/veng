@@ -37,7 +37,7 @@ world a level spawns *into*.)
 The asset is
 [`engine/include/Veng/Asset/Level.h`](../../engine/include/Veng/Asset/Level.h),
 and its `*.level.json` source carries four pieces. hello-triangle's
-[`sample.level.json`](../../examples/hello-triangle/assets/sample.level.json):
+[`sample.level.json`](../../examples/hello-triangle/assets/levels/sample.level.json):
 
 ```json
 {

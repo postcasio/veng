@@ -286,7 +286,7 @@ struct Mover
 ```
 
 In the player prefab
-([`player.prefab.json`](../../examples/hello-triangle/assets/player.prefab.json))
+([`player.prefab.json`](../../examples/hello-triangle/assets/prefabs/player.prefab.json))
 the pawn carries `"::Veng::Mover": { "MoveSpeed": 5.0, "TurnSpeed": 2.0 }`. Change
 those numbers in the inspector and the pawn's feel changes — the system never
 moves.

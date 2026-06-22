@@ -21,7 +21,7 @@ cmake --build build --target hello_triangle
 ./build/examples/hello-triangle/hello_triangle
 ```
 
-The scene is a cooked prefab (`assets/scene.prefab.json`): a 10×10 grid of random
+The scene is a cooked prefab (`assets/prefabs/scene.prefab.json`): a 10×10 grid of random
 `Primitive` components — cubes, spheres, cylinders, cones, tori, capsules — each
 streamed in at spawn via `AssetManager::Build<Mesh>` (no cooked mesh is loaded to put
 it on screen) and carrying the brick material on its submesh. The prefab also owns the
