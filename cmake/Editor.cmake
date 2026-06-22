@@ -74,4 +74,14 @@ function(veng_add_editor NAME)
         set_target_properties(${ARG_EDITOR_MODULE} PROPERTIES
                 LIBRARY_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:${NAME}-editor>)
     endif ()
+
+    # Windows has no rpath: copy the editor's dependent DLLs (libveng, libveng_editor,
+    # slang.dll via veng::cook) beside the exe so it runs standalone, mirroring the
+    # @loader_path/$ORIGIN resolution above.
+    if (WIN32)
+        add_custom_command(TARGET ${NAME}-editor POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:${NAME}-editor> $<TARGET_FILE_DIR:${NAME}-editor>
+            COMMAND_EXPAND_LISTS)
+    endif ()
 endfunction()

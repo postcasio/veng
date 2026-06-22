@@ -65,4 +65,14 @@ function(veng_add_game NAME)
                 $<TARGET_PROPERTY:${ARG_ASSET_PACK},VENG_ASSET_PACK_OUTPUT>
                 $<TARGET_FILE_DIR:${NAME}-launcher>)
     endif ()
+
+    # Windows has no rpath: the @loader_path/$ORIGIN resolution above is a no-op, so the
+    # launcher's dependent DLLs (libveng, …) must sit beside it. Copy them post-build so
+    # the trio (launcher + module + pack + DLLs) is a self-contained, runnable directory.
+    if (WIN32)
+        add_custom_command(TARGET ${NAME}-launcher POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:${NAME}-launcher> $<TARGET_FILE_DIR:${NAME}-launcher>
+            COMMAND_EXPAND_LISTS)
+    endif ()
 endfunction()

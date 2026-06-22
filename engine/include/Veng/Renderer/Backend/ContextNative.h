@@ -49,8 +49,14 @@ namespace Veng::Renderer
         ///
         /// Mutable: the swapchain extension is dropped in headless mode (no
         /// window/surface), so this is finalized during Initialize().
+        ///
+        /// VK_KHR_portability_subset is NOT listed here: the spec requires it be enabled
+        /// iff the device advertises it (a non-conformant implementation like MoltenVK).
+        /// A conformant native driver (Windows/Linux desktop) does not expose it and would
+        /// be wrongly rejected if it were always required, so CreateDevice() appends it
+        /// per-device only when present.
         vector<const char*> DeviceExtensions = vector<const char*>(
-            {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
+            {VK_KHR_SWAPCHAIN_EXTENSION_NAME,
              VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME,
              VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME});
         vector<const char*> RequiredExtensions;

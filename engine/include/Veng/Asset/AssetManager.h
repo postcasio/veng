@@ -74,6 +74,16 @@ namespace Veng
                      const AssetManagerInfo& info = {});
         ~AssetManager();
 
+        // Owns unique loaders/cache and holds references to its context/tasks/registry:
+        // never copied or moved. Declared explicitly because MSVC's STL eagerly
+        // instantiates the (deleted-in-effect) copy of the move-only m_Loaders map
+        // otherwise; libc++/libstdc++ only do so on use, so this never surfaced on the
+        // arm64 dev platform.
+        AssetManager(const AssetManager&) = delete;
+        AssetManager& operator=(const AssetManager&) = delete;
+        AssetManager(AssetManager&&) = delete;
+        AssetManager& operator=(AssetManager&&) = delete;
+
         /// @brief Opens an on-disk .vengpack archive and indexes its table of contents.
         ///
         /// Mounting the same path twice is a no-op. When the same AssetId appears in more

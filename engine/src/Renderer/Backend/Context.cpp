@@ -826,6 +826,23 @@ namespace Veng::Renderer
 
         auto deviceExtensions = DeviceExtensions;
 
+        // VK_KHR_portability_subset must be enabled iff the device advertises it (a
+        // non-conformant implementation such as MoltenVK); a conformant native driver does
+        // not expose it and must not be asked for it. Add it per-device here rather than in
+        // the always-required list so desktop GPUs are not wrongly rejected as unsuitable.
+        {
+            const auto available = PhysicalDevice.enumerateDeviceExtensionProperties(nullptr).value;
+            for (const auto& extension : available)
+            {
+                if (std::strcmp(extension.extensionName, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME) ==
+                    0)
+                {
+                    deviceExtensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+                    break;
+                }
+            }
+        }
+
         vk::PhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{.dynamicRendering =
                                                                                 vk::True};
 
@@ -856,9 +873,11 @@ namespace Veng::Renderer
         VE_ASSERT(supportedVulkan12Features.timelineSemaphore,
                   "Physical device does not support timeline semaphores!");
 
+        // Designators must be in declaration order (MSVC enforces the C++ rule; clang is
+        // lenient). timelineSemaphore is declared late in PhysicalDeviceVulkan12Features,
+        // after the descriptor-indexing block and before bufferDeviceAddress.
         vk::PhysicalDeviceVulkan12Features vulkan12Features{
             .pNext = &features2,
-            .timelineSemaphore = vk::True,
             .shaderUniformBufferArrayNonUniformIndexing = vk::True,
             .shaderSampledImageArrayNonUniformIndexing = vk::True,
             .shaderStorageBufferArrayNonUniformIndexing = vk::True,
@@ -869,6 +888,7 @@ namespace Veng::Renderer
             .descriptorBindingUpdateUnusedWhilePending = vk::True,
             .descriptorBindingPartiallyBound = vk::True,
             .runtimeDescriptorArray = vk::True,
+            .timelineSemaphore = vk::True,
             .bufferDeviceAddress = vk::True,
             .shaderOutputViewportIndex = vk::True,
             .shaderOutputLayer = vk::True,
