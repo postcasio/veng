@@ -11,6 +11,7 @@
 #include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Asset/Prefab.h>
+#include <Veng/Asset/Level.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Asset/Material.h>
@@ -244,6 +245,27 @@ protected:
 
         m_SmokeOutput = std::getenv("HT_SMOKE");
 
+        // Executable-relative so the pack resolves wherever the launcher is copied.
+        const VoidResult mountResult =
+            GetAssetManager().Mount(ExecutableDirectory() / "sample.vengpack");
+        VE_ASSERT(mountResult, "{}", mountResult.error());
+
+        // The level is the authored home for the world, the active system set, the game-mode
+        // config, and the render settings. Loading it resolves the world prefab (and the
+        // game-mode player prefab) as ordinary load-time dependencies.
+        const AssetResult<AssetHandle<Level>> level =
+            GetAssetManager().LoadSync<Level>(AssetId{0x95C2E76206A11F08ULL});
+        VE_ASSERT(level.has_value(), "{}", level.error().Detail);
+
+        // The level's render subset seeds the renderer settings and the per-frame knobs before
+        // the renderer is created, so the first frame already renders with the authored values.
+        const LevelRenderSettings& render = level->Get()->GetRender();
+        m_SceneSettings.Bloom = render.Bloom;
+        m_SceneSettings.Shadows = render.Shadows;
+        m_SceneSettings.AO = render.AO;
+        m_Exposure = render.Exposure;
+        m_BloomIntensity = render.BloomIntensity;
+
         m_SceneRenderer = Renderer::SceneRenderer::Create({
             .Context = context,
             .Assets = GetAssetManager(),
@@ -251,11 +273,6 @@ protected:
             .Extent = sceneExtent,
             .Settings = m_SceneSettings,
         });
-
-        // Executable-relative so the pack resolves wherever the launcher is copied.
-        const VoidResult mountResult =
-            GetAssetManager().Mount(ExecutableDirectory() / "sample.vengpack");
-        VE_ASSERT(mountResult, "{}", mountResult.error());
 
         if (GetImGuiLayer())
         {
@@ -299,14 +316,12 @@ protected:
                                                      { m_CompositeGraph = BuildCompositeGraph(); });
         }
 
-        m_Scene = Scene::Create(GetTypeRegistry());
-
-        const AssetResult<AssetHandle<Veng::Prefab>> prefab =
-            GetAssetManager().LoadSync<Veng::Prefab>(AssetId{0xA123F30FD219F2D5ULL});
-        VE_ASSERT(prefab.has_value(), "{}", prefab.error().Detail);
-
-        const vector<Entity> roots = prefab->Get()->SpawnInto(*m_Scene, GetAssetManager());
-        VE_ASSERT(!roots.empty(), "prefab spawned no entities");
+        // Starting the game: the level spawns its world into a fresh scene, builds the
+        // simulation from its ordered system set, and seeds the Session entity from the
+        // game-mode config. The app owns and drives the returned bundle.
+        LevelInstance instance = level->Get()->LoadInto(GetAssetManager(), GetSystemRegistry());
+        m_Scene = std::move(instance.World);
+        m_Simulation = std::move(instance.Simulation);
 
         // Smoke renders a fixed pose, so block until the streamed primitives are resident
         // before the capture frame; the windowed app lets them appear over a few frames.
@@ -320,11 +335,10 @@ protected:
             m_CompositeGraph = BuildCompositeGraph();
         }
 
-        // Both paths build and Start the simulation, so the Sim-phase SpawnPlayerRule
-        // instantiates the player at OnStart in headless smoke too. Smoke still never ticks
-        // Update, so nothing moves after the deterministic spawn and the View-phase camera
-        // rig does not run — the capture is the spawned camera's authored pose.
-        m_Simulation = CreateUnique<SceneSimulation>(GetSystemRegistry());
+        // Start the simulation, so the Sim-phase SpawnPlayerRule instantiates the player at
+        // OnStart in headless smoke too. Smoke still never ticks Update, so nothing moves after
+        // the deterministic spawn and the View-phase camera rig does not run — the capture is
+        // the spawned camera's authored pose.
         m_Simulation->Start(*m_Scene,
                             SystemContext{.Assets = GetAssetManager(), .Input = GetInput()});
     }

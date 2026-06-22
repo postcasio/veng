@@ -36,6 +36,9 @@ namespace Veng
         registry.Register<Session>();
         registry.Register<GameModeConfig>();
 
+        // Level-scoped render settings a Level carries and the app maps onto the renderer.
+        registry.Register<LevelRenderSettings>();
+
         // Registering Primitive transitively registers its shape variant and the shape
         // alternatives through the dependency recursion.
         registry.Register<Primitive>();

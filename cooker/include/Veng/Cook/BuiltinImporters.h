@@ -17,4 +17,13 @@ namespace Veng::Cook
     /// cooker. The full vengc calls both.
     /// @param cooker  The cooker to register into.
     void RegisterPrefabImporter(Cooker& cooker);
+
+    /// @brief Registers the level importer.
+    ///
+    /// Separate from RegisterBuiltinImporters for the same reason as the prefab importer:
+    /// it links libveng's reflection serializer (WriteFields) and validates against the
+    /// module's reflected TypeRegistry + SystemRegistry, so it is absent from the veng-free
+    /// bootstrap cooker. The full vengc registers it.
+    /// @param cooker  The cooker to register into.
+    void RegisterLevelImporter(Cooker& cooker);
 }

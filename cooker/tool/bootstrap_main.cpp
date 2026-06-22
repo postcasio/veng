@@ -84,7 +84,7 @@ int main(int argc, char** argv)
     RegisterBuiltinImporters(cooker);
 
     vector<path> dependencies;
-    const VoidResult result = cooker.CookPack(*packPath, *outPath, referencePacks, nullptr,
+    const VoidResult result = cooker.CookPack(*packPath, *outPath, referencePacks, nullptr, nullptr,
                                               depfilePath ? &dependencies : nullptr);
     if (!result)
     {

@@ -5,6 +5,11 @@
 #include <Veng/Cook/Types.h>
 #include <Veng/Reflection/TypeRegistry.h>
 
+namespace Veng
+{
+    class SystemRegistry;
+}
+
 namespace Veng::Cook
 {
     /// @brief Result of resolving an AssetId to its uncooked source file.
@@ -34,6 +39,10 @@ namespace Veng::Cook
         ///
         /// The prefab importer uses this to validate component schemas; other importers ignore it.
         const TypeRegistry* Types = nullptr;
+        /// @brief Reflected module system catalog; non-null only on a `--module` cook.
+        ///
+        /// The level importer resolves a level's system ids against it; other importers ignore it.
+        const SystemRegistry* Systems = nullptr;
         /// @brief Records a source file the cook read, for build dependency tracking.
         ///
         /// The cooker records the pack JSON and resolved cross-asset references centrally.

@@ -56,10 +56,12 @@ namespace Veng::Cook
         /// @param outArchive      Destination .vengpack path.
         /// @param referencePacks  Additional packs available for cross-asset AssetId resolution.
         /// @param types           Reflected module type registry, or nullptr for non-module cooks.
+        /// @param systems         Reflected module system catalog (level id validation), or nullptr.
         /// @param outDependencies If non-null, receives the sorted, de-duplicated dependency list.
         [[nodiscard]] VoidResult CookPack(const path& packJson, const path& outArchive,
                                           std::span<const path> referencePacks = {},
                                           const TypeRegistry* types = nullptr,
+                                          const SystemRegistry* systems = nullptr,
                                           vector<path>* outDependencies = nullptr) const;
 
         /// @brief Cooks one source asset and returns a complete single-entry .vengpack as in-memory bytes.
@@ -73,10 +75,12 @@ namespace Veng::Cook
         /// @param type           Asset type, selects the importer.
         /// @param referencePacks Additional packs for cross-asset AssetId resolution.
         /// @param types          Reflected module type registry, or nullptr.
+        /// @param systems        Reflected module system catalog (level id validation), or nullptr.
         [[nodiscard]] Result<vector<u8>> CookSource(const path& sourcePath, AssetId id,
                                                     AssetType type,
                                                     std::span<const path> referencePacks = {},
-                                                    const TypeRegistry* types = nullptr) const;
+                                                    const TypeRegistry* types = nullptr,
+                                                    const SystemRegistry* systems = nullptr) const;
 
     private:
         /// @brief Cooks one pack entry JSON into the archive, enforcing id uniqueness.

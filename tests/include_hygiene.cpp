@@ -22,6 +22,7 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetLoader.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Level.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Prefab.h>

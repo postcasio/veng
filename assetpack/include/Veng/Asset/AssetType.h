@@ -24,5 +24,7 @@ namespace Veng
         VertexLayout,
         /// @brief A tree of entities with components, spawnable into a Scene (see CookedPrefabHeader).
         Prefab,
+        /// @brief A world prefab plus level-scoped wiring (game mode, system set, render settings) (see CookedLevelHeader).
+        Level,
     };
 }

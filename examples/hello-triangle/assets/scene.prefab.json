@@ -4609,26 +4609,6 @@
           }
         }
       }
-    },
-    {
-      "components": {
-        "::Veng::Name": {
-          "Value": "Session"
-        },
-        "::Veng::Session": {
-          "Phase": 1,
-          "Elapsed": 0.0,
-          "Score": 0
-        },
-        "::Veng::GameModeConfig": {
-          "PlayerPrefab": 13493236524696338033,
-          "ScoreToWin": 0
-        },
-        "::Veng::Authority": {
-          "Tier": 0,
-          "Owner": 0
-        }
-      }
     }
   ]
 }

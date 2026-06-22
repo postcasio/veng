@@ -64,6 +64,10 @@ namespace Veng::Cook
             {
                 return AssetType::Prefab;
             }
+            if (name == "level")
+            {
+                return AssetType::Level;
+            }
 
             return std::nullopt;
         }
@@ -233,7 +237,7 @@ namespace Veng::Cook
 
     VoidResult Cooker::CookPack(const path& packJson, const path& outArchive,
                                 std::span<const path> referencePacks, const TypeRegistry* types,
-                                vector<path>* outDependencies) const
+                                const SystemRegistry* systems, vector<path>* outDependencies) const
     {
         const Result<json> packResult = ReadAndValidatePack(packJson);
         if (!packResult)
@@ -243,7 +247,7 @@ namespace Veng::Cook
 
         const json& pack = *packResult;
 
-        // Prefab entries require --module for their reflected component descriptors.
+        // Prefab and level entries require --module for their reflected descriptors.
         // Check before full entry parsing so the error names the cause.
         if (types == nullptr)
         {
@@ -251,12 +255,15 @@ namespace Veng::Cook
             for (usize index = 0; index < assets.size(); ++index)
             {
                 const json& entry = assets[index];
-                if (entry.is_object() && entry.contains("type") && entry["type"].is_string() &&
-                    entry["type"].get<string>() == "prefab")
+                if (entry.is_object() && entry.contains("type") && entry["type"].is_string())
                 {
-                    return std::unexpected(
-                        fmt::format("pack '{}': asset[{}]: prefab cooking requires --module",
-                                    packJson.string(), index));
+                    const string typeStr = entry["type"].get<string>();
+                    if (typeStr == "prefab" || typeStr == "level")
+                    {
+                        return std::unexpected(
+                            fmt::format("pack '{}': asset[{}]: {} cooking requires --module",
+                                        packJson.string(), index, typeStr));
+                    }
                 }
             }
         }
@@ -325,6 +332,7 @@ namespace Veng::Cook
             .PackDir = packJson.parent_path(),
             .Resolve = resolve,
             .Types = types,
+            .Systems = systems,
             .RecordDependency = record,
         };
 
@@ -364,7 +372,8 @@ namespace Veng::Cook
 
     Result<vector<u8>> Cooker::CookSource(const path& sourcePath, AssetId id, AssetType type,
                                           std::span<const path> referencePacks,
-                                          const TypeRegistry* types) const
+                                          const TypeRegistry* types,
+                                          const SystemRegistry* systems) const
     {
         const auto importerIt = m_Importers.find(type);
         if (importerIt == m_Importers.end())
@@ -407,6 +416,7 @@ namespace Veng::Cook
             .PackDir = sourcePath.parent_path(),
             .Resolve = resolve,
             .Types = types,
+            .Systems = systems,
             .RecordDependency = [](const path&) {},
         };
 

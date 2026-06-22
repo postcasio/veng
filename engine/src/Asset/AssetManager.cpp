@@ -4,6 +4,7 @@
 #include <Veng/Log.h>
 #include <Veng/Task/TaskSystem.h>
 
+#include "Loaders/LevelLoader.h"
 #include "Loaders/MaterialLoader.h"
 #include "Loaders/MeshLoader.h"
 #include "Loaders/PrefabLoader.h"
@@ -42,6 +43,8 @@ namespace Veng
                 return "VertexLayout";
             case AssetType::Prefab:
                 return "Prefab";
+            case AssetType::Level:
+                return "Level";
             }
 
             VE_ASSERT(false, "AssetManager: unhandled AssetType {}", static_cast<u32>(type));
@@ -59,6 +62,7 @@ namespace Veng
         RegisterLoader(CreateUnique<VertexLayoutLoader>());
         RegisterLoader(CreateUnique<MaterialLoader>());
         RegisterLoader(CreateUnique<PrefabLoader>());
+        RegisterLoader(CreateUnique<LevelLoader>());
 
 #ifdef VENG_HAS_CORE_PACK
         const VoidResult coreMount = MountBytes(

@@ -641,6 +641,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/hi_z_pyramid.cpp
             tests/gpu/occlusion_test.cpp
             tests/gpu/prefab_spawn.cpp
+            tests/gpu/level_loader.cpp
             tests/gpu/spawn_resolve.cpp
     )
     target_link_libraries(veng_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
@@ -747,6 +748,7 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
             tests/cooker/module_reflect.cpp
             tests/cooker/prefab_cook.cpp
             tests/cooker/prefab_variant_cook.cpp
+            tests/cooker/level_cook.cpp
             tests/cooker/cook_source.cpp
             tests/cooker/material_compile_cook.cpp
     )

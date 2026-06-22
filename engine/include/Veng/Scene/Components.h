@@ -389,6 +389,27 @@ namespace Veng
         /// @brief Score required to end the mode; a win-condition rule reads it.
         i32 ScoreToWin = 0;
     };
+
+    /// @brief Level-scoped render settings: a first-cut subset of the app's render knobs.
+    ///
+    /// Carried on a Level and seeded into the renderer the app drives — a reflected,
+    /// tolerantly-serialized struct, not a renderer type, so the renderer stays untouched
+    /// and a new field does not invalidate existing level blobs. The app maps these onto
+    /// its SceneRendererSettings (the topology toggles) and its per-frame SceneView
+    /// (Exposure, the bloom knobs) at load.
+    struct LevelRenderSettings
+    {
+        /// @brief Tonemap exposure fed into the per-frame SceneView.
+        f32 Exposure = 1.0f;
+        /// @brief Whether the bloom battery is enabled.
+        bool Bloom = true;
+        /// @brief Bloom composite intensity fed into the per-frame SceneView.
+        f32 BloomIntensity = 1.0f;
+        /// @brief Whether the directional cascaded-shadow battery is enabled.
+        bool Shadows = true;
+        /// @brief Whether the SSAO battery is enabled.
+        bool AO = true;
+    };
 }
 
 VE_LEAF(::Veng::LightType, 0x6B1D62EF4B5A16ULL, FieldClass::Enum);
@@ -528,4 +549,12 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::GameModeConfig, 0xAE57419CF98B07F8ULL)
 VE_FIELD(PlayerPrefab, .DisplayName = "Player Prefab")
 VE_FIELD(ScoreToWin, .DisplayName = "Score to Win", .Min = 0)
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::LevelRenderSettings, 0x28E4618C66455E21ULL)
+VE_FIELD(Exposure, .DisplayName = "Exposure", .Min = 0.0)
+VE_FIELD(Bloom, .DisplayName = "Bloom")
+VE_FIELD(BloomIntensity, .DisplayName = "Bloom Intensity", .Min = 0.0)
+VE_FIELD(Shadows, .DisplayName = "Shadows")
+VE_FIELD(AO, .DisplayName = "SSAO")
 VE_REFLECT_END();

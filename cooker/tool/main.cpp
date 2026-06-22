@@ -146,14 +146,16 @@ int main(int argc, char** argv)
         }
 
         const TypeRegistry* types = moduleTypes ? &moduleTypes->Types : nullptr;
+        const SystemRegistry* systems = moduleTypes ? &moduleTypes->Systems : nullptr;
 
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
         RegisterPrefabImporter(cooker);
+        RegisterLevelImporter(cooker);
 
         vector<path> dependencies;
         const VoidResult result = cooker.CookPack(*packPath, *outPath, referencePacks, types,
-                                                  depfilePath ? &dependencies : nullptr);
+                                                  systems, depfilePath ? &dependencies : nullptr);
         if (!result)
         {
             fmt::print(stderr, "vengc: {}\n", result.error());

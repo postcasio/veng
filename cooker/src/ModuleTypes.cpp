@@ -17,18 +17,16 @@ namespace Veng::Cook
             return std::unexpected(loaded.error());
         }
 
-        LoadedModuleTypes result{.Module = std::move(*loaded), .Types = {}};
+        LoadedModuleTypes result{.Module = std::move(*loaded), .Types = {}, .Systems = {}};
 
-        // Pre-register engine builtins, then run the module's VengModuleRegister.
-        // The Application factory it also registers lands in a throwaway registry and is never invoked.
+        // Pre-register engine builtins, then run the module's VengModuleRegister. The module's
+        // system registrations land in result.Systems (the level importer resolves ids against it);
+        // the Application factory it also registers lands in a throwaway registry and is never invoked.
         RegisterBuiltinTypes(result.Types);
 
         ApplicationRegistry throwaway;
-        SystemRegistry throwawaySystems;
-        VengModuleHost host{.App = throwaway,
-                            .Types = result.Types,
-                            .Systems = throwawaySystems,
-                            .Editor = nullptr};
+        VengModuleHost host{
+            .App = throwaway, .Types = result.Types, .Systems = result.Systems, .Editor = nullptr};
         result.Module.Register(host);
 
         return result;

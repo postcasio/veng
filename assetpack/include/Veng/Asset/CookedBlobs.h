@@ -330,4 +330,40 @@ namespace Veng
         /// @brief Byte size of this component's record.
         u32 RecordSize = 0;
     };
+
+    /// @brief The current level-format version.
+    ///
+    /// Bumped on any CookedLevelHeader layout change; the loader rejects a blob whose
+    /// Version != this. The two embedded reflection records evolve tolerantly within a
+    /// fixed version — a new game-mode or render-settings field does not require a bump.
+    inline constexpr u32 CookedLevelVersion = 1u;
+
+    /// @brief Cooked header for a level asset.
+    ///
+    /// A level wraps a world prefab by AssetId and carries the level-scoped wiring: the
+    /// ordered set of active systems, the game-mode config, and a render-settings subset.
+    /// The game-mode and render config each ride the reflection serializer's name-keyed
+    /// WriteFields record — assetpack treats both as opaque bytes, exactly as the prefab
+    /// blob treats a component record, so this file gains no reflection dependency
+    /// (cycle-avoidance rule at the top). The system ids select catalog entries the
+    /// engine's SystemRegistry resolves at load.
+    ///
+    /// The blob is, in order:
+    ///   CookedLevelHeader
+    ///   u64[SystemCount]      — the ordered active SystemId set
+    ///   game-mode record      — WriteFields record of the game-mode config (GameModeRecordBytes)
+    ///   render record         — WriteFields record of the render settings (RenderRecordBytes)
+    struct CookedLevelHeader
+    {
+        /// @brief Must equal CookedLevelVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief AssetId of the world prefab this level spawns; resolved as a load-time dependency.
+        u64 WorldPrefabId = 0;
+        /// @brief Number of u64 SystemId entries following this header, in run order.
+        u32 SystemCount = 0;
+        /// @brief Byte size of the game-mode config record following the system-id array.
+        u32 GameModeRecordBytes = 0;
+        /// @brief Byte size of the render-settings record following the game-mode record.
+        u32 RenderRecordBytes = 0;
+    };
 }

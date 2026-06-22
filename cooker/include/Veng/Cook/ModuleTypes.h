@@ -3,20 +3,23 @@
 #include <Veng/Result.h>
 #include <Veng/Module/ModuleLoader.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/SystemRegistry.h>
 
 namespace Veng::Cook
 {
-    /// @brief A populated TypeRegistry paired with the module image whose descriptors it points into.
+    /// @brief A populated TypeRegistry + SystemRegistry paired with the module image they point into.
     ///
-    /// Component strings and lifecycle thunks live in the loaded module, so the handle must outlive
-    /// every use of the registry. Move-only (LoadedModule is non-copyable). Declaration order ensures
-    /// Types is destroyed before Module, so dlclose runs last.
+    /// Component strings, lifecycle thunks, and system factories live in the loaded module, so the
+    /// handle must outlive every use of either registry. Move-only (LoadedModule is non-copyable).
+    /// Declaration order ensures the registries are destroyed before Module, so dlclose runs last.
     struct LoadedModuleTypes
     {
-        /// @brief RAII dlopen handle; must outlive Types.
+        /// @brief RAII dlopen handle; must outlive Types and Systems.
         LoadedModule Module;
         /// @brief Engine builtins plus every type the module registered.
         TypeRegistry Types;
+        /// @brief Every SceneSystem the module registered; the catalog the level importer resolves ids against.
+        SystemRegistry Systems;
     };
 
     /// @brief Loads a game module and returns its reflected type registry paired with the live module handle.

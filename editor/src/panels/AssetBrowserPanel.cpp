@@ -35,6 +35,8 @@ namespace VengEditor
                 return "VertexLayout";
             case AssetType::Prefab:
                 return "Prefab";
+            case AssetType::Level:
+                return "Level";
             }
             return "Unknown";
         }
@@ -58,6 +60,8 @@ namespace VengEditor
                 return "VTX";
             case AssetType::Prefab:
                 return "PFB";
+            case AssetType::Level:
+                return "LVL";
             }
             return "?";
         }
@@ -77,6 +81,8 @@ namespace VengEditor
                 return {0.60f, 0.45f, 0.80f, 1.0f};
             case AssetType::Prefab:
                 return {0.30f, 0.70f, 0.70f, 1.0f};
+            case AssetType::Level:
+                return {0.75f, 0.45f, 0.55f, 1.0f};
             case AssetType::VertexLayout:
                 return {0.55f, 0.55f, 0.60f, 1.0f};
             case AssetType::Raw:

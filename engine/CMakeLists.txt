@@ -6,11 +6,13 @@ add_library(veng SHARED
         src/Application.cpp
         src/Assert.cpp
         src/Asset/AssetManager.cpp
+        src/Asset/Level.cpp
         src/Asset/Material.cpp
         src/Asset/Mesh.cpp
         src/Asset/Prefab.cpp
         src/Asset/Primitives.cpp
         src/Asset/Texture.cpp
+        src/Asset/Loaders/LevelLoader.cpp
         src/Asset/Loaders/MaterialLoader.cpp
         src/Asset/Loaders/MeshLoader.cpp
         src/Asset/Loaders/PrefabLoader.cpp

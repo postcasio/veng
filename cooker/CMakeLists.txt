@@ -167,7 +167,8 @@ target_compile_options(veng_cook_objs PRIVATE -fno-exceptions)
 # cooker below to keep this link off the core-pack build edge.
 add_library(libveng_cook STATIC
         src/ModuleTypes.cpp
-        src/Importers/PrefabImporter.cpp)
+        src/Importers/PrefabImporter.cpp
+        src/Importers/LevelImporter.cpp)
 add_library(veng::cook ALIAS libveng_cook)
 target_link_libraries(libveng_cook PUBLIC veng_cook_objs veng::veng veng::assetpack)
 target_link_libraries(libveng_cook PRIVATE fmt::fmt assimp::assimp slang::slang)
