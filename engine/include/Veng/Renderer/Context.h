@@ -66,6 +66,8 @@ namespace Veng::Renderer
         Format OutputFormat = Format::RGBA16Sfloat;
         /// @brief Depth format of the off-screen depth target.
         Format DepthFormat = Format::D32Sfloat;
+        /// @brief Requested display output mode for the swapchain (a preference; see DisplayMode).
+        DisplayMode RequestedDisplayMode = DisplayMode::Auto;
 
         /// @brief When set, the pipeline cache is seeded from this file at init and written back
         /// at shutdown. nullopt keeps it in-memory only.
@@ -252,6 +254,15 @@ namespace Veng::Renderer
 
         /// @brief Returns the swap chain's surface format.
         [[nodiscard]] Format GetSwapChainFormat() const;
+
+        /// @brief Returns the display output mode actually resolved against device support.
+        ///
+        /// May differ from ContextInfo::RequestedDisplayMode when an HDR mode was
+        /// unavailable and selection fell back to SDR.
+        [[nodiscard]] DisplayMode GetActiveDisplayMode() const;
+
+        /// @brief Returns the resolved color space of the presentable swapchain images.
+        [[nodiscard]] DisplayColorSpace GetActiveDisplayColorSpace() const;
 
         /// @brief Returns the swap chain image for the current frame.
         [[nodiscard]] Ref<Image> GetCurrentSwapChainImage() const;

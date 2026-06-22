@@ -37,6 +37,11 @@ namespace Veng
         optional<ImGuiLayerInfo> ImGui = ImGuiLayerInfo{};
         /// @brief Run without a window, using an off-screen context; exits on RequestExit().
         bool Headless = false;
+        /// @brief Requested display output mode for the swapchain (a preference; see DisplayMode).
+        ///
+        /// Defaults to picking the best available HDR mode, falling back to SDR. The resolved
+        /// result is read back via Context::GetActiveDisplayMode().
+        Renderer::DisplayMode RequestedDisplayMode = Renderer::DisplayMode::Auto;
         /// @brief Path for pipeline cache persistence; nullopt keeps the cache in-memory only.
         ///
         /// When set, seeds the pipeline cache from this file at startup (if it exists)

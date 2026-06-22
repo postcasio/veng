@@ -6,21 +6,119 @@
 
 namespace Veng::Renderer
 {
-    /// @brief Maps a Vulkan format to its required color space for swapchain creation.
-    static vk::ColorSpaceKHR GetColorSpace(vk::Format format)
+    /// @brief A concrete (format, color space) surface choice and the engine modes it resolves to.
+    struct FormatCandidate
     {
-        switch (format)
-        {
-        case vk::Format::eR16G16B16A16Sfloat:
-            return vk::ColorSpaceKHR::eExtendedSrgbLinearEXT;
-        case vk::Format::eR8G8B8A8Srgb:
-            return vk::ColorSpaceKHR::eSrgbNonlinear;
-        case vk::Format::eB8G8R8A8Srgb:
-            return vk::ColorSpaceKHR::eSrgbNonlinear;
+        vk::Format Format;
+        vk::ColorSpaceKHR ColorSpace;
+        DisplayColorSpace Display;
+        DisplayMode Mode;
+    };
 
-        default:
-            VE_ASSERT(false, "Unsupported format!");
+    /// @brief Extended-range linear sRGB (scRGB / Apple EDR): 16-bit float, linear values.
+    static constexpr FormatCandidate ExtendedLinearCandidate{
+        .Format = vk::Format::eR16G16B16A16Sfloat,
+        .ColorSpace = vk::ColorSpaceKHR::eExtendedSrgbLinearEXT,
+        .Display = DisplayColorSpace::ExtendedLinearSrgb,
+        .Mode = DisplayMode::ExtendedLinear};
+
+    /// @brief HDR10: 10-bit Rec.2020 primaries with the ST2084 (PQ) transfer function.
+    static constexpr FormatCandidate Hdr10Candidate{.Format = vk::Format::eA2B10G10R10UnormPack32,
+                                                    .ColorSpace =
+                                                        vk::ColorSpaceKHR::eHdr10St2084EXT,
+                                                    .Display = DisplayColorSpace::Hdr10St2084,
+                                                    .Mode = DisplayMode::HDR10};
+
+    /// @brief SDR, BGRA byte order — the most common swapchain format, guaranteed in practice.
+    static constexpr FormatCandidate SdrBgraCandidate{.Format = vk::Format::eB8G8R8A8Srgb,
+                                                      .ColorSpace =
+                                                          vk::ColorSpaceKHR::eSrgbNonlinear,
+                                                      .Display = DisplayColorSpace::SrgbNonlinear,
+                                                      .Mode = DisplayMode::SDR};
+
+    /// @brief SDR, RGBA byte order — the alternate SDR ordering some drivers report.
+    static constexpr FormatCandidate SdrRgbaCandidate{.Format = vk::Format::eR8G8B8A8Srgb,
+                                                      .ColorSpace =
+                                                          vk::ColorSpaceKHR::eSrgbNonlinear,
+                                                      .Display = DisplayColorSpace::SrgbNonlinear,
+                                                      .Mode = DisplayMode::SDR};
+
+    /// @brief Human-readable name of a display mode, for logging.
+    static const char* DisplayModeName(DisplayMode mode)
+    {
+        switch (mode)
+        {
+        case DisplayMode::Auto:
+            return "Auto";
+        case DisplayMode::SDR:
+            return "SDR";
+        case DisplayMode::HDR10:
+            return "HDR10";
+        case DisplayMode::ExtendedLinear:
+            return "ExtendedLinear";
         }
+        return "?";
+    }
+
+    /// @brief Resolves a requested display mode to a surface choice the device supports.
+    ///
+    /// Builds a priority-ordered candidate list for the mode, returns the first candidate
+    /// the device reports, and falls back to any sRGB-nonlinear surface (SDR-correct under
+    /// a linear write) so selection never fails on a device that offers a presentable format.
+    static FormatCandidate SelectSurfaceFormat(DisplayMode mode,
+                                               const vector<vk::SurfaceFormatKHR>& available)
+    {
+        vector<FormatCandidate> candidates;
+        switch (mode)
+        {
+        case DisplayMode::Auto:
+            candidates = {ExtendedLinearCandidate, Hdr10Candidate, SdrBgraCandidate,
+                          SdrRgbaCandidate};
+            break;
+        case DisplayMode::ExtendedLinear:
+            candidates = {ExtendedLinearCandidate, SdrBgraCandidate, SdrRgbaCandidate};
+            break;
+        case DisplayMode::HDR10:
+            candidates = {Hdr10Candidate, SdrBgraCandidate, SdrRgbaCandidate};
+            break;
+        case DisplayMode::SDR:
+            candidates = {SdrBgraCandidate, SdrRgbaCandidate};
+            break;
+        }
+
+        for (const auto& candidate : candidates)
+        {
+            const bool supported =
+                std::ranges::any_of(available,
+                                    [&](const vk::SurfaceFormatKHR& surface)
+                                    {
+                                        return surface.format == candidate.Format &&
+                                               surface.colorSpace == candidate.ColorSpace;
+                                    });
+            if (supported)
+            {
+                return candidate;
+            }
+        }
+
+        // No preferred candidate is offered; any sRGB-nonlinear surface presents correctly
+        // under the composite's linear write (the hardware applies the sRGB transfer on store).
+        for (const auto& surface : available)
+        {
+            if (surface.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
+            {
+                return {.Format = surface.format,
+                        .ColorSpace = surface.colorSpace,
+                        .Display = DisplayColorSpace::SrgbNonlinear,
+                        .Mode = DisplayMode::SDR};
+            }
+        }
+
+        VE_ASSERT(!available.empty(), "device reports no presentable surface formats");
+        return {.Format = available[0].format,
+                .ColorSpace = available[0].colorSpace,
+                .Display = DisplayColorSpace::SrgbNonlinear,
+                .Mode = DisplayMode::SDR};
     }
 
     /// @brief Selects mailbox present mode if available, falling back to FIFO.
@@ -132,9 +230,27 @@ namespace Veng::Renderer
 
     SwapChain::SwapChain(Context& context, const SwapChainInfo& info)
         : m_Context(context), m_Width(info.Width), m_Height(info.Height),
-          m_MaxImageCount(info.MaxImageCount), m_Format(info.Format),
-          m_ColorSpace(GetColorSpace(info.Format))
+          m_MaxImageCount(info.MaxImageCount)
     {
+        auto& contextNative = m_Context.GetNative();
+        const auto support = contextNative.QuerySwapChainSupport(contextNative.PhysicalDevice);
+        const FormatCandidate selected = SelectSurfaceFormat(info.Mode, support.Formats);
+
+        m_Format = selected.Format;
+        m_ColorSpace = selected.ColorSpace;
+        m_DisplayMode = selected.Mode;
+        m_DisplayColorSpace = selected.Display;
+
+        if (info.Mode != DisplayMode::Auto && selected.Mode != info.Mode)
+        {
+            Log::Warn("Requested display mode {} is unavailable; using {}",
+                      DisplayModeName(info.Mode), DisplayModeName(selected.Mode));
+        }
+        else
+        {
+            Log::Info("Swapchain display mode: {}", DisplayModeName(selected.Mode));
+        }
+
         Initialize();
     }
 

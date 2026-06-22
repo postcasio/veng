@@ -27,6 +27,7 @@ namespace Veng
                 .ApplicationName = m_Info.Name,
                 .EngineName = m_Info.EngineName,
                 .InternalRenderExtent = m_Info.InternalRenderExtent,
+                .RequestedDisplayMode = m_Info.RequestedDisplayMode,
                 .PipelineCachePath = m_Info.PipelineCachePath,
             },
             m_Window.get());

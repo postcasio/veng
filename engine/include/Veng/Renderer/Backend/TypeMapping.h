@@ -31,6 +31,8 @@ namespace Veng::Renderer
             return vk::Format::eR16Sfloat;
         case Format::RG16Sfloat:
             return vk::Format::eR16G16Sfloat;
+        case Format::A2B10G10R10Unorm:
+            return vk::Format::eA2B10G10R10UnormPack32;
         case Format::RGBA16Sfloat:
             return vk::Format::eR16G16B16A16Sfloat;
         case Format::R32Sfloat:
@@ -77,6 +79,8 @@ namespace Veng::Renderer
             return Format::R16Sfloat;
         case vk::Format::eR16G16Sfloat:
             return Format::RG16Sfloat;
+        case vk::Format::eA2B10G10R10UnormPack32:
+            return Format::A2B10G10R10Unorm;
         case vk::Format::eR16G16B16A16Sfloat:
             return Format::RGBA16Sfloat;
         case vk::Format::eR32Sfloat:

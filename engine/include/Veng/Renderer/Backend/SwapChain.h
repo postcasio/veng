@@ -20,8 +20,13 @@ namespace Veng::Renderer
         u32 Width;
         /// @brief Initial framebuffer height in pixels.
         u32 Height;
-        /// @brief Requested image format (determines color space automatically).
-        vk::Format Format;
+        /// @brief Requested display output mode.
+        ///
+        /// The concrete format and color space are resolved against the device's
+        /// reported surface formats, falling back to SDR when an HDR mode is
+        /// unavailable. The resolved values are read back via GetDisplayMode() /
+        /// GetDisplayColorSpace().
+        DisplayMode Mode = DisplayMode::Auto;
     };
 
     /// @brief Owns the Vulkan swapchain and its per-image resources.
@@ -74,6 +79,17 @@ namespace Veng::Renderer
         /// @brief Raw Vulkan format of the presentable images.
         [[nodiscard]] vk::Format GetVkFormat() const { return m_Format; }
 
+        /// @brief Display output mode actually resolved against device support.
+        ///
+        /// May differ from the requested mode when an HDR mode was unavailable and the
+        /// selection fell back to SDR.
+        [[nodiscard]] DisplayMode GetDisplayMode() const { return m_DisplayMode; }
+
+        /// @brief Resolved color space of the presentable images.
+        ///
+        /// The swapchain composite keys its final transfer encoding off this.
+        [[nodiscard]] DisplayColorSpace GetDisplayColorSpace() const { return m_DisplayColorSpace; }
+
         /// @brief Acquires the next presentable image, signalling @p semaphore on completion.
         ///
         /// Returns eSuboptimalKHR or eErrorOutOfDateKHR when the surface has changed;
@@ -111,6 +127,8 @@ namespace Veng::Renderer
         u32 m_CurrentImageIndex = 0;
         vk::Format m_Format;
         vk::ColorSpaceKHR m_ColorSpace;
+        DisplayMode m_DisplayMode;
+        DisplayColorSpace m_DisplayColorSpace;
         vk::SwapchainKHR m_VkSwapChain;
         vector<Ref<Image>> m_Images;
         vector<Ref<ImageView>> m_ImageViews;

@@ -243,13 +243,12 @@ namespace Veng::Renderer
             m_Native->PresentQueue =
                 m_Native->Device.getQueue(m_Native->QueueFamilies.PresentFamily.value(), 0);
 
-            m_Native->SwapChain =
-                SwapChain::Create(*this, {
-                                             .MaxImageCount = 2,
-                                             .Width = window->GetWidth(),
-                                             .Height = window->GetHeight(),
-                                             .Format = vk::Format::eR16G16B16A16Sfloat,
-                                         });
+            m_Native->SwapChain = SwapChain::Create(*this, {
+                                                               .MaxImageCount = 2,
+                                                               .Width = window->GetWidth(),
+                                                               .Height = window->GetHeight(),
+                                                               .Mode = info.RequestedDisplayMode,
+                                                           });
 
             Log::Info("Created {0} swap chain images ({1}x{2})",
                       m_Native->SwapChain->GetImageCount(), m_Native->SwapChain->GetWidth(),
@@ -621,6 +620,16 @@ namespace Veng::Renderer
     {
         VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
         return m_Native->SwapChain->GetFormat();
+    }
+    DisplayMode Context::GetActiveDisplayMode() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetDisplayMode();
+    }
+    DisplayColorSpace Context::GetActiveDisplayColorSpace() const
+    {
+        VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
+        return m_Native->SwapChain->GetDisplayColorSpace();
     }
     Ref<Image> Context::GetCurrentSwapChainImage() const
     {

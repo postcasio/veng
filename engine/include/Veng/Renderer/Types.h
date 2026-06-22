@@ -52,6 +52,44 @@ namespace Veng::Renderer
         /// @brief 16-bit per channel RG float. Appended (not inserted) so the underlying
         ///        enum values cooked blobs persist by integer stay stable.
         RG16Sfloat,
+        /// @brief 10-bit RGB + 2-bit alpha, normalized, packed in 32 bits (BGRA order).
+        ///        The HDR10 swapchain format. Appended for cooked-blob integer stability.
+        A2B10G10R10Unorm,
+    };
+
+    /// @brief Requested display output mode for the presentable swapchain.
+    ///
+    /// A preference, not a guarantee: the engine intersects the mode's candidate formats
+    /// with the device's reported surface formats and falls back to SDR when an HDR mode
+    /// is unavailable. The resolved result is reported by Context::GetActiveDisplayMode().
+    enum class DisplayMode : u8
+    {
+        /// @brief Pick the best available HDR mode, falling back to SDR. The default.
+        Auto,
+        /// @brief Standard dynamic range: an 8-bit sRGB-nonlinear swapchain.
+        SDR,
+        /// @brief HDR10: 10-bit Rec.2020 primaries with the ST2084 (PQ) transfer function.
+        HDR10,
+        /// @brief Extended-range linear sRGB (scRGB / Apple EDR): 16-bit float, values may
+        ///        exceed 1.0. The macOS HDR path.
+        ExtendedLinear,
+    };
+
+    /// @brief Resolved color space of the presentable swapchain images.
+    ///
+    /// Determines the final transfer encoding the swapchain composite must apply. The
+    /// engine resolves this from the requested DisplayMode against device support.
+    enum class DisplayColorSpace : u8
+    {
+        /// @brief sRGB nonlinear (SDR). An _SRGB-format swapchain applies the sRGB transfer
+        ///        on store, so the composite writes linear values unencoded.
+        SrgbNonlinear,
+        /// @brief Rec.2020 primaries with the ST2084 (PQ) transfer function (HDR10). The
+        ///        composite must convert primaries and PQ-encode explicitly.
+        Hdr10St2084,
+        /// @brief Extended-range linear sRGB (scRGB / Apple EDR). Linear values, may exceed
+        ///        1.0; the composite writes them unencoded.
+        ExtendedLinearSrgb,
     };
 
     /// @brief Dimensionality of an image resource.
