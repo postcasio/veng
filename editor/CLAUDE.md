@@ -39,6 +39,20 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
   orbit camera via a `SceneRenderer` into a `UI::Image`, with the `DebugView` dropdown),
   `PrefabExplorerPanel`, and `InspectorPanel`. The host opens the sample prefab as the initial
   document; double-clicking a prefab in the asset browser opens another.
+- **The level editor is the game-wiring surface.** `LevelEditorPanel` (registered for
+  `AssetType::Level`) **derives from** `PrefabEditorPanel`, so the viewport / explorer /
+  inspector edit the level's **world prefab** with no scene-editing reimplemented, and adds two
+  level-scoped children over the same dockspace: a **systems panel** listing the
+  `SystemRegistry` catalog ([engine/CLAUDE.md](../engine/CLAUDE.md)) with a per-system enable
+  toggle, phase labels, and drag-reorder over the active set — writing the level's ordered
+  `SystemId` list — and a **settings panel** drawing the `GameModeConfig` and
+  `LevelRenderSettings` through the shared reflection inspector (`DrawFieldWidget`). System
+  *params* stay components, edited through the world surface like any other; the level editor
+  adds **no new inspector machinery** — the catalog drives the systems panel and reflection
+  draws the config. Editing recooks the `*.level.json` off the render thread and hot-reloads
+  behind the stable handle (the round-trip preserves unknown keys, like the texture editor).
+  Play runs **exactly the level's ordered system set** through the base's play machinery
+  (`GetPlaySystems`), distinct from a bare prefab document's "all registered" set.
 - **`PrefabExplorerPanel` is a full scene-graph tree** over the intrusive `Hierarchy`
   ([engine/CLAUDE.md](../engine/CLAUDE.md)): roots are entities with a null parent, children
   walk `ForEachChild` in order. It drives the shared selection (click / Ctrl-click toggle),

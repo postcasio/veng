@@ -14,8 +14,9 @@ only their **still-future remainder** is kept, plus any delivered capability a
 pending area builds on directly. The substance of this document is the
 **remaining** work: **material domains + shader-graph codegen (area 13)**, the
 editor's scene editor (area 6, sub-area D), **engine-owned material shader header +
-cross-pack Slang includes (area 14)**, event/input (area 4), and the named
-still-future increments of the areas done in part (areas 1, 2, 7, 8, 9, 10, 12).
+cross-pack Slang includes (area 14)**, **event/input + networking (area 4) — the next
+gate the delivered gameplay layer motivates** — and the named still-future increments of
+the areas done in part (areas 1, 2, 7, 8, 9, 10, 12).
 
 ### 1. Asset system — remaining: hot-reload
 
@@ -37,10 +38,26 @@ gone — every resource `Create` takes an explicit `Context&`.
 
 ### 4. Event & input systems
 
-Thin and partially stubbed: `EventType` declares focus/move events with no
-classes; input lives ad-hoc on `Window` (`MouseButton` unused; no actions/
-bindings/devices). Off the critical path — revisit when gameplay drives the
-requirements.
+**The next gate.** Gameplay now drives the requirements (area 7, planset-29), so this is
+the work the gameplay layer motivates and shapes. Today single-player runs on **one `Veng::Input`
+→ one `PlayerInput`**: one always-present input service fills one per-player snapshot, the
+`Intent` chokepoint and the Sim/View split are in place, and `Authority` is threaded — but
+nothing routes input or replicates state. Two coupled bodies of work sit behind those
+seams:
+
+- **Multi-seat input routing.** Split-screen and AI-vs-player need input routed *per
+  `Viewer`/player* into the right `PlayerInput`, rather than one device feeding one
+  snapshot. The components are already written so this layer is additive — it routes into
+  the existing `PlayerInput`/`Possesses` seats, no gameplay rewrite.
+- **The networking layer.** A net layer consumes the seams planset-29 established for it —
+  it serializes/predicts/rolls back `Intent`, replicates `Session`/pawn state by
+  `Authority`, and derives the View phase locally on each client. An ECS-native net model
+  (state + input replication, à la the ECS-netcode lineage) slots in behind the
+  Intent/Authority/Sim-View structure without dismantling anything, since none of those
+  seams reproduces an actor-network object graph.
+
+The pre-gameplay residue stays too: `EventType` declares focus/move events with no
+classes, and the thin key/mouse-button query sites flagged to converge here.
 
 ### 5. Unit testing / test infrastructure — DONE (planset-3 + planset-4)
 
@@ -87,8 +104,9 @@ Also still future: **installing `veng_add_game` for downstream
 ### 7. Scene / entity model — remaining: systems, perf, reflection follow-ons
 
 Runtime half delivered by planset-10; the cooked prefab asset + module-ABI seam by
-planset-11 (area 10). **The scene editor (area 6, sub-D) consumes the runtime scene
-model directly.**
+planset-11 (area 10); the **gameplay + authoring layer** (systems framework, cameras,
+control, game modes, levels) by planset-29. **The scene editor (area 6, sub-D) consumes
+the runtime scene model directly.**
 
 **Delivered:**
 
@@ -100,14 +118,31 @@ model directly.**
   transform propagation and the broadphase a precise change signal. **Design overview:**
   [hierarchy.md](hierarchy.md).
 
+**Delivered — planset-29 (the gameplay + authoring layer):** the **systems framework**
+and the layer that wires an actual game on top of it, built from ECS first principles —
+a `SceneSystem` + `SceneSimulation` driver with a **Sim / View tick split**; camera
+selection per **`Viewer`** seat resolved to a `CameraView` by a pure function (renderer
+untouched); an **Input → Intent → Movement** control pipeline (AI/remote drop-in intent
+producers); an **`Authority`** ownership annotation threaded ahead of the net layer; a
+game mode as a **`Session`** state component + **rule systems** + a config field (no
+object, no registry, no ABI bump); the systems **catalog** (`SystemId`/`VE_SYSTEM`, the
+host-owned `SystemRegistry`); the thin **`Level`** asset (a world prefab by reference plus
+the level-scoped game-mode/system/render wiring, loaded into play); the editor's
+**`LevelEditorPanel`**; and a hand-written **`docs/guides/`** tutorial.
+
 **Still future:**
 
-- A **systems** framework (planset-10 ships storage + queries; the app writes its
-  own update loops over `Each`/`View`).
+- A **richer system scheduler** — inter-system dependencies and parallelism. The
+  delivered driver runs a flat ordered list in two phases (Sim then View) each tick; a
+  dependency graph and worker-parallel execution are the next increment behind the same
+  `SceneSimulation` seam.
 - **Archetype storage** and **dirty-flag, depth-sorted** transform propagation (perf
   optimizations behind the same API; the propagation layer rides the
   [hierarchy redesign](hierarchy.md)'s ordered down-traversal and is what would let
   planset-23's broadphase move from version-gated rebuild to incremental maintenance).
+- **Camera blend/shake** (additional View-phase systems beyond the delivered follow rig)
+  and **richer `Level` data** (streaming, sublevels, spawn/nav data) — named refinements
+  behind the delivered View phase and `Level` asset.
 - Migrating `VE_REFLECT` to inline `[[=…]]` **annotation reflection** once
   AppleClang gains P2996/P3394.
 
@@ -405,9 +440,11 @@ schedule:
 
    Node→Slang codegen, the scene editor, and area 14 are the prioritized next areas,
    whichever is taken up first.
-4. **Event & input (area 4)** and the named still-future increments of the areas done
-   in part (1, 2, 7, 8, 9, 10, 12) are each independent and off the critical path —
-   slot in whenever wanted.
+4. **Event & input + networking (area 4)** is the **next gate** the delivered gameplay
+   layer (area 7, planset-29) motivates — multi-seat input routing and a net layer
+   consuming the `Intent`/`Authority`/Sim-View seams. The remaining named still-future
+   increments of the areas done in part (1, 2, 7, 8, 9, 10, 12) are each independent and
+   off the critical path — slot in whenever wanted.
 
 ## Cross-cutting concerns
 
@@ -423,6 +460,13 @@ retrofit.
 Vision only beyond what is delivered in the plansets
 ([plans/README.md](../README.md)).
 
+**Delivered (planset-29):** area 7's **gameplay + authoring layer** — the systems
+framework (`SceneSystem`/`SceneSimulation`, the Sim/View tick split), camera selection
+per `Viewer` seat resolved by a pure function, the Input → Intent → Movement pipeline, the
+`Authority` annotation, game modes as `Session` state + rule systems, the systems catalog
+(`SystemId`/`VE_SYSTEM`/`SystemRegistry`), the thin `Level` asset + its cooker importer +
+editor `LevelEditorPanel`, and the `docs/guides/` tutorial. It motivates and shapes area 4.
+
 **Delivered (planset-18):** area 13's **material-domains first slice** — the material
 **domain** concept (Surface + PostProcess), the unified ring-buffered parameter block,
 the PostProcess fullscreen-material path, the standard per-domain vertex shaders,
@@ -436,11 +480,15 @@ header + cross-pack Slang includes** (area 14 — the cooker resolves a consumer
 `#include` into the engine core pack and `MaterialParams` moves to the authoring shader; a
 codegen precursor that can fold into that planset). Whichever the next planset takes up.
 
-**Undetailed / unscheduled:** area 4 (events/input) and the named still-future
+**The next gate:** area 4 (**events/input + networking**) — multi-seat input routing and
+a net layer over the `Intent`/`Authority`/Sim-View seams planset-29 established.
+
+**Undetailed / unscheduled:** the named still-future
 increments of the
 areas done in part — area 1's
 **hot-reload**, area 2's task graph / staging pool / cancellation, area 7's
-**systems framework** + perf follow-ons +
+**richer system scheduler** (inter-system dependencies/parallelism) + archetype/perf
+follow-ons + camera blend/shake + richer `Level` data +
 the `ShaderInterface`/`MaterialField`
 unification + container/array fields, area 8's **transparent/forward pass** +
 **clustered/tiled light culling** + **cached/static shadow maps** + **per-light dynamic

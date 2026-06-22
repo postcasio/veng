@@ -62,10 +62,21 @@ This rests on the **GPU-free type-registration contract** (`RegisterBuiltinTypes
 headless cooker reflects a module's types with no ICD present, and a no-device cooker
 test pins the contract.
 
+The **`LevelImporter`** cooks a `*.level.json` (a world prefab reference + the ordered
+system set + the game-mode/render config) into the `CookedLevel` blob, beside the
+`PrefabImporter` and on the same module-reflection relaxation. It requires the
+`--module`-loaded `TypeRegistry` **and** `SystemRegistry` (absent → a "requires
+`--module`" error), and validates the level against the **real** reflected/registered
+surface: the world-prefab reference resolves, each `systems` id resolves against the
+catalog, and the `gameMode`/`render` config validate against their reflected struct
+descriptors — the same located-error discipline `PrefabImporter` applies to components. It
+emits the two config records through libveng's `WriteFields`, so the cooker and the runtime
+loader share one encoder.
+
 ## `vengc` subcommands
 
 - **`cook`** — build a `.vengpack` from a manifest (`--module <lib>` to reflect a
-  game module for prefab validation).
+  game module's types **and systems** for prefab and level validation).
 - **`verify`** — re-hash a `.vengpack`'s blobs + TOC digest and exit nonzero on any
   mismatch.
 - **`generate-id`** — mint a collision-free `AssetId` (prints hex for C++ literals and

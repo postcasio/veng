@@ -32,9 +32,12 @@ custom runtime types — loaded by a thin **launcher** (the shipped exe). The
 launcher `dlopen`s the module and calls one C-ABI entry,
 `VengModuleRegister(VengModuleHost*)`; the module registers its `Application`
 factory into the host-owned `ApplicationRegistry` (`host->App.RegisterApplication(
-[]{ … })`, one per module) **and registers its reflected component/type descriptors
-into the host-owned `TypeRegistry`** (`host->Types`, `Register<T>()` per type).
-`Application` still owns `Context`/`AssetManager`/`TaskSystem` unchanged — the
+[]{ … })`, one per module), **registers its reflected component/type descriptors
+into the host-owned `TypeRegistry`** (`host->Types`, `Register<T>()` per type), **and
+registers its gameplay `SceneSystem`s into the host-owned `SystemRegistry`**
+(`host->Systems`, `Register<T>()` per system). `Application` borrows the `TypeRegistry`
+and the `SystemRegistry` (`GetTypeRegistry()` / `GetSystemRegistry()`) and still owns
+`Context`/`AssetManager`/`TaskSystem` unchanged — the
 launcher reads the factory back, constructs the app, and calls `Run()`.
 `veng_add_game(<name> SOURCES … [ASSET_PACK …])` is the build entry: it emits
 `lib<name>` + `<name>-launcher` from one declaration. **`veng_add_editor(<name>
@@ -47,14 +50,21 @@ SOURCES …)`** is its editor sibling — it emits `lib<name>_editor` (SHARED, l
   binary-plugin platform — a module is recompiled with the engine from one tree. A
   one-integer `VengModuleAbiVersion` handshake (checked by `ModuleLoader` before the
   entry runs) **rejects a stale module loudly at load**, not later. The ABI is at
-  **version 2** (`VENG_MODULE_ABI_VERSION`); a module built against an older header
-  fails the handshake at load.
+  **version 3** (`VENG_MODULE_ABI_VERSION`); a module built against an older header
+  fails the handshake at load. The host struct carries the `SystemRegistry` (`Systems`)
+  beside `App`/`Types`/`Editor`. The gameplay layer adds **no** ABI surface: game modes
+  are systems + components, the system catalog rides a per-system trait the way a
+  component's `TypeId` does, and a `Level` is an asset — so it is registered through the
+  existing `SystemRegistry`/`TypeRegistry` or authored as data, never through a new host
+  entry. That ECS-native shape is what keeps it lighter than an actor-derived game-mode
+  object would: nothing here is a host-ABI institution.
 - **The relocatable trio.** The module resolves **beside the launcher** via an
   `$ORIGIN`/`@loader_path` rpath, and assets resolve via `ExecutableDirectory()`
   (the public executable-relative path helper) with `veng_add_game` copying the
   cooked pack beside the launcher — so launcher + lib + pack move as one directory.
 - **`EditorRegistry*` is the editor-host seam.** The host struct carries `{
-  ApplicationRegistry& App; TypeRegistry& Types; EditorRegistry* Editor; }`; the
+  ApplicationRegistry& App; TypeRegistry& Types; SystemRegistry& Systems;
+  EditorRegistry* Editor; }`; the
   launcher always passes `Editor = nullptr` (the type is only forward-declared in
   `libveng`). The editor host (`EditorHost`, in `libveng_editor`) passes a non-null
   `&m_EditorRegistry`, activating a module's editor-side registrations.
@@ -797,3 +807,98 @@ A `Scene` is **`Unique`, single-owner** — nothing holds a `Ref` to it; the app
 and a renderer reads it per frame as a `const Scene&`. Drop it in `OnDispose()` like
 any other engine resource. The `TypeRegistry` it was created with must outlive it and
 must already have every component type registered.
+
+## Gameplay: cameras, control, systems, game modes, levels
+
+The gameplay layer is built from ECS primitives — components marking entities plus
+systems acting on them, never controller/manager/mode objects — shaped for veng's
+data-oriented grain and for the networking it anticipates. A task-oriented tutorial for
+writing it lives in [`docs/guides/`](../docs/README.md)
+([writing gameplay systems](../docs/guides/writing-gameplay-systems.md),
+[wiring a level](../docs/guides/wiring-a-level.md)); this section is the architecture.
+
+**Camera is selected per seat and resolved to a `CameraView`.** A camera is
+`(Transform, Camera)` data; a **`Viewer { Entity Camera }`** component is a *seat* (a
+local player, a render target, the editor viewport) naming the camera entity it renders
+through, separating seat from camera. Two pure helpers beside `MakeCameraView`
+(`Veng/Scene/Camera.h`) resolve a seat to the view the renderer consumes:
+**`ResolveCameraView(const Scene&, Entity viewer, f32 aspect) → optional<CameraView>`**
+reads the seat's `Viewer`, looks up its `Camera` entity, and projects through its
+`WorldMatrix` (so a camera parented under a rig resolves correctly);
+**`ResolvePrimaryCameraView(const Scene&, f32 aspect)`** is the one-seat convenience —
+first `Viewer`, else the first bare `(Transform, Camera)` entity. **Aspect is a
+render-target property, never a `Camera` field** — the caller passes it (output extent
+in the runtime, panel extent in the editor). The renderer is untouched: it still consumes
+a resolved `CameraView` through `SceneView`, so the runtime's in-scene camera and the
+editor's external orbit `EditorCamera` (its own non-ECS camera, `editor/src/EditorCamera.h`)
+coexist with zero renderer change. The prefab editor's Play mode can preview the scene's
+authored `Viewer` camera through `ResolvePrimaryCameraView` instead of its orbit camera.
+
+**Control flows Input → Intent → Movement.** Device/wire input is captured into a
+per-player **`PlayerInput`** snapshot (move/look axes + a button bitset); a **control**
+system translates it into an abstract **`Intent`** command (local-frame move, look delta,
+action bitset); a **movement** system (`MovementSystem`, `Veng/Scene/Movement.h`) and
+gameplay systems generally consume `Intent` and mutate state, scaled per pawn by an
+optional **`Mover`**. The `Intent` indirection is deliberate: it is the serializable
+chokepoint a net layer predicts and rolls back, and the uniform interface AI and remote
+players write through — both are drop-in `Intent` producers, no movement change. **A
+`Possesses { Entity Pawn }`** link names the pawn a seat controls; possession is
+independent of `Viewer.Camera` (a spectator views without possessing; a cutscene
+retargets the camera without un-possessing).
+
+**The tick is split Sim / View, and entities carry `Authority`.** A `SceneSystem`
+(`Veng/Scene/SceneSystem.h`) declares a **`Phase { Sim, View }`** (default `Sim`); a
+**`SceneSimulation`** (`Veng/Scene/SceneSimulation.h`) runs all Sim systems, then all View
+systems, each tick — so a View system reads the state the Sim phase finalized this tick.
+**Sim** is the deterministic, replicable simulation (control, movement, rule systems); a
+headless Sim tick is a pure function of state + intents (the `SystemContext.Input` service
+is always present, reporting the neutral all-zeros state in headless, so an input-reading
+system needs no guard). **View** is client-local presentation derived from finalized Sim
+state — the `CameraRigSystem` (`Veng/Scene/CameraRig.h`) trails a possessed pawn via a
+`CameraFollow` component, never authoritative and never on the wire. An **`Authority {
+Tier, Owner }`** component (`Tier { Server, Local }`) marks who simulates an entity;
+authored entities default `Server`, client-local view entities `Local`. Nothing in the
+runtime reads it — its consumer is the future net layer — but threading ownership now is
+the one annotation painful to retrofit across every spawn site later. The two-pass split
+is the whole scheduling mechanism: no dependency graph, no parallelism.
+
+**A game mode is a `Session` state component + rule systems — no object, no registry.** A
+**`Session { Phase, Elapsed, Score }`** component (`SessionPhase { NotStarted, Playing,
+Ended }`) holds the mode's server-authoritative state on a well-known session entity; a
+**`GameModeConfig`** beside it names the player prefab and mode parameters (its JSON key is
+`"gameMode"`). The "mode" is a *selectable set of rule systems* (spawn-on-start, scoring,
+win-condition) reading and writing the `Session`; begin/end-play is the systems'
+`OnStart`/`OnStop` plus `SessionPhase` transitions. Selecting a mode is choosing a config
+plus a registered rule set — no C++ path picks it, no `GameModeRegistry`, no ABI bump.
+
+**Systems are a catalog; selection and order are level data; config is components.** A
+`SceneSystem` declares a stable **`SystemId`** (a `u64` id space alongside `AssetId`/`TypeId`,
+minted with `vengc generate-id`) + a display name through the **`VE_SYSTEM(Type, 0x…ULL,
+"Name")`** trait macro — the system analogue of `VE_REFLECT`'s identity. The host-owned
+**`SystemRegistry`** (`Veng/Scene/SystemRegistry.h`, mirroring the `TypeRegistry`: the host
+constructs it, the module fills it through `VengModuleRegister`, `Application` borrows it)
+stores `{ SystemId, Name, factory }`, **enumerates the catalog** without instantiating
+anything, resolves an id, and fatally rejects a duplicate id. Registration is GPU-free
+(building a system touches no `Context`/device), preserving the headless/cooker contract. A
+`SceneSimulation` is built either from an **ordered `SystemId` set** selecting catalog
+entries (run in that order, honoring the phase split) or from the whole registry as the "all
+registered" convenience. A system's **parameters are authored as components** — a settings
+entity the system reads — reusing the entire reflection inspector and keeping systems pure
+logic; there is no reflected-system-config mechanism.
+
+**A `Level` is the authored wiring artifact — a thin wrapper by reference.** A **`Level`**
+asset (`AssetType::Level`, `Veng/Asset/Level.h`) does not embed world entities: it
+*references* a **world prefab** by `AssetId` and adds the data that is not reusable-recipe
+data — the ordered active `SystemId` set, the `GameModeConfig`, and a tolerant
+**`LevelRenderSettings`** subset (exposure, bloom, shadow toggles the app maps onto its
+`SceneRendererSettings`/`SceneView`). This resolves the prefab dual-purpose tension by
+*reusing* prefab serialization, not embedding a second copy: a prefab is a reusable recipe
+again, the `Level` is the once-loaded playable unit (named `Level`, not `Scene`, to avoid
+colliding with the runtime `Scene`). It is CPU data with no GPU resource, loaded through the
+ordinary `AssetManager::Load`/`LoadSync` path; its world prefab and that prefab's embedded
+asset refs resolve as ordinary load-time dependencies. **`Level::LoadInto(AssetManager&,
+const SystemRegistry&) → LevelInstance`** is what *starts the game*: it spawns the world
+prefab into a fresh `Scene`, builds a `SceneSimulation` from the level's `SystemId` set
+against the catalog, and seeds a `Session` entity from the game-mode config, returning a
+`LevelInstance { Unique<Scene> World; Unique<SceneSimulation> Simulation; }` the app ticks
+and renders. A game is assembled as authored data, not hand-spawned in `main.cpp`.

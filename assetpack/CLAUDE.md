@@ -27,3 +27,13 @@ serialization — neither importer nor loader.
   verify`.
 - A version number the format actually checks (the on-disk `v2`) is rejected loudly on
   mismatch — a stale/foreign archive does not load silently.
+- **`AssetType::Level` is a world prefab by reference plus level-scoped wiring.** Its
+  blob is a **`CookedLevelHeader`** (`CookedLevelVersion`, currently `1`) — `WorldPrefabId`
+  (the world prefab's `AssetId`, resolved as a load-time dependency), `SystemCount`, and the
+  two record sizes — followed by the ordered `u64[SystemCount]` `SystemId` set, then the
+  game-mode config record, then the render-settings record. Each config record is the
+  reflection serializer's name-keyed `WriteFields` encoding, which `assetpack` treats as
+  **opaque bytes** exactly as a prefab blob treats a component record — so this library
+  gains no reflection dependency, and a new game-mode or render-settings field evolves
+  tolerantly within the fixed `CookedLevelVersion` (no bump). The loader rejects a blob whose
+  `Version` mismatches.
