@@ -75,7 +75,11 @@ cmake --build build -j 4
 ctest --test-dir build --output-on-failure
 ```
 
-**If you parallelize the build, cap it at `-j 4`.** Do not go higher.
+**If you parallelize the build, cap it at `-j 4`.** Do not go higher — *unless*
+you are building on the main thread with no concurrent subagent builds (no
+subagents at all, or only one subagent active at a time), in which case `-j 8` is
+fine. The `-j 4` cap exists to leave headroom when multiple agents build in
+parallel; a single builder can use the wider lane.
 
 ### Formatting
 
