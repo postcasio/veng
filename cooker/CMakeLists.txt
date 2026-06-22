@@ -59,7 +59,23 @@ FetchContent_Declare(
         GIT_TAG v5.4.3
         GIT_SHALLOW TRUE
 )
-FetchContent_MakeAvailable(assimp)
+
+# Hand assimp the zlib the top-level already built rather than letting it find a system
+# copy (macOS/Linux) or compile its bundled contrib/zlib (Windows, where it defaults
+# ASSIMP_BUILD_ZLIB=ON and the second `zlibstatic` target collides with ours). assimp
+# keys its zlib choice on ZLIB_FOUND: ASSIMP_BUILD_ZLIB=ON skips its find_package, and a
+# pre-set ZLIB_FOUND skips its bundled build, landing every platform on assimp's
+# external-zlib path against our target — one zlib in the build, no collision, no
+# system-vs-FetchContent divergence. block() keeps the ZLIB_* shims from leaking to
+# sibling targets; ZLIB_INCLUDE_DIR spans the source (zlib.h) and binary (generated
+# zconf.h) dirs.
+block()
+    set(ASSIMP_BUILD_ZLIB ON CACHE INTERNAL "")
+    set(ZLIB_FOUND TRUE)
+    set(ZLIB_LIBRARIES ZLIB::ZLIB)
+    set(ZLIB_INCLUDE_DIR ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
+    FetchContent_MakeAvailable(assimp)
+endblock()
 
 # Slang — .slang compilation + offline reflection, the
 # ShaderImporter's implementation detail. Not fetched: the Slang SDK ships as

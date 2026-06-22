@@ -75,16 +75,6 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(zlib)
 add_library(ZLIB::ZLIB ALIAS zlibstatic)
 
-# On Windows assimp (cooker-only) defaults ASSIMP_BUILD_ZLIB=ON and would compile
-# its own contrib/zlib, colliding with the zlibstatic target above. On macOS/Linux
-# it instead finds system zlib via find_package and skips its copy. Hand assimp the
-# zlib we already built so it skips both find_package and its bundled build.
-if (WIN32)
-    set(ZLIB_FOUND TRUE)
-    set(ZLIB_LIBRARIES ZLIB::ZLIB)
-    set(ZLIB_INCLUDE_DIR ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
-endif ()
-
 # fmtlib/fmt
 # FMT_INSTALL/VMA_ENABLE_INSTALL/NFD_INSTALL: these deps appear in veng's
 # exported link interface, so they must land in export sets of their own and
