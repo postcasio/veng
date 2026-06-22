@@ -48,6 +48,22 @@ namespace Veng::Renderer
 
         /// @brief Swapchain color format the composite pass writes.
         Format SwapChainFormat;
+
+        /// @brief Resolved swapchain color space, selecting the final transfer encoding.
+        ///
+        /// SrgbNonlinear and ExtendedLinearSrgb write the blended linear color unencoded;
+        /// Hdr10St2084 converts primaries and PQ-encodes. From Context::GetActiveDisplayColorSpace().
+        DisplayColorSpace ColorSpace = DisplayColorSpace::SrgbNonlinear;
+
+        /// @brief HDR10 reference (paper) white in nits: the display luminance of linear 1.0.
+        ///
+        /// Used only when ColorSpace is Hdr10St2084.
+        f32 PaperWhiteNits = 200.0f;
+
+        /// @brief HDR10 peak luminance in nits the encoded signal is clamped to.
+        ///
+        /// Used only when ColorSpace is Hdr10St2084.
+        f32 PeakNits = 1000.0f;
     };
 
     /// @brief Composites a scene output and an ImGui overlay into the swapchain.

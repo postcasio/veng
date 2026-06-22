@@ -308,6 +308,7 @@ protected:
                 .Assets = GetAssetManager(),
                 .SceneSource = m_SceneRenderer->GetOutput(),
                 .SwapChainFormat = context.GetSwapChainFormat(),
+                .ColorSpace = context.GetActiveDisplayColorSpace(),
             });
 
             // Swapchain resize invalidates the composite graph's baked extent; SceneRenderer

@@ -24,14 +24,36 @@ namespace Veng::Renderer
         constexpr AssetId FullscreenVertId{0xF46DD3C6F2AE0628ULL};
         constexpr AssetId CompositeFragId{0x4BCFF3ED0254B42EULL};
 
-        // Bindless scene/ImGui texture and sampler indices for the composite shader.
-        // Matches composite.frag PushConstants byte-for-byte.
+        // Bindless scene/ImGui texture and sampler indices plus the display-encode
+        // parameters for the composite shader. Matches composite.frag PushConstants
+        // byte-for-byte.
         struct CompositePushConstants
         {
             u32 SceneTexture;
             u32 ImGuiTexture;
             u32 Sampler;
+            u32 EncodeMode;
+            f32 PaperWhiteNits;
+            f32 PeakNits;
         };
+
+        // EncodeMode the composite shader switches on; matches composite.frag.
+        constexpr u32 EncodePassthrough = 0;
+        constexpr u32 EncodeHdr10Pq = 1;
+
+        /// @brief Maps a resolved color space to the shader's EncodeMode.
+        u32 EncodeModeFor(DisplayColorSpace space)
+        {
+            switch (space)
+            {
+            case DisplayColorSpace::SrgbNonlinear:
+            case DisplayColorSpace::ExtendedLinearSrgb:
+                return EncodePassthrough;
+            case DisplayColorSpace::Hdr10St2084:
+                return EncodeHdr10Pq;
+            }
+            return EncodePassthrough;
+        }
     }
 
     struct SwapChainCompositePass::Impl
@@ -47,6 +69,11 @@ namespace Veng::Renderer
         TextureHandle SceneHandle;
         TextureHandle ImGuiHandle;
         SamplerHandle SamplerHandle;
+
+        // Final display-transfer encoding for the swapchain's color space.
+        u32 EncodeMode;
+        f32 PaperWhiteNits;
+        f32 PeakNits;
 
         // Imported ids re-declared on every Compile; bound to concrete views per replay.
         ResourceId SwapId;
@@ -68,6 +95,10 @@ namespace Veng::Renderer
     {
         VE_ASSERT(info.SceneSource, "SwapChainCompositePass requires an initial SceneSource");
         m_Impl->SceneSource = info.SceneSource;
+
+        m_Impl->EncodeMode = EncodeModeFor(info.ColorSpace);
+        m_Impl->PaperWhiteNits = info.PaperWhiteNits;
+        m_Impl->PeakNits = info.PeakNits;
 
         m_Impl->Sampler = Sampler::Create(
             info.Context, {
@@ -177,6 +208,9 @@ namespace Veng::Renderer
                         .SceneTexture = m_Impl->SceneHandle.Index,
                         .ImGuiTexture = m_Impl->ImGuiHandle.Index,
                         .Sampler = m_Impl->SamplerHandle.Index,
+                        .EncodeMode = m_Impl->EncodeMode,
+                        .PaperWhiteNits = m_Impl->PaperWhiteNits,
+                        .PeakNits = m_Impl->PeakNits,
                     });
                     cmd.DrawFullscreenTriangle();
                 });
