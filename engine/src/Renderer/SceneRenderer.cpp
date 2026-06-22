@@ -30,6 +30,7 @@
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/LightPacking.h>
 #include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/PunctualShadows.h>
@@ -276,19 +277,6 @@ namespace Veng::Renderer
             u32 Pad2;
         };
 
-        // One light packed for the ring-buffered light buffer (set-0 binding 6),
-        // std430-compatible, matching the shader's GpuLight byte-for-byte.
-        struct GpuLight
-        {
-            vec4 PositionRange;  // xyz world position, w range
-            vec4 DirectionType;  // xyz travel direction, w LightType
-            vec4 ColorIntensity; // rgb linear color, a intensity
-            vec4 Cone;           // x cos(inner), y cos(outer), z shadow slot (-1 unshadowed), w pad
-        };
-
-        static_assert(sizeof(GpuLight) == BindlessRegistry::LightStride,
-                      "GpuLight must match the bindless light buffer stride");
-
         // The per-frame view-constants block (set-0 binding 5): camera/view state only.
         // The directional shadow system rides the set-1 ShadowConstants block.
         // Mirrors material.slang ViewConstants byte-for-byte.
@@ -360,22 +348,6 @@ namespace Veng::Renderer
         // tile (0, s) and a point uses the whole of row s.
         constexpr u32 PunctualAtlasColumns = CubeFaceCount;
         constexpr u32 PunctualAtlasRows = MaxShadowedPunctual;
-
-        // Punctual variant of ComposeTileRemap: maps slot s, face f to the corresponding tile.
-        mat4 ComposePunctualTileRemap(const mat4& viewProj, u32 slot, u32 face)
-        {
-            const f32 sx = 1.0f / static_cast<f32>(PunctualAtlasColumns);
-            const f32 sy = 1.0f / static_cast<f32>(PunctualAtlasRows);
-            const f32 col = static_cast<f32>(face);
-            const f32 row = static_cast<f32>(slot);
-
-            mat4 remap(1.0f);
-            remap[0][0] = sx;
-            remap[1][1] = sy;
-            remap[3][0] = sx * (2.0f * col + 1.0f) - 1.0f;
-            remap[3][1] = sy * (2.0f * row + 1.0f) - 1.0f;
-            return remap * viewProj;
-        }
 
         // Push block shared by all single-target debug blits: a texture + sampler index.
         struct BlitPushConstants
@@ -3242,94 +3214,19 @@ namespace Veng::Renderer
             const_cast<Material&>(*m_TonemapMaterial.Get()).SetParam("Exposure", view.Exposure);
         }
 
-        // The first MaxShadowedPunctual point/spot lights are assigned a shadow slot
-        // (Cone.z carries it, -1 = unshadowed); their records ride set-1 binding 3.
-        std::array<GpuLight, SceneView::MaxLights> packedLights{};
-        PunctualShadowBlock punctualBlock{};
-        std::array<PunctualShadowRecord, MaxShadowedPunctual> punctualRecords{};
-        // Raw (non-tile-remapped) matrices for the depth pass and frustum cull;
-        // the records carry tile-remapped matrices for the lighting pass.
-        std::array<std::array<mat4, CubeFaceCount>, MaxShadowedPunctual> punctualRawViewProj{};
-        u32 lightCount = 0;
-        u32 punctualCount = 0;
-        bool haveDirectional = false;
-        vec3 directionalTravel{0.0f, -1.0f, 0.0f};
-        for (auto [entity, light] : view.World.View<Light>())
-        {
-            if (lightCount >= SceneView::MaxLights)
-            {
-                break;
-            }
-
-            // Shadow the first directional light; its direction drives the light-space matrix.
-            if (!haveDirectional && light.Type == LightType::Directional)
-            {
-                haveDirectional = true;
-                directionalTravel = light.Direction;
-            }
-
-            const mat4 world = WorldMatrix(view.World, entity);
-            const vec3 worldPos = vec3(world[3]);
-            // Stored as cosines for direct dot-product comparison in the shader.
-            const f32 cosInner = std::cos(light.InnerCone);
-            const f32 cosOuter = std::cos(light.OuterCone);
-
-            // Assign a shadow slot to the first MaxShadowedPunctual point/spot lights;
-            // the rest carry -1. With PunctualShadows off all lights carry -1.
-            f32 shadowSlot = -1.0f;
-            if (m_Settings.PunctualShadows && punctualCount < MaxShadowedPunctual &&
-                (light.Type == LightType::Point || light.Type == LightType::Spot))
-            {
-                const u32 slot = punctualCount;
-                PunctualShadowRecord& record = punctualRecords[slot];
-                // Depth bias scales with world units per texel: a coarser tile (larger
-                // range or smaller resolution) needs more bias. The shader adds a
-                // slope-scaled term on top.
-                const f32 worldPerTexel =
-                    light.Range * 2.0f / static_cast<f32>(m_Settings.PunctualShadowResolution);
-                const f32 punctualBias = std::clamp(worldPerTexel * 0.5f, 0.0005f, 0.01f);
-                if (light.Type == LightType::Spot)
-                {
-                    const SpotShadowView spotView = ComputeSpotShadowView(
-                        worldPos, light.Direction, light.Range, light.OuterCone);
-                    // A spot uses face 0 only. Record carries the tile-remapped matrix
-                    // for the lighting pass; the raw array carries the un-remapped one
-                    // for the depth pass and per-view frustum cull.
-                    record.ViewProj[0] = ComposePunctualTileRemap(spotView.ViewProj, slot, 0);
-                    punctualRawViewProj[slot][0] = spotView.ViewProj;
-                    record.Params = vec4(2.0f, spotView.Near, spotView.Far, punctualBias);
-                }
-                else
-                {
-                    const PointShadowView pointView = ComputePointShadowView(worldPos, light.Range);
-                    for (u32 f = 0; f < CubeFaceCount; ++f)
-                    {
-                        record.ViewProj[f] =
-                            ComposePunctualTileRemap(pointView.ViewProj[f], slot, f);
-                        punctualRawViewProj[slot][f] = pointView.ViewProj[f];
-                    }
-                    record.Params = vec4(1.0f, pointView.Near, pointView.Far, punctualBias);
-                }
-                record.PositionRange = vec4(worldPos, light.Range);
-
-                shadowSlot = static_cast<f32>(slot);
-                ++punctualCount;
-            }
-
-            packedLights[lightCount] = GpuLight{
-                .PositionRange = vec4(worldPos, light.Range),
-                .DirectionType = vec4(light.Direction, static_cast<f32>(light.Type)),
-                .ColorIntensity = vec4(light.Color, light.Intensity),
-                .Cone = vec4(cosInner, cosOuter, shadowSlot, 0.0f),
-            };
-            ++lightCount;
-        }
+        // Pack every Light entity into the GPU light layout: directional selection,
+        // punctual shadow-slot assignment, and the std430 per-light records. The first
+        // MaxShadowedPunctual point/spot lights are assigned a shadow slot (Cone.z carries
+        // it, -1 = unshadowed); their records ride set-1 binding 3.
+        const PackedSceneLights packed = PackSceneLights(view.World, m_Settings.PunctualShadows,
+                                                         m_Settings.PunctualShadowResolution);
 
         // Mirror filled records into the GPU block (unused slots stay zeroed → type 0 = "no map").
         // AtlasParams.x = 1/tileRes, used by the lighting pass for inset clamping and PCF.
-        for (u32 s = 0; s < punctualCount; ++s)
+        PunctualShadowBlock punctualBlock{};
+        for (u32 s = 0; s < packed.PunctualCount; ++s)
         {
-            punctualBlock.Records[s] = punctualRecords[s];
+            punctualBlock.Records[s] = packed.PunctualRecords[s];
         }
         punctualBlock.AtlasParams =
             vec4(1.0f / static_cast<f32>(m_Settings.PunctualShadowResolution), 0.0f, 0.0f, 0.0f);
@@ -3342,25 +3239,26 @@ namespace Veng::Renderer
 
         // sceneBounds extends only the per-cascade light-axis near plane (off-screen casters);
         // the cascade XY extent comes from the camera frustum slice.
-        const CascadeData cascades = ComputeCascades(view.Camera, directionalTravel, sceneBounds,
-                                                     {.Count = m_Settings.CascadeCount,
-                                                      .Lambda = m_Settings.CascadeSplitLambda,
-                                                      .Resolution = m_Settings.ShadowResolution});
+        const CascadeData cascades =
+            ComputeCascades(view.Camera, packed.DirectionalTravel, sceneBounds,
+                            {.Count = m_Settings.CascadeCount,
+                             .Lambda = m_Settings.CascadeSplitLambda,
+                             .Resolution = m_Settings.ShadowResolution});
 
         // Thread the raw (non-tile-remapped) cascade matrices to the shadow pass,
         // which renders each cascade with its viewport placing it in the atlas tile.
         SceneView resolvedView = view;
-        resolvedView.LightCount = lightCount;
+        resolvedView.LightCount = packed.LightCount;
         resolvedView.CascadeViewProj = cascades.ViewProj;
         resolvedView.CascadeCount = cascades.Count;
-        resolvedView.PunctualShadows = punctualRecords;
-        resolvedView.PunctualShadowCount = punctualCount;
-        resolvedView.PunctualShadowRawViewProj = punctualRawViewProj;
+        resolvedView.PunctualShadows = packed.PunctualRecords;
+        resolvedView.PunctualShadowCount = packed.PunctualCount;
+        resolvedView.PunctualShadowRawViewProj = packed.PunctualRawViewProj;
         resolvedView.Visible = m_Broadphase.GetCandidates();
         resolvedView.Broadphase = &m_Broadphase;
 
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
-        registry.WriteLights(std::as_bytes(std::span(packedLights.data(), lightCount)));
+        registry.WriteLights(std::as_bytes(std::span(packed.Lights.data(), packed.LightCount)));
 
         // Pack view constants (camera/view state only; shadow system rides set-1).
         // The unjittered view-projection drives the frustum cull, hi-Z, and next frame's
@@ -3409,7 +3307,7 @@ namespace Veng::Renderer
         // Pack set-1 ShadowConstants: tile-remapped cascade view-projs, splits, and
         // params. Enabled only when the shadow pass is wired AND a directional light
         // exists this frame; otherwise the lighting pass reads full visibility.
-        const bool shadowEnabled = m_ShadowActive && m_ShadowPass && haveDirectional;
+        const bool shadowEnabled = m_ShadowActive && m_ShadowPass && packed.HaveDirectional;
         const ShadowAtlasGrid grid = ComputeShadowAtlasGrid(m_Settings.CascadeCount);
 
         ShadowConstantsBlock shadowConstants{};

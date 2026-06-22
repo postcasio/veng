@@ -344,6 +344,9 @@ if (VENG_BUILD_TESTS)
             tests/unit/task_system.cpp
             tests/unit/type_mapping.cpp
             tests/unit/barrier_decision.cpp
+            tests/unit/render_graph_schedule.cpp
+            tests/unit/input_events.cpp
+            tests/unit/light_packing.cpp
             tests/unit/transient_allocation.cpp
             tests/unit/asset_archive.cpp
             tests/unit/asset_manager.cpp

@@ -54,6 +54,7 @@ add_library(veng SHARED
         src/Renderer/SwapChainCompositePass.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/SceneRenderer.cpp
+        src/Renderer/LightPacking.cpp
         src/Renderer/ShadowCascades.cpp
         src/Renderer/HiZHistory.cpp
         src/Renderer/PunctualShadows.cpp
@@ -63,6 +64,7 @@ add_library(veng SHARED
         src/Renderer/ShaderInterface.cpp
         src/Renderer/Backend/Barrier.cpp
         src/Renderer/Backend/BarrierDecision.cpp
+        src/Renderer/Backend/RenderGraphSchedule.cpp
         src/Renderer/Backend/BindlessRegistry.cpp
         src/Renderer/Backend/TransientAllocation.cpp
         src/Renderer/Backend/Buffer.cpp

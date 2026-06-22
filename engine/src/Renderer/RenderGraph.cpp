@@ -8,6 +8,7 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Backend/Barrier.h>
 #include <Veng/Renderer/Backend/BarrierDecision.h>
+#include <Veng/Renderer/Backend/RenderGraphSchedule.h>
 #include <Veng/Renderer/Backend/TransientAllocation.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 
@@ -224,46 +225,17 @@ namespace Veng::Renderer
             Ref<Buffer> Buffer;  // buffer transient only
         };
 
-        // A baked image transition: destination scope derived by ScopeFor at compile.
-        // The source and subresource range come from the resolved view's tracked state
-        // at replay — only the destination bakes.
-        struct Transition
-        {
-            u32 Slot;
-            Backend::SubresourceState Dst;
-        };
-
-        // A baked buffer barrier: a buffer carries no runtime tracked state, so both the
-        // source (the prior pass's declared scope on this slot) and the destination
-        // (this pass's declared scope) bake at compile. Emitted only when the prior
-        // access was a write or this access is a write (a hazard).
-        struct BufferBarrier
-        {
-            u32 Slot;
-            vk::PipelineStageFlags SrcStage;
-            vk::AccessFlags SrcAccess;
-            vk::PipelineStageFlags DstStage;
-            vk::AccessFlags DstAccess;
-        };
-
-        // A baked graphics attachment: slot + load/store/clear from the declaration.
-        struct Attachment
-        {
-            u32 Slot;
-            bool IsDepth;
-            LoadOp Load;
-            StoreOp Store;
-            ClearValue Clear;
-        };
-
+        // The per-pass barrier/transition/attachment schedule is derived device-free by
+        // Backend::DeriveRenderGraphSchedule; the baked pass pairs it with the replay
+        // state (kind, layers, callback) Compile adds.
         struct Pass
         {
             RenderGraph::PassType Type = RenderGraph::PassType::Graphics;
             u32 LayerCount = 1;
             u32 ViewMask = 0;
-            vector<Transition> Transitions;
-            vector<BufferBarrier> BufferBarriers;
-            vector<Attachment> Attachments; // graphics passes only
+            vector<Backend::ScheduledTransition> Transitions;
+            vector<Backend::ScheduledBufferBarrier> BufferBarriers;
+            vector<Backend::ScheduledAttachment> Attachments; // graphics passes only
             function<void(PassContext&)> Execute;
         };
 
@@ -401,163 +373,42 @@ namespace Veng::Renderer
             }
         }
 
-        // Tracks which slots have been written by a prior pass, to detect a read before any write.
-        vector<bool> written(m_Resources.size(), false);
+        // Derive the per-pass barrier/transition/attachment schedule device-free, then
+        // pair each derived pass with the replay state (kind, layers, callback) the
+        // derivation does not carry.
+        vector<Backend::ScheduleResource> scheduleResources;
+        scheduleResources.reserve(m_Resources.size());
+        for (const Resource& resource : m_Resources)
+        {
+            scheduleResources.push_back({
+                .IsImport = resource.IsImport,
+                .IsBuffer = resource.IsBuffer,
+                .Name = resource.Name,
+                .ImageUsage = resource.Desc.Usage,
+                .BufferUsage = resource.BufferDesc.Usage,
+            });
+        }
 
-        // A buffer carries no runtime tracked state, so the graph tracks each buffer
-        // slot's last declared scope at compile and bakes both halves of a buffer
-        // barrier. Default-constructed entries (no stage/access) mean no prior access.
-        vector<Backend::SubresourceState> bufferScope(m_Resources.size());
+        vector<Backend::SchedulePass> schedulePasses;
+        schedulePasses.reserve(m_Passes.size());
+        for (const Unique<Pass>& pass : m_Passes)
+        {
+            schedulePasses.push_back({.Name = pass->Name, .Accesses = pass->Accesses});
+        }
 
-        for (const auto& pass : m_Passes)
+        vector<Backend::ScheduledPass> schedule =
+            Backend::DeriveRenderGraphSchedule(scheduleResources, schedulePasses);
+
+        for (usize i = 0; i < m_Passes.size(); i++)
         {
             CompiledGraph::Native::Pass baked;
-            baked.Type = pass->Type;
-            baked.LayerCount = pass->LayerCount;
-            baked.ViewMask = pass->ViewMask;
-            baked.Execute = pass->Execute;
-
-            for (const auto& access : pass->Accesses)
-            {
-                const u32 slot = access.Resource.Index;
-                const Resource& source = m_Resources[slot];
-
-                const bool isBufferAccess = access.Kind == AccessKind::StorageBufferRead ||
-                                            access.Kind == AccessKind::StorageBufferWrite ||
-                                            access.Kind == AccessKind::IndirectRead;
-
-                VE_ASSERT(isBufferAccess == source.IsBuffer,
-                          "RenderGraph::Compile: pass '{}' declares a {} access on '{}', which is "
-                          "a {} resource",
-                          pass->Name, isBufferAccess ? "buffer" : "image", source.Name,
-                          source.IsBuffer ? "buffer" : "image");
-
-                if (isBufferAccess)
-                {
-                    const auto scope = ScopeFor(access.Kind);
-
-                    // A transient buffer read before any pass writes it reads undefined contents.
-                    const bool isBufferRead = access.Kind == AccessKind::StorageBufferRead ||
-                                              access.Kind == AccessKind::IndirectRead;
-                    if (!source.IsImport && isBufferRead)
-                    {
-                        VE_ASSERT(written[slot],
-                                  "RenderGraph::Compile: transient buffer '{}' is read by pass "
-                                  "'{}' before any pass writes it",
-                                  source.Name, pass->Name);
-                    }
-
-                    // A buffer used as indirect args must declare BufferUsage::Indirect;
-                    // a storage-buffer access must declare BufferUsage::Storage.
-                    if (!source.IsImport)
-                    {
-                        if (access.Kind == AccessKind::IndirectRead)
-                        {
-                            VE_ASSERT(HasFlag(source.BufferDesc.Usage, BufferUsage::Indirect),
-                                      "RenderGraph::Compile: transient buffer '{}' is read as "
-                                      "indirect args but lacks BufferUsage::Indirect",
-                                      source.Name);
-                        }
-                        else
-                        {
-                            VE_ASSERT(HasFlag(source.BufferDesc.Usage, BufferUsage::Storage),
-                                      "RenderGraph::Compile: transient buffer '{}' is a storage "
-                                      "buffer access but lacks BufferUsage::Storage",
-                                      source.Name);
-                        }
-                    }
-
-                    // Emit a barrier only on a hazard: the prior access wrote, or this
-                    // access writes. A read-after-read needs none; the scope is OR'd so a
-                    // later write waits on every prior read.
-                    const Backend::SubresourceState& prior = bufferScope[slot];
-                    const bool hadPriorAccess = static_cast<bool>(prior.Stage);
-                    const bool hazard = Backend::IsWriteAccess(prior.Access) ||
-                                        Backend::IsWriteAccess(scope.Access);
-
-                    if (hadPriorAccess && hazard)
-                    {
-                        baked.BufferBarriers.push_back({
-                            .Slot = slot,
-                            .SrcStage = prior.Stage,
-                            .SrcAccess = prior.Access,
-                            .DstStage = scope.Stage,
-                            .DstAccess = scope.Access,
-                        });
-                        bufferScope[slot] = {.Stage = scope.Stage, .Access = scope.Access};
-                    }
-                    else
-                    {
-                        bufferScope[slot] = {.Stage = prior.Stage | scope.Stage,
-                                             .Access = prior.Access | scope.Access};
-                    }
-
-                    if (Backend::IsWriteAccess(scope.Access))
-                    {
-                        written[slot] = true;
-                    }
-                    continue;
-                }
-
-                // A transient read before any pass writes it produces undefined contents.
-                const bool isRead = access.Kind == AccessKind::Sample ||
-                                    access.Kind == AccessKind::StorageRead ||
-                                    access.Kind == AccessKind::TransferSrc;
-                if (!source.IsImport && isRead)
-                {
-                    VE_ASSERT(written[slot],
-                              "RenderGraph::Compile: transient '{}' is read by pass '{}' "
-                              "before any pass writes it",
-                              source.Name, pass->Name);
-                }
-
-                // A transient used as an attachment or sampled must declare the matching ImageUsage.
-                if (!source.IsImport)
-                {
-                    if (access.Kind == AccessKind::ColorAttachment)
-                    {
-                        VE_ASSERT(HasFlag(source.Desc.Usage, ImageUsage::ColorAttachment),
-                                  "RenderGraph::Compile: transient '{}' is a color attachment "
-                                  "but lacks ImageUsage::ColorAttachment",
-                                  source.Name);
-                    }
-                    else if (access.Kind == AccessKind::DepthAttachment)
-                    {
-                        VE_ASSERT(HasFlag(source.Desc.Usage, ImageUsage::DepthAttachment),
-                                  "RenderGraph::Compile: transient '{}' is a depth attachment "
-                                  "but lacks ImageUsage::DepthAttachment",
-                                  source.Name);
-                    }
-                    else if (access.Kind == AccessKind::Sample)
-                    {
-                        VE_ASSERT(HasFlag(source.Desc.Usage, ImageUsage::Sampled),
-                                  "RenderGraph::Compile: transient '{}' is sampled "
-                                  "but lacks ImageUsage::Sampled",
-                                  source.Name);
-                    }
-                }
-
-                const auto scope = ScopeFor(access.Kind);
-                baked.Transitions.push_back({.Slot = slot, .Dst = scope});
-
-                if (Backend::IsWriteAccess(scope.Access))
-                {
-                    written[slot] = true;
-                }
-
-                if (access.Kind == AccessKind::ColorAttachment ||
-                    access.Kind == AccessKind::DepthAttachment)
-                {
-                    baked.Attachments.push_back({
-                        .Slot = slot,
-                        .IsDepth = access.Kind == AccessKind::DepthAttachment,
-                        .Load = access.Load,
-                        .Store = access.Store,
-                        .Clear = access.Clear,
-                    });
-                }
-            }
-
+            baked.Type = m_Passes[i]->Type;
+            baked.LayerCount = m_Passes[i]->LayerCount;
+            baked.ViewMask = m_Passes[i]->ViewMask;
+            baked.Execute = m_Passes[i]->Execute;
+            baked.Transitions = std::move(schedule[i].Transitions);
+            baked.BufferBarriers = std::move(schedule[i].BufferBarriers);
+            baked.Attachments = std::move(schedule[i].Attachments);
             native->Passes.push_back(std::move(baked));
         }
 
@@ -634,7 +485,7 @@ namespace Veng::Renderer
             // 1. Replay the baked transitions. The source state and subresource range
             // come from each image's live tracked state, so swapchain and
             // transfer-produced imports stay correct each frame.
-            for (const Native::Transition& transition : pass.Transitions)
+            for (const Backend::ScheduledTransition& transition : pass.Transitions)
             {
                 const Ref<ImageView>& view = resolved[transition.Slot];
 
@@ -646,7 +497,7 @@ namespace Veng::Renderer
 
             // 1b. Replay the baked buffer barriers. A buffer carries no tracked state,
             // so both scopes were derived at compile from the producing/consuming passes.
-            for (const Native::BufferBarrier& barrier : pass.BufferBarriers)
+            for (const Backend::ScheduledBufferBarrier& barrier : pass.BufferBarriers)
             {
                 Backend::TransitionBuffer(cmd, *resolvedBuffers[barrier.Slot], barrier.SrcStage,
                                           barrier.SrcAccess, barrier.DstStage, barrier.DstAccess);
@@ -659,7 +510,7 @@ namespace Veng::Renderer
                 RenderingInfo info;
                 bool extentSet = false;
 
-                for (const Native::Attachment& attachment : pass.Attachments)
+                for (const Backend::ScheduledAttachment& attachment : pass.Attachments)
                 {
                     const Ref<ImageView>& view = resolved[attachment.Slot];
 
