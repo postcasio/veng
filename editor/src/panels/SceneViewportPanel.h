@@ -14,6 +14,7 @@ namespace Veng
     class ImGuiLayer;
     class ImGuiTexture;
     class Input;
+    struct LevelRenderSettings;
 
     namespace Renderer
     {
@@ -61,6 +62,16 @@ namespace VengEditor
         void OnRender(Veng::Renderer::CommandBuffer& cmd) override;
         void OnUI() override;
 
+        /// @brief Applies a level's render subset to the viewport, mirroring the runtime mapping.
+        ///
+        /// Folds the battery toggles (Bloom/Shadows/AO) into the SceneRendererSettings —
+        /// flagged for the OnRender Configure only when one actually changed, so a per-edit
+        /// call never forces a needless recompile — and stores the per-frame Exposure /
+        /// BloomIntensity the SceneView carries each Execute. The level editor pushes its live
+        /// settings here so an edit shows in the viewport immediately, ahead of the recook.
+        /// @param render  The level's render settings.
+        void ApplyLevelRenderSettings(const Veng::LevelRenderSettings& render);
+
     private:
         /// @brief Draws the toolbar overlay (play/camera/debug controls) over the viewport image.
         void DrawToolbar();
@@ -97,6 +108,11 @@ namespace VengEditor
         /// @brief Renderer settings driven by the debug-view dropdown; applied in OnRender.
         Veng::Renderer::SceneRendererSettings m_Settings;
         bool m_SettingsDirty = false;
+
+        /// @brief Per-frame tonemap exposure written into the SceneView each Execute.
+        Veng::f32 m_Exposure = 1.0f;
+        /// @brief Per-frame bloom composite intensity written into the SceneView each Execute.
+        Veng::f32 m_BloomIntensity = 1.0f;
 
         Veng::uvec2 m_RenderExtent{};
         Veng::uvec2 m_PendingExtent{};

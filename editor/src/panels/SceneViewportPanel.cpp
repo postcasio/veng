@@ -143,13 +143,30 @@ namespace VengEditor
             }
         }
 
-        const Renderer::SceneView view{
-            .World = *m_Ctx.Scene, .Camera = camera, .Delta = Time::GetDeltaTime()};
+        const Renderer::SceneView view{.World = *m_Ctx.Scene,
+                                       .Camera = camera,
+                                       .Delta = Time::GetDeltaTime(),
+                                       .Exposure = m_Exposure,
+                                       .BloomIntensity = m_BloomIntensity};
         m_SceneRenderer->Execute(cmd, view);
 
         // ImGui's sampled read of the output is recorded outside the graph by
         // ImGuiLayer::Render, so transition the output to a sampleable layout here.
         cmd.PrepareForAccess(m_SceneRenderer->GetOutput(), Renderer::AccessKind::Sample);
+    }
+
+    void SceneViewportPanel::ApplyLevelRenderSettings(const LevelRenderSettings& render)
+    {
+        if (m_Settings.Bloom != render.Bloom || m_Settings.Shadows != render.Shadows ||
+            m_Settings.AO != render.AO)
+        {
+            m_Settings.Bloom = render.Bloom;
+            m_Settings.Shadows = render.Shadows;
+            m_Settings.AO = render.AO;
+            m_SettingsDirty = true;
+        }
+        m_Exposure = render.Exposure;
+        m_BloomIntensity = render.BloomIntensity;
     }
 
     void SceneViewportPanel::DrawToolbar()

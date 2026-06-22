@@ -54,6 +54,7 @@ namespace VengEditor
     {
         auto viewport =
             CreateUnique<SceneViewportPanel>(context, m_Assets, imgui, m_Context, m_Input, *this);
+        m_Viewport = viewport.get();
         auto explorer = CreateUnique<PrefabExplorerPanel>(m_Context);
         auto inspector = CreateUnique<InspectorPanel>(m_Assets, editors, sources, m_Context);
 

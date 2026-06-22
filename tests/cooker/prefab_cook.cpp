@@ -55,7 +55,6 @@ namespace
     {
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
-        RegisterPrefabImporter(cooker);
 
         const path outArchive =
             std::filesystem::temp_directory_path() / "veng_cooker_prefab.vengpack";

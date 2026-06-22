@@ -10,6 +10,7 @@
 #include <Veng/Vendor/ImGuiInternal.h>
 
 #include "FieldWidget.h"
+#include "panels/SceneViewportPanel.h"
 
 #include <algorithm>
 #include <cstring>
@@ -70,6 +71,10 @@ namespace VengEditor
         // The world prefab is the scene surface; add the same viewport/explorer/inspector a
         // standalone prefab editor uses, then the two level-scoped children.
         AddSceneEditingChildren(context, imgui, editors, sources);
+
+        // Seed the viewport with the level's authored render subset so the first frame already
+        // renders the level's exposure/bloom/shadow config, not the viewport defaults.
+        m_Viewport->ApplyLevelRenderSettings(m_Render);
 
         m_SystemsChild =
             AddChild(CreateUnique<LevelChildPanel>("Systems", [this] { DrawSystemsPanel(); }));
@@ -455,6 +460,9 @@ namespace VengEditor
 
         if (changed)
         {
+            // Push the live render subset to the viewport so the edit shows immediately, ahead
+            // of the debounced recook; m_GameMode edits do not touch rendering.
+            m_Viewport->ApplyLevelRenderSettings(m_Render);
             MarkDirty();
         }
     }

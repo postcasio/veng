@@ -96,7 +96,7 @@ add_library(veng_cook_objs OBJECT
         src/AssetPack.cpp
         src/Cooker.cpp
         src/Verify.cpp
-        src/BuiltinImporters.cpp
+        src/CoreImporters.cpp
         src/Importers/RawImporter.cpp
         src/Importers/TextureImporter.cpp
         src/Importers/MeshImporter.cpp
@@ -146,13 +146,15 @@ target_link_libraries(veng_cook_objs PUBLIC nlohmann_json::nlohmann_json)
 target_compile_options(veng_cook_objs PRIVATE -fno-exceptions)
 
 # libveng_cook — the full cooker library: the veng-free core plus the
-# module-reflection TU (ModuleTypes.cpp) and the prefab importer
-# (PrefabImporter.cpp), linking veng::veng.
+# module-reflection TU (ModuleTypes.cpp), the prefab + level importers
+# (PrefabImporter.cpp / LevelImporter.cpp), and the full-set registration
+# aggregator (BuiltinImporters.cpp), linking veng::veng.
 #
-# PrefabImporter lives here, not in veng_cook_objs, because it reuses libveng's
-# reflection serializer (WriteFields): putting it in the veng-free objects would
-# drag an unresolved libveng symbol into the veng_cook_bootstrap link. The
-# bootstrap cooks no prefabs, so it never needs this importer.
+# These live here, not in veng_cook_objs, because they reuse libveng's reflection
+# serializer (WriteFields): putting them in the veng-free objects would drag an
+# unresolved libveng symbol into the veng_cook_bootstrap link. RegisterBuiltinImporters
+# is here for the same reason — it references the prefab/level registrations. The
+# bootstrap cooks no prefabs or levels, so it registers RegisterCoreImporters alone.
 #
 # veng::veng — the scoped cooker→libveng dependency inversion. Reflecting a
 # module's native types means the cooker process loads libgame (which pulls
@@ -166,6 +168,7 @@ target_compile_options(veng_cook_objs PRIVATE -fno-exceptions)
 # libveng. veng's own embedded core pack is cooked by the veng-free bootstrap
 # cooker below to keep this link off the core-pack build edge.
 add_library(libveng_cook STATIC
+        src/BuiltinImporters.cpp
         src/ModuleTypes.cpp
         src/Importers/PrefabImporter.cpp
         src/Importers/LevelImporter.cpp)

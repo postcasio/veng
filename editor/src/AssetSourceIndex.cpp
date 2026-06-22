@@ -44,6 +44,10 @@ namespace VengEditor
             {
                 return AssetType::Prefab;
             }
+            if (name == "level")
+            {
+                return AssetType::Level;
+            }
             return std::nullopt;
         }
     }

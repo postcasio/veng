@@ -29,6 +29,7 @@ namespace Veng
 namespace VengEditor
 {
     class AssetSourceIndex;
+    class SceneViewportPanel;
 
     /// @brief Asset editor for a prefab: a private dockspace hosting a scene viewport,
     /// an entity-hierarchy explorer, and a reflection inspector over one spawned Scene.
@@ -145,6 +146,9 @@ namespace VengEditor
         Veng::usize m_ExplorerChild = 0;
         Veng::usize m_ViewportChild = 0;
         Veng::usize m_InspectorChild = 0;
+
+        /// @brief The viewport child instance, for a subclass to drive renderer-facing state (e.g. level render settings).
+        SceneViewportPanel* m_Viewport = nullptr;
 
     private:
         /// @brief Loads and spawns the prefab, adding a default light when none is present.

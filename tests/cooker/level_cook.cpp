@@ -50,8 +50,6 @@ namespace
     {
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
-        RegisterPrefabImporter(cooker);
-        RegisterLevelImporter(cooker);
 
         const path outArchive =
             std::filesystem::temp_directory_path() / "veng_cooker_level.vengpack";
@@ -233,8 +231,6 @@ TEST_CASE("level cook: cooking a level with no --module is the requires-module e
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
-    RegisterPrefabImporter(cooker);
-    RegisterLevelImporter(cooker);
 
     const path outArchive =
         std::filesystem::temp_directory_path() / "veng_cooker_level_nm.vengpack";
