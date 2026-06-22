@@ -437,6 +437,19 @@ namespace Veng
         }
     }
 
+    void ImGuiLayer::SetMouseInputEnabled(bool enabled)
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        if (enabled)
+        {
+            io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
+        }
+        else
+        {
+            io.ConfigFlags |= ImGuiConfigFlags_NoMouse;
+        }
+    }
+
     void ImGuiLayer::Render(Renderer::CommandBuffer& commandBuffer)
     {
         using namespace Renderer;

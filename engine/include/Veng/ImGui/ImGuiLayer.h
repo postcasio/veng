@@ -66,6 +66,15 @@ namespace Veng
         /// @param event  The event to forward; non-input events relevant to ImGui (focus) included.
         void ForwardEvent(const Event& event);
 
+        /// @brief Enables or disables ImGui's mouse handling (hover, clicks, the drawn cursor).
+        ///
+        /// The router disables it while gameplay focus owns the cursor: the GLFW backend still
+        /// polls the (disabled, virtual) cursor position in NewFrame, which would otherwise drift
+        /// ImGui hover states even though no mouse events are forwarded. Toggles
+        /// `ImGuiConfigFlags_NoMouse`.
+        /// @param enabled  True to let ImGui process the mouse, false to make it ignore the mouse.
+        void SetMouseInputEnabled(bool enabled);
+
         /// @brief Renders the built UI into the output image, leaving it sampleable for compositing.
         /// @param cmd  Command buffer the render pass is recorded into.
         void Render(Renderer::CommandBuffer& cmd);

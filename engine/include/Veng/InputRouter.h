@@ -62,8 +62,11 @@ namespace Veng
         void Dispatch(Event& event);
 
     private:
-        /// @brief Captures or releases the OS cursor to match the current focus top.
-        void SyncCursor();
+        /// @brief Matches the OS cursor capture and ImGui mouse handling to the current focus top.
+        ///
+        /// Gameplay focus captures the cursor and disables ImGui's mouse (so its NewFrame cursor
+        /// poll cannot drift hover); any other focus releases the cursor and re-enables it.
+        void SyncFocusState();
 
         /// @brief Borrowed window; nullptr headless. Its cursor capture follows gameplay focus.
         Window* m_Window;

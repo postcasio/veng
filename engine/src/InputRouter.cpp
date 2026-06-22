@@ -38,7 +38,7 @@ namespace Veng
     void InputRouter::PushFocus(InputFocus focus)
     {
         m_Stack.push_back(focus);
-        SyncCursor();
+        SyncFocusState();
     }
 
     void InputRouter::PopFocus()
@@ -47,7 +47,7 @@ namespace Veng
         {
             m_Stack.pop_back();
         }
-        SyncCursor();
+        SyncFocusState();
     }
 
     InputFocus InputRouter::GetFocus() const
@@ -55,19 +55,27 @@ namespace Veng
         return m_Stack.empty() ? InputFocus::UI : m_Stack.back();
     }
 
-    void InputRouter::SyncCursor()
+    void InputRouter::SyncFocusState()
     {
-        if (m_Window == nullptr)
+        const bool gameplay = GetFocus() == InputFocus::Gameplay;
+
+        if (m_Window != nullptr)
         {
-            return;
+            if (gameplay)
+            {
+                m_Window->CaptureMouse();
+            }
+            else
+            {
+                m_Window->ReleaseMouse();
+            }
         }
-        if (GetFocus() == InputFocus::Gameplay)
+
+        // The GLFW backend polls the disabled cursor in NewFrame, so swallowing mouse events
+        // is not enough to stop hover drift; disable ImGui's mouse handling while captured.
+        if (m_ImGui != nullptr)
         {
-            m_Window->CaptureMouse();
-        }
-        else
-        {
-            m_Window->ReleaseMouse();
+            m_ImGui->SetMouseInputEnabled(!gameplay);
         }
     }
 
