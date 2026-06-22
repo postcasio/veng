@@ -25,7 +25,11 @@ namespace Veng
         /// @param context  Per-tick services forwarded to each system.
         void Start(Scene& scene, const SystemContext& context);
 
-        /// @brief Calls OnUpdate on each system, in registration order.
+        /// @brief Calls OnUpdate on each system in two passes: all Sim systems, then all View systems.
+        ///
+        /// Within each phase, systems run in registration order. The two-pass split lets
+        /// a View system (a camera rig) read the state the Sim systems finalized this
+        /// tick; it is the whole scheduling mechanism — no dependency graph, no parallelism.
         /// @param scene    The scene the systems operate over.
         /// @param delta    Time in seconds since the previous tick.
         /// @param context  Per-tick services forwarded to each system.

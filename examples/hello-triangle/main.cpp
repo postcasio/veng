@@ -20,6 +20,7 @@
 #include <Veng/Input.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Camera.h>
+#include <Veng/Scene/CameraRig.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/Resolve.h>
@@ -374,7 +375,8 @@ private:
     // Spawns the windowed-only player: a movable icosphere pawn carrying an Intent and
     // a Mover, and a seat carrying a PlayerInput snapshot that possesses it. The control
     // system fills the PlayerInput from device input and writes the pawn's Intent; the
-    // movement system integrates that Intent into the pawn's Transform.
+    // movement system integrates that Intent into the pawn's Transform. The scene's camera
+    // gains a CameraFollow trailing the pawn, so the View-phase rig moves the view with it.
     void SpawnPlayer()
     {
         // Reuse the grid's material so the pawn shades like the rest of the scene.
@@ -393,6 +395,8 @@ private:
         m_Scene->Add<Primitive>(pawn, primitive);
         m_Scene->Add<Intent>(pawn, Intent{});
         m_Scene->Add<Mover>(pawn, Mover{.MoveSpeed = 5.0f, .TurnSpeed = 2.0f});
+        // The simulated pawn is server-authoritative; the net layer will replicate it.
+        m_Scene->Add<Authority>(pawn, Authority{.Tier = Tier::Server});
 
         // Stream the pawn's mesh in, exactly as a prefab-spawned Primitive resolves.
         ResolveComponents(*m_Scene, pawn, GetAssetManager());
@@ -401,6 +405,28 @@ private:
         m_Scene->Add<Name>(seat, Name{.Value = "Player Seat"});
         m_Scene->Add<PlayerInput>(seat, PlayerInput{});
         m_Scene->Add<Possesses>(seat, Possesses{.Pawn = pawn});
+        // The seat is a client-local view, not replicated.
+        m_Scene->Add<Authority>(seat, Authority{.Tier = Tier::Local});
+
+        // Trail the scene's camera behind the pawn. The rig runs in the View phase, so it
+        // reads the pawn position the movement system finalized this tick.
+        const Entity camera = FindCameraEntity();
+        if (camera != Entity::Null)
+        {
+            m_Scene->Add<CameraFollow>(
+                camera,
+                CameraFollow{.Target = pawn, .Offset = vec3(0.0f, 6.0f, 12.0f), .Damping = 5.0f});
+            // The camera is derived, client-local view state.
+            m_Scene->Add<Authority>(camera, Authority{.Tier = Tier::Local});
+        }
+    }
+
+    // Returns the scene's first camera entity, or Entity::Null if the scene has none.
+    Entity FindCameraEntity() const
+    {
+        Entity found = Entity::Null;
+        m_Scene->Each<Camera>([&found](const Entity entity, Camera&) { found = entity; });
+        return found;
     }
 
     // Configure can recreate the output image, so the ImGui texture and composite
@@ -663,9 +689,11 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
 
     // The control pipeline runs in order: the game-specific control mapping produces
     // Intent, then the engine's generic movement system consumes it. Registration order
-    // is run order, so ControlSystem must precede MovementSystem.
+    // is run order, so ControlSystem must precede MovementSystem. Both are Sim-phase, so
+    // they finish before the View-phase camera rig trails the moved pawn.
     host->Systems.Register<ControlSystem>();
     host->Systems.Register<MovementSystem>();
+    host->Systems.Register<CameraRigSystem>();
 
     // Smoke mode: no window or swapchain, render off-screen and dump — the display-free CI path.
     const bool smoke = std::getenv("HT_SMOKE") != nullptr;

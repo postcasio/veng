@@ -25,6 +25,12 @@ namespace Veng
         registry.Register<Possesses>();
         registry.Register<Mover>();
 
+        // Net-anticipation seam: the ownership annotation and the camera-rig follow
+        // relationship the View-phase rig reads.
+        registry.Register<Tier>();
+        registry.Register<Authority>();
+        registry.Register<CameraFollow>();
+
         // Registering Primitive transitively registers its shape variant and the shape
         // alternatives through the dependency recursion.
         registry.Register<Primitive>();

@@ -53,6 +53,15 @@ namespace
     using SystemA = CountingSystem<1>;
     using SystemB = CountingSystem<2>;
 
+    // A View-phase counterpart to CountingSystem: same call log, but it overrides
+    // GetPhase() to View so the driver runs it after every Sim system.
+    template <int Tag>
+    struct ViewCountingSystem final : SceneSystem
+    {
+        Phase GetPhase() const override { return Phase::View; }
+        void OnUpdate(Scene&, f32, const SystemContext&) override { g_UpdateOrder.push_back(Tag); }
+    };
+
     TypeRegistry MakeRegistry()
     {
         return TypeRegistry{};
@@ -143,4 +152,56 @@ TEST_CASE("SceneSimulation drives Start/Update/Stop on each system in registrati
         CHECK(g_UpdateOrder[i * 2] == 1);
         CHECK(g_UpdateOrder[i * 2 + 1] == 2);
     }
+}
+
+TEST_CASE("Update runs all Sim systems before all View systems, registration order within each")
+{
+    g_UpdateOrder.clear();
+
+    TypeRegistry types = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // Interleave registration to prove the partition is by phase, not by position: a View
+    // system registered before a Sim system still runs after it. Sim tags 1/2, View tags 3/4.
+    SystemRegistry registry;
+    registry.Register<ViewCountingSystem<3>>();
+    registry.Register<SystemA>();
+    registry.Register<ViewCountingSystem<4>>();
+    registry.Register<SystemB>();
+
+    SceneSimulation sim(registry);
+    ContextStorage storage;
+    sim.Update(*scene, 0.016f, storage.Make());
+
+    // Sim phase first in registration order (1, 2), then View phase in registration order (3, 4).
+    REQUIRE(g_UpdateOrder.size() == 4);
+    CHECK(g_UpdateOrder[0] == 1);
+    CHECK(g_UpdateOrder[1] == 2);
+    CHECK(g_UpdateOrder[2] == 3);
+    CHECK(g_UpdateOrder[3] == 4);
+}
+
+TEST_CASE("A Sim-default system ticks unchanged when a View system is present")
+{
+    SystemA::Reset();
+    g_UpdateOrder.clear();
+
+    TypeRegistry types = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(types);
+
+    SystemRegistry registry;
+    registry.Register<SystemA>();
+    registry.Register<ViewCountingSystem<3>>();
+
+    SceneSimulation sim(registry);
+    ContextStorage storage;
+
+    constexpr int UpdateCount = 2;
+    for (int i = 0; i < UpdateCount; ++i)
+    {
+        sim.Update(*scene, 0.016f, storage.Make());
+    }
+
+    // The Sim-default SystemA ticks once per Update exactly as before the phase split.
+    CHECK(SystemA::Updates == UpdateCount);
 }

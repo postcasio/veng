@@ -296,6 +296,52 @@ namespace Veng
         /// @brief Look/turn speed scaling the Intent's look delta, in radians per unit.
         f32 TurnSpeed = 2.0f;
     };
+
+    /// @brief Who simulates and owns an entity: the ownership tier of an Authority.
+    ///
+    /// The minimal set ahead of a net layer. Integer values are stable — persisted in
+    /// prefabs. A net layer that introduces predicted or remote ownership extends the
+    /// enum; the two tiers here commit to no replication strategy.
+    enum class Tier : u32
+    {
+        /// @brief Server-authoritative: the replicated, deterministic owner.
+        Server = 0,
+        /// @brief Client-local: never replicated, derived per client (view entities).
+        Local = 1,
+    };
+
+    /// @brief Ownership annotation marking who simulates an entity, ahead of the net layer.
+    ///
+    /// Threaded onto entities with sensible defaults (authored entities are Server;
+    /// client-local view entities like cameras are Local) and read by nothing in the
+    /// runtime — its consumer is the future net layer. It is cheap to thread now and
+    /// expensive to retrofit across every spawn site later, so the defaulting discipline
+    /// is locked in early. It commits to no replication strategy.
+    struct Authority
+    {
+        /// @brief The ownership tier.
+        Tier Tier{Tier::Server};
+        /// @brief Owning connection/player id; meaning is net-layer policy, 0 by default.
+        u32 Owner = 0;
+    };
+
+    /// @brief Camera-rig follow relationship: the target a camera entity trails and how.
+    ///
+    /// Read by the View-phase camera rig: each tick it reads the target's world Transform
+    /// and writes the camera entity's Transform to trail it by Offset (the target's local
+    /// frame), optionally smoothed by Damping. Target is a reflected Entity reference, so
+    /// it remaps on prefab spawn like any intra-prefab reference. Because the rig runs in
+    /// the View phase, the produced camera pose is purely local — never authoritative,
+    /// never on the wire.
+    struct CameraFollow
+    {
+        /// @brief The entity whose world Transform the camera trails, or Entity::Null for no follow.
+        Entity Target = Entity::Null;
+        /// @brief Position offset from the target, expressed in the target's local frame.
+        vec3 Offset{0.0f, 5.0f, 10.0f};
+        /// @brief Exponential-smoothing rate per second; 0 snaps the camera to the target each tick.
+        f32 Damping = 0.0f;
+    };
 }
 
 VE_LEAF(::Veng::LightType, 0x6B1D62EF4B5A16ULL, FieldClass::Enum);
@@ -409,4 +455,17 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::Mover, 0x7774F1C2B00DE07EULL)
 VE_FIELD(MoveSpeed, .DisplayName = "Move Speed", .Min = 0.0)
 VE_FIELD(TurnSpeed, .DisplayName = "Turn Speed", .Min = 0.0)
+VE_REFLECT_END();
+
+VE_LEAF(::Veng::Tier, 0x45470D3410320AB9ULL, FieldClass::Enum);
+
+VE_REFLECT(::Veng::Authority, 0xA934C4B9009D7735ULL)
+VE_FIELD(Tier, .DisplayName = "Tier")
+VE_FIELD(Owner, .DisplayName = "Owner")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::CameraFollow, 0xF8BD924F0A0F9DB0ULL)
+VE_FIELD(Target, .DisplayName = "Target")
+VE_FIELD(Offset, .DisplayName = "Offset")
+VE_FIELD(Damping, .DisplayName = "Damping", .Min = 0.0)
 VE_REFLECT_END();

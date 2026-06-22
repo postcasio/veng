@@ -19,9 +19,22 @@ namespace Veng
 
     void SceneSimulation::Update(Scene& scene, f32 delta, const SystemContext& context)
     {
+        // Two partitioned passes over the registered systems: the deterministic Sim
+        // phase finishes before any View system derives presentation from it, so a
+        // camera rig reads pawn state the movement system already finalized this tick.
         for (const Unique<SceneSystem>& system : m_Systems)
         {
-            system->OnUpdate(scene, delta, context);
+            if (system->GetPhase() == SceneSystem::Phase::Sim)
+            {
+                system->OnUpdate(scene, delta, context);
+            }
+        }
+        for (const Unique<SceneSystem>& system : m_Systems)
+        {
+            if (system->GetPhase() == SceneSystem::Phase::View)
+            {
+                system->OnUpdate(scene, delta, context);
+            }
         }
     }
 

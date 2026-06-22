@@ -39,6 +39,7 @@ add_library(veng SHARED
         src/Reflection/Serialize.cpp
         src/Scene/BuiltinTypes.cpp
         src/Scene/Camera.cpp
+        src/Scene/CameraRig.cpp
         src/Scene/ComponentPool.cpp
         src/Scene/Movement.cpp
         src/Scene/Resolve.cpp

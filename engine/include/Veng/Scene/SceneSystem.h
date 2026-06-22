@@ -32,8 +32,30 @@ namespace Veng
     class SceneSystem
     {
     public:
+        /// @brief The tick pass a system runs in: deterministic simulation, or client-local view derivation.
+        ///
+        /// Sim systems advance replicable game state (control, movement, rules); View
+        /// systems derive purely local presentation from finalized Sim state (a camera
+        /// rig, blends, shake) and are never authoritative or on the wire. A
+        /// SceneSimulation runs all Sim systems before all View systems each tick, so a
+        /// View system reads the state the Sim phase finalized this tick.
+        enum class Phase
+        {
+            /// @brief Deterministic, replicable simulation; runs first each tick.
+            Sim,
+            /// @brief Client-local view derivation; runs after every Sim system each tick.
+            View,
+        };
+
         /// @brief Virtual destructor; systems are owned through SceneSystem pointers.
         virtual ~SceneSystem() = default;
+
+        /// @brief Returns the tick pass this system runs in.
+        ///
+        /// Defaults to Phase::Sim, so a system is part of the deterministic simulation
+        /// unless it overrides this to Phase::View.
+        /// @return The system's phase.
+        [[nodiscard]] virtual Phase GetPhase() const { return Phase::Sim; }
 
         /// @brief Called once when play/simulation begins, before the first OnUpdate.
         ///
