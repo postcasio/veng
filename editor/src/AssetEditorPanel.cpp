@@ -62,16 +62,22 @@ namespace VengEditor
                 UI::StyleVar(UI::StyleVarId::WindowPadding, vec2(0, 0));
             if (auto window = UI::Window(GetTitle(), open))
             {
-                // Build the split once, the first frame the node is live (or after a
-                // layout reset clears it).
-                if (!m_LayoutBuilt || ImGui::DockBuilderGetNode(dockspaceId) == nullptr)
+                // Build the default split only when no layout exists yet: a fresh node
+                // (first run) or one DockSpace auto-created empty. A layout restored from
+                // imgui.ini is non-empty and is left untouched, so the user's docking
+                // survives a restart. The build needs the host window's real content
+                // size, which is degenerate the first frame an editor opened during
+                // OnInitialize draws; defer until it is valid rather than baking a
+                // zero-size split whose children fail to dock.
+                const ImGuiDockNode* node = ImGui::DockBuilderGetNode(dockspaceId);
+                const vec2 avail = ImGui::GetContentRegionAvail();
+                if ((node == nullptr || node->IsEmpty()) && avail.x > 0.0f && avail.y > 0.0f)
                 {
                     ImGui::DockBuilderRemoveNode(dockspaceId);
                     ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
-                    ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetContentRegionAvail());
+                    ImGui::DockBuilderSetNodeSize(dockspaceId, avail);
                     BuildDefaultLayout(dockspaceId);
                     ImGui::DockBuilderFinish(dockspaceId);
-                    m_LayoutBuilt = true;
                 }
 
                 OnUI();

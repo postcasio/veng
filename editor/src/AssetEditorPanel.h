@@ -50,7 +50,8 @@ namespace VengEditor
 
         /// @brief Builds the initial split layout of the child windows.
         ///
-        /// Called once, the first frame the dockspace exists. The subclass splits
+        /// Called only when the dockspace has no layout to restore — the first run, or
+        /// after a layout reset — never when imgui.ini supplied one. The subclass splits
         /// @p dockspaceId into nodes and docks each child with DockChildWindow.
         /// @param dockspaceId  The editor's dock node id to partition.
         virtual void BuildDefaultLayout(Veng::u32 dockspaceId) = 0;
@@ -73,7 +74,5 @@ namespace VengEditor
         Veng::string m_DockSpaceName;
         /// @brief The child panels, in add order.
         Veng::vector<Child> m_Children;
-        /// @brief False until BuildDefaultLayout has run for the live dockspace.
-        bool m_LayoutBuilt = false;
     };
 }
