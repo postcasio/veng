@@ -70,6 +70,9 @@ namespace Veng::Renderer
         TextureHandle ImGuiHandle;
         SamplerHandle SamplerHandle;
 
+        // Swapchain format the pipeline is built against; rebuilt when it changes.
+        Format SwapChainFormat;
+
         // Final display-transfer encoding for the swapchain's color space.
         u32 EncodeMode;
         f32 PaperWhiteNits;
@@ -129,19 +132,8 @@ namespace Veng::Renderer
                     },
             });
 
-        m_Impl->Pipeline = GraphicsPipeline::Create(
-            info.Context,
-            {
-                .Name = "SwapChain Composite Pipeline",
-                .ColorAttachments = {{.Format = info.SwapChainFormat}},
-                .PipelineLayout = m_Impl->Layout,
-                .ShaderStages =
-                    {
-                        {.Stage = ShaderStage::Vertex, .Module = m_Impl->CompositeVS.Get()->Module},
-                        {.Stage = ShaderStage::Fragment,
-                         .Module = m_Impl->CompositeFS.Get()->Module},
-                    },
-            });
+        m_Impl->SwapChainFormat = info.SwapChainFormat;
+        RebuildPipeline(info.SwapChainFormat);
 
         // View over the ImGui layer's rendered output, blended over the scene.
         m_Impl->ImGuiView =
@@ -162,6 +154,35 @@ namespace Veng::Renderer
         bindless.Release(m_Impl->SceneHandle);
         bindless.Release(m_Impl->ImGuiHandle);
         bindless.Release(m_Impl->SamplerHandle);
+    }
+
+    void SwapChainCompositePass::RebuildPipeline(Format swapChainFormat)
+    {
+        m_Impl->Pipeline = GraphicsPipeline::Create(
+            m_Impl->Context,
+            {
+                .Name = "SwapChain Composite Pipeline",
+                .ColorAttachments = {{.Format = swapChainFormat}},
+                .PipelineLayout = m_Impl->Layout,
+                .ShaderStages =
+                    {
+                        {.Stage = ShaderStage::Vertex, .Module = m_Impl->CompositeVS.Get()->Module},
+                        {.Stage = ShaderStage::Fragment,
+                         .Module = m_Impl->CompositeFS.Get()->Module},
+                    },
+            });
+    }
+
+    void SwapChainCompositePass::SetSwapChainTarget(Format swapChainFormat,
+                                                    DisplayColorSpace colorSpace)
+    {
+        m_Impl->EncodeMode = EncodeModeFor(colorSpace);
+
+        if (swapChainFormat != m_Impl->SwapChainFormat)
+        {
+            m_Impl->SwapChainFormat = swapChainFormat;
+            RebuildPipeline(swapChainFormat);
+        }
     }
 
     void SwapChainCompositePass::SetSceneSource(const Ref<ImageView>& sceneSource)

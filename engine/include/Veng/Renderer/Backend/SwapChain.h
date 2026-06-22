@@ -60,7 +60,11 @@ namespace Veng::Renderer
         SwapChain(Context& context, const SwapChainInfo& info);
         ~SwapChain();
 
-        /// @brief Destroys and recreates the swapchain after a resize.
+        /// @brief Destroys and recreates the swapchain after a resize or surface change.
+        ///
+        /// Re-resolves the surface format against the device's currently reported formats
+        /// (a window moved to a display with different HDR support changes them), so the
+        /// resolved display mode and color space track the surface. Logs when they change.
         void RenderExtentChanged();
 
         [[nodiscard]] u32 GetWidth() const { return m_Width; }
@@ -125,6 +129,7 @@ namespace Veng::Renderer
         u32 m_MaxImageCount;
         u32 m_ImageCount{};
         u32 m_CurrentImageIndex = 0;
+        DisplayMode m_RequestedMode;
         vk::Format m_Format;
         vk::ColorSpaceKHR m_ColorSpace;
         DisplayMode m_DisplayMode;
@@ -133,6 +138,10 @@ namespace Veng::Renderer
         vector<Ref<Image>> m_Images;
         vector<Ref<ImageView>> m_ImageViews;
         vector<std::function<void()>> m_OnInvalidated;
+
+        /// @brief Re-queries device surface support and resolves the format/color space
+        ///        for the requested mode into the member state.
+        void ResolveSurfaceFormat();
 
         void Dispose();
     };

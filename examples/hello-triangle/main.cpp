@@ -311,10 +311,18 @@ protected:
                 .ColorSpace = context.GetActiveDisplayColorSpace(),
             });
 
-            // Swapchain resize invalidates the composite graph's baked extent; SceneRenderer
+            // Swapchain recreation invalidates the composite graph's baked extent and may
+            // re-negotiate the surface's format/color space (a window moved to a display with
+            // different HDR support); re-target the composite before recompiling. SceneRenderer
             // keeps a fixed internal extent so its output stays valid.
-            context.AddSwapChainInvalidationCallback([this]
-                                                     { m_CompositeGraph = BuildCompositeGraph(); });
+            context.AddSwapChainInvalidationCallback(
+                [this]
+                {
+                    const Renderer::Context& ctx = GetRenderContext();
+                    m_Composite->SetSwapChainTarget(ctx.GetSwapChainFormat(),
+                                                    ctx.GetActiveDisplayColorSpace());
+                    m_CompositeGraph = BuildCompositeGraph();
+                });
         }
 
         // Starting the game: the level spawns its world into a fresh scene, builds the

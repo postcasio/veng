@@ -87,6 +87,16 @@ namespace Veng::Renderer
         /// @param sceneSource  The new scene output view from SceneRenderer::GetOutput().
         void SetSceneSource(const Ref<ImageView>& sceneSource);
 
+        /// @brief Re-targets the composite at a re-negotiated swapchain format and color space.
+        ///
+        /// Updates the display-transfer encoding and, when the format changed, rebuilds the
+        /// composite pipeline. Call from the swapchain-invalidation callback (the surface can
+        /// switch color space when a window moves to a display with different HDR support),
+        /// before recompiling the graph. A no-op when neither changed.
+        /// @param swapChainFormat  The current swapchain format, from Context::GetSwapChainFormat().
+        /// @param colorSpace       The resolved color space, from Context::GetActiveDisplayColorSpace().
+        void SetSwapChainTarget(Format swapChainFormat, DisplayColorSpace colorSpace);
+
         /// @brief Adds the fullscreen composite pass to graph and compiles it.
         ///
         /// The recompile seam on swapchain resize.
@@ -107,6 +117,10 @@ namespace Veng::Renderer
 
     private:
         explicit SwapChainCompositePass(const SwapChainCompositePassInfo& info);
+
+        /// @brief Builds the composite graphics pipeline for the given swapchain format.
+        /// @param swapChainFormat  Color format the composite pass writes.
+        void RebuildPipeline(Format swapChainFormat);
 
         /// @brief Implementation detail; defined in SwapChainCompositePass.cpp.
         struct Impl;

@@ -228,27 +228,32 @@ namespace Veng::Renderer
         }
     }
 
-    SwapChain::SwapChain(Context& context, const SwapChainInfo& info)
-        : m_Context(context), m_Width(info.Width), m_Height(info.Height),
-          m_MaxImageCount(info.MaxImageCount)
+    void SwapChain::ResolveSurfaceFormat()
     {
         auto& contextNative = m_Context.GetNative();
         const auto support = contextNative.QuerySwapChainSupport(contextNative.PhysicalDevice);
-        const FormatCandidate selected = SelectSurfaceFormat(info.Mode, support.Formats);
+        const FormatCandidate selected = SelectSurfaceFormat(m_RequestedMode, support.Formats);
 
         m_Format = selected.Format;
         m_ColorSpace = selected.ColorSpace;
         m_DisplayMode = selected.Mode;
         m_DisplayColorSpace = selected.Display;
+    }
 
-        if (info.Mode != DisplayMode::Auto && selected.Mode != info.Mode)
+    SwapChain::SwapChain(Context& context, const SwapChainInfo& info)
+        : m_Context(context), m_Width(info.Width), m_Height(info.Height),
+          m_MaxImageCount(info.MaxImageCount), m_RequestedMode(info.Mode)
+    {
+        ResolveSurfaceFormat();
+
+        if (m_RequestedMode != DisplayMode::Auto && m_DisplayMode != m_RequestedMode)
         {
             Log::Warn("Requested display mode {} is unavailable; using {}",
-                      DisplayModeName(info.Mode), DisplayModeName(selected.Mode));
+                      DisplayModeName(m_RequestedMode), DisplayModeName(m_DisplayMode));
         }
         else
         {
-            Log::Info("Swapchain display mode: {}", DisplayModeName(selected.Mode));
+            Log::Info("Swapchain display mode: {}", DisplayModeName(m_DisplayMode));
         }
 
         Initialize();
@@ -277,8 +282,18 @@ namespace Veng::Renderer
 
     void SwapChain::RenderExtentChanged()
     {
+        const vk::Format previousFormat = m_Format;
+        const DisplayColorSpace previousColorSpace = m_DisplayColorSpace;
+
+        ResolveSurfaceFormat();
+
         Dispose();
         Initialize();
+
+        if (m_Format != previousFormat || m_DisplayColorSpace != previousColorSpace)
+        {
+            Log::Info("Swapchain re-negotiated display mode: {}", DisplayModeName(m_DisplayMode));
+        }
     }
 
     vk::Extent2D SwapChain::GetSurfaceExtent(Window& window,
