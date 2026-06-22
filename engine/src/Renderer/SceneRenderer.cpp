@@ -1329,7 +1329,7 @@ namespace Veng::Renderer
             m_Context, {
                            .Name = "SceneRenderer SSAO Layout",
                            .PushConstantRanges = {PushConstantRange{
-                               .Offset = 0, .Size = 32, .Stages = ShaderStage::Fragment}},
+                               .Stages = ShaderStage::Fragment, .Offset = 0, .Size = 32}},
                        });
         m_SsaoPipeline =
             MakePipeline("SceneRenderer SSAO Pipeline", m_SsaoLayout, ssaoFs, SsaoFormat);
@@ -2216,17 +2216,17 @@ namespace Veng::Renderer
                 // The candidate id arrives as an instance-rate attribute on binding 1,
                 // exactly as the surface pipeline reads it.
                 .InstanceCandidateId = true,
-                // Test against the populated g-buffer depth without writing it, so only the
-                // visible surface's velocity survives.
-                .DepthTestEnable = true,
-                .DepthWriteEnable = false,
-                .DepthCompareOp = CompareOp::LessOrEqual,
                 .PipelineLayout = m_VelocityLayout,
                 .ShaderStages =
                     {
                         {.Stage = ShaderStage::Vertex, .Module = vs->Get()->Module},
                         {.Stage = ShaderStage::Fragment, .Module = fs->Get()->Module},
                     },
+                // Test against the populated g-buffer depth without writing it, so only the
+                // visible surface's velocity survives.
+                .DepthTestEnable = true,
+                .DepthWriteEnable = false,
+                .DepthCompareOp = CompareOp::LessOrEqual,
             });
     }
 
@@ -2654,12 +2654,12 @@ namespace Veng::Renderer
             .DepthHandle = m_DepthHandle,
             .Hdr = lightingTargetId,
             .HdrHandle = m_HdrHandle,
+            .Ssao = m_SsaoId,
+            .SsaoHandle = ssaoHandle,
             .BloomMip0 = bloomActive ? m_BloomChainId.Level(0) : ResourceId{},
             .BloomMip0Handle = m_BloomMip0Handle,
             .Velocity = velocityId,
             .VelocityHandle = m_VelocityHandle,
-            .Ssao = m_SsaoId,
-            .SsaoHandle = ssaoHandle,
             .SamplerHandle = m_SamplerHandle,
             .ShadowMap = shadowId,
             .ShadowView = shadowAtlasView,

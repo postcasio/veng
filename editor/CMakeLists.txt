@@ -53,6 +53,12 @@ target_link_libraries(veng_editor PUBLIC veng::veng)
 target_compile_options(veng_editor PRIVATE -fno-exceptions)
 target_compile_definitions(veng_editor PRIVATE VE_BUILD_SHARED)
 
+# Auto-export all symbols on MSVC so the editor exe links against this shared library
+# without the VE_API annotation being complete — mirrors macOS/Linux default visibility.
+if (MSVC)
+    set_target_properties(veng_editor PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif ()
+
 # nlohmann/json — the texture editor reads/writes per-asset .tex.json sources and
 # the asset source index parses the pack manifest. Used only in .cpp (never in a
 # public header), so it is a PRIVATE dependency: it does not leak into editor

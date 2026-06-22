@@ -388,7 +388,9 @@ int main(int argc, char** argv)
 {
     InstallStderrSink();
     std::signal(SIGABRT, OnFatalSignal); // std::abort (default build)
+#ifdef SIGTRAP
     std::signal(SIGTRAP, OnFatalSignal); // __builtin_debugtrap (clang, VE_DEBUG)
+#endif
     std::signal(SIGILL, OnFatalSignal);  // __builtin_trap (gcc, VE_DEBUG)
 
     if (argc < 2)
