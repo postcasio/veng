@@ -9,6 +9,7 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneSystem.h>
+#include <Veng/InputRouter.h>
 #include <Veng/Time.h>
 #include <Veng/UI/UI.h>
 #include <Veng/Vendor/ImGuiInternal.h>
@@ -25,9 +26,9 @@ namespace VengEditor
                                          AssetManager& assets, ImGuiLayer& imgui,
                                          TypeRegistry& types, EditorRegistry& editors,
                                          const AssetSourceIndex& sources, Input& input,
-                                         SystemRegistry& systems)
+                                         InputRouter& router, SystemRegistry& systems)
         : PrefabEditorPanel(id, fmt::format("Prefab 0x{:X}", id.Value), context, assets, imgui,
-                            types, editors, sources, input, systems)
+                            types, editors, sources, input, router, systems)
     {
         AddSceneEditingChildren(context, imgui, editors, sources);
     }
@@ -37,9 +38,9 @@ namespace VengEditor
                                          ImGuiLayer& imgui, TypeRegistry& types,
                                          EditorRegistry& /*editors*/,
                                          const AssetSourceIndex& /*sources*/, Input& input,
-                                         SystemRegistry& systems)
+                                         InputRouter& router, SystemRegistry& systems)
         : m_Id(worldPrefab), m_Title(std::move(title)), m_Assets(assets), m_Input(input),
-          m_Systems(systems)
+          m_Router(router), m_Systems(systems)
     {
         m_Scene = Scene::Create(types);
         m_Context.Scene = m_Scene.get();
@@ -52,8 +53,8 @@ namespace VengEditor
                                                     EditorRegistry& editors,
                                                     const AssetSourceIndex& sources)
     {
-        auto viewport =
-            CreateUnique<SceneViewportPanel>(context, m_Assets, imgui, m_Context, m_Input, *this);
+        auto viewport = CreateUnique<SceneViewportPanel>(context, m_Assets, imgui, m_Context,
+                                                         m_Input, m_Router, *this);
         m_Viewport = viewport.get();
         auto explorer = CreateUnique<PrefabExplorerPanel>(m_Context);
         auto inspector = CreateUnique<InspectorPanel>(m_Assets, editors, sources, m_Context);
@@ -98,6 +99,10 @@ namespace VengEditor
                                : CreateUnique<SceneSimulation>(m_Systems);
         }
         m_Simulation->Start(*m_PlayScene, SystemContext{.Assets = m_Assets, .Input = m_Input});
+
+        // The running game owns input: capture the cursor in the viewport until the release
+        // chord (or window-focus loss) pops it.
+        CaptureForPlay();
     }
 
     void PrefabEditorPanel::Stop()
@@ -112,6 +117,7 @@ namespace VengEditor
             m_Simulation->Stop(*m_PlayScene, SystemContext{.Assets = m_Assets, .Input = m_Input});
         }
 
+        ReleaseFromPlay();
         m_Context.Clear();
         m_PlayScene.reset();
         m_Context.Scene = m_Scene.get();
@@ -123,6 +129,8 @@ namespace VengEditor
         if (m_Context.Play == PlayState::Playing)
         {
             m_Context.Play = PlayState::Paused;
+            // A paused game is not consuming input; free the cursor for editor interaction.
+            ReleaseFromPlay();
         }
     }
 
@@ -131,6 +139,23 @@ namespace VengEditor
         if (m_Context.Play == PlayState::Paused)
         {
             m_Context.Play = PlayState::Playing;
+            CaptureForPlay();
+        }
+    }
+
+    void PrefabEditorPanel::CaptureForPlay()
+    {
+        if (!m_Router.IsGameplayFocused())
+        {
+            m_Router.PushFocus(InputFocus::Gameplay);
+        }
+    }
+
+    void PrefabEditorPanel::ReleaseFromPlay()
+    {
+        if (m_Router.IsGameplayFocused())
+        {
+            m_Router.PopFocus();
         }
     }
 

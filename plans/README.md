@@ -537,6 +537,16 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   are the **next gate**, named [future area 4](future/README.md#4-event--input-systems)
   increments behind the seams this planset establishes.
 
+- **[planset-30](planset-30/README.md)** — event-routed input with a focus stack. The first
+  half of [future area 4](future/README.md#4-event--input-systems): the `Window` becomes the
+  single typed-`Event` source, an **`InputRouter`** routes each event to consumers by a **focus
+  stack**, and `Input` becomes an event-fed snapshot rather than a global poller. **ImGui is one
+  routed consumer** (backend callbacks off; the router forwards under UI focus), so pushing
+  **gameplay focus** (the editor's Play, the shipped sample) makes the running game the exclusive
+  input owner and captures the cursor until **Shift+Esc** (or window-focus loss) releases it —
+  input is finally restricted to the viewport while a game runs. **Multi-seat input routing** and
+  the **networking layer** stay the named next area-4 increments, now built on this router.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
@@ -545,7 +555,8 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   emitter generating the fragment source), and the **editor's scene editor** (area 6,
   sub-area D — its gates met by planset-10/11/12/14/15) are the **prioritized** next
   areas, whichever the next planset takes up. The rest of the remaining work is the
-  **event/input** systems (area 4) and the named still-future increments of the areas
+  **multi-seat input routing + networking** half of area 4 (its event-routing core landed in
+  planset-30) and the named still-future increments of the areas
   done in part (hot-reload; the task graph; the systems framework +
   `ShaderInterface`/`MaterialField` unification; the über-pipeline batteries — now with
   PostProcess materials as the authorable-effect mechanism — + typed lights; render-graph

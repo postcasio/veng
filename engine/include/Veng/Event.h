@@ -27,12 +27,26 @@ namespace Veng
         WindowClose,
         /// @brief The window was resized.
         WindowResize,
-        /// @brief The window gained focus.
+        /// @brief The window gained or lost focus.
         WindowFocus,
-        /// @brief The window lost focus.
-        WindowLostFocus,
         /// @brief The window was moved.
-        WindowMoved
+        WindowMoved,
+        /// @brief A key transitioned to the pressed state.
+        KeyPressed,
+        /// @brief A key transitioned to the released state.
+        KeyReleased,
+        /// @brief A Unicode codepoint was produced by text input.
+        KeyTyped,
+        /// @brief A mouse button transitioned to the pressed state.
+        MouseButtonPressed,
+        /// @brief A mouse button transitioned to the released state.
+        MouseButtonReleased,
+        /// @brief The cursor moved to a new position.
+        MouseMoved,
+        /// @brief The scroll wheel moved.
+        MouseScrolled,
+        /// @brief The cursor entered or left the window's content area.
+        MouseEntered
     };
 
     /// @brief Abstract base for all engine events.

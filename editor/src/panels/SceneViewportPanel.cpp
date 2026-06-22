@@ -4,6 +4,7 @@
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/ImGui/ImGuiTexture.h>
 #include <Veng/Input.h>
+#include <Veng/InputRouter.h>
 #include <Veng/Math/AABB.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
@@ -24,9 +25,9 @@ namespace VengEditor
 
     SceneViewportPanel::SceneViewportPanel(Renderer::Context& context, AssetManager& assets,
                                            ImGuiLayer& imgui, PrefabEditContext& ctx, Input& input,
-                                           PrefabEditorPanel& document)
+                                           InputRouter& router, PrefabEditorPanel& document)
         : m_Context(context), m_Assets(assets), m_ImGui(imgui), m_Ctx(ctx), m_Input(input),
-          m_Document(document)
+          m_Router(router), m_Document(document)
     {
         m_RenderExtent = context.GetInternalRenderExtent();
 
@@ -303,6 +304,15 @@ namespace VengEditor
         }
     }
 
+    void SceneViewportPanel::DrawCaptureNotice()
+    {
+        const UI::Theme& theme = UI::GetTheme();
+        if (auto banner = UI::ViewportOverlay("##capture-notice", UI::OverlayAnchor::TopCenter))
+        {
+            UI::TextColored(theme.Accent, "Mouse captured  —  Shift+Esc to release");
+        }
+    }
+
     void SceneViewportPanel::OnUI()
     {
         const vec2 available = UI::ContentRegionAvail();
@@ -314,6 +324,21 @@ namespace VengEditor
         // Camera gating: the image item drives hover; the window owns interaction focus.
         const bool hovered = UI::ItemHovered();
         const bool focused = UI::WindowFocused();
+
+        // Play mouse capture is the router's gameplay focus (pushed by the document on Play,
+        // popped by Shift+Esc or window-focus loss). Clicking the viewport while playing
+        // re-grabs it after a release; recompute focus after so the push takes effect this frame.
+        if (m_Ctx.IsPlaying() && !m_Router.IsGameplayFocused() && hovered &&
+            m_Input.WasMouseButtonPressed(MouseButton::Left))
+        {
+            m_Router.PushFocus(InputFocus::Gameplay);
+        }
+        const bool gameplayFocused = m_Router.IsGameplayFocused();
+
+        if (gameplayFocused)
+        {
+            UI::ItemBorder(UI::GetTheme().Accent, 3.0f);
+        }
 
         EditorCameraInput in;
         in.Hovered = hovered;
@@ -334,16 +359,30 @@ namespace VengEditor
         in.FrameSelection = (hovered || focused) && m_Input.WasKeyPressed(Key::F);
         in.Aspect = static_cast<f32>(m_RenderExtent.x) / static_cast<f32>(m_RenderExtent.y);
 
-        const bool wantsCapture = m_Camera.Update(in, Time::GetDeltaTime());
-        m_Input.SetMouseCaptured(wantsCapture);
-        m_View = m_Camera.GetView();
-
-        if (in.FrameSelection)
+        // While the game owns input the editor camera stands down (the router already holds
+        // the cursor captured); otherwise the camera reads input and drives its own transient
+        // navigation cursor lock for the RMB-fly drag.
+        if (gameplayFocused)
         {
-            FrameSelection();
             m_View = m_Camera.GetView();
+        }
+        else
+        {
+            const bool navCursorLock = m_Camera.Update(in, Time::GetDeltaTime());
+            m_Input.SetMouseCaptured(navCursorLock);
+            m_View = m_Camera.GetView();
+
+            if (in.FrameSelection)
+            {
+                FrameSelection();
+                m_View = m_Camera.GetView();
+            }
         }
 
         DrawToolbar();
+        if (gameplayFocused)
+        {
+            DrawCaptureNotice();
+        }
     }
 }

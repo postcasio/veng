@@ -25,7 +25,6 @@ int main(const int argc, char** argv)
                     {
                         .Extent = {1600, 900},
                         .Resizable = true,
-                        .EventCallback = [](Veng::Event&) {},
                         .Title = "veng — Editor",
                         .CaptureMouse = false,
                     },

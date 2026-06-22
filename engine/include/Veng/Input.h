@@ -105,33 +105,45 @@ namespace Veng
     };
 
     class Window;
+    class Event;
 
     /// @brief Frame-coherent input service, always present, updated once per frame.
     ///
     /// Mirrors Time: a per-frame service the run loop pumps before OnUpdate/OnRender.
-    /// It snapshots current and previous key/button state each frame so callers get
-    /// per-frame edges (WasKeyPressed/WasKeyReleased) and deltas (mouse + scroll) on
-    /// top of the level queries the Window exposes. It is driven from the single render
-    /// thread like the rest of veng. The borrowed window is nullable: with no window
-    /// (a headless run) Update leaves the zero-initialized state, so a headless reading
-    /// is the neutral all-zeros input a windowed app produces with nothing pressed.
+    /// It holds current and previous key/button state plus per-frame mouse/scroll deltas,
+    /// so callers get per-frame edges (WasKeyPressed/WasKeyReleased) and deltas. State is
+    /// **event-fed, not polled**: BeginFrame rolls the snapshot forward and the InputRouter
+    /// applies this frame's routed events via ApplyEvent. It is driven from the single
+    /// render thread like the rest of veng. The borrowed window is nullable: with no window
+    /// (a headless run) no events arrive, so the snapshot stays the neutral all-zeros input
+    /// a windowed app produces with nothing pressed.
+    ///
+    /// Because the router applies only the events routed to it, this snapshot reflects input
+    /// **only while its layer owns focus** — a gameplay-focused snapshot sees the game's
+    /// input exclusively; a UI-focused one sees input the editor camera reads.
     class Input
     {
     public:
         /// @brief Constructs the input service borrowing the given window.
-        /// @param window  Window polled for key/button/mouse state; nullptr for a
-        ///                headless run that reports the neutral all-zeros state. Must
-        ///                outlive this when non-null.
+        /// @param window  Window borrowed for cursor capture; nullptr for a headless run that
+        ///                reports the neutral all-zeros state. Must outlive this when non-null.
         explicit Input(Window* window);
 
-        /// @brief Snapshots input state for the new frame; called once at the top of the frame loop.
+        /// @brief Rolls the snapshot forward for a new frame; called once at the top of the loop.
         ///
-        /// Copies current state to previous, re-polls current key/button/mouse state from
-        /// the window, computes the mouse delta, and consumes the accumulated scroll delta.
-        /// With no window it leaves the zero-initialized state untouched (nothing pressed,
-        /// no mouse/scroll delta).
-        /// @pre Must run before OnUpdate/OnRender so per-frame edges and deltas are current.
-        void Update();
+        /// Copies current key/button state to previous and clears the per-frame mouse and
+        /// scroll deltas, so the edges and deltas the router then applies via ApplyEvent are
+        /// this frame's. With no events applied the state stays neutral (nothing pressed).
+        /// @pre Must run before the event drain so ApplyEvent writes into a fresh frame.
+        void BeginFrame();
+
+        /// @brief Folds one routed input event into the current snapshot.
+        ///
+        /// Engine-internal: the InputRouter calls this for each key/mouse event routed to
+        /// this snapshot. Non-input events are ignored. Out-of-range key/button codes are
+        /// guarded, never an out-of-bounds write.
+        /// @param event  The event to apply.
+        void ApplyEvent(const Event& event);
 
         /// @brief Returns true if the given key is currently held down.
         [[nodiscard]] bool IsKeyDown(Key key) const;
@@ -195,15 +207,13 @@ namespace Veng
 
         /// @brief Mouse position this frame, in window-space pixels.
         vec2 m_MousePosition = {0, 0};
-        /// @brief Mouse position last frame, in window-space pixels.
-        vec2 m_PreviousMousePosition = {0, 0};
-        /// @brief Mouse position change since last frame.
+        /// @brief Accumulated mouse motion this frame, summed across this frame's move events.
         vec2 m_MouseDelta = {0, 0};
 
-        /// @brief Scroll delta consumed from the window this frame.
+        /// @brief Scroll delta accumulated this frame.
         vec2 m_ScrollDelta = {0, 0};
 
-        /// @brief True until the first Update, so the opening frame reports a zero mouse delta.
-        bool m_FirstUpdate = true;
+        /// @brief False until the first move event seeds m_MousePosition, so the opening move reports no delta.
+        bool m_HavePosition = false;
     };
 }

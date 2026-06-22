@@ -45,6 +45,10 @@ namespace Veng
             m_ImGuiLayer = ImGuiLayer::Create(*m_Info.ImGui, m_RenderContext, *m_Window);
         }
 
+        // Routes the window's events to ImGui and the Input snapshot by focus. Borrows all
+        // three; the ImGui layer is nullable (UI-free) and the window is nullable (headless).
+        m_InputRouter = CreateUnique<InputRouter>(m_Window.get(), *m_Input, m_ImGuiLayer.get());
+
         OnInitialize();
     }
 
@@ -85,6 +89,9 @@ namespace Veng
 
         OnDispose();
 
+        // The router borrows the window, input, and ImGui layer; drop it before any of them.
+        m_InputRouter.reset();
+
         // Shut ImGui down before the context: its backend, descriptor pool and
         // offscreen target must be released while the device is still alive.
         m_ImGuiLayer.reset();
@@ -115,20 +122,21 @@ namespace Veng
 
         const f32 delta = Time::Update();
 
+        // Roll the input snapshot forward, then poll the window and route this frame's events
+        // through the router (folding into the snapshot, forwarding to ImGui by focus).
+        // Headless borrows no window, so no events arrive and the snapshot stays neutral.
+        m_Input->BeginFrame();
+        if (m_Window)
+        {
+            m_Window->Update();
+            m_Window->DrainEvents([this](Event& event) { m_InputRouter->Dispatch(event); });
+        }
+
+        // After the events are forwarded: ImGui's NewFrame consumes them this frame.
         if (m_ImGuiLayer)
         {
             m_ImGuiLayer->BeginFrame();
         }
-
-        if (m_Window)
-        {
-            m_Window->Update();
-        }
-
-        // After Window::Update polls GLFW events: Input snapshots the fresh key/
-        // button/cursor/scroll state, so per-frame edges and deltas precede OnUpdate.
-        // Headless leaves the neutral all-zeros reading.
-        m_Input->Update();
 
         OnUpdate(delta);
 

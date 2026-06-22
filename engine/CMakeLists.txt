@@ -22,6 +22,7 @@ add_library(veng SHARED
         src/Asset/Loaders/VertexLayoutLoader.cpp
         src/ExecutableDirectory.cpp
         src/Input.cpp
+        src/InputRouter.cpp
         src/Log.cpp
         src/Math/AABB.cpp
         src/Math/BVH.cpp

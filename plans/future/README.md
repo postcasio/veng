@@ -14,9 +14,9 @@ only their **still-future remainder** is kept, plus any delivered capability a
 pending area builds on directly. The substance of this document is the
 **remaining** work: **material domains + shader-graph codegen (area 13)**, the
 editor's scene editor (area 6, sub-area D), **engine-owned material shader header +
-cross-pack Slang includes (area 14)**, **event/input + networking (area 4) — the next
-gate the delivered gameplay layer motivates** — and the named still-future increments of
-the areas done in part (areas 1, 2, 7, 8, 9, 10, 12).
+cross-pack Slang includes (area 14)**, **multi-seat input routing + networking (area 4),
+now that the event-routed input core is delivered** — and the named still-future increments
+of the areas done in part (areas 1, 2, 7, 8, 9, 10, 12).
 
 ### 1. Asset system — remaining: hot-reload
 
@@ -38,12 +38,16 @@ gone — every resource `Create` takes an explicit `Context&`.
 
 ### 4. Event & input systems
 
-**The next gate.** Gameplay now drives the requirements (area 7, planset-29), so this is
-the work the gameplay layer motivates and shapes. Today single-player runs on **one `Veng::Input`
-→ one `PlayerInput`**: one always-present input service fills one per-player snapshot, the
-`Intent` chokepoint and the Sim/View split are in place, and `Authority` is threaded — but
-nothing routes input or replicates state. Two coupled bodies of work sit behind those
-seams:
+**Event routing landed; networking remains.** Gameplay drives the requirements (area 7,
+planset-29). The **event-routed input core is delivered**: the `Window` is the single event
+source (typed `Event` queue), an **`InputRouter`** routes each event to consumers by a
+**focus stack** (ImGui forwarded to under UI focus, the `Input` snapshot fed always, gameplay
+focus making the running game the exclusive owner with the cursor captured), and `Input` is an
+event-fed snapshot rather than a global poller. The editor's Play and the shipped sample push
+gameplay focus to own input; Shift+Esc (or window-focus loss) releases it. Today single-player
+still runs on **one `Veng::Input` → one `PlayerInput`**, the `Intent` chokepoint and Sim/View
+split are in place, and `Authority` is threaded — but nothing yet routes input *per seat* or
+replicates state. Two coupled bodies of work sit behind those seams:
 
 - **Multi-seat input routing.** Split-screen and AI-vs-player need input routed *per
   `Viewer`/player* into the right `PlayerInput`, rather than one device feeding one
@@ -56,8 +60,9 @@ seams:
   Intent/Authority/Sim-View structure without dismantling anything, since none of those
   seams reproduces an actor-network object graph.
 
-The pre-gameplay residue stays too: `EventType` declares focus/move events with no
-classes, and the thin key/mouse-button query sites flagged to converge here.
+Multi-seat routing builds directly on the delivered `InputRouter`: it already owns the
+event→consumer routing seam, so per-`Viewer` routing extends it to fan one device (or several)
+into the right `PlayerInput` rather than the single shared snapshot.
 
 ### 5. Unit testing / test infrastructure — DONE (planset-3 + planset-4)
 

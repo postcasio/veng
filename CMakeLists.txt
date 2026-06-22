@@ -346,6 +346,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/barrier_decision.cpp
             tests/unit/render_graph_schedule.cpp
             tests/unit/input_events.cpp
+            tests/unit/input_router.cpp
             tests/unit/light_packing.cpp
             tests/unit/shader_interface.cpp
             tests/unit/transient_allocation.cpp

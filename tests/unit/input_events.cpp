@@ -103,8 +103,8 @@ TEST_CASE("Input: a null window leaves the neutral all-zeros headless state")
     Input input(nullptr);
 
     // Pump several frames: the headless path must keep the zero-initialized state.
-    input.Update();
-    input.Update();
+    input.BeginFrame();
+    input.BeginFrame();
 
     CHECK_FALSE(input.IsKeyDown(Key::Space));
     CHECK_FALSE(input.WasKeyPressed(Key::W));
@@ -125,7 +125,7 @@ TEST_CASE("Input: a null window leaves the neutral all-zeros headless state")
 TEST_CASE("Input: an out-of-range key code is guarded, not an out-of-bounds read")
 {
     Input input(nullptr);
-    input.Update();
+    input.BeginFrame();
 
     // A key code past the bitset bound returns false rather than indexing out of range.
     const auto outOfRange = static_cast<Key>(60000);

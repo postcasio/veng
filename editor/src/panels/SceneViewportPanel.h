@@ -14,6 +14,7 @@ namespace Veng
     class ImGuiLayer;
     class ImGuiTexture;
     class Input;
+    class InputRouter;
     struct LevelRenderSettings;
 
     namespace Renderer
@@ -46,10 +47,11 @@ namespace VengEditor
         /// @param imgui     ImGui layer the render target is registered with.
         /// @param ctx       Shared document context supplying the Scene and selection.
         /// @param input     Frame-coherent input service the editor camera reads.
+        /// @param router    Input router whose gameplay focus captures the mouse during Play.
         /// @param document  Owning document the toolbar drives play state through.
         SceneViewportPanel(Veng::Renderer::Context& context, Veng::AssetManager& assets,
                            Veng::ImGuiLayer& imgui, PrefabEditContext& ctx, Veng::Input& input,
-                           PrefabEditorPanel& document);
+                           Veng::InputRouter& router, PrefabEditorPanel& document);
         ~SceneViewportPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return "Scene Viewport"; }
@@ -76,6 +78,9 @@ namespace VengEditor
         /// @brief Draws the toolbar overlay (play/camera/debug controls) over the viewport image.
         void DrawToolbar();
 
+        /// @brief Draws the centered banner telling the player how to release a captured mouse.
+        void DrawCaptureNotice();
+
         /// @brief Frames the camera on the selected entities, or the whole scene when none are selected.
         void FrameSelection();
 
@@ -84,6 +89,7 @@ namespace VengEditor
         Veng::ImGuiLayer& m_ImGui;
         PrefabEditContext& m_Ctx;
         Veng::Input& m_Input;
+        Veng::InputRouter& m_Router;
         PrefabEditorPanel& m_Document;
 
         Veng::Unique<Veng::Renderer::SceneRenderer> m_SceneRenderer;

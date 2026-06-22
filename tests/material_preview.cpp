@@ -80,7 +80,6 @@ int main()
     const Unique<Window> window = Window::Create({
         .Extent = {640, 480},
         .Resizable = false,
-        .EventCallback = [](Event&) {},
         .Title = "Material Preview Test",
         .CaptureMouse = false,
     });

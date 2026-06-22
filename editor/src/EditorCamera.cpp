@@ -70,14 +70,14 @@ namespace VengEditor
 
     bool EditorCamera::Update(const EditorCameraInput& in, f32 dt)
     {
-        bool requestCapture = false;
+        bool lockCursor = false;
 
         if (in.Focused)
         {
             if (in.MouseRight)
             {
-                // RMB fly mode: mouse-look + WASDQE movement; request OS mouse capture.
-                requestCapture = true;
+                // RMB fly mode: mouse-look + WASDQE movement; lock the cursor for the drag.
+                lockCursor = true;
 
                 m_Yaw += in.MouseDelta.x * LookSensitivity;
                 m_Pitch =
@@ -167,7 +167,7 @@ namespace VengEditor
         }
 
         RebuildView(in.Aspect);
-        return requestCapture;
+        return lockCursor;
     }
 
     Veng::CameraView EditorCamera::GetView() const

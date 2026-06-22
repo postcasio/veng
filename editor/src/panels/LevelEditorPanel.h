@@ -51,13 +51,15 @@ namespace VengEditor
         /// @param editors     Editor registry for inspector field-widget overrides.
         /// @param sources     Manifest source index for the inspector's asset pickers.
         /// @param input       Frame-coherent input service the viewport camera reads.
+        /// @param router      Input router whose gameplay focus captures the mouse during Play.
         /// @param systems     System registry the systems panel lists and Play instantiates from.
         /// @param cook        Cook driver that recooks the level source and shadow-mounts the result.
         LevelEditorPanel(Veng::AssetId id, Veng::AssetId worldPrefab, Veng::path sourcePath,
                          Veng::Renderer::Context& context, Veng::AssetManager& assets,
                          Veng::ImGuiLayer& imgui, Veng::TypeRegistry& types,
                          Veng::EditorRegistry& editors, const AssetSourceIndex& sources,
-                         Veng::Input& input, Veng::SystemRegistry& systems, CookDriver cook);
+                         Veng::Input& input, Veng::InputRouter& router,
+                         Veng::SystemRegistry& systems, CookDriver cook);
         ~LevelEditorPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }

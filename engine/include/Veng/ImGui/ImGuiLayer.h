@@ -6,6 +6,7 @@
 namespace Veng
 {
     class Window;
+    class Event;
 }
 
 namespace Veng::Renderer
@@ -52,8 +53,18 @@ namespace Veng
 
         /// @brief Begins a new ImGui frame.
         ///
-        /// Call once per frame before building any UI.
+        /// Call once per frame before building any UI, after the frame's events are forwarded
+        /// (ImGui's NewFrame consumes the events ForwardEvent queued into the backend).
         void BeginFrame();
+
+        /// @brief Forwards one window event into the ImGui GLFW backend.
+        ///
+        /// The engine owns the GLFW callbacks (the backend is initialized with callbacks off),
+        /// so the InputRouter calls this to hand ImGui the events routed to the UI layer — and
+        /// withholds the ones gameplay focus swallows. Translates the engine event to the
+        /// backend's chain-callback so keymap/mods/char handling stay the backend's job.
+        /// @param event  The event to forward; non-input events relevant to ImGui (focus) included.
+        void ForwardEvent(const Event& event);
 
         /// @brief Renders the built UI into the output image, leaving it sampleable for compositing.
         /// @param cmd  Command buffer the render pass is recorded into.
@@ -94,6 +105,9 @@ namespace Veng
 
         /// @brief Renderer context providing the device and retire queue.
         Renderer::Context& m_Context;
+
+        /// @brief Borrowed window; its GLFWwindow backs the event forwarders.
+        Window& m_Window;
 
         /// @brief ImGui descriptor pool, forward-declared so this public header pulls in no Vulkan.
         ///

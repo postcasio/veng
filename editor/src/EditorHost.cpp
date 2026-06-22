@@ -125,17 +125,19 @@ namespace VengEditor
         public:
             PrefabEditorFactory(Renderer::Context& context, AssetManager& assets, ImGuiLayer& imgui,
                                 TypeRegistry& types, EditorRegistry& editors,
-                                const AssetSourceIndex& sources, Input& input,
+                                const AssetSourceIndex& sources, Input& input, InputRouter& router,
                                 SystemRegistry& systems)
                 : m_Context(context), m_Assets(assets), m_ImGui(imgui), m_Types(types),
-                  m_Editors(editors), m_Sources(sources), m_Input(input), m_Systems(systems)
+                  m_Editors(editors), m_Sources(sources), m_Input(input), m_Router(router),
+                  m_Systems(systems)
             {
             }
 
             [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
             {
                 return CreateUnique<PrefabEditorPanel>(id, m_Context, m_Assets, m_ImGui, m_Types,
-                                                       m_Editors, m_Sources, m_Input, m_Systems);
+                                                       m_Editors, m_Sources, m_Input, m_Router,
+                                                       m_Systems);
             }
 
         private:
@@ -146,6 +148,7 @@ namespace VengEditor
             EditorRegistry& m_Editors;
             const AssetSourceIndex& m_Sources;
             Input& m_Input;
+            InputRouter& m_Router;
             SystemRegistry& m_Systems;
         };
 
@@ -156,11 +159,11 @@ namespace VengEditor
         public:
             LevelEditorFactory(const AssetSourceIndex& index, Renderer::Context& context,
                                AssetManager& assets, ImGuiLayer& imgui, TypeRegistry& types,
-                               EditorRegistry& editors, Input& input, SystemRegistry& systems,
-                               VengEditor::CookDriver cook)
+                               EditorRegistry& editors, Input& input, InputRouter& router,
+                               SystemRegistry& systems, VengEditor::CookDriver cook)
                 : m_Index(index), m_Context(context), m_Assets(assets), m_ImGui(imgui),
-                  m_Types(types), m_Editors(editors), m_Input(input), m_Systems(systems),
-                  m_Cook(std::move(cook))
+                  m_Types(types), m_Editors(editors), m_Input(input), m_Router(router),
+                  m_Systems(systems), m_Cook(std::move(cook))
             {
             }
 
@@ -184,9 +187,9 @@ namespace VengEditor
                 }
                 const AssetId worldPrefab = level->Get()->GetWorld().Id();
 
-                return CreateUnique<LevelEditorPanel>(id, worldPrefab, entry->Source, m_Context,
-                                                      m_Assets, m_ImGui, m_Types, m_Editors,
-                                                      m_Index, m_Input, m_Systems, m_Cook);
+                return CreateUnique<LevelEditorPanel>(
+                    id, worldPrefab, entry->Source, m_Context, m_Assets, m_ImGui, m_Types,
+                    m_Editors, m_Index, m_Input, m_Router, m_Systems, m_Cook);
             }
 
         private:
@@ -197,6 +200,7 @@ namespace VengEditor
             TypeRegistry& m_Types;
             EditorRegistry& m_Editors;
             Input& m_Input;
+            InputRouter& m_Router;
             SystemRegistry& m_Systems;
             VengEditor::CookDriver m_Cook;
         };
@@ -344,10 +348,10 @@ namespace VengEditor
         // A prefab is edited live in a spawned Scene, so its editor needs no manifest
         // source; register it unconditionally.
         m_Registries->Editor.RegisterAssetEditor(
-            AssetType::Prefab,
-            CreateUnique<PrefabEditorFactory>(
-                GetRenderContext(), GetAssetManager(), *GetImGuiLayer(), GetTypeRegistry(),
-                m_Registries->Editor, *m_Sources, GetInput(), GetSystemRegistry()));
+            AssetType::Prefab, CreateUnique<PrefabEditorFactory>(
+                                   GetRenderContext(), GetAssetManager(), *GetImGuiLayer(),
+                                   GetTypeRegistry(), m_Registries->Editor, *m_Sources, GetInput(),
+                                   GetInputRouter(), GetSystemRegistry()));
 
         // try_emplace no-ops if the game module already registered a factory for these types.
         if (m_Info.AssetManifestPath)
@@ -370,10 +374,11 @@ namespace VengEditor
                                          *GetImGuiLayer(), m_Registries->Editor, cookFor()));
 
             m_Registries->Editor.RegisterAssetEditor(
-                AssetType::Level, CreateUnique<LevelEditorFactory>(
-                                      *m_Sources, GetRenderContext(), GetAssetManager(),
-                                      *GetImGuiLayer(), GetTypeRegistry(), m_Registries->Editor,
-                                      GetInput(), GetSystemRegistry(), cookFor()));
+                AssetType::Level,
+                CreateUnique<LevelEditorFactory>(*m_Sources, GetRenderContext(), GetAssetManager(),
+                                                 *GetImGuiLayer(), GetTypeRegistry(),
+                                                 m_Registries->Editor, GetInput(), GetInputRouter(),
+                                                 GetSystemRegistry(), cookFor()));
         }
 
         m_Panels.push_back({CreateUnique<AssetBrowserPanel>(

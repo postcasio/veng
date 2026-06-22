@@ -174,6 +174,14 @@ namespace Veng::UI
     /// @param size  Display size in pixels.
     void Image(const Ref<ImGuiTexture>& tex, vec2 size);
 
+    /// @brief Strokes a border around the most recently submitted item's rectangle.
+    ///
+    /// Draws over the previous item without consuming layout space — an accent frame on a
+    /// viewport image that has captured the mouse, for instance. Authored color is sRGB.
+    /// @param color      Border color, authored sRGB (linearized for the UI pipeline).
+    /// @param thickness  Stroke width in pixels.
+    void ItemBorder(vec4 color, f32 thickness = 2.0f);
+
     /// @brief Draws a filled, rounded badge with centered glyph text.
     ///
     /// A status/type chip: a rounded-rect fill in `color` with `text` centered over it in

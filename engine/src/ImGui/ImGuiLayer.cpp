@@ -2,7 +2,10 @@
 
 #include <filesystem>
 
+#include <Veng/Event.h>
+#include <Veng/InputEvents.h>
 #include <Veng/Window.h>
+#include <Veng/WindowEvents.h>
 #include <Veng/UI/Theme.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -20,6 +23,8 @@
 
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
+
+#include <GLFW/glfw3.h>
 
 #ifdef VENG_HAS_DEFAULT_FONT
 namespace Veng
@@ -46,7 +51,7 @@ namespace Veng
     }
 
     ImGuiLayer::ImGuiLayer(const ImGuiLayerInfo& info, Context& context, Window& window)
-        : m_Context(context)
+        : m_Context(context), m_Window(window)
     {
         using namespace Renderer;
 
@@ -80,7 +85,10 @@ namespace Veng
 
         GLFWwindow* handle = GetGlfwWindow(window);
 
-        ImGui_ImplGlfw_InitForVulkan(handle, true);
+        // Callbacks off: the engine owns the GLFW callbacks and the InputRouter forwards
+        // events to the backend through ForwardEvent, so input is routed by focus rather
+        // than ingested behind the engine's back.
+        ImGui_ImplGlfw_InitForVulkan(handle, false);
 
         const vk::Format colorAttachmentFormat = ToVk(Format::RGBA16Sfloat);
 
@@ -363,6 +371,70 @@ namespace Veng
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+    }
+
+    void ImGuiLayer::ForwardEvent(const Event& event)
+    {
+        GLFWwindow* handle = GetGlfwWindow(m_Window);
+        switch (event.GetEventType())
+        {
+        case EventType::KeyPressed:
+        {
+            const auto& key = static_cast<const KeyPressedEvent&>(event);
+            ImGui_ImplGlfw_KeyCallback(handle, static_cast<int>(key.GetKey()), key.GetScancode(),
+                                       GLFW_PRESS, key.GetMods());
+            break;
+        }
+        case EventType::KeyReleased:
+        {
+            const auto& key = static_cast<const KeyReleasedEvent&>(event);
+            ImGui_ImplGlfw_KeyCallback(handle, static_cast<int>(key.GetKey()), key.GetScancode(),
+                                       GLFW_RELEASE, key.GetMods());
+            break;
+        }
+        case EventType::KeyTyped:
+            ImGui_ImplGlfw_CharCallback(handle,
+                                        static_cast<const KeyTypedEvent&>(event).GetCodepoint());
+            break;
+        case EventType::MouseButtonPressed:
+        {
+            const auto& button = static_cast<const MouseButtonPressedEvent&>(event);
+            ImGui_ImplGlfw_MouseButtonCallback(handle, static_cast<int>(button.GetButton()),
+                                               GLFW_PRESS, button.GetMods());
+            break;
+        }
+        case EventType::MouseButtonReleased:
+        {
+            const auto& button = static_cast<const MouseButtonReleasedEvent&>(event);
+            ImGui_ImplGlfw_MouseButtonCallback(handle, static_cast<int>(button.GetButton()),
+                                               GLFW_RELEASE, button.GetMods());
+            break;
+        }
+        case EventType::MouseMoved:
+        {
+            const vec2 position = static_cast<const MouseMovedEvent&>(event).GetPosition();
+            ImGui_ImplGlfw_CursorPosCallback(handle, position.x, position.y);
+            break;
+        }
+        case EventType::MouseScrolled:
+        {
+            const vec2 offset = static_cast<const MouseScrolledEvent&>(event).GetOffset();
+            ImGui_ImplGlfw_ScrollCallback(handle, offset.x, offset.y);
+            break;
+        }
+        case EventType::MouseEntered:
+            ImGui_ImplGlfw_CursorEnterCallback(
+                handle,
+                static_cast<const MouseEnteredEvent&>(event).HasEntered() ? GLFW_TRUE : GLFW_FALSE);
+            break;
+        case EventType::WindowFocus:
+            ImGui_ImplGlfw_WindowFocusCallback(
+                handle,
+                static_cast<const WindowFocusEvent&>(event).IsFocused() ? GLFW_TRUE : GLFW_FALSE);
+            break;
+        default:
+            break;
+        }
     }
 
     void ImGuiLayer::Render(Renderer::CommandBuffer& commandBuffer)

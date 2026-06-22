@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Window.h>
 #include <Veng/Input.h>
+#include <Veng/InputRouter.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/ImGui/ImGuiLayer.h>
@@ -72,6 +73,13 @@ namespace Veng
         /// all-zeros state rather than being absent.
         [[nodiscard]] Input& GetInput() const { return *m_Input; }
 
+        /// @brief Returns the input router that routes window events to ImGui and the Input snapshot.
+        ///
+        /// Push InputFocus::Gameplay to give the running game exclusive input (and capture the
+        /// cursor); pop it (or the Shift+Esc release chord) to return input to the UI. Always
+        /// present; headless borrows no window and routes nothing.
+        [[nodiscard]] InputRouter& GetInputRouter() const { return *m_InputRouter; }
+
         /// @brief Returns the render context.
         [[nodiscard]] Renderer::Context& GetRenderContext() { return m_RenderContext; }
 
@@ -137,6 +145,10 @@ namespace Veng
         Unique<Input> m_Input;
 
         Renderer::Context m_RenderContext;
+
+        /// @brief Routes window events to ImGui + Input by focus; borrows the window, input, and
+        ///        ImGui layer, so it is constructed after them and reset before them.
+        Unique<InputRouter> m_InputRouter;
 
         /// @brief Worker pool; destroyed after m_AssetManager to avoid tearing down live workers.
         Unique<TaskSystem> m_TaskSystem;

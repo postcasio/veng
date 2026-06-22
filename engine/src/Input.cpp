@@ -1,49 +1,89 @@
 #include <Veng/Input.h>
 
+#include <Veng/InputEvents.h>
 #include <Veng/Window.h>
 
 namespace Veng
 {
     Input::Input(Window* window) : m_Window(window) {}
 
-    void Input::Update()
+    void Input::BeginFrame()
     {
         m_PreviousKeys = m_Keys;
         m_PreviousMouseButtons = m_MouseButtons;
 
-        // No window to poll (headless): leave the zero-initialized state, so the
-        // reading is the neutral all-zeros a windowed app produces with nothing pressed.
-        if (m_Window == nullptr)
+        // Deltas are per-frame: the router accumulates this frame's move/scroll events
+        // into them via ApplyEvent after this roll.
+        m_MouseDelta = {0, 0};
+        m_ScrollDelta = {0, 0};
+    }
+
+    void Input::ApplyEvent(const Event& event)
+    {
+        switch (event.GetEventType())
         {
-            return;
-        }
-
-        // GLFW key codes are sparse but bounded by GLFW_KEY_LAST (348), so the
-        // bitset is indexed directly by code; unused slots stay false.
-        for (usize code = 0; code < MaxKeys; ++code)
+        case EventType::KeyPressed:
         {
-            m_Keys[code] = m_Window->KeyPressed(static_cast<Key>(code));
+            const auto code =
+                static_cast<usize>(static_cast<const KeyPressedEvent&>(event).GetKey());
+            if (code < MaxKeys)
+            {
+                m_Keys[code] = true;
+            }
+            break;
         }
-
-        for (usize button = 0; button < MaxMouseButtons; ++button)
+        case EventType::KeyReleased:
         {
-            m_MouseButtons[button] = m_Window->MouseButtonPressed(static_cast<MouseButton>(button));
+            const auto code =
+                static_cast<usize>(static_cast<const KeyReleasedEvent&>(event).GetKey());
+            if (code < MaxKeys)
+            {
+                m_Keys[code] = false;
+            }
+            break;
         }
-
-        m_PreviousMousePosition = m_MousePosition;
-        m_MousePosition = m_Window->GetMousePosition();
-
-        // The opening frame has no previous position, so report no motion rather
-        // than a spurious jump from the {0,0} initial value to the cursor's spawn.
-        if (m_FirstUpdate)
+        case EventType::MouseButtonPressed:
         {
-            m_PreviousMousePosition = m_MousePosition;
-            m_FirstUpdate = false;
+            const auto index =
+                static_cast<usize>(static_cast<const MouseButtonPressedEvent&>(event).GetButton());
+            if (index < MaxMouseButtons)
+            {
+                m_MouseButtons[index] = true;
+            }
+            break;
         }
-
-        m_MouseDelta = m_MousePosition - m_PreviousMousePosition;
-
-        m_ScrollDelta = m_Window->ConsumeScrollDelta();
+        case EventType::MouseButtonReleased:
+        {
+            const auto index =
+                static_cast<usize>(static_cast<const MouseButtonReleasedEvent&>(event).GetButton());
+            if (index < MaxMouseButtons)
+            {
+                m_MouseButtons[index] = false;
+            }
+            break;
+        }
+        case EventType::MouseMoved:
+        {
+            const vec2 position = static_cast<const MouseMovedEvent&>(event).GetPosition();
+            // Seed the first position with no delta, so the opening move reports no spurious
+            // jump from the {0,0} initial value; later moves accumulate relative motion
+            // (correct under a captured cursor's virtual coordinate).
+            if (m_HavePosition)
+            {
+                m_MouseDelta += position - m_MousePosition;
+            }
+            m_MousePosition = position;
+            m_HavePosition = true;
+            break;
+        }
+        case EventType::MouseScrolled:
+        {
+            m_ScrollDelta += static_cast<const MouseScrolledEvent&>(event).GetOffset();
+            break;
+        }
+        default:
+            break;
+        }
     }
 
     bool Input::IsKeyDown(const Key key) const

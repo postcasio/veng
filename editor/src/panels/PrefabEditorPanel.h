@@ -13,6 +13,7 @@ namespace Veng
     class EditorRegistry;
     class ImGuiLayer;
     class Input;
+    class InputRouter;
     class Prefab;
     class Scene;
     class SceneSimulation;
@@ -51,12 +52,13 @@ namespace VengEditor
         /// @param editors   Editor registry for inspector field-widget overrides.
         /// @param sources   Manifest source index for the inspector's asset pickers.
         /// @param input     Frame-coherent input service the viewport camera reads.
+        /// @param router    Input router whose gameplay focus captures the mouse during Play.
         /// @param systems   System registry the play session instantiates its systems from.
         PrefabEditorPanel(Veng::AssetId id, Veng::Renderer::Context& context,
                           Veng::AssetManager& assets, Veng::ImGuiLayer& imgui,
                           Veng::TypeRegistry& types, Veng::EditorRegistry& editors,
                           const AssetSourceIndex& sources, Veng::Input& input,
-                          Veng::SystemRegistry& systems);
+                          Veng::InputRouter& router, Veng::SystemRegistry& systems);
         ~PrefabEditorPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
@@ -108,12 +110,14 @@ namespace VengEditor
         /// @param editors      Editor registry for inspector field-widget overrides.
         /// @param sources      Manifest source index for the inspector's asset pickers.
         /// @param input        Frame-coherent input service the viewport camera reads.
+        /// @param router       Input router whose gameplay focus captures the mouse during Play.
         /// @param systems      System registry the play session instantiates its systems from.
         PrefabEditorPanel(Veng::AssetId worldPrefab, Veng::string title,
                           Veng::Renderer::Context& context, Veng::AssetManager& assets,
                           Veng::ImGuiLayer& imgui, Veng::TypeRegistry& types,
                           Veng::EditorRegistry& editors, const AssetSourceIndex& sources,
-                          Veng::Input& input, Veng::SystemRegistry& systems);
+                          Veng::Input& input, Veng::InputRouter& router,
+                          Veng::SystemRegistry& systems);
 
         /// @brief Splits the dockspace into explorer (left), viewport (center), inspector (right).
         void BuildDefaultLayout(Veng::u32 dockspaceId) override;
@@ -154,11 +158,17 @@ namespace VengEditor
         /// @brief Loads and spawns the prefab, adding a default light when none is present.
         void BuildScene(Veng::Renderer::Context& context, Veng::AssetManager& assets);
 
+        /// @brief Pushes gameplay input focus (capturing the cursor) if not already held.
+        void CaptureForPlay();
+        /// @brief Pops gameplay input focus (releasing the cursor) if currently held.
+        void ReleaseFromPlay();
+
         Veng::AssetId m_Id;
         Veng::string m_Title;
 
         Veng::AssetManager& m_Assets;
         Veng::Input& m_Input;
+        Veng::InputRouter& m_Router;
         Veng::SystemRegistry& m_Systems;
 
         Veng::AssetHandle<Veng::Prefab> m_Prefab;

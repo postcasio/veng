@@ -23,8 +23,6 @@ namespace Veng
         uvec2 Extent;
         /// @brief Whether the window may be resized by the user.
         bool Resizable;
-        /// @brief Callback invoked for every window event.
-        EventCallback EventCallback;
         /// @brief Window title bar text.
         string Title;
         /// @brief Whether to capture the mouse cursor on creation.
@@ -95,8 +93,18 @@ namespace Veng
         /// @brief Returns true if the mouse cursor is currently captured.
         [[nodiscard]] bool IsMouseCaptured() const;
 
-        /// @brief Polls OS events and dispatches them through the event callback.
+        /// @brief Polls OS events, enqueuing each as a typed Event for this frame.
+        ///
+        /// GLFW callbacks fire during the poll and push events onto an internal queue;
+        /// drain it with DrainEvents after calling this.
         void Update();
+
+        /// @brief Drains this frame's queued events to @p handler, then clears the queue.
+        ///
+        /// Called once per frame after Update; the InputRouter is the handler, routing each
+        /// event to ImGui and the Input snapshot by the active focus.
+        /// @param handler  Invoked with each queued event in arrival order.
+        void DrainEvents(const std::function<void(Event&)>& handler);
 
         /// @brief Signals the run loop to exit; sets IsOpen() to false without destroying anything.
         void Close();
@@ -151,12 +159,14 @@ namespace Veng
         bool m_Open = true;
         uvec2 m_Extent{};
         bool m_Resizable;
-        std::function<void(Event&)> m_EventCallback;
         string m_Title;
         bool m_MouseCaptured;
         GLFWwindow* m_Handle = nullptr;
         vec2 m_MousePosition = {0, 0};
         vec2 m_ScrollDelta = {0, 0};
+
+        /// @brief This frame's queued events, filled by GLFW callbacks and drained by DrainEvents.
+        vector<Unique<Event>> m_Events;
 
         Unique<Native> m_Native;
     };

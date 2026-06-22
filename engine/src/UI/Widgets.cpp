@@ -314,6 +314,14 @@ namespace Veng::UI
         ImGui::Image(static_cast<ImTextureID>(tex->GetTextureId()), size);
     }
 
+    void ItemBorder(vec4 color, f32 thickness)
+    {
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        const ImU32 borderCol = ImGui::GetColorU32(SrgbToLinear(color));
+        drawList->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), borderCol,
+                          GetTheme().FrameRounding, 0, thickness);
+    }
+
     void Badge(string_view text, vec4 color, vec2 size)
     {
         const string str = AsCStr(text);

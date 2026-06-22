@@ -70,7 +70,10 @@ namespace VengEditor
         /// refreshes the CameraView. Fly-mode WASDQE movement scales by the elapsed time.
         /// @param in  This frame's gathered viewport input.
         /// @param dt  Elapsed time this frame, in seconds.
-        /// @return true if the camera requests OS mouse capture this frame (RMB fly active).
+        /// @return true while the camera is actively navigating and the cursor should be
+        ///         locked to the viewport for the duration of the drag (RMB fly active).
+        ///         This is a transient navigation lock, released the instant the drag ends —
+        ///         distinct from the play session's sticky mouse capture.
         bool Update(const EditorCameraInput& in, Veng::f32 dt);
 
         /// @brief Returns the camera view rebuilt by the last Update.

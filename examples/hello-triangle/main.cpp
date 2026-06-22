@@ -341,6 +341,14 @@ protected:
         // the spawned camera's authored pose.
         m_Simulation->Start(*m_Scene,
                             SystemContext{.Assets = GetAssetManager(), .Input = GetInput()});
+
+        // The shipped game owns input: capture the mouse in the window so the player's
+        // mouse-look runs against a hidden, locked cursor (Shift+Esc frees it). Smoke is
+        // headless with no window, so it skips this.
+        if (!m_SmokeOutput)
+        {
+            GetInputRouter().PushFocus(InputFocus::Gameplay);
+        }
     }
 
     void OnUpdate(const f32 delta) override
@@ -741,7 +749,6 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                         {
                             .Extent = {1280, 720},
                             .Resizable = false,
-                            .EventCallback = [](Event&) {},
                             .Title = "veng — Hello Triangle",
                             .CaptureMouse = false,
                         },

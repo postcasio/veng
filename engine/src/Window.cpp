@@ -1,5 +1,6 @@
 #include <Veng/Window.h>
 #include <Veng/WindowEvents.h>
+#include <Veng/InputEvents.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Context.h>
@@ -21,8 +22,8 @@ namespace Veng
     }
 
     Window::Window(const WindowInfo& info)
-        : m_Extent(info.Extent), m_Resizable(info.Resizable), m_EventCallback(info.EventCallback),
-          m_Title(info.Title), m_MouseCaptured(info.CaptureMouse), m_Native(CreateUnique<Native>())
+        : m_Extent(info.Extent), m_Resizable(info.Resizable), m_Title(info.Title),
+          m_MouseCaptured(info.CaptureMouse), m_Native(CreateUnique<Native>())
     {
         if (!s_GlfwInitialized)
         {
@@ -52,41 +53,108 @@ namespace Veng
         }
 
         glfwSetWindowUserPointer(m_Handle, this);
-        glfwSetFramebufferSizeCallback(m_Handle,
-                                       [](GLFWwindow* glfwWindow, int width, int height)
-                                       {
-                                           auto window = static_cast<Window*>(
-                                               glfwGetWindowUserPointer(glfwWindow));
 
-                                           WindowResizeEvent event(width, height);
-                                           window->m_EventCallback(event);
-                                       });
+        glfwSetFramebufferSizeCallback(
+            m_Handle,
+            [](GLFWwindow* glfwWindow, int width, int height)
+            {
+                auto window = static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
+                window->m_Events.push_back(CreateUnique<WindowResizeEvent>(
+                    static_cast<u32>(width), static_cast<u32>(height)));
+            });
 
         glfwSetWindowCloseCallback(m_Handle,
                                    [](GLFWwindow* glfwWindow)
                                    {
                                        auto window = static_cast<Window*>(
                                            glfwGetWindowUserPointer(glfwWindow));
-                                       WindowCloseEvent event;
-                                       window->m_EventCallback(event);
+                                       window->m_Events.push_back(CreateUnique<WindowCloseEvent>());
                                    });
 
-        glfwSetCursorPosCallback(m_Handle,
-                                 [](GLFWwindow* glfwWindow, f64 xpos, f64 ypos)
-                                 {
-                                     auto window =
-                                         static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
-                                     window->m_MousePosition = {xpos, ypos};
-                                 });
+        glfwSetWindowFocusCallback(
+            m_Handle,
+            [](GLFWwindow* glfwWindow, int focused)
+            {
+                auto window = static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
+                window->m_Events.push_back(CreateUnique<WindowFocusEvent>(focused == GLFW_TRUE));
+            });
 
-        glfwSetScrollCallback(m_Handle,
-                              [](GLFWwindow* glfwWindow, f64 xoffset, f64 yoffset)
-                              {
-                                  auto window =
-                                      static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
-                                  window->m_ScrollDelta +=
-                                      vec2{static_cast<f32>(xoffset), static_cast<f32>(yoffset)};
-                              });
+        glfwSetKeyCallback(
+            m_Handle,
+            [](GLFWwindow* glfwWindow, int key, int scancode, int action, int mods)
+            {
+                // GLFW_KEY_UNKNOWN (-1) has no engine Key; skip it. Named keys round-trip
+                // through the u16 Key enum exactly, so the ImGui sink recovers the GLFW code.
+                if (key < 0)
+                {
+                    return;
+                }
+                auto window = static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
+                const auto code = static_cast<Key>(key);
+                if (action == GLFW_PRESS)
+                {
+                    window->m_Events.push_back(CreateUnique<KeyPressedEvent>(code, scancode, mods));
+                }
+                else if (action == GLFW_RELEASE)
+                {
+                    window->m_Events.push_back(
+                        CreateUnique<KeyReleasedEvent>(code, scancode, mods));
+                }
+                // GLFW_REPEAT carries no state change: the key stays down and the ImGui
+                // backend tracks held state itself, so no event is produced for it.
+            });
+
+        glfwSetCharCallback(m_Handle,
+                            [](GLFWwindow* glfwWindow, unsigned int codepoint)
+                            {
+                                auto window =
+                                    static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
+                                window->m_Events.push_back(CreateUnique<KeyTypedEvent>(codepoint));
+                            });
+
+        glfwSetMouseButtonCallback(
+            m_Handle,
+            [](GLFWwindow* glfwWindow, int button, int action, int mods)
+            {
+                auto window = static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
+                const auto code = static_cast<MouseButton>(button);
+                if (action == GLFW_PRESS)
+                {
+                    window->m_Events.push_back(CreateUnique<MouseButtonPressedEvent>(code, mods));
+                }
+                else if (action == GLFW_RELEASE)
+                {
+                    window->m_Events.push_back(CreateUnique<MouseButtonReleasedEvent>(code, mods));
+                }
+            });
+
+        glfwSetCursorPosCallback(
+            m_Handle,
+            [](GLFWwindow* glfwWindow, f64 xpos, f64 ypos)
+            {
+                auto window = static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
+                const vec2 position{static_cast<f32>(xpos), static_cast<f32>(ypos)};
+                window->m_MousePosition = position;
+                window->m_Events.push_back(CreateUnique<MouseMovedEvent>(position));
+            });
+
+        glfwSetCursorEnterCallback(
+            m_Handle,
+            [](GLFWwindow* glfwWindow, int entered)
+            {
+                auto window = static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
+                window->m_Events.push_back(CreateUnique<MouseEnteredEvent>(entered == GLFW_TRUE));
+            });
+
+        glfwSetScrollCallback(
+            m_Handle,
+            [](GLFWwindow* glfwWindow, f64 xoffset, f64 yoffset)
+            {
+                auto window = static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
+                const vec2 offset{static_cast<f32>(xoffset), static_cast<f32>(yoffset)};
+                window->m_ScrollDelta += offset;
+                window->m_Events.push_back(CreateUnique<MouseScrolledEvent>(offset));
+            });
 
         {
             int width, height;
@@ -149,6 +217,15 @@ namespace Veng
         {
             Close();
         }
+    }
+
+    void Window::DrainEvents(const std::function<void(Event&)>& handler)
+    {
+        for (const Unique<Event>& event : m_Events)
+        {
+            handler(*event);
+        }
+        m_Events.clear();
     }
 
     void Window::Close()

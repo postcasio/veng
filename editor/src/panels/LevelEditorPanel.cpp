@@ -59,9 +59,10 @@ namespace VengEditor
                                        Renderer::Context& context, AssetManager& assets,
                                        ImGuiLayer& imgui, TypeRegistry& types,
                                        EditorRegistry& editors, const AssetSourceIndex& sources,
-                                       Input& input, SystemRegistry& systems, CookDriver cook)
+                                       Input& input, InputRouter& router, SystemRegistry& systems,
+                                       CookDriver cook)
         : PrefabEditorPanel(worldPrefab, fmt::format("Level 0x{:X}", id.Value), context, assets,
-                            imgui, types, editors, sources, input, systems),
+                            imgui, types, editors, sources, input, router, systems),
           m_Id(id), m_Title(fmt::format("Level 0x{:X}", id.Value)),
           m_SourcePath(std::move(sourcePath)), m_AssetManager(assets), m_Catalog(systems),
           m_Editors(editors), m_Sources(sources), m_Cook(std::move(cook))
