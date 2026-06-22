@@ -78,11 +78,29 @@ if (NOT Slang_INCLUDE_DIR OR NOT Slang_LIBRARY)
             "CMAKE_PREFIX_PATH at a Slang install.")
 endif ()
 
+# SHARED IMPORTED so $<TARGET_RUNTIME_DLLS> can copy slang.dll beside the tools that
+# link it (vengc, the editor) — Windows has no rpath. A SHARED import on Windows needs
+# the import lib (IMPORTED_IMPLIB) and the runtime DLL (IMPORTED_LOCATION) given
+# separately; on macOS/Linux the single library file find_library found is both.
 add_library(slang::slang SHARED IMPORTED)
-set_target_properties(slang::slang PROPERTIES
-        IMPORTED_LOCATION ${Slang_LIBRARY}
-        INTERFACE_INCLUDE_DIRECTORIES ${Slang_INCLUDE_DIR}
-)
+if (WIN32)
+    find_file(Slang_DLL NAMES slang.dll
+            HINTS "${Slang_INCLUDE_DIR}/../Bin" "$ENV{VULKAN_SDK}/Bin"
+            DOC "Path to slang.dll (Vulkan SDK Bin)")
+    if (NOT Slang_DLL)
+        message(FATAL_ERROR
+                "slang.dll not found alongside the Slang SDK; vengc/the editor need it "
+                "at runtime. Point CMAKE_PREFIX_PATH/VULKAN_SDK at the Vulkan SDK.")
+    endif ()
+    set_target_properties(slang::slang PROPERTIES
+            IMPORTED_IMPLIB ${Slang_LIBRARY}
+            IMPORTED_LOCATION ${Slang_DLL}
+            INTERFACE_INCLUDE_DIRECTORIES ${Slang_INCLUDE_DIR})
+else ()
+    set_target_properties(slang::slang PROPERTIES
+            IMPORTED_LOCATION ${Slang_LIBRARY}
+            INTERFACE_INCLUDE_DIRECTORIES ${Slang_INCLUDE_DIR})
+endif ()
 
 # The cooker's veng-free core. Everything except the module-reflection TU
 # (src/ModuleTypes.cpp) lives here: importers, the Cooker, pack parsing, verify.
@@ -144,6 +162,12 @@ target_include_directories(veng_cook_objs PRIVATE
 target_compile_definitions(veng_cook_objs PUBLIC JSON_NOEXCEPTION)
 target_link_libraries(veng_cook_objs PUBLIC nlohmann_json::nlohmann_json)
 target_compile_options(veng_cook_objs PRIVATE -fno-exceptions)
+# veng_cook_objs pulls in fmt through veng's public headers but does not link
+# fmt::fmt (only the executables below do), so it misses the PUBLIC /utf-8 fmt
+# attaches to its consumers. fmt 12.x static_asserts on it under MSVC; add it
+# here directly, matching the generator expression fmt uses.
+target_compile_options(veng_cook_objs PRIVATE
+        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:MSVC>>:/utf-8>)
 
 # libveng_cook — the full cooker library: the veng-free core plus the
 # module-reflection TU (ModuleTypes.cpp), the prefab + level importers

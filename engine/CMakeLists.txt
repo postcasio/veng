@@ -121,6 +121,24 @@ target_include_directories(veng PRIVATE
 
 target_compile_definitions(veng PRIVATE VE_BUILD_SHARED)
 
+# The VE_API dllexport annotations cover only part of the public surface (the Windows
+# port is in progress), while macOS/Linux export everything via default visibility. On
+# MSVC, auto-export every symbol so the shared library matches that behaviour and its
+# consumers (game modules, vengc, the editor) link without the annotation being complete.
+if (MSVC)
+    set_target_properties(veng PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif ()
+
+# vulkan-hpp's dynamic dispatcher (VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1) keeps its
+# storage (defaultDispatchLoaderDynamic) in one TU, here in veng.dll (Context.cpp). It
+# is a data symbol, so sharing it across the DLL boundary on Windows needs explicit
+# dllexport/dllimport: STORAGE_SHARED everywhere, STORAGE_SHARED_EXPORT only where the
+# storage lives. Default visibility already handles this on macOS/Linux.
+if (WIN32)
+    target_compile_definitions(veng PUBLIC VULKAN_HPP_STORAGE_SHARED)
+    target_compile_definitions(veng PRIVATE VULKAN_HPP_STORAGE_SHARED_EXPORT)
+endif ()
+
 # veng raises no exceptions (see Veng/Assert.h): asserts are fatal, recoverable
 # operations return Veng::Result<T>. Building -fno-exceptions is the enforcement
 # mechanism — any stray `throw` becomes a compile error. tinyexr is the one

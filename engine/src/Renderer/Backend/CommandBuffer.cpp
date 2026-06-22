@@ -136,10 +136,8 @@ namespace Veng::Renderer
         }
 
         const auto renderingInfo = vk::RenderingInfo{
-            .renderArea = {.offset.x = info.Offset.x,
-                           .offset.y = info.Offset.y,
-                           .extent.width = info.Extent.x,
-                           .extent.height = info.Extent.y},
+            .renderArea = {.offset = {.x = info.Offset.x, .y = info.Offset.y},
+                           .extent = {.width = info.Extent.x, .height = info.Extent.y}},
             .layerCount = info.LayerCount,
             .viewMask = info.ViewMask,
             .colorAttachmentCount = static_cast<u32>(colorAttachments.size()),

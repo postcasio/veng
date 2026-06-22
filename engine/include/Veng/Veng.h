@@ -27,7 +27,12 @@
 #include <fmt/format.h>
 #include <functional>
 
-#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
+// NOTE: GLM_FORCE_DEFAULT_ALIGNED_GENTYPES is deliberately NOT set. It pads vec3/vec4
+// to 16 bytes wherever glm enables aligned gentypes (any SSE2/AVX target, i.e. x86-64),
+// which breaks the packed GPU layouts the engine asserts on — e.g. the 48-byte
+// CanonicalVertex in Asset/Mesh.h (position@0, normal@12, tangent@24, uv@40). It was a
+// silent no-op on the arm64 dev platform (glm leaves aligned gentypes off for NEON), so
+// the packed layout held there; on x86-64 it must stay off for that layout to match.
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RIGHT_HANDED
