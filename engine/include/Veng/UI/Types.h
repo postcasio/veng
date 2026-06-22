@@ -103,6 +103,34 @@ namespace Veng::UI
         return static_cast<TreeFlags>(static_cast<u32>(a) & static_cast<u32>(b));
     }
 
+    /// @brief Flags controlling selectable-row behavior.
+    ///
+    /// A closed engine enum; the `.cpp` maps each bit to its `ImGuiSelectableFlags_`
+    /// counterpart. Bitwise-combinable.
+    enum class SelectableFlags : u32
+    {
+        /// @brief No flags.
+        None = 0,
+        /// @brief Hit area spans every column of the enclosing table.
+        SpanAllColumns = 1,
+        /// @brief Reports a click on the double-click press, so a caller can pair it with
+        /// `IsMouseDoubleClicked` to act on a double-click (without it the row reports on
+        /// release, which never coincides with the double-click query).
+        AllowDoubleClick = 2,
+    };
+
+    /// @brief Bitwise OR of two `SelectableFlags` values.
+    constexpr SelectableFlags operator|(SelectableFlags a, SelectableFlags b)
+    {
+        return static_cast<SelectableFlags>(static_cast<u32>(a) | static_cast<u32>(b));
+    }
+
+    /// @brief Bitwise AND of two `SelectableFlags` values.
+    constexpr SelectableFlags operator&(SelectableFlags a, SelectableFlags b)
+    {
+        return static_cast<SelectableFlags>(static_cast<u32>(a) & static_cast<u32>(b));
+    }
+
     /// @brief Style color slots a `StyleColor` scope guard pushes.
     ///
     /// A closed engine enum; the `.cpp` maps each value to its `ImGuiCol_` counterpart.

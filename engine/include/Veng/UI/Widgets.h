@@ -121,20 +121,16 @@ namespace Veng::UI
     [[nodiscard]] bool ToggleButton(string_view label, bool& active);
 
     /// @brief Draws a selectable row.
+    ///
+    /// `SelectableFlags::SpanAllColumns` makes the highlight cover a multi-column table
+    /// row rather than the first column; `SelectableFlags::AllowDoubleClick` lets a caller
+    /// pair the return with `IsMouseDoubleClicked` to act on a double-click.
     /// @param label     Row label and ImGui id.
     /// @param selected  Whether the row appears highlighted.
+    /// @param flags     Selectable behavior flags.
     /// @return True the frame the row is clicked.
-    [[nodiscard]] bool Selectable(string_view label, bool selected = false);
-
-    /// @brief Draws a selectable row that can span every column of the enclosing table.
-    ///
-    /// The table-spanning variant: a selection in a multi-column tree or list row whose
-    /// highlight covers the whole row rather than the first column.
-    /// @param label           Row label and ImGui id.
-    /// @param selected        Whether the row appears highlighted.
-    /// @param spanAllColumns  When true, the row spans all table columns.
-    /// @return True the frame the row is clicked.
-    [[nodiscard]] bool Selectable(string_view label, bool selected, bool spanAllColumns);
+    [[nodiscard]] bool Selectable(string_view label, bool selected = false,
+                                  SelectableFlags flags = SelectableFlags::None);
 
     /// @brief Draws a selectable of a fixed size.
     ///
@@ -144,8 +140,10 @@ namespace Veng::UI
     /// @param label     Row label and ImGui id.
     /// @param selected  Whether the cell appears highlighted.
     /// @param size      Hit-area size in pixels.
+    /// @param flags     Selectable behavior flags.
     /// @return True the frame the cell is clicked.
-    [[nodiscard]] bool Selectable(string_view label, bool selected, vec2 size);
+    [[nodiscard]] bool Selectable(string_view label, bool selected, vec2 size,
+                                  SelectableFlags flags = SelectableFlags::None);
 
     /// @brief Draws preformatted text.
     /// @param text  Text to display.

@@ -247,24 +247,33 @@ namespace Veng::UI
         return clicked;
     }
 
-    bool Selectable(string_view label, bool selected)
+    namespace
     {
-        const string id = AsCStr(label);
-        return ImGui::Selectable(id.c_str(), selected);
+        ImGuiSelectableFlags ToImGui(SelectableFlags flags)
+        {
+            ImGuiSelectableFlags out = ImGuiSelectableFlags_None;
+            if ((flags & SelectableFlags::SpanAllColumns) != SelectableFlags::None)
+            {
+                out |= ImGuiSelectableFlags_SpanAllColumns;
+            }
+            if ((flags & SelectableFlags::AllowDoubleClick) != SelectableFlags::None)
+            {
+                out |= ImGuiSelectableFlags_AllowDoubleClick;
+            }
+            return out;
+        }
     }
 
-    bool Selectable(string_view label, bool selected, bool spanAllColumns)
+    bool Selectable(string_view label, bool selected, SelectableFlags flags)
     {
         const string id = AsCStr(label);
-        const ImGuiSelectableFlags flags =
-            spanAllColumns ? ImGuiSelectableFlags_SpanAllColumns : ImGuiSelectableFlags_None;
-        return ImGui::Selectable(id.c_str(), selected, flags);
+        return ImGui::Selectable(id.c_str(), selected, ToImGui(flags));
     }
 
-    bool Selectable(string_view label, bool selected, vec2 size)
+    bool Selectable(string_view label, bool selected, vec2 size, SelectableFlags flags)
     {
         const string id = AsCStr(label);
-        return ImGui::Selectable(id.c_str(), selected, ImGuiSelectableFlags_None, size);
+        return ImGui::Selectable(id.c_str(), selected, ToImGui(flags), size);
     }
 
     void Text(string_view text)

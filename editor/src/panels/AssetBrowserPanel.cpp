@@ -304,7 +304,8 @@ namespace VengEditor
                     UI::Badge("DIR", FolderColor);
                     UI::SameLine();
                     activateFolder(name,
-                                   UI::Selectable(fmt::format("{}##folder_{}", name, name), false));
+                                   UI::Selectable(fmt::format("{}##folder_{}", name, name), false,
+                                                  UI::SelectableFlags::AllowDoubleClick));
                 }
                 for (const AssetEntry& asset : folder.Assets)
                 {
@@ -315,8 +316,9 @@ namespace VengEditor
                     const bool selected = m_Selected && m_Selected->Value == asset.Id.Value;
                     UI::Badge(TypeGlyph(asset.Type), TypeColor(asset.Type));
                     UI::SameLine();
-                    const bool clicked = UI::Selectable(
-                        fmt::format("{}##asset_{}", asset.Name, asset.Id.Value), selected);
+                    const bool clicked =
+                        UI::Selectable(fmt::format("{}##asset_{}", asset.Name, asset.Id.Value),
+                                       selected, UI::SelectableFlags::AllowDoubleClick);
                     activateAsset(asset, clicked);
                     dragAsset(asset);
                 }
@@ -340,8 +342,10 @@ namespace VengEditor
                         }
                         UI::TableNextRow();
                         UI::TableNextColumn();
-                        activateFolder(name, UI::Selectable(fmt::format("{}##frow_{}", name, name),
-                                                            false, true));
+                        activateFolder(name,
+                                       UI::Selectable(fmt::format("{}##frow_{}", name, name), false,
+                                                      UI::SelectableFlags::SpanAllColumns |
+                                                          UI::SelectableFlags::AllowDoubleClick));
                         UI::TableNextColumn();
                         UI::TextDisabled("Folder");
                         UI::TableNextColumn();
@@ -357,7 +361,9 @@ namespace VengEditor
                         UI::TableNextColumn();
                         const bool selected = m_Selected && m_Selected->Value == asset.Id.Value;
                         const bool clicked = UI::Selectable(
-                            fmt::format("{}##arow_{}", asset.Name, asset.Id.Value), selected, true);
+                            fmt::format("{}##arow_{}", asset.Name, asset.Id.Value), selected,
+                            UI::SelectableFlags::SpanAllColumns |
+                                UI::SelectableFlags::AllowDoubleClick);
                         activateAsset(asset, clicked);
                         dragAsset(asset);
                         UI::TableNextColumn();
@@ -388,7 +394,8 @@ namespace VengEditor
                     const f32 colWidth = UI::ContentRegionAvail().x;
                     const vec2 origin = UI::CursorPos();
                     const bool clicked =
-                        UI::Selectable(fmt::format("##cell_{}", id), selected, vec2{0.0f, Cell});
+                        UI::Selectable(fmt::format("##cell_{}", id), selected, vec2{0.0f, Cell},
+                                       UI::SelectableFlags::AllowDoubleClick);
                     if (dragSource != nullptr)
                     {
                         dragAsset(*dragSource);
@@ -430,7 +437,7 @@ namespace VengEditor
         }
     }
 
-    void AssetBrowserPanel::OnImGui()
+    void AssetBrowserPanel::OnUI()
     {
         if (!m_Loaded)
         {
