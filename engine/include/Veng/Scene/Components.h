@@ -12,6 +12,7 @@ namespace Veng
 {
     class Mesh;
     class Material;
+    class Prefab;
 
     /// @brief Human-readable label for an entity.
     ///
@@ -342,6 +343,52 @@ namespace Veng
         /// @brief Exponential-smoothing rate per second; 0 snaps the camera to the target each tick.
         f32 Damping = 0.0f;
     };
+
+    /// @brief Lifecycle phase of a game-mode Session.
+    ///
+    /// A rule system reads the phase to decide when to act (spawn the player on
+    /// entering Playing, tear down on Ended) and writes it to advance the mode.
+    /// Integer values are stable — persisted in prefabs.
+    enum class SessionPhase : u32
+    {
+        /// @brief The mode has not begun; rule systems wait.
+        NotStarted = 0,
+        /// @brief The mode is live; rule systems run and the timer advances.
+        Playing = 1,
+        /// @brief The mode has finished; rule systems tear down.
+        Ended = 2,
+    };
+
+    /// @brief The game mode's replicated state, held on a well-known session entity.
+    ///
+    /// A game mode is rule systems over this state plus a GameModeConfig naming the
+    /// rule set's data — no object, no registry. The rule systems read and write the
+    /// phase, accumulate the elapsed timer, and track score. It is server-authoritative
+    /// (it carries Authority::Server); a future net layer replicates it. Today it is
+    /// plain scene data.
+    struct Session
+    {
+        /// @brief The mode's lifecycle phase; an authored session typically begins in Playing.
+        SessionPhase Phase{SessionPhase::NotStarted};
+        /// @brief Seconds elapsed since the mode entered Playing; accumulated by a rule system.
+        f32 Elapsed = 0.0f;
+        /// @brief Mode score / objective counter; meaning is game policy.
+        i32 Score = 0;
+    };
+
+    /// @brief Per-scene game-mode configuration: the data a scene names to pick its mode.
+    ///
+    /// Held on the session entity beside Session. Names the player prefab a spawn rule
+    /// instantiates and the mode parameters the rule systems read. Selecting a different
+    /// mode is choosing a different config plus a different registered rule set — no C++
+    /// path picks the mode. Its authored JSON key is "gameMode".
+    struct GameModeConfig
+    {
+        /// @brief The player prefab a spawn rule instantiates when the session enters Playing.
+        AssetHandle<Prefab> PlayerPrefab;
+        /// @brief Score required to end the mode; a win-condition rule reads it.
+        i32 ScoreToWin = 0;
+    };
 }
 
 VE_LEAF(::Veng::LightType, 0x6B1D62EF4B5A16ULL, FieldClass::Enum);
@@ -468,4 +515,17 @@ VE_REFLECT(::Veng::CameraFollow, 0xF8BD924F0A0F9DB0ULL)
 VE_FIELD(Target, .DisplayName = "Target")
 VE_FIELD(Offset, .DisplayName = "Offset")
 VE_FIELD(Damping, .DisplayName = "Damping", .Min = 0.0)
+VE_REFLECT_END();
+
+VE_LEAF(::Veng::SessionPhase, 0x6DF15084654B59E7ULL, FieldClass::Enum);
+
+VE_REFLECT(::Veng::Session, 0x5EC76128049D9629ULL)
+VE_FIELD(Phase, .DisplayName = "Phase")
+VE_FIELD(Elapsed, .DisplayName = "Elapsed", .Min = 0.0, .ReadOnly = true)
+VE_FIELD(Score, .DisplayName = "Score")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::GameModeConfig, 0xAE57419CF98B07F8ULL)
+VE_FIELD(PlayerPrefab, .DisplayName = "Player Prefab")
+VE_FIELD(ScoreToWin, .DisplayName = "Score to Win", .Min = 0)
 VE_REFLECT_END();

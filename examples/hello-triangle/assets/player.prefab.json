@@ -1,0 +1,99 @@
+{
+  "entities": [
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Player Camera"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            10.0,
+            14.0
+          ],
+          "Rotation": [
+            -0.3051774799823761,
+            0.0,
+            0.0,
+            0.95229560136795044
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Camera": {
+          "FovY": 0.7853981633974483,
+          "Near": 0.1,
+          "Far": 100.0
+        },
+        "::Veng::CameraFollow": {
+          "Target": 2,
+          "Offset": [
+            0.0,
+            6.0,
+            12.0
+          ],
+          "Damping": 5.0
+        },
+        "::Veng::Authority": {
+          "Tier": 1,
+          "Owner": 0
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Player Seat"
+        },
+        "::Veng::Viewer": {
+          "Camera": 0
+        },
+        "::Veng::PlayerInput": {},
+        "::Veng::Possesses": {
+          "Pawn": 2
+        },
+        "::Veng::Authority": {
+          "Tier": 1,
+          "Owner": 0
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Player Pawn"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Intent": {},
+        "::Veng::Mover": {
+          "MoveSpeed": 5.0,
+          "TurnSpeed": 2.0
+        },
+        "::Veng::Authority": {
+          "Tier": 0,
+          "Owner": 0
+        }
+      }
+    }
+  ]
+}

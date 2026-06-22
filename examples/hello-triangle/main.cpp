@@ -23,7 +23,6 @@
 #include <Veng/Scene/CameraRig.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Movement.h>
-#include <Veng/Scene/Resolve.h>
 #include <Veng/Scene/Transforms.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
@@ -152,6 +151,76 @@ public:
     }
 };
 
+// The game mode's spawn rule: a Sim-phase system that instantiates the configured player
+// prefab when the Session is Playing, and tears it down when the session ends or play stops.
+// The player prefab authors its own Viewer/Possesses/Camera/CameraFollow wiring, so the
+// rule only picks (the GameModeConfig's PlayerPrefab) and spawns — no imperative wiring. It
+// spawns at OnStart, before the first Update, so the spawn is deterministic and the pinned
+// smoke frame (which never ticks Update) renders the authored camera pose.
+class SpawnPlayerRule final : public SceneSystem
+{
+public:
+    void OnStart(Scene& scene, const SystemContext& context) override
+    {
+        const Entity session = FindSession(scene);
+        if (session == Entity::Null || scene.Get<Session>(session).Phase != SessionPhase::Playing)
+        {
+            return;
+        }
+
+        const GameModeConfig& config = scene.Get<GameModeConfig>(session);
+
+        // The config's player prefab is eager-loaded as a dependency of the scene prefab,
+        // so it is resident by the time the simulation starts; skip if it is not.
+        if (!config.PlayerPrefab.IsLoaded())
+        {
+            return;
+        }
+
+        m_Spawned = config.PlayerPrefab.Get()->SpawnInto(scene, context.Assets);
+    }
+
+    void OnUpdate(Scene& scene, const f32, const SystemContext&) override
+    {
+        // The spawn happens once at OnStart; a scoring / win-condition rule is the obvious
+        // second system. Here the only per-tick rule action is tearing the player down when
+        // the session ends.
+        const Entity session = FindSession(scene);
+        if (session != Entity::Null && !m_Spawned.empty() &&
+            scene.Get<Session>(session).Phase == SessionPhase::Ended)
+        {
+            Despawn(scene);
+        }
+    }
+
+    void OnStop(Scene& scene, const SystemContext&) override { Despawn(scene); }
+
+private:
+    // Returns the well-known session entity (the one carrying both Session and its config),
+    // or Entity::Null if the scene authors no game mode.
+    static Entity FindSession(Scene& scene)
+    {
+        Entity found = Entity::Null;
+        scene.Each<Session, GameModeConfig>([&found](const Entity entity, Session&, GameModeConfig&)
+                                            { found = entity; });
+        return found;
+    }
+
+    void Despawn(Scene& scene)
+    {
+        for (const Entity entity : m_Spawned)
+        {
+            if (scene.IsAlive(entity))
+            {
+                scene.DestroyEntity(entity);
+            }
+        }
+        m_Spawned.clear();
+    }
+
+    vector<Entity> m_Spawned;
+};
+
 class HelloTriangleApp final : public Application
 {
 public:
@@ -245,18 +314,13 @@ protected:
             m_CompositeGraph = BuildCompositeGraph();
         }
 
-        // Smoke mode has no window, so Input is null and the gameplay tick is skipped;
-        // it writes a fixed pose in OnUpdate instead. The windowed app drives the
-        // registered systems through the simulation, and gains a player-driven pawn —
-        // spawned only here so the pinned smoke capture stays byte-identical.
-        if (!m_SmokeOutput)
-        {
-            SpawnPlayer();
-
-            m_Simulation = CreateUnique<SceneSimulation>(GetSystemRegistry());
-            m_Simulation->Start(*m_Scene,
-                                SystemContext{.Assets = GetAssetManager(), .Input = GetInput()});
-        }
+        // Both paths build and Start the simulation, so the Sim-phase SpawnPlayerRule
+        // instantiates the player at OnStart in headless smoke too. Smoke still never ticks
+        // Update, so nothing moves after the deterministic spawn and the View-phase camera
+        // rig does not run — the capture is the spawned camera's authored pose.
+        m_Simulation = CreateUnique<SceneSimulation>(GetSystemRegistry());
+        m_Simulation->Start(*m_Scene,
+                            SystemContext{.Assets = GetAssetManager(), .Input = GetInput()});
     }
 
     void OnUpdate(const f32 delta) override
@@ -370,63 +434,6 @@ private:
             GetTaskSystem().PumpMainThread();
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-    }
-
-    // Spawns the windowed-only player: a movable icosphere pawn carrying an Intent and
-    // a Mover, and a seat carrying a PlayerInput snapshot that possesses it. The control
-    // system fills the PlayerInput from device input and writes the pawn's Intent; the
-    // movement system integrates that Intent into the pawn's Transform. The scene's camera
-    // gains a CameraFollow trailing the pawn, so the View-phase rig moves the view with it.
-    void SpawnPlayer()
-    {
-        // Reuse the grid's material so the pawn shades like the rest of the scene.
-        const AssetResult<AssetHandle<Material>> material =
-            GetAssetManager().LoadSync<Material>(AssetId{0x3EBULL});
-        VE_ASSERT(material.has_value(), "{}", material.error().Detail);
-
-        const Entity pawn = m_Scene->CreateEntity();
-        m_Scene->Add<Name>(pawn, Name{.Value = "Player Pawn"});
-        Transform pawnTransform;
-        pawnTransform.Position = vec3(0.0f, 1.0f, 0.0f);
-        m_Scene->Add<Transform>(pawn, pawnTransform);
-        Primitive primitive;
-        *static_cast<IcosphereShape*>(primitive.Shape.SetActive(TypeIdOf<IcosphereShape>())) =
-            IcosphereShape{.Radius = 0.5f, .Subdivisions = 3, .Material = material.value()};
-        m_Scene->Add<Primitive>(pawn, primitive);
-        m_Scene->Add<Intent>(pawn, Intent{});
-        m_Scene->Add<Mover>(pawn, Mover{.MoveSpeed = 5.0f, .TurnSpeed = 2.0f});
-        // The simulated pawn is server-authoritative; the net layer will replicate it.
-        m_Scene->Add<Authority>(pawn, Authority{.Tier = Tier::Server});
-
-        // Stream the pawn's mesh in, exactly as a prefab-spawned Primitive resolves.
-        ResolveComponents(*m_Scene, pawn, GetAssetManager());
-
-        const Entity seat = m_Scene->CreateEntity();
-        m_Scene->Add<Name>(seat, Name{.Value = "Player Seat"});
-        m_Scene->Add<PlayerInput>(seat, PlayerInput{});
-        m_Scene->Add<Possesses>(seat, Possesses{.Pawn = pawn});
-        // The seat is a client-local view, not replicated.
-        m_Scene->Add<Authority>(seat, Authority{.Tier = Tier::Local});
-
-        // Trail the scene's camera behind the pawn. The rig runs in the View phase, so it
-        // reads the pawn position the movement system finalized this tick.
-        const Entity camera = FindCameraEntity();
-        if (camera != Entity::Null)
-        {
-            m_Scene->Add<CameraFollow>(
-                camera,
-                CameraFollow{.Target = pawn, .Offset = vec3(0.0f, 6.0f, 12.0f), .Damping = 5.0f});
-            // The camera is derived, client-local view state.
-            m_Scene->Add<Authority>(camera, Authority{.Tier = Tier::Local});
-        }
-    }
-
-    // Returns the scene's first camera entity, or Entity::Null if the scene has none.
-    Entity FindCameraEntity() const
-    {
-        Entity found = Entity::Null;
-        m_Scene->Each<Camera>([&found](const Entity entity, Camera&) { found = entity; });
-        return found;
     }
 
     // Configure can recreate the output image, so the ImGui texture and composite
@@ -663,7 +670,8 @@ private:
 
     Unique<Scene> m_Scene;
 
-    // Drives the registered scene systems in the windowed path; null in smoke mode.
+    // Drives the registered scene systems. Started in both paths so the spawn rule runs;
+    // only the windowed path ticks Update.
     Unique<SceneSimulation> m_Simulation;
 
     f32 m_LastDelta = 0.0f;
@@ -687,10 +695,14 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     host->Types.Register<Spinner>();
     host->Systems.Register<SpinnerSystem>();
 
+    // The game-mode rule runs first: it spawns the configured player prefab at the
+    // session's start, so the pawn and seat exist before the control pipeline ticks.
+    host->Systems.Register<SpawnPlayerRule>();
+
     // The control pipeline runs in order: the game-specific control mapping produces
     // Intent, then the engine's generic movement system consumes it. Registration order
-    // is run order, so ControlSystem must precede MovementSystem. Both are Sim-phase, so
-    // they finish before the View-phase camera rig trails the moved pawn.
+    // is run order, so ControlSystem must precede MovementSystem. All three are Sim-phase,
+    // so they finish before the View-phase camera rig trails the moved pawn.
     host->Systems.Register<ControlSystem>();
     host->Systems.Register<MovementSystem>();
     host->Systems.Register<CameraRigSystem>();

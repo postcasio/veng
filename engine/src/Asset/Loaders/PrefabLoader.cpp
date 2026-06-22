@@ -39,6 +39,10 @@ namespace Veng
             {
                 return AssetType::Material;
             }
+            if (fieldType == TypeIdOf<AssetHandle<Prefab>>())
+            {
+                return AssetType::Prefab;
+            }
             return std::nullopt;
         }
 
@@ -79,6 +83,8 @@ namespace Veng
                 return load.operator()<Mesh>();
             case AssetType::Material:
                 return load.operator()<Material>();
+            case AssetType::Prefab:
+                return load.operator()<Prefab>();
             default:
                 return std::unexpected(Corrupt(
                     parentId,

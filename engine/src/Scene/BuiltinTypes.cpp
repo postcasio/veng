@@ -31,6 +31,11 @@ namespace Veng
         registry.Register<Authority>();
         registry.Register<CameraFollow>();
 
+        // Game mode as data: the replicated Session state and the per-scene config a
+        // spawn rule reads. SessionPhase registers transitively through Session.
+        registry.Register<Session>();
+        registry.Register<GameModeConfig>();
+
         // Registering Primitive transitively registers its shape variant and the shape
         // alternatives through the dependency recursion.
         registry.Register<Primitive>();

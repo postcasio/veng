@@ -11,7 +11,7 @@ namespace Veng
     /// Covers the leaf vocabulary and the builtin components (Name, Transform,
     /// Hierarchy, Camera, Viewer, MeshRenderer, Light, the PlayerInput/Intent/
     /// Possesses/Mover control components, the Authority annotation, the CameraFollow
-    /// rig relationship, Primitive and its
+    /// rig relationship, the Session state and GameModeConfig, Primitive and its
     /// shape variant). GPU-free: touches no
     /// Context or device, so a headless cooker with no Vulkan ICD can call it.
     /// Idempotent per type — re-registering an id is a no-op.

@@ -38,6 +38,10 @@ namespace Veng::Cook
             {
                 return AssetType::Material;
             }
+            if (fieldType == TypeIdOf<AssetHandle<Prefab>>())
+            {
+                return AssetType::Prefab;
+            }
             return std::nullopt;
         }
 

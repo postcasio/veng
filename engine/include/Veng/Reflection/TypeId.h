@@ -13,6 +13,7 @@ namespace Veng
     class Texture;
     class Mesh;
     class Material;
+    class Prefab;
     class TypeRegistry;
 
     /// @brief Identity trait for every reflected type.
@@ -101,6 +102,7 @@ namespace Veng
     VE_LEAF(AssetHandle<Texture>, 0x612EE7E69BE7B848ULL, FieldClass::AssetHandle);
     VE_LEAF(AssetHandle<Mesh>, 0x1CD2C85C50AFC9E0ULL, FieldClass::AssetHandle);
     VE_LEAF(AssetHandle<Material>, 0x3992D11EB4362B4CULL, FieldClass::AssetHandle);
+    VE_LEAF(AssetHandle<Prefab>, 0xF71230AEA9060D83ULL, FieldClass::AssetHandle);
 
     // Entity is an intra-scene reference, not a value leaf — the prefab loader
     // recognises FieldClass::Reference to remap it into a fresh Scene.
