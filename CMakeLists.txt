@@ -685,6 +685,10 @@ if (VENG_BUILD_TESTS)
                 tests/gpu/shader_loader.cpp
                 tests/gpu/material_loader.cpp
                 tests/gpu/vertex_layout_loader.cpp
+                # The RTT-into-material proof: a producer viewport's output, sampled
+                # through a consumer viewport's material, in registration order.
+                # Cooks the brick g-buffer fixture, so it is gated with the rest.
+                tests/gpu/viewport_feeds_viewport.cpp
         )
         target_link_libraries(veng_test_gpu PRIVATE veng::cook)
         target_compile_definitions(veng_test_gpu PRIVATE
