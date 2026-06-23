@@ -37,3 +37,14 @@ serialization — neither importer nor loader.
   gains no reflection dependency, and a new game-mode or render-settings field evolves
   tolerantly within the fixed `CookedLevelVersion` (no bump). The loader rejects a blob whose
   `Version` mismatches.
+- **`AssetType::Skeleton` and `AssetType::Animation` carry skinned-character rigs.** A
+  **`CookedSkeletonHeader`** (`CookedSkeletonVersion`) is a `BoneCount` plus a column-major
+  `GlobalInverse` mat4, followed by `CookedBone[BoneCount]` in topological (parent-before-child)
+  order — each a parent index, a 64-byte name, an inverse-bind matrix, and a local bind TRS,
+  all stored as raw `f32`/`i32` (no glm dependency). A **`CookedAnimationHeader`**
+  (`CookedAnimationVersion`) is a `Duration` plus `CookedAnimChannel[]` (one per bone, with
+  position/rotation/scale key counts + byte offsets) and a trailing key region of timed
+  `CookedVec3Key`/`CookedQuatKey` runs. A **skinned mesh** sets `CookedMeshHeader.SkeletonId`
+  (0 = static) and is written in the skinned vertex layout (the canonical attributes plus
+  `RGBA16Uint` bone indices and `RGBA32Sfloat` weights); the attribute table is self-describing
+  so the loader validates it against the engine's canonical *or* skinned layout by `SkeletonId`.

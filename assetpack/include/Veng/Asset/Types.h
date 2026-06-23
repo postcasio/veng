@@ -18,6 +18,8 @@ namespace Veng
 {
     /// @brief Unsigned 8-bit integer.
     using u8 = uint8_t;
+    /// @brief Signed 32-bit integer.
+    using i32 = int32_t;
     /// @brief Unsigned 32-bit integer.
     using u32 = uint32_t;
     /// @brief Unsigned 64-bit integer.

@@ -26,5 +26,9 @@ namespace Veng
         Prefab,
         /// @brief A world prefab plus level-scoped wiring (game mode, system set, render settings) (see CookedLevelHeader).
         Level,
+        /// @brief A bone hierarchy with inverse-bind matrices for skinning (see CookedSkeletonHeader).
+        Skeleton,
+        /// @brief A set of per-bone keyframe tracks animating a skeleton (see CookedAnimationHeader).
+        Animation,
     };
 }

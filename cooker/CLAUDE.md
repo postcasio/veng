@@ -37,6 +37,19 @@ at cook time:
   parameters — the declared, explicitly-typed field list must match — and the
   fragment outputs are validated against the material domain's contract (Surface →
   g-buffer MRT `SV_Target0`+`SV_Target1`; PostProcess → a single `SV_Target0`).
+- **Skinned meshes, skeletons, and animations** come from a rigged model (FBX, via the
+  enabled assimp FBX importer). The `MeshImporter` emits the skinned vertex layout when the
+  `*.mesh.json` names a `"skeleton"` id: it caps each vertex to four normalized influences
+  (`aiProcess_LimitBoneWeights`), writes `RGBA16Uint` bone indices + `RGBA32Sfloat` weights,
+  and stamps `SkeletonId`. The **`SkeletonImporter`** (`*.skeleton.json`) and
+  **`AnimationImporter`** (`*.animation.json`, optional `"clip"` index) read the same model;
+  all three derive bone indices from one **canonical bone order** (`SkeletonSource`, a DFS of
+  the assimp node hierarchy), so a vertex's bone index, the skeleton's bone array, and an
+  animation channel's target all agree. A skinned mesh keeps raw model units (bone bind /
+  animation translations are not scaled) — scale a character via its entity `Transform`.
+- **Textures** take an optional `"max_size"` that downscales the decoded image (aspect-
+  preserving, sRGB- or linear-correct) before packing, so high-resolution scan art does not
+  bloat the raw-pixel blob.
 
 ## The prefab-cooking relaxation
 

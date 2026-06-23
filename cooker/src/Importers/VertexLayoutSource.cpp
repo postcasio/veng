@@ -12,12 +12,13 @@ namespace Veng::Cook
     namespace
     {
         // Underlying-integer ordinals mirroring Veng::Renderer::Format
-        // (cycle-avoidance rule, CookedBlobs.h). Only the four float formats
-        // that VertexBufferElement supports are valid vertex-layout formats.
+        // (cycle-avoidance rule, CookedBlobs.h). The four float formats plus the
+        // RGBA16Uint bone-index format are the valid vertex-layout formats.
         constexpr u32 FormatR32Sfloat = 7;
         constexpr u32 FormatRG32Sfloat = 8;
         constexpr u32 FormatRGB32Sfloat = 9;
         constexpr u32 FormatRGBA32Sfloat = 10;
+        constexpr u32 FormatRGBA16Uint = 20;
 
         void SetName(char (&dest)[ShaderNameCapacity], std::string_view name)
         {
@@ -43,6 +44,10 @@ namespace Veng::Cook
             if (name == "RGBA32Sfloat")
             {
                 return FormatRGBA32Sfloat;
+            }
+            if (name == "RGBA16Uint")
+            {
+                return FormatRGBA16Uint;
             }
             return std::nullopt;
         }
@@ -79,7 +84,8 @@ namespace Veng::Cook
             {
                 return std::unexpected(
                     fmt::format("vertex layout '{}': element[{}]: unrecognized format '{}' "
-                                "(valid: R32Sfloat, RG32Sfloat, RGB32Sfloat, RGBA32Sfloat)",
+                                "(valid: R32Sfloat, RG32Sfloat, RGB32Sfloat, RGBA32Sfloat, "
+                                "RGBA16Uint)",
                                 diagnosticContext, i, formatStr));
             }
 

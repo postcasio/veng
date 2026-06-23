@@ -15,6 +15,8 @@ namespace Veng
         registry.Register<Camera>();
         registry.Register<Viewer>();
         registry.Register<MeshRenderer>();
+        registry.Register<Animator>();
+        registry.Register<SkinnedPose>();
         registry.Register<LightType>();
         registry.Register<Light>();
 

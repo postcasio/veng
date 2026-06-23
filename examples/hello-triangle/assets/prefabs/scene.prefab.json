@@ -4609,6 +4609,40 @@
           }
         }
       }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Nathan"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            0.02,
+            0.02,
+            0.02
+          ]
+        },
+        "::Veng::MeshRenderer": {
+          "Mesh": 2751177482215621782
+        },
+        "::Veng::Animator": {
+          "Clip": 4971316837671446691,
+          "Speed": 1.0,
+          "Loop": true,
+          "Playing": true
+        }
+      }
     }
   ]
 }

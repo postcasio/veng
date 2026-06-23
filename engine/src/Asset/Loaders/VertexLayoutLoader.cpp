@@ -31,6 +31,8 @@ namespace Veng
                 return Renderer::Format::RGB32Sfloat;
             case static_cast<u32>(Renderer::Format::RGBA32Sfloat):
                 return Renderer::Format::RGBA32Sfloat;
+            case static_cast<u32>(Renderer::Format::RGBA16Uint):
+                return Renderer::Format::RGBA16Uint;
             default:
                 return std::nullopt;
             }

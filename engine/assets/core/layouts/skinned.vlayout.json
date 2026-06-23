@@ -1,0 +1,10 @@
+{
+  "elements": [
+    { "format": "RGB32Sfloat",  "name": "a_Position" },
+    { "format": "RGB32Sfloat",  "name": "a_Normal" },
+    { "format": "RGBA32Sfloat", "name": "a_Tangent" },
+    { "format": "RG32Sfloat",   "name": "a_UV" },
+    { "format": "RGBA16Uint",   "name": "a_BoneIndices" },
+    { "format": "RGBA32Sfloat", "name": "a_BoneWeights" }
+  ]
+}

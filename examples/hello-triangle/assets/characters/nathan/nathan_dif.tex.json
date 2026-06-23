@@ -1,0 +1,12 @@
+{
+  "image": "tex/nathan_dif.jpg",
+  "srgb": true,
+  "max_size": 2048,
+  "sampler": {
+    "min": "linear",
+    "mag": "linear",
+    "mipmap": "linear",
+    "wrap_u": "repeat",
+    "wrap_v": "repeat"
+  }
+}

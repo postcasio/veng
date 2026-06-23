@@ -55,6 +55,10 @@ namespace Veng::Renderer
         /// @brief 10-bit RGB + 2-bit alpha, normalized, packed in 32 bits (BGRA order).
         ///        The HDR10 swapchain format. Appended for cooked-blob integer stability.
         A2B10G10R10Unorm,
+        /// @brief 16-bit per channel RGBA unsigned integer (read as uint4 in-shader).
+        ///        The skinned-mesh bone-index attribute format. Appended for cooked-blob
+        ///        integer stability.
+        RGBA16Uint,
     };
 
     /// @brief Requested display output mode for the presentable swapchain.

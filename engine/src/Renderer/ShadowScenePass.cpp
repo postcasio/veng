@@ -7,6 +7,8 @@
 #include <Veng/Assert.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
@@ -34,6 +36,10 @@ namespace Veng::Renderer
         // light-space MVP, no fragment stage).
         constexpr AssetId ShadowDepthVertId{0x156C14C99FFF6B7CULL};
 
+        // The skinned depth-only shadow vertex shader (skinned layout in, palette at set 1,
+        // light-space MVP + PaletteBase push).
+        constexpr AssetId ShadowDepthSkinnedVertId{0x83DB748493614120ULL};
+
         // Depth format and usage: a single-channel float depth target written per cascade
         // and sampled by the lighting pass through its dedicated set.
         constexpr Format ShadowFormat = Format::D32Sfloat;
@@ -45,6 +51,20 @@ namespace Veng::Renderer
         {
             mat4 MVP;
         };
+
+        // The skinned depth-only push block: light-space MVP plus the instance's PaletteBase,
+        // matching shadow_depth_skinned.vert's push block.
+        struct ShadowSkinnedPushConstants
+        {
+            mat4 MVP;
+            u32 PaletteBase;
+        };
+
+        // Packs an Entity into the u64 key the renderer's per-entity palette map uses.
+        u64 PackEntity(Entity e)
+        {
+            return (static_cast<u64>(e.Index) << 32) | static_cast<u64>(e.Generation);
+        }
     }
 
     ShadowScenePass::ShadowScenePass(Context& context, AssetManager& assets, u32 resolution,
@@ -100,7 +120,66 @@ namespace Veng::Renderer
                 .DepthWriteEnable = true,
             });
 
+        BuildSkinnedPipeline(assets, vertexBufferLayout.has_value());
+
         CreateAtlas();
+    }
+
+    void ShadowScenePass::BuildSkinnedPipeline(AssetManager& assets, bool /*hasStaticLayout*/)
+    {
+        const AssetResult<AssetHandle<Veng::Shader>> vs =
+            assets.LoadSync<Veng::Shader>(ShadowDepthSkinnedVertId);
+        VE_ASSERT(vs.has_value(), "ShadowScenePass: skinned depth vertex shader load failed: {}",
+                  vs.error().Detail);
+        m_SkinnedVertexShader = *vs;
+
+        // The palette set (set 1): one storage buffer, vertex stage — matching the renderer's
+        // palette descriptor set and the skinned shader's reflected set 1.
+        m_PaletteSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "ShadowScenePass Palette Set Layout",
+                           .Bindings = {{.Binding = 0,
+                                         .Type = DescriptorType::StorageBuffer,
+                                         .Count = 1,
+                                         .Stages = ShaderStage::Vertex}},
+                       });
+
+        m_SkinnedLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "ShadowScenePass Skinned Layout",
+                           .DescriptorSetLayouts = {m_PaletteSetLayout},
+                           .PushConstantRanges = {PushConstantRange::Of<ShadowSkinnedPushConstants>(
+                               ShaderStage::Vertex)},
+                       });
+
+        optional<VertexBufferLayout> skinnedLayout;
+        const Renderer::ShaderInterface& vsInterface = m_SkinnedVertexShader.Get()->Interface;
+        if (vsInterface.VertexLayoutId.has_value())
+        {
+            const AssetResult<AssetHandle<Veng::VertexLayout>> layoutResult =
+                assets.LoadSync<Veng::VertexLayout>(*vsInterface.VertexLayoutId);
+            VE_ASSERT(layoutResult.has_value(),
+                      "ShadowScenePass: skinned vertex layout load failed: {}",
+                      layoutResult.error().Detail);
+            skinnedLayout = layoutResult->Get()->GetLayout();
+        }
+
+        m_SkinnedPipeline = GraphicsPipeline::Create(
+            m_Context, {
+                           .Name = "ShadowScenePass Skinned Depth Pipeline",
+                           .ColorAttachments = {},
+                           .DepthAttachmentFormat = ShadowFormat,
+                           .VertexBufferLayout = skinnedLayout,
+                           .PipelineLayout = m_SkinnedLayout,
+                           .ShaderStages =
+                               {
+                                   {.Stage = ShaderStage::Vertex,
+                                    .Module = m_SkinnedVertexShader.Get()->Module},
+                               },
+                           .CullMode = CullMode::Front,
+                           .DepthTestEnable = true,
+                           .DepthWriteEnable = true,
+                       });
     }
 
     ShadowScenePass::~ShadowScenePass() = default;
@@ -150,13 +229,14 @@ namespace Veng::Renderer
                     const SceneView& view = ctx.View();
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
-                    cmd.BindPipeline(m_Pipeline);
-                    registry.Bind(cmd);
-
                     // Render each cascade into its tile: set the viewport + scissor to the
                     // tile sub-rect, push cascade k's raw light-space matrix, and draw.
                     const u32 count =
                         cascadeCount < view.CascadeCount ? cascadeCount : view.CascadeCount;
+
+                    const std::span<const SubMeshCandidate> candidates =
+                        view.Broadphase->GetSubMeshCandidates();
+
                     for (u32 k = 0; k < count; ++k)
                     {
                         const ivec2 tileOffset{
@@ -174,26 +254,44 @@ namespace Veng::Renderer
                         // completely outside the cascade's volume is dropped.
                         const Frustum cascadeFrustum = Frustum::FromViewProjection(lightViewProj);
 
-                        const Mesh* lastBound = nullptr;
-
-                        const auto DrawSubMesh = [&](const VisibleMesh& item, u32 subMeshIndex)
+                        m_CullScratch.clear();
+                        if (m_FrustumCull)
                         {
+                            view.Broadphase->Cull(cascadeFrustum, m_CullScratch);
+                        }
+                        else
+                        {
+                            for (u32 i = 0; i < candidates.size(); ++i)
+                            {
+                                m_CullScratch.push_back(i);
+                            }
+                        }
+
+                        // Static casters: the canonical-layout depth pipeline.
+                        cmd.BindPipeline(m_Pipeline);
+                        registry.Bind(cmd);
+                        const Mesh* lastBound = nullptr;
+                        for (const u32 id : m_CullScratch)
+                        {
+                            const SubMeshCandidate& c = candidates[id];
+                            const VisibleMesh& item = view.Visible[c.MeshCandidate];
                             const Mesh& mesh = *item.Mesh;
+                            if (mesh.IsSkinned())
+                            {
+                                continue;
+                            }
+
                             const std::span<const AssetHandle<Material>> materials =
                                 mesh.GetMaterials();
-
-                            const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
-                            if (subMesh.MaterialIndex == SubMesh::NoMaterial)
+                            const SubMesh& subMesh = mesh.GetSubMeshes()[c.SubMeshIndex];
+                            if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
+                                !materials[subMesh.MaterialIndex].IsLoaded())
                             {
-                                return;
-                            }
-                            if (!materials[subMesh.MaterialIndex].IsLoaded())
-                            {
-                                return;
+                                continue;
                             }
 
-                            // The candidate list is in GatherMeshes order, so a mesh's
-                            // submeshes are contiguous — bind its buffers + MVP once.
+                            // The candidate list is in GatherMeshes order, so a mesh's submeshes
+                            // are contiguous — bind its buffers + MVP once.
                             if (lastBound != &mesh)
                             {
                                 cmd.BindVertexBuffer(mesh.GetVertexBuffer());
@@ -202,28 +300,57 @@ namespace Veng::Renderer
                                     ShadowPushConstants{.MVP = lightViewProj * item.World});
                                 lastBound = &mesh;
                             }
-
                             cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
-                        };
+                        }
 
-                        const std::span<const SubMeshCandidate> candidates =
-                            view.Broadphase->GetSubMeshCandidates();
-
-                        if (m_FrustumCull)
+                        // Skinned casters: the skinned depth pipeline + the palette set (set 1),
+                        // posing each caster's shadow through its DrawData PaletteBase.
+                        if (view.SkinningPalette != nullptr && view.SkinnedPaletteBases != nullptr)
                         {
-                            m_CullScratch.clear();
-                            view.Broadphase->Cull(cascadeFrustum, m_CullScratch);
+                            cmd.BindPipeline(m_SkinnedPipeline);
+                            cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                                .Sets = {view.SkinningPalette},
+                                .FirstSet = 1,
+                                .PipelineBindPoint = PipelineBindPoint::Graphics,
+                            });
+                            const Mesh* lastSkinned = nullptr;
                             for (const u32 id : m_CullScratch)
                             {
                                 const SubMeshCandidate& c = candidates[id];
-                                DrawSubMesh(view.Visible[c.MeshCandidate], c.SubMeshIndex);
-                            }
-                        }
-                        else
-                        {
-                            for (const SubMeshCandidate& c : candidates)
-                            {
-                                DrawSubMesh(view.Visible[c.MeshCandidate], c.SubMeshIndex);
+                                const VisibleMesh& item = view.Visible[c.MeshCandidate];
+                                const Mesh& mesh = *item.Mesh;
+                                if (!mesh.IsSkinned())
+                                {
+                                    continue;
+                                }
+
+                                const std::span<const AssetHandle<Material>> materials =
+                                    mesh.GetMaterials();
+                                const SubMesh& subMesh = mesh.GetSubMeshes()[c.SubMeshIndex];
+                                if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
+                                    !materials[subMesh.MaterialIndex].IsLoaded())
+                                {
+                                    continue;
+                                }
+
+                                const auto baseIt =
+                                    view.SkinnedPaletteBases->find(PackEntity(item.Owner));
+                                if (baseIt == view.SkinnedPaletteBases->end())
+                                {
+                                    continue;
+                                }
+
+                                if (lastSkinned != &mesh)
+                                {
+                                    cmd.BindVertexBuffer(mesh.GetVertexBuffer());
+                                    cmd.BindIndexBuffer(mesh.GetIndexBuffer());
+                                    lastSkinned = &mesh;
+                                }
+                                cmd.PushConstants(ShadowSkinnedPushConstants{
+                                    .MVP = lightViewProj * item.World,
+                                    .PaletteBase = baseIt->second,
+                                });
+                                cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                             }
                         }
                     }

@@ -62,9 +62,13 @@ namespace Veng
     ///   index bytes   (IndexCount * (IndexType == U16 ? 2 : 4))
     ///
     /// The attribute descriptor records the on-disk interleaved format so the loader can
-    /// validate it against the engine's canonical VertexBufferLayout (a loud Corrupt error
-    /// on mismatch, not silent UB). The descriptor is stored self-describingly so a layout
-    /// change is a format-version bump, not a silent reinterpretation.
+    /// validate it against the engine's canonical (or skinned) VertexBufferLayout (a loud
+    /// Corrupt error on mismatch, not silent UB). The descriptor is stored self-describingly
+    /// so a layout change is a format-version bump, not a silent reinterpretation.
+    ///
+    /// A non-zero SkeletonId marks a skinned mesh: its vertices carry the skinned layout
+    /// (canonical attributes plus BoneIndices/BoneWeights) and the loader resolves the
+    /// referenced Skeleton as a load-time dependency.
     struct CookedMeshHeader
     {
         /// @brief Byte stride per vertex.
@@ -79,6 +83,8 @@ namespace Veng
         u32 SubMeshCount = 0;
         /// @brief Number of CookedVertexAttribute entries following this header.
         u32 AttributeCount = 0;
+        /// @brief AssetId of the mesh's Skeleton, or 0 for a static (non-skinned) mesh.
+        u64 SkeletonId = 0;
     };
 
     /// @brief One interleaved vertex attribute, in layout order.
@@ -365,5 +371,124 @@ namespace Veng
         u32 GameModeRecordBytes = 0;
         /// @brief Byte size of the render-settings record following the game-mode record.
         u32 RenderRecordBytes = 0;
+    };
+
+    /// @brief The current skeleton-format version.
+    ///
+    /// Bumped on any CookedSkeletonHeader/CookedBone layout change; the loader rejects a
+    /// blob whose Version != this.
+    inline constexpr u32 CookedSkeletonVersion = 1u;
+
+    /// @brief Cooked header for a skeleton asset.
+    ///
+    /// A skeleton is a flat array of bones in topological order (every bone precedes its
+    /// children), each carrying its parent index, inverse-bind matrix, and local bind-pose
+    /// transform. Animations and the skinning palette index this same bone order. The
+    /// runtime computes each bone's skinning matrix as
+    /// GlobalInverse * modelBone(bone) * InverseBind(bone).
+    ///
+    /// The blob is, in order:
+    ///   CookedSkeletonHeader
+    ///   CookedBone[BoneCount]
+    struct CookedSkeletonHeader
+    {
+        /// @brief Must equal CookedSkeletonVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief Number of CookedBone entries following this header.
+        u32 BoneCount = 0;
+        /// @brief Inverse of the scene root transform, column-major mat4; folded into the skin formula.
+        f32 GlobalInverse[16] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+                                 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+    };
+
+    /// @brief One bone in a cooked skeleton, in topological (parent-before-child) order.
+    ///
+    /// All matrices/transforms are stored as raw f32 arrays (column-major for the matrix,
+    /// xyzw for the quaternion) so assetpack gains no glm dependency; the engine loader
+    /// reinterprets them into its glm types.
+    struct CookedBone
+    {
+        /// @brief Index of the parent bone in the bone array, or -1 for a root.
+        i32 Parent = -1;
+        /// @brief Nul-terminated bone name, at most ShaderNameCapacity - 1 bytes.
+        char Name[ShaderNameCapacity] = {};
+        /// @brief Inverse bind-pose matrix (mesh space → bone space), column-major mat4.
+        f32 InverseBind[16] = {};
+        /// @brief Local bind-pose translation (parent space).
+        f32 LocalPosition[3] = {};
+        /// @brief Local bind-pose rotation quaternion, xyzw (parent space).
+        f32 LocalRotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        /// @brief Local bind-pose scale (parent space).
+        f32 LocalScale[3] = {1.0f, 1.0f, 1.0f};
+    };
+
+    /// @brief The current animation-format version.
+    ///
+    /// Bumped on any CookedAnimationHeader/CookedAnimChannel/key layout change; the loader
+    /// rejects a blob whose Version != this.
+    inline constexpr u32 CookedAnimationVersion = 1u;
+
+    /// @brief Cooked header for an animation asset.
+    ///
+    /// An animation is a set of per-bone keyframe tracks (position/rotation/scale) sampled
+    /// against a skeleton's bone order. Times are in seconds; a bone with no track for a
+    /// component holds its skeleton bind-pose value.
+    ///
+    /// The blob is, in order:
+    ///   CookedAnimationHeader
+    ///   CookedAnimChannel[ChannelCount]
+    ///   key region                            — CookedVec3Key / CookedQuatKey runs the
+    ///                                            channels reference by byte offset (KeyRegionBytes)
+    struct CookedAnimationHeader
+    {
+        /// @brief Must equal CookedAnimationVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief Number of CookedAnimChannel entries following this header.
+        u32 ChannelCount = 0;
+        /// @brief Byte size of the trailing key region.
+        u32 KeyRegionBytes = 0;
+        /// @brief Total animation duration in seconds.
+        f32 Duration = 0.0f;
+    };
+
+    /// @brief One bone's animation track: position/rotation/scale key runs by byte offset.
+    ///
+    /// Offsets are byte offsets into the animation's key region (the bytes following the
+    /// channel array). Position and scale keys are CookedVec3Key; rotation keys are
+    /// CookedQuatKey. A zero count means the bone holds its bind-pose value for that channel.
+    struct CookedAnimChannel
+    {
+        /// @brief Target bone index in the skeleton's bone array.
+        u32 BoneIndex = 0;
+        /// @brief Number of position keys.
+        u32 PositionKeyCount = 0;
+        /// @brief Byte offset of the position keys within the key region.
+        u32 PositionKeyOffset = 0;
+        /// @brief Number of rotation keys.
+        u32 RotationKeyCount = 0;
+        /// @brief Byte offset of the rotation keys within the key region.
+        u32 RotationKeyOffset = 0;
+        /// @brief Number of scale keys.
+        u32 ScaleKeyCount = 0;
+        /// @brief Byte offset of the scale keys within the key region.
+        u32 ScaleKeyOffset = 0;
+    };
+
+    /// @brief One timed vec3 key (position or scale) in an animation track.
+    struct CookedVec3Key
+    {
+        /// @brief Key time in seconds.
+        f32 Time = 0.0f;
+        /// @brief Keyed value (xyz).
+        f32 Value[3] = {};
+    };
+
+    /// @brief One timed quaternion key (rotation) in an animation track.
+    struct CookedQuatKey
+    {
+        /// @brief Key time in seconds.
+        f32 Time = 0.0f;
+        /// @brief Keyed rotation quaternion, xyzw.
+        f32 Value[4] = {0.0f, 0.0f, 0.0f, 1.0f};
     };
 }

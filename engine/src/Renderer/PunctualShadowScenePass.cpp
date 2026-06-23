@@ -5,6 +5,8 @@
 #include <Veng/Assert.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/PipelineLayout.h>
@@ -21,6 +23,7 @@
 
 #include <Veng/Math/Frustum.h>
 
+#include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Visibility.h>
 
 namespace Veng::Renderer
@@ -30,6 +33,10 @@ namespace Veng::Renderer
         // The core pack's depth-only shadow vertex shader (canonical layout in,
         // light-space MVP, no fragment stage).
         constexpr AssetId ShadowDepthVertId{0x156C14C99FFF6B7CULL};
+
+        // The skinned depth-only shadow vertex shader (skinned layout in, palette at set 1,
+        // light-space MVP + PaletteBase push) — shared with the directional cascade pass.
+        constexpr AssetId ShadowDepthSkinnedVertId{0x83DB748493614120ULL};
 
         // The atlas's depth format: a single-channel float depth target the lighting
         // pass SampleCmps. The image is renderer-owned; this pass only writes the
@@ -42,6 +49,20 @@ namespace Veng::Renderer
         {
             mat4 MVP;
         };
+
+        // The skinned depth-only push block: light-space MVP plus the instance's PaletteBase,
+        // matching shadow_depth_skinned.vert's push block.
+        struct PunctualSkinnedPushConstants
+        {
+            mat4 MVP;
+            u32 PaletteBase;
+        };
+
+        // Packs an Entity into the u64 key the renderer's per-entity palette map uses.
+        u64 PackEntity(Entity e)
+        {
+            return (static_cast<u64>(e.Index) << 32) | static_cast<u64>(e.Generation);
+        }
     }
 
     PunctualShadowScenePass::PunctualShadowScenePass(Context& context, AssetManager& assets,
@@ -94,6 +115,67 @@ namespace Veng::Renderer
                 .DepthTestEnable = true,
                 .DepthWriteEnable = true,
             });
+
+        BuildSkinnedPipeline(assets);
+    }
+
+    void PunctualShadowScenePass::BuildSkinnedPipeline(AssetManager& assets)
+    {
+        const AssetResult<AssetHandle<Veng::Shader>> vs =
+            assets.LoadSync<Veng::Shader>(ShadowDepthSkinnedVertId);
+        VE_ASSERT(vs.has_value(),
+                  "PunctualShadowScenePass: skinned depth vertex shader load failed: {}",
+                  vs.error().Detail);
+        m_SkinnedVertexShader = *vs;
+
+        // The palette set (set 1): one storage buffer, vertex stage — matching the renderer's
+        // palette descriptor set and the skinned shader's reflected set 1.
+        m_PaletteSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "PunctualShadowScenePass Palette Set Layout",
+                           .Bindings = {{.Binding = 0,
+                                         .Type = DescriptorType::StorageBuffer,
+                                         .Count = 1,
+                                         .Stages = ShaderStage::Vertex}},
+                       });
+
+        m_SkinnedLayout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "PunctualShadowScenePass Skinned Layout",
+                .DescriptorSetLayouts = {m_PaletteSetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<PunctualSkinnedPushConstants>(
+                    ShaderStage::Vertex)},
+            });
+
+        optional<VertexBufferLayout> skinnedLayout;
+        const Renderer::ShaderInterface& vsInterface = m_SkinnedVertexShader.Get()->Interface;
+        if (vsInterface.VertexLayoutId.has_value())
+        {
+            const AssetResult<AssetHandle<Veng::VertexLayout>> layoutResult =
+                assets.LoadSync<Veng::VertexLayout>(*vsInterface.VertexLayoutId);
+            VE_ASSERT(layoutResult.has_value(),
+                      "PunctualShadowScenePass: skinned vertex layout load failed: {}",
+                      layoutResult.error().Detail);
+            skinnedLayout = layoutResult->Get()->GetLayout();
+        }
+
+        m_SkinnedPipeline = GraphicsPipeline::Create(
+            m_Context, {
+                           .Name = "PunctualShadowScenePass Skinned Depth Pipeline",
+                           .ColorAttachments = {},
+                           .DepthAttachmentFormat = PunctualShadowFormat,
+                           .VertexBufferLayout = skinnedLayout,
+                           .PipelineLayout = m_SkinnedLayout,
+                           .ShaderStages =
+                               {
+                                   {.Stage = ShaderStage::Vertex,
+                                    .Module = m_SkinnedVertexShader.Get()->Module},
+                               },
+                           .CullMode = CullMode::Front,
+                           .DepthTestEnable = true,
+                           .DepthWriteEnable = true,
+                       });
     }
 
     PunctualShadowScenePass::~PunctualShadowScenePass() = default;
@@ -125,30 +207,27 @@ namespace Veng::Renderer
                     const SceneView& view = ctx.View();
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
-                    cmd.BindPipeline(m_Pipeline);
-                    registry.Bind(cmd);
+                    const std::span<const SubMeshCandidate> candidates =
+                        view.Broadphase->GetSubMeshCandidates();
 
-                    const Mesh* lastBound = nullptr;
-
-                    const auto DrawSubMesh =
-                        [&](const VisibleMesh& item, u32 subMeshIndex, const mat4& lightViewProj)
+                    // Static caster draw: the canonical-layout depth pipeline, bind buffers + MVP
+                    // once per mesh (submeshes are contiguous within a face in GatherMeshes order).
+                    const auto DrawStatic = [&](const VisibleMesh& item, u32 subMeshIndex,
+                                                const mat4& lightViewProj, const Mesh*& lastBound)
                     {
                         const Mesh& mesh = *item.Mesh;
+                        if (mesh.IsSkinned())
+                        {
+                            return;
+                        }
                         const std::span<const AssetHandle<Material>> materials =
                             mesh.GetMaterials();
-
                         const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
-                        if (subMesh.MaterialIndex == SubMesh::NoMaterial)
+                        if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
+                            !materials[subMesh.MaterialIndex].IsLoaded())
                         {
                             return;
                         }
-                        if (!materials[subMesh.MaterialIndex].IsLoaded())
-                        {
-                            return;
-                        }
-
-                        // The candidate list is in GatherMeshes order, so a mesh's submeshes
-                        // are contiguous within a face — bind its buffers + MVP once.
                         if (lastBound != &mesh)
                         {
                             cmd.BindVertexBuffer(mesh.GetVertexBuffer());
@@ -157,12 +236,42 @@ namespace Veng::Renderer
                                 PunctualShadowPushConstants{.MVP = lightViewProj * item.World});
                             lastBound = &mesh;
                         }
-
                         cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                     };
 
-                    const std::span<const SubMeshCandidate> candidates =
-                        view.Broadphase->GetSubMeshCandidates();
+                    // Skinned caster draw: the skinned depth pipeline; the posed shadow comes from
+                    // the per-instance palette (set 1) indexed by the entity's PaletteBase.
+                    const auto DrawSkinned = [&](const VisibleMesh& item, u32 subMeshIndex,
+                                                 const mat4& lightViewProj, const Mesh*& lastBound)
+                    {
+                        const Mesh& mesh = *item.Mesh;
+                        if (!mesh.IsSkinned())
+                        {
+                            return;
+                        }
+                        const std::span<const AssetHandle<Material>> materials =
+                            mesh.GetMaterials();
+                        const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
+                        if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
+                            !materials[subMesh.MaterialIndex].IsLoaded())
+                        {
+                            return;
+                        }
+                        const auto baseIt = view.SkinnedPaletteBases->find(PackEntity(item.Owner));
+                        if (baseIt == view.SkinnedPaletteBases->end())
+                        {
+                            return;
+                        }
+                        if (lastBound != &mesh)
+                        {
+                            cmd.BindVertexBuffer(mesh.GetVertexBuffer());
+                            cmd.BindIndexBuffer(mesh.GetIndexBuffer());
+                            lastBound = &mesh;
+                        }
+                        cmd.PushConstants(PunctualSkinnedPushConstants{
+                            .MVP = lightViewProj * item.World, .PaletteBase = baseIt->second});
+                        cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
+                    };
 
                     // Cull against each face's own frustum: off-screen casters within the
                     // light's range/cone are kept; only what falls outside is dropped.
@@ -192,27 +301,46 @@ namespace Veng::Renderer
                             const mat4 lightViewProj = view.PunctualShadowRawViewProj[slot][face];
                             const Frustum lightFrustum = Frustum::FromViewProjection(lightViewProj);
 
-                            // Each face is a fresh draw set with its own MVP; reset the
-                            // redundant-bind tracker so the first mesh rebinds + repushes.
-                            lastBound = nullptr;
-
+                            m_CullScratch.clear();
                             if (m_FrustumCull)
                             {
-                                m_CullScratch.clear();
                                 view.Broadphase->Cull(lightFrustum, m_CullScratch);
-                                for (const u32 id : m_CullScratch)
-                                {
-                                    const SubMeshCandidate& c = candidates[id];
-                                    DrawSubMesh(view.Visible[c.MeshCandidate], c.SubMeshIndex,
-                                                lightViewProj);
-                                }
                             }
                             else
                             {
-                                for (const SubMeshCandidate& c : candidates)
+                                for (u32 i = 0; i < candidates.size(); ++i)
                                 {
-                                    DrawSubMesh(view.Visible[c.MeshCandidate], c.SubMeshIndex,
-                                                lightViewProj);
+                                    m_CullScratch.push_back(i);
+                                }
+                            }
+
+                            // Static casters.
+                            cmd.BindPipeline(m_Pipeline);
+                            registry.Bind(cmd);
+                            const Mesh* lastStatic = nullptr;
+                            for (const u32 id : m_CullScratch)
+                            {
+                                const SubMeshCandidate& c = candidates[id];
+                                DrawStatic(view.Visible[c.MeshCandidate], c.SubMeshIndex,
+                                           lightViewProj, lastStatic);
+                            }
+
+                            // Skinned casters.
+                            if (view.SkinningPalette != nullptr &&
+                                view.SkinnedPaletteBases != nullptr)
+                            {
+                                cmd.BindPipeline(m_SkinnedPipeline);
+                                cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                                    .Sets = {view.SkinningPalette},
+                                    .FirstSet = 1,
+                                    .PipelineBindPoint = PipelineBindPoint::Graphics,
+                                });
+                                const Mesh* lastSkinned = nullptr;
+                                for (const u32 id : m_CullScratch)
+                                {
+                                    const SubMeshCandidate& c = candidates[id];
+                                    DrawSkinned(view.Visible[c.MeshCandidate], c.SubMeshIndex,
+                                                lightViewProj, lastSkinned);
                                 }
                             }
                         }

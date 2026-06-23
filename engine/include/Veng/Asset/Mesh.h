@@ -8,6 +8,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/Skeleton.h>
 #include <Veng/Math/AABB.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/TypedBuffers.h>
@@ -99,6 +100,8 @@ namespace Veng
         vector<AssetHandle<Material>> Materials;
         /// @brief Local/object-space bound of the mesh's vertices, folded from canonical positions by Mesh::ComputeBounds.
         AABB Bounds = AABB::Empty();
+        /// @brief The mesh's Skeleton when skinned; invalid for a static mesh.
+        AssetHandle<Skeleton> Skeleton;
     };
 
     /// @brief Cooked mesh's GPU buffers and draw ranges.
@@ -114,6 +117,12 @@ namespace Veng
         ///
         /// Must match the id assigned in core.vengpack.json.
         static constexpr AssetId CanonicalLayoutId{0x4DC267CE63429B6CULL};
+
+        /// @brief Well-known AssetId of the skinned VertexLayout asset in the embedded core pack.
+        ///
+        /// Must match the id assigned in core.vengpack.json. The skinned-mesh vertex shader
+        /// references it.
+        static constexpr AssetId SkinnedLayoutId{0xD49E7F530927BA31ULL};
 
         /// @brief Creates a Mesh directly from a MeshInfo (GPU buffers already uploaded).
         ///
@@ -142,6 +151,23 @@ namespace Veng
                 {Renderer::Format::RGB32Sfloat, "a_Normal"},
                 {Renderer::Format::RGBA32Sfloat, "a_Tangent"},
                 {Renderer::Format::RG32Sfloat, "a_UV"},
+            });
+        }
+
+        /// @brief Returns the skinned vertex layout (canonical attributes + bone indices/weights, 72-byte stride).
+        ///
+        /// The canonical attributes (position/normal/tangent/uv) followed by RGBA16Uint bone
+        /// indices and RGBA32Sfloat bone weights. The cooker writes a skinned mesh in this
+        /// layout; the loader validates against it; the skinned-mesh pipeline declares it.
+        [[nodiscard]] static Renderer::VertexBufferLayout SkinnedLayout()
+        {
+            return Renderer::VertexBufferLayout({
+                {Renderer::Format::RGB32Sfloat, "a_Position"},
+                {Renderer::Format::RGB32Sfloat, "a_Normal"},
+                {Renderer::Format::RGBA32Sfloat, "a_Tangent"},
+                {Renderer::Format::RG32Sfloat, "a_UV"},
+                {Renderer::Format::RGBA16Uint, "a_BoneIndices"},
+                {Renderer::Format::RGBA32Sfloat, "a_BoneWeights"},
             });
         }
 
@@ -224,11 +250,17 @@ namespace Veng
         /// Lift to world space per instance via AABB::Transformed(worldMatrix).
         [[nodiscard]] const AABB& GetBounds() const { return m_Bounds; }
 
+        /// @brief Returns the mesh's Skeleton handle; invalid for a static mesh.
+        [[nodiscard]] const AssetHandle<Skeleton>& GetSkeleton() const { return m_Skeleton; }
+
+        /// @brief Whether the mesh is skinned (carries a Skeleton and the skinned vertex layout).
+        [[nodiscard]] bool IsSkinned() const { return m_Skeleton.Id().IsValid(); }
+
     private:
         explicit Mesh(const MeshInfo& info)
             : m_Name(info.Name), m_VertexBuffer(info.VertexBuffer), m_IndexBuffer(info.IndexBuffer),
               m_Layout(info.Layout), m_SubMeshes(info.SubMeshes), m_Materials(info.Materials),
-              m_Bounds(info.Bounds)
+              m_Bounds(info.Bounds), m_Skeleton(info.Skeleton)
         {
         }
 
@@ -239,6 +271,7 @@ namespace Veng
         vector<SubMesh> m_SubMeshes;
         vector<AssetHandle<Material>> m_Materials;
         AABB m_Bounds = AABB::Empty();
+        AssetHandle<Skeleton> m_Skeleton;
     };
 
     /// @brief AssetTypeTrait specialization mapping Mesh to AssetType::Mesh.

@@ -14,6 +14,7 @@ namespace Veng
     class Mesh;
     class Material;
     class Prefab;
+    struct Animation;
     class TypeRegistry;
 
     /// @brief Identity trait for every reflected type.
@@ -104,6 +105,8 @@ VE_LEAF(::Veng::AssetHandle<::Veng::Mesh>, 0x1CD2C85C50AFC9E0ULL, ::Veng::FieldC
 VE_LEAF(::Veng::AssetHandle<::Veng::Material>, 0x3992D11EB4362B4CULL,
         ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::Prefab>, 0xF71230AEA9060D83ULL,
+        ::Veng::FieldClass::AssetHandle);
+VE_LEAF(::Veng::AssetHandle<::Veng::Animation>, 0xED6B03478BD050CEULL,
         ::Veng::FieldClass::AssetHandle);
 
 // Entity is an intra-scene reference, not a value leaf — the prefab loader

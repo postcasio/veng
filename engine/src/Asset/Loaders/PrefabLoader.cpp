@@ -4,6 +4,7 @@
 
 #include <fmt/format.h>
 
+#include <Veng/Asset/Animation.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Material.h>
@@ -42,6 +43,10 @@ namespace Veng
             if (fieldType == TypeIdOf<AssetHandle<Prefab>>())
             {
                 return AssetType::Prefab;
+            }
+            if (fieldType == TypeIdOf<AssetHandle<Animation>>())
+            {
+                return AssetType::Animation;
             }
             return std::nullopt;
         }
@@ -85,6 +90,8 @@ namespace Veng
                 return load.operator()<Material>();
             case AssetType::Prefab:
                 return load.operator()<Prefab>();
+            case AssetType::Animation:
+                return load.operator()<Animation>();
             default:
                 return std::unexpected(Corrupt(
                     parentId,

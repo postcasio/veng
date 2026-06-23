@@ -13,6 +13,7 @@ namespace Veng
     class Mesh;
     class Material;
     class Prefab;
+    struct Animation;
 
     /// @brief Human-readable label for an entity.
     ///
@@ -66,6 +67,36 @@ namespace Veng
     {
         /// @brief The mesh this entity draws.
         AssetHandle<Mesh> Mesh;
+    };
+
+    /// @brief Plays an Animation clip on a skinned-mesh entity.
+    ///
+    /// The animation system advances Time each tick (when Playing), samples Clip against the
+    /// entity mesh's Skeleton, and writes the result into the entity's SkinnedPose for the
+    /// renderer to upload. A skinned mesh with no Animator shows its bind pose.
+    struct Animator
+    {
+        /// @brief The animation clip to play.
+        AssetHandle<Animation> Clip;
+        /// @brief Current playback time in seconds (advanced by the system).
+        f32 Time = 0.0f;
+        /// @brief Playback rate multiplier.
+        f32 Speed = 1.0f;
+        /// @brief Whether playback loops at the clip's end.
+        bool Loop = true;
+        /// @brief Whether playback is advancing.
+        bool Playing = true;
+    };
+
+    /// @brief Runtime-only skinning palette for a skinned-mesh entity.
+    ///
+    /// Holds the bone matrices the animation system computes each tick and the renderer
+    /// uploads into the GPU skinning palette. Never serialized (a derived, per-frame product);
+    /// added automatically to a skinned entity by the animation system.
+    struct SkinnedPose
+    {
+        /// @brief Per-bone skinning matrices (GlobalInverse * modelBone * InverseBind).
+        vector<mat4> Skinning;
     };
 
     /// @brief Cube shape recipe: the parameters of Primitives::Cube plus its material.
@@ -437,6 +468,16 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::MeshRenderer, 0x3C5CB13E46E0450BULL)
 VE_FIELD(Mesh, .DisplayName = "Mesh")
 VE_REFLECT_END();
+
+VE_REFLECT(::Veng::Animator, 0x2B56DF7335B89F8DULL)
+VE_FIELD(Clip, .DisplayName = "Clip")
+VE_FIELD(Speed, .DisplayName = "Speed", .Min = 0.0)
+VE_FIELD(Loop, .DisplayName = "Loop")
+VE_FIELD(Playing, .DisplayName = "Playing")
+VE_FIELD(Time, .DisplayName = "Time", .Min = 0.0, .ReadOnly = true)
+VE_REFLECT_END();
+
+VE_TYPE(::Veng::SkinnedPose, 0x063C1245B8912FC3ULL);
 
 VE_REFLECT(::Veng::CubeShape, 0x2B758A3FE238BAA5ULL)
 VE_FIELD(Extent, .DisplayName = "Extent", .Min = 0.001)

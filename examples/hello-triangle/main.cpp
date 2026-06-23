@@ -18,6 +18,7 @@
 
 #include <Veng/Input.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/AnimationSystem.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/CameraRig.h>
 #include <Veng/Scene/Components.h>
@@ -755,6 +756,10 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     host->Systems.Register<ControlSystem>();
     host->Systems.Register<MovementSystem>();
     host->Systems.Register<CameraRigSystem>();
+
+    // Poses skinned characters each tick (View phase): samples the Animator's clip and writes
+    // the entity's SkinnedPose for the renderer's skinning palette.
+    host->Systems.Register<AnimationSystem>();
 
     // Smoke mode: no window or swapchain, render off-screen and dump — the display-free CI path.
     const bool smoke = std::getenv("HT_SMOKE") != nullptr;

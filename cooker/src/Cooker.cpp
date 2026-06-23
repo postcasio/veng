@@ -68,6 +68,14 @@ namespace Veng::Cook
             {
                 return AssetType::Level;
             }
+            if (name == "skeleton")
+            {
+                return AssetType::Skeleton;
+            }
+            if (name == "animation")
+            {
+                return AssetType::Animation;
+            }
 
             return std::nullopt;
         }
