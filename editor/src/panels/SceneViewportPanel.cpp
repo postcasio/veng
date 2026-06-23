@@ -162,10 +162,6 @@ namespace VengEditor
                 }
                 UI::Tooltip(paused ? "Resume the paused play session"
                                    : "Pause the play session (hold the current frame)");
-
-                UI::SameLine();
-                (void)UI::ToggleButton("Game view", m_ViewThroughScene);
-                UI::Tooltip("Render through the scene's Viewer camera (what the player sees)");
             }
 
             UI::Separator();
@@ -363,11 +359,11 @@ namespace VengEditor
         }
 
         // Push this frame's render source onto the viewport: a null Scene (a closed document)
-        // is a no-op in Render. Play with the toggle on previews the scene's authored Viewer
-        // camera (what the player sees); edit mode, Stop, and an unauthored scene use the
+        // is a no-op in Render. Play always renders through the scene's authored Viewer camera
+        // (what the player sees); edit mode, Stop, and a scene that authors no camera use the
         // editor camera.
         CameraView camera = m_View;
-        if (m_Ctx.IsPlaying() && m_ViewThroughScene && m_Ctx.Scene != nullptr)
+        if (m_Ctx.IsPlaying() && m_Ctx.Scene != nullptr)
         {
             const f32 aspect = static_cast<f32>(renderExtent.x) / static_cast<f32>(renderExtent.y);
             if (const optional<CameraView> resolved =

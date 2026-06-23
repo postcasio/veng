@@ -99,14 +99,6 @@ namespace VengEditor
         /// @brief The view the camera produced last OnUI, pushed as the viewport's ViewState.
         Veng::CameraView m_View;
 
-        /// @brief While playing, render through the scene's authored Viewer camera instead of the editor camera.
-        ///
-        /// Off by default and ignored outside Play: edit mode and Stop always use the
-        /// editor camera. When on during Play, the panel resolves the played clone's
-        /// primary Viewer to show what the player sees, falling back to the editor camera
-        /// when the scene authors no camera.
-        bool m_ViewThroughScene = false;
-
         Veng::Ref<Veng::Renderer::Sampler> m_SceneSampler;
         Veng::Ref<Veng::ImGuiTexture> m_SceneTexture;
 
