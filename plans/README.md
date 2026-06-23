@@ -547,6 +547,27 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   input is finally restricted to the viewport while a game runs. **Multi-seat input routing** and
   the **networking layer** stay the named next area-4 increments, now built on this router.
 
+- **[planset-31](planset-31/README.md)** — viewports: a view owns its rectangle, the engine drives
+  the list. A **`Viewport`** (over the delivered `SceneRenderer`) **owns its `ViewportRegion`** (its
+  window rect) and renders into its own texture; the engine drives a **central drive-list** of them
+  each frame. A **role** gates compositing — `Presented` (a **gather pass** scissor-blits it into its
+  region on one assembly target the composite then encodes) or `Offscreen` (a consumer samples it: an
+  ImGui panel, or a material via `GetOutputHandle` → `Material::SetTextureHandle`). **RTT is the
+  floor**: the game's view, a
+  **splitscreen** quadrant, an editor panel, and a monitor are one mechanism. The shipped sample
+  drops its hand-wired `SceneRenderer`/composite/sampler/texture boilerplate onto a **managed
+  primary viewport** (region = whole window), and the editor's per-panel viewports move onto the
+  same list (panels own, the engine drives), feeding their region from the ImGui content rect — so
+  *"any number of renderers, including zero"* is one `vector`. Owning the region yields a
+  **window↔view mapping** (`WindowToViewport` / `ScreenToWorldRay`): editor picking now, and the
+  *pointer* half of **multi-seat input** routing later (the *device* half is gamepad-by-id,
+  independent of viewports). The viewport slice of
+  [area 8](future/README.md#8-scene-renderer--render-pipeline-architecture--remaining-the-über-pipeline-batteries),
+  the render-driving slice of [area 6](future/README.md#6-editor-application), and the pointer-routing
+  seam of [area 4](future/README.md#4-event--input-systems). **Declared inter-viewport
+  dependencies**, **output ringing** for an async/off-queue consumer, and a playable
+  **splitscreen / monitor sample feature** stay the named follow-ons.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
