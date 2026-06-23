@@ -705,6 +705,22 @@ smoke render use.
   its own texture/shader dependencies — so every asset eager-loads its
   dependencies. A draw iterates submeshes, binding `GetMaterials()[MaterialIndex]`
   per range.
+- **Skinned meshes carry a skeleton and animate through GPU skinning.** A `Mesh` with a
+  `SkeletonId` is **skinned** (`Mesh::IsSkinned()`): its vertices use the skinned layout
+  (`Mesh::SkinnedLayout()` — canonical attributes plus `RGBA16Uint` bone indices +
+  `RGBA32Sfloat` weights) and it eager-resolves an `AssetHandle<Skeleton>` (`Skeleton` and
+  `Animation` are CPU-only assets, loaded by `AssetId` like any other, no GPU resource). An
+  **`Animator`** component (`AssetHandle<Animation>` + time/speed/loop/playing) plays a clip;
+  the View-phase **`AnimationSystem`** samples it against the mesh's `Skeleton` each tick into
+  a transient **`SkinnedPose`** component (the bone palette, `Skeleton::ComputeSkinningMatrices`
+  = `GlobalInverse · modelBone · inverseBind`). The `SceneRenderer` splits its g-buffer draw
+  plan into a static path (the existing GPU-driven-cull pipeline) and a **skinned path**: a
+  second pipeline built from the core `surface_skinned.vert` (4-influence linear-blend skinning)
+  drawn CPU-direct, reading a per-instance **skinning palette** SSBO (ring-buffered, **set 2**;
+  `DrawData.PaletteBase` is each instance's offset). The directional `ShadowScenePass` casts a
+  skinned caster's posed shadow through a parallel `shadow_depth_skinned.vert` + the palette at
+  set 1; an entity with no `SkinnedPose` (e.g. the editor with systems paused) renders at the
+  skeleton's bind pose. The core pack ships the `skinned` vertex layout and both skinned shaders.
 - **Cooked prefabs load like every other asset; a `Scene` is what you spawn into.**
   A `*.prefab.json` (entities + components + field values) cooks into an
   `AssetType::Prefab` blob and loads through the **identical**
@@ -910,7 +926,9 @@ recomputed on demand with no dirty-flag cache), `Camera` (the component whose
 FovY/Near/Far and world transform build a `CameraView`, the value type carrying the
 view/projection — Y flipped for Vulkan clip space), `MeshRenderer` (holds the
 `AssetHandle<Mesh>` a draw queries — the mesh owns its materials, so a renderer queries
-`(Transform, MeshRenderer)` and draws each submesh with its material), and `Light` (a
+`(Transform, MeshRenderer)` and draws each submesh with its material), `Animator` (plays an
+`AssetHandle<Animation>` on a skinned-mesh entity; the `AnimationSystem` writes the result into
+a transient `SkinnedPose` the renderer uploads), and `Light` (a
 directional light — `Direction`/`Color`/`Intensity`; `SceneRenderer::Execute` selects
 the first `Light` entity into the `SceneView`, or a zero-intensity default → flat
 ambient when the scene has none).

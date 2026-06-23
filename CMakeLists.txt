@@ -345,6 +345,7 @@ if (VENG_BUILD_TESTS)
     add_executable(veng_test_unit
             tests/unit/main.cpp
             tests/unit/sanity.cpp
+            tests/unit/animation.cpp
             tests/unit/pure_logic.cpp
             tests/unit/task_system.cpp
             tests/unit/type_mapping.cpp

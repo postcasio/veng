@@ -1,0 +1,16 @@
+{
+  "model": "nathan_walking.fbx",
+  "skeleton": 48274702747265810,
+  "materials": {
+    "0": 252717381658754241,
+    "1": 252717381658754241,
+    "2": 252717381658754241,
+    "3": 252717381658754241
+  },
+  "import": {
+    "flip_uv": false,
+    "generate_normals": true,
+    "generate_tangents": true,
+    "join_identical_vertices": true
+  }
+}

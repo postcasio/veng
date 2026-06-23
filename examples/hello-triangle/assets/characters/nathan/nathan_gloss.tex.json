@@ -1,0 +1,12 @@
+{
+  "image": "tex/nathan_gloss.jpg",
+  "srgb": false,
+  "max_size": 2048,
+  "sampler": {
+    "min": "linear",
+    "mag": "linear",
+    "mipmap": "linear",
+    "wrap_u": "repeat",
+    "wrap_v": "repeat"
+  }
+}

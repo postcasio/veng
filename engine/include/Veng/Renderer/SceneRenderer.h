@@ -377,6 +377,18 @@ namespace Veng::Renderer
         /// A pass queries it (Cull) for the candidate indices its frustum touches; returned ids
         /// index Visible. A caller's value is overwritten.
         const SceneBroadphase* Broadphase = nullptr;
+
+        /// @brief The per-instance skinning palette descriptor set; set by the renderer each Execute.
+        ///
+        /// Bound by the shadow passes for skinned casters (and the geometry pass for skinned
+        /// draws). Holds the same buffer the geometry pass fills in PrepareDraws.
+        Ref<DescriptorSet> SkinningPalette;
+
+        /// @brief This frame's PaletteBase per skinned entity (packed Entity → base); set each Execute.
+        ///
+        /// Filled by the geometry-pass draw preparation; a shadow pass looks up a skinned caster's
+        /// palette base here so it casts its posed shadow. Borrowed; valid only for this Execute.
+        const unordered_map<u64, u32>* SkinnedPaletteBases = nullptr;
     };
 
     /// @brief Long-lived deferred render pipeline owning an offscreen target.
@@ -1096,6 +1108,24 @@ namespace Veng::Renderer
         /// instance attribute (the per-draw DrawData index). Created once; shared by both cull
         /// modes' draws. MaxCullCandidates elements.
         Ref<Buffer> m_CandidateIdBuffer;
+
+        /// @brief Maximum bone matrices a single skinned instance contributes to the palette.
+        static constexpr u32 MaxBonesPerSkinnedInstance = 256;
+        /// @brief Maximum skinning matrices uploaded per frame across all skinned instances.
+        static constexpr u32 MaxSkinningMatricesPerFrame = 8192;
+
+        /// @brief Per-instance skinning palette (mat4 per bone), bound at set 2 for skinned draws.
+        ///
+        /// Host-visible, ring-buffered for frames-in-flight (MaxSkinningMatricesPerFrame matrices
+        /// per region). Each skinned instance's bones are appended contiguously and its DrawData
+        /// PaletteBase is the absolute index of its first bone in this buffer.
+        Ref<Buffer> m_PaletteBuffer;
+        /// @brief Set 2 for the skinned surface pipeline / set 1 for the skinned shadow pipeline: the palette SSBO.
+        Ref<DescriptorSetLayout> m_PaletteSetLayout;
+        /// @brief Descriptor set holding the palette buffer, bound for skinned draws.
+        Ref<DescriptorSet> m_PaletteSet;
+        /// @brief This frame's PaletteBase per skinned entity (packed Entity → base), read by the shadow passes.
+        unordered_map<u64, u32> m_PaletteBaseByEntity;
 
         /// @brief Cull compute pipeline (occlusion test → instanceCount), GPU mode only.
         Ref<class ComputePipeline> m_CullPipeline;

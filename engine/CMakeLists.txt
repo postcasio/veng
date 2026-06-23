@@ -11,13 +11,16 @@ add_library(veng SHARED
         src/Asset/Mesh.cpp
         src/Asset/Prefab.cpp
         src/Asset/Primitives.cpp
+        src/Asset/Skeleton.cpp
         src/Asset/Texture.cpp
+        src/Asset/Loaders/AnimationLoader.cpp
         src/Asset/Loaders/LevelLoader.cpp
         src/Asset/Loaders/MaterialLoader.cpp
         src/Asset/Loaders/MeshLoader.cpp
         src/Asset/Loaders/PrefabLoader.cpp
         src/Asset/Loaders/RawAssetLoader.cpp
         src/Asset/Loaders/ShaderLoader.cpp
+        src/Asset/Loaders/SkeletonLoader.cpp
         src/Asset/Loaders/TextureLoader.cpp
         src/Asset/Loaders/VertexLayoutLoader.cpp
         src/ExecutableDirectory.cpp
@@ -40,6 +43,7 @@ add_library(veng SHARED
         src/UI/Scopes.cpp
         src/UI/Query.cpp
         src/Reflection/Serialize.cpp
+        src/Scene/AnimationSystem.cpp
         src/Scene/BuiltinTypes.cpp
         src/Scene/Camera.cpp
         src/Scene/CameraRig.cpp

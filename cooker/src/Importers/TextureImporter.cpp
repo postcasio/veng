@@ -1,11 +1,13 @@
 #include "TextureImporter.h"
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <sstream>
 
 #include <fmt/format.h>
 #include <stb_image.h>
+#include <stb_image_resize2.h>
 
 #include <Veng/Asset/CookedBlobs.h>
 
@@ -121,15 +123,54 @@ namespace Veng::Cook
                             sourcePath.string(), imagePath.string(), stbi_failure_reason()));
         }
 
-        const usize pixelBytes = static_cast<usize>(width) * static_cast<usize>(height) * 4;
+        // Optional downscale: when the larger edge exceeds "max_size", shrink the image
+        // (aspect-preserving) before packing so high-resolution source art does not bloat
+        // the raw-pixel cooked blob. sRGB textures resize in gamma space, linear in linear.
+        u32 maxSize = 0;
+        if (texJson.contains("max_size") && texJson["max_size"].is_number_unsigned())
+        {
+            maxSize = texJson["max_size"].get<u32>();
+        }
+
+        int targetWidth = width;
+        int targetHeight = height;
+        if (maxSize > 0 &&
+            (static_cast<u32>(width) > maxSize || static_cast<u32>(height) > maxSize))
+        {
+            const f32 scale = static_cast<f32>(maxSize) / static_cast<f32>(std::max(width, height));
+            targetWidth = std::max(1, static_cast<int>(static_cast<f32>(width) * scale));
+            targetHeight = std::max(1, static_cast<int>(static_cast<f32>(height) * scale));
+        }
+
+        const usize pixelBytes =
+            static_cast<usize>(targetWidth) * static_cast<usize>(targetHeight) * 4;
         vector<u8> pixelData(pixelBytes);
-        std::memcpy(pixelData.data(), pixels, pixelBytes);
+
+        if (targetWidth != width || targetHeight != height)
+        {
+            const stbir_pixel_layout layout = STBIR_RGBA;
+            const unsigned char* resized =
+                srgb ? stbir_resize_uint8_srgb(pixels, width, height, 0, pixelData.data(),
+                                               targetWidth, targetHeight, 0, layout)
+                     : stbir_resize_uint8_linear(pixels, width, height, 0, pixelData.data(),
+                                                 targetWidth, targetHeight, 0, layout);
+            if (resized == nullptr)
+            {
+                stbi_image_free(pixels);
+                return std::unexpected(fmt::format("texture importer: '{}': failed to resize '{}'",
+                                                   sourcePath.string(), imagePath.string()));
+            }
+        }
+        else
+        {
+            std::memcpy(pixelData.data(), pixels, pixelBytes);
+        }
         stbi_image_free(pixels);
 
         CookedTextureHeader header{};
         header.Format = srgb ? 3u /* RGBA8Srgb */ : 2u /* RGBA8Unorm */;
-        header.Width = static_cast<u32>(width);
-        header.Height = static_cast<u32>(height);
+        header.Width = static_cast<u32>(targetWidth);
+        header.Height = static_cast<u32>(targetHeight);
         header.MipCount = 1;
 
         // Sampler defaults mirror Veng::Renderer::SamplerInfo's defaults

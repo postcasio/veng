@@ -29,6 +29,8 @@ namespace Veng
                 return Renderer::Format::RGB32Sfloat;
             case 10:
                 return Renderer::Format::RGBA32Sfloat;
+            case 20:
+                return Renderer::Format::RGBA16Uint;
             default:
                 return std::nullopt;
             }
@@ -79,10 +81,12 @@ namespace Veng
             return std::unexpected(Corrupt(id, "mesh: only u32 indices are supported"));
         }
 
-        // Validate the cooked attribute descriptor against the engine's single
-        // canonical layout: count, per-attribute format + offset, and stride
-        // must all match, or it's a stale/corrupt archive (loud, not silent UB).
-        const Renderer::VertexBufferLayout canonical = Veng::Mesh::CanonicalLayout();
+        // Validate the cooked attribute descriptor against the engine's canonical (static) or
+        // skinned layout, selected by SkeletonId: count, per-attribute format + offset, and
+        // stride must all match, or it's a stale/corrupt archive (loud, not silent UB).
+        const bool skinned = header.SkeletonId != 0;
+        const Renderer::VertexBufferLayout canonical =
+            skinned ? Veng::Mesh::SkinnedLayout() : Veng::Mesh::CanonicalLayout();
         const vector<Renderer::VertexBufferElement>& elements = canonical.GetElements();
 
         if (header.AttributeCount != elements.size())
@@ -228,6 +232,20 @@ namespace Veng
         Renderer::IndexBuffer indexBuffer = Renderer::IndexBuffer::Create(
             context, fmt::format("Mesh {} Indices", id.Value), header.IndexCount);
 
+        // Resolve the skeleton eagerly (like materials) so a skinned mesh is ready to pose
+        // the moment it is resident.
+        AssetHandle<Veng::Skeleton> skeleton;
+        if (skinned)
+        {
+            const AssetResult<AssetHandle<Veng::Skeleton>> resolved =
+                manager.LoadSync<Veng::Skeleton>(AssetId{header.SkeletonId});
+            if (!resolved)
+            {
+                return std::unexpected(resolved.error());
+            }
+            skeleton = *resolved;
+        }
+
         if (async)
         {
             const Task<void> vertexUpload = vertexBuffer->Upload(tasks, vertexData);
@@ -247,6 +265,7 @@ namespace Veng
             .SubMeshes = std::move(subMeshes),
             .Materials = std::move(materials),
             .Bounds = Veng::Mesh::ComputeBounds(vertexData, header.VertexStride),
+            .Skeleton = skeleton,
         });
 
         return Detail::LoadJob{.Resource = Detail::RefAny(mesh)};

@@ -40,8 +40,9 @@ FetchContent_MakeAvailable(nlohmann_json)
 
 # assimp — mesh import. The one heavy dependency; strictly cooker-only
 # (behind VENG_BUILD_TOOLS), so a consumer of libveng never pays for it. Trim it
-# hard: no tools/tests/exports, only the importers veng's fixtures use (OBJ +
-# glTF), and a static lib so vengc stays self-contained.
+# hard: no tools/tests/exports, only the importers veng's assets use (OBJ +
+# glTF + FBX, the rigged-character format), and a static lib so vengc stays
+# self-contained.
 set(ASSIMP_BUILD_TESTS OFF CACHE INTERNAL "")
 set(ASSIMP_INSTALL OFF CACHE INTERNAL "")
 set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE INTERNAL "")
@@ -50,6 +51,7 @@ set(ASSIMP_NO_EXPORT ON CACHE INTERNAL "")
 set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE INTERNAL "")
 set(ASSIMP_BUILD_OBJ_IMPORTER ON CACHE INTERNAL "")
 set(ASSIMP_BUILD_GLTF_IMPORTER ON CACHE INTERNAL "")
+set(ASSIMP_BUILD_FBX_IMPORTER ON CACHE INTERNAL "")
 set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE INTERNAL "")
 set(ASSIMP_INJECT_DEBUG_POSTFIX OFF CACHE INTERNAL "")
 set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "")
@@ -139,6 +141,9 @@ add_library(veng_cook_objs OBJECT
         src/Importers/SlangReflect.cpp
         src/Importers/VertexLayoutImporter.cpp
         src/Importers/VertexLayoutSource.cpp
+        src/Importers/SkeletonImporter.cpp
+        src/Importers/AnimationImporter.cpp
+        src/Importers/SkeletonSource.cpp
         src/Vendor/StbImage.cpp
         src/Vendor/XxHash.cpp
 )

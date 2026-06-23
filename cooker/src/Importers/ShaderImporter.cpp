@@ -42,6 +42,7 @@ namespace Veng::Cook
         constexpr u32 FormatRG32Sfloat = 8;
         constexpr u32 FormatRGB32Sfloat = 9;
         constexpr u32 FormatRGBA32Sfloat = 10;
+        constexpr u32 FormatRGBA16Uint = 20;
 
         // Cooked names are fixed-size, nul-terminated char arrays (CookedBlobs.h);
         // truncate rather than fail on an over-long identifier.
@@ -133,8 +134,10 @@ namespace Veng::Cook
             }
         }
 
-        // Maps a Slang-reflected vertex input type to a format ordinal.
-        // Only float/floatN are valid; used for element-for-element layout validation.
+        // Maps a Slang-reflected vertex input type to a format ordinal, used for
+        // element-for-element layout validation. float/floatN map to the float formats;
+        // a uint4 maps to RGBA16Uint — the skinned-mesh bone-index attribute, stored
+        // 16-bit on-disk but widened to a 32-bit uint4 in the shader by the GPU.
         Result<u32> MapVertexInputFormat(slang::TypeReflection* type, const string& name,
                                          const path& sourcePath, const string& entryName)
         {
@@ -143,11 +146,24 @@ namespace Veng::Cook
                 return std::unexpected(
                     fmt::format("shader importer: '{}': entry point '{}': vertex input '{}' has "
                                 "unsupported type "
-                                "(only float/float2/float3/float4 are supported)",
+                                "(only float/float2/float3/float4 and uint4 are supported)",
                                 sourcePath.string(), entryName, name));
             };
 
-            if (type->getScalarType() != slang::TypeReflection::ScalarType::Float32)
+            const slang::TypeReflection::ScalarType scalar = type->getScalarType();
+
+            // A uint4 bone-index attribute: the only integer vertex input veng uses.
+            if (scalar == slang::TypeReflection::ScalarType::UInt32)
+            {
+                if (type->getKind() == slang::TypeReflection::Kind::Vector &&
+                    type->getColumnCount() == 4)
+                {
+                    return FormatRGBA16Uint;
+                }
+                return unsupported();
+            }
+
+            if (scalar != slang::TypeReflection::ScalarType::Float32)
             {
                 return unsupported();
             }

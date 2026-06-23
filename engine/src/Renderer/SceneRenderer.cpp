@@ -193,7 +193,7 @@ namespace Veng::Renderer
             vec4 NormalColumn1;
             vec4 NormalColumn2;
             u32 MaterialIndex;
-            u32 Pad0;
+            u32 PaletteBase;
             u32 Pad1;
             u32 Pad2;
             mat4 PrevWorld;
@@ -381,6 +381,15 @@ namespace Veng::Renderer
             const Material* PipelineMaterial = nullptr;
             vector<DrawSlot> Slots;
             vector<DrawGroup> Groups;
+
+            // Skinned draws ride a parallel CPU-direct path after the static draws: the skinned
+            // surface pipeline (built from surface_skinned.vert) bound from a representative
+            // skinned material, with the per-instance palette bound at set 2. They share the same
+            // DrawData buffer (each slot's DrawData.PaletteBase points into the palette).
+            const Material* SkinnedPipelineMaterial = nullptr;
+            Ref<DescriptorSet> PaletteSet;
+            vector<DrawSlot> SkinnedSlots;
+            vector<DrawGroup> SkinnedGroups;
         };
 
         class GBufferScenePass final : public ScenePass
@@ -447,59 +456,103 @@ namespace Veng::Renderer
                 cmd.SetViewport({0, 0}, m_Extent);
                 cmd.SetScissor({0, 0}, m_Extent);
 
-                if (plan.Slots.empty())
+                if (plan.Slots.empty() && plan.SkinnedSlots.empty())
                 {
                     return;
                 }
 
-                // One surface pipeline drives every submesh; bind it, set 0 (bindless), and
-                // set 1 (the per-draw DrawData SSBO) once, then push the frame selector. The
-                // pipeline is shared across materials (all surface materials reuse the core
-                // surface.vert + the deferred g-buffer formats), so binding any one surface
-                // material binds the pipeline for the whole pass (Surface pushes no selector).
-                plan.PipelineMaterial->Bind(cmd);
-                registry.Bind(cmd);
-
-                cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                    .Sets = {plan.DrawDataSet},
-                    .FirstSet = 1,
-                    .PipelineBindPoint = PipelineBindPoint::Graphics,
-                });
-                cmd.PushConstants(plan.Push);
-
-                // The instance-rate candidate-id buffer (binding 1) is bound once; each draw's
-                // firstInstance selects the candidate id, fetched as the instance attribute.
-                cmd.GetNative().CommandBuffer.bindVertexBuffers(
-                    1, GetVkBuffer(*plan.CandidateIdBuffer), {0});
-
-                const Mesh* lastBound = nullptr;
-                for (const DrawGroup& group : plan.Groups)
+                // The instance-rate candidate-id buffer (binding 1) is bound once for both the
+                // static and skinned passes; each draw's firstInstance selects the candidate id,
+                // fetched as the instance attribute that indexes DrawData.
+                if (!plan.Slots.empty() || !plan.SkinnedSlots.empty())
                 {
-                    if (lastBound != group.SourceMesh)
-                    {
-                        cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
-                        cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
-                        lastBound = group.SourceMesh;
-                    }
+                    cmd.GetNative().CommandBuffer.bindVertexBuffers(
+                        1, GetVkBuffer(*plan.CandidateIdBuffer), {0});
+                }
 
-                    if (plan.Cull == SceneRendererSettings::CullMode::GPU)
+                if (!plan.Slots.empty())
+                {
+                    // One surface pipeline drives every static submesh; bind it, set 0 (bindless),
+                    // and set 1 (the per-draw DrawData SSBO) once, then push the frame selector.
+                    // The pipeline is shared across materials (all surface materials reuse the core
+                    // surface.vert + the deferred g-buffer formats), so binding any one binds the
+                    // pipeline for the whole static pass (Surface pushes no selector).
+                    plan.PipelineMaterial->Bind(cmd);
+                    registry.Bind(cmd);
+
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {plan.DrawDataSet},
+                        .FirstSet = 1,
+                        .PipelineBindPoint = PipelineBindPoint::Graphics,
+                    });
+                    cmd.PushConstants(plan.Push);
+
+                    const Mesh* lastBound = nullptr;
+                    for (const DrawGroup& group : plan.Groups)
                     {
-                        // One indirect draw over the group's contiguous command run; culled
-                        // slots carry instanceCount 0 and no-op (no GPU-sourced count —
-                        // MoltenVK lacks drawIndirectCount).
-                        const u64 offset =
-                            plan.IndirectRegionOffset +
-                            static_cast<u64>(group.FirstSlot) * sizeof(DrawIndexedIndirectCommand);
-                        cmd.DrawIndexedIndirect(plan.IndirectBuffer, offset, group.SlotCount,
-                                                sizeof(DrawIndexedIndirectCommand));
+                        if (lastBound != group.SourceMesh)
+                        {
+                            cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
+                            cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
+                            lastBound = group.SourceMesh;
+                        }
+
+                        if (plan.Cull == SceneRendererSettings::CullMode::GPU)
+                        {
+                            // One indirect draw over the group's contiguous command run; culled
+                            // slots carry instanceCount 0 and no-op (no GPU-sourced count —
+                            // MoltenVK lacks drawIndirectCount).
+                            const u64 offset =
+                                plan.IndirectRegionOffset + static_cast<u64>(group.FirstSlot) *
+                                                                sizeof(DrawIndexedIndirectCommand);
+                            cmd.DrawIndexedIndirect(plan.IndirectBuffer, offset, group.SlotCount,
+                                                    sizeof(DrawIndexedIndirectCommand));
+                        }
+                        else
+                        {
+                            // CPU mode issues a direct DrawIndexed per surviving slot, the
+                            // candidate id carried as firstInstance (the same instance path).
+                            for (u32 s = 0; s < group.SlotCount; ++s)
+                            {
+                                const DrawSlot& slot = plan.Slots[group.FirstSlot + s];
+                                cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex,
+                                                slot.VertexOffset, slot.CandidateId);
+                            }
+                        }
                     }
-                    else
+                }
+
+                // Skinned draws: the skinned surface pipeline + the palette set (set 2), always
+                // CPU-direct (skinned meshes opt out of GPU-driven culling). They share the same
+                // DrawData buffer; each slot's DrawData.PaletteBase points into the palette.
+                if (!plan.SkinnedSlots.empty() && plan.SkinnedPipelineMaterial != nullptr)
+                {
+                    plan.SkinnedPipelineMaterial->Bind(cmd);
+                    registry.Bind(cmd);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {plan.DrawDataSet},
+                        .FirstSet = 1,
+                        .PipelineBindPoint = PipelineBindPoint::Graphics,
+                    });
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {plan.PaletteSet},
+                        .FirstSet = 2,
+                        .PipelineBindPoint = PipelineBindPoint::Graphics,
+                    });
+                    cmd.PushConstants(plan.Push);
+
+                    const Mesh* lastBound = nullptr;
+                    for (const DrawGroup& group : plan.SkinnedGroups)
                     {
-                        // CPU mode issues a direct DrawIndexed per surviving slot, the candidate
-                        // id carried as firstInstance (the same instance-attribute path).
+                        if (lastBound != group.SourceMesh)
+                        {
+                            cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
+                            cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
+                            lastBound = group.SourceMesh;
+                        }
                         for (u32 s = 0; s < group.SlotCount; ++s)
                         {
-                            const DrawSlot& slot = plan.Slots[group.FirstSlot + s];
+                            const DrawSlot& slot = plan.SkinnedSlots[group.FirstSlot + s];
                             cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex, slot.VertexOffset,
                                             slot.CandidateId);
                         }
@@ -1996,6 +2049,31 @@ namespace Veng::Renderer
                                                          });
         m_DrawDataSet->Write(0, m_DrawDataBuffer);
 
+        // The per-instance skinning palette drives skinned draws. Host-visible, ring-buffered;
+        // a skinned draw's DrawData.PaletteBase indexes it directly. Vertex-stage only — the
+        // skinned vertex shaders declare g_Palette in the vertex stage alone, so the reflected
+        // set layout (set 2 for the surface pipeline, set 1 for the shadow pipeline) is Vertex.
+        const u64 paletteRegion = static_cast<u64>(MaxSkinningMatricesPerFrame) * sizeof(mat4);
+        m_PaletteBuffer = Buffer::Create(m_Context, {
+                                                        .Name = "SceneRenderer Skinning Palette",
+                                                        .Size = paletteRegion * m_FramesInFlight,
+                                                        .Usage = BufferUsage::Storage,
+                                                        .HostMapped = true,
+                                                    });
+        m_PaletteSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Palette Set Layout",
+                           .Bindings = {{.Binding = 0,
+                                         .Type = DescriptorType::StorageBuffer,
+                                         .Count = 1,
+                                         .Stages = ShaderStage::Vertex}},
+                       });
+        m_PaletteSet = DescriptorSet::Create(m_Context, {
+                                                            .Name = "SceneRenderer Palette Set",
+                                                            .Layout = m_PaletteSetLayout,
+                                                        });
+        m_PaletteSet->Write(0, m_PaletteBuffer);
+
         // The identity candidate-id buffer bound to vertex binding 1 (instance rate): element k
         // holds k, so a draw's firstInstance = candidateId fetches candidateId as the attribute.
         vector<u32> identity(MaxCullCandidates);
@@ -2965,9 +3043,17 @@ namespace Veng::Renderer
         plan.PipelineMaterial = nullptr;
         plan.Slots.clear();
         plan.Groups.clear();
+        plan.SkinnedPipelineMaterial = nullptr;
+        plan.PaletteSet = m_PaletteSet;
+        plan.SkinnedSlots.clear();
+        plan.SkinnedGroups.clear();
+        m_PaletteBaseByEntity.clear();
 
         const u32 frameIndex = m_Context.GetBindlessRegistry().GetCurrentViewConstantsIndex();
         const u32 frameBase = frameIndex * MaxCullCandidates;
+        const u32 paletteRegionBase = frameIndex * MaxSkinningMatricesPerFrame;
+        u32 paletteCursor = 0;
+        auto* paletteData = static_cast<mat4*>(m_PaletteBuffer->GetMappedData());
         plan.Push = SurfacePush{.FrameBase = frameBase, .ViewConstantsIndex = viewConstantsIndex};
         plan.IndirectRegionOffset =
             frameIndex * MaxCullCandidates * static_cast<u32>(sizeof(DrawIndexedIndirectCommand));
@@ -3020,6 +3106,10 @@ namespace Veng::Renderer
                       static_cast<usize>(frameBase)
                 : nullptr;
 
+        // Skinned survivors are deferred to a second pass (they draw on the CPU-direct skinned
+        // path after the static slots, which must stay contiguous from 0 for the GPU cull arrays).
+        vector<u32> skinnedScratch;
+
         // Fill one slot per survivor whose submesh has a loaded material (a materialless or
         // not-yet-resident submesh is skipped, matching the direct draw it replaces). The slot
         // index is the dense candidate id the instance attribute carries.
@@ -3034,6 +3124,12 @@ namespace Veng::Renderer
             if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
                 !materials[subMesh.MaterialIndex].IsLoaded())
             {
+                continue;
+            }
+
+            if (mesh.IsSkinned())
+            {
+                skinnedScratch.push_back(id);
                 continue;
             }
 
@@ -3108,6 +3204,106 @@ namespace Veng::Renderer
                 ++count;
             }
             plan.Groups.push_back(
+                DrawGroup{.SourceMesh = mesh, .FirstSlot = s, .SlotCount = count});
+            s += count;
+        }
+
+        // Skinned second pass: assign DrawData slots after the static ones (keeping the static
+        // range contiguous from 0), compute each skinned instance's palette once per entity, and
+        // record PaletteBase into the slot's DrawData. These draw on the CPU-direct skinned path.
+        for (const u32 id : skinnedScratch)
+        {
+            const SubMeshCandidate& candidate = candidates[id];
+            const VisibleMesh& item = view.Visible[candidate.MeshCandidate];
+            const Mesh& mesh = *item.Mesh;
+            const SubMesh& subMesh = mesh.GetSubMeshes()[candidate.SubMeshIndex];
+            const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
+            const AssetHandle<Skeleton>& skeletonHandle = mesh.GetSkeleton();
+            if (!skeletonHandle.IsLoaded())
+            {
+                continue;
+            }
+            const Skeleton& skeleton = *skeletonHandle.Get();
+            const u32 boneCount = static_cast<u32>(skeleton.GetBoneCount());
+
+            // One palette per entity, shared by its submeshes. Computed on first encounter from
+            // the entity's SkinnedPose (the animation system's output) or the bind pose when the
+            // entity has none (e.g. the editor with systems paused).
+            const u64 packed = PackEntity(item.Owner);
+            u32 paletteBase = 0;
+            const auto existing = m_PaletteBaseByEntity.find(packed);
+            if (existing != m_PaletteBaseByEntity.end())
+            {
+                paletteBase = existing->second;
+            }
+            else
+            {
+                if (paletteCursor + boneCount > MaxSkinningMatricesPerFrame)
+                {
+                    continue; // palette budget exhausted this frame
+                }
+                paletteBase = paletteRegionBase + paletteCursor;
+
+                const auto* pose = view.World.TryGet<SkinnedPose>(item.Owner);
+                if (pose != nullptr && pose->Skinning.size() == boneCount)
+                {
+                    std::memcpy(paletteData + paletteBase, pose->Skinning.data(),
+                                static_cast<usize>(boneCount) * sizeof(mat4));
+                }
+                else
+                {
+                    vector<mat4> bind;
+                    skeleton.ComputeBindPoseMatrices(bind);
+                    std::memcpy(paletteData + paletteBase, bind.data(),
+                                static_cast<usize>(boneCount) * sizeof(mat4));
+                }
+
+                paletteCursor += boneCount;
+                m_PaletteBaseByEntity[packed] = paletteBase;
+            }
+
+            const u32 slot = static_cast<u32>(plan.Slots.size() + plan.SkinnedSlots.size());
+            if (slot >= MaxCullCandidates)
+            {
+                break;
+            }
+
+            const Material& material = *materials[subMesh.MaterialIndex].Get();
+            if (plan.SkinnedPipelineMaterial == nullptr)
+            {
+                plan.SkinnedPipelineMaterial = materials[subMesh.MaterialIndex].Get();
+            }
+
+            const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
+            drawData[frameBase + slot] = GpuDrawData{
+                .World = item.World,
+                .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
+                .NormalColumn1 = vec4(normalMatrix[1], 0.0f),
+                .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
+                .MaterialIndex = material.GetMaterialSelector(),
+                .PaletteBase = paletteBase,
+                .PrevWorld = item.World,
+            };
+
+            plan.SkinnedSlots.push_back(DrawSlot{
+                .SourceMesh = &mesh,
+                .IndexCount = subMesh.IndexCount,
+                .FirstIndex = subMesh.IndexOffset,
+                .VertexOffset = 0,
+                .CandidateId = slot,
+            });
+        }
+
+        for (u32 s = 0; s < plan.SkinnedSlots.size();)
+        {
+            const Mesh* mesh = plan.SkinnedSlots[s].SourceMesh;
+            u32 count = 0;
+            while (s + count < plan.SkinnedSlots.size() &&
+                   plan.SkinnedSlots[s + count].SourceMesh == mesh)
+            {
+                ++count;
+            }
+            plan.SkinnedGroups.push_back(
                 DrawGroup{.SourceMesh = mesh, .FirstSlot = s, .SlotCount = count});
             s += count;
         }
@@ -3327,6 +3523,11 @@ namespace Veng::Renderer
 
         // Fill the per-draw DrawData buffer + (GPU) the candidate buffer and submission plan.
         PrepareDraws(resolvedView, frameIndex);
+
+        // Expose the skinning palette + per-entity bases (filled by PrepareDraws) to the shadow
+        // passes so a skinned caster casts its posed shadow.
+        resolvedView.SkinningPalette = m_PaletteSet;
+        resolvedView.SkinnedPaletteBases = &m_PaletteBaseByEntity;
 
         // Bloom and SSAO imports are appended only when active (they are only declared then).
         vector<RenderGraph::ImportBinding> bindings = {

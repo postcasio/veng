@@ -44,6 +44,12 @@ namespace Veng::Cook
                 return "vertex_layout";
             case AssetType::Prefab:
                 return "prefab";
+            case AssetType::Level:
+                return "level";
+            case AssetType::Skeleton:
+                return "skeleton";
+            case AssetType::Animation:
+                return "animation";
             }
             return "unknown";
         }

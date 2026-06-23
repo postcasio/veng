@@ -134,6 +134,13 @@ namespace Veng::Renderer
                         [&](const VisibleMesh& item, u32 subMeshIndex, const mat4& lightViewProj)
                     {
                         const Mesh& mesh = *item.Mesh;
+                        // Skinned meshes use the skinned vertex layout (a different stride) and a
+                        // palette this pass does not bind, so they do not cast into the punctual
+                        // atlas; their directional cascade shadow is handled in ShadowScenePass.
+                        if (mesh.IsSkinned())
+                        {
+                            return;
+                        }
                         const std::span<const AssetHandle<Material>> materials =
                             mesh.GetMaterials();
 
