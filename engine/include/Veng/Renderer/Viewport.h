@@ -147,6 +147,14 @@ namespace Veng::Renderer
         ///
         /// For the compositor, ImGuiLayer::CreateTexture, and Material::SetTextureHandle.
         /// Invalidated alongside GetOutput() by an extent change and by Configure; re-fetch after.
+        /// @warning A consumer viewport sampling this handle (e.g. a material bound through
+        ///          Material::SetTextureHandle) must be registered after the producer:
+        ///          registration order is render order, so a producer registered first ends its
+        ///          Render with the output in Sample layout before the consumer's Render reads it.
+        ///          Both halves record on the single graphics queue in submission order, so the
+        ///          handoff needs no ring and no semaphore and the output stays single-copy;
+        ///          the producer's next-frame Execute transitions it back to ColorAttachment.
+        /// @see SceneRenderer::GetOutput for the frames-in-flight / single-copy output contract.
         [[nodiscard]] TextureHandle GetOutputHandle() const;
 
         /// @brief Returns the viewport's current region (placement + extent).
