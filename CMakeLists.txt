@@ -227,22 +227,27 @@ endif ()
 function(veng_embed_binary input symbol)
     set(gen "${CMAKE_CURRENT_BINARY_DIR}/generated/embed_${symbol}.cpp")
     if (VENG_HAVE_EMBED)
-        set(VENG_EMBED_INPUT "${input}")
-        set(VENG_EMBED_SYMBOL "${symbol}")
-        file(CONFIGURE OUTPUT "${gen}" @ONLY CONTENT [==[
-// Auto-generated #embed shim — do not edit.
-namespace Veng {
-extern const unsigned char @VENG_EMBED_SYMBOL@[] = {
-#embed "@VENG_EMBED_INPUT@"
-};
-extern const unsigned long @VENG_EMBED_SYMBOL@Size = sizeof(@VENG_EMBED_SYMBOL@);
-}
-]==])
+        # Regenerate the shim at build time (cmake -P) whenever <input> changes, so
+        # it carries a current SHA-256 of the embedded bytes. #embed splices those
+        # bytes only at compile time and ccache does not track an #embed-ed file as
+        # a dependency, so a changed pack is otherwise a false cache hit on the
+        # unchanging shim source; the baked hash makes it a real cache miss. See
+        # cmake/EmbedShim.cmake.
+        add_custom_command(
+                OUTPUT "${gen}"
+                COMMAND ${CMAKE_COMMAND}
+                        -DVENG_EMBED_INPUT=${input}
+                        -DVENG_EMBED_SYMBOL=${symbol}
+                        -DVENG_EMBED_OUTPUT=${gen}
+                        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedShim.cmake
+                DEPENDS "${input}" ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedShim.cmake
+                COMMENT "Generating #embed shim for ${symbol}")
         # TARGET_DIRECTORY scopes these to where veng compiles the file (a
         # subdirectory), not this root scope. OBJECT_DEPENDS forces a recompile
         # when the embedded bytes change; the preprocessor splices the path
         # resolved at configure time. clang flags #embed as a pre-C23 extension.
         set_source_files_properties("${gen}" TARGET_DIRECTORY veng PROPERTIES
+                GENERATED TRUE
                 SKIP_LINTING TRUE
                 OBJECT_DEPENDS "${input}"
                 COMPILE_OPTIONS "-Wno-c23-extensions")
