@@ -100,6 +100,14 @@ namespace Veng::Renderer
         /// across SetPlacements; replaced by Resize.
         [[nodiscard]] const Ref<ImageView>& GetOutput() const;
 
+        /// @brief The placement list this pass last received from SetPlacements.
+        ///
+        /// A read-only view of the placements Execute replays — the textures and their
+        /// regions, in list order. Empty until the first SetPlacements; replaced wholesale
+        /// by each SetPlacements call. The span is valid until the next SetPlacements.
+        /// @return The current placements, in list order.
+        [[nodiscard]] std::span<const CompositePlacement> GetPlacements() const;
+
         /// @brief Adds the gather pass to graph and compiles it.
         ///
         /// The recompile seam on swapchain resize.
