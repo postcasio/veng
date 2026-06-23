@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Renderer/Viewport.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Veng.h>
@@ -18,22 +19,22 @@ namespace Veng
     namespace Renderer
     {
         class Context;
-        class CommandBuffer;
         class Sampler;
-        class SceneRenderer;
     }
 }
 
 namespace VengEditor
 {
-    /// @brief Renders one material on a sphere into a fixed-extent SceneRenderer target.
+    /// @brief Renders one material on a sphere through an Offscreen viewport at a fixed extent.
     ///
-    /// Owns a one-sphere Scene (sphere under Transform + MeshRenderer, plus a
-    /// directional Light), the SceneRenderer, and the ImGuiTexture the panel draws.
+    /// Owns a one-sphere Scene (sphere under Transform + MeshRenderer, plus a directional
+    /// Light), an Offscreen Veng::Renderer::Viewport, and the ImGuiTexture the panel draws.
     /// SetMaterial swaps the previewed material after a recook hands back a fresh handle.
     ///
-    /// Render records the scene render itself; the host passes the frame's command
-    /// buffer before the ImGui frame is built so the output is ready for UI::Image.
+    /// The viewport is rendered by the engine drive-list (its owning MaterialEditorPanel
+    /// registers it on this preview's behalf — MaterialPreview is not an EditorPanel). Each
+    /// frame the preview advances the turntable and pushes the view through Update; the
+    /// engine renders the registered viewport, and GetTexture() samples the result.
     /// The class depends only on the shipped engine and knows nothing of the node graph.
     class MaterialPreview
     {
@@ -42,7 +43,7 @@ namespace VengEditor
         /// @param context  Renderer context owning all GPU resources.
         /// @param assets   Asset manager used to adopt the sphere mesh.
         /// @param imgui    ImGui layer used to register the output texture.
-        /// @param extent   Initial render resolution in pixels.
+        /// @param extent   Render resolution in pixels.
         MaterialPreview(Veng::Renderer::Context& context, Veng::AssetManager& assets,
                         Veng::ImGuiLayer& imgui, Veng::uvec2 extent);
         ~MaterialPreview();
@@ -50,26 +51,24 @@ namespace VengEditor
         MaterialPreview(const MaterialPreview&) = delete;
         MaterialPreview& operator=(const MaterialPreview&) = delete;
 
+        /// @brief Returns the owned viewport so the owning panel can register it.
+        [[nodiscard]] Veng::Renderer::Viewport& GetViewport() const { return *m_Viewport; }
+
         /// @brief Swaps the previewed material.
         /// @param material  Fresh handle returned by a recook.
         void SetMaterial(Veng::AssetHandle<Veng::Material> material);
 
-        /// @brief Records this frame's scene render into @p cmd.
+        /// @brief Advances the turntable and pushes this frame's view onto the viewport.
         ///
-        /// Must be called before the ImGui frame is built so the output texture is
-        /// ready for UI::Image. Reads Time::GetDeltaTime() internally.
-        void Render(Veng::Renderer::CommandBuffer& cmd);
+        /// Reads Time::GetDeltaTime() internally. The engine drive-list renders the registered
+        /// viewport; this records no scene render itself.
+        void Update();
 
         /// @brief Returns the ImGuiTexture for use with UI::Image.
         [[nodiscard]] const Veng::Ref<Veng::ImGuiTexture>& GetTexture() const;
 
         /// @brief Returns the current render extent.
         [[nodiscard]] Veng::uvec2 GetExtent() const { return m_Extent; }
-
-        /// @brief Recreates the SceneRenderer at a new extent and re-registers the ImGuiTexture.
-        ///
-        /// Resize invalidates GetOutput(); the ImGuiTexture is rebuilt over the new view.
-        void Resize(Veng::uvec2 extent);
 
     private:
         /// @brief Constructs the one-sphere scene and camera.
@@ -85,9 +84,9 @@ namespace VengEditor
         Veng::Unique<Veng::TypeRegistry> m_Types;
         /// @brief The one-sphere preview scene.
         Veng::Unique<Veng::Scene> m_Scene;
-        /// @brief SceneRenderer sized to the preview extent.
-        Veng::Unique<Veng::Renderer::SceneRenderer> m_SceneRenderer;
-        /// @brief Preview camera (fixed perspective, updated on Resize).
+        /// @brief The Offscreen viewport rendering the preview; registered by the owning panel.
+        Veng::Unique<Veng::Renderer::Viewport> m_Viewport;
+        /// @brief Preview camera (fixed perspective).
         Veng::CameraView m_Camera;
 
         /// @brief Owned sphere mesh, kept resident for the renderer's lifetime.
@@ -100,13 +99,13 @@ namespace VengEditor
 
         /// @brief Sampler for the preview output (edge clamp).
         Veng::Ref<Veng::Renderer::Sampler> m_SceneSampler;
-        /// @brief ImGuiTexture over SceneRenderer::GetOutput(); recreated on Resize.
+        /// @brief ImGuiTexture over the viewport's output.
         Veng::Ref<Veng::ImGuiTexture> m_SceneTexture;
 
-        /// @brief Current render resolution.
+        /// @brief Render resolution.
         Veng::uvec2 m_Extent{};
 
-        /// @brief Accumulated turntable spin angle, advanced each Render by the frame delta.
+        /// @brief Accumulated turntable spin angle, advanced each Update by the frame delta.
         Veng::f32 m_SpinAccum = 0.0f;
     };
 }

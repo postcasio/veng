@@ -5,10 +5,10 @@
 
 #include "material/MaterialCompile.h"
 
+#include <Veng/Application.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Log.h>
-#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Time.h>
 #include <Veng/UI/UI.h>
@@ -72,12 +72,12 @@ namespace VengEditor
     }
 
     MaterialEditorPanel::MaterialEditorPanel(AssetId id, path sourcePath,
-                                             const AssetSourceIndex& sources,
-                                             Renderer::Context& context, AssetManager& assets,
-                                             ImGuiLayer& imgui, EditorRegistry& editors,
-                                             CookDriver cook)
-        : m_Id(id), m_SourcePath(std::move(sourcePath)), m_Sources(sources), m_Context(context),
-          m_Assets(assets), m_ImGui(imgui), m_Editors(editors), m_Cook(std::move(cook))
+                                             const AssetSourceIndex& sources, Application& app,
+                                             AssetManager& assets, ImGuiLayer& imgui,
+                                             EditorRegistry& editors, CookDriver cook)
+        : m_Id(id), m_SourcePath(std::move(sourcePath)), m_Sources(sources),
+          m_Context(app.GetRenderContext()), m_Assets(assets), m_ImGui(imgui), m_Editors(editors),
+          m_Cook(std::move(cook))
     {
         m_Title = fmt::format("Material: {}", m_SourcePath.filename().string());
 
@@ -88,7 +88,9 @@ namespace VengEditor
 
         m_NodeEditorContext = ImNodes::EditorContextCreate();
 
+        // The preview owns an Offscreen viewport; register it so the engine drive-list renders it.
         m_Preview = CreateUnique<MaterialPreview>(m_Context, m_Assets, m_ImGui, PreviewExtent);
+        app.RegisterViewport(m_Preview->GetViewport());
 
         if (!LoadInterface())
         {
@@ -328,14 +330,6 @@ namespace VengEditor
                    m_Handle = m_Assets.Load<Material>(m_Id);
                    m_MaterialDirty = true;
                });
-    }
-
-    void MaterialEditorPanel::OnRender(Renderer::CommandBuffer& cmd)
-    {
-        if (m_Preview)
-        {
-            m_Preview->Render(cmd);
-        }
     }
 
     bool MaterialEditorPanel::DrawCanvas()
@@ -600,6 +594,10 @@ namespace VengEditor
             m_MaterialDirty = false;
             m_PreviewReady = true;
         }
+
+        // Advance the turntable and push this frame's view; the engine renders the preview's
+        // registered viewport at the next frame's start.
+        m_Preview->Update();
 
         if (m_Graph == nullptr)
         {

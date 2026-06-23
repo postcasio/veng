@@ -4,11 +4,6 @@
 
 #include <VengEditor/EditorPanel.h>
 
-namespace Veng::Renderer
-{
-    class CommandBuffer;
-}
-
 namespace VengEditor
 {
     /// @brief Base for an asset editor that hosts its own private dockspace.
@@ -24,10 +19,6 @@ namespace VengEditor
     public:
         /// @brief Submits the document window, its dockspace, and the child windows.
         void Draw(bool* open) override;
-
-        /// @brief Forwards the offscreen-render pass to every child panel.
-        /// @param cmd  Command buffer for the current frame.
-        void OnRender(Veng::Renderer::CommandBuffer& cmd) override;
 
         /// @brief The document body drawn inside the dockspace host window, above the dockspace.
         ///

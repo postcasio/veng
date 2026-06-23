@@ -56,13 +56,13 @@ namespace VengEditor
     };
 
     LevelEditorPanel::LevelEditorPanel(AssetId id, AssetId worldPrefab, path sourcePath,
-                                       Renderer::Context& context, AssetManager& assets,
-                                       ImGuiLayer& imgui, TypeRegistry& types,
-                                       EditorRegistry& editors, const AssetSourceIndex& sources,
-                                       Input& input, InputRouter& router, SystemRegistry& systems,
+                                       Application& app, AssetManager& assets, ImGuiLayer& imgui,
+                                       TypeRegistry& types, EditorRegistry& editors,
+                                       const AssetSourceIndex& sources, Input& input,
+                                       InputRouter& router, SystemRegistry& systems,
                                        CookDriver cook)
-        : PrefabEditorPanel(worldPrefab, fmt::format("Level 0x{:X}", id.Value), context, assets,
-                            imgui, types, editors, sources, input, router, systems),
+        : PrefabEditorPanel(worldPrefab, fmt::format("Level 0x{:X}", id.Value), app, assets, imgui,
+                            types, editors, sources, input, router, systems),
           m_Id(id), m_Title(fmt::format("Level 0x{:X}", id.Value)),
           m_SourcePath(std::move(sourcePath)), m_AssetManager(assets), m_Catalog(systems),
           m_Editors(editors), m_Sources(sources), m_Cook(std::move(cook))
@@ -71,7 +71,7 @@ namespace VengEditor
 
         // The world prefab is the scene surface; add the same viewport/explorer/inspector a
         // standalone prefab editor uses, then the two level-scoped children.
-        AddSceneEditingChildren(context, imgui, editors, sources);
+        AddSceneEditingChildren(app, imgui, editors, sources);
 
         // Seed the viewport with the level's authored render subset so the first frame already
         // renders the level's exposure/bloom/shadow config, not the viewport defaults.

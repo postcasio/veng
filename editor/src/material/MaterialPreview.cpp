@@ -8,12 +8,9 @@
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/ImGui/ImGuiTexture.h>
 #include <Veng/Reflection/TypeRegistry.h>
-#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
-#include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
-#include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
@@ -34,12 +31,13 @@ namespace VengEditor
                                      ImGuiLayer& imgui, uvec2 extent)
         : m_Context(context), m_Assets(assets), m_ImGui(imgui), m_Extent(extent)
     {
-        m_SceneRenderer = Renderer::SceneRenderer::Create({
+        m_Viewport = Renderer::Viewport::Create({
             .Context = context,
             .Assets = assets,
-            .OutputFormat = context.GetOutputFormat(),
-            .Extent = m_Extent,
+            .Region = {.Offset = {0, 0}, .Extent = m_Extent},
+            .ColorFormat = context.GetOutputFormat(),
             .Settings = {},
+            .Role = Renderer::ViewportRole::Offscreen,
         });
 
         BuildScene();
@@ -52,7 +50,7 @@ namespace VengEditor
                          .AddressModeV = Renderer::AddressMode::ClampToEdge,
                          .AddressModeW = Renderer::AddressMode::ClampToEdge,
                      });
-        m_SceneTexture = imgui.CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
+        m_SceneTexture = imgui.CreateTexture(*m_SceneSampler, *m_Viewport->GetOutput());
     }
 
     MaterialPreview::~MaterialPreview()
@@ -62,7 +60,7 @@ namespace VengEditor
         m_Scene.reset();
         m_Sphere.reset();
         m_Material = {};
-        m_SceneRenderer.reset();
+        m_Viewport.reset();
         m_Types.reset();
     }
 
@@ -103,41 +101,17 @@ namespace VengEditor
         m_Scene->Get<MeshRenderer>(m_SphereEntity).Mesh = m_Assets.Adopt(m_Sphere);
     }
 
-    void MaterialPreview::Render(Renderer::CommandBuffer& cmd)
+    void MaterialPreview::Update()
     {
         const f32 delta = Time::GetDeltaTime();
         m_SpinAccum += delta * SpinSpeed;
         m_Scene->Get<Transform>(m_SphereEntity).Rotation = glm::angleAxis(m_SpinAccum, SpinAxis);
 
-        const Renderer::SceneView view{.World = *m_Scene, .Camera = m_Camera, .Delta = delta};
-        m_SceneRenderer->Execute(cmd, view);
-
-        // ImGui's sampled read of the output is recorded outside the graph by
-        // ImGuiLayer::Render, so no pass .Sample() covers it; transition the output
-        // to a sampleable layout here, before that read. The renderer re-arms
-        // ColorAttachment before its next Execute.
-        cmd.PrepareForAccess(m_SceneRenderer->GetOutput(), Renderer::AccessKind::Sample);
+        m_Viewport->SetViewState({.World = m_Scene.get(), .Camera = m_Camera, .Delta = delta});
     }
 
     const Ref<ImGuiTexture>& MaterialPreview::GetTexture() const
     {
         return m_SceneTexture;
-    }
-
-    void MaterialPreview::Resize(uvec2 extent)
-    {
-        if (extent.x == 0 || extent.y == 0 || extent == m_Extent)
-        {
-            return;
-        }
-
-        m_Extent = extent;
-        m_SceneRenderer->Resize(m_Extent);
-
-        const f32 aspect = static_cast<f32>(m_Extent.x) / static_cast<f32>(m_Extent.y);
-        m_Camera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
-
-        // Resize invalidates GetOutput(); the prior texture's view is now dangling.
-        m_SceneTexture = m_ImGui.CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
     }
 }

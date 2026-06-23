@@ -22,13 +22,13 @@ struct ImNodesEditorContext;
 
 namespace Veng
 {
+    class Application;
     class AssetManager;
     class ImGuiLayer;
 
     namespace Renderer
     {
         class Context;
-        class CommandBuffer;
     }
 }
 
@@ -47,15 +47,16 @@ namespace VengEditor
     {
     public:
         /// @brief Opens the editor for the material at @p id / @p sourcePath.
+        ///
+        /// @param app  Application the preview's Offscreen viewport is registered into.
         MaterialEditorPanel(Veng::AssetId id, Veng::path sourcePath,
-                            const AssetSourceIndex& sources, Veng::Renderer::Context& context,
+                            const AssetSourceIndex& sources, Veng::Application& app,
                             Veng::AssetManager& assets, Veng::ImGuiLayer& imgui,
                             Veng::EditorRegistry& editors, CookDriver cook);
         ~MaterialEditorPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
         void OnUI() override;
-        void OnRender(Veng::Renderer::CommandBuffer& cmd) override;
 
     private:
         /// @brief Loads the material synchronously, populating m_Fields and shader ids.

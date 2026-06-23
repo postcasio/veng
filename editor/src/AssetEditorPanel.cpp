@@ -35,17 +35,6 @@ namespace VengEditor
         ImGui::DockBuilderDockWindow(m_Children[index].WindowName.c_str(), node);
     }
 
-    void AssetEditorPanel::OnRender(Renderer::CommandBuffer& cmd)
-    {
-        for (Child& child : m_Children)
-        {
-            if (child.Open)
-            {
-                child.Panel->OnRender(cmd);
-            }
-        }
-    }
-
     void AssetEditorPanel::Draw(bool* open)
     {
         // Restrict docking to this editor's own children: the dockspace adopts this
