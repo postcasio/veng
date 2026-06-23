@@ -14,6 +14,7 @@
 
 namespace Veng
 {
+    class Application;
     class SystemRegistry;
 }
 
@@ -44,7 +45,7 @@ namespace VengEditor
         /// @param id          The level asset being edited.
         /// @param worldPrefab The level's world prefab, opened in the scene surface.
         /// @param sourcePath  The *.level.json source the editor round-trips and recooks.
-        /// @param context     Render context for the viewport's SceneRenderer.
+        /// @param app         Application the viewport registers its Offscreen viewport into.
         /// @param assets      Asset manager the level and its dependencies load through.
         /// @param imgui       ImGui layer the viewport registers its render target with.
         /// @param types       Type registry the spawned Scene and config structs reflect against.
@@ -55,7 +56,7 @@ namespace VengEditor
         /// @param systems     System registry the systems panel lists and Play instantiates from.
         /// @param cook        Cook driver that recooks the level source and shadow-mounts the result.
         LevelEditorPanel(Veng::AssetId id, Veng::AssetId worldPrefab, Veng::path sourcePath,
-                         Veng::Renderer::Context& context, Veng::AssetManager& assets,
+                         Veng::Application& app, Veng::AssetManager& assets,
                          Veng::ImGuiLayer& imgui, Veng::TypeRegistry& types,
                          Veng::EditorRegistry& editors, const AssetSourceIndex& sources,
                          Veng::Input& input, Veng::InputRouter& router,

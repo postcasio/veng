@@ -9,6 +9,7 @@
 
 namespace Veng
 {
+    class Application;
     class AssetManager;
     class EditorRegistry;
     class ImGuiLayer;
@@ -19,12 +20,6 @@ namespace Veng
     class SceneSimulation;
     class SystemRegistry;
     class TypeRegistry;
-
-    namespace Renderer
-    {
-        class CommandBuffer;
-        class Context;
-    }
 }
 
 namespace VengEditor
@@ -45,7 +40,7 @@ namespace VengEditor
     public:
         /// @brief Opens the editor for the prefab at @p id.
         /// @param id        The prefab asset to edit.
-        /// @param context   Render context for the viewport's SceneRenderer.
+        /// @param app       Application the viewport registers its Offscreen viewport into.
         /// @param assets    Asset manager the prefab and its dependencies load through.
         /// @param imgui     ImGui layer the viewport registers its render target with.
         /// @param types     Type registry the spawned Scene pools components against.
@@ -54,11 +49,11 @@ namespace VengEditor
         /// @param input     Frame-coherent input service the viewport camera reads.
         /// @param router    Input router whose gameplay focus captures the mouse during Play.
         /// @param systems   System registry the play session instantiates its systems from.
-        PrefabEditorPanel(Veng::AssetId id, Veng::Renderer::Context& context,
-                          Veng::AssetManager& assets, Veng::ImGuiLayer& imgui,
-                          Veng::TypeRegistry& types, Veng::EditorRegistry& editors,
-                          const AssetSourceIndex& sources, Veng::Input& input,
-                          Veng::InputRouter& router, Veng::SystemRegistry& systems);
+        PrefabEditorPanel(Veng::AssetId id, Veng::Application& app, Veng::AssetManager& assets,
+                          Veng::ImGuiLayer& imgui, Veng::TypeRegistry& types,
+                          Veng::EditorRegistry& editors, const AssetSourceIndex& sources,
+                          Veng::Input& input, Veng::InputRouter& router,
+                          Veng::SystemRegistry& systems);
         ~PrefabEditorPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
@@ -84,14 +79,10 @@ namespace VengEditor
         /// @brief Resumes a paused play session. No-op unless Paused.
         void Resume();
 
-        /// @brief Ticks the play simulation (when playing), then forwards the render to the children.
-        ///
-        /// Advances the clone's systems before the base forwards OnRender so the viewport
-        /// renders the just-updated frame.
-        /// @param cmd  Command buffer for the current frame.
-        void OnRender(Veng::Renderer::CommandBuffer& cmd) override;
-
         /// @brief Draws the document toolbar above the dockspace: a live entity-count readout.
+        ///
+        /// Also ticks the play simulation (when playing) so the next engine viewport render
+        /// shows the advanced clone — the same one-frame latency the editor camera carries.
         void OnUI() override;
 
     protected:
@@ -103,7 +94,7 @@ namespace VengEditor
         /// surface into a richer editor without reimplementing it.
         /// @param worldPrefab The prefab spawned into the edit scene.
         /// @param title       The document window title.
-        /// @param context     Render context for the viewport's SceneRenderer.
+        /// @param app         Application the viewport registers its Offscreen viewport into.
         /// @param assets       Asset manager the prefab and its dependencies load through.
         /// @param imgui        ImGui layer the viewport registers its render target with.
         /// @param types        Type registry the spawned Scene pools components against.
@@ -112,12 +103,11 @@ namespace VengEditor
         /// @param input        Frame-coherent input service the viewport camera reads.
         /// @param router       Input router whose gameplay focus captures the mouse during Play.
         /// @param systems      System registry the play session instantiates its systems from.
-        PrefabEditorPanel(Veng::AssetId worldPrefab, Veng::string title,
-                          Veng::Renderer::Context& context, Veng::AssetManager& assets,
-                          Veng::ImGuiLayer& imgui, Veng::TypeRegistry& types,
-                          Veng::EditorRegistry& editors, const AssetSourceIndex& sources,
-                          Veng::Input& input, Veng::InputRouter& router,
-                          Veng::SystemRegistry& systems);
+        PrefabEditorPanel(Veng::AssetId worldPrefab, Veng::string title, Veng::Application& app,
+                          Veng::AssetManager& assets, Veng::ImGuiLayer& imgui,
+                          Veng::TypeRegistry& types, Veng::EditorRegistry& editors,
+                          const AssetSourceIndex& sources, Veng::Input& input,
+                          Veng::InputRouter& router, Veng::SystemRegistry& systems);
 
         /// @brief Splits the dockspace into explorer (left), viewport (center), inspector (right).
         void BuildDefaultLayout(Veng::u32 dockspaceId) override;
@@ -136,11 +126,11 @@ namespace VengEditor
         ///
         /// Called by a subclass after the base constructor has built the scene, so the level
         /// editor composes the same scene-editing surface a standalone prefab editor uses.
-        /// @param context  Render context the viewport's SceneRenderer is created against.
+        /// @param app      Application the viewport registers its Offscreen viewport into.
         /// @param imgui    ImGui layer the viewport registers its render target with.
         /// @param editors  Editor registry for inspector field-widget overrides.
         /// @param sources  Manifest source index for the inspector's asset pickers.
-        void AddSceneEditingChildren(Veng::Renderer::Context& context, Veng::ImGuiLayer& imgui,
+        void AddSceneEditingChildren(Veng::Application& app, Veng::ImGuiLayer& imgui,
                                      Veng::EditorRegistry& editors,
                                      const AssetSourceIndex& sources);
 
@@ -156,7 +146,7 @@ namespace VengEditor
 
     private:
         /// @brief Loads and spawns the prefab, adding a default light when none is present.
-        void BuildScene(Veng::Renderer::Context& context, Veng::AssetManager& assets);
+        void BuildScene();
 
         /// @brief Pushes gameplay input focus (capturing the cursor) if not already held.
         void CaptureForPlay();

@@ -1,10 +1,10 @@
 #include "panels/PrefabEditorPanel.h"
 
+#include <Veng/Application.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
-#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSimulation.h>
@@ -22,21 +22,19 @@ namespace VengEditor
 {
     using namespace Veng;
 
-    PrefabEditorPanel::PrefabEditorPanel(AssetId id, Renderer::Context& context,
-                                         AssetManager& assets, ImGuiLayer& imgui,
-                                         TypeRegistry& types, EditorRegistry& editors,
-                                         const AssetSourceIndex& sources, Input& input,
-                                         InputRouter& router, SystemRegistry& systems)
-        : PrefabEditorPanel(id, fmt::format("Prefab 0x{:X}", id.Value), context, assets, imgui,
-                            types, editors, sources, input, router, systems)
+    PrefabEditorPanel::PrefabEditorPanel(AssetId id, Application& app, AssetManager& assets,
+                                         ImGuiLayer& imgui, TypeRegistry& types,
+                                         EditorRegistry& editors, const AssetSourceIndex& sources,
+                                         Input& input, InputRouter& router, SystemRegistry& systems)
+        : PrefabEditorPanel(id, fmt::format("Prefab 0x{:X}", id.Value), app, assets, imgui, types,
+                            editors, sources, input, router, systems)
     {
-        AddSceneEditingChildren(context, imgui, editors, sources);
+        AddSceneEditingChildren(app, imgui, editors, sources);
     }
 
-    PrefabEditorPanel::PrefabEditorPanel(AssetId worldPrefab, string title,
-                                         Renderer::Context& context, AssetManager& assets,
-                                         ImGuiLayer& imgui, TypeRegistry& types,
-                                         EditorRegistry& /*editors*/,
+    PrefabEditorPanel::PrefabEditorPanel(AssetId worldPrefab, string title, Application& /*app*/,
+                                         AssetManager& assets, ImGuiLayer& imgui,
+                                         TypeRegistry& types, EditorRegistry& /*editors*/,
                                          const AssetSourceIndex& /*sources*/, Input& input,
                                          InputRouter& router, SystemRegistry& systems)
         : m_Id(worldPrefab), m_Title(std::move(title)), m_Assets(assets), m_Input(input),
@@ -46,15 +44,15 @@ namespace VengEditor
         m_Context.Scene = m_Scene.get();
         m_Context.Assets = &assets;
 
-        BuildScene(context, assets);
+        BuildScene();
     }
 
-    void PrefabEditorPanel::AddSceneEditingChildren(Renderer::Context& context, ImGuiLayer& imgui,
+    void PrefabEditorPanel::AddSceneEditingChildren(Application& app, ImGuiLayer& imgui,
                                                     EditorRegistry& editors,
                                                     const AssetSourceIndex& sources)
     {
-        auto viewport = CreateUnique<SceneViewportPanel>(context, m_Assets, imgui, m_Context,
-                                                         m_Input, m_Router, *this);
+        auto viewport = CreateUnique<SceneViewportPanel>(app, m_Assets, imgui, m_Context, m_Input,
+                                                         m_Router, *this);
         m_Viewport = viewport.get();
         auto explorer = CreateUnique<PrefabExplorerPanel>(m_Context);
         auto inspector = CreateUnique<InspectorPanel>(m_Assets, editors, sources, m_Context);
@@ -159,8 +157,11 @@ namespace VengEditor
         }
     }
 
-    void PrefabEditorPanel::OnRender(Renderer::CommandBuffer& cmd)
+    void PrefabEditorPanel::OnUI()
     {
+        // Advance the play clone before the toolbar draws; the engine renders the viewport at
+        // the next frame's start from the ViewState the viewport child pushes this frame, so the
+        // tick and the camera carry the same one-frame latency.
         if (m_Context.Play == PlayState::Playing && m_PlayScene != nullptr &&
             m_Simulation != nullptr)
         {
@@ -168,13 +169,6 @@ namespace VengEditor
                                  SystemContext{.Assets = m_Assets, .Input = m_Input});
         }
 
-        // Forward to the children after the tick so the viewport renders this frame's
-        // advanced scene.
-        AssetEditorPanel::OnRender(cmd);
-    }
-
-    void PrefabEditorPanel::OnUI()
-    {
         if (m_Context.Scene == nullptr)
         {
             return;
@@ -182,9 +176,9 @@ namespace VengEditor
         UI::TextDisabled(fmt::format("{} entities", m_Context.Scene->EntityCount()));
     }
 
-    void PrefabEditorPanel::BuildScene(Renderer::Context& context, AssetManager& assets)
+    void PrefabEditorPanel::BuildScene()
     {
-        const AssetResult<AssetHandle<Prefab>> prefab = assets.LoadSync<Prefab>(m_Id);
+        const AssetResult<AssetHandle<Prefab>> prefab = m_Assets.LoadSync<Prefab>(m_Id);
         if (!prefab.has_value())
         {
             Log::Error("Prefab editor: failed to load prefab 0x{:X}: {}", m_Id.Value,
@@ -193,7 +187,7 @@ namespace VengEditor
         }
         m_Prefab = *prefab;
 
-        const vector<Entity> roots = m_Prefab.Get()->SpawnInto(*m_Scene, assets);
+        const vector<Entity> roots = m_Prefab.Get()->SpawnInto(*m_Scene, m_Assets);
         if (!roots.empty())
         {
             m_Context.SelectOnly(roots[0]);

@@ -3,12 +3,13 @@
 // the brick g-buffer fixture in-process, and exercises the preview surface.
 //
 // It proves the preview renders the brick material on a sphere into a 256² target
-// exposed as a non-null ImGuiTexture, that SetMaterial swaps cleanly, and that
-// Resize re-fetches a fresh valid texture id. A second viewport-style
-// SceneRenderer is recorded alongside the preview in one command stream, so the
-// two-renderer cross-graph handoff (each renderer brackets its own output's
-// Sample ↔ ColorAttachment over disjoint targets) is exercised under the
-// validation gate — not just an isolated preview.
+// exposed as a non-null ImGuiTexture, and that SetMaterial swaps cleanly. The
+// preview owns an Offscreen Viewport; the test drives it directly (Update pushes
+// the view, the viewport's Render records the scene), standing in for the engine
+// drive-list. A second viewport-style SceneRenderer is recorded alongside it in
+// one command stream, so the two-renderer cross-graph handoff (each renderer
+// brackets its own output's Sample ↔ ColorAttachment over disjoint targets) is
+// exercised under the validation gate — not just an isolated preview.
 //
 // Skips cleanly (exit 77) on a machine with no usable Vulkan ICD via
 // Test::HasVulkanDriver().
@@ -30,6 +31,7 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Renderer/Viewport.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
@@ -170,7 +172,10 @@ int main()
               "viewport output sized to its own extent");
 
         // Record both renderers in one command stream, each bracketing its own
-        // output with PrepareForAccess(Sample) — the two-renderer interaction.
+        // output with PrepareForAccess(Sample) — the two-renderer interaction. The
+        // preview's Update pushes its view; the viewport's Render does the Execute +
+        // Sample barrier itself, standing in for the engine drive-list.
+        preview.Update();
         context.ImmediateCommands(
             [&](CommandBuffer& cmd)
             {
@@ -179,7 +184,7 @@ int main()
                                                            .Delta = 0.0f});
                 cmd.PrepareForAccess(viewport->GetOutput(), AccessKind::Sample);
 
-                preview.Render(cmd);
+                preview.GetViewport().Render(cmd);
             });
 
         // The preview is sized to the requested 256² extent and exposes a non-null
@@ -187,17 +192,13 @@ int main()
         Check(preview.GetExtent() == previewExtent, "preview extent is 256²");
         Check(preview.GetTexture()->GetTextureId() != 0, "preview texture id is non-null");
 
-        // Resize re-fetches a fresh, valid texture id at the new extent.
-        const u64 before = preview.GetTexture()->GetTextureId();
-        constexpr uvec2 resized{192, 192};
-        preview.Resize(resized);
+        // A second frame records cleanly: the viewport re-arms its output for the
+        // next Execute, so the preview keeps drawing across frames.
+        preview.Update();
+        context.ImmediateCommands([&](CommandBuffer& cmd) { preview.GetViewport().Render(cmd); });
 
-        context.ImmediateCommands([&](CommandBuffer& cmd) { preview.Render(cmd); });
-
-        Check(preview.GetExtent() == resized, "preview extent updated on Resize");
-        Check(preview.GetTexture()->GetTextureId() != 0, "preview texture id valid after Resize");
-        Check(preview.GetTexture()->GetTextureId() != before,
-              "preview texture id is fresh after Resize");
+        Check(preview.GetTexture()->GetTextureId() != 0,
+              "preview texture id valid after a second frame");
 
         std::filesystem::remove(outArchive);
     }

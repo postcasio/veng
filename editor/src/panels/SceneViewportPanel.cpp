@@ -1,12 +1,12 @@
 #include "panels/SceneViewportPanel.h"
 
+#include <Veng/Application.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/ImGui/ImGuiTexture.h>
 #include <Veng/Input.h>
 #include <Veng/InputRouter.h>
 #include <Veng/Math/AABB.h>
-#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Scene/Components.h>
@@ -14,6 +14,7 @@
 #include <Veng/Scene/Transforms.h>
 #include <Veng/Time.h>
 #include <Veng/UI/UI.h>
+#include <Veng/Vendor/ImGui.h>
 
 #include "panels/PrefabEditorPanel.h"
 
@@ -23,21 +24,25 @@ namespace VengEditor
 {
     using namespace Veng;
 
-    SceneViewportPanel::SceneViewportPanel(Renderer::Context& context, AssetManager& assets,
+    SceneViewportPanel::SceneViewportPanel(Application& app, AssetManager& assets,
                                            ImGuiLayer& imgui, PrefabEditContext& ctx, Input& input,
                                            InputRouter& router, PrefabEditorPanel& document)
-        : m_Context(context), m_Assets(assets), m_ImGui(imgui), m_Ctx(ctx), m_Input(input),
-          m_Router(router), m_Document(document)
+        : m_Assets(assets), m_ImGui(imgui), m_Ctx(ctx), m_Input(input), m_Router(router),
+          m_Document(document)
     {
-        m_RenderExtent = context.GetInternalRenderExtent();
+        Renderer::Context& context = app.GetRenderContext();
+        const uvec2 extent = context.GetInternalRenderExtent();
 
-        m_SceneRenderer = Renderer::SceneRenderer::Create({
+        m_Viewport = Renderer::Viewport::Create({
             .Context = context,
             .Assets = assets,
-            .OutputFormat = context.GetOutputFormat(),
-            .Extent = m_RenderExtent,
+            .Region = {.Offset = {0, 0}, .Extent = extent},
+            .ColorFormat = context.GetOutputFormat(),
             .Settings = m_Settings,
+            .Role = Renderer::ViewportRole::Offscreen,
         });
+        app.RegisterViewport(*m_Viewport);
+        m_TextureExtent = extent;
 
         // Seed a sensible opening view; the camera produces the live one each OnUI.
         m_View = m_Camera.GetView();
@@ -51,14 +56,14 @@ namespace VengEditor
                          .AddressModeV = Renderer::AddressMode::ClampToEdge,
                          .AddressModeW = Renderer::AddressMode::ClampToEdge,
                      });
-        m_SceneTexture = imgui.CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
+        m_SceneTexture = imgui.CreateTexture(*m_SceneSampler, *m_Viewport->GetOutput());
     }
 
     SceneViewportPanel::~SceneViewportPanel()
     {
         m_SceneTexture.reset();
         m_SceneSampler.reset();
-        m_SceneRenderer.reset();
+        m_Viewport.reset();
     }
 
     void SceneViewportPanel::FrameSelection()
@@ -98,62 +103,6 @@ namespace VengEditor
         const vec3 center = bounds.Center();
         const f32 radius = glm::max(glm::length(bounds.Extents()), 0.1f);
         m_Camera.Frame(center, radius);
-    }
-
-    void SceneViewportPanel::OnRender(Renderer::CommandBuffer& cmd)
-    {
-        if (m_Ctx.Scene == nullptr)
-        {
-            return;
-        }
-
-        // Resize and Configure both invalidate GetOutput(); rebind the ImGui texture
-        // once after both are applied, before recording.
-        bool outputInvalidated = false;
-
-        if (m_PendingExtent.x != 0 && m_PendingExtent.y != 0 && m_PendingExtent != m_RenderExtent)
-        {
-            m_RenderExtent = m_PendingExtent;
-            m_SceneRenderer->Resize(m_RenderExtent);
-            outputInvalidated = true;
-        }
-
-        if (m_SettingsDirty)
-        {
-            m_SceneRenderer->Configure(m_Settings);
-            m_SettingsDirty = false;
-            outputInvalidated = true;
-        }
-
-        if (outputInvalidated)
-        {
-            m_SceneTexture = m_ImGui.CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
-        }
-
-        // Play with the toggle on previews the scene's authored Viewer camera (what the
-        // player sees); edit mode, Stop, and an unauthored scene use the editor camera.
-        CameraView camera = m_View;
-        if (m_Ctx.IsPlaying() && m_ViewThroughScene)
-        {
-            const f32 aspect =
-                static_cast<f32>(m_RenderExtent.x) / static_cast<f32>(m_RenderExtent.y);
-            if (const optional<CameraView> resolved =
-                    ResolvePrimaryCameraView(*m_Ctx.Scene, aspect))
-            {
-                camera = *resolved;
-            }
-        }
-
-        const Renderer::SceneView view{.World = *m_Ctx.Scene,
-                                       .Camera = camera,
-                                       .Delta = Time::GetDeltaTime(),
-                                       .Exposure = m_Exposure,
-                                       .BloomIntensity = m_BloomIntensity};
-        m_SceneRenderer->Execute(cmd, view);
-
-        // ImGui's sampled read of the output is recorded outside the graph by
-        // ImGuiLayer::Render, so transition the output to a sampleable layout here.
-        cmd.PrepareForAccess(m_SceneRenderer->GetOutput(), Renderer::AccessKind::Sample);
     }
 
     void SceneViewportPanel::ApplyLevelRenderSettings(const LevelRenderSettings& render)
@@ -252,8 +201,8 @@ namespace VengEditor
             UI::SameLine();
 
             // Debug visualizations: the DebugView dropdown plus the battery toggles.
-            // The change is deferred via m_SettingsDirty so Configure runs in OnRender,
-            // not mid-ImGui.
+            // The change is deferred via m_SettingsDirty so Configure runs once in OnUI,
+            // not per widget.
             // Entries mirror the DebugView enum in declaration order; combo index == enum value.
             static constexpr std::array<string_view, 13> modeNames{
                 "Final",         "Albedo", "Normal",  "Depth",    "Roughness",        "Metallic",
@@ -315,9 +264,37 @@ namespace VengEditor
 
     void SceneViewportPanel::OnUI()
     {
+        // The engine renders the viewport at frame start, applying any pending region resize
+        // and Configure before this runs; the output the panel samples is the one its prior
+        // SetRegion/SetViewState produced. Re-fetch the ImGui texture when that applied extent
+        // differs from the one the current texture views (a resize or Configure invalidated it).
+        const uvec2 appliedExtent = m_Viewport->GetRegion().Extent;
+        if (appliedExtent != m_TextureExtent && appliedExtent.x != 0 && appliedExtent.y != 0)
+        {
+            m_SceneTexture = m_ImGui.CreateTexture(*m_SceneSampler, *m_Viewport->GetOutput());
+            m_TextureExtent = appliedExtent;
+        }
+
         const vec2 available = UI::ContentRegionAvail();
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
         const uvec2 wanted{static_cast<u32>(available.x), static_cast<u32>(available.y)};
-        m_PendingExtent = wanted;
+
+        // Feed the content rect to the viewport: the extent drives the debounced resize, the
+        // offset is the panel's window-space origin (the picking seam maps from it). A zero
+        // extent (a collapsed or first-frame panel) is ignored by SetRegion.
+        m_Viewport->SetRegion({
+            .Offset = {static_cast<i32>(origin.x), static_cast<i32>(origin.y)},
+            .Extent = wanted,
+        });
+
+        // Settings edits (debug view, battery toggles) reconfigure the renderer; this
+        // invalidates the output, so re-fetch the texture immediately.
+        if (m_SettingsDirty)
+        {
+            m_Viewport->Configure(m_Settings);
+            m_SettingsDirty = false;
+            m_SceneTexture = m_ImGui.CreateTexture(*m_SceneSampler, *m_Viewport->GetOutput());
+        }
 
         UI::Image(m_SceneTexture, available);
 
@@ -340,6 +317,12 @@ namespace VengEditor
             UI::ItemBorder(UI::GetTheme().Accent, 3.0f);
         }
 
+        // The render extent the camera's aspect is computed against is the viewport's, which
+        // tracks the panel; fall back to the content rect on a degenerate first frame.
+        const uvec2 renderExtent = appliedExtent.x != 0 && appliedExtent.y != 0 ? appliedExtent
+                                   : wanted.x != 0 && wanted.y != 0             ? wanted
+                                                                                : uvec2{1, 1};
+
         EditorCameraInput in;
         in.Hovered = hovered;
         in.Focused = focused;
@@ -357,7 +340,7 @@ namespace VengEditor
         in.Up = m_Input.IsKeyDown(Key::E);
         in.Down = m_Input.IsKeyDown(Key::Q);
         in.FrameSelection = (hovered || focused) && m_Input.WasKeyPressed(Key::F);
-        in.Aspect = static_cast<f32>(m_RenderExtent.x) / static_cast<f32>(m_RenderExtent.y);
+        in.Aspect = static_cast<f32>(renderExtent.x) / static_cast<f32>(renderExtent.y);
 
         // While the game owns input the editor camera stands down (the router already holds
         // the cursor captured); otherwise the camera reads input and drives its own transient
@@ -378,6 +361,29 @@ namespace VengEditor
                 m_View = m_Camera.GetView();
             }
         }
+
+        // Push this frame's render source onto the viewport: a null Scene (a closed document)
+        // is a no-op in Render. Play with the toggle on previews the scene's authored Viewer
+        // camera (what the player sees); edit mode, Stop, and an unauthored scene use the
+        // editor camera.
+        CameraView camera = m_View;
+        if (m_Ctx.IsPlaying() && m_ViewThroughScene && m_Ctx.Scene != nullptr)
+        {
+            const f32 aspect = static_cast<f32>(renderExtent.x) / static_cast<f32>(renderExtent.y);
+            if (const optional<CameraView> resolved =
+                    ResolvePrimaryCameraView(*m_Ctx.Scene, aspect))
+            {
+                camera = *resolved;
+            }
+        }
+
+        m_Viewport->SetViewState({
+            .World = m_Ctx.Scene,
+            .Camera = camera,
+            .Delta = Time::GetDeltaTime(),
+            .Exposure = m_Exposure,
+            .BloomIntensity = m_BloomIntensity,
+        });
 
         DrawToolbar();
         if (gameplayFocused)

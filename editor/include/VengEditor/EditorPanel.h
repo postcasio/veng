@@ -3,18 +3,15 @@
 #include <Veng/Veng.h>
 #include <Veng/UI/Types.h>
 
-namespace Veng::Renderer
-{
-    class CommandBuffer;
-}
-
 namespace VengEditor
 {
     /// @brief Base class for a dockable editor window.
     ///
     /// The host owns the open/close toggle, the dock id, and the Window-menu
     /// wiring. A panel provides its title and draws its body each frame inside
-    /// the host-managed UI::Window scope.
+    /// the host-managed UI::Window scope. A render-owning panel holds a registered
+    /// Veng::Renderer::Viewport; the engine drive-list renders it each frame, so the
+    /// panel records no scene render of its own.
     class EditorPanel
     {
     public:
@@ -41,13 +38,5 @@ namespace VengEditor
         /// class-tagged child windows that dock into it.
         /// @param open  Host-owned visibility flag, toggled by the window close button.
         virtual void Draw(bool* open);
-
-        /// @brief Records this frame's offscreen render into cmd.
-        ///
-        /// Called on every open panel before the ImGui frame is built, so the
-        /// output is sampleable when OnUI draws it. Default is a no-op;
-        /// only render-owning panels (e.g. scene viewport, material preview) override it.
-        /// @param cmd Command buffer for the current frame.
-        virtual void OnRender(Veng::Renderer::CommandBuffer& cmd) {}
     };
 }

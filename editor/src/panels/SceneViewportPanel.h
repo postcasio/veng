@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Renderer/Viewport.h>
 #include <Veng/Scene/Camera.h>
 
 #include <VengEditor/EditorPanel.h>
@@ -10,6 +11,7 @@
 
 namespace Veng
 {
+    class Application;
     class AssetManager;
     class ImGuiLayer;
     class ImGuiTexture;
@@ -20,7 +22,6 @@ namespace Veng
     namespace Renderer
     {
         class Context;
-        class CommandBuffer;
         class Sampler;
     }
 }
@@ -29,27 +30,27 @@ namespace VengEditor
 {
     class PrefabEditorPanel;
 
-    /// @brief Scene viewport child of a prefab editor: renders the document's Scene from
-    /// an Unreal-style editor camera into a UI::Image, with a translucent toolbar overlay.
+    /// @brief Scene viewport child of a prefab editor: shows the document's Scene from
+    /// an Unreal-style editor camera in a UI::Image, with a translucent toolbar overlay.
     ///
-    /// Owns a SceneRenderer sized to the panel's content region (debounced resize) and an
-    /// EditorCamera the user drives (RMB fly + WASDQE, MMB pan, Alt orbit, wheel dolly, F to
-    /// frame); reads the live Scene from the shared PrefabEditContext. The toolbar overlay
-    /// drives the document's play session and the camera/debug controls. The host records
-    /// the scene render via OnRender before the ImGui frame is built, so the output is
-    /// sampleable when OnUI draws it.
+    /// Owns a registered Offscreen Veng::Renderer::Viewport sized to the panel's content
+    /// region and an EditorCamera the user drives (RMB fly + WASDQE, MMB pan, Alt orbit,
+    /// wheel dolly, F to frame); reads the live Scene from the shared PrefabEditContext.
+    /// The engine drive-list renders the viewport each frame from the region and view the
+    /// panel pushes in OnUI; the panel records no scene render itself. The toolbar overlay
+    /// drives the document's play session and the camera/debug controls.
     class SceneViewportPanel final : public EditorPanel
     {
     public:
         /// @brief Constructs the viewport over the document's edit context.
-        /// @param context   Render context the SceneRenderer is created against.
+        /// @param app       Application the owned viewport registers into the drive-list.
         /// @param assets    Asset manager the renderer resolves materials through.
         /// @param imgui     ImGui layer the render target is registered with.
         /// @param ctx       Shared document context supplying the Scene and selection.
         /// @param input     Frame-coherent input service the editor camera reads.
         /// @param router    Input router whose gameplay focus captures the mouse during Play.
         /// @param document  Owning document the toolbar drives play state through.
-        SceneViewportPanel(Veng::Renderer::Context& context, Veng::AssetManager& assets,
+        SceneViewportPanel(Veng::Application& app, Veng::AssetManager& assets,
                            Veng::ImGuiLayer& imgui, PrefabEditContext& ctx, Veng::Input& input,
                            Veng::InputRouter& router, PrefabEditorPanel& document);
         ~SceneViewportPanel() override;
@@ -60,17 +61,15 @@ namespace VengEditor
             return Veng::UI::WindowFlags::NoScrollbar | Veng::UI::WindowFlags::NoScrollWithMouse;
         }
 
-        /// @brief Records this frame's scene render so the output is ready for UI::Image.
-        void OnRender(Veng::Renderer::CommandBuffer& cmd) override;
         void OnUI() override;
 
         /// @brief Applies a level's render subset to the viewport, mirroring the runtime mapping.
         ///
         /// Folds the battery toggles (Bloom/Shadows/AO) into the SceneRendererSettings —
-        /// flagged for the OnRender Configure only when one actually changed, so a per-edit
-        /// call never forces a needless recompile — and stores the per-frame Exposure /
-        /// BloomIntensity the SceneView carries each Execute. The level editor pushes its live
-        /// settings here so an edit shows in the viewport immediately, ahead of the recook.
+        /// flagged for a Configure only when one actually changed, so a per-edit call never
+        /// forces a needless recompile — and stores the per-frame Exposure / BloomIntensity the
+        /// pushed ViewState carries each frame. The level editor pushes its live settings here so
+        /// an edit shows in the viewport immediately, ahead of the recook.
         /// @param render  The level's render settings.
         void ApplyLevelRenderSettings(const Veng::LevelRenderSettings& render);
 
@@ -84,7 +83,6 @@ namespace VengEditor
         /// @brief Frames the camera on the selected entities, or the whole scene when none are selected.
         void FrameSelection();
 
-        Veng::Renderer::Context& m_Context;
         Veng::AssetManager& m_Assets;
         Veng::ImGuiLayer& m_ImGui;
         PrefabEditContext& m_Ctx;
@@ -92,12 +90,13 @@ namespace VengEditor
         Veng::InputRouter& m_Router;
         PrefabEditorPanel& m_Document;
 
-        Veng::Unique<Veng::Renderer::SceneRenderer> m_SceneRenderer;
+        /// @brief The owned Offscreen viewport; registered into the app's drive-list on construction.
+        Veng::Unique<Veng::Renderer::Viewport> m_Viewport;
 
         /// @brief The user-driven editor camera.
         EditorCamera m_Camera;
 
-        /// @brief The view the camera produced last OnUI, consumed by OnRender (one-frame latency).
+        /// @brief The view the camera produced last OnUI, pushed as the viewport's ViewState.
         Veng::CameraView m_View;
 
         /// @brief While playing, render through the scene's authored Viewer camera instead of the editor camera.
@@ -111,16 +110,16 @@ namespace VengEditor
         Veng::Ref<Veng::Renderer::Sampler> m_SceneSampler;
         Veng::Ref<Veng::ImGuiTexture> m_SceneTexture;
 
-        /// @brief Renderer settings driven by the debug-view dropdown; applied in OnRender.
+        /// @brief Renderer settings driven by the debug-view dropdown; pushed to Configure when dirty.
         Veng::Renderer::SceneRendererSettings m_Settings;
         bool m_SettingsDirty = false;
 
-        /// @brief Per-frame tonemap exposure written into the SceneView each Execute.
+        /// @brief Per-frame tonemap exposure written into the pushed ViewState each frame.
         Veng::f32 m_Exposure = 1.0f;
-        /// @brief Per-frame bloom composite intensity written into the SceneView each Execute.
+        /// @brief Per-frame bloom composite intensity written into the pushed ViewState each frame.
         Veng::f32 m_BloomIntensity = 1.0f;
 
-        Veng::uvec2 m_RenderExtent{};
-        Veng::uvec2 m_PendingExtent{};
+        /// @brief Last extent the ImGui texture was fetched at; re-fetch when the viewport resizes.
+        Veng::uvec2 m_TextureExtent{};
     };
 }
