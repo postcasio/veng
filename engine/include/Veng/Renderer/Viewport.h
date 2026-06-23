@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Math/Ray.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
@@ -163,6 +164,33 @@ namespace Veng::Renderer
         /// @brief Returns the viewport's role.
         [[nodiscard]] ViewportRole GetRole() const;
 
+        /// @brief Maps a window point into this viewport's region as normalized coordinates.
+        ///
+        /// Hit-tests windowPoint (window framebuffer pixels) against GetRegion(); on a hit,
+        /// remaps it to normalized [0,1] coordinates across the region — (0,0) is the region's
+        /// top-left, (1,1) its bottom-right — independent of the region's window offset. The
+        /// pointer-to-viewport seam: a router hit-tests a click against each registered
+        /// viewport's region to find the one it belongs to, and the editor uses the fraction
+        /// for hover/pick coordinates. Gameplay-agnostic — the viewport imports no Viewer or
+        /// PlayerInput; the viewport-to-seat association lives in the router/app.
+        /// @param windowPoint  The point to test, in window framebuffer pixels.
+        /// @return The point's normalized [0,1] position within the region, or nullopt when it
+        ///         lies outside the region (or the region has a zero extent).
+        [[nodiscard]] optional<vec2> WindowToViewport(ivec2 windowPoint) const;
+
+        /// @brief Unprojects a window point into a world-space ray through the retained camera.
+        ///
+        /// Composes WindowToViewport with the camera retained from the last SetViewState: maps
+        /// the [0,1] point to NDC and unprojects it through glm::inverse(camera.ViewProjection())
+        /// into a world-space Ray whose origin is the camera and whose normalized direction passes
+        /// through the pixel. Self-contained — the viewport already holds the camera, so picking
+        /// needs no external CameraView. The viewport supplies the ray; what the ray hits (a scene
+        /// raycast) is editor or gameplay code, not the viewport.
+        /// @param windowPoint  The point to unproject, in window framebuffer pixels.
+        /// @return The world-space ray through windowPoint, or nullopt when the point lies outside
+        ///         the region or no ViewState has been set yet.
+        [[nodiscard]] optional<Ray> ScreenToWorldRay(ivec2 windowPoint) const;
+
         /// @brief Returns the owned renderer for its stats and diagnostic surface.
         ///
         /// The escape hatch for GetLastDrawnCount() and the rest of the renderer's read
@@ -200,6 +228,12 @@ namespace Veng::Renderer
 
         /// @brief The bound per-frame render source.
         ViewState m_ViewState;
+
+        /// @brief True once SetViewState has bound a render source.
+        ///
+        /// Gates ScreenToWorldRay: before any ViewState the retained camera is the default,
+        /// so picking returns nullopt rather than unprojecting through an unset view.
+        bool m_HasViewState = false;
 
         /// @brief Pending extent applied at the next Render; zero when none is pending.
         uvec2 m_PendingExtent = {};
