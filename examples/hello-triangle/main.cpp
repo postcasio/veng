@@ -8,6 +8,7 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
+#include <Veng/Renderer/GatherPass.h>
 #include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Asset/Prefab.h>
@@ -302,11 +303,19 @@ protected:
             m_SceneTexture =
                 GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
 
+            // The gather pass assembles the Presented viewports into one full-window target
+            // the composite consumes; the sample registers a single window-covering placement.
+            m_Gather = Renderer::GatherPass::Create({
+                .Context = context,
+                .Assets = GetAssetManager(),
+                .Extent = context.GetSwapChainExtent(),
+            });
+
             m_Composite = Renderer::SwapChainCompositePass::Create({
                 .Context = context,
                 .ImGui = *GetImGuiLayer(),
                 .Assets = GetAssetManager(),
-                .SceneSource = m_SceneRenderer->GetOutput(),
+                .SceneSource = m_Gather->GetOutput(),
                 .SwapChainFormat = context.GetSwapChainFormat(),
                 .ColorSpace = context.GetActiveDisplayColorSpace(),
             });
@@ -319,8 +328,14 @@ protected:
                 [this]
                 {
                     const Renderer::Context& ctx = GetRenderContext();
+                    // The gather's assembly target is window-sized; resize it (which replaces
+                    // its output view), re-point the composite at the new view, and rebuild
+                    // both graphs against the new extent.
+                    m_Gather->Resize(ctx.GetSwapChainExtent());
+                    m_Composite->SetSceneSource(m_Gather->GetOutput());
                     m_Composite->SetSwapChainTarget(ctx.GetSwapChainFormat(),
                                                     ctx.GetActiveDisplayColorSpace());
+                    m_GatherGraph = BuildGatherGraph();
                     m_CompositeGraph = BuildCompositeGraph();
                 });
         }
@@ -341,6 +356,7 @@ protected:
 
         if (GetImGuiLayer())
         {
+            m_GatherGraph = BuildGatherGraph();
             m_CompositeGraph = BuildCompositeGraph();
         }
 
@@ -419,6 +435,18 @@ protected:
             // ImGui samples the scene output outside the graph; transition before the overlay reads it.
             cmd.PrepareForAccess(m_SceneRenderer->GetOutput(), Renderer::AccessKind::Sample);
 
+            // Assemble the scene into one window-covering placement on the gather target, then
+            // composite that single target. Splitscreen would register N quadrant placements here.
+            const Renderer::CompositePlacement placement{
+                .Texture = m_SceneRenderer->GetOutput(),
+                .Region = {.Offset = {0, 0}, .Extent = context.GetSwapChainExtent()},
+            };
+            m_Gather->SetPlacements({&placement, 1});
+            m_Gather->Execute(cmd, *m_GatherGraph);
+
+            // The composite samples the assembly target outside the graph; transition it.
+            cmd.PrepareForAccess(m_Gather->GetOutput(), Renderer::AccessKind::Sample);
+
             RenderUserInterface();
             GetImGuiLayer()->Render(cmd);
             CompositeToSwapChain(cmd);
@@ -431,6 +459,8 @@ protected:
         m_SceneRenderer.reset();
         m_CompositeGraph.reset();
         m_Composite.reset();
+        m_GatherGraph.reset();
+        m_Gather.reset();
         m_SceneTexture.reset();
         m_SceneSampler.reset();
         m_Scene.reset();
@@ -473,14 +503,14 @@ private:
         }
     }
 
-    // Configure can recreate the output image, so the ImGui texture and composite
-    // scene source must be re-fetched after each call.
+    // Configure can recreate the scene output image, so the ImGui texture must be re-fetched
+    // after each call. The gather reads the scene output fresh per frame as its placement, and
+    // the composite reads the (unchanged) gather assembly target — neither needs re-pointing.
     void ReconfigureScene()
     {
         m_SceneRenderer->Configure(m_SceneSettings);
         m_SceneTexture =
             GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
-        m_Composite->SetSceneSource(m_SceneRenderer->GetOutput());
     }
 
     void RenderUserInterface()
@@ -677,6 +707,13 @@ private:
     }
 
     // Re-run on swapchain resize to rebuild against the new extent.
+    Unique<Renderer::CompiledGraph> BuildGatherGraph()
+    {
+        Renderer::RenderGraph graph(GetRenderContext());
+        return m_Gather->Compile(graph);
+    }
+
+    // Re-run on swapchain resize to rebuild against the new extent.
     Unique<Renderer::CompiledGraph> BuildCompositeGraph()
     {
         Renderer::RenderGraph graph(GetRenderContext());
@@ -697,8 +734,11 @@ private:
     Ref<Renderer::Sampler> m_SceneSampler;
     Ref<ImGuiTexture> m_SceneTexture;
 
+    Unique<Renderer::GatherPass> m_Gather;
     Unique<Renderer::SwapChainCompositePass> m_Composite;
 
+    // Re-Compile()d on swapchain resize.
+    Unique<Renderer::CompiledGraph> m_GatherGraph;
     // Re-Compile()d on swapchain resize.
     Unique<Renderer::CompiledGraph> m_CompositeGraph;
 

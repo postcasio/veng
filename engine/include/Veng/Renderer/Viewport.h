@@ -5,6 +5,7 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Types.h>
+#include <Veng/Renderer/ViewportRegion.h>
 
 #include <Veng/Scene/Camera.h>
 
@@ -31,18 +32,6 @@ namespace Veng::Renderer
         Presented,
         /// @brief A consumer samples this viewport's texture (an ImGui panel, a material).
         Offscreen,
-    };
-
-    /// @brief A viewport's rectangle in window framebuffer pixels.
-    ///
-    /// The Extent is the render resolution; the Offset is where a Presented viewport is
-    /// placed in the window (and the origin an Offscreen panel viewport's picking maps from).
-    struct ViewportRegion
-    {
-        /// @brief Top-left placement in window framebuffer pixels.
-        ivec2 Offset = {};
-        /// @brief Render resolution in window framebuffer pixels.
-        uvec2 Extent = {};
     };
 
     /// @brief Per-frame render source pushed into a viewport by its owner.
