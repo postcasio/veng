@@ -41,9 +41,11 @@ namespace Veng::Renderer
         /// Must outlive the pass.
         AssetManager& Assets;
 
-        /// @brief Initial scene output to composite — SceneRenderer::GetOutput() at construction.
+        /// @brief Initial single source to composite — the gather pass's assembly target.
         ///
-        /// Rebound through SetSceneSource after Resize/Configure invalidates the view.
+        /// GatherPass::GetOutput() at construction: the full-window linear-HDR target the
+        /// gather pass assembled the Presented viewports into. Rebound through SetSceneSource
+        /// after a resize invalidates the view.
         Ref<ImageView> SceneSource;
 
         /// @brief Swapchain color format the composite pass writes.

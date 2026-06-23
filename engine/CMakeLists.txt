@@ -53,6 +53,7 @@ add_library(veng SHARED
         src/Scene/Transforms.cpp
         src/Scene/Visibility.cpp
         src/Renderer/SwapChainCompositePass.cpp
+        src/Renderer/GatherPass.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/SceneRenderer.cpp
         src/Renderer/LightPacking.cpp
