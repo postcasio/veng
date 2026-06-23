@@ -78,6 +78,7 @@ namespace Veng::Renderer
     void Viewport::SetViewState(const ViewState& state)
     {
         m_ViewState = state;
+        m_HasViewState = true;
     }
 
     void Viewport::Configure(const SceneRendererSettings& settings)
@@ -136,6 +137,65 @@ namespace Veng::Renderer
     ViewportRole Viewport::GetRole() const
     {
         return m_Role;
+    }
+
+    optional<vec2> Viewport::WindowToViewport(ivec2 windowPoint) const
+    {
+        // A zero-extent region (a collapsed or first-frame panel) has no interior to hit.
+        if (m_Region.Extent.x == 0 || m_Region.Extent.y == 0)
+        {
+            return std::nullopt;
+        }
+
+        const ivec2 local = windowPoint - m_Region.Offset;
+        const ivec2 extent = ivec2(m_Region.Extent);
+
+        // Right/bottom edges are exclusive: a point at Offset + Extent belongs to the next
+        // viewport, so the upper bound is the extent, not extent inclusive.
+        if (local.x < 0 || local.y < 0 || local.x >= extent.x || local.y >= extent.y)
+        {
+            return std::nullopt;
+        }
+
+        return vec2(static_cast<f32>(local.x) / static_cast<f32>(extent.x),
+                    static_cast<f32>(local.y) / static_cast<f32>(extent.y));
+    }
+
+    optional<Ray> Viewport::ScreenToWorldRay(ivec2 windowPoint) const
+    {
+        // Before any ViewState the retained camera is the default view; picking through it
+        // would fabricate a ray, so the contract returns nullopt instead.
+        if (!m_HasViewState)
+        {
+            return std::nullopt;
+        }
+
+        const optional<vec2> fraction = WindowToViewport(windowPoint);
+        if (!fraction.has_value())
+        {
+            return std::nullopt;
+        }
+
+        // [0,1] (top-left origin) to NDC. Vulkan clip space has Y pointing down, and the
+        // engine's projection bakes that flip in, so a top-left fraction (y=0) maps to NDC
+        // y = -1 directly without a second flip here.
+        const vec2 ndc = *fraction * 2.0f - 1.0f;
+
+        const CameraView& camera = m_ViewState.Camera;
+        const mat4 invViewProj = glm::inverse(camera.ViewProjection());
+
+        // Unproject the near (z=0) and far (z=1) clip points of this pixel; the ray runs
+        // through both. The origin is the camera position so a near-plane offset never
+        // shifts where picking starts.
+        const vec4 nearClip = invViewProj * vec4(ndc, 0.0f, 1.0f);
+        const vec4 farClip = invViewProj * vec4(ndc, 1.0f, 1.0f);
+        const vec3 nearWorld = vec3(nearClip) / nearClip.w;
+        const vec3 farWorld = vec3(farClip) / farClip.w;
+
+        return Ray{
+            .Origin = camera.GetPosition(),
+            .Direction = glm::normalize(farWorld - nearWorld),
+        };
     }
 
     SceneRenderer& Viewport::GetRenderer() const
