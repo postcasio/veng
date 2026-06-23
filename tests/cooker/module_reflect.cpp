@@ -50,7 +50,8 @@ TEST_CASE("module reflect: LoadModuleTypes reflects builtins + the game's Spinne
     REQUIRE(types.IsRegistered(TypeIdOf<Light>()));
     const TypeInfo& light = types.Info(TypeIdOf<Light>());
     CHECK(light.Id == 0xECF6442708DF7C00ULL);
-    CHECK(light.Name == "::Veng::Light");
+    CHECK(light.Name == "Light");
+    CHECK(light.Namespace == "Veng");
     REQUIRE(light.Fields.size() == 7);
     CHECK(light.Fields[0].Name == "Type");
     CHECK(light.Fields[1].Name == "Direction");

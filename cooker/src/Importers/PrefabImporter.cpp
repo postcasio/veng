@@ -58,14 +58,14 @@ namespace Veng::Cook
             return nullptr;
         }
 
-        // Matches `name` against the registered TypeInfo.Name of each of the
-        // variant's alternatives, returning the matched TypeId or InvalidTypeId.
+        // Matches `name` (bare or namespace-qualified) against each of the variant's
+        // alternatives, returning the matched TypeId or InvalidTypeId.
         TypeId MatchAlternativeByName(const TypeInfo& variant, const string& name,
                                       const TypeRegistry& registry)
         {
             for (const TypeId altId : variant.VariantAlternatives)
             {
-                if (registry.Info(altId).Name == name)
+                if (TypeNameMatches(registry.Info(altId), name))
                 {
                     return altId;
                 }
@@ -504,7 +504,7 @@ namespace Veng::Cook
                     bool found = false;
                     for (const auto& [id, info] : registry.All())
                     {
-                        if (!info.Name.empty() && info.Name == key)
+                        if (TypeNameMatches(info, key))
                         {
                             typeId = id;
                             found = true;

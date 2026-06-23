@@ -50,9 +50,10 @@ a wrong field type, or a malformed value is a located cook-time error. A field a
 from the source keeps its default-constructed value (schema tolerance): omission is
 allowed, type-mismatch is not.
 
-A **`FieldClass::Variant`** field is authored as `{ "type": <registered name>, "value":
-{…fields…} }`; the importer matches `"type"` against the registered `TypeInfo.Name` of
-the variant's alternatives (a name not among them is a located error), selects that
+A **`FieldClass::Variant`** field is authored as `{ "type": <fully-qualified name>, "value":
+{…fields…} }`; the importer matches `"type"` against each of the variant's alternatives by
+its `TypeInfo.QualifiedName` (`TypeNameMatches`, strict — a leading `::` is tolerated but a
+bare unqualified name is not) — (a name not among them is a located error), selects that
 alternative, and recurses `BindField` into `"value"`, emitting the same `TypeId`
 tag-plus-record bytes the engine reader expects. An absent or empty-`"type"` variant
 stays empty.

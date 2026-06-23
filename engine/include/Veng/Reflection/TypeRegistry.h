@@ -6,6 +6,7 @@
 #include <Veng/Reflection/FieldDescriptor.h>
 
 #include <new>
+#include <string_view>
 #include <utility>
 
 // Forward declarations only — the SpawnResolve typedef names these as opaque
@@ -47,8 +48,18 @@ namespace Veng
     /// C++ type.
     struct TypeInfo
     {
-        /// @brief Logs/editor display only — never the persisted key. The TypeId is the on-disk identity.
+        /// @brief The bare type name (qualifiers stripped) — logs/editor display only, never the persisted key.
+        ///
+        /// The TypeId is the on-disk identity; this is split from the authored spelling by
+        /// SplitQualifiedTypeName, with the enclosing namespace held in Namespace.
         string Name;
+        /// @brief The enclosing namespace of the type (e.g. "Veng"); empty for a global-namespace type.
+        string Namespace;
+        /// @brief The fully-qualified name "Namespace::Name" (just "Name" when global) — the matching key.
+        ///
+        /// The single spelling all type-name matching (cook-time JSON keys, variant tags)
+        /// is done against; held as a field so a consumer need not reassemble it.
+        string QualifiedName;
         /// @brief `sizeof(T)`.
         usize Size = 0;
         /// @brief `alignof(T)`.
@@ -202,8 +213,14 @@ namespace Veng
                       "TypeId collision: '{}' and '{}' both claim TypeId {:#018x}", name,
                       existing == m_Types.end() ? string{} : existing->second.Name, id);
 
+            QualifiedTypeName qualified = SplitQualifiedTypeName(name);
+
             TypeInfo info;
-            info.Name = std::move(name);
+            info.QualifiedName = qualified.Namespace.empty()
+                                     ? qualified.Name
+                                     : qualified.Namespace + "::" + qualified.Name;
+            info.Name = std::move(qualified.Name);
+            info.Namespace = std::move(qualified.Namespace);
             info.Size = sizeof(T);
             info.Align = alignof(T);
             info.DefaultConstruct = [](void* dst) { ::new (dst) T{}; };
@@ -240,6 +257,24 @@ namespace Veng
         /// @brief All registered types, keyed by their authored TypeId.
         unordered_map<TypeId, TypeInfo> m_Types;
     };
+
+    /// @brief True when `key` is the fully-qualified name of `info`, ignoring a leading "::".
+    ///
+    /// The cook-time matcher for a JSON component key or a variant `"type"` tag. Matching is
+    /// strict: only the fully-qualified `QualifiedName` matches — a bare unqualified name does
+    /// not. A leading "::" (the global-scope marker) on `key` is tolerated, since it denotes
+    /// the same name.
+    /// @param info  The registered type to test against.
+    /// @param key   The authored spelling.
+    /// @return True when `key` is the type's fully-qualified name.
+    inline bool TypeNameMatches(const TypeInfo& info, std::string_view key)
+    {
+        if (key.size() >= 2 && key[0] == ':' && key[1] == ':')
+        {
+            key.remove_prefix(2);
+        }
+        return key == info.QualifiedName;
+    }
 }
 
 /// @brief Declares a fieldless struct/component's identity by specialising VengReflect\<T\>.
@@ -254,6 +289,8 @@ namespace Veng
     template <>                                                                                    \
     struct ::Veng::VengReflect<Type>                                                               \
     {                                                                                              \
+        static_assert(::Veng::Detail::IsFullyQualifiedSpelling(#Type),                             \
+                      "VE_TYPE: the type must be written fully qualified, e.g. ::Veng::Foo");      \
         static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                                      \
         static constexpr ::Veng::FieldClass Class = ::Veng::FieldClass::Struct;                    \
         static ::Veng::string Name() { return #Type; }                                             \

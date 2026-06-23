@@ -11,6 +11,6 @@ struct Probe
     Veng::f32 Value = 1.0f;
 };
 
-VE_REFLECT(Probe, 0x7E5701A2B3C4D5E6ULL)
+VE_REFLECT(::Probe, 0x7E5701A2B3C4D5E6ULL)
 VE_FIELD(Value, .DisplayName = "Probe Value")
 VE_REFLECT_END();

@@ -90,9 +90,9 @@ namespace
     };
 }
 
-VE_TYPE(DeathPosition, 0x45680D614D2A8FE4ULL);
-VE_TYPE(CollideA, 0xB87E1263116E0707ULL);
-VE_TYPE(CollideB, 0xB87E1263116E0707ULL); // same id as CollideA — a collision
+VE_TYPE(::DeathPosition, 0x45680D614D2A8FE4ULL);
+VE_TYPE(::CollideA, 0xB87E1263116E0707ULL);
+VE_TYPE(::CollideB, 0xB87E1263116E0707ULL); // same id as CollideA — a collision
 
 VE_SYSTEM(CollideSystemA, 0x4DEAD51D00000001ULL, "CollideSystemA");
 VE_SYSTEM(CollideSystemB, 0x4DEAD51D00000001ULL, "CollideSystemB"); // same id — a collision
@@ -391,7 +391,7 @@ int main(int argc, char** argv)
 #ifdef SIGTRAP
     std::signal(SIGTRAP, OnFatalSignal); // __builtin_debugtrap (clang, VE_DEBUG)
 #endif
-    std::signal(SIGILL, OnFatalSignal);  // __builtin_trap (gcc, VE_DEBUG)
+    std::signal(SIGILL, OnFatalSignal); // __builtin_trap (gcc, VE_DEBUG)
 
     if (argc < 2)
     {

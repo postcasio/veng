@@ -27,7 +27,7 @@ namespace
     };
 }
 
-VE_REFLECT(Target, 0x6F2D9A4C1B8E5037ULL)
+VE_REFLECT(::Target, 0x6F2D9A4C1B8E5037ULL)
 VE_FIELD(Other, .DisplayName = "Other")
 VE_FIELD(Weight, .DisplayName = "Weight")
 VE_REFLECT_END();

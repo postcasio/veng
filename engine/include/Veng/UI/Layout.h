@@ -61,4 +61,13 @@ namespace Veng::UI
     /// `if (auto t = UI::PropertyTable("xform")) { UI::PropertyLabel("Position"); UI::Drag("##pos", pos); }`
     /// @param label  Property name drawn in the label column.
     void PropertyLabel(string_view label);
+
+    /// @brief Returns the height of a framed widget (one text line plus frame padding), in pixels.
+    ///
+    /// The vertical extent of a button, header, or input — used to position content overlaid
+    /// on such a widget.
+    [[nodiscard]] f32 GetFrameHeight();
+
+    /// @brief Returns the height of one line of text, in pixels.
+    [[nodiscard]] f32 GetTextLineHeight();
 }

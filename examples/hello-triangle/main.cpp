@@ -48,7 +48,7 @@ struct Spinner
     vec3 Axis = vec3(0.0f, 1.0f, 0.0f);
 };
 
-VE_REFLECT(Spinner, 0xAEF00D5EFC2444DAULL)
+VE_REFLECT(::Spinner, 0xAEF00D5EFC2444DAULL)
 VE_FIELD(SpeedRadiansPerSec, .DisplayName = "Speed", .Tooltip = "Radians per second", .Min = 0.0)
 VE_FIELD(Axis, .DisplayName = "Axis", .Tooltip = "Spin axis (normalized at runtime)")
 VE_REFLECT_END();

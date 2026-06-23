@@ -163,6 +163,24 @@ namespace Veng::UI
     /// @param value  Right-column value text.
     void Label(string_view label, string_view value);
 
+    /// @brief Draws a type name with its namespace de-emphasized in parentheses, inline.
+    ///
+    /// Renders `name`, then — when `ns` is non-empty — `(ns)` in the disabled (greyed)
+    /// style on the same line, e.g. `string (Veng)`. The canonical way to show a reflected
+    /// type in editor UI.
+    /// @param name  The bare type name.
+    /// @param ns    The enclosing namespace; omitted from the output when empty.
+    void TypeLabel(string_view name, string_view ns);
+
+    /// @brief Formats a type name and namespace as a single "Name (Namespace)" string.
+    ///
+    /// For widgets that take one label string and so cannot de-emphasize part of it (combo
+    /// items, selectable labels). Yields just `name` when `ns` is empty.
+    /// @param name  The bare type name.
+    /// @param ns    The enclosing namespace.
+    /// @return The combined label.
+    [[nodiscard]] string FormatTypeLabel(string_view name, string_view ns);
+
     /// @brief Draws a horizontal separator with a centered text label.
     ///
     /// A labeled section divider, used to head a group of inspector rows.

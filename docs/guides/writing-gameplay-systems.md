@@ -394,7 +394,9 @@ struct Patrol
     f32  Speed = 1.0f;   // fraction of the leg traversed per second
 };
 
-VE_REFLECT(Patrol, 0x…ULL)   // mint with `vengc generate-id`
+// The type is named fully qualified (a leading `::`) — a hard rule the macro enforces,
+// so the registry records its namespace.
+VE_REFLECT(::Patrol, 0x…ULL)   // mint with `vengc generate-id`
 VE_FIELD(PointA, .DisplayName = "Point A")
 VE_FIELD(PointB, .DisplayName = "Point B")
 VE_FIELD(Speed,  .DisplayName = "Speed", .Min = 0.0)

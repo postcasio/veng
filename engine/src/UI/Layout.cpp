@@ -80,4 +80,14 @@ namespace Veng::UI
         ImGui::TableSetColumnIndex(1);
         ImGui::SetNextItemWidth(-FLT_MIN);
     }
+
+    f32 GetFrameHeight()
+    {
+        return ImGui::GetFrameHeight();
+    }
+
+    f32 GetTextLineHeight()
+    {
+        return ImGui::GetTextLineHeight();
+    }
 }

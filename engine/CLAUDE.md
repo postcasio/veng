@@ -854,8 +854,17 @@ decimal in JSON. It is a compile-time constant (`TypeIdOf<T>()` reads it off a t
 independent of registration order), persisted directly (a scene stores a component's
 `TypeId`, never its name), and byte-identical across the module boundary (so the
 cooker reflecting a module reads the same ids the runtime does); two
-types claiming one id is a **fatal collision assert**. The `TypeInfo.Name` string is
-logs/editor display only. A game registers its own types through the same path as the
+types claiming one id is a **fatal collision assert**. **Every reflect-macro site must spell
+its type fully qualified** (a leading `::`) — a hard rule the macros enforce with a
+`static_assert` (`Detail::IsFullyQualifiedSpelling`; a fundamental type like `bool`, which has
+no namespace and cannot be `::`-prefixed, is the sole exception) — so the registry captures the
+namespace for every type. `SplitQualifiedTypeName` splits the authored spelling into the bare
+`TypeInfo.Name`, its `TypeInfo.Namespace` (e.g. `{ "vec3", "Veng" }`), and the joined
+`TypeInfo.QualifiedName` (`"Veng::vec3"`, or just the bare name when global). Name/Namespace
+are logs/editor display only — the editor shows them as `Name (Namespace)` with the namespace
+de-emphasized (`Veng::UI::TypeLabel`); `QualifiedName` is the single key **all** type-name
+matching is done against (`TypeNameMatches`, strict). A game registers its own types through
+the same path as the
 builtins — a **`VE_REFLECT`** describe-block next to the struct, read back by the
 zero-arg `Register<T>()` (a referenced type's schema auto-registers from its trait on
 first reference, so there is no registration-ordering burden). A **leaf or enum** type
@@ -878,7 +887,8 @@ offset. It **serializes as a `TypeId` tag** (the active alternative's id, `Inval
 for empty) followed by that member's record; an unknown or unregistered tag leaves the
 variant empty and skips the record, the same schema-drift tolerance an unknown field
 name gets. It is **authored in JSON as `{ "type": <registered name>, "value": {…} }`**,
-the cooker matching `"type"` against an alternative's registered `TypeInfo.Name`. The
+the cooker matching `"type"` against an alternative's fully-qualified `QualifiedName`
+(`TypeNameMatches`, strict). The
 prefab loader's dependency walk and `Prefab::SpawnInto`'s rehydration both recurse into
 the active alternative, so an embedded `AssetHandle` inside a variant (a shape's
 material) loads as an ordinary dependency. `FieldDescriptor`s — authored via

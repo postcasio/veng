@@ -122,8 +122,18 @@ namespace VengEditor
         // components share a display name.
         auto scope = UI::PushId(fmt::format("{}", id));
 
-        const bool open =
-            static_cast<bool>(UI::CollapsingHeader(info.Name, UI::TreeFlags::DefaultOpen));
+        // The header shows the bare type name with its namespace de-emphasized beside it.
+        // ImGui's header takes one flat label, so draw a hidden-label collapsing header
+        // (full-width, collapsible) and overlay the styled type label over its text area,
+        // past the disclosure arrow and vertically centered in the frame.
+        const vec2 headerOrigin = UI::CursorPos();
+        auto header = UI::CollapsingHeader("##header", UI::TreeFlags::DefaultOpen);
+        const vec2 afterHeader = UI::CursorPos();
+        const f32 vpad = (UI::GetFrameHeight() - UI::GetTextLineHeight()) * 0.5f;
+        UI::SetCursorPos(vec2{headerOrigin.x + UI::GetFrameHeight(), headerOrigin.y + vpad});
+        UI::TypeLabel(info.Name, info.Namespace);
+        UI::SetCursorPos(afterHeader);
+        const bool open = static_cast<bool>(header);
 
         // Hierarchy topology is owned by the hierarchy panel, so it offers no removal.
         const bool removable = id != TypeIdOf<Hierarchy>();
@@ -209,7 +219,15 @@ namespace VengEditor
             {
                 continue;
             }
-            if (UI::Selectable(info.Name))
+            // A full-width selectable carries the click; the styled type label (name plus
+            // de-emphasized namespace) is overlaid over its row.
+            const vec2 rowOrigin = UI::CursorPos();
+            const bool picked = UI::Selectable(fmt::format("##add{}", id));
+            const vec2 afterRow = UI::CursorPos();
+            UI::SetCursorPos(rowOrigin);
+            UI::TypeLabel(info.Name, info.Namespace);
+            UI::SetCursorPos(afterRow);
+            if (picked)
             {
                 scene->AddComponent(entity, id);
                 // A newly added recipe (a Primitive) builds no resource until resolved.

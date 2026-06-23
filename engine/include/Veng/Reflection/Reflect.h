@@ -7,15 +7,16 @@
 
 #include <cstddef>
 
-// VE_REFLECT — the reflection authoring surface for fielded structs. Placed at
-// namespace scope next to a struct, it specialises VengReflect<T> with the
-// type's stable TypeId plus its field descriptors, so the zero-arg
-// TypeRegistry::Register<T>() reads the schema back at startup. The struct
-// stays the single source of truth; only the field names are restated, once.
+// VE_REFLECT — the reflection authoring surface for fielded structs. Placed next
+// to a struct, it specialises VengReflect<T> with the type's stable TypeId plus
+// its field descriptors, so the zero-arg TypeRegistry::Register<T>() reads the
+// schema back at startup. The struct stays the single source of truth; only the
+// field names are restated, once. The type is named **fully qualified** (a leading
+// `::`), a hard rule a static_assert enforces, so the registry captures its namespace.
 //
-//   struct Transform { vec3 Position; quat Rotation; vec3 Scale; };
+//   namespace Game { struct Transform { vec3 Position; quat Rotation; vec3 Scale; }; }
 //
-//   VE_REFLECT(Transform, 0x4DD9F2A1C03B5E76ULL)
+//   VE_REFLECT(::Game::Transform, 0x4DD9F2A1C03B5E76ULL)
 //       VE_FIELD(Position, .DisplayName = "Position")
 //       VE_FIELD(Rotation, .DisplayName = "Rotation")
 //       VE_FIELD(Scale,    .DisplayName = "Scale", .Min = 0.001)
@@ -87,6 +88,8 @@ namespace Veng::Detail
     template <>                                                                                    \
     struct ::Veng::VengReflect<Type>                                                               \
     {                                                                                              \
+        static_assert(::Veng::Detail::IsFullyQualifiedSpelling(#Type),                             \
+                      "VE_REFLECT: the type must be written fully qualified, e.g. ::Veng::Foo");   \
         using Owner = Type;                                                                        \
         static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                                      \
         static ::Veng::string Name() { return #Type; }                                             \
@@ -135,6 +138,8 @@ namespace Veng::Detail
     template <>                                                                                    \
     struct ::Veng::VengReflect<Type>                                                               \
     {                                                                                              \
+        static_assert(::Veng::Detail::IsFullyQualifiedSpelling(#Type),                             \
+                      "VE_VARIANT: the type must be written fully qualified, e.g. ::Veng::Foo");   \
         static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                                      \
         static constexpr ::Veng::FieldClass Class = ::Veng::FieldClass::Variant;                   \
         static ::Veng::string Name() { return #Type; }                                             \

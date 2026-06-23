@@ -1,4 +1,5 @@
 #include <Veng/UI/Widgets.h>
+#include <Veng/UI/Layout.h>
 #include <Veng/UI/Theme.h>
 
 #include <imgui.h>
@@ -307,6 +308,25 @@ namespace Veng::UI
     {
         const string label = AsCStr(text);
         ImGui::SeparatorText(label.c_str());
+    }
+
+    void TypeLabel(string_view name, string_view ns)
+    {
+        Text(name);
+        if (!ns.empty())
+        {
+            SameLine();
+            TextDisabled(fmt::format("({})", ns));
+        }
+    }
+
+    string FormatTypeLabel(string_view name, string_view ns)
+    {
+        if (ns.empty())
+        {
+            return string(name);
+        }
+        return fmt::format("{} ({})", name, ns);
     }
 
     void Image(const Ref<ImGuiTexture>& tex, vec2 size)

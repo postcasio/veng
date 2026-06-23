@@ -258,7 +258,8 @@ namespace VengEditor
             labels.emplace_back("(none)");
             for (const TypeId altId : alternatives)
             {
-                labels.push_back(registry.Info(altId).Name);
+                const TypeInfo& altInfo = registry.Info(altId);
+                labels.push_back(UI::FormatTypeLabel(altInfo.Name, altInfo.Namespace));
             }
 
             vector<string_view> items(labels.begin(), labels.end());
