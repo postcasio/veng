@@ -84,6 +84,18 @@
             1.0
           ]
         },
+        "::Veng::Primitive": {
+          "Shape": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.4,
+              "Height": 1.0,
+              "Segments": 20,
+              "Rings": 6,
+              "Material": 1003
+            }
+          }
+        },
         "::Veng::Intent": {},
         "::Veng::Mover": {
           "MoveSpeed": 5.0,

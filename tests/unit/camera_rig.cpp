@@ -64,7 +64,7 @@ TEST_CASE("FollowCamera with zero damping snaps the camera behind the target")
     CHECK(VecApprox(result.Position, vec3(2.0f, 0.0f, 5.0f)));
 }
 
-TEST_CASE("FollowCamera rotates the offset into the target's orientation")
+TEST_CASE("FollowCamera rotates the offset by the target's yaw")
 {
     const Transform current;
     // Yaw the target 90 degrees about world up, so its local +Z points along world +X.
@@ -76,6 +76,37 @@ TEST_CASE("FollowCamera rotates the offset into the target's orientation")
 
     // The +Z offset rotates to world +X: camera at (5,0,0).
     CHECK(VecApprox(result.Position, vec3(5.0f, 0.0f, 0.0f)));
+}
+
+TEST_CASE("FollowCamera keeps the camera above when the target pitches")
+{
+    const Transform current;
+    // Pitch the target steeply nose-down about its local right; the offset trails by yaw
+    // only, so the camera holds the offset's +Y height instead of swinging below.
+    const quat pitch = glm::angleAxis(glm::radians(60.0f), vec3(1.0f, 0.0f, 0.0f));
+    const mat4 targetWorld = glm::mat4_cast(pitch);
+    const CameraFollow follow{.Offset = vec3(0.0f, 6.0f, 12.0f), .Damping = 0.0f};
+
+    const Transform result = FollowCamera(current, targetWorld, follow, 0.016f);
+
+    // Target unpitched in yaw, so the offset is unrotated: camera above and behind at (0,6,12).
+    CHECK(VecApprox(result.Position, vec3(0.0f, 6.0f, 12.0f)));
+}
+
+TEST_CASE("FollowCamera orbits the camera by the follow pitch, preserving its distance")
+{
+    const Transform current;
+    const mat4 targetWorld = mat4(1.0f); // target at the origin
+    CameraFollow follow{.Offset = vec3(0.0f, 6.0f, 12.0f), .Damping = 0.0f};
+    follow.Pitch = glm::radians(30.0f);
+
+    const Transform result = FollowCamera(current, targetWorld, follow, 0.016f);
+
+    // A positive pitch orbits the camera downward (tilting it to look up at the target)
+    // about the target, so it drops below the offset height but keeps its distance.
+    CHECK(result.Position.y < 6.0f);
+    CHECK(glm::length(result.Position) ==
+          doctest::Approx(glm::length(vec3(0.0f, 6.0f, 12.0f))).epsilon(0.01f));
 }
 
 TEST_CASE("FollowCamera with damping lands between the current pose and the goal")

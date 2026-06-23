@@ -342,6 +342,12 @@ namespace Veng
         vec3 Offset{0.0f, 5.0f, 10.0f};
         /// @brief Exponential-smoothing rate per second; 0 snaps the camera to the target each tick.
         f32 Damping = 0.0f;
+        /// @brief Orbit pitch about the target, in radians.
+        ///
+        /// Tilts the camera up and down around the target without rotating the target. This is
+        /// runtime view state driven by look input — not authored and not serialized; it starts
+        /// at zero on spawn.
+        f32 Pitch = 0.0f;
     };
 
     /// @brief Lifecycle phase of a game-mode Session.

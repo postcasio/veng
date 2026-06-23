@@ -8,6 +8,8 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/quaternion.hpp>
 
+#include <cmath>
+
 namespace Veng
 {
     Transform FollowCamera(const Transform& current, const mat4& targetWorld,
@@ -16,9 +18,20 @@ namespace Veng
         const vec3 targetPosition = vec3(targetWorld[3]);
         const quat targetRotation = glm::quat_cast(mat3(targetWorld));
 
-        // Offset is in the target's local frame, so a target that turns swings the camera
-        // with it; the camera then looks back at the target.
-        const vec3 goalPosition = targetPosition + targetRotation * follow.Offset;
+        // The offset trails the target by its yaw only: a target that turns swings the
+        // camera around it, but a target that pitches or rolls never tips the camera off
+        // the height the offset's +Y places it at (a pawn looking down keeps the camera
+        // above). The camera then looks back at the target.
+        const vec3 facing = targetRotation * vec3(0.0f, 0.0f, -1.0f);
+        const f32 yaw = std::atan2(-facing.x, -facing.z);
+        const quat yawRotation = glm::angleAxis(yaw, vec3(0.0f, 1.0f, 0.0f));
+
+        // Orbit the offset up and down around the target by the follow Pitch, about the
+        // yaw-rotated right axis — so a look-up/down tilts the camera around the target
+        // rather than rotating the target itself.
+        const quat pitchRotation =
+            glm::angleAxis(follow.Pitch, yawRotation * vec3(1.0f, 0.0f, 0.0f));
+        const vec3 goalPosition = targetPosition + pitchRotation * (yawRotation * follow.Offset);
         const quat goalRotation =
             glm::quatLookAt(glm::normalize(targetPosition - goalPosition), vec3(0.0f, 1.0f, 0.0f));
 

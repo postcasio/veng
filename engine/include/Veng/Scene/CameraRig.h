@@ -11,7 +11,10 @@ namespace Veng
     /// @brief Computes the camera Transform that trails a target by a follow relationship.
     ///
     /// The camera is placed at the target's world position plus the follow Offset rotated
-    /// into the target's world orientation, and oriented to look at the target. When the
+    /// by the target's yaw (its heading about world up) — not its full orientation, so a
+    /// target that pitches or rolls keeps the camera at the offset's authored height — then
+    /// orbited up/down around the target by the follow Pitch, and oriented to look at the
+    /// target. When the
     /// follow's Damping is positive, the result is exponentially smoothed from the camera's
     /// current Transform toward that goal over delta; a zero Damping snaps to the goal. Pure
     /// math — no scene, no device — so it is the deterministic core both the camera-rig

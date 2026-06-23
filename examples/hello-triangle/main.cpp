@@ -31,6 +31,7 @@
 #include <glm/gtc/packing.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -87,8 +88,9 @@ Intent MapInputToIntent(const PlayerInput& input)
 {
     Intent intent;
     intent.Move = input.Move;
-    // Look maps device deltas straight through; the Mover's TurnSpeed scales them.
-    intent.Look = input.Look;
+    // Only the yaw drives the pawn; the pitch tilts the follow camera, not the body. The
+    // Mover's TurnSpeed scales the yaw.
+    intent.Look = vec2(input.Look.x, 0.0f);
     intent.Actions = input.Buttons;
     return intent;
 }
@@ -106,14 +108,16 @@ public:
         const Input& input = context.Input;
 
         // WASD strafes/advances in the pawn's local frame; Space requests a jump action.
+        // The pawn faces its local -Z (the camera trails behind looking that way), so W
+        // advances toward -Z and S retreats toward +Z.
         vec3 move{0.0f};
         if (input.IsKeyDown(Key::W))
         {
-            move.z += 1.0f;
+            move.z -= 1.0f;
         }
         if (input.IsKeyDown(Key::S))
         {
-            move.z -= 1.0f;
+            move.z += 1.0f;
         }
         if (input.IsKeyDown(Key::D))
         {
@@ -130,14 +134,34 @@ public:
             buttons |= static_cast<u32>(PlayerButton::Jump);
         }
 
-        const vec2 look = input.GetMouseDelta();
+        // GetMouseDelta is raw pixels. Mouse X yaws the pawn, negated so moving the mouse
+        // right turns the view right (the engine integrates Look.x * TurnSpeed * delta about
+        // world up). Mouse Y tilts the follow camera; it accumulates as a direct, clamped
+        // angle below, so it uses its own small per-pixel scale rather than the yaw rate.
+        constexpr f32 YawSensitivity = 0.05f;
+        constexpr f32 PitchSensitivity = 0.005f;
+        const vec2 mouse = input.GetMouseDelta();
+        const vec2 look = {-mouse.x * YawSensitivity, 0.0f};
+        const f32 cameraPitchDelta = -mouse.y * PitchSensitivity;
 
         scene.Each<PlayerInput, Possesses>(
-            [&](Entity, PlayerInput& player, Possesses& possesses)
+            [&](const Entity seat, PlayerInput& player, Possesses& possesses)
             {
                 player.Move = move;
                 player.Look = look;
                 player.Buttons = buttons;
+
+                // Mouse Y pitches the seat's follow camera around the pawn, clamped so it
+                // never orbits over the top or under the floor — the body stays upright.
+                if (const Viewer* viewer = scene.TryGet<Viewer>(seat);
+                    viewer != nullptr && viewer->Camera != Entity::Null &&
+                    scene.IsAlive(viewer->Camera) && scene.Has<CameraFollow>(viewer->Camera))
+                {
+                    constexpr f32 PitchLimit = 1.2f;
+                    auto& follow = scene.Get<CameraFollow>(viewer->Camera);
+                    follow.Pitch =
+                        std::clamp(follow.Pitch + cameraPitchDelta, -PitchLimit, PitchLimit);
+                }
 
                 // The seat may possess no pawn, or one that lacks an Intent slot; skip
                 // rather than fault, so an unwired seat is inert.
