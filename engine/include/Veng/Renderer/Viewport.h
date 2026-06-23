@@ -92,12 +92,17 @@ namespace Veng::Renderer
         /// @brief Creates a Viewport owning a fresh SceneRenderer sized to the region's extent.
         ///
         /// A ColorFormat left Undefined resolves to Context::GetOutputFormat(). The viewport is
-        /// constructed unregistered: it is driveable on its own (call Render directly).
+        /// constructed unregistered: it is driveable on its own (call Render directly) until an
+        /// Application::RegisterViewport hands it a drive-list back-reference.
         /// @param info  Construction parameters.
         /// @return The owning Unique.
         static Unique<Viewport> Create(const ViewportInfo& info);
 
-        /// @brief Destroys the owned renderer and releases the output's bindless slot.
+        /// @brief Releases the output's bindless slot and self-unregisters from its drive-list.
+        ///
+        /// If this viewport was registered (Application::RegisterViewport), it removes its own
+        /// pointer from the drive-list via the stored back-reference — an order-preserving erase,
+        /// so dropping the owning Unique is the whole of cleanup with no explicit unregister.
         ~Viewport();
 
         Viewport(const Viewport&) = delete;
@@ -157,6 +162,16 @@ namespace Veng::Renderer
         /// Native-idiom rule: the wrapper's constness is its own identity, not the GPU state.
         [[nodiscard]] SceneRenderer& GetRenderer() const;
 
+        /// @brief Binds this viewport to a drive-list it self-unregisters from on destruction.
+        ///
+        /// Application::RegisterViewport calls this with its drive-list after appending this
+        /// viewport's pointer; ~Viewport then erases that pointer, order-preserving. Registering
+        /// an already-registered viewport is a fatal assert (the back-reference would leak the
+        /// prior membership).
+        /// @param driveList  The Application drive-list this viewport now belongs to.
+        /// @pre This viewport is not already attached to a drive-list.
+        void AttachToDriveList(vector<Viewport*>& driveList);
+
     private:
         explicit Viewport(const ViewportInfo& info);
 
@@ -183,5 +198,10 @@ namespace Veng::Renderer
 
         /// @brief Bindless slot naming the current output view; re-registered on resize/Configure.
         TextureHandle m_OutputHandle;
+
+        /// @brief The drive-list this viewport is registered into; null when unregistered.
+        ///
+        /// Set by AttachToDriveList; ~Viewport erases this viewport's pointer from it.
+        vector<Viewport*>* m_DriveList = nullptr;
     };
 }

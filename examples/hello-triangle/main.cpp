@@ -4,16 +4,13 @@
 #include <Veng/Module/Module.h>
 
 #include <Veng/Asset/AssetManager.h>
-#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
-#include <Veng/Renderer/GatherPass.h>
-#include <Veng/Renderer/SwapChainCompositePass.h>
+#include <Veng/Renderer/Viewport.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Asset/Level.h>
-#include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Texture.h>
@@ -240,10 +237,6 @@ public:
 protected:
     void OnInitialize() override
     {
-        auto& context = GetRenderContext();
-
-        const uvec2 sceneExtent = context.GetInternalRenderExtent();
-
         m_SmokeOutput = std::getenv("HT_SMOKE");
 
         // Executable-relative so the pack resolves wherever the launcher is copied.
@@ -258,8 +251,8 @@ protected:
             GetAssetManager().LoadSync<Level>(AssetId{0x95C2E76206A11F08ULL});
         VE_ASSERT(level.has_value(), "{}", level.error().Detail);
 
-        // The level's render subset seeds the renderer settings and the per-frame knobs before
-        // the renderer is created, so the first frame already renders with the authored values.
+        // The level's render subset seeds the renderer settings and the per-frame knobs, applied
+        // to the engine-owned managed viewport so the first frame renders with the authored values.
         const LevelRenderSettings& render = level->Get()->GetRender();
         m_SceneSettings.Bloom = render.Bloom;
         m_SceneSettings.Shadows = render.Shadows;
@@ -267,13 +260,9 @@ protected:
         m_Exposure = render.Exposure;
         m_BloomIntensity = render.BloomIntensity;
 
-        m_SceneRenderer = Renderer::SceneRenderer::Create({
-            .Context = context,
-            .Assets = GetAssetManager(),
-            .OutputFormat = context.GetOutputFormat(),
-            .Extent = sceneExtent,
-            .Settings = m_SceneSettings,
-        });
+        // The engine owns the primary viewport (its SceneRenderer, output, and the gather +
+        // composite tail); the app pushes only a ViewState. Apply the level's topology settings.
+        GetPrimaryViewport()->Configure(m_SceneSettings);
 
         if (GetImGuiLayer())
         {
@@ -292,52 +281,16 @@ protected:
             GetImGuiLayer()->ApplyTheme();
 
             // Edge-clamped so the "Scene" window's UI::Image never samples past the
-            // renderer output.
+            // viewport output.
             m_SceneSampler = Renderer::Sampler::Create(
-                context, {
-                             .Name = "Scene Composite Sampler",
-                             .AddressModeU = Renderer::AddressMode::ClampToEdge,
-                             .AddressModeV = Renderer::AddressMode::ClampToEdge,
-                             .AddressModeW = Renderer::AddressMode::ClampToEdge,
-                         });
+                GetRenderContext(), {
+                                        .Name = "Scene Composite Sampler",
+                                        .AddressModeU = Renderer::AddressMode::ClampToEdge,
+                                        .AddressModeV = Renderer::AddressMode::ClampToEdge,
+                                        .AddressModeW = Renderer::AddressMode::ClampToEdge,
+                                    });
             m_SceneTexture =
-                GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
-
-            // The gather pass assembles the Presented viewports into one full-window target
-            // the composite consumes; the sample registers a single window-covering placement.
-            m_Gather = Renderer::GatherPass::Create({
-                .Context = context,
-                .Assets = GetAssetManager(),
-                .Extent = context.GetSwapChainExtent(),
-            });
-
-            m_Composite = Renderer::SwapChainCompositePass::Create({
-                .Context = context,
-                .ImGui = *GetImGuiLayer(),
-                .Assets = GetAssetManager(),
-                .SceneSource = m_Gather->GetOutput(),
-                .SwapChainFormat = context.GetSwapChainFormat(),
-                .ColorSpace = context.GetActiveDisplayColorSpace(),
-            });
-
-            // Swapchain recreation invalidates the composite graph's baked extent and may
-            // re-negotiate the surface's format/color space (a window moved to a display with
-            // different HDR support); re-target the composite before recompiling. SceneRenderer
-            // keeps a fixed internal extent so its output stays valid.
-            context.AddSwapChainInvalidationCallback(
-                [this]
-                {
-                    const Renderer::Context& ctx = GetRenderContext();
-                    // The gather's assembly target is window-sized; resize it (which replaces
-                    // its output view), re-point the composite at the new view, and rebuild
-                    // both graphs against the new extent.
-                    m_Gather->Resize(ctx.GetSwapChainExtent());
-                    m_Composite->SetSceneSource(m_Gather->GetOutput());
-                    m_Composite->SetSwapChainTarget(ctx.GetSwapChainFormat(),
-                                                    ctx.GetActiveDisplayColorSpace());
-                    m_GatherGraph = BuildGatherGraph();
-                    m_CompositeGraph = BuildCompositeGraph();
-                });
+                GetImGuiLayer()->CreateTexture(*m_SceneSampler, *GetPrimaryViewport()->GetOutput());
         }
 
         // Starting the game: the level spawns its world into a fresh scene, builds the
@@ -352,12 +305,6 @@ protected:
         if (m_SmokeOutput)
         {
             WaitForPrimitiveResidency();
-        }
-
-        if (GetImGuiLayer())
-        {
-            m_GatherGraph = BuildGatherGraph();
-            m_CompositeGraph = BuildCompositeGraph();
         }
 
         // Start the simulation, so the Sim-phase SpawnPlayerRule instantiates the player at
@@ -396,6 +343,25 @@ protected:
                                  SystemContext{.Assets = GetAssetManager(), .Input = GetInput()});
         }
 
+        // Push this frame's render source into the engine-owned managed viewport: the resolved
+        // camera plus the per-frame tonemap/bloom knobs the "Scene" window edits. The engine
+        // renders the viewport in its drive-list phase, before OnRender builds the UI.
+        const Ref<Renderer::ImageView> output = GetPrimaryViewport()->GetOutput();
+        const f32 aspect = static_cast<f32>(output->GetImage()->GetWidth()) /
+                           static_cast<f32>(output->GetImage()->GetHeight());
+        const CameraView camera =
+            ResolvePrimaryCameraView(*m_Scene, aspect).value_or(DefaultCameraView(aspect));
+
+        GetPrimaryViewport()->SetViewState({
+            .World = m_Scene.get(),
+            .Camera = camera,
+            .Delta = m_LastDelta,
+            .Exposure = m_Exposure,
+            .BloomThreshold = m_BloomThreshold,
+            .BloomIntensity = m_BloomIntensity,
+            .BloomRadius = m_BloomRadius,
+        });
+
         // Runs before this frame's commands record, so the image holds the previous frame's contents.
         if (m_SmokeOutput && ++m_FrameCount == 20)
         {
@@ -406,61 +372,15 @@ protected:
 
     void OnRender() override
     {
-        auto& context = GetRenderContext();
-        auto& cmd = context.GetCurrentCommandBuffer();
-
-        // Aspect comes from the scene-render target the camera projects into, not the
-        // swapchain; the camera lives in the scene and is resolved through its Viewer seat.
-        const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
-        const f32 aspect = static_cast<f32>(output->GetImage()->GetWidth()) /
-                           static_cast<f32>(output->GetImage()->GetHeight());
-        const CameraView camera =
-            ResolvePrimaryCameraView(*m_Scene, aspect).value_or(DefaultCameraView(aspect));
-
-        // Per-frame tonemap/bloom knobs read straight off the app-side members the
-        // "Scene" window edits; no Configure on these paths.
-        const Renderer::SceneView view{
-            .World = *m_Scene,
-            .Camera = camera,
-            .Delta = m_LastDelta,
-            .Exposure = m_Exposure,
-            .BloomThreshold = m_BloomThreshold,
-            .BloomIntensity = m_BloomIntensity,
-            .BloomRadius = m_BloomRadius,
-        };
-        m_SceneRenderer->Execute(cmd, view);
-
         if (GetImGuiLayer())
         {
-            // ImGui samples the scene output outside the graph; transition before the overlay reads it.
-            cmd.PrepareForAccess(m_SceneRenderer->GetOutput(), Renderer::AccessKind::Sample);
-
-            // Assemble the scene into one window-covering placement on the gather target, then
-            // composite that single target. Splitscreen would register N quadrant placements here.
-            const Renderer::CompositePlacement placement{
-                .Texture = m_SceneRenderer->GetOutput(),
-                .Region = {.Offset = {0, 0}, .Extent = context.GetSwapChainExtent()},
-            };
-            m_Gather->SetPlacements({&placement, 1});
-            m_Gather->Execute(cmd, *m_GatherGraph);
-
-            // The composite samples the assembly target outside the graph; transition it.
-            cmd.PrepareForAccess(m_Gather->GetOutput(), Renderer::AccessKind::Sample);
-
             RenderUserInterface();
-            GetImGuiLayer()->Render(cmd);
-            CompositeToSwapChain(cmd);
         }
     }
 
     void OnDispose() override
     {
         m_Simulation.reset();
-        m_SceneRenderer.reset();
-        m_CompositeGraph.reset();
-        m_Composite.reset();
-        m_GatherGraph.reset();
-        m_Gather.reset();
         m_SceneTexture.reset();
         m_SceneSampler.reset();
         m_Scene.reset();
@@ -503,18 +423,20 @@ private:
         }
     }
 
-    // Configure can recreate the scene output image, so the ImGui texture must be re-fetched
-    // after each call. The gather reads the scene output fresh per frame as its placement, and
-    // the composite reads the (unchanged) gather assembly target — neither needs re-pointing.
+    // Configure can recreate the viewport's output image, so the ImGui texture must be re-fetched
+    // after each call. The engine's gather reads the viewport output fresh per frame as its
+    // placement, so it picks up the new view with no re-pointing here.
     void ReconfigureScene()
     {
-        m_SceneRenderer->Configure(m_SceneSettings);
+        GetPrimaryViewport()->Configure(m_SceneSettings);
         m_SceneTexture =
-            GetImGuiLayer()->CreateTexture(*m_SceneSampler, *m_SceneRenderer->GetOutput());
+            GetImGuiLayer()->CreateTexture(*m_SceneSampler, *GetPrimaryViewport()->GetOutput());
     }
 
     void RenderUserInterface()
     {
+        const Renderer::SceneRenderer& renderer = GetPrimaryViewport()->GetRenderer();
+
         if (auto sceneWindow = UI::Window("Scene"))
         {
             // Entries mirror the DebugView enum in declaration order; combo index == enum value.
@@ -560,7 +482,7 @@ private:
             if (UI::Drag("Shadow resolution", shadowResolution,
                          {.Speed = 16.0f,
                           .Min = 256.0f,
-                          .Max = static_cast<f32>(m_SceneRenderer->GetMaxShadowResolution())}))
+                          .Max = static_cast<f32>(renderer.GetMaxShadowResolution())}))
             {
                 m_SceneSettings.ShadowResolution = static_cast<u32>(shadowResolution);
                 ReconfigureScene();
@@ -579,11 +501,10 @@ private:
             }
 
             i32 punctualResolution = static_cast<i32>(m_SceneSettings.PunctualShadowResolution);
-            if (UI::Drag(
-                    "Punctual shadow resolution", punctualResolution,
-                    {.Speed = 16.0f,
-                     .Min = 256.0f,
-                     .Max = static_cast<f32>(m_SceneRenderer->GetMaxPunctualShadowResolution())}))
+            if (UI::Drag("Punctual shadow resolution", punctualResolution,
+                         {.Speed = 16.0f,
+                          .Min = 256.0f,
+                          .Max = static_cast<f32>(renderer.GetMaxPunctualShadowResolution())}))
             {
                 m_SceneSettings.PunctualShadowResolution = static_cast<u32>(punctualResolution);
                 ReconfigureScene();
@@ -640,7 +561,7 @@ private:
             }
 
             const vec2 available = UI::ContentRegionAvail();
-            const Ref<Renderer::ImageView> output = m_SceneRenderer->GetOutput();
+            const Ref<Renderer::ImageView> output = renderer.GetOutput();
             const f32 aspect = static_cast<f32>(output->GetImage()->GetHeight()) /
                                static_cast<f32>(output->GetImage()->GetWidth());
             UI::Image(m_SceneTexture, {available.x, available.x * aspect});
@@ -652,9 +573,9 @@ private:
                 fmt::format("{:.1f} fps ({:.2f} ms)", UI::FrameRate(), 1000.0f / UI::FrameRate()));
 
             // The cull funnel: gathered submesh candidates → frustum survivors → draws issued.
-            const u32 gathered = m_SceneRenderer->GetLastVisibleCount();
-            const u32 frustum = m_SceneRenderer->GetFrustumSurvivedCount();
-            const u32 drawn = m_SceneRenderer->GetLastDrawnCount();
+            const u32 gathered = renderer.GetLastVisibleCount();
+            const u32 frustum = renderer.GetFrustumSurvivedCount();
+            const u32 drawn = renderer.GetLastDrawnCount();
             UI::Text(fmt::format("Gathered: {}", gathered));
             UI::Text(fmt::format("Frustum survived: {}", frustum));
             UI::Text(fmt::format("Drawn: {}", drawn));
@@ -662,19 +583,18 @@ private:
             // Under the GPU path the occlusion test zeroes occluded commands' instanceCount;
             // the survivor count is read back one frame late. The active line shows the real
             // mode (GPU degrades to CPU on a device without multiDrawIndirect).
-            const bool gpuActive = m_SceneRenderer->GetActiveCullMode() ==
-                                   Renderer::SceneRendererSettings::CullMode::GPU;
+            const bool gpuActive =
+                renderer.GetActiveCullMode() == Renderer::SceneRendererSettings::CullMode::GPU;
             UI::Text(fmt::format("Cull mode: {}", gpuActive ? "GPU" : "CPU"));
             if (gpuActive)
             {
-                UI::Text(fmt::format("Occlusion survived: {}",
-                                     m_SceneRenderer->GetLastGpuSurvivorCount()));
+                UI::Text(fmt::format("Occlusion survived: {}", renderer.GetLastGpuSurvivorCount()));
             }
 
             // Flips live as the pause-spin toggle stops/resumes the per-frame Transform write.
-            const bool rebuilt = m_SceneRenderer->DidBroadphaseRebuildLastFrame();
+            const bool rebuilt = renderer.DidBroadphaseRebuildLastFrame();
             UI::Text(fmt::format("Broadphase: {} ({} nodes)", rebuilt ? "rebuilt" : "static",
-                                 m_SceneRenderer->GetBroadphaseNodeCount()));
+                                 renderer.GetBroadphaseNodeCount()));
 
             (void)UI::Checkbox("Pause spin", m_PauseSpin);
         }
@@ -682,7 +602,7 @@ private:
 
     void WriteSceneCapture(const char* outPath) const
     {
-        const Ref<Renderer::Image> output = m_SceneRenderer->GetOutput()->GetImage();
+        const Ref<Renderer::Image> output = GetPrimaryViewport()->GetOutput()->GetImage();
         const auto data = output->Download();
         const u32 width = output->GetWidth();
         const u32 height = output->GetHeight();
@@ -706,41 +626,13 @@ private:
         Log::Info("Wrote scene capture to {}", outPath);
     }
 
-    // Re-run on swapchain resize to rebuild against the new extent.
-    Unique<Renderer::CompiledGraph> BuildGatherGraph()
-    {
-        Renderer::RenderGraph graph(GetRenderContext());
-        return m_Gather->Compile(graph);
-    }
-
-    // Re-run on swapchain resize to rebuild against the new extent.
-    Unique<Renderer::CompiledGraph> BuildCompositeGraph()
-    {
-        Renderer::RenderGraph graph(GetRenderContext());
-        const Renderer::ResourceId swapId = graph.Import("SwapChain");
-        return m_Composite->Compile(graph, swapId);
-    }
-
-    void CompositeToSwapChain(Renderer::CommandBuffer& cmd)
-    {
-        m_Composite->Execute(cmd, *m_CompositeGraph,
-                             GetRenderContext().GetCurrentSwapChainImageView());
-    }
-
-    Unique<Renderer::SceneRenderer> m_SceneRenderer;
+    // Topology/sizing knobs applied to the managed viewport through Configure; the per-frame
+    // tonemap/bloom values ride the ViewState instead.
     Renderer::SceneRendererSettings m_SceneSettings;
 
-    // Recreated when Configure invalidates the output image.
+    // Recreated when Configure invalidates the viewport's output image.
     Ref<Renderer::Sampler> m_SceneSampler;
     Ref<ImGuiTexture> m_SceneTexture;
-
-    Unique<Renderer::GatherPass> m_Gather;
-    Unique<Renderer::SwapChainCompositePass> m_Composite;
-
-    // Re-Compile()d on swapchain resize.
-    Unique<Renderer::CompiledGraph> m_GatherGraph;
-    // Re-Compile()d on swapchain resize.
-    Unique<Renderer::CompiledGraph> m_CompositeGraph;
 
     // Fixed rotation for the smoke capture, in radians.
     static constexpr f32 SmokeAngle = 0.9f;
@@ -805,6 +697,10 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                     // Persist the pipeline cache beside the launcher, the same
                     // executable-relative resolution the asset pack uses.
                     .PipelineCachePath = ExecutableDirectory() / "pipeline_cache.bin",
+                    // The engine owns the primary viewport (its SceneRenderer + the gather +
+                    // composite tail); the app pushes only a ViewState. Topology is applied
+                    // through Configure once the level's render subset is loaded.
+                    .ManagedViewport = ManagedViewportInfo{},
                 },
                 types, systems));
         });

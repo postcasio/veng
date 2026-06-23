@@ -1,10 +1,13 @@
 #include <Veng/Renderer/Viewport.h>
 
+#include <Veng/Assert.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 
 #include <Veng/Scene/Scene.h>
+
+#include <algorithm>
 
 namespace Veng::Renderer
 {
@@ -35,7 +38,21 @@ namespace Veng::Renderer
 
     Viewport::~Viewport()
     {
+        // Order-preserving erase from the drive-list (registration order is render order, so a
+        // swap-and-pop would scramble it). Unregistered viewports leave m_DriveList null.
+        if (m_DriveList != nullptr)
+        {
+            const auto removed = std::ranges::remove(*m_DriveList, this);
+            m_DriveList->erase(removed.begin(), removed.end());
+        }
+
         m_Context.GetBindlessRegistry().Release(m_OutputHandle);
+    }
+
+    void Viewport::AttachToDriveList(vector<Viewport*>& driveList)
+    {
+        VE_ASSERT(m_DriveList == nullptr, "Viewport is already registered to a drive-list");
+        m_DriveList = &driveList;
     }
 
     void Viewport::RefreshOutputHandle()

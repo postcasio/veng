@@ -6,6 +6,11 @@
 #include <Veng/InputRouter.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Renderer/Viewport.h>
+#include <Veng/Renderer/GatherPass.h>
+#include <Veng/Renderer/RenderGraph.h>
+#include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -19,6 +24,25 @@ namespace Veng
     /// pack resolve beside the binary, not at an absolute build-tree path.
     /// @return Absolute path to the directory holding the running binary.
     [[nodiscard]] VE_API path ExecutableDirectory();
+
+    /// @brief Opt-in configuration for the engine-owned managed primary viewport.
+    ///
+    /// Set ApplicationInfo::ManagedViewport to this to have Application construct, register, and
+    /// drive one Presented viewport whose region tracks the whole window. A game flips this on and
+    /// pushes its scene through GetPrimaryViewport()->SetViewState each frame, owning no
+    /// SceneRenderer, sampler, texture, or composite. The editor leaves it unset.
+    struct ManagedViewportInfo
+    {
+        /// @brief Render extent the managed viewport's SceneRenderer is sized to.
+        ///
+        /// Defaults to {} so Application substitutes ApplicationInfo::InternalRenderExtent; a
+        /// non-zero value overrides it.
+        uvec2 Extent = {};
+        /// @brief Output color format; resolved to Context::GetOutputFormat() when Undefined.
+        Renderer::Format ColorFormat = Renderer::Format::Undefined;
+        /// @brief Initial topology and sizing knobs for the managed viewport's SceneRenderer.
+        Renderer::SceneRendererSettings Settings;
+    };
 
     /// @brief Construction parameters for Application.
     struct ApplicationInfo
@@ -47,6 +71,12 @@ namespace Veng
         /// When set, seeds the pipeline cache from this file at startup (if it exists)
         /// and writes it back at shutdown. veng does not choose the path.
         optional<path> PipelineCachePath = std::nullopt;
+        /// @brief Opt-in engine-owned managed primary viewport; nullopt leaves the app to own its views.
+        ///
+        /// When set, Application constructs one Presented viewport covering the window, registers
+        /// it, tracks swapchain resize, and exposes it via GetPrimaryViewport(). The plug-and-play
+        /// path for a game. Unset (the editor) means GetPrimaryViewport() returns null.
+        optional<ManagedViewportInfo> ManagedViewport = std::nullopt;
     };
 
     /// @brief Base class for a veng application; subclass and override the lifecycle hooks.
@@ -110,6 +140,27 @@ namespace Veng
         /// @brief Returns the ImGui layer, or nullptr if the app opted out.
         [[nodiscard]] ImGuiLayer* GetImGuiLayer() const { return m_ImGuiLayer.get(); }
 
+        /// @brief Registers a viewport into the engine drive-list rendered each frame.
+        ///
+        /// Stores a non-owning pointer in registration order (which is render order — a producer
+        /// viewport registered before its consumer renders first); the caller keeps the owning
+        /// Unique from Viewport::Create. The engine hands the viewport a back-reference, so
+        /// dropping that Unique self-unregisters it (~Viewport erases its own pointer). Must not
+        /// be called from inside the per-frame drive loop. Double-registering a viewport is a
+        /// fatal assert.
+        /// @param viewport  The viewport to drive; its lifetime stays with the caller.
+        void RegisterViewport(Renderer::Viewport& viewport);
+
+        /// @brief Returns the engine-owned managed primary viewport, or null when unconfigured.
+        ///
+        /// Non-null only when ApplicationInfo::ManagedViewport is set. The game pushes its scene
+        /// and camera through the returned viewport's SetViewState each frame.
+        /// @return The managed primary viewport, or nullptr.
+        [[nodiscard]] Renderer::Viewport* GetPrimaryViewport() const
+        {
+            return m_PrimaryViewport.get();
+        }
+
     protected:
         /// @brief Called once after all engine systems are initialized.
         virtual void OnInitialize() {}
@@ -135,6 +186,20 @@ namespace Veng
     private:
         void Initialize();
         void Frame();
+
+        /// @brief Constructs the managed gather pass and swapchain composite tail.
+        ///
+        /// Called at init only when ImGui is present; wires the swapchain-invalidation re-target
+        /// and the initial graph compiles.
+        void InitializeManagedTail();
+
+        /// @brief Gathers the registered Presented viewports and composites them into the swapchain.
+        ///
+        /// Rebinds the gather's placement list ({ output, region } per Presented viewport — slots
+        /// rebound only when a viewport's output view identity changed), runs the gather, then the
+        /// composite. Called from Frame after ImGuiLayer::Render. No-op without the managed tail.
+        /// @param cmd  The command buffer to record into.
+        void RenderManagedTail(Renderer::CommandBuffer& cmd);
 
         ApplicationInfo m_Info;
 
@@ -162,6 +227,31 @@ namespace Veng
         Unique<AssetManager> m_AssetManager;
 
         Unique<ImGuiLayer> m_ImGuiLayer;
+
+        /// @brief Non-owning, ordered list of viewports the engine renders each frame.
+        ///
+        /// Registration order is render order. Holds raw pointers; each registered Viewport holds
+        /// a back-reference and erases itself on destruction (order-preserving). A subclass's
+        /// panel-owned viewports destruct before this base member, so the back-reference is live.
+        vector<Renderer::Viewport*> m_Viewports;
+
+        /// @brief The engine-owned managed primary viewport; null when ManagedViewport is unset.
+        Unique<Renderer::Viewport> m_PrimaryViewport;
+
+        /// @brief The managed gather pass assembling the Presented viewports; present only with ImGui.
+        Unique<Renderer::GatherPass> m_Gather;
+        /// @brief The managed swapchain composite tail; present only with ImGui.
+        Unique<Renderer::SwapChainCompositePass> m_Composite;
+        /// @brief Compiled gather graph, re-Compile()d on swapchain resize.
+        Unique<Renderer::CompiledGraph> m_GatherGraph;
+        /// @brief Compiled composite graph, re-Compile()d on swapchain resize.
+        Unique<Renderer::CompiledGraph> m_CompositeGraph;
+
+        /// @brief Last placement list pushed to the gather; rebinds only when it changes.
+        ///
+        /// Guards against per-frame bindless churn: the gather's slots are re-registered only on a
+        /// frame where a Presented viewport's output view identity or region differs from this.
+        vector<Renderer::CompositePlacement> m_GatheredPlacements;
 
         bool m_ShouldExit = false;
     };

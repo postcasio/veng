@@ -4,6 +4,14 @@
 #include <Veng/Log.h>
 #include <Veng/Time.h>
 
+#include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/GatherPass.h>
+#include <Veng/Renderer/RenderGraph.h>
+#include <Veng/Renderer/SwapChainCompositePass.h>
+#include <Veng/Renderer/Viewport.h>
+
+#include <algorithm>
+
 namespace Veng
 {
     Application::Application(ApplicationInfo info, TypeRegistry& types, SystemRegistry& systems)
@@ -50,7 +58,136 @@ namespace Veng
         // three; the ImGui layer is nullable (UI-free) and the window is nullable (headless).
         m_InputRouter = CreateUnique<InputRouter>(m_Window.get(), *m_Input, m_ImGuiLayer.get());
 
+        // The opt-in managed primary viewport: one Presented viewport covering the window, owned
+        // and driven by the engine so a game pushes only a ViewState. Built before OnInitialize so
+        // a subclass can Configure it and read its renderer there.
+        if (m_Info.ManagedViewport)
+        {
+            const ManagedViewportInfo& managed = *m_Info.ManagedViewport;
+            const uvec2 extent =
+                managed.Extent == uvec2{} ? m_Info.InternalRenderExtent : managed.Extent;
+
+            m_PrimaryViewport = Renderer::Viewport::Create({
+                .Context = m_RenderContext,
+                .Assets = *m_AssetManager,
+                .Region = {.Offset = {0, 0}, .Extent = extent},
+                .ColorFormat = managed.ColorFormat,
+                .Settings = managed.Settings,
+                .Role = Renderer::ViewportRole::Presented,
+            });
+            RegisterViewport(*m_PrimaryViewport);
+        }
+
+        // The managed gather + composite tail exists only with ImGui (it feeds the swapchain
+        // composite). Headless renders the managed viewport into its offscreen target and the app
+        // reads it back directly.
+        if (m_ImGuiLayer)
+        {
+            InitializeManagedTail();
+        }
+
         OnInitialize();
+    }
+
+    void Application::InitializeManagedTail()
+    {
+        m_Gather = Renderer::GatherPass::Create({
+            .Context = m_RenderContext,
+            .Assets = *m_AssetManager,
+            .Extent = m_RenderContext.GetSwapChainExtent(),
+        });
+
+        m_Composite = Renderer::SwapChainCompositePass::Create({
+            .Context = m_RenderContext,
+            .ImGui = *m_ImGuiLayer,
+            .Assets = *m_AssetManager,
+            .SceneSource = m_Gather->GetOutput(),
+            .SwapChainFormat = m_RenderContext.GetSwapChainFormat(),
+            .ColorSpace = m_RenderContext.GetActiveDisplayColorSpace(),
+        });
+
+        const auto compileGather = [this]
+        {
+            Renderer::RenderGraph graph(m_RenderContext);
+            return m_Gather->Compile(graph);
+        };
+        const auto compileComposite = [this]
+        {
+            Renderer::RenderGraph graph(m_RenderContext);
+            const Renderer::ResourceId swapId = graph.Import("SwapChain");
+            return m_Composite->Compile(graph, swapId);
+        };
+
+        // Swapchain recreation invalidates the baked extent and may re-negotiate the surface's
+        // format/color space (a window moved to a display with different HDR support); re-target
+        // the composite before recompiling. The managed viewport keeps a fixed internal extent, so
+        // its output stays valid across resize.
+        m_RenderContext.AddSwapChainInvalidationCallback(
+            [this, compileGather, compileComposite]
+            {
+                m_Gather->Resize(m_RenderContext.GetSwapChainExtent());
+                m_Composite->SetSceneSource(m_Gather->GetOutput());
+                m_Composite->SetSwapChainTarget(m_RenderContext.GetSwapChainFormat(),
+                                                m_RenderContext.GetActiveDisplayColorSpace());
+                m_GatherGraph = compileGather();
+                m_CompositeGraph = compileComposite();
+            });
+
+        m_GatherGraph = compileGather();
+        m_CompositeGraph = compileComposite();
+    }
+
+    void Application::RegisterViewport(Renderer::Viewport& viewport)
+    {
+        VE_ASSERT(std::ranges::find(m_Viewports, &viewport) == m_Viewports.end(),
+                  "Viewport is already registered to this Application's drive-list");
+
+        m_Viewports.emplace_back(&viewport);
+        viewport.AttachToDriveList(m_Viewports);
+    }
+
+    void Application::RenderManagedTail(Renderer::CommandBuffer& cmd)
+    {
+        if (!m_Gather)
+        {
+            return;
+        }
+
+        // Assemble the registered Presented viewports into the gather target, each into its own
+        // region. Zero placements composites ImGui over a clear (the editor's case).
+        vector<Renderer::CompositePlacement> placements;
+        for (const Renderer::Viewport* viewport : m_Viewports)
+        {
+            if (viewport->GetRole() == Renderer::ViewportRole::Presented)
+            {
+                placements.emplace_back(Renderer::CompositePlacement{
+                    .Texture = viewport->GetOutput(),
+                    .Region = viewport->GetRegion(),
+                });
+            }
+        }
+
+        // Rebind only when the placement set changed (output identity or region), so a steady
+        // frame issues no bindless re-registration.
+        const auto samePlacement =
+            [](const Renderer::CompositePlacement& a, const Renderer::CompositePlacement& b)
+        {
+            return a.Texture == b.Texture && a.Region.Offset == b.Region.Offset &&
+                   a.Region.Extent == b.Region.Extent;
+        };
+        if (!std::ranges::equal(placements, m_GatheredPlacements, samePlacement))
+        {
+            m_Gather->SetPlacements(placements);
+            m_GatheredPlacements = std::move(placements);
+        }
+
+        m_Gather->Execute(cmd, *m_GatherGraph);
+
+        // The composite samples the assembly target outside the graph; transition it.
+        cmd.PrepareForAccess(m_Gather->GetOutput(), Renderer::AccessKind::Sample);
+
+        m_Composite->Execute(cmd, *m_CompositeGraph,
+                             m_RenderContext.GetCurrentSwapChainImageView());
     }
 
     void Application::Run(vector<string> arguments)
@@ -89,6 +226,16 @@ namespace Veng
         m_TaskSystem->WaitForAll();
 
         OnDispose();
+
+        // Drop the engine-owned managed tail and primary viewport before the context: the gather
+        // and composite hold GPU resources, and the primary viewport self-unregisters from the
+        // still-live drive-list. A subclass's panel-owned viewports are released in OnDispose
+        // above, so the drive-list is empty (or holds only the managed primary) by here.
+        m_CompositeGraph.reset();
+        m_Composite.reset();
+        m_GatherGraph.reset();
+        m_Gather.reset();
+        m_PrimaryViewport.reset();
 
         // The router borrows the window, input, and ImGui layer; drop it before any of them.
         m_InputRouter.reset();
@@ -143,7 +290,27 @@ namespace Veng
 
         m_RenderContext.BeginFrame();
 
+        Renderer::CommandBuffer& cmd = m_RenderContext.GetCurrentCommandBuffer();
+
+        // The engine render phase, uniform for every app and not overridable: render every
+        // registered viewport in registration order (each does its own Execute + Sample barrier),
+        // so viewport outputs are in Sample layout before OnRender builds the ImGui draw data that
+        // may sample them.
+        for (Renderer::Viewport* viewport : m_Viewports)
+        {
+            viewport->Render(cmd);
+        }
+
+        // The app builds its ImGui frame and records any extra draws; it no longer runs the
+        // composite or ImGuiLayer::Render — those bracket it in the engine phase.
         OnRender();
+
+        // When ImGui is on, record the overlay then composite the Presented viewports behind it.
+        if (m_ImGuiLayer)
+        {
+            m_ImGuiLayer->Render(cmd);
+            RenderManagedTail(cmd);
+        }
 
         m_RenderContext.EndFrame();
     }
