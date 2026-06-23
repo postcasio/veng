@@ -286,7 +286,7 @@ namespace
         context.Initialize(
             {
                 .ApplicationName = "Death Test",
-                .InternalRenderExtent = {4, 4},
+                .HeadlessExtent = {4, 4},
             },
             nullptr);
 

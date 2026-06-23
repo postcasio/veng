@@ -34,7 +34,7 @@ namespace Veng
             {
                 .ApplicationName = m_Info.Name,
                 .EngineName = m_Info.EngineName,
-                .InternalRenderExtent = m_Info.InternalRenderExtent,
+                .HeadlessExtent = m_Info.HeadlessExtent,
                 .RequestedDisplayMode = m_Info.RequestedDisplayMode,
                 .PipelineCachePath = m_Info.PipelineCachePath,
             },
@@ -67,9 +67,9 @@ namespace Veng
 
             // The managed viewport covers the whole window: with no explicit Extent its region
             // is the render-target extent (the swapchain framebuffer extent windowed — larger
-            // than the logical window on a HiDPI display — and InternalRenderExtent headless),
-            // so the gather places it across the full target rather than a sub-rect. A non-zero
-            // Extent pins a fixed render resolution instead.
+            // than the logical window on a HiDPI display — and HeadlessExtent headless), so the
+            // gather places it across the full target rather than a sub-rect. A non-zero Extent
+            // pins a fixed render resolution instead.
             const bool trackWindow = managed.Extent == uvec2{};
             const uvec2 extent = trackWindow ? m_RenderContext.GetRenderExtent() : managed.Extent;
 

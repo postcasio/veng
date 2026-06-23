@@ -37,7 +37,7 @@ namespace Veng::Test
             m_Context.Initialize(
                 {
                     .ApplicationName = string(applicationName),
-                    .InternalRenderExtent = extent,
+                    .HeadlessExtent = extent,
                 },
                 nullptr);
         }

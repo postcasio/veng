@@ -60,8 +60,11 @@ namespace Veng::Renderer
         string ApplicationName;
         /// @brief Engine name for the Vulkan instance.
         string EngineName = "Veng";
-        /// @brief Off-screen render resolution.
-        uvec2 InternalRenderExtent;
+        /// @brief Off-screen render-target extent used only when headless (window == nullptr).
+        ///
+        /// A headless context has no swapchain to derive a render-target extent from; this is
+        /// the extent GetRenderExtent() reports. Ignored when a window is present.
+        uvec2 HeadlessExtent;
         /// @brief Color format of the off-screen output target.
         Format OutputFormat = Format::RGBA16Sfloat;
         /// @brief Depth format of the off-screen depth target.
@@ -228,10 +231,10 @@ namespace Veng::Renderer
         /// @brief Updates the render extent to match the current window size.
         void UpdateRenderExtent();
 
-        /// @brief Returns the fixed internal render resolution (may differ from the window size).
-        [[nodiscard]] uvec2 GetInternalRenderExtent() const { return m_InternalRenderExtent; }
-
-        /// @brief Returns the current effective render extent.
+        /// @brief Returns the window render-target extent.
+        ///
+        /// The swapchain framebuffer extent when windowed; the configured ContextInfo::HeadlessExtent
+        /// when headless. Per-viewport render resolution is a Viewport concern, not this.
         [[nodiscard]] uvec2 GetRenderExtent() const { return m_RenderExtent; }
 
         /// @brief Returns the maximum number of frames that may be in flight simultaneously.
@@ -319,9 +322,7 @@ namespace Veng::Renderer
         /// @brief Borrowed from the application in Initialize(); never owned.
         Window* m_Window = nullptr;
 
-        /// @brief Fixed render resolution as supplied to Initialize.
-        uvec2 m_InternalRenderExtent;
-        /// @brief Current effective render resolution (swapchain extent or internal extent for headless).
+        /// @brief Window render-target extent (swapchain framebuffer extent, or HeadlessExtent headless).
         uvec2 m_RenderExtent;
         /// @brief Off-screen output format.
         Format m_OutputFormat = Format::RGBA16Sfloat;

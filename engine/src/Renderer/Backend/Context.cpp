@@ -258,17 +258,14 @@ namespace Veng::Renderer
         }
         else
         {
-            // No swapchain to derive an extent from; fall back to the requested
-            // internal extent for GetRenderExtent() consumers.
-            m_RenderExtent = info.InternalRenderExtent;
+            // No swapchain to derive an extent from; fall back to the configured
+            // headless extent for GetRenderExtent() consumers.
+            m_RenderExtent = info.HeadlessExtent;
         }
 
-        Log::Info("Setting initial render extents:");
-        m_InternalRenderExtent = info.InternalRenderExtent;
         m_OutputFormat = info.OutputFormat;
         m_DepthFormat = info.DepthFormat;
-        Log::Info("  Internal: {0}x{1}", m_InternalRenderExtent.x, m_InternalRenderExtent.y);
-        Log::Info("  Output: {0}x{1}", m_RenderExtent.x, m_RenderExtent.y);
+        Log::Info("Render-target extent: {0}x{1}", m_RenderExtent.x, m_RenderExtent.y);
 
         Log::Info("Creating command pool");
 

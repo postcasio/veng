@@ -90,7 +90,7 @@ int main()
     context.Initialize(
         {
             .ApplicationName = "Material Preview Test",
-            .InternalRenderExtent = {640, 480},
+            .HeadlessExtent = {640, 480},
         },
         window.get());
 

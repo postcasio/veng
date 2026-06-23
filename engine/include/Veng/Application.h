@@ -36,7 +36,7 @@ namespace Veng
         /// @brief Render extent the managed viewport's SceneRenderer is sized to.
         ///
         /// Defaults to {} so the viewport tracks the window: its region follows the render-target
-        /// extent (the swapchain framebuffer extent windowed, InternalRenderExtent headless) and
+        /// extent (the swapchain framebuffer extent windowed, HeadlessExtent headless) and
         /// resizes with the swapchain, covering the whole window. A non-zero value pins a fixed
         /// render resolution that does not track resize.
         uvec2 Extent = {};
@@ -53,8 +53,12 @@ namespace Veng
         string Name = "Veng Application";
         /// @brief Engine name passed to the Vulkan instance.
         string EngineName = "Veng";
-        /// @brief Off-screen render resolution before presentation.
-        uvec2 InternalRenderExtent{1280, 720};
+        /// @brief Off-screen render-target extent used only when Headless.
+        ///
+        /// Headless runs borrow no window, so there is no swapchain to derive a render-target
+        /// size from; this is the extent the render target (and the managed viewport) takes.
+        /// Ignored windowed, where the swapchain framebuffer extent drives it instead.
+        uvec2 HeadlessExtent{1280, 720};
         /// @brief Window creation parameters.
         WindowInfo WindowInfo;
         /// @brief ImGui integration; nullopt disables it for UI-free apps.

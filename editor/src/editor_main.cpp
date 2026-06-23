@@ -20,7 +20,7 @@ int main(const int argc, char** argv)
         .App =
             {
                 .Name = "veng Editor",
-                .InternalRenderExtent = {1280, 720},
+                .HeadlessExtent = {1280, 720},
                 .WindowInfo =
                     {
                         .Extent = {1600, 900},

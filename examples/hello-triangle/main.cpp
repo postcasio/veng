@@ -736,7 +736,7 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
             return Unique<Application>(new HelloTriangleApp(
                 ApplicationInfo{
                     .Name = "Hello Triangle",
-                    .InternalRenderExtent = {1280, 720},
+                    .HeadlessExtent = {1280, 720},
                     .WindowInfo =
                         {
                             .Extent = {1280, 720},

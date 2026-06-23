@@ -31,7 +31,8 @@ namespace VengEditor
           m_Document(document)
     {
         Renderer::Context& context = app.GetRenderContext();
-        const uvec2 extent = context.GetInternalRenderExtent();
+        // A first-frame placeholder; the panel's content rect drives the real region each OnUI.
+        const uvec2 extent = {1280, 720};
 
         m_Viewport = Renderer::Viewport::Create({
             .Context = context,
