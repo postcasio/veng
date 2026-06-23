@@ -107,31 +107,39 @@ public:
     {
         const Input& input = context.Input;
 
+        // Control runs only while the cursor is captured (gameplay focus). Released for the
+        // debug UI, the snapshot still mirrors input, so gating on capture leaves the pawn
+        // and follow camera still while ImGui owns the mouse — all axes read zero.
+        const bool active = input.IsMouseCaptured();
+
         // WASD strafes/advances in the pawn's local frame; Space requests a jump action.
         // The pawn faces its local -Z (the camera trails behind looking that way), so W
         // advances toward -Z and S retreats toward +Z.
         vec3 move{0.0f};
-        if (input.IsKeyDown(Key::W))
-        {
-            move.z -= 1.0f;
-        }
-        if (input.IsKeyDown(Key::S))
-        {
-            move.z += 1.0f;
-        }
-        if (input.IsKeyDown(Key::D))
-        {
-            move.x += 1.0f;
-        }
-        if (input.IsKeyDown(Key::A))
-        {
-            move.x -= 1.0f;
-        }
-
         u32 buttons = 0;
-        if (input.IsKeyDown(Key::Space))
+        if (active)
         {
-            buttons |= static_cast<u32>(PlayerButton::Jump);
+            if (input.IsKeyDown(Key::W))
+            {
+                move.z -= 1.0f;
+            }
+            if (input.IsKeyDown(Key::S))
+            {
+                move.z += 1.0f;
+            }
+            if (input.IsKeyDown(Key::D))
+            {
+                move.x += 1.0f;
+            }
+            if (input.IsKeyDown(Key::A))
+            {
+                move.x -= 1.0f;
+            }
+
+            if (input.IsKeyDown(Key::Space))
+            {
+                buttons |= static_cast<u32>(PlayerButton::Jump);
+            }
         }
 
         // GetMouseDelta is raw pixels. Mouse X yaws the pawn, negated so moving the mouse
@@ -140,7 +148,7 @@ public:
         // angle below, so it uses its own small per-pixel scale rather than the yaw rate.
         constexpr f32 YawSensitivity = 0.05f;
         constexpr f32 PitchSensitivity = 0.005f;
-        const vec2 mouse = input.GetMouseDelta();
+        const vec2 mouse = active ? input.GetMouseDelta() : vec2(0.0f);
         const vec2 look = {-mouse.x * YawSensitivity, 0.0f};
         const f32 cameraPitchDelta = -mouse.y * PitchSensitivity;
 
@@ -339,8 +347,8 @@ protected:
                             SystemContext{.Assets = GetAssetManager(), .Input = GetInput()});
 
         // The shipped game owns input: capture the mouse in the window so the player's
-        // mouse-look runs against a hidden, locked cursor (Shift+Esc frees it). Smoke is
-        // headless with no window, so it skips this.
+        // mouse-look runs against a hidden, locked cursor (Escape frees it for the debug UI;
+        // a click on the scene re-captures it). Smoke is headless with no window, so it skips.
         if (!m_SmokeOutput)
         {
             GetInputRouter().PushFocus(InputFocus::Gameplay);
@@ -360,11 +368,30 @@ protected:
                 [](Entity, Transform& transform, Spinner& spinner)
                 { transform.Rotation = glm::angleAxis(SmokeAngle, glm::normalize(spinner.Axis)); });
         }
-        else if (!m_PauseSpin && m_Simulation)
+        else
         {
-            // Skipping the tick stops every Transform write, so the broadphase reads `static`.
-            m_Simulation->Update(*m_Scene, delta,
-                                 SystemContext{.Assets = GetAssetManager(), .Input = GetInput()});
+            // Escape frees the mouse to drive the debug UI; a left click on the scene (outside
+            // any ImGui window) re-captures it and resumes mouse-look. ImGui's NewFrame already
+            // ran this frame, so WantCaptureMouse reflects this frame's cursor.
+            if (GetInputRouter().IsGameplayFocused())
+            {
+                if (GetInput().WasKeyPressed(Key::Escape))
+                {
+                    GetInputRouter().PopFocus();
+                }
+            }
+            else if (GetInput().WasMouseButtonPressed(MouseButton::Left) && !UI::WantCaptureMouse())
+            {
+                GetInputRouter().PushFocus(InputFocus::Gameplay);
+            }
+
+            if (!m_PauseSpin && m_Simulation)
+            {
+                // Skipping the tick stops every Transform write, so the broadphase reads `static`.
+                m_Simulation->Update(
+                    *m_Scene, delta,
+                    SystemContext{.Assets = GetAssetManager(), .Input = GetInput()});
+            }
         }
 
         // Push this frame's render source into the engine-owned managed viewport: the resolved

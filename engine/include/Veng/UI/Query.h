@@ -40,6 +40,13 @@ namespace Veng::UI
     /// while focused) — distinct from item hover.
     [[nodiscard]] bool WindowFocused();
 
+    /// @brief Returns true if ImGui is currently using the mouse.
+    ///
+    /// True while the cursor is over any ImGui window or a widget holds the mouse — so a
+    /// caller can tell a UI click apart from a click that landed on the scene behind the
+    /// overlay (e.g. to re-capture the mouse for gameplay only on the latter).
+    [[nodiscard]] bool WantCaptureMouse();
+
     /// @brief Returns true the frame the last item was clicked with the given button.
     /// @param button  Mouse button to query.
     [[nodiscard]] bool IsItemClicked(MouseButton button = MouseButton::Left);

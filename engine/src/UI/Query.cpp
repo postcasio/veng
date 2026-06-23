@@ -45,6 +45,11 @@ namespace Veng::UI
         return ImGui::IsWindowFocused();
     }
 
+    bool WantCaptureMouse()
+    {
+        return ImGui::GetIO().WantCaptureMouse;
+    }
+
     bool ItemEdited()
     {
         return ImGui::IsItemDeactivatedAfterEdit();

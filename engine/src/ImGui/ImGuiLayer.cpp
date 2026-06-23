@@ -447,6 +447,12 @@ namespace Veng
         else
         {
             io.ConfigFlags |= ImGuiConfigFlags_NoMouse;
+
+            // Drop any in-progress interaction before input is swallowed: a focus switch on
+            // mouse-down (e.g. click-to-capture) sends the down to ImGui but routes the
+            // matching up to the game, which would otherwise leave a button stuck held and
+            // break ImGui input on the next release.
+            io.ClearInputMouse();
         }
     }
 
