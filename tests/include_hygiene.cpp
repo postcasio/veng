@@ -102,6 +102,7 @@
 #include <Veng/Renderer/TypedBuffers.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>
+#include <Veng/Renderer/Viewport.h>
 
 #include <VengEditor/NodeGraph/NodeGraph.h>
 #include <VengEditor/NodeGraph/NodeType.h>
