@@ -64,8 +64,14 @@ namespace Veng
         if (m_Info.ManagedViewport)
         {
             const ManagedViewportInfo& managed = *m_Info.ManagedViewport;
-            const uvec2 extent =
-                managed.Extent == uvec2{} ? m_Info.InternalRenderExtent : managed.Extent;
+
+            // The managed viewport covers the whole window: with no explicit Extent its region
+            // is the render-target extent (the swapchain framebuffer extent windowed — larger
+            // than the logical window on a HiDPI display — and InternalRenderExtent headless),
+            // so the gather places it across the full target rather than a sub-rect. A non-zero
+            // Extent pins a fixed render resolution instead.
+            const bool trackWindow = managed.Extent == uvec2{};
+            const uvec2 extent = trackWindow ? m_RenderContext.GetRenderExtent() : managed.Extent;
 
             m_PrimaryViewport = Renderer::Viewport::Create({
                 .Context = m_RenderContext,
@@ -76,6 +82,19 @@ namespace Veng
                 .Role = Renderer::ViewportRole::Presented,
             });
             RegisterViewport(*m_PrimaryViewport);
+
+            // A window-tracking managed viewport follows swapchain resizes so it keeps covering
+            // the window; SetRegion debounces the SceneRenderer::Resize to the next Render.
+            // Headless has no swapchain, so the fixed internal extent stands.
+            if (trackWindow && !m_Info.Headless)
+            {
+                m_RenderContext.AddSwapChainInvalidationCallback(
+                    [this]
+                    {
+                        m_PrimaryViewport->SetRegion(
+                            {.Offset = {0, 0}, .Extent = m_RenderContext.GetRenderExtent()});
+                    });
+            }
         }
 
         // The managed gather + composite tail exists only with ImGui (it feeds the swapchain
@@ -120,8 +139,7 @@ namespace Veng
 
         // Swapchain recreation invalidates the baked extent and may re-negotiate the surface's
         // format/color space (a window moved to a display with different HDR support); re-target
-        // the composite before recompiling. The managed viewport keeps a fixed internal extent, so
-        // its output stays valid across resize.
+        // the composite before recompiling.
         m_RenderContext.AddSwapChainInvalidationCallback(
             [this, compileGather, compileComposite]
             {
@@ -235,6 +253,11 @@ namespace Veng
         m_Composite.reset();
         m_GatherGraph.reset();
         m_Gather.reset();
+
+        // The placement cache retains a Ref to each Presented viewport's output view for
+        // change-detection; clear it so dropping the viewports below releases their outputs and
+        // the images retire, rather than outliving the context's allocator.
+        m_GatheredPlacements.clear();
         m_PrimaryViewport.reset();
 
         // The router borrows the window, input, and ImGui layer; drop it before any of them.

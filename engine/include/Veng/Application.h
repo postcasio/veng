@@ -35,8 +35,10 @@ namespace Veng
     {
         /// @brief Render extent the managed viewport's SceneRenderer is sized to.
         ///
-        /// Defaults to {} so Application substitutes ApplicationInfo::InternalRenderExtent; a
-        /// non-zero value overrides it.
+        /// Defaults to {} so the viewport tracks the window: its region follows the render-target
+        /// extent (the swapchain framebuffer extent windowed, InternalRenderExtent headless) and
+        /// resizes with the swapchain, covering the whole window. A non-zero value pins a fixed
+        /// render resolution that does not track resize.
         uvec2 Extent = {};
         /// @brief Output color format; resolved to Context::GetOutputFormat() when Undefined.
         Renderer::Format ColorFormat = Renderer::Format::Undefined;
