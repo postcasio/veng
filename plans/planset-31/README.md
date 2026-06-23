@@ -110,7 +110,7 @@ Application drive-list: [vp0, vp1, …]   Frame: render each (registration order
 | 04 | Splitscreen — tests only | gpu test: N `Presented` viewports with quadrant regions driven through the gather + composite into an **offscreen** target; assert both the gather's received placements (regions) and the assembled quadrant pixels. No sample feature. | done |
 | 05 | RTT-to-material + render ordering | An `Offscreen` viewport's `GetOutputHandle` bound into a material via `Material::SetTextureHandle`, with the registration-order render guarantee (producer before consumer, same frame, single queue, no ring) documented and covered by a viewport-feeds-viewport gpu test. | done |
 | 06 | Viewport input mapping | `WindowToViewport(pt) → optional<vec2>` (hit-test + remap) and `ScreenToWorldRay(pt) → optional<Ray>` (region + last `ViewState` camera); a `Ray` primitive in `Veng/Math/`. Unit-tested (pure math). The gameplay-agnostic seam editor picking uses now and multi-seat pointer routing uses later. | done |
-| 07 | Docs + roadmap | `engine/CLAUDE.md` (a `Viewport` section), `editor/CLAUDE.md` (panels own viewports, engine drives), `future/README.md` areas 4/6/8, this record. Full `ctest` + `smoke_golden` + `validation_gate` green. | proposed |
+| 07 | Docs + roadmap | `engine/CLAUDE.md` (a `Viewport` section), `editor/CLAUDE.md` (panels own viewports, engine drives), `future/README.md` areas 4/6/8, this record. Full `ctest` + `smoke_golden` + `validation_gate` green. | done |
 
 > Status legend: `proposed` = drafted, awaiting review; `ready` = reviewed and approved;
 > `done` = implemented, migrated, verified, committed.

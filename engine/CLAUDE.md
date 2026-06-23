@@ -25,6 +25,35 @@ threaded. It is pumped once per frame: `Frame()` calls
 `TaskSystem::PumpMainThread()` at the top, before `BeginFrame()` advances the
 frame, so off-thread continuations land on the main thread.
 
+**`Application` drives the viewport list each frame.** It owns a non-owning,
+ordered `vector<Renderer::Viewport*>` (registration order = render order);
+`RegisterViewport(Viewport&)` appends a pointer and hands the viewport a
+back-reference, so dropping the owner's `Unique<Viewport>` self-unregisters it
+(`~Viewport` erases its own pointer, order-preserving) and the caller keeps
+ownership — only the *driving* is central. `GetPrimaryViewport()` returns the
+engine-owned **managed primary viewport** when `ApplicationInfo::ManagedViewport`
+is set (`ManagedViewportInfo`: render extent, color format, `SceneRendererSettings`):
+`Application` constructs one `Presented` viewport covering the whole window,
+registers it, tracks swapchain resize, and exposes it — the plug-and-play path
+where a game owns no `SceneRenderer`/sampler/texture/composite and just pushes its
+scene through `GetPrimaryViewport()->SetViewState` each frame. The editor leaves
+`ManagedViewport` unset, so `GetPrimaryViewport()` is null and it registers its own
+viewports.
+
+The **engine render phase** runs between `BeginFrame()` and `EndFrame()`, uniform
+for every app and not overridable: render every registered viewport in
+registration order (each does its own `Execute` + `PrepareForAccess(Sample)`), so
+every viewport output is in `Sample` layout before `OnRender` builds the ImGui
+draw data that may sample it. `OnRender` is **narrowed** to building the ImGui
+frame and recording extra draws — it no longer runs the composite or
+`ImGuiLayer::Render`. When ImGui is on, the frame then records the overlay and runs
+the **managed tail**: the `GatherPass` assembles the registered `Presented`
+viewports into one full-window assembly target and `SwapChainCompositePass`
+composites it behind the ImGui overlay. The managed tail's gather + composite
+graphs re-`Compile()` on swapchain resize, and the composite re-targets the
+swapchain (`SetSwapChainTarget`) on a format change. See the `Viewport` section for
+the viewport model the drive-list holds.
+
 ## Game modules: a shared lib + a launcher
 
 A game is a **`libgame` (shared)** — the runtime: `Application` logic, components,
@@ -382,6 +411,98 @@ each `Execute`. The fixed plumbing composites stay hardcoded engine passes —
 directional and punctual shadow maps) have no
 authorable surface; a PostProcess material is for *tunable effects with exposed
 parameters*, not plumbing.
+
+## Viewport: a region + a renderer + a role
+
+A `Viewport` (`Veng/Renderer/Viewport.h`) is *"a renderable view into a world"*
+made first-class: it owns a `SceneRenderer`, carries a **`ViewportRegion`** (its
+rectangle in window framebuffer pixels — an `Offset` and an `Extent`, the extent
+driving the render resolution), takes a per-frame **`ViewState`** *pushed* by its
+owner, and exposes a **`ViewportRole`**. It is **`Unique`, single-owner**;
+`Create(const ViewportInfo&)` is the factory. Owning the region is what makes the
+name correct — a viewport is classically a rect of the render target — and it is
+what lets the engine drive a list of them: every consumer that wanted a rendered
+scene used to hand-wire the same trio (a `SceneRenderer`, a sampler, an ImGui
+texture, the `Execute` + `Sample` barrier); the `Viewport` is that trio owned once.
+
+- **The role gates engine compositing, nothing else.** `ViewportRole::Presented` —
+  the engine compositor places the viewport's texture into its region (a fullscreen
+  game is one viewport covering the window; a splitscreen quadrant is one of N).
+  `ViewportRole::Offscreen` — a consumer samples the texture (an ImGui panel, a
+  material). Both roles render *identically*: every viewport renders into its own
+  target at its region's resolution, and the deferred pipeline never scatters into a
+  swapchain sub-rect. The region is universal state — an `Offscreen` editor panel
+  still owns a region (for resize + picking); the role only decides whether the
+  **engine** places it.
+- **Push the per-frame source.** The owner sets a `ViewState` each frame (the
+  `Scene` to render, the resolved `CameraView`, `Delta`, and the tone/bloom knobs —
+  the input subset of the renderer's internal `SceneView`); the viewport never
+  reaches into the scene for a camera. A null `World` renders nothing (a closed
+  document is a no-op, not a null deref). The viewport retains the camera for
+  screen-to-world mapping.
+- **`Render(cmd)` does Execute + the Sample barrier.** It applies any pending region
+  resize, builds the internal `SceneView` from the bound `ViewState`, calls
+  `SceneRenderer::Execute`, then `PrepareForAccess(Sample)` — so the output is
+  sampleable when the frame's later consumers read it. Its product is a sampleable
+  `Ref<ImageView>` (`GetOutput()`) and a bindless `TextureHandle` (`GetOutputHandle()`)
+  for the compositor, `ImGuiLayer::CreateTexture`, or `Material::SetTextureHandle`.
+  Both invalidate on an extent change applied in `Render` and on `Configure` —
+  re-fetch after, exactly as the underlying `SceneRenderer::Resize`/`Configure`
+  invalidate `GetOutput()` (the lifetime split + composite encode are unchanged; see
+  the `SceneRenderer` section).
+- **Central driving, local ownership, RAII cleanup.** The engine drive-list holds
+  raw `Viewport*` (registration order = render order), not the viewports; the owner
+  constructs and registers — `m_vp = Viewport::Create(info); app.RegisterViewport(*m_vp);`
+  — keeping the owning `Unique`, and `~Viewport` removes the engine's pointer through
+  the stored back-reference. So registration is explicit but dropping the `Unique` is
+  the whole of cleanup, and "0..N viewports including zero" is the list length.
+- **The render-phase order is render-all → `OnRender`/ImGui → gather + composite.**
+  The engine renders every registered viewport first (so every output is in `Sample`
+  layout), then `OnRender` builds the ImGui frame (an `Offscreen` panel draws
+  `UI::Image(vp.GetOutput())`), then — when ImGui is on — the overlay records and the
+  managed tail gathers the `Presented` viewports and composites. The managed primary
+  viewport is the game's plug-and-play path; the editor registers no `Presented`
+  viewport, so the gather assembles **zero placements** (a cleared target) and the
+  composite is ImGui-only.
+
+**A gather pass assembles; the composite encodes.** `GatherPass` (`Veng/Renderer/GatherPass.h`)
+scissor-blits each `Presented` viewport's texture (a `CompositePlacement` = its
+`Ref<ImageView>` + its `ViewportRegion`) into its region on one full-window
+linear-HDR (RGBA16F) **assembly target**, in list order, clearing the area no
+placement covers; `SwapChainCompositePass` then consumes that single target
+*unchanged* (ImGui over, the display-transfer encode once). One window-covering
+placement is the old fullscreen-game case (a point-sampled same-resolution copy, so
+the assembled values are bit-identical to sampling the source directly); zero
+placements is the editor (a cleared target); N quadrant placements is splitscreen —
+the same gather + composite tail for all three, the HDR/color-space encode left
+untouched. `SetPlacements` registers exactly one bindless slot per placement
+(`MaxPresented` is the budget, asserted at register time). **Splitscreen falls out**
+as "register N `Presented` viewports with quadrant regions"; it needs no bespoke
+compositing path.
+
+**Owning the region yields a window↔view mapping.** `WindowToViewport(windowPoint)`
+hit-tests a window point against the region and, on a hit, remaps it to normalized
+`[0,1]` across the region (nullopt outside); `ScreenToWorldRay(windowPoint)` composes
+that with the camera retained from the last `ViewState` — mapping the point to NDC and
+unprojecting it through `glm::inverse(camera.ViewProjection())` into a world-space
+`Ray` (`Veng/Math/Ray.h`, a glm-only origin + direction value type) whose origin is
+the camera and whose normalized direction passes through the pixel (nullopt outside
+the region or before any `ViewState`). These are **gameplay-agnostic** primitives —
+the viewport imports no `Viewer`/`PlayerInput`; it supplies the ray, and what the ray
+hits (a scene raycast) is editor or gameplay code. Editor entity-picking consumes them
+now; multi-seat *pointer* routing (which quadrant a click landed in) consumes them
+later.
+
+**The registration-order RTT contract.** An `Offscreen` viewport's `GetOutputHandle`
+can be bound into a material (`Material::SetTextureHandle`) so one viewport samples
+another's output. Because registration order is render order, a producer registered
+**before** its consumer ends its `Render` with the output in `Sample` layout before
+the consumer's `Render` reads it. Both halves record on the single graphics queue in
+submission order, so the handoff needs **no ring and no semaphore** and the output
+stays **single-copy**; the producer's next-frame `Execute` transitions it back to
+`ColorAttachment`. (A declared topological render order over registration order, and
+output ringing for an off-queue/async consumer, are future refinements behind this
+seam — the single-copy contract holds for same-frame, same-queue RTT.)
 
 ## Pipeline cache
 

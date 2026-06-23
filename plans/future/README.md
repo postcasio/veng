@@ -52,7 +52,14 @@ replicates state. Two coupled bodies of work sit behind those seams:
 - **Multi-seat input routing.** Split-screen and AI-vs-player need input routed *per
   `Viewer`/player* into the right `PlayerInput`, rather than one device feeding one
   snapshot. The components are already written so this layer is additive — it routes into
-  the existing `PlayerInput`/`Possesses` seats, no gameplay rewrite.
+  the existing `PlayerInput`/`Possesses` seats, no gameplay rewrite. **The *pointer*-routing
+  seam is delivered (planset-31):** a `Viewport` owns its region and exposes
+  `WindowToViewport`/`ScreenToWorldRay`, so a router hit-tests a click against each
+  registered viewport's region to find the seat it belongs to (the editor already uses the
+  fraction/ray for picking). The remaining half is *device*-keyed routing — fanning gamepad
+  (and other per-device) events into the right `PlayerInput` by device id, which is
+  independent of viewports entirely. The two compose: pointer events route by region,
+  device events by id, both into the existing seats.
 - **The networking layer.** A net layer consumes the seams planset-29 established for it —
   it serializes/predicts/rolls back `Intent`, replicates `Session`/pawn state by
   `Authority`, and derives the View phase locally on each client. An ECS-native net model
@@ -87,7 +94,11 @@ all three:
   macro, the reflection-driven inspector (`Scene::ForEachComponent` → a widget per
   `FieldClass`, overrides via `RegisterFieldWidget`), cook-on-demand (`libveng_cook`
   in the editor exe only → injected `CookBackend` → `MountMemory` hot-reload), and
-  the texture editor.
+  the texture editor. **The editor's render-owning panels moved onto the engine's
+  central viewport drive-list (planset-31):** a panel holds a registered `Offscreen`
+  `Viewport`, the engine renders it each frame, and `EditorHost` runs the engine
+  render tail instead of a hand-rolled present path — `EditorPanel` no longer carries
+  a scene-render seam.
 - **Sub-area C — material node editor (planset-15).** The generic, device-free
   **`VengEditor/NodeGraph/`** surface (topology core + data-driven `NodeType`/
   `NodeCatalog` + JSON (de)serialization) — **reused by sub-area D** — its material
@@ -257,6 +268,24 @@ are per-frame `SceneView` values and `Bloom`/`Kernel` the topology knobs, with a
 arm blitting pyramid mip 0 after the up-sweep. The four bloom materials + their fragment shaders are
 deleted.
 
+**Delivered — planset-31 (viewports):** *"a renderable view into a world"* is made a
+first-class, ownable, listable thing. A **`Viewport`** (`Veng/Renderer/Viewport.h`) owns a
+**region** of the window (`ViewportRegion`) over a `SceneRenderer` and a **role** (`Presented`
+= the engine compositor places its texture into its region; `Offscreen` = a consumer samples
+it), takes a *pushed* per-frame `ViewState`, and on `Render` does the `Execute` + `Sample`
+barrier itself. A **`GatherPass`** scissor-blits each `Presented` viewport into its region on
+one full-window linear-HDR assembly target that `SwapChainCompositePass` consumes *unchanged* —
+one placement is the fullscreen game, zero is the editor, N quadrant placements is
+**splitscreen**, the same gather + composite tail for all three. `Application` drives a
+**central drive-list** of viewports (registration order = render order; RAII cleanup —
+`~Viewport` self-unregisters, the owner keeps the `Unique`) with an optional engine-owned
+**managed primary** viewport (`ApplicationInfo::ManagedViewport`) as the game's plug-and-play
+path. An `Offscreen` viewport's `GetOutputHandle` bound into a material (**material-RTT**) is
+single-copy under the registration-order producer-before-consumer guarantee. Owning the region
+also yields a window↔view mapping (`WindowToViewport`/`ScreenToWorldRay`, over a glm-only `Ray`
+in `Veng/Math/`). It took the viewport slice of this area, the render-driving slice of area 6,
+and left the pointer-routing seam area 4 consumes.
+
 **Still future:** a **transparent/forward pass** (a second material contract whose fragment
 outputs final color) and **MSAA**, reading the delivered `AABB`/`Frustum`/broadphase facility. The
 BVH broadphase's refinements, behind the same `Sync`/`Cull` + version-gate seam: **incremental tree
@@ -275,7 +304,13 @@ named: **colored emissive** (a fourth g-buffer target). Also future: **history-b
 temporal effects (TAA/motion-blur reading an older frame); **cross-queue synchronization** (an
 explicit semaphore once a handoff side moves off the single graphics queue); and **parallel
 pass recording** into secondary command buffers (area 2's seam — the user-pointer channel is
-shaped for it, not built). The **CSM shadow-render path** (planset-20's depth atlas) has a
+shaped for it, not built). The viewport facility (planset-31) has its own named follow-ons:
+**declared inter-viewport dependencies** (a topological render order over the drive-list's
+registration order, once an RTT graph gets deep), **viewport output ringing** (for an
+async/off-queue RTT consumer — the single-copy contract holds only for same-frame, same-queue
+RTT), and a **playable splitscreen / multi-monitor sample feature** (the tests cover the gather
++ composite; a runtime sample is deferred to keep the planset asset-free). The **CSM shadow-render
+path** (planset-20's depth atlas) has a
 follow-on — a single-pass depth **array** via `VK_KHR_multiview` or layered
 `SV_RenderTargetArrayIndex` routing — but it is a **quality/cleanliness** change (cleaner
 per-layer sampling), **not a perf win**: the installed MoltenVK 1.4.0 implements multiview by
