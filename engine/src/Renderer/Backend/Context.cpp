@@ -244,7 +244,14 @@ namespace Veng::Renderer
                 m_Native->Device.getQueue(m_Native->QueueFamilies.PresentFamily.value(), 0);
 
             m_Native->SwapChain = SwapChain::Create(*this, {
-                                                               .MaxImageCount = 2,
+                                                               // Triple-buffered: under FIFO a
+                                                               // two-image swapchain half-rate
+                                                               // locks (30 on a 60Hz display) the
+                                                               // moment a frame overruns one
+                                                               // vblank; a spare image lets the
+                                                               // present engine pace at the GPU
+                                                               // rate instead.
+                                                               .MaxImageCount = 3,
                                                                .Width = window->GetWidth(),
                                                                .Height = window->GetHeight(),
                                                                .Mode = info.RequestedDisplayMode,
@@ -1208,9 +1215,14 @@ namespace Veng::Renderer
         const vk::SubmitInfo submitInfo = {.commandBufferCount = 1,
                                            .pCommandBuffers = &commandBufferHandle};
 
-        m_Native->LockedSubmit(m_Native->GraphicsQueue, submitInfo, VK_NULL_HANDLE);
+        // Block on this submission's own fence, not the whole device: an immediate
+        // submit must outlive only its work, not drain every queue (a device-wide
+        // WaitIdle here stalls in-flight frame and transfer work too).
+        const Unique<Fence> fence = Fence::Create(const_cast<Context&>(*this), "Immediate Submit");
 
-        WaitIdle();
+        m_Native->LockedSubmit(m_Native->GraphicsQueue, submitInfo, fence->GetNative().Fence);
+
+        fence->Wait();
     }
 
     void Context::UpdateRenderExtent()
