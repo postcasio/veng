@@ -181,6 +181,11 @@ namespace Veng::Renderer
         return m_Impl->AssemblyView;
     }
 
+    std::span<const CompositePlacement> GatherPass::GetPlacements() const
+    {
+        return m_Impl->Placements;
+    }
+
     Unique<CompiledGraph> GatherPass::Compile(RenderGraph& graph)
     {
         m_Impl->AssemblyId = graph.Import("GatherAssembly");
