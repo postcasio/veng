@@ -67,22 +67,30 @@ namespace Veng::Renderer
         ///
         /// Must outlive the viewport.
         AssetManager& Assets;
-        /// @brief Initial region; its Extent sizes the owned SceneRenderer's render target.
+        /// @brief Initial placement region; its Extent times RenderScale sizes the render target.
         ViewportRegion Region;
         /// @brief Output target format; resolved to Context::GetOutputFormat() when Undefined.
         Format ColorFormat = Format::Undefined;
         /// @brief Initial topology and sizing knobs for the owned SceneRenderer.
         SceneRendererSettings Settings;
+        /// @brief Uniform render-resolution multiplier on the region extent.
+        ///
+        /// The SceneRenderer is sized to round(Region.Extent * RenderScale); the placement region
+        /// is unchanged, so the compositor scales the result to fill it. (0,1] renders below the
+        /// region for dynamic resolution scaling and is upscaled; >1 supersamples. Uniform, so the
+        /// render aspect matches the region. Must be > 0.
+        f32 RenderScale = 1.0f;
         /// @brief Whether the engine compositor places this viewport into its region.
         ViewportRole Role = ViewportRole::Offscreen;
     };
 
     /// @brief A region of the window, a renderer, and a role: a renderable view into a world.
     ///
-    /// Owns a SceneRenderer, carries a ViewportRegion (its window rectangle, whose extent
-    /// drives the render resolution), takes a per-frame ViewState pushed by its owner, and on
-    /// Render does the Execute + PrepareForAccess(Sample) pair itself. Its product is a
-    /// sampleable Ref<ImageView> (GetOutput) and a bindless TextureHandle (GetOutputHandle).
+    /// Owns a SceneRenderer, carries a ViewportRegion (its window placement rectangle) and a
+    /// RenderScale (its render target is the region extent times the scale), takes a per-frame
+    /// ViewState pushed by its owner, and on Render does the Execute + PrepareForAccess(Sample)
+    /// pair itself. Its product is a sampleable Ref<ImageView> (GetOutput) and a bindless
+    /// TextureHandle (GetOutputHandle).
     ///
     /// Single-owner (Unique); Create is the factory. A region or settings change invalidates
     /// GetOutput()/GetOutputHandle() exactly as the underlying SceneRenderer's Resize/Configure
@@ -90,7 +98,7 @@ namespace Veng::Renderer
     class Viewport
     {
     public:
-        /// @brief Creates a Viewport owning a fresh SceneRenderer sized to the region's extent.
+        /// @brief Creates a Viewport owning a fresh SceneRenderer sized to the region's extent × RenderScale.
         ///
         /// A ColorFormat left Undefined resolves to Context::GetOutputFormat(). The viewport is
         /// constructed unregistered: it is driveable on its own (call Render directly) until an
@@ -117,6 +125,19 @@ namespace Veng::Renderer
         /// never drives SceneRenderer::Resize(0,0). The offset is stored immediately.
         /// @param region  The new placement and extent in window framebuffer pixels.
         void SetRegion(const ViewportRegion& region);
+
+        /// @brief Sets the uniform render-resolution multiplier on the region extent.
+        ///
+        /// The render target becomes round(GetRegion().Extent * scale) while the placement region
+        /// is unchanged; the compositor scales the result to fill the region. A real change
+        /// debounces an internal SceneRenderer::Resize to the next Render, invalidating
+        /// GetOutput()/GetOutputHandle() (re-fetch after). Drives dynamic resolution scaling.
+        /// @param scale  The multiplier; (0,1] reduces resolution, >1 supersamples.
+        /// @pre scale > 0 — asserted otherwise.
+        void SetRenderScale(f32 scale);
+
+        /// @brief Returns the current render-resolution multiplier.
+        [[nodiscard]] f32 GetRenderScale() const;
 
         /// @brief Binds this frame's render source (stores a copy).
         ///
@@ -217,12 +238,19 @@ namespace Veng::Renderer
         /// always names the live output. The old slot retires through the per-frame window.
         void RefreshOutputHandle();
 
+        /// @brief The render-target extent: the region extent scaled by RenderScale, clamped to ≥ 1.
+        ///
+        /// @return round(m_Region.Extent * m_RenderScale), never below {1,1}.
+        [[nodiscard]] uvec2 ScaledExtent() const;
+
         /// @brief The Vulkan context, for bindless registration.
         Context& m_Context;
         /// @brief The owned deferred renderer.
         Unique<SceneRenderer> m_Renderer;
-        /// @brief The viewport's window rectangle.
+        /// @brief The viewport's window placement rectangle.
         ViewportRegion m_Region;
+        /// @brief Uniform render-resolution multiplier on the region extent.
+        f32 m_RenderScale = 1.0f;
         /// @brief Whether the engine compositor places this viewport.
         ViewportRole m_Role;
 

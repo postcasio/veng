@@ -99,11 +99,11 @@ namespace Veng::Renderer
         m_Impl->Sampler = Sampler::Create(
             info.Context, {
                               .Name = "Gather Placement Sampler",
-                              // Nearest + ClampToEdge: a same-resolution window-covering
-                              // placement copies texel-for-texel, so the assembled values
-                              // are bit-identical to the source.
-                              .MagFilter = Filter::Nearest,
-                              .MinFilter = Filter::Nearest,
+                              // Linear + ClampToEdge: a same-resolution placement samples at
+                              // texel centers (1:1, bit-identical to the source); a placement
+                              // rendered below its region (RenderScale < 1) is upscaled smoothly.
+                              .MagFilter = Filter::Linear,
+                              .MinFilter = Filter::Linear,
                               .AddressModeU = AddressMode::ClampToEdge,
                               .AddressModeV = AddressMode::ClampToEdge,
                               .AddressModeW = AddressMode::ClampToEdge,

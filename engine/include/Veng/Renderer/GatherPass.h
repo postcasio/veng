@@ -16,8 +16,9 @@
 /// game; zero placements is the editor (a cleared target); N quadrant placements is
 /// splitscreen — the same gather + composite tail for all three.
 ///
-/// A window-covering placement is a point-sampled same-resolution copy, so the assembled
-/// values are bit-identical to sampling the source directly.
+/// The placement blit is linear-filtered: a same-resolution placement samples at texel
+/// centers (1:1, bit-identical to the source), and a placement rendered below its region
+/// (a viewport with RenderScale < 1, for dynamic resolution scaling) is upscaled to fill it.
 ///
 /// Windowed-only: it feeds the swapchain composite and is never used headless.
 namespace Veng

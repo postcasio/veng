@@ -486,6 +486,15 @@ private:
 
     void RenderUserInterface()
     {
+        // A render-scale change resized the output in the prior frame's render-all phase; re-point
+        // the ImGui texture at the fresh output now (the gather already reads it fresh per frame).
+        if (m_RefetchSceneTexture)
+        {
+            m_SceneTexture =
+                GetImGuiLayer()->CreateTexture(*m_SceneSampler, *GetPrimaryViewport()->GetOutput());
+            m_RefetchSceneTexture = false;
+        }
+
         const Renderer::SceneRenderer& renderer = GetPrimaryViewport()->GetRenderer();
 
         if (auto sceneWindow = UI::Window("Scene"))
@@ -583,6 +592,15 @@ private:
                 ReconfigureScene();
             }
 
+            // Render scale is a per-viewport property, not a SceneRendererSettings: it resizes the
+            // viewport's render target while the on-screen region stays full size, so the gather
+            // upscales. Below 1.0 the image visibly softens; the Stats window shows the real extent.
+            if (UI::Slider("Render scale", m_RenderScale, {.Min = 0.25f, .Max = 2.0f}))
+            {
+                GetPrimaryViewport()->SetRenderScale(m_RenderScale);
+                m_RefetchSceneTexture = true;
+            }
+
             // Tonemap exposure is a per-frame SceneView value; the drag edits the member.
             (void)UI::Drag("Exposure", m_Exposure, {.Speed = 0.01f, .Min = 0.0f, .Max = 16.0f});
 
@@ -622,6 +640,10 @@ private:
         {
             UI::Text(
                 fmt::format("{:.1f} fps ({:.2f} ms)", UI::FrameRate(), 1000.0f / UI::FrameRate()));
+
+            // The render-target extent shrinks with render scale while the window stays full size.
+            const Ref<Renderer::Image> target = renderer.GetOutput()->GetImage();
+            UI::Text(fmt::format("Render target: {}x{}", target->GetWidth(), target->GetHeight()));
 
             // The cull funnel: gathered submesh candidates → frustum survivors → draws issued.
             const u32 gathered = renderer.GetLastVisibleCount();
@@ -684,6 +706,13 @@ private:
     // Recreated when Configure invalidates the viewport's output image.
     Ref<Renderer::Sampler> m_SceneSampler;
     Ref<ImGuiTexture> m_SceneTexture;
+
+    // Dynamic resolution scale on the managed viewport: 1.0 renders at the window extent,
+    // lower renders below it and the gather upscales. Set via SetRenderScale.
+    f32 m_RenderScale = 1.0f;
+    // A scale change resizes the output on the next viewport Render (debounced), so the ImGui
+    // texture is re-fetched the following frame.
+    bool m_RefetchSceneTexture = false;
 
     // Fixed rotation for the smoke capture, in radians.
     static constexpr f32 SmokeAngle = 0.9f;

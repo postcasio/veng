@@ -17,8 +17,12 @@ namespace Veng::Renderer
     }
 
     Viewport::Viewport(const ViewportInfo& info)
-        : m_Context(info.Context), m_Region(info.Region), m_Role(info.Role)
+        : m_Context(info.Context), m_Region(info.Region), m_RenderScale(info.RenderScale),
+          m_Role(info.Role)
     {
+        VE_ASSERT(info.RenderScale > 0.0f, "Viewport RenderScale must be > 0 (got {})",
+                  info.RenderScale);
+
         // A struct member cannot default to a value pulled from the Context&, so an
         // Undefined ColorFormat resolves to the window's output format here.
         const Format colorFormat = info.ColorFormat == Format::Undefined
@@ -29,7 +33,7 @@ namespace Veng::Renderer
             .Context = info.Context,
             .Assets = info.Assets,
             .OutputFormat = colorFormat,
-            .Extent = info.Region.Extent,
+            .Extent = ScaledExtent(),
             .Settings = info.Settings,
         });
 
@@ -71,8 +75,36 @@ namespace Veng::Renderer
         if (region.Extent.x != 0 && region.Extent.y != 0 && region.Extent != m_Region.Extent)
         {
             m_Region.Extent = region.Extent;
-            m_PendingExtent = region.Extent;
+            m_PendingExtent = ScaledExtent();
         }
+    }
+
+    void Viewport::SetRenderScale(f32 scale)
+    {
+        VE_ASSERT(scale > 0.0f, "Viewport RenderScale must be > 0 (got {})", scale);
+
+        if (scale != m_RenderScale)
+        {
+            m_RenderScale = scale;
+
+            // A zero-extent region has no render target yet (a first-frame panel); the scale
+            // applies once SetRegion delivers a real extent.
+            if (m_Region.Extent.x != 0 && m_Region.Extent.y != 0)
+            {
+                m_PendingExtent = ScaledExtent();
+            }
+        }
+    }
+
+    f32 Viewport::GetRenderScale() const
+    {
+        return m_RenderScale;
+    }
+
+    uvec2 Viewport::ScaledExtent() const
+    {
+        const vec2 scaled = glm::round(vec2(m_Region.Extent) * m_RenderScale);
+        return glm::max(uvec2(scaled), uvec2(1));
     }
 
     void Viewport::SetViewState(const ViewState& state)
