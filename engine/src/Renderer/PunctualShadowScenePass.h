@@ -15,6 +15,7 @@ namespace Veng
 namespace Veng::Renderer
 {
     class Context;
+    class DescriptorSetLayout;
     class GraphicsPipeline;
     class PipelineLayout;
 
@@ -48,6 +49,9 @@ namespace Veng::Renderer
         void Declare(RenderGraph& graph, const PassIO& io) override;
 
     private:
+        /// @brief Loads the skinned depth shader and builds the skinned caster pipeline.
+        void BuildSkinnedPipeline(AssetManager& assets);
+
         Context& m_Context;
         u32 m_Resolution;
         bool m_FrustumCull = true;
@@ -59,5 +63,12 @@ namespace Veng::Renderer
         Ref<GraphicsPipeline> m_Pipeline;
         Ref<PipelineLayout> m_Layout;
         AssetHandle<Veng::Shader> m_VertexShader;
+
+        // The skinned caster path: a parallel depth pipeline driven by the skinned vertex stage,
+        // with the per-instance palette bound at set 1 and PaletteBase in the push block.
+        Ref<GraphicsPipeline> m_SkinnedPipeline;
+        Ref<PipelineLayout> m_SkinnedLayout;
+        Ref<DescriptorSetLayout> m_PaletteSetLayout;
+        AssetHandle<Veng::Shader> m_SkinnedVertexShader;
     };
 }

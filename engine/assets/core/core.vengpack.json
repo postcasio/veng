@@ -35,6 +35,7 @@
     { "id": 17471639324806791998, "type": "shader", "source": "shaders/taa_resolve.frag.shader.json" },
     { "id": 572832496162056639, "type": "shader", "source": "shaders/taa_history_copy.frag.shader.json" },
     { "id": 15890455265817079080, "type": "shader", "source": "shaders/velocity.vert.shader.json" },
+    { "id": 13975929878550852130, "type": "shader", "source": "shaders/velocity_skinned.vert.shader.json" },
     { "id": 13365286926744012748, "type": "shader", "source": "shaders/velocity.frag.shader.json" },
     { "id": 14759435582217356029, "type": "shader", "source": "shaders/motion_blit.frag.shader.json" },
     { "id": 13589203438992884788, "type": "material", "source": "materials/tonemap.vmat.json" }

@@ -76,6 +76,8 @@ namespace Veng::Renderer
         // The TAA velocity prepass shaders (per-object motion vectors).
         constexpr AssetId VelocityVertId{0xDC863CDF7E432D28ULL};
         constexpr AssetId VelocityFragId{0xB97B09A5C5BFC7CCULL};
+        // The skinned velocity vertex stage (skins current + previous position).
+        constexpr AssetId VelocitySkinnedVertId{0xC1F47A2D48CAB222ULL};
 
         // The hi-Z max-Z reduction compute shader.
         constexpr AssetId HiZReduceCompId{0xCB20C4EF8A20ADBCULL};
@@ -194,7 +196,7 @@ namespace Veng::Renderer
             vec4 NormalColumn2;
             u32 MaterialIndex;
             u32 PaletteBase;
-            u32 Pad1;
+            u32 PrevPaletteBase;
             u32 Pad2;
             mat4 PrevWorld;
         };
@@ -574,11 +576,13 @@ namespace Veng::Renderer
         class VelocityScenePass final : public ScenePass
         {
         public:
-            VelocityScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent,
+            VelocityScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
+                              Ref<GraphicsPipeline> skinnedPipeline, uvec2 extent,
                               const GBufferDrawPlan* plan, SceneRendererSettings::CullMode cull,
                               ResourceId velocityId, ResourceId depthId, ResourceId indirectId)
-                : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent),
-                  m_Plan(plan), m_Cull(cull), m_VelocityId(velocityId), m_DepthId(depthId),
+                : m_Context(context), m_Pipeline(std::move(pipeline)),
+                  m_SkinnedPipeline(std::move(skinnedPipeline)), m_Extent(extent), m_Plan(plan),
+                  m_Cull(cull), m_VelocityId(velocityId), m_DepthId(depthId),
                   m_IndirectId(indirectId)
             {
             }
@@ -624,48 +628,87 @@ namespace Veng::Renderer
                 cmd.SetViewport({0, 0}, m_Extent);
                 cmd.SetScissor({0, 0}, m_Extent);
 
-                if (plan.Slots.empty())
+                if (plan.Slots.empty() && plan.SkinnedSlots.empty())
                 {
                     return;
                 }
 
-                // The velocity pipeline replaces the per-material surface pipeline; set 0
-                // (bindless) and set 1 (DrawData) and the push are the same surface path.
-                cmd.BindPipeline(m_Pipeline);
-                registry.Bind(cmd);
-                cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                    .Sets = {plan.DrawDataSet},
-                    .FirstSet = 1,
-                    .PipelineBindPoint = PipelineBindPoint::Graphics,
-                });
-                cmd.PushConstants(plan.Push);
-
                 cmd.GetNative().CommandBuffer.bindVertexBuffers(
                     1, GetVkBuffer(*plan.CandidateIdBuffer), {0});
 
-                const Mesh* lastBound = nullptr;
-                for (const DrawGroup& group : plan.Groups)
+                if (!plan.Slots.empty())
                 {
-                    if (lastBound != group.SourceMesh)
-                    {
-                        cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
-                        cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
-                        lastBound = group.SourceMesh;
-                    }
+                    // The velocity pipeline replaces the per-material surface pipeline; set 0
+                    // (bindless) and set 1 (DrawData) and the push are the same surface path.
+                    cmd.BindPipeline(m_Pipeline);
+                    registry.Bind(cmd);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {plan.DrawDataSet},
+                        .FirstSet = 1,
+                        .PipelineBindPoint = PipelineBindPoint::Graphics,
+                    });
+                    cmd.PushConstants(plan.Push);
 
-                    if (m_Cull == SceneRendererSettings::CullMode::GPU)
+                    const Mesh* lastBound = nullptr;
+                    for (const DrawGroup& group : plan.Groups)
                     {
-                        const u64 offset =
-                            plan.IndirectRegionOffset +
-                            static_cast<u64>(group.FirstSlot) * sizeof(DrawIndexedIndirectCommand);
-                        cmd.DrawIndexedIndirect(plan.IndirectBuffer, offset, group.SlotCount,
-                                                sizeof(DrawIndexedIndirectCommand));
+                        if (lastBound != group.SourceMesh)
+                        {
+                            cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
+                            cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
+                            lastBound = group.SourceMesh;
+                        }
+
+                        if (m_Cull == SceneRendererSettings::CullMode::GPU)
+                        {
+                            const u64 offset =
+                                plan.IndirectRegionOffset + static_cast<u64>(group.FirstSlot) *
+                                                                sizeof(DrawIndexedIndirectCommand);
+                            cmd.DrawIndexedIndirect(plan.IndirectBuffer, offset, group.SlotCount,
+                                                    sizeof(DrawIndexedIndirectCommand));
+                        }
+                        else
+                        {
+                            for (u32 s = 0; s < group.SlotCount; ++s)
+                            {
+                                const DrawSlot& slot = plan.Slots[group.FirstSlot + s];
+                                cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex,
+                                                slot.VertexOffset, slot.CandidateId);
+                            }
+                        }
                     }
-                    else
+                }
+
+                // Skinned velocity: the skinned velocity pipeline + palette set (set 2), CPU-direct
+                // (matching the g-buffer skinned path). Captures both rigid and deformation motion.
+                if (!plan.SkinnedSlots.empty() && m_SkinnedPipeline)
+                {
+                    cmd.BindPipeline(m_SkinnedPipeline);
+                    registry.Bind(cmd);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {plan.DrawDataSet},
+                        .FirstSet = 1,
+                        .PipelineBindPoint = PipelineBindPoint::Graphics,
+                    });
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {plan.PaletteSet},
+                        .FirstSet = 2,
+                        .PipelineBindPoint = PipelineBindPoint::Graphics,
+                    });
+                    cmd.PushConstants(plan.Push);
+
+                    const Mesh* lastBound = nullptr;
+                    for (const DrawGroup& group : plan.SkinnedGroups)
                     {
+                        if (lastBound != group.SourceMesh)
+                        {
+                            cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
+                            cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
+                            lastBound = group.SourceMesh;
+                        }
                         for (u32 s = 0; s < group.SlotCount; ++s)
                         {
-                            const DrawSlot& slot = plan.Slots[group.FirstSlot + s];
+                            const DrawSlot& slot = plan.SkinnedSlots[group.FirstSlot + s];
                             cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex, slot.VertexOffset,
                                             slot.CandidateId);
                         }
@@ -675,6 +718,7 @@ namespace Veng::Renderer
 
             Context& m_Context;
             Ref<GraphicsPipeline> m_Pipeline;
+            Ref<GraphicsPipeline> m_SkinnedPipeline;
             uvec2 m_Extent;
             const GBufferDrawPlan* m_Plan = nullptr;
             SceneRendererSettings::CullMode m_Cull = SceneRendererSettings::CullMode::CPU;
@@ -2306,6 +2350,42 @@ namespace Veng::Renderer
                 .DepthWriteEnable = false,
                 .DepthCompareOp = CompareOp::LessOrEqual,
             });
+
+        // The skinned velocity pipeline: skins both current and previous position through the
+        // palette (set 2) so a skinned mesh's deformation motion writes velocity too.
+        const AssetResult<AssetHandle<Veng::Shader>> skinnedVs =
+            m_Assets.LoadSync<Veng::Shader>(VelocitySkinnedVertId);
+        VE_ASSERT(skinnedVs.has_value(),
+                  "SceneRenderer: skinned velocity vertex shader load failed: {}",
+                  skinnedVs.error().Detail);
+
+        m_VelocitySkinnedLayout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer Skinned Velocity Layout",
+                .DescriptorSetLayouts = {m_DrawDataSetLayout, m_PaletteSetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<SurfacePush>(ShaderStage::Vertex)},
+            });
+
+        m_VelocitySkinnedPipeline = GraphicsPipeline::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer Skinned Velocity Pipeline",
+                .ColorAttachments = {{.Format = GBuffer::VelocityFormat,
+                                      .Blend = BlendState::Opaque()}},
+                .DepthAttachmentFormat = GBuffer::DepthFormat,
+                .VertexBufferLayout = Mesh::SkinnedLayout(),
+                .InstanceCandidateId = true,
+                .PipelineLayout = m_VelocitySkinnedLayout,
+                .ShaderStages =
+                    {
+                        {.Stage = ShaderStage::Vertex, .Module = skinnedVs->Get()->Module},
+                        {.Stage = ShaderStage::Fragment, .Module = fs->Get()->Module},
+                    },
+                .DepthTestEnable = true,
+                .DepthWriteEnable = false,
+                .DepthCompareOp = CompareOp::LessOrEqual,
+            });
     }
 
     void SceneRenderer::CreateBloom()
@@ -2590,8 +2670,8 @@ namespace Veng::Renderer
         if (velocityActive)
         {
             m_Passes.push_back(CreateUnique<VelocityScenePass>(
-                m_Context, m_VelocityPipeline, m_Extent, &m_Internal->Plan, m_ActiveCull,
-                velocityId, depthId, m_IndirectId));
+                m_Context, m_VelocityPipeline, m_VelocitySkinnedPipeline, m_Extent,
+                &m_Internal->Plan, m_ActiveCull, velocityId, depthId, m_IndirectId));
         }
 
         // Created before the tail switch so ssaoHandle is set when the Final arm reads it.
@@ -3274,6 +3354,25 @@ namespace Veng::Renderer
                 plan.SkinnedPipelineMaterial = materials[subMesh.MaterialIndex].Get();
             }
 
+            // Velocity needs the previous frame's world and palette base for this entity (its
+            // deformation motion). The previous palette data is still resident in its own ring
+            // region. First seen / velocity inactive → no motion (current values).
+            mat4 prevWorld = item.World;
+            u32 prevPaletteBase = paletteBase;
+            if (m_VelocityActive)
+            {
+                const auto prevWorldIt = m_PreviousWorlds.find(packed);
+                if (prevWorldIt != m_PreviousWorlds.end())
+                {
+                    prevWorld = prevWorldIt->second;
+                }
+                const auto prevBaseIt = m_PreviousPaletteBaseByEntity.find(packed);
+                if (prevBaseIt != m_PreviousPaletteBaseByEntity.end())
+                {
+                    prevPaletteBase = prevBaseIt->second;
+                }
+            }
+
             const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
             drawData[frameBase + slot] = GpuDrawData{
                 .World = item.World,
@@ -3282,7 +3381,8 @@ namespace Veng::Renderer
                 .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
                 .MaterialIndex = material.GetMaterialSelector(),
                 .PaletteBase = paletteBase,
-                .PrevWorld = item.World,
+                .PrevPaletteBase = prevPaletteBase,
+                .PrevWorld = prevWorld,
             };
 
             plan.SkinnedSlots.push_back(DrawSlot{
@@ -3594,10 +3694,13 @@ namespace Veng::Renderer
         m_TaaHistoryReset = false;
         ++m_FrameIndex;
 
-        // This frame's worlds become next frame's "previous" for the velocity prepass.
+        // This frame's worlds + skinning-palette bases become next frame's "previous" for the
+        // velocity prepass. The palette buffer is ring-buffered, so the previous bases still point
+        // at resident data next frame.
         if (m_VelocityActive)
         {
             m_PreviousWorlds.swap(m_CurrentWorlds);
+            m_PreviousPaletteBaseByEntity = m_PaletteBaseByEntity;
         }
     }
 

@@ -717,10 +717,14 @@ smoke render use.
   plan into a static path (the existing GPU-driven-cull pipeline) and a **skinned path**: a
   second pipeline built from the core `surface_skinned.vert` (4-influence linear-blend skinning)
   drawn CPU-direct, reading a per-instance **skinning palette** SSBO (ring-buffered, **set 2**;
-  `DrawData.PaletteBase` is each instance's offset). The directional `ShadowScenePass` casts a
-  skinned caster's posed shadow through a parallel `shadow_depth_skinned.vert` + the palette at
-  set 1; an entity with no `SkinnedPose` (e.g. the editor with systems paused) renders at the
-  skeleton's bind pose. The core pack ships the `skinned` vertex layout and both skinned shaders.
+  `DrawData.PaletteBase` is each instance's offset). The directional `ShadowScenePass` and the
+  `PunctualShadowScenePass` both cast a skinned caster's posed shadow through a parallel
+  `shadow_depth_skinned.vert` + the palette at set 1, and the TAA velocity prepass has a
+  `velocity_skinned.vert` that skins the current and previous position (the renderer tracks each
+  skinned entity's previous-frame palette base, valid because the palette is ring-buffered) so a
+  skinned mesh's deformation writes motion vectors. An entity with no `SkinnedPose` (e.g. the
+  editor with systems paused) renders at the skeleton's bind pose. The core pack ships the
+  `skinned` vertex layout and the skinned surface/shadow/velocity vertex shaders.
 - **Cooked prefabs load like every other asset; a `Scene` is what you spawn into.**
   A `*.prefab.json` (entities + components + field values) cooks into an
   `AssetType::Prefab` blob and loads through the **identical**

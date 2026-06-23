@@ -902,6 +902,11 @@ namespace Veng::Renderer
         /// @brief Layout for m_VelocityPipeline: set 1 (DrawData SSBO) + the surface push block.
         Ref<class PipelineLayout> m_VelocityLayout;
 
+        /// @brief Skinned velocity pipeline (skins current + previous position via the palette).
+        Ref<class GraphicsPipeline> m_VelocitySkinnedPipeline;
+        /// @brief Layout for m_VelocitySkinnedPipeline: set 1 (DrawData) + set 2 (palette) + push.
+        Ref<class PipelineLayout> m_VelocitySkinnedLayout;
+
         /// @brief SSAO fullscreen pipeline writing the R8 AO target.
         Ref<class GraphicsPipeline> m_SsaoPipeline;
         /// @brief Layout for the SSAO pipeline.
@@ -1126,6 +1131,9 @@ namespace Veng::Renderer
         Ref<DescriptorSet> m_PaletteSet;
         /// @brief This frame's PaletteBase per skinned entity (packed Entity → base), read by the shadow passes.
         unordered_map<u64, u32> m_PaletteBaseByEntity;
+        /// @brief Previous frame's PaletteBase per skinned entity; the skinned velocity pass skins
+        ///        the previous position through it. Swapped from m_PaletteBaseByEntity each frame.
+        unordered_map<u64, u32> m_PreviousPaletteBaseByEntity;
 
         /// @brief Cull compute pipeline (occlusion test → instanceCount), GPU mode only.
         Ref<class ComputePipeline> m_CullPipeline;

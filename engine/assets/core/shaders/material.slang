@@ -61,7 +61,7 @@ struct DrawData
     float4   NormalColumn2;  // column 2
     uint     MaterialIndex;  // GetCurrentFrameBase()-folded material selector
     uint     PaletteBase;    // skinned meshes: base offset of this instance's bones in g_Palette
-    uint     Pad1;
+    uint     PrevPaletteBase; // skinned meshes: previous frame's palette base (TAA velocity)
     uint     Pad2;
     float4x4 PrevWorld;      // previous frame's model matrix (TAA velocity; equals World with no motion)
 };
