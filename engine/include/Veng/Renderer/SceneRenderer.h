@@ -100,8 +100,8 @@ namespace Veng::Renderer
     /// Bloom runs the lighting pass and the bloom pyramid sweep, then blits pyramid mip 0
     /// after the up-sweep — the accumulated bloom contribution before composite —
     /// force-wiring the bloom pass regardless of the Settings.Bloom toggle. MotionVectors blits
-    /// the per-object velocity target colorized as an optical-flow field, force-wiring the TAA
-    /// velocity prepass regardless of the Settings.TAA toggle.
+    /// the per-object velocity g-buffer channel (G3, written by the surface pass every frame)
+    /// colorized as an optical-flow field.
     enum class DebugView : u8
     {
         /// @brief Full deferred pipeline output.
@@ -128,7 +128,7 @@ namespace Veng::Renderer
         PunctualShadows,
         /// @brief Accumulated bloom pyramid mip 0 after the up-sweep (force-wires the bloom pass).
         Bloom,
-        /// @brief Per-object velocity as an optical-flow field (force-wires the TAA velocity prepass).
+        /// @brief Per-object velocity (g-buffer channel G3) as an optical-flow field.
         MotionVectors,
     };
 
@@ -190,9 +190,9 @@ namespace Veng::Renderer
         ///
         /// A topology change: it jitters the projection, inserts the TAA resolve and
         /// history-copy passes between lighting and tonemap, and routes lighting into a
-        /// separate target the resolve reads. Off by default. Motion vectors are
-        /// camera-only (reconstructed from depth), so a moving camera over static
-        /// geometry resolves exactly while dynamic objects ghost.
+        /// separate target the resolve reads. Off by default. Motion vectors are per-object,
+        /// read from the g-buffer velocity channel (G3) the surface pass writes every frame
+        /// (camera and object motion combined), so dynamic objects reproject correctly too.
         bool TAA = false;
 
         /// @brief Whether the directional light casts a shadow.
@@ -602,9 +602,10 @@ namespace Veng::Renderer
         /// and Configure. Exposed for tests inspecting temporal accumulation.
         [[nodiscard]] Ref<ImageView> GetTaaHistoryView() const;
 
-        /// @brief Returns the per-object velocity target, or null when TAA is off.
+        /// @brief Returns the per-object velocity target (g-buffer channel G3).
         ///
-        /// RG screen-space motion vectors written by the velocity prepass. Renderer-owned;
+        /// RG screen-space motion vectors written by the surface pass as a fourth g-buffer
+        /// channel every frame (not a separate prepass, never null). Renderer-owned;
         /// invalidated by Resize and Configure. Exposed for tests.
         [[nodiscard]] Ref<ImageView> GetVelocityView() const;
 
@@ -651,11 +652,6 @@ namespace Veng::Renderer
         /// previously-created ones. Sets m_TaaHistoryReset so the next resolve ignores the
         /// freshly-created history. Called from Create and every Resize/Configure.
         void CreateTaa();
-        /// @brief Builds the velocity prepass pipeline once at Create (after the DrawData set layout exists).
-        ///
-        /// The pipeline shares the per-draw DrawData set and surface push block with the geometry
-        /// pass, so it must build after CreateCullResources. Depth-tested, depth-write off.
-        void CreateVelocityPipeline();
         /// @brief Recreates the bloom mip-pyramid + result image, their views, and the per-level sets.
         ///
         /// Builds m_BloomImage (one HDR mip chain), the per-mip storage views, the whole-chain
@@ -830,11 +826,12 @@ namespace Veng::Renderer
         /// @brief Bindless slot for the history view; the resolve samples it at the reprojected UV.
         TextureHandle m_TaaHistoryHandle;
 
-        /// @brief Per-object screen-space motion vector target (the velocity prepass writes it).
+        /// @brief Per-object screen-space motion vector target — g-buffer channel G3.
         ///
-        /// RG16Sfloat, full extent. The velocity pass renders geometry with current and
-        /// previous transforms into this; the resolve reprojects geometry pixels through it.
-        /// Null when TAA is off. Recreated on Resize/Configure alongside the TAA targets.
+        /// RG16Sfloat, full extent. The surface pass writes it as SV_Target3 alongside the
+        /// other g-buffer channels every frame (no separate prepass), so it is always
+        /// allocated; the TAA resolve and the MotionVectors debug blit read it. Created in
+        /// CreateGBuffer and recreated on Resize/Configure with the rest of the g-buffer.
         Ref<Image> m_VelocityImage;
         /// @brief View over m_VelocityImage.
         Ref<ImageView> m_VelocityView;
@@ -927,20 +924,6 @@ namespace Veng::Renderer
         Ref<class GraphicsPipeline> m_TaaCopyPipeline;
         /// @brief Layout for m_TaaCopyPipeline: a texture + sampler push block.
         Ref<class PipelineLayout> m_TaaCopyLayout;
-
-        /// @brief TAA velocity prepass pipeline (per-object motion vectors), writing VelocityFormat.
-        ///
-        /// Depth-tested against the g-buffer depth (no write) so only the visible surface
-        /// writes its motion. Drives the same per-draw DrawData/candidate path as the
-        /// geometry pass, so it shares the DrawData set layout and the surface push block.
-        Ref<class GraphicsPipeline> m_VelocityPipeline;
-        /// @brief Layout for m_VelocityPipeline: set 1 (DrawData SSBO) + the surface push block.
-        Ref<class PipelineLayout> m_VelocityLayout;
-
-        /// @brief Skinned velocity pipeline (skins current + previous position via the palette).
-        Ref<class GraphicsPipeline> m_VelocitySkinnedPipeline;
-        /// @brief Layout for m_VelocitySkinnedPipeline: set 1 (DrawData) + set 2 (palette) + push.
-        Ref<class PipelineLayout> m_VelocitySkinnedLayout;
 
         /// @brief SSAO fullscreen pipeline writing the R8 AO target.
         Ref<class GraphicsPipeline> m_SsaoPipeline;
@@ -1166,8 +1149,8 @@ namespace Veng::Renderer
         Ref<DescriptorSet> m_PaletteSet;
         /// @brief This frame's PaletteBase per skinned entity (packed Entity → base), read by the shadow passes.
         unordered_map<u64, u32> m_PaletteBaseByEntity;
-        /// @brief Previous frame's PaletteBase per skinned entity; the skinned velocity pass skins
-        ///        the previous position through it. Swapped from m_PaletteBaseByEntity each frame.
+        /// @brief Previous frame's PaletteBase per skinned entity; surface_skinned.vert skins the
+        ///        previous position through it for velocity. Swapped from m_PaletteBaseByEntity each frame.
         unordered_map<u64, u32> m_PreviousPaletteBaseByEntity;
 
         /// @brief Cull compute pipeline (occlusion test → instanceCount), GPU mode only.
@@ -1244,7 +1227,7 @@ namespace Veng::Renderer
         ResourceId m_LitId;
         /// @brief Imported id for the persisted TAA history target.
         ResourceId m_TaaHistoryId;
-        /// @brief Imported id for the velocity target under TAA.
+        /// @brief Imported id for the velocity g-buffer channel (G3), written every frame.
         ResourceId m_VelocityId;
         /// @brief Per-mip subresource handle for the bloom pyramid the down/up sweep reads and writes.
         MipChainId m_BloomChainId;
@@ -1272,11 +1255,6 @@ namespace Veng::Renderer
         /// resolve's history-validity flag only when true.
         bool m_TaaActive = false;
 
-        /// @brief True when the last Rebuild wired the velocity prepass (Final mode + Settings.TAA).
-        ///
-        /// Execute binds the velocity import and maintains the previous-transform maps only when true.
-        bool m_VelocityActive = false;
-
         /// @brief Forces the next resolve to ignore history (frame 0 and after Resize/Configure).
         ///
         /// The history image holds undefined or stale-extent content after creation, so the
@@ -1292,10 +1270,10 @@ namespace Veng::Renderer
 
         /// @brief Previous frame's world matrix per entity, keyed by a packed Entity id.
         ///
-        /// The velocity prepass needs each drawn object's prior transform; PrepareDraws looks
-        /// it up here and writes it into the per-draw record. An entity absent (first seen, or
-        /// after a TAA toggle) reprojects with zero object motion. Maintained only while TAA is
-        /// active; swapped from m_CurrentWorlds at the end of each Execute.
+        /// The surface pass writes velocity from each drawn object's prior transform; PrepareDraws
+        /// looks it up here and writes it into the per-draw record (DrawData.PrevWorld). An entity
+        /// absent (first seen) reprojects with zero object motion. Maintained every frame (velocity
+        /// is always written); swapped from m_CurrentWorlds at the end of each Execute.
         unordered_map<u64, mat4> m_PreviousWorlds;
         /// @brief This frame's world matrix per entity; swapped into m_PreviousWorlds after Execute.
         unordered_map<u64, mat4> m_CurrentWorlds;

@@ -73,12 +73,6 @@ namespace Veng::Renderer
         constexpr AssetId TaaResolveFragId{0xF277BB65AEDAC33EULL};
         constexpr AssetId TaaHistoryCopyFragId{0x07F31C1EC98A29BFULL};
 
-        // The TAA velocity prepass shaders (per-object motion vectors).
-        constexpr AssetId VelocityVertId{0xDC863CDF7E432D28ULL};
-        constexpr AssetId VelocityFragId{0xB97B09A5C5BFC7CCULL};
-        // The skinned velocity vertex stage (skins current + previous position).
-        constexpr AssetId VelocitySkinnedVertId{0xC1F47A2D48CAB222ULL};
-
         // The hi-Z max-Z reduction compute shader.
         constexpr AssetId HiZReduceCompId{0xCB20C4EF8A20ADBCULL};
 
@@ -439,6 +433,16 @@ namespace Veng::Renderer
                         // for any background texel; a material overwrites all four.
                         .Clear = ClearColor{.R = 1.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
                     })
+                    .Color({
+                        // G3 — the per-object motion vector (SV_Target3). The surface fragment
+                        // writes it alongside the g-buffer, so motion vectors cost no second
+                        // geometry pass. Cleared to zero motion for any background texel; the
+                        // TAA resolve falls back to depth reprojection wherever it stays zero.
+                        .Resource = io.Velocity,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
+                    })
                     .Depth({
                         .Resource = io.GBufferDepth,
                         .Load = LoadOp::Clear,
@@ -578,167 +582,6 @@ namespace Veng::Renderer
             uvec2 m_Extent;
             const GBufferDrawPlan* m_Plan = nullptr;
             SceneRendererSettings::CullMode m_Cull = SceneRendererSettings::CullMode::CPU;
-            ResourceId m_IndirectId;
-        };
-
-        // TAA velocity prepass: re-rasterizes the geometry pass's draws with the velocity
-        // pipeline, depth-tested against the populated g-buffer depth (no write), so only the
-        // visible surface writes its per-object screen-space motion vector. Drives the same
-        // per-frame plan as the geometry pass, differing only in the bound pipeline and target.
-        class VelocityScenePass final : public ScenePass
-        {
-        public:
-            VelocityScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
-                              Ref<GraphicsPipeline> skinnedPipeline, uvec2 extent,
-                              const GBufferDrawPlan* plan, SceneRendererSettings::CullMode cull,
-                              ResourceId velocityId, ResourceId depthId, ResourceId indirectId)
-                : m_Context(context), m_Pipeline(std::move(pipeline)),
-                  m_SkinnedPipeline(std::move(skinnedPipeline)), m_Extent(extent), m_Plan(plan),
-                  m_Cull(cull), m_VelocityId(velocityId), m_DepthId(depthId),
-                  m_IndirectId(indirectId)
-            {
-            }
-
-            void Resize(const uvec2 extent) override { m_Extent = extent; }
-
-            void Declare(RenderGraph& graph, const PassIO& /*io*/) override
-            {
-                RenderGraph::PassBuilder builder = graph.AddPass("TAA Velocity");
-                builder
-                    .Color({
-                        .Resource = m_VelocityId,
-                        .Load = LoadOp::Clear,
-                        .Store = StoreOp::Store,
-                        // Zero motion for the background; the resolve falls back to depth
-                        // reprojection wherever no geometry overwrote this.
-                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
-                    })
-                    .Depth({
-                        // Load the geometry pass's depth and test against it (write off) so the
-                        // velocity of the front surface alone survives; the lighting pass still
-                        // samples this depth afterward, so it is stored.
-                        .Resource = m_DepthId,
-                        .Load = LoadOp::Load,
-                        .Store = StoreOp::Store,
-                    });
-
-                if (m_Cull == SceneRendererSettings::CullMode::GPU)
-                {
-                    builder.IndirectRead(m_IndirectId);
-                }
-
-                builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
-            }
-
-        private:
-            void Record(const ScenePassContext& ctx) const
-            {
-                CommandBuffer& cmd = ctx.Cmd();
-                const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
-                const GBufferDrawPlan& plan = *m_Plan;
-
-                // Render into the dynamic-resolution sub-rect; the target stays allocated at the
-                // high-water-mark extent (m_Extent), so the consumer upscales the valid region.
-                const uvec2 renderExtent = ctx.View().RenderExtent;
-                cmd.SetViewport({0, 0}, renderExtent);
-                cmd.SetScissor({0, 0}, renderExtent);
-
-                if (plan.Slots.empty() && plan.SkinnedSlots.empty())
-                {
-                    return;
-                }
-
-                cmd.GetNative().CommandBuffer.bindVertexBuffers(
-                    1, GetVkBuffer(*plan.CandidateIdBuffer), {0});
-
-                if (!plan.Slots.empty())
-                {
-                    // The velocity pipeline replaces the per-material surface pipeline; set 0
-                    // (bindless) and set 1 (DrawData) and the push are the same surface path.
-                    cmd.BindPipeline(m_Pipeline);
-                    registry.Bind(cmd);
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {plan.DrawDataSet},
-                        .FirstSet = 1,
-                        .PipelineBindPoint = PipelineBindPoint::Graphics,
-                    });
-                    cmd.PushConstants(plan.Push);
-
-                    const Mesh* lastBound = nullptr;
-                    for (const DrawGroup& group : plan.Groups)
-                    {
-                        if (lastBound != group.SourceMesh)
-                        {
-                            cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
-                            cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
-                            lastBound = group.SourceMesh;
-                        }
-
-                        if (m_Cull == SceneRendererSettings::CullMode::GPU)
-                        {
-                            const u64 offset =
-                                plan.IndirectRegionOffset + static_cast<u64>(group.FirstSlot) *
-                                                                sizeof(DrawIndexedIndirectCommand);
-                            cmd.DrawIndexedIndirect(plan.IndirectBuffer, offset, group.SlotCount,
-                                                    sizeof(DrawIndexedIndirectCommand));
-                        }
-                        else
-                        {
-                            for (u32 s = 0; s < group.SlotCount; ++s)
-                            {
-                                const DrawSlot& slot = plan.Slots[group.FirstSlot + s];
-                                cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex,
-                                                slot.VertexOffset, slot.CandidateId);
-                            }
-                        }
-                    }
-                }
-
-                // Skinned velocity: the skinned velocity pipeline + palette set (set 2), CPU-direct
-                // (matching the g-buffer skinned path). Captures both rigid and deformation motion.
-                if (!plan.SkinnedSlots.empty() && m_SkinnedPipeline)
-                {
-                    cmd.BindPipeline(m_SkinnedPipeline);
-                    registry.Bind(cmd);
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {plan.DrawDataSet},
-                        .FirstSet = 1,
-                        .PipelineBindPoint = PipelineBindPoint::Graphics,
-                    });
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {plan.PaletteSet},
-                        .FirstSet = 2,
-                        .PipelineBindPoint = PipelineBindPoint::Graphics,
-                    });
-                    cmd.PushConstants(plan.Push);
-
-                    const Mesh* lastBound = nullptr;
-                    for (const DrawGroup& group : plan.SkinnedGroups)
-                    {
-                        if (lastBound != group.SourceMesh)
-                        {
-                            cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
-                            cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
-                            lastBound = group.SourceMesh;
-                        }
-                        for (u32 s = 0; s < group.SlotCount; ++s)
-                        {
-                            const DrawSlot& slot = plan.SkinnedSlots[group.FirstSlot + s];
-                            cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex, slot.VertexOffset,
-                                            slot.CandidateId);
-                        }
-                    }
-                }
-            }
-
-            Context& m_Context;
-            Ref<GraphicsPipeline> m_Pipeline;
-            Ref<GraphicsPipeline> m_SkinnedPipeline;
-            uvec2 m_Extent;
-            const GBufferDrawPlan* m_Plan = nullptr;
-            SceneRendererSettings::CullMode m_Cull = SceneRendererSettings::CullMode::CPU;
-            ResourceId m_VelocityId;
-            ResourceId m_DepthId;
             ResourceId m_IndirectId;
         };
 
@@ -1332,8 +1175,6 @@ namespace Veng::Renderer
         CreateOutput();
         CreateGBuffer();
         CreateCullResources();
-        // After CreateCullResources: the velocity pipeline binds the DrawData set layout.
-        CreateVelocityPipeline();
         CreateHdr();
         CreateTaa();
         CreateBloom();
@@ -1959,6 +1800,7 @@ namespace Veng::Renderer
         bindless.Release(m_NormalHandle);
         bindless.Release(m_OrmHandle);
         bindless.Release(m_DepthHandle);
+        bindless.Release(m_VelocityHandle);
 
         m_AlbedoImage = Image::Create(m_Context, {
                                                      .Name = "SceneRenderer GBuffer Albedo",
@@ -1996,6 +1838,18 @@ namespace Veng::Renderer
         m_DepthView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer GBuffer Depth View", .Image = m_DepthImage});
 
+        // G3 — the per-object screen-space motion vector. A g-buffer channel like the others:
+        // the surface pass writes it as SV_Target3 every frame (the TAA resolve and the
+        // MotionVectors debug blit read it), so it is always allocated, not TAA-gated.
+        m_VelocityImage = Image::Create(m_Context, {
+                                                       .Name = "SceneRenderer GBuffer Velocity",
+                                                       .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                       .Format = GBuffer::VelocityFormat,
+                                                       .Usage = GBuffer::ColorUsage,
+                                                   });
+        m_VelocityView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer GBuffer Velocity View", .Image = m_VelocityImage});
+
         if (!m_Sampler)
         {
             m_Sampler = Sampler::Create(m_Context, {
@@ -2011,6 +1865,7 @@ namespace Veng::Renderer
         m_NormalHandle = bindless.Register(m_NormalView);
         m_OrmHandle = bindless.Register(m_OrmView);
         m_DepthHandle = bindless.Register(m_DepthView);
+        m_VelocityHandle = bindless.Register(m_VelocityView);
 
         CreateHiZ();
     }
@@ -2268,15 +2123,8 @@ namespace Veng::Renderer
 
         bindless.Release(m_LitHandle);
         bindless.Release(m_TaaHistoryHandle);
-        bindless.Release(m_VelocityHandle);
         m_LitHandle = {};
         m_TaaHistoryHandle = {};
-        m_VelocityHandle = {};
-
-        // The lit + history targets serve the resolve and exist only under TAA; the velocity
-        // target additionally feeds the MotionVectors debug view, which force-wires the
-        // velocity prepass with the resolve off.
-        const bool needVelocity = m_Settings.TAA || m_Settings.Mode == DebugView::MotionVectors;
 
         if (m_Settings.TAA)
         {
@@ -2308,106 +2156,6 @@ namespace Veng::Renderer
             m_TaaHistoryImage.reset();
             m_TaaHistoryView.reset();
         }
-
-        if (needVelocity)
-        {
-            m_VelocityImage = Image::Create(m_Context, {
-                                                           .Name = "SceneRenderer Velocity",
-                                                           .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                           .Format = GBuffer::VelocityFormat,
-                                                           .Usage = GBuffer::ColorUsage,
-                                                       });
-            m_VelocityView = ImageView::Create(
-                m_Context, {.Name = "SceneRenderer Velocity View", .Image = m_VelocityImage});
-            m_VelocityHandle = bindless.Register(m_VelocityView);
-        }
-        else
-        {
-            m_VelocityImage.reset();
-            m_VelocityView.reset();
-        }
-    }
-
-    void SceneRenderer::CreateVelocityPipeline()
-    {
-        const AssetResult<AssetHandle<Veng::Shader>> vs =
-            m_Assets.LoadSync<Veng::Shader>(VelocityVertId);
-        VE_ASSERT(vs.has_value(), "SceneRenderer: velocity vertex shader load failed: {}",
-                  vs.error().Detail);
-        const AssetResult<AssetHandle<Veng::Shader>> fs =
-            m_Assets.LoadSync<Veng::Shader>(VelocityFragId);
-        VE_ASSERT(fs.has_value(), "SceneRenderer: velocity fragment shader load failed: {}",
-                  fs.error().Detail);
-
-        // Shares set 1 (the per-draw DrawData SSBO) and the surface push with the geometry
-        // pass, so the same plan drives both draws.
-        m_VelocityLayout = PipelineLayout::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer Velocity Layout",
-                .DescriptorSetLayouts = {m_DrawDataSetLayout},
-                .PushConstantRanges = {PushConstantRange::Of<SurfacePush>(ShaderStage::Vertex)},
-            });
-
-        m_VelocityPipeline = GraphicsPipeline::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer Velocity Pipeline",
-                .ColorAttachments = {{.Format = GBuffer::VelocityFormat,
-                                      .Blend = BlendState::Opaque()}},
-                .DepthAttachmentFormat = GBuffer::DepthFormat,
-                .VertexBufferLayout = Mesh::CanonicalLayout(),
-                // The candidate id arrives as an instance-rate attribute on binding 1,
-                // exactly as the surface pipeline reads it.
-                .InstanceCandidateId = true,
-                .PipelineLayout = m_VelocityLayout,
-                .ShaderStages =
-                    {
-                        {.Stage = ShaderStage::Vertex, .Module = vs->Get()->Module},
-                        {.Stage = ShaderStage::Fragment, .Module = fs->Get()->Module},
-                    },
-                // Test against the populated g-buffer depth without writing it, so only the
-                // visible surface's velocity survives.
-                .DepthTestEnable = true,
-                .DepthWriteEnable = false,
-                .DepthCompareOp = CompareOp::LessOrEqual,
-            });
-
-        // The skinned velocity pipeline: skins both current and previous position through the
-        // palette (set 2) so a skinned mesh's deformation motion writes velocity too.
-        const AssetResult<AssetHandle<Veng::Shader>> skinnedVs =
-            m_Assets.LoadSync<Veng::Shader>(VelocitySkinnedVertId);
-        VE_ASSERT(skinnedVs.has_value(),
-                  "SceneRenderer: skinned velocity vertex shader load failed: {}",
-                  skinnedVs.error().Detail);
-
-        m_VelocitySkinnedLayout = PipelineLayout::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer Skinned Velocity Layout",
-                .DescriptorSetLayouts = {m_DrawDataSetLayout, m_PaletteSetLayout},
-                .PushConstantRanges = {PushConstantRange::Of<SurfacePush>(ShaderStage::Vertex)},
-            });
-
-        m_VelocitySkinnedPipeline = GraphicsPipeline::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer Skinned Velocity Pipeline",
-                .ColorAttachments = {{.Format = GBuffer::VelocityFormat,
-                                      .Blend = BlendState::Opaque()}},
-                .DepthAttachmentFormat = GBuffer::DepthFormat,
-                .VertexBufferLayout = Mesh::SkinnedLayout(),
-                .InstanceCandidateId = true,
-                .PipelineLayout = m_VelocitySkinnedLayout,
-                .ShaderStages =
-                    {
-                        {.Stage = ShaderStage::Vertex, .Module = skinnedVs->Get()->Module},
-                        {.Stage = ShaderStage::Fragment, .Module = fs->Get()->Module},
-                    },
-                .DepthTestEnable = true,
-                .DepthWriteEnable = false,
-                .DepthCompareOp = CompareOp::LessOrEqual,
-            });
     }
 
     void SceneRenderer::CreateBloom()
@@ -2555,11 +2303,6 @@ namespace Veng::Renderer
         const bool taaActive = m_Settings.Mode == DebugView::Final && m_Settings.TAA;
         m_TaaActive = taaActive;
 
-        // The MotionVectors debug arm force-wires the velocity prepass so the target it
-        // visualizes exists with the TAA resolve off.
-        const bool debugMotion = m_Settings.Mode == DebugView::MotionVectors;
-        const bool velocityActive = taaActive || debugMotion;
-
         const bool debugShadow = m_Settings.Mode == DebugView::Shadows;
         const bool debugAo = m_Settings.Mode == DebugView::AO;
         // Cascades debug needs the shadow pass wired so cascade constants are written.
@@ -2605,16 +2348,12 @@ namespace Veng::Renderer
             litId = graph.Import("SceneRenderer Lit");
             taaHistoryId = graph.Import("SceneRenderer TAA History");
         }
-        // The velocity target is imported whenever the velocity prepass is wired — under TAA
-        // (the resolve reads it) or the MotionVectors debug arm (the blit reads it).
-        if (velocityActive)
-        {
-            velocityId = graph.Import("SceneRenderer Velocity");
-        }
+        // The velocity target (G3) is always imported — the g-buffer pass writes it on every
+        // frame as a fourth color attachment.
+        velocityId = graph.Import("SceneRenderer Velocity");
         m_LitId = litId;
         m_TaaHistoryId = taaHistoryId;
         m_VelocityId = velocityId;
-        m_VelocityActive = velocityActive;
         const ResourceId lightingTargetId = taaActive ? litId : hdrId;
 
         ResourceId shadowId{};
@@ -2685,16 +2424,6 @@ namespace Veng::Renderer
         auto gbufferPass = CreateUnique<GBufferScenePass>(m_Context, m_Extent, &m_Internal->Plan,
                                                           m_ActiveCull, m_IndirectId);
         m_Passes.push_back(std::move(gbufferPass));
-
-        // The velocity prepass runs right after the g-buffer pass (it needs the populated
-        // depth) and before the TAA resolve or the MotionVectors blit. It reuses the geometry
-        // pass's draw plan.
-        if (velocityActive)
-        {
-            m_Passes.push_back(CreateUnique<VelocityScenePass>(
-                m_Context, m_VelocityPipeline, m_VelocitySkinnedPipeline, m_Extent,
-                &m_Internal->Plan, m_ActiveCull, velocityId, depthId, m_IndirectId));
-        }
 
         // Created before the tail switch so ssaoHandle is set when the Final arm reads it.
         if (ssaoActive)
@@ -2808,8 +2537,8 @@ namespace Veng::Renderer
                 m_Context, m_AlbedoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Bloom));
             break;
         case DebugView::MotionVectors:
-            // The force-wired velocity prepass (above) writes the velocity target; this blit
-            // colorizes it as an optical-flow field.
+            // The g-buffer pass writes the velocity target (G3); this blit colorizes it as an
+            // optical-flow field.
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_MotionBlitPipeline, m_Extent,
                 FullscreenBlitScenePass::Source::MotionVectors));
@@ -3227,10 +2956,10 @@ namespace Veng::Renderer
 
         // Per-object velocity needs each drawn entity's previous-frame world matrix. Record
         // this frame's worlds (swapped to "previous" after Execute) and look the prior one up
-        // when filling DrawData. Maintained only while the velocity pass is wired.
+        // when filling DrawData. The surface pass writes velocity every frame (G3), so this is
+        // always maintained.
         const auto PackEntity = [](Entity e) -> u64
         { return (static_cast<u64>(e.Index) << 32) | static_cast<u64>(e.Generation); };
-        if (m_VelocityActive)
         {
             m_CurrentWorlds.clear();
             for (const VisibleMesh& vm : view.Visible)
@@ -3293,9 +3022,8 @@ namespace Veng::Renderer
             // frame-folded material selector.
             const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
             // Previous world for velocity: last frame's matrix for this entity, or the
-            // current one (zero object motion) when first seen or velocity is inactive.
+            // current one (zero object motion) when first seen.
             mat4 prevWorld = item.World;
-            if (m_VelocityActive)
             {
                 const auto it = m_PreviousWorlds.find(PackEntity(item.Owner));
                 if (it != m_PreviousWorlds.end())
@@ -3416,10 +3144,9 @@ namespace Veng::Renderer
 
             // Velocity needs the previous frame's world and palette base for this entity (its
             // deformation motion). The previous palette data is still resident in its own ring
-            // region. First seen / velocity inactive → no motion (current values).
+            // region. First seen → no motion (current values).
             mat4 prevWorld = item.World;
             u32 prevPaletteBase = paletteBase;
-            if (m_VelocityActive)
             {
                 const auto prevWorldIt = m_PreviousWorlds.find(packed);
                 if (prevWorldIt != m_PreviousWorlds.end())
@@ -3727,11 +3454,8 @@ namespace Veng::Renderer
             bindings.push_back({m_LitId, m_LitView});
             bindings.push_back({m_TaaHistoryId, m_TaaHistoryView});
         }
-        // The velocity import is also live under the MotionVectors debug arm (no resolve).
-        if (m_VelocityActive)
-        {
-            bindings.push_back({m_VelocityId, m_VelocityView});
-        }
+        // Velocity is a g-buffer channel the surface pass writes every frame, so it is always bound.
+        bindings.push_back({m_VelocityId, m_VelocityView});
         if (m_ShadowActive && m_ShadowPass)
         {
             bindings.push_back({m_ShadowId, m_ShadowPass->GetShadowView()});
@@ -3789,13 +3513,10 @@ namespace Veng::Renderer
         ++m_FrameIndex;
 
         // This frame's worlds + skinning-palette bases become next frame's "previous" for the
-        // velocity prepass. The palette buffer is ring-buffered, so the previous bases still point
+        // velocity channel. The palette buffer is ring-buffered, so the previous bases still point
         // at resident data next frame.
-        if (m_VelocityActive)
-        {
-            m_PreviousWorlds.swap(m_CurrentWorlds);
-            m_PreviousPaletteBaseByEntity = m_PaletteBaseByEntity;
-        }
+        m_PreviousWorlds.swap(m_CurrentWorlds);
+        m_PreviousPaletteBaseByEntity = m_PaletteBaseByEntity;
     }
 
     Ref<ImageView> SceneRenderer::GetOutput() const

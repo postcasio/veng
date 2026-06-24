@@ -1,5 +1,5 @@
-// Motion-vector visualize fragment stage: samples the per-object velocity target
-// (the VelocityScenePass's RG16Sfloat screen-space motion, curUV - prevUV) through
+// Motion-vector visualize fragment stage: samples the per-object velocity g-buffer
+// channel (G3, the surface pass's RG16Sfloat screen-space motion, curUV - prevUV) through
 // the bindless set-0 array and colorizes it as an optical-flow field — hue encodes
 // the motion direction (a full color wheel), brightness its magnitude. A static
 // surface under a static camera reads zero and renders black; the cleared background

@@ -23,6 +23,8 @@ struct VSOutput
     float3 v_WorldNormal : NORMAL;
     float4 v_WorldTangent : TANGENT;  // xyz world tangent; w handedness sign for the bitangent
     nointerpolation uint v_MaterialIndex : TEXCOORD1;  // per-draw material selector for the fragment
+    float4 v_CurClip : TEXCOORD2;   // unjittered current clip position (g-buffer motion vector)
+    float4 v_PrevClip : TEXCOORD3;  // unjittered previous clip position (g-buffer motion vector)
 };
 
 [shader("vertex")]
@@ -39,9 +41,14 @@ VSOutput vsMain(VSInput input)
     float3 c2 = draw.NormalColumn2.xyz;
 
     float4 worldPos = mul(draw.World, float4(input.a_Position, 1.0));
+    float4 prevWorldPos = mul(draw.PrevWorld, float4(input.a_Position, 1.0));
 
     VSOutput output;
     output.sv_position = mul(view.Proj, mul(view.View, worldPos));
+    // The motion vector is measured in unjittered clip space so the jitter the TAA
+    // resolve is integrating does not leak into the reprojection.
+    output.v_CurClip = mul(view.CurViewProj, worldPos);
+    output.v_PrevClip = mul(view.PrevViewProj, prevWorldPos);
     output.v_UV = input.a_UV;
     output.v_WorldNormal = c0 * input.a_Normal.x + c1 * input.a_Normal.y + c2 * input.a_Normal.z;
     // NormalMatrix carries the tangent to world space alongside the normal; the

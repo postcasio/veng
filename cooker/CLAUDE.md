@@ -36,7 +36,7 @@ at cook time:
 - **Materials** (`*.vmat.json`) are validated against the fragment shader's reflected
   parameters — the declared, explicitly-typed field list must match — and the
   fragment outputs are validated against the material domain's contract (Surface →
-  g-buffer MRT `SV_Target0`+`SV_Target1`; PostProcess → a single `SV_Target0`).
+  g-buffer MRT `SV_Target0`..`SV_Target3`; PostProcess → a single `SV_Target0`).
 - **Skinned meshes, skeletons, and animations** come from a rigged model (FBX, via the
   enabled assimp FBX importer). The `MeshImporter` emits the skinned vertex layout when the
   `*.mesh.json` names a `"skeleton"` id: it caps each vertex to four normalized influences

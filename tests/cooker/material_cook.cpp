@@ -409,7 +409,7 @@ TEST_CASE("Cooker: an unknown domain is a located cook error")
 TEST_CASE(
     "Cooker: a surface material whose fragment shader writes one target is a located cook error")
 {
-    // A surface material must write the g-buffer MRT (SV_Target0 + SV_Target1).
+    // A surface material must write the g-buffer MRT (SV_Target0..SV_Target3).
     // Pointing it at a shader that writes a single target is a contract mismatch.
     const path packJson = FixtureDir / "material_surface_wrong_output_pack.json";
     const path outArchive =

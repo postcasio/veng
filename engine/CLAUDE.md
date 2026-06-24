@@ -168,21 +168,25 @@ driving the `Configure` recompile.
 **TAA is an HDR-space temporal resolve** (`Settings.TAA`, off by default). It jitters the
 projection by a Halton(2, 3) sub-pixel offset each frame (`Renderer/TaaJitter.h`, a pure
 device-free helper), routes the lighting pass into a separate **lit** target, and inserts a
-**velocity prepass**, a **resolve** pass (lit + reprojected history + velocity/depth → the
-HDR target the bloom/tonemap tail already samples), and a **history-copy** pass (HDR → the
-persisted history for next frame). Motion is **per-object**: a dedicated `VelocityScenePass`
-re-rasterizes the geometry pass's draw plan with a velocity pipeline (depth-tested against
-the populated g-buffer depth, **depth-write off**, so only the visible surface writes) into a
-renderer-owned `RG16Sfloat` **velocity** target — `curUV - prevUV` from the per-vertex
-current and previous clip positions. The previous position comes from a per-draw `PrevWorld`
-matrix (`GpuDrawData` carries it; the renderer tracks each entity's prior world in
-`m_PreviousWorlds`, keyed by packed `Entity` and swapped each frame) and the unjittered
-`CurViewProj`/`PrevViewProj` (both added to the set-0 view-constants block). The resolve uses
-the velocity vector for geometry (camera **and** object motion) and falls back to depth-based
-camera reprojection for the cleared background. This is **TAA-only cost** — the velocity
-target, prepass, and transform tracking exist only while `Settings.TAA` is on, and the opaque
-g-buffer material contract (G0/G1/G2) is unchanged (velocity is a separate target, not an MRT
-channel). History is **YCoCg variance-clipped** to the 3×3 neighborhood, sampled with a
+**resolve** pass (lit + reprojected history + velocity/depth → the HDR target the
+bloom/tonemap tail already samples) and a **history-copy** pass (HDR → the persisted history
+for next frame). Motion is **per-object** and **folded into the g-buffer pass**: velocity is
+a fourth g-buffer channel (**G3**, `RG16Sfloat`), written by the surface fragment as
+`SV_Target3` alongside G0/G1/G2 — `curUV - prevUV` from the per-vertex current and previous
+clip positions, computed by the shared `ComputeMotionVector` helper. So there is **no
+separate velocity prepass**: the one geometry rasterization that fills the g-buffer also fills
+velocity. The previous position comes from a per-draw `PrevWorld` matrix (`GpuDrawData` carries
+it; the renderer tracks each entity's prior world in `m_PreviousWorlds`, keyed by packed
+`Entity` and swapped each frame) and the unjittered `CurViewProj`/`PrevViewProj` (both in the
+set-0 view-constants block); the skinned surface vertex stage additionally skins the previous
+position through the previous-frame palette (`PrevPaletteBase`), so deformation motion writes
+velocity too. The resolve uses the velocity vector for geometry (camera **and** object motion)
+and falls back to depth-based camera reprojection for the cleared background. Because velocity
+is a g-buffer channel it is **always written and always allocated** (the cost is one extra
+`RG16Sfloat` target plus a clip-position write, not a second geometry pass); with TAA off it is
+written but unread, and the `MotionVectors` debug arm blits it directly. The opaque material
+contract is therefore **G0/G1/G2/G3** — velocity is the fourth MRT channel of the surface
+output, not a separate pass. History is **YCoCg variance-clipped** to the 3×3 neighborhood, sampled with a
 **Catmull-Rom** filter, and blended with **luminance weighting** (Karis anti-flicker);
 offscreen reprojection and the first frame after a `Resize`/`Configure` fall back to the
 current color (`m_TaaHistoryReset`). The history is a renderer-owned persisted image written
@@ -351,8 +355,8 @@ toggles, the bloom `Kernel`, and `ShadowResolution` / `PunctualShadowResolution`
 recompile knobs. A debug arm terminates the chain after the g-buffer (and, for `AO` / `Shadows` /
 `PunctualShadows`, the force-wired producing battery pass) with a single fullscreen debug blit;
 the `Bloom` arm additionally runs the lighting pass and the force-wired bloom sweep and blits
-pyramid mip 0 after the up-sweep, and the `MotionVectors` arm force-wires the TAA velocity prepass
-(regardless of `Settings.TAA`) and blits the per-object velocity target colorized as an optical-flow
+pyramid mip 0 after the up-sweep, and the `MotionVectors` arm blits the per-object velocity
+g-buffer channel (written by the surface pass every frame) colorized as an optical-flow
 field (hue = direction, brightness = magnitude). Per-frame values (`Exposure`, the bloom
 `Threshold` / `Intensity` / `Radius`, the camera, the lights) ride `SceneView`, so tuning them
 never recompiles.
@@ -379,11 +383,15 @@ renderer's own single-queue graph each frame, ordered by the graph's derived bar
 **The deferred opaque material g-buffer contract.** An opaque (Surface-domain)
 material's **fragment shader outputs** are **g-buffer channels**, not final swapchain
 color, written through a single engine-provided `GBufferOutput` struct
-(`float4 Albedo : SV_Target0; float4 Normal : SV_Target1; float4 ORM : SV_Target2;`).
+(`float4 Albedo : SV_Target0; float4 Normal : SV_Target1; float4 ORM : SV_Target2;
+float2 Velocity : SV_Target3;`).
 Albedo (G0) is sRGB-encoded (sampled back as linear); the normal (G1) is the
 tangent-space-perturbed world normal in a signed float format; ORM (G2) packs occlusion
 (R), roughness (G), metallic (B), and emissive strength (A) — the metallic-roughness
-PBR channel set. Depth is the depth attachment, also sampled by the lighting pass for
+PBR channel set; velocity (G3, `RG16Sfloat`) is the per-object screen-space motion vector
+(`curUV - prevUV`) the TAA resolve reprojects through, written by the shared
+`ComputeMotionVector` helper from the vertex stage's unjittered current/previous clip
+positions. Depth is the depth attachment, also sampled by the lighting pass for
 world-position reconstruction (one of the depth targets read as textures in the engine —
 the directional cascade atlas and the punctual shadow atlas are the others). The g-buffer
 layout (channels,
@@ -391,9 +399,11 @@ formats, usage) is fixed in `Renderer/GBuffer.h`, agreed on by the geometry pass
 `RenderingInfo` and every material pipeline. It is the **opaque** contract — a
 transparent/forward material outputs final color through a separate fragment entry, not
 a change to this one — and **colored** emissive (an emissive color distinct from albedo)
-is the one free channel away from needing a fourth target (only G0.a is unused). Set-0
-bindless, the material parameter block, and texture handles are unchanged — only the
-fragment shader's outputs move to the g-buffer.
+is the one free channel away from needing a fifth target (only G0.a is unused). Folding
+velocity into the surface output means motion vectors cost **no second geometry pass** —
+the single g-buffer rasterization fills them — at the price of a small always-on write even
+when TAA is off. Set-0 bindless, the material parameter block, and texture handles are
+unchanged — only the fragment shader's outputs move to the g-buffer.
 
 **The PostProcess fullscreen-material path.** A `PostProcessScenePass` runs a PostProcess
 material as a fullscreen effect: it builds a `GraphicsPipeline` from the material's
@@ -719,12 +729,12 @@ smoke render use.
   drawn CPU-direct, reading a per-instance **skinning palette** SSBO (ring-buffered, **set 2**;
   `DrawData.PaletteBase` is each instance's offset). The directional `ShadowScenePass` and the
   `PunctualShadowScenePass` both cast a skinned caster's posed shadow through a parallel
-  `shadow_depth_skinned.vert` + the palette at set 1, and the TAA velocity prepass has a
-  `velocity_skinned.vert` that skins the current and previous position (the renderer tracks each
-  skinned entity's previous-frame palette base, valid because the palette is ring-buffered) so a
-  skinned mesh's deformation writes motion vectors. An entity with no `SkinnedPose` (e.g. the
+  `shadow_depth_skinned.vert` + the palette at set 1, and `surface_skinned.vert` skins both the
+  current and previous position (the latter through the previous-frame palette base the renderer
+  tracks, valid because the palette is ring-buffered) so a skinned mesh's deformation writes its
+  motion vector into the g-buffer velocity channel. An entity with no `SkinnedPose` (e.g. the
   editor with systems paused) renders at the skeleton's bind pose. The core pack ships the
-  `skinned` vertex layout and the skinned surface/shadow/velocity vertex shaders.
+  `skinned` vertex layout and the skinned surface/shadow vertex shaders.
 - **Cooked prefabs load like every other asset; a `Scene` is what you spawn into.**
   A `*.prefab.json` (entities + components + field values) cooks into an
   `AssetType::Prefab` blob and loads through the **identical**

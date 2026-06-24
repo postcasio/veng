@@ -37,9 +37,10 @@ MaterialParams LoadMaterialParams(uint index)
 // occlusion/roughness/metallic/emissive into G2 — the surface output contract.
 struct GBufferOutput
 {
-    float4 Albedo : SV_Target0;
-    float4 Normal : SV_Target1;
-    float4 ORM    : SV_Target2;
+    float4 Albedo   : SV_Target0;
+    float4 Normal   : SV_Target1;
+    float4 ORM      : SV_Target2;
+    float2 Velocity : SV_Target3;  // screen-space motion vector (curUV - prevUV)
 };
 
 // One shared push-constant block, used by both stages. The vertex stage reads

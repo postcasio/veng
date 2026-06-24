@@ -26,6 +26,8 @@ struct VSOutput
     float3 v_WorldNormal : NORMAL;
     float4 v_WorldTangent : TANGENT;
     nointerpolation uint v_MaterialIndex : TEXCOORD1;
+    float4 v_CurClip : TEXCOORD2;   // unjittered current clip position (g-buffer motion vector)
+    float4 v_PrevClip : TEXCOORD3;  // unjittered previous clip position (g-buffer motion vector)
 };
 
 // The per-instance skinning palette: each bone's GlobalInverse * modelBone * InverseBind
@@ -50,14 +52,28 @@ VSOutput vsMain(VSInput input)
     float3 skinnedNormal = mul((float3x3)skin, input.a_Normal);
     float3 skinnedTangent = mul((float3x3)skin, input.a_Tangent.xyz);
 
+    // Previous frame's deformation: the same vertex skinned by the previous-frame palette
+    // (still resident in the ring-buffered palette), so the motion vector captures both
+    // rigid (World/PrevWorld) and deformation (animation) movement.
+    uint prevBase = draw.PrevPaletteBase;
+    float4x4 skinPrev =
+        input.a_BoneWeights.x * g_Palette[prevBase + input.a_BoneIndices.x] +
+        input.a_BoneWeights.y * g_Palette[prevBase + input.a_BoneIndices.y] +
+        input.a_BoneWeights.z * g_Palette[prevBase + input.a_BoneIndices.z] +
+        input.a_BoneWeights.w * g_Palette[prevBase + input.a_BoneIndices.w];
+    float4 prevSkinnedPos = mul(skinPrev, float4(input.a_Position, 1.0));
+
     float3 c0 = draw.NormalColumn0.xyz;
     float3 c1 = draw.NormalColumn1.xyz;
     float3 c2 = draw.NormalColumn2.xyz;
 
     float4 worldPos = mul(draw.World, skinnedPos);
+    float4 prevWorldPos = mul(draw.PrevWorld, prevSkinnedPos);
 
     VSOutput output;
     output.sv_position = mul(view.Proj, mul(view.View, worldPos));
+    output.v_CurClip = mul(view.CurViewProj, worldPos);
+    output.v_PrevClip = mul(view.PrevViewProj, prevWorldPos);
     output.v_UV = input.a_UV;
     output.v_WorldNormal = c0 * skinnedNormal.x + c1 * skinnedNormal.y + c2 * skinnedNormal.z;
     output.v_WorldTangent =

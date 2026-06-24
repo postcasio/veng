@@ -3,8 +3,9 @@
 // World-position/view-position reconstruction (InvViewProj, Proj), the camera
 // position, the view matrix for view-space depth and the SSAO hemisphere, and the
 // previous and current unjittered view-projections (PrevViewProj / CurViewProj) the
-// TAA resolve and velocity pass reproject through. The directional-shadow system
-// rides a separate set-1 ShadowConstants block, not here.
+// TAA resolve reprojects through and the surface stage writes its g-buffer velocity
+// channel from. The directional-shadow system rides a separate set-1 ShadowConstants
+// block, not here.
 //
 // Ring-buffered across frames-in-flight, byte-addressed at index * ViewConstantsStride;
 // mirrors BindlessRegistry::ViewConstantsStride and the CPU ViewConstantsBlock exactly.

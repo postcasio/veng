@@ -42,6 +42,8 @@ struct ViewConstants
     float4   CameraPosition; // xyz; w unused
     float4x4 View;           // world → view
     float4x4 Proj;           // view → clip
+    float4x4 PrevViewProj;   // previous frame's unjittered world → clip (g-buffer motion vector)
+    float4x4 CurViewProj;    // this frame's unjittered world → clip (g-buffer motion vector)
 };
 
 static const uint ViewConstantsStride = 512;
@@ -95,16 +97,26 @@ DrawData LoadDrawData(uint candidateId)
     return g_DrawData[g_PC.FrameBase + candidateId];
 }
 
-// The deferred opaque g-buffer outputs the material fragment stage writes. The
-// metallic-roughness channel set, funnelled through one struct: albedo into G0
-// (sRGB target, the sampler decodes to linear on read), the world-space normal
-// into G1, and packed occlusion/roughness/metallic/emissive into G2.
+// The deferred opaque g-buffer outputs the material fragment stage writes: albedo into
+// G0, the world-space normal into G1, packed occlusion/roughness/metallic/emissive into
+// G2, and the per-object screen-space motion vector into G3 (written every frame by the
+// same surface pipeline, so motion vectors cost no second geometry pass).
 struct GBufferOutput
 {
-    float4 Albedo : SV_Target0;  // rgb sRGB albedo; a unused
-    float4 Normal : SV_Target1;  // world-space normal in xyz
-    float4 ORM    : SV_Target2;  // R occlusion, G roughness, B metallic, A emissive strength
+    float4 Albedo   : SV_Target0;  // rgb sRGB albedo; a unused
+    float4 Normal   : SV_Target1;  // world-space normal in xyz
+    float4 ORM      : SV_Target2;  // R occlusion, G roughness, B metallic, A emissive strength
+    float2 Velocity : SV_Target3;  // screen-space motion vector (curUV - prevUV)
 };
+
+// The per-object screen-space motion vector from the vertex stage's unjittered current
+// and previous clip positions (the UV displacement from previous to current position).
+float2 ComputeMotionVector(float4 curClip, float4 prevClip)
+{
+    const float2 curUv = (curClip.xy / curClip.w) * 0.5 + 0.5;
+    const float2 prevUv = (prevClip.xy / prevClip.w) * 0.5 + 0.5;
+    return curUv - prevUv;
+}
 
 // The shared surface push block, used by the vertex stage only. FrameBase folds the
 // ring-buffered draw-data region into the candidate id (the current frame's region

@@ -12,6 +12,8 @@ struct VSOutput
     float2 v_UV : TEXCOORD0;
     float3 v_WorldNormal : NORMAL;
     nointerpolation uint v_MaterialIndex : TEXCOORD1;  // per-draw material selector from the vertex stage
+    float4 v_CurClip : TEXCOORD2;   // unjittered current clip position (g-buffer motion vector)
+    float4 v_PrevClip : TEXCOORD3;  // unjittered previous clip position (g-buffer motion vector)
 };
 
 [shader("fragment")]
@@ -26,5 +28,6 @@ GBufferOutput fsMain(VSOutput input)
     output.Albedo = baseColor * p.BaseColorFactor;
     output.Normal = float4(normalize(input.v_WorldNormal), 0.0);
     output.ORM = float4(1.0, p.RoughnessFactor, p.MetallicFactor, p.EmissiveFactor.a);
+    output.Velocity = ComputeMotionVector(input.v_CurClip, input.v_PrevClip);
     return output;
 }

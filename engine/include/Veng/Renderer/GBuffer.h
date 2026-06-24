@@ -10,10 +10,12 @@
 /// in the shader), the geometry pass clears and stores them, and the lighting pass
 /// samples them.
 ///
-/// The layout is albedo (G0) / world-normal (G1) / packed ORM (G2) plus a sampled
-/// depth attachment the lighting pass reconstructs world position from. This is the
-/// opaque material contract — a transparent/forward material outputs final color
-/// through a separate fragment entry, not a change to this one.
+/// The layout is albedo (G0) / world-normal (G1) / packed ORM (G2) / screen-space
+/// motion vector (G3) plus a sampled depth attachment the lighting pass reconstructs
+/// world position from. Velocity is folded into the surface output (written every frame
+/// as SV_Target3), so motion vectors cost no second geometry pass. This is the opaque
+/// material contract — a transparent/forward material outputs final color through a
+/// separate fragment entry, not a change to this one.
 ///
 /// Color-space contract: albedo is stored sRGB-encoded (RGBA8Srgb) and sampled as
 /// linear — the sampler decodes on read, so a material writes its sampled albedo
@@ -25,13 +27,13 @@ namespace Veng::Renderer
 {
     /// @brief The g-buffer's format and usage constants.
     ///
-    /// The geometry pass renders into G0/G1/G2 (+ depth); a fullscreen pass samples them.
+    /// The geometry pass renders into G0/G1/G2/G3 (+ depth); a fullscreen pass samples them.
     namespace GBuffer
     {
         /// @brief G0 — base color. rgb is the sRGB-encoded albedo; a is unused (reserved).
         ///
-        /// Only G2.a carries data (emissive strength), so this is the one free g-buffer
-        /// channel before independent colored emissive needs a fourth target.
+        /// Only G2.a carries data (emissive strength), so G0.a is the one free g-buffer
+        /// channel before independent colored emissive needs a fifth target.
         inline constexpr Format AlbedoFormat = Format::RGBA8Srgb;
 
         /// @brief G1 — world-space normal in xyz.
@@ -43,13 +45,13 @@ namespace Veng::Renderer
         /// is a low-dynamic scalar (the lighting pass scales albedo by it).
         inline constexpr Format ORMFormat = Format::RGBA8Unorm;
 
-        /// @brief Screen-space motion vector target written by the TAA velocity prepass.
+        /// @brief G3 — screen-space motion vector, written by the surface pass.
         ///
         /// RG: the per-pixel UV displacement from the previous frame's screen position to
-        /// this frame's (curUV - prevUV). Not a g-buffer MRT channel — it is a separate,
-        /// TAA-only target written by a dedicated velocity pass, so the opaque material
-        /// contract (G0/G1/G2) is unchanged. Signed float to carry motion in either
-        /// direction across the full UV range.
+        /// this frame's (curUV - prevUV). The fourth g-buffer MRT channel — the surface
+        /// fragment writes it as SV_Target3 alongside G0/G1/G2 every frame, so motion vectors
+        /// cost no second geometry pass; the TAA resolve and the MotionVectors debug blit read
+        /// it. Signed float to carry motion in either direction across the full UV range.
         inline constexpr Format VelocityFormat = Format::RG16Sfloat;
 
         /// @brief The depth attachment, also sampled by the lighting pass for world-position reconstruction.

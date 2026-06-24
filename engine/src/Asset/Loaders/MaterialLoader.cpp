@@ -205,6 +205,10 @@ namespace Veng
                              .Blend = Renderer::BlendState::Opaque()},
                             {.Format = Renderer::GBuffer::ORMFormat,
                              .Blend = Renderer::BlendState::Opaque()},
+                            // G3 — the per-object motion vector the surface fragment writes
+                            // alongside the g-buffer (folded in, not a separate prepass).
+                            {.Format = Renderer::GBuffer::VelocityFormat,
+                             .Blend = Renderer::BlendState::Opaque()},
                         },
                     .DepthAttachmentFormat = Renderer::GBuffer::DepthFormat,
                     .VertexBufferLayout = vertexBufferLayout,

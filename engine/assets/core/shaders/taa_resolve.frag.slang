@@ -2,11 +2,11 @@
 // reprojected history of previous frames so the jitter sequence integrates into a
 // supersampled, edge-stable image. Runs in linear HDR before bloom and tonemap.
 //
-// Motion is per-object: geometry reads the screen-space motion vector the velocity
-// prepass wrote (which combines camera and object movement), so both a moving camera
-// and a moving object reproject correctly. The background, which the velocity pass
-// leaves cleared, reprojects by reconstructing its far-plane world position from depth
-// and projecting through the previous frame's unjittered view-projection.
+// Motion is per-object: geometry reads the screen-space motion vector the surface pass
+// wrote into the g-buffer velocity channel (which combines camera and object movement),
+// so both a moving camera and a moving object reproject correctly. The background, which
+// the surface pass leaves cleared, reprojects by reconstructing its far-plane world
+// position from depth and projecting through the previous frame's unjittered view-projection.
 //
 // History is rejected where it cannot be trusted — offscreen reprojection or an
 // invalid history frame (the first frame, or the frame after a resize) fall back to
@@ -165,9 +165,9 @@ float4 fsMain(VSOutput input) : SV_Target0
     const float3 boxMax = min(mean + ClipGamma * sigma, neighborMax);
 
     // Find this pixel's previous-frame screen position. Geometry uses the per-object
-    // motion vector the velocity prepass wrote (camera + object motion); the background
-    // (cleared depth) has no velocity, so it reprojects by reconstructing the far-plane
-    // world position from depth and projecting through last frame's view-projection.
+    // motion vector the surface pass wrote into the g-buffer (camera + object motion); the
+    // background (cleared depth) has no velocity, so it reprojects by reconstructing the
+    // far-plane world position from depth and projecting through last frame's view-projection.
     const float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, uv).r;
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
 

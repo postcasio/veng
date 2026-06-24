@@ -14,8 +14,8 @@ namespace Veng::Cook
     /// is reflected from the fragment shader's MaterialParams struct via
     /// SlangReflect::ReflectStructLayout; declared fields are validated by name, type,
     /// and offset. The fragment entry's SV_TargetN outputs are validated against the
-    /// domain contract: Surface writes float4 SV_Target0+1+2 (the g-buffer);
-    /// PostProcess writes a single float4 SV_Target0.
+    /// domain contract: Surface writes float4 SV_Target0+1+2 + float2 SV_Target3 (the
+    /// g-buffer: albedo/normal/ORM + velocity); PostProcess writes a single float4 SV_Target0.
     class MaterialImporter final : public AssetImporter
     {
     public:

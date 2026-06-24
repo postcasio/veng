@@ -219,8 +219,9 @@ namespace Veng::Cook
 
         // --- 3b. Validate the fragment outputs against the domain's contract ---
 
-        // Surface: float4 SV_Target0 (albedo) + SV_Target1 (normal) + SV_Target2 (ORM).
-        // PostProcess: single float4 SV_Target0. Mismatch is a located cook error.
+        // Surface: float4 SV_Target0 (albedo) + SV_Target1 (normal) + SV_Target2 (ORM) +
+        // float2 SV_Target3 (screen-space motion vector). PostProcess: single float4 SV_Target0.
+        // Mismatch is a located cook error.
         const Result<vector<ReflectedFragmentOutput>> outputs =
             ReflectFragmentOutputs(fragSlangPath, fragEntry);
         if (!outputs)
@@ -230,17 +231,19 @@ namespace Veng::Cook
 
         if (domain == 0) // Surface
         {
-            const bool ok = outputs->size() == 3 && (*outputs)[0].TargetIndex == 0 &&
+            const bool ok = outputs->size() == 4 && (*outputs)[0].TargetIndex == 0 &&
                             (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4 &&
                             (*outputs)[1].TargetIndex == 1 && (*outputs)[1].IsFloat &&
                             (*outputs)[1].ComponentCount == 4 && (*outputs)[2].TargetIndex == 2 &&
-                            (*outputs)[2].IsFloat && (*outputs)[2].ComponentCount == 4;
+                            (*outputs)[2].IsFloat && (*outputs)[2].ComponentCount == 4 &&
+                            (*outputs)[3].TargetIndex == 3 && (*outputs)[3].IsFloat &&
+                            (*outputs)[3].ComponentCount == 2;
             if (!ok)
             {
                 return std::unexpected(
                     fmt::format("material importer: '{}': surface material must write the g-buffer "
-                                "(float4 SV_Target0 + float4 SV_Target1 + float4 SV_Target2); "
-                                "its fragment shader does not",
+                                "(float4 SV_Target0 + float4 SV_Target1 + float4 SV_Target2 + "
+                                "float2 SV_Target3); its fragment shader does not",
                                 vmatPath.string()));
             }
         }

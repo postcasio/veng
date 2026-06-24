@@ -1227,9 +1227,9 @@ TEST_CASE_FIXTURE(
     CHECK(std::isfinite(bloomCenter.g));
     CHECK(std::isfinite(bloomCenter.b));
 
-    // The MotionVectors arm force-wires the TAA velocity prepass regardless of Settings.TAA
-    // (off here) and colorizes the velocity target as an optical-flow field. It allocates the
-    // velocity target, recompiles, and renders without error.
+    // The MotionVectors arm colorizes the velocity g-buffer channel (G3) as an optical-flow
+    // field. Velocity is written by the surface pass every frame, so the target is always
+    // present; the arm recompiles and renders without error.
     renderer->Configure(
         {.Mode = DebugView::MotionVectors, .Bloom = false, .Shadows = false, .AO = false});
     REQUIRE(renderer->GetVelocityView() != nullptr);
@@ -1238,9 +1238,9 @@ TEST_CASE_FIXTURE(
     CHECK(std::isfinite(motionCenter.g));
     CHECK(std::isfinite(motionCenter.b));
 
-    // Leaving the arm releases the velocity target (no TAA, no MotionVectors view).
+    // Velocity is a g-buffer channel, so it stays allocated under any mode (not TAA-gated).
     renderer->Configure({.Mode = DebugView::Albedo, .Bloom = false, .Shadows = false, .AO = false});
-    CHECK(renderer->GetVelocityView() == nullptr);
+    CHECK(renderer->GetVelocityView() != nullptr);
 
     // Configure back to Final restores the lit result.
     renderer->Configure({.Mode = DebugView::Final, .Bloom = false});
@@ -3459,7 +3459,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                      .AO = false},
     });
 
-    // The history and velocity targets exist only when TAA is wired.
+    // The history target exists only when TAA is wired; velocity is a g-buffer channel,
+    // always present regardless of TAA.
     REQUIRE(renderer->GetTaaHistoryView() != nullptr);
     CHECK(renderer->GetTaaHistoryView()->GetImage()->GetWidth() == extent.x);
     REQUIRE(renderer->GetVelocityView() != nullptr);
@@ -3500,8 +3501,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     outputMean /= static_cast<f64>(extent.x) * extent.y;
     CHECK(outputMean > 0.0);
 
-    // Toggling TAA off releases the history target; back on recreates it. Both Configures
-    // and a render across each must stay clean (the validation gate runs this binary).
+    // Toggling TAA off releases the history target; back on recreates it. Velocity is a
+    // g-buffer channel, so it stays allocated either way. Both Configures and a render
+    // across each must stay clean (the validation gate runs this binary).
     renderer->Configure({.Mode = DebugView::Final,
                          .Bloom = false,
                          .TAA = false,
@@ -3509,7 +3511,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                          .PunctualShadows = false,
                          .AO = false});
     CHECK(renderer->GetTaaHistoryView() == nullptr);
-    CHECK(renderer->GetVelocityView() == nullptr);
+    CHECK(renderer->GetVelocityView() != nullptr);
     Render();
 
     renderer->Configure({.Mode = DebugView::Final,

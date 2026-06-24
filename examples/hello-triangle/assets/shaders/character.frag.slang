@@ -13,6 +13,8 @@ struct VSOutput
     float3 v_WorldNormal : NORMAL;
     float4 v_WorldTangent : TANGENT;  // xyz world tangent; w handedness sign for the bitangent
     nointerpolation uint v_MaterialIndex : TEXCOORD1;  // per-draw material selector from the vertex stage
+    float4 v_CurClip : TEXCOORD2;   // unjittered current clip position (g-buffer motion vector)
+    float4 v_PrevClip : TEXCOORD3;  // unjittered previous clip position (g-buffer motion vector)
 };
 
 [shader("fragment")]
@@ -51,5 +53,6 @@ GBufferOutput fsMain(VSOutput input)
     output.Albedo = baseColor * p.BaseColorFactor;
     output.Normal = float4(worldNormal, 0.0);
     output.ORM = float4(occlusion, roughness, metallic, p.EmissiveFactor.a);
+    output.Velocity = ComputeMotionVector(input.v_CurClip, input.v_PrevClip);
     return output;
 }
