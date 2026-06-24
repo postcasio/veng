@@ -782,7 +782,7 @@ namespace Veng::Renderer
 
         SubmitFrame(frame);
 
-        PresentFrame(frame);
+        PresentFrame();
     }
 
     u32 Context::GetMaxFramesInFlight() const
@@ -1317,8 +1317,11 @@ namespace Veng::Renderer
             return;
         }
 
+        // Signal the present-wait semaphore owned by the image acquired this frame
+        // (not a per-frame-in-flight one), so the present's hold on it cannot collide
+        // with a later frame reusing the same semaphore.
         const auto renderFinishedSemaphore =
-            frame.GetRenderFinishedSemaphore().GetNative().Semaphore;
+            m_Native->SwapChain->GetCurrentRenderFinishedSemaphore().GetNative().Semaphore;
         const auto imageAvailableSemaphore =
             frame.GetImageAvailableSemaphore().GetNative().Semaphore;
 
@@ -1350,7 +1353,7 @@ namespace Veng::Renderer
                                frame.GetInFlightFence().GetNative().Fence);
     }
 
-    void Context::PresentFrame(const SynchronizationFrame& frame)
+    void Context::PresentFrame()
     {
         // Headless: nothing to present — just advance to the next in-flight frame.
         if (m_Native->Headless)
@@ -1360,7 +1363,10 @@ namespace Veng::Renderer
             return;
         }
 
-        auto renderFinishedSemaphore = frame.GetRenderFinishedSemaphore().GetNative().Semaphore;
+        // Wait on the same per-image semaphore the frame submit signalled (image index
+        // unchanged since acquire), the one keyed to this image rather than the frame slot.
+        auto renderFinishedSemaphore =
+            m_Native->SwapChain->GetCurrentRenderFinishedSemaphore().GetNative().Semaphore;
         auto swapChain = m_Native->SwapChain->GetVkSwapChain();
         auto imageIndex = m_Native->SwapChain->GetCurrentImageIndex();
 

@@ -10,8 +10,11 @@ namespace Veng::Renderer
     class Context;
 
     /// @brief Owns the per-frame-in-flight synchronization primitives: the
-    /// image-available semaphore, the render-finished semaphore, the in-flight
-    /// fence, and the primary command buffer.
+    /// image-available semaphore, the in-flight fence, and the primary command buffer.
+    ///
+    /// The present-wait (render-finished) semaphore is deliberately not here — it is
+    /// owned per swapchain image by SwapChain, since a present holds it past the point
+    /// the in-flight fence bounds. See SwapChain::GetCurrentRenderFinishedSemaphore.
     class SynchronizationFrame
     {
     public:
@@ -26,11 +29,6 @@ namespace Veng::Renderer
         {
             return *m_ImageAvailableSemaphore;
         }
-        /// @brief Returns the semaphore signalled when rendering is complete.
-        [[nodiscard]] Semaphore& GetRenderFinishedSemaphore() const
-        {
-            return *m_RenderFinishedSemaphore;
-        }
         /// @brief Returns the fence waited on before reusing this frame's resources.
         [[nodiscard]] Fence& GetInFlightFence() const { return *m_InFlightFence; }
         /// @brief Returns the primary command buffer for this frame.
@@ -38,7 +36,6 @@ namespace Veng::Renderer
 
     private:
         Unique<Semaphore> m_ImageAvailableSemaphore;
-        Unique<Semaphore> m_RenderFinishedSemaphore;
         Unique<Fence> m_InFlightFence;
         Ref<CommandBuffer> m_CommandBuffer;
     };

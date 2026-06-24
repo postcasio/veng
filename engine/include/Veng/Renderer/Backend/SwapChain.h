@@ -113,6 +113,19 @@ namespace Veng::Renderer
             return m_ImageViews[m_CurrentImageIndex];
         }
 
+        /// @brief Returns the present-wait semaphore owned by the currently acquired image.
+        ///
+        /// The frame submit signals this and the present waits on it. It is keyed to the
+        /// swapchain image, not the frame-in-flight, because a present holds the semaphore
+        /// until the image is actually displayed — a lifetime the in-flight fence does not
+        /// bound. One semaphore per image (rather than per frame-in-flight) is what keeps a
+        /// later frame from re-signalling a semaphore whose present has not yet consumed it.
+        /// @pre An image has been acquired this frame (GetCurrentImageIndex() is valid).
+        [[nodiscard]] Semaphore& GetCurrentRenderFinishedSemaphore() const
+        {
+            return *m_RenderFinishedSemaphores[m_CurrentImageIndex];
+        }
+
         /// @brief Registers a callback fired after the swapchain has been recreated.
         void AddInvalidationCallback(std::function<void()> func)
         {
@@ -137,6 +150,8 @@ namespace Veng::Renderer
         vk::SwapchainKHR m_VkSwapChain;
         vector<Ref<Image>> m_Images;
         vector<Ref<ImageView>> m_ImageViews;
+        /// @brief One present-wait semaphore per swapchain image, indexed by image index.
+        vector<Unique<Semaphore>> m_RenderFinishedSemaphores;
         vector<std::function<void()>> m_OnInvalidated;
 
         /// @brief Re-queries device surface support and resolves the format/color space

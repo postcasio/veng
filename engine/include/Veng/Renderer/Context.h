@@ -221,8 +221,8 @@ namespace Veng::Renderer
         /// @brief Submits the given synchronization frame's command buffer to the graphics queue.
         void SubmitFrame(const SynchronizationFrame& frame) const;
 
-        /// @brief Presents the given synchronization frame's swapchain image.
-        void PresentFrame(const SynchronizationFrame& frame);
+        /// @brief Presents the currently acquired swapchain image and advances the frame index.
+        void PresentFrame();
 
         /// @brief Registers a transfer-timeline wait the next frame submit must satisfy.
         ///

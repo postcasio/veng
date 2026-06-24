@@ -226,6 +226,17 @@ namespace Veng::Renderer
                                .Image = m_Images.back(),
                            }));
         }
+
+        // One present-wait semaphore per image: the frame submit signals image i's
+        // semaphore and the present of image i waits on it. Keyed per image (not per
+        // frame-in-flight) so a present's hold on the semaphore — which outlives the
+        // in-flight fence — never overlaps a later frame re-signalling the same one.
+        m_RenderFinishedSemaphores.reserve(m_ImageCount);
+        for (u32 i = 0; i < m_ImageCount; i++)
+        {
+            m_RenderFinishedSemaphores.emplace_back(
+                Semaphore::Create(m_Context, fmt::format("SwapChain RenderFinished [{}]", i)));
+        }
     }
 
     void SwapChain::ResolveSurfaceFormat()
@@ -266,6 +277,10 @@ namespace Veng::Renderer
 
     void SwapChain::Dispose()
     {
+        // Safe to destroy directly: RenderExtentChanged (the only recreate path) is
+        // always reached after a device WaitIdle, so no submit or present still holds
+        // these semaphores.
+        m_RenderFinishedSemaphores.clear();
         m_Images.clear();
         m_ImageViews.clear();
 
