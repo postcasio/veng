@@ -7,6 +7,7 @@
 #include <fmt/format.h>
 
 #include <assimp/Importer.hpp>
+#include <assimp/config.h>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 
@@ -55,6 +56,9 @@ namespace Veng::Cook
                                   : 0u;
 
         Assimp::Importer importer;
+        // Collapse FBX pivots so each bone is a single node — see MeshImporter. All three
+        // importers must set this identically to keep one canonical bone order.
+        importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
         const aiScene* scene = importer.ReadFile(modelPath.string(), 0);
         if (scene == nullptr || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) != 0 ||
             scene->mRootNode == nullptr)

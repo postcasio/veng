@@ -210,6 +210,12 @@ namespace Veng::Cook
         Assimp::Importer importer;
         importer.SetPropertyInteger(AI_CONFIG_PP_SBP_REMOVE,
                                     aiPrimitiveType_POINT | aiPrimitiveType_LINE);
+        // Collapse FBX pivots so each bone is a single node whose animation channel fully
+        // describes its local transform — the runtime sampler resamples T*R*S per node and
+        // cannot reconstruct a transform split across synthetic $AssimpFbx$ pivot nodes.
+        // Must match the same setting in the skeleton and animation importers: all three
+        // share one canonical bone order, so the bone count must agree.
+        importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
         const aiScene* scene = importer.ReadFile(modelPath.string(), flags);
         if (scene == nullptr || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) != 0 ||
             scene->mRootNode == nullptr)
