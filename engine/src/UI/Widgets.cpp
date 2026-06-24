@@ -334,6 +334,20 @@ namespace Veng::UI
         ImGui::Image(static_cast<ImTextureID>(tex->GetTextureId()), size);
     }
 
+    void PlotLines(string_view label, std::span<const f32> values, PlotOptions options)
+    {
+        const string id = AsCStr(label);
+        const string overlay = AsCStr(options.OverlayText);
+
+        // FLT_MAX is ImGui's sentinel for "autoscale this bound"; map nullopt onto it.
+        const float scaleMin = options.ScaleMin.value_or(std::numeric_limits<float>::max());
+        const float scaleMax = options.ScaleMax.value_or(std::numeric_limits<float>::max());
+
+        ImGui::PlotLines(id.c_str(), values.data(), static_cast<int>(values.size()), options.Offset,
+                         options.OverlayText.empty() ? nullptr : overlay.c_str(), scaleMin,
+                         scaleMax, ImVec2(options.Size.x, options.Size.y));
+    }
+
     void ItemBorder(vec4 color, f32 thickness)
     {
         ImDrawList* drawList = ImGui::GetWindowDrawList();

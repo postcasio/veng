@@ -37,6 +37,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
+#include <span>
 #include <thread>
 
 using namespace Veng;
@@ -368,6 +370,25 @@ protected:
     {
         m_LastDelta = delta;
 
+        // Sample both timelines once per frame for the frame-time graph: the CPU delta the
+        // engine just measured, and the GPU frame time read back from the device timers (a
+        // frame or two late, which is fine for a rolling history). Smoke renders 20 frames and
+        // never opens the UI, so the buffers simply go unread there.
+        m_CpuFrameTimes.Push(delta * 1000.0f);
+        if (GetRenderContext().IsGpuTimingSupported())
+        {
+            m_GpuFrameTimes.Push(GetRenderContext().GetLastGpuFrameTimeMs());
+
+            // Per-pass GPU breakdown, keyed by pass name so each pass keeps its own rolling
+            // history across frames. A pass absent this frame (a topology change) simply stops
+            // receiving samples and its history freezes until it returns.
+            for (const Renderer::Context::GpuPassTiming& pass :
+                 GetRenderContext().GetLastGpuPassTimings())
+            {
+                m_PassFrameTimes[pass.Name].Push(pass.Milliseconds);
+            }
+        }
+
         // Smoke mode pins a fixed pose for golden comparison and never ticks the simulation,
         // so the capture is byte-identical run to run; the windowed app advances the spinners
         // through the registered systems.
@@ -447,6 +468,59 @@ protected:
     }
 
 private:
+    // A fixed-capacity ring buffer of millisecond samples for the frame-time graph. New
+    // samples overwrite the oldest once full; Head is the next write slot (and, once full,
+    // the oldest sample). Count saturates at Capacity.
+    struct FrameTimeHistory
+    {
+        static constexpr usize Capacity = 240;
+
+        std::array<f32, Capacity> Samples{};
+        usize Head = 0;
+        usize Count = 0;
+
+        void Push(const f32 milliseconds)
+        {
+            Samples[Head] = milliseconds;
+            Head = (Head + 1) % Capacity;
+            Count = std::min(Count + 1, Capacity);
+        }
+
+        // The most recently pushed sample, or 0 before the first push.
+        f32 Last() const { return Count == 0 ? 0.0f : Samples[(Head + Capacity - 1) % Capacity]; }
+    };
+
+    // Summary of a history window for the readout line above each plot.
+    struct FrameStats
+    {
+        f32 Min = 0.0f;
+        f32 Max = 0.0f;
+        f32 Average = 0.0f;
+    };
+
+    // Reduces the valid samples of a history to min / max / average. The valid range is the
+    // first Count slots: the buffer fills from index 0 before it wraps, so [0, Count) is
+    // always the populated set regardless of Head.
+    static FrameStats ComputeStats(const FrameTimeHistory& history)
+    {
+        if (history.Count == 0)
+        {
+            return {};
+        }
+
+        FrameStats stats{.Min = std::numeric_limits<f32>::max(), .Max = 0.0f, .Average = 0.0f};
+        f32 sum = 0.0f;
+        for (usize i = 0; i < history.Count; i++)
+        {
+            const f32 sample = history.Samples[i];
+            stats.Min = std::min(stats.Min, sample);
+            stats.Max = std::max(stats.Max, sample);
+            sum += sample;
+        }
+        stats.Average = sum / static_cast<f32>(history.Count);
+        return stats;
+    }
+
     // The fallback view when the scene resolves no camera: the fixed pose that frames the
     // 10x10 grid from above, pulled back and elevated.
     static CameraView DefaultCameraView(const f32 aspect)
@@ -759,6 +833,73 @@ private:
 
             (void)UI::Checkbox("Pause spin", m_PauseSpin);
         }
+
+        RenderFrameTimeGraph();
+    }
+
+    // Plots one rolling history: a label/stat line above a fixed-axis line graph. The axis is
+    // pinned to [0, max·1.25] (floored at one 60 Hz frame) so a line's height reads as absolute
+    // milliseconds, and the overlay reports the current sample.
+    static void PlotHistory(string_view name, const FrameTimeHistory& history, f32 height)
+    {
+        const FrameStats stats = ComputeStats(history);
+        UI::Text(fmt::format("{}: {:.2f} ms  (avg {:.2f}  min {:.2f}  max {:.2f})", name,
+                             history.Last(), stats.Average, stats.Min, stats.Max));
+
+        // A full buffer wraps, so the oldest sample sits at the write head; until then it is
+        // filled from index 0 and plots in array order.
+        const i32 offset =
+            history.Count == FrameTimeHistory::Capacity ? static_cast<i32>(history.Head) : 0;
+        const f32 scaleMax = glm::max(stats.Max * 1.25f, 1000.0f / 60.0f);
+        UI::PlotLines(fmt::format("##{}", name), {history.Samples.data(), history.Count},
+                      {
+                          .OverlayText = fmt::format("{:.2f} ms", history.Last()),
+                          .ScaleMin = 0.0f,
+                          .ScaleMax = scaleMax,
+                          .Offset = offset,
+                          .Size = {0.0f, height},
+                      });
+    }
+
+    // A rolling graph of CPU and GPU whole-frame time plus, below them, a per-pass GPU breakdown
+    // — one compact plot per render-graph pass, in execution order. The GPU sections appear only
+    // when the device exposes timestamp queries; otherwise a note stands in.
+    void RenderFrameTimeGraph()
+    {
+        if (auto graphWindow = UI::Window("Frame Time"))
+        {
+            PlotHistory("CPU", m_CpuFrameTimes, 80.0f);
+
+            UI::Spacing();
+            if (!GetRenderContext().IsGpuTimingSupported())
+            {
+                UI::TextDisabled("GPU timing unsupported on this device");
+                return;
+            }
+
+            PlotHistory("GPU", m_GpuFrameTimes, 80.0f);
+
+            // The per-pass histories are pushed in OnUpdate; here they are drawn in the live
+            // frame's execution order. A scrolling child keeps the long list from pushing the
+            // window taller than the screen.
+            const std::span<const Renderer::Context::GpuPassTiming> passes =
+                GetRenderContext().GetLastGpuPassTimings();
+            if (passes.empty())
+            {
+                return;
+            }
+
+            UI::SeparatorText("Passes (GPU)");
+            // A fixed-height scroll region: the pass list is long, so it scrolls rather than
+            // stretching the window past the screen.
+            if (auto passChild = UI::Child("Passes", {0.0f, 240.0f}))
+            {
+                for (const Renderer::Context::GpuPassTiming& pass : passes)
+                {
+                    PlotHistory(pass.Name, m_PassFrameTimes[pass.Name], 36.0f);
+                }
+            }
+        }
     }
 
     void WriteSceneCapture(const char* outPath) const
@@ -786,6 +927,15 @@ private:
 
         Log::Info("Wrote scene capture to {}", outPath);
     }
+
+    // Per-frame millisecond histories driving the frame-time graph: the engine-measured CPU
+    // delta and the device GPU frame time (populated only when timestamp queries are supported).
+    FrameTimeHistory m_CpuFrameTimes;
+    FrameTimeHistory m_GpuFrameTimes;
+
+    // Per-pass GPU histories keyed by render-graph pass name, so each pass's plot persists
+    // across frames while the live frame's timing list drives display order.
+    map<string, FrameTimeHistory> m_PassFrameTimes;
 
     // Topology/sizing knobs applied to the managed viewport through Configure; the per-frame
     // tonemap/bloom values ride the ViewState instead.

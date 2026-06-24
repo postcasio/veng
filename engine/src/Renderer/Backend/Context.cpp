@@ -326,12 +326,17 @@ namespace Veng::Renderer
             m_Native->TimestampValidMask =
                 validBits >= 64 ? ~0ULL : ((static_cast<u64>(1) << validBits) - 1);
             m_Native->TimestampWritten.assign(m_Native->MaxFramesInFlight, false);
-            m_Native->TimestampPool = m_Native->Device
-                                          .createQueryPool({
-                                              .queryType = vk::QueryType::eTimestamp,
-                                              .queryCount = m_Native->MaxFramesInFlight * 2,
-                                          })
-                                          .value;
+            m_Native->ScopeNames.resize(m_Native->MaxFramesInFlight);
+
+            // Per frame slot: the frame (start,end) pair plus MaxGpuScopes (start,end) scope pairs.
+            const u32 queriesPerFrame = 2 + 2 * Native::MaxGpuScopes;
+            m_Native->TimestampPool =
+                m_Native->Device
+                    .createQueryPool({
+                        .queryType = vk::QueryType::eTimestamp,
+                        .queryCount = m_Native->MaxFramesInFlight * queriesPerFrame,
+                    })
+                    .value;
         }
     }
 
@@ -573,6 +578,64 @@ namespace Veng::Renderer
         return m_GpuFrameTimeMs;
     }
 
+    std::span<const Context::GpuPassTiming> Context::GetLastGpuPassTimings() const
+    {
+        return m_GpuPassTimings;
+    }
+
+    void Context::BeginGpuScope(CommandBuffer& cmd, const string_view name)
+    {
+        // Only inside a driven frame are the queries reset and writable; a graph executed
+        // out-of-frame (ImmediateCommands, a one-shot render) records no scopes.
+        if (!m_GpuTimingSupported || !m_GpuScopeRecording)
+        {
+            return;
+        }
+
+        // Past the budget: still push a sentinel so the matching EndGpuScope balances the stack.
+        if (m_Native->CurrentScopeNames.size() >= Native::MaxGpuScopes)
+        {
+            m_Native->OpenScopeStack.push_back(Native::MaxGpuScopes);
+            return;
+        }
+
+        const u32 slot = m_Native->CurrentFrameInFlight;
+        const u32 scopeBase = (slot * (2 + 2 * Native::MaxGpuScopes)) + 2;
+        const auto index = static_cast<u32>(m_Native->CurrentScopeNames.size());
+
+        m_Native->CurrentScopeNames.emplace_back(name);
+        m_Native->OpenScopeStack.push_back(index);
+        GetVkCommandBuffer(cmd).writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe,
+                                               m_Native->TimestampPool, scopeBase + (index * 2));
+    }
+
+    void Context::EndGpuScope(CommandBuffer& cmd)
+    {
+        // Symmetric with BeginGpuScope: out-of-frame the matching Begin pushed nothing, so the
+        // stack stays balanced without a pop here.
+        if (!m_GpuTimingSupported || !m_GpuScopeRecording)
+        {
+            return;
+        }
+
+        VE_ASSERT(!m_Native->OpenScopeStack.empty(),
+                  "Context::EndGpuScope called without a matching BeginGpuScope");
+        const u32 index = m_Native->OpenScopeStack.back();
+        m_Native->OpenScopeStack.pop_back();
+
+        // The sentinel marks a scope opened past the per-frame budget — nothing to close.
+        if (index == Native::MaxGpuScopes)
+        {
+            return;
+        }
+
+        const u32 slot = m_Native->CurrentFrameInFlight;
+        const u32 scopeBase = (slot * (2 + 2 * Native::MaxGpuScopes)) + 2;
+        GetVkCommandBuffer(cmd).writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe,
+                                               m_Native->TimestampPool,
+                                               scopeBase + (index * 2) + 1);
+    }
+
     bool Context::IsFormatLinearFilterSupported(const Format format) const
     {
         const vk::FormatProperties props =
@@ -609,33 +672,70 @@ namespace Veng::Renderer
 
         commandBuffer->Begin();
 
-        // GPU frame timing: read back the pair this slot wrote on its previous cycle (its fence
-        // was just waited by AcquireNextFrame, so the results are ready), then reset the pair and
-        // write the frame-start timestamp. The slot is read only after it has been written once.
+        // GPU timing: read back the queries this slot wrote on its previous cycle (its fence
+        // was just waited by AcquireNextFrame, so the results are ready), then reset the slot's
+        // whole query run and write the frame-start timestamp. The slot is read only after it
+        // has been written once.
         if (m_GpuTimingSupported)
         {
             const u32 slot = m_Native->CurrentFrameInFlight;
-            const vk::CommandBuffer vkCmd = GetVkCommandBuffer(*commandBuffer);
+            const u32 queriesPerFrame = 2 + 2 * Native::MaxGpuScopes;
+            const u32 frameBase = slot * queriesPerFrame;
+            const u32 scopeBase = frameBase + 2;
+            const u64 mask = m_Native->TimestampValidMask;
+            const auto ticksToMs = [this](const u64 ticks)
+            { return static_cast<f32>(ticks) * m_Native->TimestampPeriodNs * 1e-6f; };
 
             if (m_Native->TimestampWritten[slot])
             {
-                std::array<u64, 2> stamps{};
-                const vk::Result result = m_Native->Device.getQueryPoolResults(
-                    m_Native->TimestampPool, slot * 2, 2, sizeof(stamps), stamps.data(),
+                std::array<u64, 2> frameStamps{};
+                const vk::Result frameResult = m_Native->Device.getQueryPoolResults(
+                    m_Native->TimestampPool, frameBase, 2, sizeof(frameStamps), frameStamps.data(),
                     sizeof(u64), vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
-                if (result == vk::Result::eSuccess)
+                if (frameResult == vk::Result::eSuccess)
                 {
-                    const u64 begin = stamps[0] & m_Native->TimestampValidMask;
-                    const u64 end = stamps[1] & m_Native->TimestampValidMask;
-                    const u64 ticks = (end - begin) & m_Native->TimestampValidMask;
-                    m_GpuFrameTimeMs =
-                        static_cast<f32>(ticks) * m_Native->TimestampPeriodNs * 1e-6f;
+                    const u64 ticks = (frameStamps[1] - frameStamps[0]) & mask;
+                    m_GpuFrameTimeMs = ticksToMs(ticks);
+                }
+
+                // The scope names recorded into this slot last cycle give both the count of
+                // scope pairs to read (only the written ones — an eWait read of an unwritten
+                // query would hang) and the label for each measured pass.
+                const vector<string>& names = m_Native->ScopeNames[slot];
+                m_GpuPassTimings.clear();
+                if (!names.empty())
+                {
+                    vector<u64> scopeStamps(names.size() * 2);
+                    const vk::Result scopeResult = m_Native->Device.getQueryPoolResults(
+                        m_Native->TimestampPool, scopeBase, static_cast<u32>(scopeStamps.size()),
+                        scopeStamps.size() * sizeof(u64), scopeStamps.data(), sizeof(u64),
+                        vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+                    if (scopeResult == vk::Result::eSuccess)
+                    {
+                        m_GpuPassTimings.reserve(names.size());
+                        for (usize i = 0; i < names.size(); i++)
+                        {
+                            const u64 ticks =
+                                (scopeStamps[(i * 2) + 1] - scopeStamps[i * 2]) & mask;
+                            m_GpuPassTimings.push_back({
+                                .Name = names[i],
+                                .Milliseconds = ticksToMs(ticks),
+                            });
+                        }
+                    }
                 }
             }
 
-            vkCmd.resetQueryPool(m_Native->TimestampPool, slot * 2, 2);
+            const vk::CommandBuffer vkCmd = GetVkCommandBuffer(*commandBuffer);
+            vkCmd.resetQueryPool(m_Native->TimestampPool, frameBase, queriesPerFrame);
             vkCmd.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe, m_Native->TimestampPool,
-                                 slot * 2);
+                                 frameBase);
+
+            // Open a fresh recording for this slot's new frame; scopes append as passes record.
+            // The reset above makes the slot's queries writable, so scope writes are now legal.
+            m_Native->CurrentScopeNames.clear();
+            m_Native->OpenScopeStack.clear();
+            m_GpuScopeRecording = true;
         }
 
         // Transition any resources that went resident since last frame into Sample
@@ -664,13 +764,18 @@ namespace Veng::Renderer
         }
 
         // GPU frame timing: the frame-end timestamp, capturing the whole command buffer's work.
+        // The scope names recorded this frame travel to the slot so its next readback can pair
+        // each duration with its pass.
         if (m_GpuTimingSupported)
         {
             const u32 slot = m_Native->CurrentFrameInFlight;
+            const u32 frameBase = slot * (2 + 2 * Native::MaxGpuScopes);
             GetVkCommandBuffer(*commandBuffer)
                 .writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, m_Native->TimestampPool,
-                                slot * 2 + 1);
+                                frameBase + 1);
+            m_Native->ScopeNames[slot] = std::move(m_Native->CurrentScopeNames);
             m_Native->TimestampWritten[slot] = true;
+            m_GpuScopeRecording = false;
         }
 
         commandBuffer->End();

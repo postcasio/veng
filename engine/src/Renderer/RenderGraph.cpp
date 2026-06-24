@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
 #include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
@@ -230,6 +231,7 @@ namespace Veng::Renderer
         // state (kind, layers, callback) Compile adds.
         struct Pass
         {
+            string Name;
             RenderGraph::PassType Type = RenderGraph::PassType::Graphics;
             u32 LayerCount = 1;
             u32 ViewMask = 0;
@@ -402,6 +404,7 @@ namespace Veng::Renderer
         for (usize i = 0; i < m_Passes.size(); i++)
         {
             CompiledGraph::Native::Pass baked;
+            baked.Name = m_Passes[i]->Name;
             baked.Type = m_Passes[i]->Type;
             baked.LayerCount = m_Passes[i]->LayerCount;
             baked.ViewMask = m_Passes[i]->ViewMask;
@@ -482,6 +485,11 @@ namespace Veng::Renderer
 
         for (const Native::Pass& pass : native.Passes)
         {
+            // Bracket the pass's GPU work — transitions included, so a barrier stall counts
+            // against the pass that waited — with a timestamp scope. Inert unless the device
+            // supports timestamps; the timestamps sit outside BeginRendering/EndRendering.
+            native.Context->BeginGpuScope(cmd, pass.Name);
+
             // 1. Replay the baked transitions. The source state and subresource range
             // come from each image's live tracked state, so swapchain and
             // transfer-produced imports stay correct each frame.
@@ -572,6 +580,8 @@ namespace Veng::Renderer
                 PassContext context(cmd, resolved, resolvedBuffers, userData);
                 pass.Execute(context);
             }
+
+            native.Context->EndGpuScope(cmd);
         }
     }
 }

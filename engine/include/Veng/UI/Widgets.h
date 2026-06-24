@@ -192,6 +192,16 @@ namespace Veng::UI
     /// @param size  Display size in pixels.
     void Image(const Ref<ImGuiTexture>& tex, vec2 size);
 
+    /// @brief Plots a line graph of a value series.
+    ///
+    /// The series is plotted left (oldest) to right (newest); `options.Offset` names the
+    /// oldest sample so a ring buffer plots in order without being rotated first. The plot
+    /// is non-interactive — a rolling readout, not an editable widget — so it returns void.
+    /// @param label    Graph label and ImGui id.
+    /// @param values   The value series to plot.
+    /// @param options  Overlay text, axis scale, ring-buffer offset, and graph size.
+    void PlotLines(string_view label, std::span<const f32> values, PlotOptions options = {});
+
     /// @brief Strokes a border around the most recently submitted item's rectangle.
     ///
     /// Draws over the previous item without consuming layout space — an accent frame on a

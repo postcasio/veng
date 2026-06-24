@@ -146,11 +146,20 @@ namespace Veng::Renderer
         u32 CurrentFrameInFlight = 0;
         u32 MaxFramesInFlight = 2;
 
-        /// @brief Timestamp query pool holding a (start, end) pair per frame-in-flight.
+        /// @brief Maximum named GPU timestamp scopes measured per frame-in-flight.
         ///
-        /// Query 2·slot is written top-of-pipe at BeginFrame, 2·slot+1 bottom-of-pipe at
-        /// EndFrame; the pair is read back when that slot's frame next retires. Null when the
-        /// device reports no timestamp support.
+        /// Bounds the per-frame query allocation; scopes opened past this budget go
+        /// unmeasured for that frame. Comfortably above the pass count of a frame driving
+        /// several viewports plus the gather/composite tail.
+        static constexpr u32 MaxGpuScopes = 128;
+
+        /// @brief Timestamp query pool: per frame-in-flight, a (start, end) frame pair followed
+        /// by MaxGpuScopes (start, end) scope pairs.
+        ///
+        /// A slot's run begins at slot·(2 + 2·MaxGpuScopes): queries 0/1 are the frame
+        /// top-of-pipe/bottom-of-pipe pair, and scope i is queries 2+2·i / 3+2·i (both
+        /// bottom-of-pipe). The whole run is reset at BeginFrame and read back when that slot's
+        /// frame next retires. Null when the device reports no timestamp support.
         vk::QueryPool TimestampPool;
         /// @brief Nanoseconds per timestamp tick (PhysicalDeviceLimits::timestampPeriod).
         f32 TimestampPeriodNs = 0.0f;
@@ -163,6 +172,21 @@ namespace Veng::Renderer
         ///
         /// Guards the readback so a slot is never read before its first frame wrote it.
         vector<bool> TimestampWritten;
+
+        /// @brief Per-slot pass names recorded into that slot's scope queries on its last frame.
+        ///
+        /// Sized [MaxFramesInFlight]; the count also gives how many scope query pairs to read
+        /// back, since the scope count varies per frame with the graph topology. Indexed by slot.
+        vector<vector<string>> ScopeNames;
+        /// @brief Names of the scopes opened during the in-progress recording, in open order.
+        ///
+        /// Moved into ScopeNames[slot] at EndFrame; cleared at the next BeginFrame for the slot.
+        vector<string> CurrentScopeNames;
+        /// @brief Open BeginGpuScope query-pair indices awaiting their EndGpuScope (a nesting stack).
+        ///
+        /// Holds MaxGpuScopes as a sentinel for a scope opened past the per-frame budget, so the
+        /// matching EndGpuScope balances without writing a timestamp.
+        vector<u32> OpenScopeStack;
 
         /// @brief Per-in-flight-frame deferred-destruction bins.
         ///

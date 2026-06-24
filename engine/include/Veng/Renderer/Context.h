@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <span>
 
 #include <Veng/Veng.h>
 #include <Veng/Renderer/Types.h>
@@ -146,6 +147,42 @@ namespace Veng::Renderer
         /// IsGpuTimingSupported() is false.
         /// @return The last completed frame's GPU time in ms, or 0 when unavailable.
         [[nodiscard]] f32 GetLastGpuFrameTimeMs() const;
+
+        /// @brief One render pass's measured GPU duration for the last completed frame.
+        struct GpuPassTiming
+        {
+            /// @brief The pass's name, as declared on the RenderGraph.
+            string Name;
+            /// @brief The pass's GPU duration in milliseconds.
+            f32 Milliseconds = 0.0f;
+        };
+
+        /// @brief Returns the per-pass GPU durations measured for the last completed frame.
+        ///
+        /// One entry per timestamp scope bracketed during the frame, in execution order across
+        /// every CompiledGraph::Execute of the frame (scene render, then the gather/composite
+        /// tail). Each pass is bracketed by a timestamp pair around its GPU work, so a duration
+        /// includes the pass's own barrier waits. Empty before the first measurement, whenever
+        /// IsGpuTimingSupported() is false, and on a frame whose scope count exceeded the
+        /// per-frame budget (the surplus scopes go unmeasured). The span is valid until the
+        /// next BeginFrame.
+        /// @return The last completed frame's per-pass timings, in execution order.
+        [[nodiscard]] std::span<const GpuPassTiming> GetLastGpuPassTimings() const;
+
+        /// @brief Opens a named GPU timestamp scope, recording a begin timestamp into @p cmd.
+        ///
+        /// The RenderGraph brackets every pass with a scope; a caller recording raw passes
+        /// outside the graph may bracket its own work the same way. Scopes may nest and must be
+        /// balanced by an EndGpuScope on the same command buffer. A no-op when
+        /// IsGpuTimingSupported() is false or the per-frame scope budget is exhausted.
+        /// @param cmd   Command buffer the begin timestamp is recorded into.
+        /// @param name  Label paired with this scope's duration in GetLastGpuPassTimings().
+        void BeginGpuScope(CommandBuffer& cmd, string_view name);
+
+        /// @brief Closes the most recently opened GPU timestamp scope, recording its end timestamp.
+        /// @pre A matching BeginGpuScope is open — asserted otherwise.
+        /// @param cmd  Command buffer the end timestamp is recorded into.
+        void EndGpuScope(CommandBuffer& cmd);
 
         /// @brief Returns true when the device can linearly filter a sampled image of @p format.
         ///
@@ -358,6 +395,19 @@ namespace Veng::Renderer
         ///
         /// Written by BeginFrame from the timestamp-query pair of the frame that just retired.
         f32 m_GpuFrameTimeMs = 0.0f;
+
+        /// @brief Per-pass GPU durations of the frame that just retired, in execution order.
+        ///
+        /// Rebuilt by BeginFrame from the retiring slot's scope timestamps, paired with the
+        /// pass names recorded into that slot. Returned by GetLastGpuPassTimings().
+        vector<GpuPassTiming> m_GpuPassTimings;
+
+        /// @brief True between BeginFrame and EndFrame, when the frame's query run is reset.
+        ///
+        /// Gates BeginGpuScope/EndGpuScope: a graph executed outside the frame loop (an
+        /// ImmediateCommands render, a one-shot offscreen render) writes no timestamps, since
+        /// its queries were never reset. Per-pass timing covers only the driven frame.
+        bool m_GpuScopeRecording = false;
 
         /// @brief Bindless-sampled resources awaiting their one-time graphics-queue acquire.
         ///

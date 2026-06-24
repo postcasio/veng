@@ -43,6 +43,27 @@ namespace Veng::UI
         const char* Format = "%.3f";
     };
 
+    /// @brief Configuration for the `PlotLines` graph widget.
+    ///
+    /// `ScaleMin`/`ScaleMax` are optional: `nullopt` autoscales that bound to the series'
+    /// own min/max, while a present value pins the axis so a line's height maps to an
+    /// absolute quantity (frame milliseconds, say). `OverlayText` draws centered over the
+    /// plot — a current-value readout — and an empty view draws none. `Offset` is the index
+    /// of the oldest sample, so a ring buffer plots oldest-to-newest without being rotated.
+    struct PlotOptions
+    {
+        /// @brief Text drawn centered over the plot; an empty view draws none.
+        string_view OverlayText;
+        /// @brief Lower bound of the value axis; `nullopt` autoscales to the series minimum.
+        optional<f32> ScaleMin;
+        /// @brief Upper bound of the value axis; `nullopt` autoscales to the series maximum.
+        optional<f32> ScaleMax;
+        /// @brief Index of the oldest sample for ring-buffer data; 0 plots in array order.
+        i32 Offset = 0;
+        /// @brief Graph size in pixels; a zero component fills width / takes the default height.
+        vec2 Size = {0.0f, 0.0f};
+    };
+
     /// @brief Flags controlling window and child-region display behavior.
     ///
     /// A closed engine enum; the `.cpp` maps each bit to its `ImGuiWindowFlags_` counterpart.
