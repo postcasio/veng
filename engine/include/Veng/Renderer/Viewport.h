@@ -76,10 +76,11 @@ namespace Veng::Renderer
         SceneRendererSettings Settings;
         /// @brief Uniform render-resolution multiplier on the region extent.
         ///
-        /// The SceneRenderer is sized to round(Region.Extent * RenderScale); the placement region
-        /// is unchanged, so the compositor scales the result to fill it. (0,1] renders below the
-        /// region for dynamic resolution scaling and is upscaled; >1 supersamples. Uniform, so the
-        /// render aspect matches the region. Must be > 0.
+        /// The SceneRenderer is sized to round(Region.Extent * upper-bound-scale) — the static
+        /// RenderScale here, or the dynamic-resolution MaxScale once SetDynamicResolution is called;
+        /// the placement region is unchanged, so the compositor scales the result to fill it. (0,1]
+        /// renders below the region and is upscaled; >1 supersamples. Uniform, so the render aspect
+        /// matches the region. Must be > 0.
         f32 RenderScale = 1.0f;
         /// @brief Whether the engine compositor places this viewport into its region.
         ViewportRole Role = ViewportRole::Offscreen;
@@ -88,10 +89,11 @@ namespace Veng::Renderer
     /// @brief A region of the window, a renderer, and a role: a renderable view into a world.
     ///
     /// Owns a SceneRenderer, carries a ViewportRegion (its window placement rectangle) and a
-    /// RenderScale (its render target is the region extent times the scale), takes a per-frame
-    /// ViewState pushed by its owner, and on Render does the Execute + PrepareForAccess(Sample)
-    /// pair itself. Its product is a sampleable Ref<ImageView> (GetOutput) and a bindless
-    /// TextureHandle (GetOutputHandle).
+    /// RenderScale (its render target is the region extent times the upper-bound scale — the static
+    /// scale, or the dynamic-resolution MaxScale — with the current scale rendering a sub-rect),
+    /// takes a per-frame ViewState pushed by its owner, and on Render does the Execute +
+    /// PrepareForAccess(Sample) pair itself. Its product is a sampleable Ref<ImageView> (GetOutput)
+    /// and a bindless TextureHandle (GetOutputHandle).
     ///
     /// Single-owner (Unique); Create is the factory. A region or settings change invalidates
     /// GetOutput()/GetOutputHandle() exactly as the underlying SceneRenderer's Resize/Configure
@@ -129,10 +131,12 @@ namespace Veng::Renderer
 
         /// @brief Sets the uniform render-resolution multiplier on the region extent.
         ///
-        /// The render target becomes round(GetRegion().Extent * scale) while the placement region
-        /// is unchanged; the compositor scales the result to fill the region. A real change
+        /// While dynamic resolution is enabled this is the current (per-frame) scale: the render
+        /// target is sized to the controller's MaxScale, so a scale at or below it only adjusts the
+        /// rendered sub-rect — no resize. With dynamic resolution off the scale is the allocation
+        /// ceiling, so the target becomes round(GetRegion().Extent * scale) and a real change
         /// debounces an internal SceneRenderer::Resize to the next Render, invalidating
-        /// GetOutput()/GetOutputHandle() (re-fetch after). Drives dynamic resolution scaling.
+        /// GetOutput()/GetOutputHandle() (re-fetch after).
         /// @param scale  The multiplier; (0,1] reduces resolution, >1 supersamples.
         /// @pre scale > 0 — asserted otherwise.
         void SetRenderScale(f32 scale);
@@ -143,15 +147,22 @@ namespace Veng::Renderer
         /// @brief Enables automatic render-scale control from measured GPU frame time.
         ///
         /// Each Render the viewport reads Context::GetLastGpuFrameTimeMs() and eases its
-        /// RenderScale toward the settings' frame budget (ComputeDynamicResolutionScale),
-        /// resizing only when the integer render extent changes. The control is inert — the
-        /// scale is left as set — when Context::IsGpuTimingSupported() is false. The whole-frame
-        /// GPU time drives it, so it is meaningful for the dominant (primary) viewport; on a
-        /// device with several heavy viewports the measurement is not attributed per viewport.
+        /// RenderScale toward the settings' frame budget (ComputeDynamicResolutionScale), rendering
+        /// into a sub-rect of the target without a resize. The render target is sized to MaxScale —
+        /// the ceiling the controller can reach — so this call resizes the SceneRenderer images
+        /// whenever MaxScale moves the integer extent (invalidating GetOutput()/GetOutputHandle();
+        /// re-fetch after), and a MaxScale below 1 shrinks them rather than allocating full-region.
+        /// The current scale is clamped into [MinScale, MaxScale]. The control is inert — the scale
+        /// is left as set — when Context::IsGpuTimingSupported() is false. The whole-frame GPU time
+        /// drives it, so it is meaningful for the dominant (primary) viewport; on a device with
+        /// several heavy viewports the measurement is not attributed per viewport.
         /// @param settings  The controller tuning (budget, scale bounds, deadband, rate limit).
         void SetDynamicResolution(const DynamicResolutionSettings& settings);
 
         /// @brief Disables automatic render-scale control, holding the current RenderScale.
+        ///
+        /// The allocation ceiling reverts from MaxScale to the held static scale, which may move the
+        /// extent and debounce a resize (invalidating GetOutput()/GetOutputHandle(); re-fetch after).
         void ClearDynamicResolution();
 
         /// @brief Returns whether automatic render-scale control is enabled.
@@ -265,26 +276,40 @@ namespace Veng::Renderer
         /// always names the live output. The old slot retires through the per-frame window.
         void RefreshOutputHandle();
 
+        /// @brief The upper-bound render scale the allocation is sized to.
+        ///
+        /// MaxScale when the dynamic-resolution controller is enabled, else the static RenderScale
+        /// (its own ceiling). The render target is allocated at this scale, so a current-scale move
+        /// below it renders into a sub-rect without a resize, and a sub-1 MaxScale shrinks the
+        /// target instead of allocating full-region.
+        /// @return The ceiling scale, > 0.
+        [[nodiscard]] f32 AllocationScale() const;
+
         /// @brief The renderer's allocation extent for a given scale, clamped to ≥ 1.
         ///
-        /// round(region * max(scale, 1)): a scale ≤ 1 (dynamic resolution) renders into a sub-rect
-        /// of the region-sized allocation and does not grow it; a scale > 1 (supersample) grows it.
         /// @param scale  The render-resolution multiplier to apply.
-        /// @return round(m_Region.Extent * max(scale, 1)), never below {1,1}.
+        /// @return round(m_Region.Extent * scale), never below {1,1}.
         [[nodiscard]] uvec2 ExtentForScale(f32 scale) const;
 
-        /// @brief The renderer's allocation extent at the current RenderScale, clamped to ≥ 1.
+        /// @brief The renderer's allocation extent at the current allocation scale, clamped to ≥ 1.
         ///
-        /// @return ExtentForScale(m_RenderScale).
+        /// @return ExtentForScale(AllocationScale()).
         [[nodiscard]] uvec2 ScaledExtent() const;
 
         /// @brief The per-frame render fraction of the allocation pushed into SceneView::RenderScale.
         ///
-        /// m_RenderScale / max(m_RenderScale, 1): the fraction of the (allocation-sized) target to
-        /// render this frame. A scale ≤ 1 yields that fraction (a sub-rect); a scale > 1 yields 1
-        /// (the allocation was grown to supersample, so it renders fully).
+        /// m_RenderScale / AllocationScale(): the fraction of the (allocation-sized) target to
+        /// render this frame. At the allocation scale it is 1 (renders the full target); below it a
+        /// sub-rect. Clamped to ≤ 1 against a transient current-scale-above-ceiling window.
         /// @return The sub-rect fraction in (0, 1].
         [[nodiscard]] f32 ViewRenderScale() const;
+
+        /// @brief Debounces a SceneRenderer::Resize to the next Render when the allocation moved.
+        ///
+        /// Compares the allocation extent computed after a scale/bound change against the caller's
+        /// captured prior extent; on a real change (and a non-zero region) it sets m_PendingExtent.
+        /// @param priorAlloc  The allocation extent captured before the change.
+        void DebounceAllocationResize(uvec2 priorAlloc);
 
         /// @brief Advances the render scale from measured GPU frame time when control is enabled.
         ///

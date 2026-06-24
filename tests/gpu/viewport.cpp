@@ -145,8 +145,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
 TEST_CASE_FIXTURE(
     Veng::Test::GpuFixture,
-    "viewport: a render scale <= 1 sub-rects the allocation without resizing; the output stays "
-    "allocation-sized; a supersample grows it; dynamic resolution holds without timing")
+    "viewport: with dynamic resolution off the static render scale sizes the allocation; a change "
+    "resizes; a supersample grows it")
 {
     RegisterBuiltinTypes(Types);
 
@@ -157,8 +157,8 @@ TEST_CASE_FIXTURE(
     const Unique<Scene> scene = Scene::Create(Types);
     const Ref<Mesh> cube = PopulateCubeScene(Context, assets, *scene);
 
-    // Half-scale at construction: the allocation is the region (a scale <= 1 never grows it); the
-    // output is allocation-sized and the half-scale shows up as the internal valid sub-rect.
+    // Dynamic resolution off: the static scale is the allocation ceiling, so a half-scale sizes the
+    // target to region/2 directly — not a full-region allocation rendered into a sub-rect.
     const Unique<Viewport> viewport = Viewport::Create({
         .Context = Context,
         .Assets = assets,
@@ -168,49 +168,101 @@ TEST_CASE_FIXTURE(
     });
     CHECK(viewport->GetRegion().Extent == region);
     CHECK(viewport->GetRenderScale() == doctest::Approx(0.5f));
-    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
-    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y);
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x / 2);
+    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y / 2);
 
     viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(region), .Delta = 0.0f});
     Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
-    // The rendered sub-rect is round(allocation * 0.5); the output image stays full size.
+    // The allocation is rendered fully (the static scale is the ceiling, so the fraction is 1).
     CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{32, 24});
-    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
 
-    // A scale change within (0, 1] does NOT resize: the allocation and the output Ref are stable
-    // (no generation bump), the change rides the per-frame sub-rect. This is the no-hitch win.
+    // Changing the static scale moves the allocation ceiling: a real resize (generation bumps, a
+    // fresh output Ref) — the deliberate cost of not over-allocating a scale that never grows.
     const Ref<ImageView> beforeScale = viewport->GetOutput();
     const u64 generationBefore = viewport->GetOutputGeneration();
     viewport->SetRenderScale(1.0f);
     Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
-    CHECK(viewport->GetOutputGeneration() == generationBefore);
-    CHECK(viewport->GetOutput().get() == beforeScale.get());
+    CHECK(viewport->GetOutputGeneration() > generationBefore);
+    CHECK(viewport->GetOutput().get() != beforeScale.get());
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
     CHECK(viewport->GetRenderer().GetValidExtent() == region);
 
-    viewport->SetRenderScale(0.25f);
-    Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
-    CHECK(viewport->GetOutputGeneration() == generationBefore);
-    CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{16, 12});
-
-    // A supersample (scale > 1) grows the allocation: a real resize (generation bumps, the output
-    // image exceeds the region), rendered fully (valid == allocation).
+    // A supersample (scale > 1) grows the allocation, rendered fully (valid == allocation).
     viewport->SetRenderScale(2.0f);
     Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
-    CHECK(viewport->GetOutputGeneration() > generationBefore);
     CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x * 2);
     CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y * 2);
     CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{region.x * 2, region.y * 2});
+}
 
-    // Enabling dynamic resolution outside a frame loop (ImmediateCommands drives no BeginFrame, so
-    // GetLastGpuFrameTimeMs stays 0) holds the scale: the controller is a safe no-op with no data.
-    viewport->SetRenderScale(0.75f);
-    viewport->SetDynamicResolution({});
-    CHECK(viewport->IsDynamicResolutionEnabled());
-    const f32 heldScale = viewport->GetRenderScale();
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "viewport: dynamic resolution sizes the allocation to MaxScale; the current scale sub-rects it "
+    "without resizing; a MaxScale change resizes")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    constexpr uvec2 region{64, 48};
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Ref<Mesh> cube = PopulateCubeScene(Context, assets, *scene);
+
+    const Unique<Viewport> viewport = Viewport::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Region = {.Offset = {0, 0}, .Extent = region},
+        .Role = ViewportRole::Offscreen,
+    });
+    viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(region), .Delta = 0.0f});
     Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
-    CHECK(viewport->GetRenderScale() == doctest::Approx(heldScale));
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
+
+    // Enabling dynamic resolution with a sub-1 MaxScale shrinks the allocation to region * MaxScale:
+    // a real resize, and the current scale is clamped down into [MinScale, MaxScale]. (No frame loop,
+    // so GetLastGpuFrameTimeMs stays 0 and the controller holds the scale each Render.)
+    const u64 generationBefore = viewport->GetOutputGeneration();
+    viewport->SetDynamicResolution({.MinScale = 0.5f, .MaxScale = 0.75f});
+    CHECK(viewport->IsDynamicResolutionEnabled());
+    CHECK(viewport->GetRenderScale() == doctest::Approx(0.75f));
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
+    CHECK(viewport->GetOutputGeneration() > generationBefore);
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == 48);
+    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == 36);
+    // At the ceiling the allocation renders fully.
+    CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{48, 36});
+
+    // A current-scale move below MaxScale rides the per-frame sub-rect: no resize, stable output Ref
+    // — the no-hitch dynamic-resolution win.
+    const Ref<ImageView> beforeSubRect = viewport->GetOutput();
+    const u64 generationSubRect = viewport->GetOutputGeneration();
+    viewport->SetRenderScale(0.5f);
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
+    CHECK(viewport->GetOutputGeneration() == generationSubRect);
+    CHECK(viewport->GetOutput().get() == beforeSubRect.get());
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == 48);
+    // round(allocation {48,36} * (0.5 / 0.75)).
+    CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{32, 24});
+
+    // Raising MaxScale resizes the allocation back up (the point of the option).
+    const u64 generationMax = viewport->GetOutputGeneration();
+    viewport->SetDynamicResolution({.MinScale = 0.5f, .MaxScale = 1.0f});
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
+    CHECK(viewport->GetOutputGeneration() > generationMax);
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
+    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y);
+
+    // Clearing reverts the allocation ceiling to the held static scale (0.5), resizing down.
+    CHECK(viewport->GetRenderScale() == doctest::Approx(0.5f));
+    const u64 generationClear = viewport->GetOutputGeneration();
     viewport->ClearDynamicResolution();
     CHECK_FALSE(viewport->IsDynamicResolutionEnabled());
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
+    CHECK(viewport->GetOutputGeneration() > generationClear);
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x / 2);
+    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y / 2);
+    CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{32, 24});
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

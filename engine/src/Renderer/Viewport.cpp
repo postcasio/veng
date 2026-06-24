@@ -89,20 +89,14 @@ namespace Veng::Renderer
             return;
         }
 
-        // The render target is allocated at the high-water-mark extent; a scale <= 1 (dynamic
-        // resolution scaling) renders into a sub-rect of it and is pushed per frame through the
-        // SceneView, so it never resizes. Only a change that moves the *allocation* extent — a
-        // supersample factor (scale > 1) growing or shrinking it — debounces a resize.
+        // The allocation tracks the upper-bound scale (DRS MaxScale, or the static scale when DRS
+        // is off). While DRS is enabled the current scale stays at or below MaxScale, so a current-
+        // scale move never changes the allocation — it only adjusts the per-frame sub-rect fraction
+        // pushed through the SceneView. With DRS off the static scale *is* the upper bound, so a
+        // change moves the allocation and debounces a resize.
         const uvec2 priorAlloc = ScaledExtent();
         m_RenderScale = scale;
-        if (m_Region.Extent.x != 0 && m_Region.Extent.y != 0)
-        {
-            const uvec2 newAlloc = ScaledExtent();
-            if (newAlloc != priorAlloc)
-            {
-                m_PendingExtent = newAlloc;
-            }
-        }
+        DebounceAllocationResize(priorAlloc);
     }
 
     f32 Viewport::GetRenderScale() const
@@ -112,12 +106,23 @@ namespace Veng::Renderer
 
     void Viewport::SetDynamicResolution(const DynamicResolutionSettings& settings)
     {
+        // The allocation is sized to MaxScale (the high-water mark the controller can reach), so a
+        // MaxScale change resizes the renderer images — the point of the bound. The current scale
+        // is clamped into the new band so it never exceeds the allocation between this call and the
+        // next controller update (a ViewRenderScale > 1 would render outside the target).
+        const uvec2 priorAlloc = ScaledExtent();
         m_DynamicResolution = settings;
+        m_RenderScale = glm::clamp(m_RenderScale, settings.MinScale, settings.MaxScale);
+        DebounceAllocationResize(priorAlloc);
     }
 
     void Viewport::ClearDynamicResolution()
     {
+        // The allocation scale flips from MaxScale back to the (now static) current scale, which
+        // may move the allocation extent and debounce a resize.
+        const uvec2 priorAlloc = ScaledExtent();
         m_DynamicResolution.reset();
+        DebounceAllocationResize(priorAlloc);
     }
 
     bool Viewport::IsDynamicResolutionEnabled() const
@@ -130,25 +135,47 @@ namespace Veng::Renderer
         return m_OutputGeneration;
     }
 
+    f32 Viewport::AllocationScale() const
+    {
+        // The allocation is sized to the upper bound of the render scale: MaxScale when the dynamic-
+        // resolution controller owns the scale, else the static scale (its own ceiling). Sizing to
+        // the ceiling is what lets a current-scale move render into a sub-rect without a resize, and
+        // lets a MaxScale below 1 actually shrink the images rather than allocating full-region.
+        return m_DynamicResolution ? m_DynamicResolution->MaxScale : m_RenderScale;
+    }
+
     uvec2 Viewport::ExtentForScale(f32 scale) const
     {
-        // The allocation tracks the region times the supersample factor (a scale > 1); a scale
-        // <= 1 is a sub-rect of the region-sized allocation, so it never grows it.
-        const vec2 allocated = glm::round(vec2(m_Region.Extent) * glm::max(scale, 1.0f));
+        const vec2 allocated = glm::round(vec2(m_Region.Extent) * scale);
         return glm::max(uvec2(allocated), uvec2(1));
     }
 
     uvec2 Viewport::ScaledExtent() const
     {
-        return ExtentForScale(m_RenderScale);
+        return ExtentForScale(AllocationScale());
     }
 
     f32 Viewport::ViewRenderScale() const
     {
-        // The render scale relative to the allocation: a scale <= 1 renders that fraction of the
-        // region-sized allocation (sub-rect); a scale > 1 grows the allocation and renders it
-        // fully (the supersample), so the per-frame fraction is 1.
-        return m_RenderScale / glm::max(m_RenderScale, 1.0f);
+        // The current scale as a fraction of the allocation scale (the ceiling the target is sized
+        // to): at the ceiling the fraction is 1 (renders the full target), below it a sub-rect. The
+        // clamp guards the window between a MaxScale drop and the next controller update.
+        return glm::min(m_RenderScale / AllocationScale(), 1.0f);
+    }
+
+    void Viewport::DebounceAllocationResize(uvec2 priorAlloc)
+    {
+        // A zero-extent region (a collapsed or first-frame panel) never drives a resize.
+        if (m_Region.Extent.x == 0 || m_Region.Extent.y == 0)
+        {
+            return;
+        }
+
+        const uvec2 newAlloc = ScaledExtent();
+        if (newAlloc != priorAlloc)
+        {
+            m_PendingExtent = newAlloc;
+        }
     }
 
     void Viewport::UpdateDynamicResolution()

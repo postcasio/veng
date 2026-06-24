@@ -819,11 +819,11 @@ private:
                 }
             }
 
-            // Render scale is a per-viewport property, not a SceneRendererSettings: it renders into
-            // a sub-rect of the allocation while the on-screen region stays full size, so the
-            // tonemap upscales. Below 1.0 the image visibly softens; the Stats window shows the real
-            // extent. The manual field steps by 0.05 from a 0.25 floor and greys out while the
-            // adaptive controller owns the scale.
+            // Render scale is a per-viewport property, not a SceneRendererSettings: with dynamic
+            // resolution off it sizes the render target directly (the on-screen region stays full
+            // size, so the compositor upscales). Below 1.0 the image visibly softens; the Stats
+            // window shows the real extent. The manual field steps by 0.05 from a 0.25 floor and
+            // greys out while the adaptive controller owns the scale.
             {
                 auto manualDisabled = UI::Disabled(m_DynamicResolution);
                 if (scaleDrag("Render scale", m_RenderScale, 0.25f, 2.0f))
