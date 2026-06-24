@@ -202,6 +202,16 @@ namespace Veng::UI
     /// @param options  Overlay text, axis scale, ring-buffer offset, and graph size.
     void PlotLines(string_view label, std::span<const f32> values, PlotOptions options = {});
 
+    /// @brief Plots a bar graph of a value series.
+    ///
+    /// The histogram counterpart of PlotLines: one bar per value, in array order. Suited to a
+    /// per-category breakdown (per-pass GPU cost, say) where each value is an independent
+    /// quantity rather than a sample of one rolling signal. Non-interactive, so it returns void.
+    /// @param label    Graph label and ImGui id.
+    /// @param values   The value series, one bar each.
+    /// @param options  Overlay text, axis scale, ring-buffer offset, and graph size.
+    void PlotHistogram(string_view label, std::span<const f32> values, PlotOptions options = {});
+
     /// @brief Strokes a border around the most recently submitted item's rectangle.
     ///
     /// Draws over the previous item without consuming layout space — an accent frame on a

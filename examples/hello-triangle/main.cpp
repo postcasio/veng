@@ -379,11 +379,10 @@ protected:
         {
             m_GpuFrameTimes.Push(GetRenderContext().GetLastGpuFrameTimeMs());
 
-            // Per-pass GPU breakdown, keyed by pass name so each pass keeps its own rolling
-            // history across frames. A pass absent this frame (a topology change) simply stops
-            // receiving samples and its history freezes until it returns.
-            for (const Renderer::Context::GpuPassTiming& pass :
-                 GetRenderContext().GetLastGpuPassTimings())
+            // Per-pass GPU breakdown, grouped (bloom/hi-Z mip sweeps collapsed) and keyed by
+            // group name so each pass keeps its own rolling history across frames. A pass absent
+            // this frame (a topology change) stops receiving samples until it returns.
+            for (const PassCost& pass : AggregatePasses(GetRenderContext().GetLastGpuPassTimings()))
             {
                 m_PassFrameTimes[pass.Name].Push(pass.Milliseconds);
             }
@@ -519,6 +518,52 @@ private:
         }
         stats.Average = sum / static_cast<f32>(history.Count);
         return stats;
+    }
+
+    // One pass's GPU time after grouping: the bloom and hi-Z mip sweeps each collapse to a
+    // single named entry, every other pass stays itself.
+    struct PassCost
+    {
+        string Name;
+        f32 Milliseconds = 0.0f;
+    };
+
+    // Folds a per-scope pass name onto its display group: the per-mip bloom and hi-Z passes
+    // ("Bloom Down Mip 3", "HiZ Reduce Mip 2", …) collapse to "Bloom" / "Hi-Z" so the sweep
+    // reads as one pass; any other name passes through unchanged.
+    static string PassGroup(string_view name)
+    {
+        if (name.starts_with("Bloom"))
+        {
+            return "Bloom";
+        }
+        if (name.starts_with("HiZ") || name.starts_with("Hi-Z"))
+        {
+            return "Hi-Z";
+        }
+        return string(name);
+    }
+
+    // Aggregates the frame's per-scope timings into grouped pass costs, summing each group's
+    // contiguous mip passes and preserving first-seen (execution) order.
+    static vector<PassCost>
+    AggregatePasses(std::span<const Renderer::Context::GpuPassTiming> passes)
+    {
+        vector<PassCost> costs;
+        for (const Renderer::Context::GpuPassTiming& pass : passes)
+        {
+            string group = PassGroup(pass.Name);
+            const auto existing = std::ranges::find(costs, group, &PassCost::Name);
+            if (existing == costs.end())
+            {
+                costs.push_back({.Name = std::move(group), .Milliseconds = pass.Milliseconds});
+            }
+            else
+            {
+                existing->Milliseconds += pass.Milliseconds;
+            }
+        }
+        return costs;
     }
 
     // The fallback view when the scene resolves no camera: the fixed pose that frames the
@@ -879,24 +924,42 @@ private:
 
             PlotHistory("GPU", m_GpuFrameTimes, 80.0f);
 
-            // The per-pass histories are pushed in OnUpdate; here they are drawn in the live
-            // frame's execution order. A scrolling child keeps the long list from pushing the
-            // window taller than the screen.
-            const std::span<const Renderer::Context::GpuPassTiming> passes =
-                GetRenderContext().GetLastGpuPassTimings();
+            // The whole per-pass breakdown in one graph: a histogram with one bar per grouped
+            // pass (bloom/hi-Z mip sweeps collapsed), in execution order. The legend below maps
+            // each bar, left-to-right, to its pass name, current cost, and rolling average.
+            const vector<PassCost> passes =
+                AggregatePasses(GetRenderContext().GetLastGpuPassTimings());
             if (passes.empty())
             {
                 return;
             }
 
             UI::SeparatorText("Passes (GPU)");
-            // A fixed-height scroll region: the pass list is long, so it scrolls rather than
-            // stretching the window past the screen.
-            if (auto passChild = UI::Child("Passes", {0.0f, 240.0f}))
+
+            vector<f32> costs;
+            costs.reserve(passes.size());
+            f32 maxCost = 0.0f;
+            for (const PassCost& pass : passes)
             {
-                for (const Renderer::Context::GpuPassTiming& pass : passes)
+                costs.push_back(pass.Milliseconds);
+                maxCost = glm::max(maxCost, pass.Milliseconds);
+            }
+
+            UI::PlotHistogram("##passes", costs,
+                              {
+                                  .ScaleMin = 0.0f,
+                                  .ScaleMax = maxCost * 1.25f,
+                                  .Size = {0.0f, 100.0f},
+                              });
+
+            // The legend scrolls if the pass list outgrows it, keeping the window bounded.
+            if (auto legendChild = UI::Child("PassLegend", {0.0f, 160.0f}))
+            {
+                for (const PassCost& pass : passes)
                 {
-                    PlotHistory(pass.Name, m_PassFrameTimes[pass.Name], 36.0f);
+                    const FrameStats stats = ComputeStats(m_PassFrameTimes[pass.Name]);
+                    UI::Text(fmt::format("{}: {:.3f} ms  (avg {:.3f})", pass.Name,
+                                         pass.Milliseconds, stats.Average));
                 }
             }
         }
