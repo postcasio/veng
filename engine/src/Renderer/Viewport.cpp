@@ -64,6 +64,7 @@ namespace Veng::Renderer
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_OutputHandle);
         m_OutputHandle = bindless.Register(m_Renderer->GetOutput());
+        ++m_OutputGeneration;
     }
 
     void Viewport::SetRegion(const ViewportRegion& region)
@@ -83,15 +84,23 @@ namespace Veng::Renderer
     {
         VE_ASSERT(scale > 0.0f, "Viewport RenderScale must be > 0 (got {})", scale);
 
-        if (scale != m_RenderScale)
+        if (scale == m_RenderScale)
         {
-            m_RenderScale = scale;
+            return;
+        }
 
-            // A zero-extent region has no render target yet (a first-frame panel); the scale
-            // applies once SetRegion delivers a real extent.
-            if (m_Region.Extent.x != 0 && m_Region.Extent.y != 0)
+        // The render target is allocated at the high-water-mark extent; a scale <= 1 (dynamic
+        // resolution scaling) renders into a sub-rect of it and is pushed per frame through the
+        // SceneView, so it never resizes. Only a change that moves the *allocation* extent — a
+        // supersample factor (scale > 1) growing or shrinking it — debounces a resize.
+        const uvec2 priorAlloc = ScaledExtent();
+        m_RenderScale = scale;
+        if (m_Region.Extent.x != 0 && m_Region.Extent.y != 0)
+        {
+            const uvec2 newAlloc = ScaledExtent();
+            if (newAlloc != priorAlloc)
             {
-                m_PendingExtent = ScaledExtent();
+                m_PendingExtent = newAlloc;
             }
         }
     }
@@ -101,10 +110,59 @@ namespace Veng::Renderer
         return m_RenderScale;
     }
 
+    void Viewport::SetDynamicResolution(const DynamicResolutionSettings& settings)
+    {
+        m_DynamicResolution = settings;
+    }
+
+    void Viewport::ClearDynamicResolution()
+    {
+        m_DynamicResolution.reset();
+    }
+
+    bool Viewport::IsDynamicResolutionEnabled() const
+    {
+        return m_DynamicResolution.has_value();
+    }
+
+    u64 Viewport::GetOutputGeneration() const
+    {
+        return m_OutputGeneration;
+    }
+
+    uvec2 Viewport::ExtentForScale(f32 scale) const
+    {
+        // The allocation tracks the region times the supersample factor (a scale > 1); a scale
+        // <= 1 is a sub-rect of the region-sized allocation, so it never grows it.
+        const vec2 allocated = glm::round(vec2(m_Region.Extent) * glm::max(scale, 1.0f));
+        return glm::max(uvec2(allocated), uvec2(1));
+    }
+
     uvec2 Viewport::ScaledExtent() const
     {
-        const vec2 scaled = glm::round(vec2(m_Region.Extent) * m_RenderScale);
-        return glm::max(uvec2(scaled), uvec2(1));
+        return ExtentForScale(m_RenderScale);
+    }
+
+    f32 Viewport::ViewRenderScale() const
+    {
+        // The render scale relative to the allocation: a scale <= 1 renders that fraction of the
+        // region-sized allocation (sub-rect); a scale > 1 grows the allocation and renders it
+        // fully (the supersample), so the per-frame fraction is 1.
+        return m_RenderScale / glm::max(m_RenderScale, 1.0f);
+    }
+
+    void Viewport::UpdateDynamicResolution()
+    {
+        if (!m_DynamicResolution || !m_Context.IsGpuTimingSupported())
+        {
+            return;
+        }
+
+        // The controller's scale is applied through SetRenderScale, which for a sub-rect change
+        // (scale <= 1) only updates the per-frame fraction — no resize, the dynamic-resolution win.
+        const f32 gpuFrameTimeMs = m_Context.GetLastGpuFrameTimeMs();
+        SetRenderScale(
+            ComputeDynamicResolutionScale(m_RenderScale, gpuFrameTimeMs, *m_DynamicResolution));
     }
 
     void Viewport::SetViewState(const ViewState& state)
@@ -121,6 +179,11 @@ namespace Veng::Renderer
 
     void Viewport::Render(CommandBuffer& cmd)
     {
+        // Adaptive resolution: updates the render scale from the last frame's GPU time. A sub-rect
+        // change (scale <= 1) only adjusts the per-frame fraction below — no resize; a supersample
+        // boundary change leaves a pending allocation resize applied here.
+        UpdateDynamicResolution();
+
         if (m_PendingExtent.x != 0 && m_PendingExtent.y != 0)
         {
             m_Renderer->Resize(m_PendingExtent);
@@ -139,6 +202,9 @@ namespace Veng::Renderer
             .World = *m_ViewState.World,
             .Camera = m_ViewState.Camera,
             .Delta = m_ViewState.Delta,
+            // The sub-rect fraction of the allocation to render this frame; the terminal tonemap
+            // upscales it to the full (allocation-sized) output, so GetOutput stays full-resolution.
+            .RenderScale = ViewRenderScale(),
             .Exposure = m_ViewState.Exposure,
             .BloomThreshold = m_ViewState.BloomThreshold,
             .BloomIntensity = m_ViewState.BloomIntensity,

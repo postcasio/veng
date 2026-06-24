@@ -1,6 +1,7 @@
 #define VMA_IMPLEMENTATION
 #include <Veng/Renderer/Context.h>
 
+#include <array>
 #include <cstring>
 #include <fstream>
 #include <set>
@@ -309,6 +310,29 @@ namespace Veng::Renderer
         m_Native->TransferTimeline = TimelineSemaphore::Create(*this);
 
         m_Native->Bindless = CreateUnique<BindlessRegistry>(*this);
+
+        // GPU frame timing: a (start, end) timestamp pair per frame-in-flight. Available only
+        // when the graphics queue family reports valid timestamp bits and the device a non-zero
+        // period; otherwise GetLastGpuFrameTimeMs() stays zero and BeginFrame/EndFrame skip the
+        // writes (so dynamic-resolution control is inert rather than wrong).
+        const f32 timestampPeriod = m_Native->PhysicalDevice.getProperties().limits.timestampPeriod;
+        const u32 graphicsFamily = m_Native->QueueFamilies.GraphicsFamily.value();
+        const u32 validBits =
+            m_Native->PhysicalDevice.getQueueFamilyProperties()[graphicsFamily].timestampValidBits;
+        if (timestampPeriod > 0.0f && validBits > 0)
+        {
+            m_GpuTimingSupported = true;
+            m_Native->TimestampPeriodNs = timestampPeriod;
+            m_Native->TimestampValidMask =
+                validBits >= 64 ? ~0ULL : ((static_cast<u64>(1) << validBits) - 1);
+            m_Native->TimestampWritten.assign(m_Native->MaxFramesInFlight, false);
+            m_Native->TimestampPool = m_Native->Device
+                                          .createQueryPool({
+                                              .queryType = vk::QueryType::eTimestamp,
+                                              .queryCount = m_Native->MaxFramesInFlight * 2,
+                                          })
+                                          .value;
+        }
     }
 
     void Context::DisposeResources()
@@ -384,6 +408,12 @@ namespace Veng::Renderer
             {
                 Log::Warn("pipeline cache write failed: {}", m_Native->PipelineCachePath->string());
             }
+        }
+
+        if (m_Native->TimestampPool)
+        {
+            m_Native->Device.destroyQueryPool(m_Native->TimestampPool);
+            m_Native->TimestampPool = nullptr;
         }
 
         m_Native->Device.destroyPipelineCache(m_Native->PipelineCache);
@@ -533,6 +563,16 @@ namespace Veng::Renderer
         return m_Native->GpuDrivenCullingSupported;
     }
 
+    bool Context::IsGpuTimingSupported() const
+    {
+        return m_GpuTimingSupported;
+    }
+
+    f32 Context::GetLastGpuFrameTimeMs() const
+    {
+        return m_GpuFrameTimeMs;
+    }
+
     bool Context::IsFormatLinearFilterSupported(const Format format) const
     {
         const vk::FormatProperties props =
@@ -569,6 +609,35 @@ namespace Veng::Renderer
 
         commandBuffer->Begin();
 
+        // GPU frame timing: read back the pair this slot wrote on its previous cycle (its fence
+        // was just waited by AcquireNextFrame, so the results are ready), then reset the pair and
+        // write the frame-start timestamp. The slot is read only after it has been written once.
+        if (m_GpuTimingSupported)
+        {
+            const u32 slot = m_Native->CurrentFrameInFlight;
+            const vk::CommandBuffer vkCmd = GetVkCommandBuffer(*commandBuffer);
+
+            if (m_Native->TimestampWritten[slot])
+            {
+                std::array<u64, 2> stamps{};
+                const vk::Result result = m_Native->Device.getQueryPoolResults(
+                    m_Native->TimestampPool, slot * 2, 2, sizeof(stamps), stamps.data(),
+                    sizeof(u64), vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+                if (result == vk::Result::eSuccess)
+                {
+                    const u64 begin = stamps[0] & m_Native->TimestampValidMask;
+                    const u64 end = stamps[1] & m_Native->TimestampValidMask;
+                    const u64 ticks = (end - begin) & m_Native->TimestampValidMask;
+                    m_GpuFrameTimeMs =
+                        static_cast<f32>(ticks) * m_Native->TimestampPeriodNs * 1e-6f;
+                }
+            }
+
+            vkCmd.resetQueryPool(m_Native->TimestampPool, slot * 2, 2);
+            vkCmd.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe, m_Native->TimestampPool,
+                                 slot * 2);
+        }
+
         // Transition any resources that went resident since last frame into Sample
         // layout before passes record. The RenderGraph cannot derive this transition
         // — bindless resources are invisible to it (sampled through set 0).
@@ -592,6 +661,16 @@ namespace Veng::Renderer
         {
             Backend::TransitionImage(*commandBuffer, *GetCurrentSwapChainImage(),
                                      ImageLayout::PresentSrc);
+        }
+
+        // GPU frame timing: the frame-end timestamp, capturing the whole command buffer's work.
+        if (m_GpuTimingSupported)
+        {
+            const u32 slot = m_Native->CurrentFrameInFlight;
+            GetVkCommandBuffer(*commandBuffer)
+                .writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, m_Native->TimestampPool,
+                                slot * 2 + 1);
+            m_Native->TimestampWritten[slot] = true;
         }
 
         commandBuffer->End();

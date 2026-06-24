@@ -82,7 +82,6 @@ namespace Veng::Renderer
         const TextureHandle normalHandle = io.NormalHandle;
         const TextureHandle depthHandle = io.DepthHandle;
         const SamplerHandle samplerHandle = m_SamplerHandle;
-        const uvec2 extent = m_Extent;
 
         graph.AddPass("Scene SSAO")
             .Color({
@@ -100,22 +99,26 @@ namespace Veng::Renderer
             .Sample(io.GBufferNormal)
             .Sample(io.GBufferDepth)
             .Execute(
-                [this, normalHandle, depthHandle, samplerHandle, extent](PassContext& inner)
+                [this, normalHandle, depthHandle, samplerHandle](PassContext& inner)
                 {
                     CommandBuffer& cmd = inner.Cmd();
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
+                    // Render into the dynamic-resolution sub-rect; the AO target stays allocated at
+                    // the high-water-mark extent. ExtentX/Y is the rendered (sub-rect) size, the
+                    // texel scale the kernel's depth taps use.
+                    const uvec2 renderExtent = Wrap(inner).View().RenderExtent;
                     cmd.BindPipeline(m_Pipeline);
-                    cmd.SetViewport({0, 0}, extent);
-                    cmd.SetScissor({0, 0}, extent);
+                    cmd.SetViewport({0, 0}, renderExtent);
+                    cmd.SetScissor({0, 0}, renderExtent);
                     registry.Bind(cmd);
                     cmd.PushConstants(SsaoPushConstants{
                         .NormalTexture = normalHandle.Index,
                         .DepthTexture = depthHandle.Index,
                         .Sampler = samplerHandle.Index,
                         .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
-                        .ExtentX = extent.x,
-                        .ExtentY = extent.y,
+                        .ExtentX = renderExtent.x,
+                        .ExtentY = renderExtent.y,
                     });
                     cmd.DrawFullscreenTriangle();
                 });

@@ -129,23 +129,30 @@ namespace Veng::Renderer
         struct BloomDownPush
         {
             uvec2 DestExtent;
+            vec2 SourceScaleUV; // source validExtent/allocExtent (dynamic-resolution sub-rect)
+            vec2 SourceMaxUV;   // source (validExtent-0.5)/allocExtent (bilinear-tap clamp)
             f32 BrightPass;
             f32 Threshold;
         };
 
-        // The bloom upsample push: the destination (finer) mip extent and the spread
-        // scale. Matches bloom_up.comp.
+        // The bloom upsample push: the destination (finer) mip extent, the source sub-rect
+        // mapping, and the spread scale. Matches bloom_up.comp.
         struct BloomUpPush
         {
             uvec2 DestExtent;
+            vec2 SourceScaleUV;
+            vec2 SourceMaxUV;
             f32 Radius;
         };
 
-        // The bloom composite push: the result extent and the bloom mix. Matches
+        // The bloom composite push: the result extent, the source sub-rect mapping (shared by
+        // the HDR and bloom-mip-0 inputs, both at mip-0 scale), and the bloom mix. Matches
         // bloom_composite.comp.
         struct BloomCompositePush
         {
             uvec2 DestExtent;
+            vec2 SourceScaleUV;
+            vec2 SourceMaxUV;
             f32 Intensity;
         };
 
@@ -290,6 +297,8 @@ namespace Veng::Renderer
             mat4 Proj;           // view → clip (jittered under TAA)
             mat4 PrevViewProj;   // previous frame's unjittered world → clip (TAA reprojection)
             mat4 CurViewProj;    // this frame's unjittered world → clip (TAA velocity)
+            vec4 RenderScaleUV;  // xy this frame's validExtent/allocExtent, zw previous frame's
+            vec4 MaxValidUV;     // xy this frame's (validExtent-0.5)/allocExtent, zw previous
         };
 
         static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,
@@ -455,8 +464,11 @@ namespace Veng::Renderer
                 const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
                 const GBufferDrawPlan& plan = *m_Plan;
 
-                cmd.SetViewport({0, 0}, m_Extent);
-                cmd.SetScissor({0, 0}, m_Extent);
+                // Render into the dynamic-resolution sub-rect; the target stays allocated at the
+                // high-water-mark extent (m_Extent), so the consumer upscales the valid region.
+                const uvec2 renderExtent = ctx.View().RenderExtent;
+                cmd.SetViewport({0, 0}, renderExtent);
+                cmd.SetScissor({0, 0}, renderExtent);
 
                 if (plan.Slots.empty() && plan.SkinnedSlots.empty())
                 {
@@ -625,8 +637,11 @@ namespace Veng::Renderer
                 const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
                 const GBufferDrawPlan& plan = *m_Plan;
 
-                cmd.SetViewport({0, 0}, m_Extent);
-                cmd.SetScissor({0, 0}, m_Extent);
+                // Render into the dynamic-resolution sub-rect; the target stays allocated at the
+                // high-water-mark extent (m_Extent), so the consumer upscales the valid region.
+                const uvec2 renderExtent = ctx.View().RenderExtent;
+                cmd.SetViewport({0, 0}, renderExtent);
+                cmd.SetScissor({0, 0}, renderExtent);
 
                 if (plan.Slots.empty() && plan.SkinnedSlots.empty())
                 {
@@ -808,8 +823,9 @@ namespace Veng::Renderer
                         const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
                         cmd.BindPipeline(m_Pipeline);
-                        cmd.SetViewport({0, 0}, m_Extent);
-                        cmd.SetScissor({0, 0}, m_Extent);
+                        const uvec2 renderExtent = ctx.View().RenderExtent;
+                        cmd.SetViewport({0, 0}, renderExtent);
+                        cmd.SetScissor({0, 0}, renderExtent);
                         registry.Bind(cmd);
 
                         // Bind set 1 (the shadow system: both atlases, comparison sampler, and
@@ -1133,8 +1149,9 @@ namespace Veng::Renderer
                             CommandBuffer& cmd = inner.Cmd();
                             const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
                             cmd.BindPipeline(m_ResolvePipeline);
-                            cmd.SetViewport({0, 0}, m_Extent);
-                            cmd.SetScissor({0, 0}, m_Extent);
+                            const uvec2 renderExtent = Wrap(inner).View().RenderExtent;
+                            cmd.SetViewport({0, 0}, renderExtent);
+                            cmd.SetScissor({0, 0}, renderExtent);
                             registry.Bind(cmd);
                             cmd.PushConstants(TaaResolvePush{
                                 .CurrentTexture = m_LitHandle.Index,
@@ -1144,7 +1161,7 @@ namespace Veng::Renderer
                                 .Sampler = samplerHandle.Index,
                                 .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
                                 .HistoryValid = *m_HistoryResetPtr ? 0u : 1u,
-                                .Extent = m_Extent,
+                                .Extent = renderExtent,
                             });
                             cmd.DrawFullscreenTriangle();
                         });
@@ -1166,8 +1183,9 @@ namespace Veng::Renderer
                             CommandBuffer& cmd = inner.Cmd();
                             const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
                             cmd.BindPipeline(m_CopyPipeline);
-                            cmd.SetViewport({0, 0}, m_Extent);
-                            cmd.SetScissor({0, 0}, m_Extent);
+                            const uvec2 renderExtent = Wrap(inner).View().RenderExtent;
+                            cmd.SetViewport({0, 0}, renderExtent);
+                            cmd.SetScissor({0, 0}, renderExtent);
                             registry.Bind(cmd);
                             cmd.PushConstants(TaaCopyPush{
                                 .SourceTexture = hdrHandle.Index,
@@ -1275,6 +1293,9 @@ namespace Veng::Renderer
                 }
 
                 // Pipeline must be bound before registry.Bind (Bind uses the active layout).
+                // The terminal post pass renders the FULL output and upscales its sub-rect source
+                // (the tonemap material samples through ScaledSampleUV), so the output image is
+                // valid edge to edge and the compositor needs no sub-rect awareness.
                 cmd.BindPipeline(m_Pipeline);
                 cmd.SetViewport({0, 0}, m_Extent);
                 cmd.SetScissor({0, 0}, m_Extent);
@@ -1300,7 +1321,8 @@ namespace Veng::Renderer
 
     SceneRenderer::SceneRenderer(const SceneRendererInfo& info)
         : m_Context(info.Context), m_Assets(info.Assets), m_OutputFormat(info.OutputFormat),
-          m_Extent(info.Extent), m_Settings(info.Settings), m_Internal(CreateUnique<Internal>())
+          m_Extent(info.Extent), m_ValidExtent(info.Extent), m_Settings(info.Settings),
+          m_Internal(CreateUnique<Internal>())
     {
         ClampShadowResolutions();
         ResolveActiveCullMode();
@@ -2922,6 +2944,32 @@ namespace Veng::Renderer
         }
     }
 
+    namespace
+    {
+        // The dynamic-resolution sub-rect mapping for one mip level of a high-water-mark-allocated
+        // chain: the valid extent at that level, and the (scale, clamp) UVs mapping a [0,1] valid
+        // UV into the level's valid region. At full resolution ScaleUV is 1 and MaxUV ~1.
+        struct MipSubRect
+        {
+            uvec2 ValidExtent;
+            vec2 ScaleUV;
+            vec2 MaxUV;
+        };
+
+        MipSubRect ComputeMipSubRect(uvec2 validBase, uvec2 allocBase, u32 level)
+        {
+            const uvec2 valid{std::max(validBase.x >> level, 1u),
+                              std::max(validBase.y >> level, 1u)};
+            const uvec2 alloc{std::max(allocBase.x >> level, 1u),
+                              std::max(allocBase.y >> level, 1u)};
+            return {
+                .ValidExtent = valid,
+                .ScaleUV = vec2(valid) / vec2(alloc),
+                .MaxUV = (vec2(valid) - 0.5f) / vec2(alloc),
+            };
+        }
+    }
+
     void SceneRenderer::DeclareBloom(RenderGraph& graph)
     {
         const u32 mipCount = static_cast<u32>(m_BloomMips.size());
@@ -2930,11 +2978,9 @@ namespace Veng::Renderer
         // and writes mip k. Mip 0 fuses the bright-pass + Karis; deeper levels are the plain
         // 13-tap. The per-mip graph surface derives the read-after-write barrier between
         // dispatch k's write and dispatch k+1's read.
+        const uvec2 allocExtent = m_Extent;
         for (u32 level = 0; level < mipCount; level++)
         {
-            const u32 dstW = std::max(m_Extent.x >> level, 1u);
-            const u32 dstH = std::max(m_Extent.y >> level, 1u);
-
             RenderGraph::PassBuilder builder =
                 graph.AddComputePass(fmt::format("Bloom Down Mip {}", level));
             if (level == 0)
@@ -2951,13 +2997,19 @@ namespace Veng::Renderer
                                                       ? m_BloomDownKawasePipeline
                                                       : m_BloomDownPipeline;
             const Ref<DescriptorSet> set = m_BloomDownSets[level];
-            const uvec2 dstExtent{dstW, dstH};
             const f32 brightPass = level == 0 ? 1.0f : 0.0f;
+            // The source is mip level-1 (the HDR for level 0); its dynamic-resolution sub-rect
+            // ratio is at the source's level. Computed at record time from this frame's extent.
+            const u32 srcLevel = level == 0 ? 0u : level - 1;
             builder.Execute(
-                [pipeline, set, dstExtent, brightPass](PassContext& inner)
+                [pipeline, set, level, srcLevel, allocExtent, brightPass](PassContext& inner)
                 {
                     const auto* view = static_cast<const SceneView*>(inner.UserData());
                     VE_ASSERT(view != nullptr, "Bloom down pass: null SceneView");
+                    const MipSubRect dst =
+                        ComputeMipSubRect(view->RenderExtent, allocExtent, level);
+                    const MipSubRect src =
+                        ComputeMipSubRect(view->RenderExtent, allocExtent, srcLevel);
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(pipeline);
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
@@ -2966,11 +3018,13 @@ namespace Veng::Renderer
                         .PipelineBindPoint = PipelineBindPoint::Compute,
                     });
                     cmd.PushConstants(BloomDownPush{
-                        .DestExtent = dstExtent,
+                        .DestExtent = dst.ValidExtent,
+                        .SourceScaleUV = src.ScaleUV,
+                        .SourceMaxUV = src.MaxUV,
                         .BrightPass = brightPass,
                         .Threshold = view->BloomThreshold,
                     });
-                    cmd.Dispatch((dstExtent.x + 7) / 8, (dstExtent.y + 7) / 8, 1);
+                    cmd.Dispatch((dst.ValidExtent.x + 7) / 8, (dst.ValidExtent.y + 7) / 8, 1);
                 });
         }
 
@@ -2982,9 +3036,6 @@ namespace Veng::Renderer
         // per-level barrier before the next finer up-step reads mip k.
         for (u32 level = mipCount - 1; level-- > 0;)
         {
-            const u32 dstW = std::max(m_Extent.x >> level, 1u);
-            const u32 dstH = std::max(m_Extent.y >> level, 1u);
-
             RenderGraph::PassBuilder builder =
                 graph.AddComputePass(fmt::format("Bloom Up Mip {}", level));
             builder.Sample(m_BloomChainId.Level(level + 1));
@@ -2994,12 +3045,16 @@ namespace Veng::Renderer
                                                       ? m_BloomUpKawasePipeline
                                                       : m_BloomUpPipeline;
             const Ref<DescriptorSet> set = m_BloomUpSets[level];
-            const uvec2 dstExtent{dstW, dstH};
+            const u32 srcLevel = level + 1;
             builder.Execute(
-                [pipeline, set, dstExtent](PassContext& inner)
+                [pipeline, set, level, srcLevel, allocExtent](PassContext& inner)
                 {
                     const auto* view = static_cast<const SceneView*>(inner.UserData());
                     VE_ASSERT(view != nullptr, "Bloom up pass: null SceneView");
+                    const MipSubRect dst =
+                        ComputeMipSubRect(view->RenderExtent, allocExtent, level);
+                    const MipSubRect src =
+                        ComputeMipSubRect(view->RenderExtent, allocExtent, srcLevel);
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(pipeline);
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
@@ -3008,15 +3063,18 @@ namespace Veng::Renderer
                         .PipelineBindPoint = PipelineBindPoint::Compute,
                     });
                     cmd.PushConstants(BloomUpPush{
-                        .DestExtent = dstExtent,
+                        .DestExtent = dst.ValidExtent,
+                        .SourceScaleUV = src.ScaleUV,
+                        .SourceMaxUV = src.MaxUV,
                         .Radius = view->BloomRadius,
                     });
-                    cmd.Dispatch((dstExtent.x + 7) / 8, (dstExtent.y + 7) / 8, 1);
+                    cmd.Dispatch((dst.ValidExtent.x + 7) / 8, (dst.ValidExtent.y + 7) / 8, 1);
                 });
         }
 
-        // Composite over the full extent: result = hdr + mip0 * Intensity. Samples the HDR
-        // target and bloom mip 0, stores into the result the tonemap reads.
+        // Composite over the valid sub-rect: result = hdr + mip0 * Intensity. Samples the HDR
+        // target and bloom mip 0 (both at mip-0 sub-rect scale) and stores into the result the
+        // terminal tonemap upscales.
         {
             RenderGraph::PassBuilder builder = graph.AddComputePass("Bloom Composite");
             builder.Sample(m_HdrId);
@@ -3025,12 +3083,12 @@ namespace Veng::Renderer
 
             const Ref<ComputePipeline> pipeline = m_BloomCompositePipeline;
             const Ref<DescriptorSet> set = m_BloomCompositeSet;
-            const uvec2 dstExtent = m_Extent;
             builder.Execute(
-                [pipeline, set, dstExtent](PassContext& inner)
+                [pipeline, set, allocExtent](PassContext& inner)
                 {
                     const auto* view = static_cast<const SceneView*>(inner.UserData());
                     VE_ASSERT(view != nullptr, "Bloom composite pass: null SceneView");
+                    const MipSubRect r = ComputeMipSubRect(view->RenderExtent, allocExtent, 0);
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(pipeline);
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
@@ -3039,10 +3097,12 @@ namespace Veng::Renderer
                         .PipelineBindPoint = PipelineBindPoint::Compute,
                     });
                     cmd.PushConstants(BloomCompositePush{
-                        .DestExtent = dstExtent,
+                        .DestExtent = r.ValidExtent,
+                        .SourceScaleUV = r.ScaleUV,
+                        .SourceMaxUV = r.MaxUV,
                         .Intensity = view->BloomIntensity,
                     });
-                    cmd.Dispatch((dstExtent.x + 7) / 8, (dstExtent.y + 7) / 8, 1);
+                    cmd.Dispatch((r.ValidExtent.x + 7) / 8, (r.ValidExtent.y + 7) / 8, 1);
                 });
         }
     }
@@ -3434,6 +3494,11 @@ namespace Veng::Renderer
     void SceneRenderer::Resize(const uvec2 extent)
     {
         m_Extent = extent;
+        // The new allocation is the full target until the next Execute scales it; the prior
+        // sub-rect mapping is moot (the TAA history resets on resize anyway).
+        m_ValidExtent = extent;
+        m_PreviousRenderScaleUV = vec2(1.0f);
+        m_PreviousMaxValidUV = vec2(1.0f);
         CreateOutput();
         CreateGBuffer();
         CreateHdr();
@@ -3480,10 +3545,29 @@ namespace Veng::Renderer
 
     void SceneRenderer::Execute(CommandBuffer& cmd, const SceneView& view)
     {
+        // Dynamic resolution: render into the top-left round(allocExtent * scale) sub-rect of the
+        // (high-water-mark-allocated) targets; the terminal tonemap upscales it to the full output.
+        // Scale applies only on the Final path with the sub-rect-aware battery set: a debug view, the
+        // TAA resolve, the GPU hi-Z occlusion test, and the Dual-Kawase bloom kernel do not carry the
+        // sub-rect sampling yet, so each forces full resolution (correct, just no scaling).
+        const bool drsSupported =
+            m_Settings.Mode == DebugView::Final && !m_Settings.TAA &&
+            !(m_ActiveCull == SceneRendererSettings::CullMode::GPU && m_Settings.Occlusion) &&
+            !(m_Settings.Bloom && m_Settings.Kernel == BloomKernel::Kawase);
+        const f32 renderScale = drsSupported ? view.RenderScale : 1.0f;
+        const uvec2 validExtent =
+            glm::clamp(uvec2(glm::round(vec2(m_Extent) * renderScale)), uvec2(1), m_Extent);
+        const vec2 renderScaleUV = vec2(validExtent) / vec2(m_Extent);
+        // Half-texel inset so a bilinear tap at the valid edge never reads past it.
+        const vec2 maxValidUV = (vec2(validExtent) - 0.5f) / vec2(m_Extent);
+
         // Per-frame param writes land in the ring-buffered block's current region (no stall).
         if (m_TonemapMaterial.IsLoaded())
         {
-            const_cast<Material&>(*m_TonemapMaterial.Get()).SetParam("Exposure", view.Exposure);
+            auto& tonemap = const_cast<Material&>(*m_TonemapMaterial.Get());
+            tonemap.SetParam("Exposure", view.Exposure);
+            // The terminal tonemap reads the sub-rect HDR and upscales it to the full output.
+            tonemap.SetParam("RenderScale", vec4(renderScaleUV, maxValidUV));
         }
 
         // Pack every Light entity into the GPU light layout: directional selection,
@@ -3520,6 +3604,7 @@ namespace Veng::Renderer
         // Thread the raw (non-tile-remapped) cascade matrices to the shadow pass,
         // which renders each cascade with its viewport placing it in the atlas tile.
         SceneView resolvedView = view;
+        resolvedView.RenderExtent = validExtent;
         resolvedView.LightCount = packed.LightCount;
         resolvedView.CascadeViewProj = cascades.ViewProj;
         resolvedView.CascadeCount = cascades.Count;
@@ -3538,14 +3623,15 @@ namespace Veng::Renderer
         // lighting actually render through.
         const mat4 viewProj = view.Camera.ViewProjection();
         mat4 renderProj = view.Camera.Projection();
-        if (m_TaaActive && m_Extent.x > 0 && m_Extent.y > 0)
+        if (m_TaaActive && validExtent.x > 0 && validExtent.y > 0)
         {
             // Sub-pixel projection shear; sign is irrelevant to quality (the sequence is
             // symmetric) and cancels between render and reconstruction, which share this
-            // matrix. The reprojection uses the separate unjittered PrevViewProj.
+            // matrix. The reprojection uses the separate unjittered PrevViewProj. The jitter is
+            // a fraction of the rendered (sub-rect) extent, the resolution actually rasterized.
             const vec2 jitterPixel = TaaJitterOffset(m_FrameIndex);
-            renderProj[2][0] += 2.0f * jitterPixel.x / static_cast<f32>(m_Extent.x);
-            renderProj[2][1] += 2.0f * jitterPixel.y / static_cast<f32>(m_Extent.y);
+            renderProj[2][0] += 2.0f * jitterPixel.x / static_cast<f32>(validExtent.x);
+            renderProj[2][1] += 2.0f * jitterPixel.y / static_cast<f32>(validExtent.y);
         }
         const mat4 renderViewProj = renderProj * view.Camera.View();
         const ViewConstantsBlock viewConstants{
@@ -3555,6 +3641,8 @@ namespace Veng::Renderer
             .Proj = renderProj,
             .PrevViewProj = m_PreviousViewProj,
             .CurViewProj = viewProj,
+            .RenderScaleUV = vec4(renderScaleUV, m_PreviousRenderScaleUV),
+            .MaxValidUV = vec4(maxValidUV, m_PreviousMaxValidUV),
         };
         registry.WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
 
@@ -3684,6 +3772,12 @@ namespace Veng::Renderer
         // this frame's depth, so it pairs with this frame's view-projection next time.
         m_PreviousViewProj = viewProj;
         m_PreviousHiZState = currentHiZState;
+
+        // Record this frame's sub-rect mapping: GetValidExtent reports it, and the next frame's
+        // TAA resolve reprojects the history written at this scale (the zw of RenderScaleUV).
+        m_ValidExtent = validExtent;
+        m_PreviousRenderScaleUV = renderScaleUV;
+        m_PreviousMaxValidUV = maxValidUV;
         // The pyramid now holds this frame's depth, so the next Execute may test against
         // it (subject to the view-delta metric).
         m_HiZHistoryReset = false;
@@ -3707,6 +3801,11 @@ namespace Veng::Renderer
     Ref<ImageView> SceneRenderer::GetOutput() const
     {
         return m_OutputView;
+    }
+
+    uvec2 SceneRenderer::GetValidExtent() const
+    {
+        return m_ValidExtent;
     }
 
     u32 SceneRenderer::GetLastVisibleCount() const

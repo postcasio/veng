@@ -297,6 +297,14 @@ protected:
         // composite tail); the app pushes only a ViewState. Apply the level's topology settings.
         GetPrimaryViewport()->Configure(m_SceneSettings);
 
+        // HT_RENDER_SCALE pins a fixed render scale (the headless capture has no slider): it drives
+        // the dynamic-resolution sub-rect so a reduced-resolution render can be captured and diffed.
+        if (const char* scaleEnv = std::getenv("HT_RENDER_SCALE"))
+        {
+            m_RenderScale = std::strtof(scaleEnv, nullptr);
+            GetPrimaryViewport()->SetRenderScale(m_RenderScale);
+        }
+
         if (GetImGuiLayer())
         {
             // Translucent debug windows so the lit scene shows through behind the
@@ -483,20 +491,43 @@ private:
         GetPrimaryViewport()->Configure(m_SceneSettings);
         m_SceneTexture =
             GetImGuiLayer()->CreateTexture(*m_SceneSampler, *GetPrimaryViewport()->GetOutput());
+        m_SceneTextureGeneration = GetPrimaryViewport()->GetOutputGeneration();
+    }
+
+    // Enables or disables the viewport's adaptive resolution controller from the demo state.
+    void ApplyDynamicResolution()
+    {
+        if (m_DynamicResolution)
+        {
+            GetPrimaryViewport()->SetDynamicResolution({
+                .TargetFrameTimeMs = 1000.0f / m_TargetFps,
+                .MinScale = m_DrsMinScale,
+                .MaxScale = m_DrsMaxScale,
+            });
+        }
+        else
+        {
+            GetPrimaryViewport()->ClearDynamicResolution();
+        }
     }
 
     void RenderUserInterface()
     {
-        // A render-scale change resized the output in the prior frame's render-all phase; re-point
-        // the ImGui texture at the fresh output now (the gather already reads it fresh per frame).
-        if (m_RefetchSceneTexture)
+        const Renderer::Viewport& viewport = *GetPrimaryViewport();
+
+        // The output is replaced whenever the render scale changes the render extent (the manual
+        // slider, an adaptive-resolution adjustment) or Configure recreates it; the generation
+        // bump tells us to re-point the ImGui texture (the gather reads the output fresh anyway).
+        if (viewport.GetOutputGeneration() != m_SceneTextureGeneration)
         {
-            m_SceneTexture =
-                GetImGuiLayer()->CreateTexture(*m_SceneSampler, *GetPrimaryViewport()->GetOutput());
-            m_RefetchSceneTexture = false;
+            m_SceneTexture = GetImGuiLayer()->CreateTexture(*m_SceneSampler, *viewport.GetOutput());
+            m_SceneTextureGeneration = viewport.GetOutputGeneration();
         }
 
-        const Renderer::SceneRenderer& renderer = GetPrimaryViewport()->GetRenderer();
+        // Mirror the live scale so the (possibly greyed) slider tracks automatic adjustments.
+        m_RenderScale = viewport.GetRenderScale();
+
+        const Renderer::SceneRenderer& renderer = viewport.GetRenderer();
 
         if (auto sceneWindow = UI::Window("Scene"))
         {
@@ -593,13 +624,59 @@ private:
                 ReconfigureScene();
             }
 
-            // Render scale is a per-viewport property, not a SceneRendererSettings: it resizes the
-            // viewport's render target while the on-screen region stays full size, so the gather
-            // upscales. Below 1.0 the image visibly softens; the Stats window shows the real extent.
-            if (UI::Slider("Render scale", m_RenderScale, {.Min = 0.25f, .Max = 2.0f}))
+            // A scale drag field stepping by 0.05: the drag speed is the step, and the value snaps
+            // to a 0.05 multiple (clamped) so it lands on clean increments.
+            const auto scaleDrag = [](const char* label, f32& value, f32 min, f32 max)
             {
-                GetPrimaryViewport()->SetRenderScale(m_RenderScale);
-                m_RefetchSceneTexture = true;
+                if (UI::Drag(label, value,
+                             {.Speed = 0.05f, .Min = min, .Max = max, .Format = "%.2f"}))
+                {
+                    value = glm::clamp(glm::round(value / 0.05f) * 0.05f, min, max);
+                    return true;
+                }
+                return false;
+            };
+
+            // Adaptive resolution drives the render scale from measured GPU frame time toward a
+            // target rate, kept between a min and max scale (needs device timestamp support). The
+            // checkbox greys out without it.
+            {
+                auto timingDisabled = UI::Disabled(!GetRenderContext().IsGpuTimingSupported());
+                if (UI::Checkbox("Dynamic resolution", m_DynamicResolution))
+                {
+                    ApplyDynamicResolution();
+                }
+            }
+            if (m_DynamicResolution)
+            {
+                if (UI::Slider("Target FPS", m_TargetFps, {.Min = 30.0f, .Max = 120.0f}))
+                {
+                    ApplyDynamicResolution();
+                }
+                // The controller's scale bounds. Each keeps min <= max so the band never inverts.
+                if (scaleDrag("Min scale", m_DrsMinScale, 0.25f, 1.0f))
+                {
+                    m_DrsMaxScale = glm::max(m_DrsMaxScale, m_DrsMinScale);
+                    ApplyDynamicResolution();
+                }
+                if (scaleDrag("Max scale", m_DrsMaxScale, 0.25f, 2.0f))
+                {
+                    m_DrsMinScale = glm::min(m_DrsMinScale, m_DrsMaxScale);
+                    ApplyDynamicResolution();
+                }
+            }
+
+            // Render scale is a per-viewport property, not a SceneRendererSettings: it renders into
+            // a sub-rect of the allocation while the on-screen region stays full size, so the
+            // tonemap upscales. Below 1.0 the image visibly softens; the Stats window shows the real
+            // extent. The manual field steps by 0.05 from a 0.25 floor and greys out while the
+            // adaptive controller owns the scale.
+            {
+                auto manualDisabled = UI::Disabled(m_DynamicResolution);
+                if (scaleDrag("Render scale", m_RenderScale, 0.25f, 2.0f))
+                {
+                    GetPrimaryViewport()->SetRenderScale(m_RenderScale);
+                }
             }
 
             // Tonemap exposure is a per-frame SceneView value; the drag edits the member.
@@ -642,7 +719,17 @@ private:
             UI::Text(
                 fmt::format("{:.1f} fps ({:.2f} ms)", UI::FrameRate(), 1000.0f / UI::FrameRate()));
 
-            // The render-target extent shrinks with render scale while the window stays full size.
+            // The measured GPU frame time the adaptive controller drives off (when supported).
+            if (GetRenderContext().IsGpuTimingSupported())
+            {
+                UI::Text(fmt::format("GPU frame: {:.2f} ms",
+                                     GetRenderContext().GetLastGpuFrameTimeMs()));
+            }
+
+            // The live render scale (the controller writes it while dynamic resolution is on) and
+            // the render-target extent, which shrinks with the scale while the window stays full size.
+            UI::Text(fmt::format("Render scale: {:.2f}{}", viewport.GetRenderScale(),
+                                 m_DynamicResolution ? " (auto)" : ""));
             const Ref<Renderer::Image> target = renderer.GetOutput()->GetImage();
             UI::Text(fmt::format("Render target: {}x{}", target->GetWidth(), target->GetHeight()));
 
@@ -708,12 +795,20 @@ private:
     Ref<Renderer::Sampler> m_SceneSampler;
     Ref<ImGuiTexture> m_SceneTexture;
 
-    // Dynamic resolution scale on the managed viewport: 1.0 renders at the window extent,
-    // lower renders below it and the gather upscales. Set via SetRenderScale.
+    // Render scale on the managed viewport: 1.0 renders at the window extent, lower renders below
+    // it and the gather upscales. Mirrors the viewport's live scale (which the adaptive controller
+    // also writes), so the slider tracks automatic adjustments while greyed out.
     f32 m_RenderScale = 1.0f;
-    // A scale change resizes the output on the next viewport Render (debounced), so the ImGui
-    // texture is re-fetched the following frame.
-    bool m_RefetchSceneTexture = false;
+    // Output generation the ImGui scene texture was last built from; a mismatch (a manual scale
+    // change, an adaptive-resolution resize, or Configure replacing the output) drives a re-fetch.
+    u64 m_SceneTextureGeneration = 0;
+
+    // Adaptive resolution demo: when on, the viewport drives its own render scale from GPU frame
+    // time toward m_TargetFps, between m_DrsMinScale and m_DrsMaxScale; the manual slider greys out.
+    bool m_DynamicResolution = false;
+    f32 m_TargetFps = 60.0f;
+    f32 m_DrsMinScale = 0.5f;
+    f32 m_DrsMaxScale = 1.0f;
 
     // Fixed rotation for the smoke capture, in radians.
     static constexpr f32 SmokeAngle = 0.9f;

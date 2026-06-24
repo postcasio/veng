@@ -79,8 +79,16 @@ namespace Veng
                 .Region = {.Offset = {0, 0}, .Extent = extent},
                 .ColorFormat = managed.ColorFormat,
                 .Settings = managed.Settings,
+                .RenderScale = managed.RenderScale,
                 .Role = Renderer::ViewportRole::Presented,
             });
+
+            // Opt-in adaptive resolution: the viewport drives its own scale from GPU frame time.
+            if (managed.DynamicResolution)
+            {
+                m_PrimaryViewport->SetDynamicResolution(*managed.DynamicResolution);
+            }
+
             RegisterViewport(*m_PrimaryViewport);
 
             // A window-tracking managed viewport follows swapchain resizes so it keeps covering

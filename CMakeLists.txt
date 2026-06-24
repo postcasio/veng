@@ -385,6 +385,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/game_mode.cpp
             tests/unit/material_params.cpp
             tests/unit/viewport_mapping.cpp
+            tests/unit/dynamic_resolution.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
 

@@ -128,6 +128,25 @@ namespace Veng::Renderer
         /// CullMode::GPU is unavailable otherwise and the CPU path is the fallback.
         [[nodiscard]] bool IsGpuDrivenCullingSupported() const;
 
+        /// @brief Returns true when the graphics queue can timestamp GPU work.
+        ///
+        /// True when the graphics queue family reports a non-zero timestampValidBits and the
+        /// device exposes a non-zero timestampPeriod — the requirements for the per-frame
+        /// timestamp-query pair that measures GPU frame time. False on a device without
+        /// timestamp support, where GetLastGpuFrameTimeMs() stays zero and dynamic-resolution
+        /// control is inert.
+        [[nodiscard]] bool IsGpuTimingSupported() const;
+
+        /// @brief Returns the most recently completed frame's GPU execution time, in milliseconds.
+        ///
+        /// A timestamp-query pair brackets each frame's command buffer; the value is read back
+        /// once the frame retires (its fence is waited again, GetMaxFramesInFlight() frames
+        /// later), so it is the freshest fully-completed GPU frame time. The adaptive
+        /// resolution controller drives off it. Zero before the first measurement and whenever
+        /// IsGpuTimingSupported() is false.
+        /// @return The last completed frame's GPU time in ms, or 0 when unavailable.
+        [[nodiscard]] f32 GetLastGpuFrameTimeMs() const;
+
         /// @brief Returns true when the device can linearly filter a sampled image of @p format.
         ///
         /// Queries the format's optimal-tiling feature flags for
@@ -331,6 +350,14 @@ namespace Veng::Renderer
 
         /// @brief Set when a resize is pending; triggers swapchain recreation at the next PresentFrame.
         bool m_RenderExtentChanged = false;
+
+        /// @brief True when the graphics queue supports timestamp queries (set in Initialize).
+        bool m_GpuTimingSupported = false;
+
+        /// @brief Most recently completed frame's GPU time in ms; 0 until the first readback.
+        ///
+        /// Written by BeginFrame from the timestamp-query pair of the frame that just retired.
+        f32 m_GpuFrameTimeMs = 0.0f;
 
         /// @brief Bindless-sampled resources awaiting their one-time graphics-queue acquire.
         ///

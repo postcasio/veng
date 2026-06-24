@@ -44,6 +44,17 @@ namespace Veng
         Renderer::Format ColorFormat = Renderer::Format::Undefined;
         /// @brief Initial topology and sizing knobs for the managed viewport's SceneRenderer.
         Renderer::SceneRendererSettings Settings;
+        /// @brief Initial render-resolution multiplier on the region extent (see Viewport).
+        ///
+        /// The managed viewport renders at its region extent times this; (0,1] renders below the
+        /// window for dynamic resolution scaling, >1 supersamples. Must be > 0.
+        f32 RenderScale = 1.0f;
+        /// @brief Enables automatic render-scale control on the managed viewport when set.
+        ///
+        /// The viewport eases its RenderScale toward this budget from measured GPU frame time
+        /// each frame (see Viewport::SetDynamicResolution); inert on a device without GPU timing.
+        /// Unset leaves the scale fixed at RenderScale.
+        optional<Renderer::DynamicResolutionSettings> DynamicResolution;
     };
 
     /// @brief Construction parameters for Application.

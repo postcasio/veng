@@ -16,15 +16,20 @@
 
 struct PushConstants
 {
-    uint2 DestExtent;  // destination (finer) mip dimensions in texels
-    float Radius;      // upsample spread scale
+    uint2  DestExtent;     // destination (finer) mip dimensions in texels (the valid sub-rect)
+    float2 SourceScaleUV;  // source validExtent/allocExtent (dynamic-resolution sub-rect)
+    float2 SourceMaxUV;    // source (validExtent-0.5)/allocExtent (bilinear-tap clamp)
+    float  Radius;         // upsample spread scale
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
 
+// The source (coarser mip) is rendered into a dynamic-resolution sub-rect; map the valid-space UV
+// into its valid region and clamp so a bilinear tap never bleeds past it (identity at scale 1.0).
 float3 SampleSource(float2 uv)
 {
-    return g_Source.SampleLevel(g_Sampler, uv, 0.0).rgb;
+    float2 physical = min(uv * g_PC.SourceScaleUV, g_PC.SourceMaxUV);
+    return g_Source.SampleLevel(g_Sampler, physical, 0.0).rgb;
 }
 
 [shader("compute")]

@@ -134,12 +134,17 @@ float4 fsMain(VSOutput input) : SV_Target
 {
     SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
 
-    float3 albedo = g_Textures[NonUniformResourceIndex(g_PC.AlbedoTexture)].Sample(samp, input.v_UV).rgb;
-    float3 normal = g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].Sample(samp, input.v_UV).xyz;
-    float4 orm    = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Sample(samp, input.v_UV);
-    float depth   = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, input.v_UV).r;
-
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
+
+    // The g-buffer is rendered into the dynamic-resolution sub-rect, so remap the logical UV into
+    // the valid region before sampling (identity at scale 1.0). NDC reconstruction below keeps the
+    // raw logical UV — the view is logically full-screen; only the storage is a sub-rect.
+    float2 sampleUV = ScaledSampleUV(input.v_UV, vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
+
+    float3 albedo = g_Textures[NonUniformResourceIndex(g_PC.AlbedoTexture)].Sample(samp, sampleUV).rgb;
+    float3 normal = g_Textures[NonUniformResourceIndex(g_PC.NormalTexture)].Sample(samp, sampleUV).xyz;
+    float4 orm    = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Sample(samp, sampleUV);
+    float depth   = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
 
     float occlusion = orm.r;
     float roughness = clamp(orm.g, 0.04, 1.0);
@@ -245,7 +250,7 @@ float4 fsMain(VSOutput input) : SV_Target
     // non-SSAO variant uses the baked occlusion (× OcclusionStrength, already folded
     // into ORM.r by the geometry pass's material) alone.
 #if VE_USE_SSAO
-    float ssao = g_Textures[NonUniformResourceIndex(g_PC.SsaoTexture)].Sample(samp, input.v_UV).r;
+    float ssao = g_Textures[NonUniformResourceIndex(g_PC.SsaoTexture)].Sample(samp, sampleUV).r;
     float ambientOcclusion = min(occlusion, ssao);
 #else
     float ambientOcclusion = occlusion;

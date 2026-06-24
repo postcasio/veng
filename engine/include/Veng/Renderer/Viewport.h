@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Math/Ray.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/DynamicResolution.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Types.h>
@@ -139,6 +140,32 @@ namespace Veng::Renderer
         /// @brief Returns the current render-resolution multiplier.
         [[nodiscard]] f32 GetRenderScale() const;
 
+        /// @brief Enables automatic render-scale control from measured GPU frame time.
+        ///
+        /// Each Render the viewport reads Context::GetLastGpuFrameTimeMs() and eases its
+        /// RenderScale toward the settings' frame budget (ComputeDynamicResolutionScale),
+        /// resizing only when the integer render extent changes. The control is inert — the
+        /// scale is left as set — when Context::IsGpuTimingSupported() is false. The whole-frame
+        /// GPU time drives it, so it is meaningful for the dominant (primary) viewport; on a
+        /// device with several heavy viewports the measurement is not attributed per viewport.
+        /// @param settings  The controller tuning (budget, scale bounds, deadband, rate limit).
+        void SetDynamicResolution(const DynamicResolutionSettings& settings);
+
+        /// @brief Disables automatic render-scale control, holding the current RenderScale.
+        void ClearDynamicResolution();
+
+        /// @brief Returns whether automatic render-scale control is enabled.
+        [[nodiscard]] bool IsDynamicResolutionEnabled() const;
+
+        /// @brief Returns a counter bumped whenever the output view/handle is replaced.
+        ///
+        /// GetOutput()/GetOutputHandle() are invalidated by a resize (a region or render-scale
+        /// change applied in Render, including an automatic dynamic-resolution adjustment) and by
+        /// Configure. A consumer caching an ImGui texture or a material binding from the output
+        /// compares this counter frame to frame to know when to re-fetch, rather than tracking
+        /// every mutation itself. Monotonic for the viewport's lifetime.
+        [[nodiscard]] u64 GetOutputGeneration() const;
+
         /// @brief Binds this frame's render source (stores a copy).
         ///
         /// @param state  The scene, camera, and per-frame tone/bloom knobs to render with.
@@ -238,10 +265,34 @@ namespace Veng::Renderer
         /// always names the live output. The old slot retires through the per-frame window.
         void RefreshOutputHandle();
 
-        /// @brief The render-target extent: the region extent scaled by RenderScale, clamped to ≥ 1.
+        /// @brief The renderer's allocation extent for a given scale, clamped to ≥ 1.
         ///
-        /// @return round(m_Region.Extent * m_RenderScale), never below {1,1}.
+        /// round(region * max(scale, 1)): a scale ≤ 1 (dynamic resolution) renders into a sub-rect
+        /// of the region-sized allocation and does not grow it; a scale > 1 (supersample) grows it.
+        /// @param scale  The render-resolution multiplier to apply.
+        /// @return round(m_Region.Extent * max(scale, 1)), never below {1,1}.
+        [[nodiscard]] uvec2 ExtentForScale(f32 scale) const;
+
+        /// @brief The renderer's allocation extent at the current RenderScale, clamped to ≥ 1.
+        ///
+        /// @return ExtentForScale(m_RenderScale).
         [[nodiscard]] uvec2 ScaledExtent() const;
+
+        /// @brief The per-frame render fraction of the allocation pushed into SceneView::RenderScale.
+        ///
+        /// m_RenderScale / max(m_RenderScale, 1): the fraction of the (allocation-sized) target to
+        /// render this frame. A scale ≤ 1 yields that fraction (a sub-rect); a scale > 1 yields 1
+        /// (the allocation was grown to supersample, so it renders fully).
+        /// @return The sub-rect fraction in (0, 1].
+        [[nodiscard]] f32 ViewRenderScale() const;
+
+        /// @brief Advances the render scale from measured GPU frame time when control is enabled.
+        ///
+        /// Called at the top of Render. Reads Context::GetLastGpuFrameTimeMs(), computes the next
+        /// scale, and debounces a resize (via SetRenderScale) only when the integer render extent
+        /// would change — so a steady-state micro-adjustment within a pixel never resizes. A no-op
+        /// when control is disabled or timing is unsupported.
+        void UpdateDynamicResolution();
 
         /// @brief The Vulkan context, for bindless registration.
         Context& m_Context;
@@ -251,6 +302,8 @@ namespace Veng::Renderer
         ViewportRegion m_Region;
         /// @brief Uniform render-resolution multiplier on the region extent.
         f32 m_RenderScale = 1.0f;
+        /// @brief Automatic render-scale controller tuning; unset when control is disabled.
+        optional<DynamicResolutionSettings> m_DynamicResolution;
         /// @brief Whether the engine compositor places this viewport.
         ViewportRole m_Role;
 
@@ -268,6 +321,9 @@ namespace Veng::Renderer
 
         /// @brief Bindless slot naming the current output view; re-registered on resize/Configure.
         TextureHandle m_OutputHandle;
+
+        /// @brief Bumped each time the output view/handle is replaced; read via GetOutputGeneration.
+        u64 m_OutputGeneration = 0;
 
         /// @brief The drive-list this viewport is registered into; null when unregistered.
         ///

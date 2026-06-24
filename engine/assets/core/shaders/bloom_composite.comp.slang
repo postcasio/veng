@@ -13,8 +13,10 @@
 
 struct PushConstants
 {
-    uint2 DestExtent;  // result dimensions in texels
-    float Intensity;   // bloom mix
+    uint2  DestExtent;     // result dimensions in texels (the valid sub-rect)
+    float2 SourceScaleUV;  // HDR/bloom validExtent/allocExtent (both at mip-0 sub-rect scale)
+    float2 SourceMaxUV;    // (validExtent-0.5)/allocExtent (bilinear-tap clamp)
+    float  Intensity;      // bloom mix
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -26,10 +28,13 @@ void csMain(uint3 id : SV_DispatchThreadID)
     if (id.x >= g_PC.DestExtent.x || id.y >= g_PC.DestExtent.y)
         return;
 
+    // The HDR and bloom-mip-0 sources are rendered into a dynamic-resolution sub-rect; map the
+    // valid-space UV into their valid region and clamp (identity at scale 1.0).
     float2 uv = (float2(id.xy) + 0.5) / float2(g_PC.DestExtent);
+    float2 src = min(uv * g_PC.SourceScaleUV, g_PC.SourceMaxUV);
 
-    float3 hdr = g_Hdr.SampleLevel(g_Sampler, uv, 0.0).rgb;
-    float3 bloom = g_Bloom.SampleLevel(g_Sampler, uv, 0.0).rgb;
+    float3 hdr = g_Hdr.SampleLevel(g_Sampler, src, 0.0).rgb;
+    float3 bloom = g_Bloom.SampleLevel(g_Sampler, src, 0.0).rgb;
 
     g_Dest[int2(id.xy)] = float4(hdr + bloom * g_PC.Intensity, 1.0);
 }

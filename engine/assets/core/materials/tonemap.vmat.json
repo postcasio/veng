@@ -2,8 +2,9 @@
   "domain": "postprocess",
   "shaders": { "vertex": 17612966569144354344, "fragment": 7952927765378679446 },
   "fields": [
-    { "name": "Hdr",        "type": "texture" },
-    { "name": "HdrSampler", "type": "sampler", "texture": "Hdr" },
-    { "name": "Exposure",   "type": "float", "value": 1.0 }
+    { "name": "Hdr",         "type": "texture" },
+    { "name": "HdrSampler",  "type": "sampler", "texture": "Hdr" },
+    { "name": "Exposure",    "type": "float", "value": 1.0 },
+    { "name": "RenderScale", "type": "vec4", "value": [1.0, 1.0, 1.0, 1.0] }
   ]
 }

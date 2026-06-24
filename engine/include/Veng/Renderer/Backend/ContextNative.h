@@ -146,6 +146,24 @@ namespace Veng::Renderer
         u32 CurrentFrameInFlight = 0;
         u32 MaxFramesInFlight = 2;
 
+        /// @brief Timestamp query pool holding a (start, end) pair per frame-in-flight.
+        ///
+        /// Query 2·slot is written top-of-pipe at BeginFrame, 2·slot+1 bottom-of-pipe at
+        /// EndFrame; the pair is read back when that slot's frame next retires. Null when the
+        /// device reports no timestamp support.
+        vk::QueryPool TimestampPool;
+        /// @brief Nanoseconds per timestamp tick (PhysicalDeviceLimits::timestampPeriod).
+        f32 TimestampPeriodNs = 0.0f;
+        /// @brief Mask of the meaningful low bits of a timestamp (from timestampValidBits).
+        ///
+        /// A device may report fewer than 64 valid bits; the raw query values and their
+        /// difference are masked to this before converting to time.
+        u64 TimestampValidMask = ~0ULL;
+        /// @brief Per-slot flag: true once a slot's query pair has been written at least once.
+        ///
+        /// Guards the readback so a slot is never read before its first frame wrote it.
+        vector<bool> TimestampWritten;
+
         /// @brief Per-in-flight-frame deferred-destruction bins.
         ///
         /// A handle retired while frame i is recording goes into bin i and is protected

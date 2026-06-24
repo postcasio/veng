@@ -18,9 +18,13 @@
 // material buffer at index * MaterialParamStride.
 struct MaterialParams
 {
-    uint  Hdr;        // bindless sampled-image index (runtime-bound each frame)
-    uint  HdrSampler; // bindless sampler index (runtime-bound each frame)
-    float Exposure;   // authored param, set per frame from the SceneView
+    // RenderScale is first so its offset is 0 in both the cooker's std140 reflection and the
+    // shader's scalar-layout Load: a float4 placed after the scalar fields would land at offset 16
+    // under std140 but 12 under scalar, so the runtime would write it where the shader cannot read.
+    float4 RenderScale; // dynamic-resolution upscale: xy source validExtent/allocExtent, zw clamp
+    uint   Hdr;         // bindless sampled-image index (runtime-bound each frame)
+    uint   HdrSampler;  // bindless sampler index (runtime-bound each frame)
+    float  Exposure;    // authored param, set per frame from the SceneView
 };
 
 static const uint MaterialParamStride = 256;
@@ -65,8 +69,13 @@ float3 AcesApprox(float3 x)
 float4 fsMain(VSOutput input) : SV_Target0
 {
     MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
+    // The HDR source is rendered into a dynamic-resolution sub-rect; this terminal pass renders the
+    // full output and upscales by mapping the full-output UV across the source's valid region
+    // (RenderScale.xy), clamped (RenderScale.zw) so the bilinear tap never bleeds past it. At scale
+    // 1.0 RenderScale is (1,1,~1,~1) and this is the plain full-resolution sample.
+    float2 uv = min(input.v_UV * p.RenderScale.xy, p.RenderScale.zw);
     float3 hdr = g_Textures[NonUniformResourceIndex(p.Hdr)].Sample(
-        g_Samplers[NonUniformResourceIndex(p.HdrSampler)], input.v_UV).rgb;
+        g_Samplers[NonUniformResourceIndex(p.HdrSampler)], uv).rgb;
     float3 tonemapped = AcesApprox(hdr * p.Exposure);
     return float4(tonemapped, 1.0);
 }

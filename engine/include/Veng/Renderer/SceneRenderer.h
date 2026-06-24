@@ -304,6 +304,22 @@ namespace Veng::Renderer
         /// @brief Frame delta time in seconds.
         f32 Delta = 0.0f;
 
+        /// @brief Dynamic-resolution multiplier on the allocated extent for this frame.
+        ///
+        /// The renderer's targets are allocated at a high-water-mark extent; each Execute renders
+        /// into the top-left round(allocExtent * RenderScale) sub-rect of them and the result is
+        /// upscaled by the consumer. (0,1] renders below the allocation (dynamic resolution
+        /// scaling); a value that would exceed the current allocation grows it (a one-time
+        /// resize). 1.0 renders at full allocation. A debug view (Mode != Final) forces 1.0.
+        /// Clamped to a valid range by the renderer; the realized sub-rect is GetValidExtent().
+        f32 RenderScale = 1.0f;
+
+        /// @brief This frame's render-target sub-rect extent; set by the renderer each Execute.
+        ///
+        /// round(allocExtent * RenderScale), clamped to [1, allocExtent]. Every pass sizes its
+        /// viewport/scissor and compute dispatch to it; a caller's value is overwritten.
+        uvec2 RenderExtent = {};
+
         /// @brief Live light count this frame; set by the renderer on every Execute.
         ///
         /// The number of (Transform, Light) entities packed, capped at MaxLights. The
@@ -452,8 +468,21 @@ namespace Veng::Renderer
 
         /// @brief Returns the sampleable view of the owned result.
         ///
-        /// Invalidated by Resize and Configure; re-fetch after those calls.
+        /// The image is allocated at the high-water-mark extent; under dynamic resolution only
+        /// its top-left GetValidExtent() sub-rect holds this frame's rendered content. A consumer
+        /// upscales that sub-rect (see GetValidExtent). Invalidated by Resize and Configure;
+        /// re-fetch after those calls.
         [[nodiscard]] Ref<ImageView> GetOutput() const;
+
+        /// @brief Returns the valid sub-rect extent of the output from the last Execute.
+        ///
+        /// round(allocExtent * SceneView::RenderScale) from the last Execute, clamped to
+        /// [1, allocExtent]. The output image (GetOutput) is allocated at the full extent; only
+        /// the top-left GetValidExtent() texels are this frame's content, and a consumer sampling
+        /// it must remap its UVs into [0, GetValidExtent()/allocExtent] to upscale (a half-texel
+        /// inset avoids bleeding past the valid edge). Equal to the allocated extent before the
+        /// first Execute and whenever RenderScale is 1.0.
+        [[nodiscard]] uvec2 GetValidExtent() const;
 
         /// @brief Returns the total resident per-submesh candidate count from the last Execute.
         ///
@@ -695,8 +724,14 @@ namespace Veng::Renderer
         AssetManager& m_Assets;
         /// @brief Pixel format of the owned output target.
         Format m_OutputFormat;
-        /// @brief Current render extent.
+        /// @brief Allocated render extent — the high-water-mark every target is sized to.
         uvec2 m_Extent;
+        /// @brief This frame's valid sub-rect extent (round(m_Extent * RenderScale)); GetValidExtent.
+        uvec2 m_ValidExtent;
+        /// @brief Previous frame's sub-rect UV mapping (validExtent/allocExtent), for TAA history.
+        vec2 m_PreviousRenderScaleUV{1.0f};
+        /// @brief Previous frame's clamped max valid UV ((validExtent-0.5)/allocExtent), for TAA history.
+        vec2 m_PreviousMaxValidUV{1.0f};
         /// @brief Current topology and sizing knobs.
         SceneRendererSettings m_Settings;
 
