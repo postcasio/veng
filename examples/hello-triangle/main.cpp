@@ -570,13 +570,25 @@ private:
     // a name hash, so a pass keeps its color regardless of its position in the frame's order.
     static vec4 PassColor(string_view name)
     {
-        static const std::array<vec4, 12> Palette{
-            vec4{0.90f, 0.30f, 0.30f, 1.0f}, vec4{0.95f, 0.60f, 0.25f, 1.0f},
-            vec4{0.90f, 0.85f, 0.30f, 1.0f}, vec4{0.55f, 0.85f, 0.30f, 1.0f},
-            vec4{0.30f, 0.80f, 0.40f, 1.0f}, vec4{0.25f, 0.80f, 0.75f, 1.0f},
-            vec4{0.30f, 0.75f, 0.95f, 1.0f}, vec4{0.35f, 0.55f, 0.95f, 1.0f},
-            vec4{0.55f, 0.45f, 0.95f, 1.0f}, vec4{0.70f, 0.45f, 0.90f, 1.0f},
-            vec4{0.90f, 0.40f, 0.80f, 1.0f}, vec4{0.95f, 0.45f, 0.60f, 1.0f},
+        // A hand-tuned categorical palette: widely separated hues with alternating brightness so
+        // neighbors in the legend stay distinguishable. White is reserved for the GPU total.
+        static const std::array<vec4, 16> Palette{
+            vec4{0.90f, 0.10f, 0.10f, 1.0f}, // red
+            vec4{0.20f, 0.55f, 1.00f, 1.0f}, // blue
+            vec4{1.00f, 0.85f, 0.00f, 1.0f}, // yellow
+            vec4{0.55f, 0.20f, 0.90f, 1.0f}, // violet
+            vec4{0.10f, 0.80f, 0.30f, 1.0f}, // green
+            vec4{1.00f, 0.45f, 0.00f, 1.0f}, // orange
+            vec4{0.10f, 0.85f, 0.90f, 1.0f}, // cyan
+            vec4{0.95f, 0.35f, 0.70f, 1.0f}, // pink
+            vec4{0.60f, 0.80f, 0.10f, 1.0f}, // lime
+            vec4{0.50f, 0.35f, 0.20f, 1.0f}, // brown
+            vec4{0.45f, 0.95f, 0.65f, 1.0f}, // mint
+            vec4{0.80f, 0.55f, 1.00f, 1.0f}, // lavender
+            vec4{0.85f, 0.65f, 0.40f, 1.0f}, // tan
+            vec4{0.00f, 0.50f, 0.55f, 1.0f}, // teal
+            vec4{1.00f, 0.60f, 0.55f, 1.0f}, // salmon
+            vec4{0.65f, 0.75f, 0.85f, 1.0f}, // slate
         };
 
         // FNV-1a over the name.
@@ -928,66 +940,74 @@ private:
                       });
     }
 
-    // A rolling graph of CPU and GPU whole-frame time plus, below them, a per-pass GPU breakdown
-    // — one compact plot per render-graph pass, in execution order. The GPU sections appear only
-    // when the device exposes timestamp queries; otherwise a note stands in.
+    // The whole-frame GPU line is drawn in white; the passes take the distinct palette.
+    static constexpr vec4 GpuLineColor{1.0f, 1.0f, 1.0f, 1.0f};
+
+    // Returns a ring-buffer plot offset: the write head once the buffer has wrapped, else 0.
+    static i32 HistoryOffset(const FrameTimeHistory& history)
+    {
+        return history.Count == FrameTimeHistory::Capacity ? static_cast<i32>(history.Head) : 0;
+    }
+
+    // The frame-time window: one big chart overlaying the whole-frame GPU time (white) with every
+    // grouped pass (bloom/hi-Z mip sweeps collapsed) as a colored line, a two-column legend, and
+    // the CPU whole-frame plot below. The GPU sections appear only when the device exposes
+    // timestamp queries; otherwise a note stands in above the CPU plot.
     void RenderFrameTimeGraph()
     {
         if (auto graphWindow = UI::Window("Frame Time"))
         {
-            PlotHistory("CPU", m_CpuFrameTimes, 80.0f);
-
-            UI::Spacing();
-            if (!GetRenderContext().IsGpuTimingSupported())
+            if (GetRenderContext().IsGpuTimingSupported())
             {
-                UI::TextDisabled("GPU timing unsupported on this device");
-                return;
-            }
+                const vector<PassCost> passes =
+                    AggregatePasses(GetRenderContext().GetLastGpuPassTimings());
 
-            PlotHistory("GPU", m_GpuFrameTimes, 80.0f);
-
-            // The whole per-pass breakdown in one graph: a histogram with one bar per grouped
-            // pass (bloom/hi-Z mip sweeps collapsed), in execution order. The legend below maps
-            // each bar, left-to-right, to its pass name, current cost, and rolling average.
-            const vector<PassCost> passes =
-                AggregatePasses(GetRenderContext().GetLastGpuPassTimings());
-            if (passes.empty())
-            {
-                return;
-            }
-
-            UI::SeparatorText("Passes (GPU)");
-
-            // Every pass's rolling history overlaid as colored lines on one shared chart, each
-            // line colored by its pass so it matches the legend swatch below.
-            vector<UI::PlotSeries> series;
-            series.reserve(passes.size());
-            for (const PassCost& pass : passes)
-            {
-                const FrameTimeHistory& history = m_PassFrameTimes[pass.Name];
-                const i32 offset = history.Count == FrameTimeHistory::Capacity
-                                       ? static_cast<i32>(history.Head)
-                                       : 0;
+                // The whole-frame GPU envelope first (white), then each pass's history — one
+                // shared, auto-scaled chart so the passes read against the frame total.
+                vector<UI::PlotSeries> series;
+                series.reserve(passes.size() + 1);
                 series.push_back({
-                    .Color = PassColor(pass.Name),
-                    .Values = {history.Samples.data(), history.Count},
-                    .Offset = offset,
+                    .Color = GpuLineColor,
+                    .Values = {m_GpuFrameTimes.Samples.data(), m_GpuFrameTimes.Count},
+                    .Offset = HistoryOffset(m_GpuFrameTimes),
                 });
-            }
-            UI::PlotLinesMulti("##passes", series, {.ScaleMin = 0.0f, .Size = {0.0f, 140.0f}});
-
-            // Two-column legend: a color swatch matching each line, then the pass and its cost.
-            if (auto legend = UI::Table("PassLegend", 2))
-            {
-                const f32 swatch = UI::GetTextLineHeight();
                 for (const PassCost& pass : passes)
                 {
-                    UI::TableNextColumn();
-                    UI::Badge("", PassColor(pass.Name), {swatch, swatch});
-                    UI::SameLine();
-                    UI::Text(fmt::format("{}: {:.3f} ms", pass.Name, pass.Milliseconds));
+                    const FrameTimeHistory& history = m_PassFrameTimes[pass.Name];
+                    series.push_back({
+                        .Color = PassColor(pass.Name),
+                        .Values = {history.Samples.data(), history.Count},
+                        .Offset = HistoryOffset(history),
+                    });
                 }
+                UI::PlotLinesMulti("##gpu", series, {.ScaleMin = 0.0f, .Size = {0.0f, 160.0f}});
+
+                // Two-column legend: a swatch matching each line, then its label and current cost.
+                if (auto legend = UI::Table("GpuLegend", 2))
+                {
+                    const f32 swatch = UI::GetTextLineHeight();
+                    UI::TableNextColumn();
+                    UI::Badge("", GpuLineColor, {swatch, swatch});
+                    UI::SameLine();
+                    UI::Text(fmt::format("GPU: {:.3f} ms", m_GpuFrameTimes.Last()));
+                    for (const PassCost& pass : passes)
+                    {
+                        UI::TableNextColumn();
+                        UI::Badge("", PassColor(pass.Name), {swatch, swatch});
+                        UI::SameLine();
+                        UI::Text(fmt::format("{}: {:.3f} ms", pass.Name, pass.Milliseconds));
+                    }
+                }
+
+                UI::Spacing();
             }
+            else
+            {
+                UI::TextDisabled("GPU timing unsupported on this device");
+            }
+
+            // The CPU whole-frame plot sits below the GPU chart, on its own fixed millisecond axis.
+            PlotHistory("CPU", m_CpuFrameTimes, 80.0f);
         }
     }
 
