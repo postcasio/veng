@@ -5,6 +5,7 @@
 #include <imgui.h>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <algorithm>
 #include <limits>
 
 namespace Veng::UI
@@ -348,18 +349,91 @@ namespace Veng::UI
                          scaleMax, ImVec2(options.Size.x, options.Size.y));
     }
 
-    void PlotHistogram(string_view label, std::span<const f32> values, PlotOptions options)
+    void PlotLinesMulti(string_view label, std::span<const PlotSeries> series, PlotOptions options)
     {
+        const Theme& theme = GetTheme();
+
+        // Resolve the chart rect: a zero width fills the content region, a zero height takes a
+        // default. The rect is reserved (Dummy) after drawing, since the draw list records at
+        // absolute coordinates computed up front — the Badge/ItemBorder pattern.
+        vec2 size = options.Size;
+        if (size.x <= 0.0f)
+        {
+            size.x = ImGui::GetContentRegionAvail().x;
+        }
+        if (size.y <= 0.0f)
+        {
+            size.y = 80.0f;
+        }
+
+        const ImVec2 min = ImGui::GetCursorScreenPos();
+        const ImVec2 max = ImVec2(min.x + size.x, min.y + size.y);
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+        // Framed background + border, matching the look of the single-series plots.
+        drawList->AddRectFilled(min, max, ImGui::GetColorU32(SrgbToLinear(theme.Surface)),
+                                theme.FrameRounding);
+        drawList->AddRect(min, max, ImGui::GetColorU32(SrgbToLinear(theme.Border)),
+                          theme.FrameRounding);
+
+        // Shared Y axis: an unset max autoscales to the largest sample across every series.
+        const float scaleMin = options.ScaleMin.value_or(0.0f);
+        float scaleMax = options.ScaleMax.value_or(scaleMin);
+        if (!options.ScaleMax.has_value())
+        {
+            for (const PlotSeries& s : series)
+            {
+                for (const f32 value : s.Values)
+                {
+                    scaleMax = std::max(scaleMax, value);
+                }
+            }
+        }
+        const float range = scaleMax > scaleMin ? scaleMax - scaleMin : 1.0f;
+
+        // Inset a couple pixels so a line never sits on the border.
+        constexpr float Pad = 2.0f;
+        const float x0 = min.x + Pad;
+        const float y1 = max.y - Pad;
+        const float plotWidth = std::max((max.x - Pad) - x0, 1.0f);
+        const float plotHeight = std::max(y1 - (min.y + Pad), 1.0f);
+
+        vector<ImVec2> points;
+        for (const PlotSeries& s : series)
+        {
+            const usize count = s.Values.size();
+            if (count == 0)
+            {
+                continue;
+            }
+
+            points.clear();
+            points.reserve(count);
+            const float denom = count > 1 ? static_cast<float>(count - 1) : 1.0f;
+            for (usize k = 0; k < count; k++)
+            {
+                const usize index = (static_cast<usize>(s.Offset) + k) % count;
+                const float t = static_cast<float>(k) / denom;
+                const float norm = std::clamp((s.Values[index] - scaleMin) / range, 0.0f, 1.0f);
+                points.emplace_back(x0 + (t * plotWidth), y1 - (norm * plotHeight));
+            }
+            drawList->AddPolyline(points.data(), static_cast<int>(points.size()),
+                                  ImGui::GetColorU32(SrgbToLinear(s.Color)), ImDrawFlags_None,
+                                  1.5f);
+        }
+
+        if (!options.OverlayText.empty())
+        {
+            const string overlay = AsCStr(options.OverlayText);
+            const ImVec2 textSize = ImGui::CalcTextSize(overlay.c_str());
+            const ImVec2 textPos = ImVec2(min.x + ((size.x - textSize.x) * 0.5f), min.y + Pad);
+            drawList->AddText(textPos, ImGui::GetColorU32(SrgbToLinear(theme.TextMuted)),
+                              overlay.c_str());
+        }
+
+        // Reserve the rect as a labelled item; the draw above already recorded at these coords.
         const string id = AsCStr(label);
-        const string overlay = AsCStr(options.OverlayText);
-
-        const float scaleMin = options.ScaleMin.value_or(std::numeric_limits<float>::max());
-        const float scaleMax = options.ScaleMax.value_or(std::numeric_limits<float>::max());
-
-        ImGui::PlotHistogram(id.c_str(), values.data(), static_cast<int>(values.size()),
-                             options.Offset,
-                             options.OverlayText.empty() ? nullptr : overlay.c_str(), scaleMin,
-                             scaleMax, ImVec2(options.Size.x, options.Size.y));
+        ImGui::InvisibleButton(id.c_str(), size);
     }
 
     void ItemBorder(vec4 color, f32 thickness)

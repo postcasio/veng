@@ -202,15 +202,18 @@ namespace Veng::UI
     /// @param options  Overlay text, axis scale, ring-buffer offset, and graph size.
     void PlotLines(string_view label, std::span<const f32> values, PlotOptions options = {});
 
-    /// @brief Plots a bar graph of a value series.
+    /// @brief Plots several colored value series as lines on one shared chart.
     ///
-    /// The histogram counterpart of PlotLines: one bar per value, in array order. Suited to a
-    /// per-category breakdown (per-pass GPU cost, say) where each value is an independent
-    /// quantity rather than a sample of one rolling signal. Non-interactive, so it returns void.
-    /// @param label    Graph label and ImGui id.
-    /// @param values   The value series, one bar each.
-    /// @param options  Overlay text, axis scale, ring-buffer offset, and graph size.
-    void PlotHistogram(string_view label, std::span<const f32> values, PlotOptions options = {});
+    /// Each series is drawn as a polyline in its own color over a common axis, so overlapping
+    /// rolling histories (per-pass GPU cost, say) compare directly. The Y axis spans
+    /// [ScaleMin, ScaleMax]; an unset ScaleMax autoscales to the largest sample across every
+    /// series. Non-interactive, so it returns void. `options.Offset` is unused — each series
+    /// carries its own ring-buffer offset.
+    /// @param label    Chart ImGui id.
+    /// @param series   The colored series to overlay.
+    /// @param options  Overlay text, axis scale, and chart size.
+    void PlotLinesMulti(string_view label, std::span<const PlotSeries> series,
+                        PlotOptions options = {});
 
     /// @brief Strokes a border around the most recently submitted item's rectangle.
     ///

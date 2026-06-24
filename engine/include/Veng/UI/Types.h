@@ -1,6 +1,8 @@
 #pragma once
 #include <Veng/Veng.h>
 
+#include <span>
+
 /// @brief Vocabulary types and options structs for the `Veng::UI` widget free functions.
 ///
 /// No imgui types appear here: the surface names only engine types, and the matching
@@ -62,6 +64,21 @@ namespace Veng::UI
         i32 Offset = 0;
         /// @brief Graph size in pixels; a zero component fills width / takes the default height.
         vec2 Size = {0.0f, 0.0f};
+    };
+
+    /// @brief One named, colored value series for `PlotLinesMulti`.
+    ///
+    /// The series is plotted oldest-to-newest across the chart; `Offset` names the oldest
+    /// sample so a ring buffer plots in order without rotation. `Color` is authored sRGB and
+    /// linearized for the UI pipeline — pass the same color to a legend swatch to match.
+    struct PlotSeries
+    {
+        /// @brief Line color, authored sRGB.
+        vec4 Color;
+        /// @brief The sample values, plotted across the chart width.
+        std::span<const f32> Values;
+        /// @brief Index of the oldest sample for ring-buffer data; 0 plots in array order.
+        i32 Offset = 0;
     };
 
     /// @brief Flags controlling window and child-region display behavior.

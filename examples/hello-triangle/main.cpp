@@ -566,6 +566,28 @@ private:
         return costs;
     }
 
+    // A stable, legible color for a pass's line and legend swatch: a fixed palette indexed by
+    // a name hash, so a pass keeps its color regardless of its position in the frame's order.
+    static vec4 PassColor(string_view name)
+    {
+        static const std::array<vec4, 12> Palette{
+            vec4{0.90f, 0.30f, 0.30f, 1.0f}, vec4{0.95f, 0.60f, 0.25f, 1.0f},
+            vec4{0.90f, 0.85f, 0.30f, 1.0f}, vec4{0.55f, 0.85f, 0.30f, 1.0f},
+            vec4{0.30f, 0.80f, 0.40f, 1.0f}, vec4{0.25f, 0.80f, 0.75f, 1.0f},
+            vec4{0.30f, 0.75f, 0.95f, 1.0f}, vec4{0.35f, 0.55f, 0.95f, 1.0f},
+            vec4{0.55f, 0.45f, 0.95f, 1.0f}, vec4{0.70f, 0.45f, 0.90f, 1.0f},
+            vec4{0.90f, 0.40f, 0.80f, 1.0f}, vec4{0.95f, 0.45f, 0.60f, 1.0f},
+        };
+
+        // FNV-1a over the name.
+        u32 hash = 2166136261u;
+        for (const char c : name)
+        {
+            hash = (hash ^ static_cast<u8>(c)) * 16777619u;
+        }
+        return Palette[hash % Palette.size()];
+    }
+
     // The fallback view when the scene resolves no camera: the fixed pose that frames the
     // 10x10 grid from above, pulled back and elevated.
     static CameraView DefaultCameraView(const f32 aspect)
@@ -936,30 +958,34 @@ private:
 
             UI::SeparatorText("Passes (GPU)");
 
-            vector<f32> costs;
-            costs.reserve(passes.size());
-            f32 maxCost = 0.0f;
+            // Every pass's rolling history overlaid as colored lines on one shared chart, each
+            // line colored by its pass so it matches the legend swatch below.
+            vector<UI::PlotSeries> series;
+            series.reserve(passes.size());
             for (const PassCost& pass : passes)
             {
-                costs.push_back(pass.Milliseconds);
-                maxCost = glm::max(maxCost, pass.Milliseconds);
+                const FrameTimeHistory& history = m_PassFrameTimes[pass.Name];
+                const i32 offset = history.Count == FrameTimeHistory::Capacity
+                                       ? static_cast<i32>(history.Head)
+                                       : 0;
+                series.push_back({
+                    .Color = PassColor(pass.Name),
+                    .Values = {history.Samples.data(), history.Count},
+                    .Offset = offset,
+                });
             }
+            UI::PlotLinesMulti("##passes", series, {.ScaleMin = 0.0f, .Size = {0.0f, 140.0f}});
 
-            UI::PlotHistogram("##passes", costs,
-                              {
-                                  .ScaleMin = 0.0f,
-                                  .ScaleMax = maxCost * 1.25f,
-                                  .Size = {0.0f, 100.0f},
-                              });
-
-            // The legend scrolls if the pass list outgrows it, keeping the window bounded.
-            if (auto legendChild = UI::Child("PassLegend", {0.0f, 160.0f}))
+            // Two-column legend: a color swatch matching each line, then the pass and its cost.
+            if (auto legend = UI::Table("PassLegend", 2))
             {
+                const f32 swatch = UI::GetTextLineHeight();
                 for (const PassCost& pass : passes)
                 {
-                    const FrameStats stats = ComputeStats(m_PassFrameTimes[pass.Name]);
-                    UI::Text(fmt::format("{}: {:.3f} ms  (avg {:.3f})", pass.Name,
-                                         pass.Milliseconds, stats.Average));
+                    UI::TableNextColumn();
+                    UI::Badge("", PassColor(pass.Name), {swatch, swatch});
+                    UI::SameLine();
+                    UI::Text(fmt::format("{}: {:.3f} ms", pass.Name, pass.Milliseconds));
                 }
             }
         }
