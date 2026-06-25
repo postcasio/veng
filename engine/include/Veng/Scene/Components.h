@@ -13,6 +13,7 @@ namespace Veng
     class Mesh;
     class Material;
     class Prefab;
+    class Environment;
     struct Animation;
 
     /// @brief Human-readable label for an entity.
@@ -477,6 +478,15 @@ namespace Veng
         bool Shadows = true;
         /// @brief Whether the SSAO battery is enabled.
         bool AO = true;
+        /// @brief The environment map for image-based lighting + skybox; empty for none.
+        ///
+        /// Resolved as a load-time dependency and pushed into the per-frame SceneView. Its
+        /// presence drives image-based lighting; the Skybox toggle drives the skybox pass.
+        AssetHandle<Environment> Environment;
+        /// @brief Scales the IBL ambient + skybox radiance, fed into the per-frame SceneView.
+        f32 EnvironmentIntensity = 1.0f;
+        /// @brief Whether the environment renders as the background skybox (a topology toggle).
+        bool Skybox = true;
     };
 }
 
@@ -640,4 +650,7 @@ VE_FIELD(Bloom, .DisplayName = "Bloom")
 VE_FIELD(BloomIntensity, .DisplayName = "Bloom Intensity", .Min = 0.0)
 VE_FIELD(Shadows, .DisplayName = "Shadows")
 VE_FIELD(AO, .DisplayName = "SSAO")
+VE_FIELD(Environment, .DisplayName = "Environment")
+VE_FIELD(EnvironmentIntensity, .DisplayName = "Environment Intensity", .Min = 0.0)
+VE_FIELD(Skybox, .DisplayName = "Skybox")
 VE_REFLECT_END();

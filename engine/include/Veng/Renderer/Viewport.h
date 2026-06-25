@@ -55,8 +55,6 @@ namespace Veng::Renderer
         AssetHandle<Environment> Environment;
         /// @brief Scales the IBL ambient + skybox radiance.
         f32 EnvironmentIntensity = 1.0f;
-        /// @brief Whether the environment renders as the background skybox.
-        bool Skybox = true;
         /// @brief Bloom bright-pass luminance knee.
         f32 BloomThreshold = 1.0f;
         /// @brief Bloom composite mix intensity.

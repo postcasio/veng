@@ -43,6 +43,7 @@
     { "id": 8370908130628051935,  "type": "shader", "source": "shaders/ibl_irradiance.comp.shader.json" },
     { "id": 427731706800222545,   "type": "shader", "source": "shaders/ibl_prefilter.comp.shader.json" },
     { "id": 9944075845009600008,  "type": "shader", "source": "shaders/ibl_brdf_lut.comp.shader.json" },
+    { "id": 18205072294976643471, "type": "shader", "source": "shaders/skybox.frag.shader.json" },
     { "id": 13589203438992884788, "type": "material", "source": "materials/tonemap.vmat.json" }
   ]
 }

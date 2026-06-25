@@ -4,6 +4,7 @@
 #include "EnvironmentIbl.h"
 #include "ShadowScenePass.h"
 #include "PunctualShadowScenePass.h"
+#include "SkyboxScenePass.h"
 #include "SsaoScenePass.h"
 
 #include <algorithm>
@@ -61,6 +62,7 @@ namespace Veng::Renderer
         constexpr AssetId DeferredLightingFragId{0x6569EBAC0810CC1FULL};
         constexpr AssetId DeferredLightingSsaoFragId{0x6EEF5D26BAF2849FULL};
         constexpr AssetId DeferredLightingCascadesFragId{0x834ED7C05F336E01ULL};
+        constexpr AssetId SkyboxFragId{0xFCA568CC3463618FULL};
         constexpr AssetId SsaoFragId{0xCCBA63DB760A4E8EULL};
         constexpr AssetId TonemapMaterialId{0xBC968C8771B00434ULL};
         constexpr AssetId AlbedoBlitFragId{0xF90F709155D04BE7ULL};
@@ -314,10 +316,10 @@ namespace Veng::Renderer
             u32 ViewConstantsIndex;
             u32 LightBase;
             u32 LightCount;
-            u32 IblEnabled;        // 1 = sample the IBL set's maps; 0 = flat ambient fallback
-            u32 SkyboxEnabled;     // 1 = fill background depth with the radiance cube
+            u32 IblEnabled; // 1 = sample the IBL set's maps; 0 = flat ambient fallback
+            u32 Pad0;       // (was the folded-in skybox flag; the skybox is its own pass now)
             u32 PrefilterMipCount; // prefiltered specular mip count (roughness → LOD)
-            f32 EnvIntensity;      // scales the IBL + skybox radiance
+            f32 EnvIntensity;      // scales the IBL ambient
         };
 
         // The SSAO-enabled lighting variant's push block: the base + IBL fields plus the AO
@@ -334,13 +336,13 @@ namespace Veng::Renderer
             u32 LightBase;
             u32 LightCount;
             u32 IblEnabled;
-            u32 SkyboxEnabled;
+            u32 Pad0; // (was the folded-in skybox flag; the skybox is its own pass now)
             u32 PrefilterMipCount;
             f32 EnvIntensity;
             u32 SsaoTexture;
-            u32 Pad0;
             u32 Pad1;
             u32 Pad2;
+            u32 Pad3;
         };
 
         // The per-frame view-constants block (set-0 binding 5): camera/view state only.
@@ -753,11 +755,10 @@ namespace Veng::Renderer
                         });
 
                         // IBL is active when the bound environment is resident; the renderer
-                        // generated its maps before the graph ran. EnvIntensity/Skybox ride the
-                        // per-frame SceneView.
+                        // generated its maps before the graph ran. EnvIntensity rides the
+                        // per-frame SceneView; the skybox is a separate pass.
                         const SceneView& view = ctx.View();
                         const u32 iblEnabled = view.Environment.IsLoaded() ? 1u : 0u;
-                        const u32 skyboxEnabled = (iblEnabled != 0u && view.Skybox) ? 1u : 0u;
 
                         if (useSsao)
                         {
@@ -771,7 +772,6 @@ namespace Veng::Renderer
                                 .LightBase = registry.GetCurrentLightBase(),
                                 .LightCount = view.LightCount,
                                 .IblEnabled = iblEnabled,
-                                .SkyboxEnabled = skyboxEnabled,
                                 .PrefilterMipCount = prefilterMipCount,
                                 .EnvIntensity = view.EnvironmentIntensity,
                                 .SsaoTexture = ssaoHandle.Index,
@@ -789,7 +789,6 @@ namespace Veng::Renderer
                                 .LightBase = registry.GetCurrentLightBase(),
                                 .LightCount = view.LightCount,
                                 .IblEnabled = iblEnabled,
-                                .SkyboxEnabled = skyboxEnabled,
                                 .PrefilterMipCount = prefilterMipCount,
                                 .EnvIntensity = view.EnvironmentIntensity,
                             });
@@ -1383,6 +1382,20 @@ namespace Veng::Renderer
         // format directly — a terminal debug arm with no tonemap tail.
         m_CascadeDebugPipeline = MakePipeline("SceneRenderer Cascade Debug Pipeline",
                                               m_LightingLayout, cascadeDebugFs, m_OutputFormat);
+
+        // Skybox: a fullscreen pass compositing the radiance cube over the lit HDR. It reads the
+        // IBL set (set 1, radiance + sampler) and the depth target through bindless; its push is
+        // eight u32s (Size = 32 matches SkyboxPushConstants).
+        const AssetHandle<Veng::Shader> skyboxFs = LoadShader(SkyboxFragId, "skybox fragment");
+        m_SkyboxLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Skybox Layout",
+                           .DescriptorSetLayouts = {m_Ibl->GetSetLayout()},
+                           .PushConstantRanges = {PushConstantRange{
+                               .Stages = ShaderStage::Fragment, .Offset = 0, .Size = 32}},
+                       });
+        m_SkyboxPipeline =
+            MakePipeline("SceneRenderer Skybox Pipeline", m_SkyboxLayout, skyboxFs, HdrFormat);
 
         // Push block is eight u32s (g-buffer slots + extent); Size = 32 matches SsaoPushConstants.
         m_SsaoLayout = PipelineLayout::Create(
@@ -2799,6 +2812,16 @@ namespace Veng::Renderer
                 m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
                 ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
                 m_Ibl->GetPrefilterMipCount()));
+
+            // Skybox composites the radiance cube over the lit scene color, before the
+            // TAA/SSR/bloom tail so the sky resolves, reflects, and tonemaps with the scene.
+            // Gated on the Skybox setting; per frame it is a no-op unless an environment is bound.
+            if (m_Settings.Skybox)
+            {
+                m_Passes.push_back(CreateUnique<SkyboxScenePass>(
+                    m_Context, m_SkyboxPipeline, m_Ibl->GetSet(), lightingTargetId, depthId,
+                    m_DepthHandle, m_SamplerHandle, m_Extent));
+            }
 
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
             // between lighting and the bloom/tonemap tail.

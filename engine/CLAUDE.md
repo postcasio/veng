@@ -268,12 +268,19 @@ linear sampler reach the deferred lighting pass as **one dedicated descriptor se
 precedent (a cubemap in a Metal argument buffer is a MoltenVK risk, and a closed resource needs no
 global registration). The lighting fragment replaces its flat hemispheric ambient with `kD ·
 irradiance · albedo` diffuse + `prefiltered · (F · brdf.x + brdf.y)` specular when an environment
-is bound, and **folds the skybox into the same pass** — at cleared-depth background it samples the
-radiance cube along the view ray rather than a separate skybox pass. IBL is a **runtime push flag**
-(`IblEnabled`), not a pipeline variant: the set is always bound and valid (the maps are
-transitioned to a sampled layout at first `Execute` even before an environment arrives), so a scene
-**without** an environment falls back to the exact flat-ambient path and renders unchanged.
-`SceneView::EnvironmentIntensity` and `Skybox` are per-frame push values (no recompile).
+is bound. IBL is a **runtime push flag** (`IblEnabled`), not a pipeline variant: the set is always
+bound and valid (the maps are transitioned to a sampled layout at first `Execute` even before an
+environment arrives), so a scene **without** an environment falls back to the exact flat-ambient
+path and renders unchanged. The **skybox is a separate `SkyboxScenePass`** (a `SceneRendererSettings::Skybox`
+topology toggle) inserted between lighting and the bloom/SSR/tonemap tail: a fullscreen pass that
+composites the radiance cube over the cleared-depth background (sampling depth through bindless and
+`discard`ing foreground), writing the same scene-color target lighting wrote so the sky resolves,
+reflects, and tonemaps with the scene. Keeping it a separate pass leaves a clean seam for a future
+procedural sky model. Both passes run fullscreen and mask sky vs. geometry in-shader; a depth/stencil
+mask that skips lighting on sky pixels (and runs the sky only on background) is the named next
+refinement. `SceneView::EnvironmentIntensity` is a per-frame push value (no recompile); the
+environment itself rides `SceneView::Environment`, sourced from `LevelRenderSettings` (a reflected
+`AssetHandle<Environment>` field the level loader resolves as a dependency).
 
 Per-view data rides a **ring-buffered view-constants buffer**, not push constants: the
 `InvViewProj`/`CameraPosition` (for world-position reconstruction), the view/projection,

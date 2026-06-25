@@ -27,10 +27,9 @@
 [[vk::binding(6, 0)]] ByteAddressBuffer g_Lights;
 
 // Set 2: the image-based-lighting maps (off the bindless registry, a closed
-// renderer-owned set). The radiance cube backs the skybox; irradiance is the diffuse
-// term; the prefiltered cube + the BRDF LUT are the split-sum specular term. Always
-// bound and valid; sampling is gated on the IblEnabled push flag.
-[[vk::binding(0, 2)]] TextureCube g_Radiance;
+// renderer-owned set). Irradiance is the diffuse term; the prefiltered cube + the BRDF
+// LUT are the split-sum specular term. Binding 0 (the radiance cube) is the skybox pass's
+// and is unused here. Always bound and valid; sampling is gated on the IblEnabled push flag.
 [[vk::binding(1, 2)]] TextureCube g_Irradiance;
 [[vk::binding(2, 2)]] TextureCube g_Prefilter;
 [[vk::binding(3, 2)]] Texture2D g_BrdfLut;
@@ -64,14 +63,14 @@ struct PushConstants
     uint LightBase;           // current frame's base index into the light buffer
     uint LightCount;          // live light count this frame
     uint IblEnabled;          // 1 = split-sum IBL ambient; 0 = flat ambient fallback
-    uint SkyboxEnabled;       // 1 = fill cleared-depth background with the radiance cube
+    uint Pad0;                // (was the folded-in skybox flag; the skybox is its own pass now)
     uint PrefilterMipCount;   // prefiltered specular mip count (roughness -> LOD)
-    float EnvIntensity;       // scales the IBL ambient + skybox radiance
+    float EnvIntensity;       // scales the IBL ambient
 #if VE_USE_SSAO
     uint SsaoTexture;         // screen-space AO bindless index (the SSAO variant only)
-    uint Pad0;
     uint Pad1;
     uint Pad2;
+    uint Pad3;
 #endif
 };
 
@@ -195,15 +194,6 @@ float4 fsMain(VSOutput input) : SV_Target
         return float4(0.0, 0.0, 0.0, 1.0);
     return float4(CascadeDebugTint(viewDepth), 1.0);
 #endif
-
-    // Skybox: the cleared-depth background (no geometry) reads the environment radiance
-    // along the view ray. Geometry (depth < 1) falls through to the lit path below.
-    if (g_PC.SkyboxEnabled != 0 && depth >= 1.0)
-    {
-        float3 skyDir = normalize(worldPos - vc.CameraPosition.xyz);
-        float3 sky = g_Radiance.SampleLevel(g_IblSampler, skyDir, 0.0).rgb * g_PC.EnvIntensity;
-        return float4(sky, 1.0);
-    }
 
     float3 V = normalize(vc.CameraPosition.xyz - worldPos);
 

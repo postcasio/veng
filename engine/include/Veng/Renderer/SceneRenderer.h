@@ -284,6 +284,15 @@ namespace Veng::Renderer
         /// (radius/intensity/bias) are fixed in the SSAO shader.
         bool AO = true;
 
+        /// @brief Whether the environment renders as the background skybox.
+        ///
+        /// A topology change: it inserts/removes the fullscreen SkyboxScenePass between
+        /// lighting and the bloom/tonemap tail. The pass is a per-frame no-op unless an
+        /// environment is bound (SceneView::Environment); EnvironmentIntensity rides the
+        /// per-frame SceneView. Independent of image-based lighting, which is driven by the
+        /// presence of an environment regardless of this toggle.
+        bool Skybox = true;
+
         /// @brief Whether scene passes cull by frustum.
         ///
         /// The g-buffer pass tests each mesh's world bound against the camera frustum;
@@ -380,16 +389,10 @@ namespace Veng::Renderer
         /// handle falls back to the flat ambient (a scene without an environment is unchanged).
         AssetHandle<Environment> Environment;
 
-        /// @brief Scales the IBL ambient + skybox radiance; pushed to the lighting pass each Execute.
+        /// @brief Scales the IBL ambient + skybox radiance; pushed to the lighting + skybox passes each Execute.
         ///
         /// Rides the per-frame push (no recompile). Ignored when no environment is bound.
         f32 EnvironmentIntensity = 1.0f;
-
-        /// @brief Whether the environment renders as the background skybox where no geometry is drawn.
-        ///
-        /// The lighting pass fills the cleared-depth background with the radiance cube. Rides the
-        /// per-frame push (no recompile). Ignored when no environment is bound.
-        bool Skybox = true;
 
         /// @brief Bloom bright-pass luminance knee; pushed to the downsample compute each Execute.
         ///
@@ -1065,6 +1068,11 @@ namespace Veng::Renderer
         /// Tint fragment shader over the plain lighting layout (set 1 + non-SSAO push block),
         /// writing the output format directly. Reuses m_LightingLayout.
         Ref<class GraphicsPipeline> m_CascadeDebugPipeline;
+
+        /// @brief Fullscreen skybox pipeline (radiance cube over the lit HDR), writing HdrFormat.
+        Ref<class GraphicsPipeline> m_SkyboxPipeline;
+        /// @brief Layout for m_SkyboxPipeline: the IBL set (set 1) + the skybox push block.
+        Ref<class PipelineLayout> m_SkyboxLayout;
 
         /// @brief TAA resolve pipeline (reproject + neighborhood-clip + blend), writing HdrFormat.
         Ref<class GraphicsPipeline> m_TaaResolvePipeline;

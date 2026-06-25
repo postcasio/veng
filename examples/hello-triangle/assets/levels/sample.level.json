@@ -17,6 +17,9 @@
     "Bloom": true,
     "BloomIntensity": 1.5,
     "Shadows": true,
-    "AO": true
+    "AO": true,
+    "Environment": 10517717547470730851,
+    "EnvironmentIntensity": 1.0,
+    "Skybox": true
   }
 }
