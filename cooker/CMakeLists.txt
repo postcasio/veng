@@ -144,7 +144,9 @@ add_library(veng_cook_objs OBJECT
         src/Importers/SkeletonImporter.cpp
         src/Importers/AnimationImporter.cpp
         src/Importers/SkeletonSource.cpp
+        src/Importers/EnvironmentImporter.cpp
         src/Vendor/StbImage.cpp
+        src/Vendor/TinyExr.cpp
         src/Vendor/XxHash.cpp
 )
 
@@ -160,11 +162,20 @@ target_include_directories(veng_cook_objs PUBLIC
 
 # stb_image (texture decode) and xxHash (archive content hashing) — header-only
 # implementation details of src/Vendor/StbImage.cpp / TextureImporter.cpp and
-# src/Vendor/XxHash.cpp / Cooker.cpp & Verify.cpp respectively.
+# src/Vendor/XxHash.cpp / Cooker.cpp & Verify.cpp respectively. tinyexr (HDR
+# environment decode) and the zlib it compresses through back the EnvironmentImporter
+# via src/Vendor/TinyExr.cpp.
 target_include_directories(veng_cook_objs PRIVATE
         ${stb_SOURCE_DIR}
         ${xxhash_SOURCE_DIR}
+        ${tinyexr_SOURCE_DIR}
+        $<TARGET_PROPERTY:ZLIB::ZLIB,INTERFACE_INCLUDE_DIRECTORIES>
 )
+
+# tinyexr defaults to exceptions; veng_cook_objs builds -fno-exceptions like the
+# engine's TinyExr TU, so disable them for this vendor TU too.
+set_source_files_properties(src/Vendor/TinyExr.cpp PROPERTIES
+        COMPILE_DEFINITIONS TINYEXR_USE_EXCEPTIONS=0)
 
 # assimp/Slang headers are needed at compile time by MeshImporter/ShaderImporter
 # (their link is on the executables below).
@@ -219,7 +230,7 @@ add_library(libveng_cook STATIC
         src/Importers/LevelImporter.cpp)
 add_library(veng::cook ALIAS libveng_cook)
 target_link_libraries(libveng_cook PUBLIC veng_cook_objs veng::veng veng::assetpack)
-target_link_libraries(libveng_cook PRIVATE fmt::fmt assimp::assimp slang::slang)
+target_link_libraries(libveng_cook PRIVATE fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB)
 target_compile_options(libveng_cook PRIVATE -fno-exceptions)
 
 add_executable(vengc tool/main.cpp)
@@ -231,6 +242,6 @@ target_link_libraries(vengc PRIVATE veng::cook fmt::fmt)
 # vengc links veng, but this one does not, so veng can depend on it.
 add_executable(veng_cook_bootstrap tool/bootstrap_main.cpp)
 target_link_libraries(veng_cook_bootstrap PRIVATE
-        veng_cook_objs veng::assetpack fmt::fmt assimp::assimp slang::slang)
+        veng_cook_objs veng::assetpack fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB)
 target_compile_options(veng_cook_bootstrap PRIVATE -fno-exceptions)
 target_compile_options(vengc PRIVATE -fno-exceptions)

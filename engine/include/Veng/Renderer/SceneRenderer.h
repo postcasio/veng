@@ -34,6 +34,7 @@ namespace Veng
     class Scene;
     class AssetManager;
     class Material;
+    class Environment;
 }
 
 namespace Veng::Renderer
@@ -48,6 +49,7 @@ namespace Veng::Renderer
     class Buffer;
     class DescriptorSet;
     class DescriptorSetLayout;
+    class EnvironmentIbl;
 
     /// @brief Maximum number of simultaneously shadowed point/spot lights.
     ///
@@ -370,6 +372,24 @@ namespace Veng::Renderer
         ///
         /// Read fresh every Execute, so tuning it never triggers a recompile.
         f32 Exposure = 1.0f;
+
+        /// @brief Environment map driving image-based lighting and the skybox; empty for none.
+        ///
+        /// When resident, the renderer (re)generates its IBL maps on change and the lighting
+        /// pass replaces the flat ambient term with split-sum IBL. An unset/not-yet-loaded
+        /// handle falls back to the flat ambient (a scene without an environment is unchanged).
+        AssetHandle<Environment> Environment;
+
+        /// @brief Scales the IBL ambient + skybox radiance; pushed to the lighting pass each Execute.
+        ///
+        /// Rides the per-frame push (no recompile). Ignored when no environment is bound.
+        f32 EnvironmentIntensity = 1.0f;
+
+        /// @brief Whether the environment renders as the background skybox where no geometry is drawn.
+        ///
+        /// The lighting pass fills the cleared-depth background with the radiance cube. Rides the
+        /// per-frame push (no recompile). Ignored when no environment is bound.
+        bool Skybox = true;
 
         /// @brief Bloom bright-pass luminance knee; pushed to the downsample compute each Execute.
         ///
@@ -1445,6 +1465,19 @@ namespace Veng::Renderer
         /// @brief True when the last Rebuild wired the SSR passes (Final mode + Settings.SSR, or the
         ///        Reflections debug arm). Execute binds the SSR imports only when true.
         bool m_SsrActive = false;
+
+        /// @brief Image-based-lighting maps + their generation pipelines; created at Create.
+        ///
+        /// Owns the radiance/irradiance/prefilter cubemaps, the BRDF LUT, and the consumer set
+        /// (set 2) the lighting pass binds. The lighting layout reserves its set layout, so it
+        /// exists before the pipelines.
+        Unique<EnvironmentIbl> m_Ibl;
+
+        /// @brief The environment the IBL maps were last generated from; gates regeneration.
+        ///
+        /// Generation re-runs only when the bound environment differs from this. Non-owning —
+        /// the AssetHandle keeps the Environment alive.
+        const Environment* m_LastEnvironment = nullptr;
 
         /// @brief Opaque compiled graph; replayed every Execute.
         ///

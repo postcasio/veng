@@ -5,6 +5,7 @@
 #include <Veng/Task/TaskSystem.h>
 
 #include "Loaders/AnimationLoader.h"
+#include "Loaders/EnvironmentLoader.h"
 #include "Loaders/LevelLoader.h"
 #include "Loaders/MaterialLoader.h"
 #include "Loaders/MeshLoader.h"
@@ -51,6 +52,8 @@ namespace Veng
                 return "Skeleton";
             case AssetType::Animation:
                 return "Animation";
+            case AssetType::Environment:
+                return "Environment";
             }
 
             VE_ASSERT(false, "AssetManager: unhandled AssetType {}", static_cast<u32>(type));
@@ -71,6 +74,7 @@ namespace Veng
         RegisterLoader(CreateUnique<LevelLoader>());
         RegisterLoader(CreateUnique<SkeletonLoader>());
         RegisterLoader(CreateUnique<AnimationLoader>());
+        RegisterLoader(CreateUnique<EnvironmentLoader>());
 
 #ifdef VENG_HAS_CORE_PACK
         const VoidResult coreMount = MountBytes(

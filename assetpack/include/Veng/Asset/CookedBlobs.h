@@ -491,4 +491,25 @@ namespace Veng
         /// @brief Keyed rotation quaternion, xyzw.
         f32 Value[4] = {0.0f, 0.0f, 0.0f, 1.0f};
     };
+
+    /// @brief Current CookedEnvironmentHeader version; the loader rejects a mismatch.
+    inline constexpr u32 CookedEnvironmentVersion = 1u;
+
+    /// @brief Cooked header for an environment-map asset.
+    ///
+    /// The blob is the header followed by Width * Height raw texels in the given Format
+    /// (an equirectangular HDR panorama, row-major top-to-bottom). The engine generates the
+    /// IBL cubemap, irradiance, and prefilter maps from this panorama at load. The sampler is
+    /// fixed by the loader (linear, clamp-to-edge), so no sampler fields are stored.
+    struct CookedEnvironmentHeader
+    {
+        /// @brief Must equal CookedEnvironmentVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief Pixel format; underlying Renderer::Format integer (RGBA16Sfloat).
+        u32 Format = 0;
+        /// @brief Panorama width in pixels.
+        u32 Width = 0;
+        /// @brief Panorama height in pixels.
+        u32 Height = 0;
+    };
 }

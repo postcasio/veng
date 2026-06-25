@@ -1,0 +1,4 @@
+{
+  "source": "ibl_brdf_lut.comp.slang",
+  "entry": "csMain"
+}

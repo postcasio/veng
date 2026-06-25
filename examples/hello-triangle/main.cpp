@@ -4,6 +4,7 @@
 #include <Veng/Module/Module.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Environment.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
@@ -299,6 +300,14 @@ protected:
         m_Exposure = render.Exposure;
         m_BloomIntensity = render.BloomIntensity;
 
+        // The HDRI environment drives image-based lighting and the skybox. Loaded directly
+        // here (and pushed through the ViewState below); the renderer generates the IBL
+        // cubemaps the first frame it is bound.
+        const AssetResult<AssetHandle<Environment>> environment =
+            GetAssetManager().LoadSync<Environment>(AssetId{0x91F6706258E2B663ULL});
+        VE_ASSERT(environment.has_value(), "{}", environment.error().Detail);
+        m_Environment = *environment;
+
         // HT_DEBUG_VIEW pins a debug visualization mode by its DebugView enum index (the headless
         // capture has no combo): it overrides the level's Final mode so a g-buffer/battery target
         // can be captured and inspected.
@@ -451,6 +460,9 @@ protected:
             .Camera = camera,
             .Delta = m_LastDelta,
             .Exposure = m_Exposure,
+            .Environment = m_Environment,
+            .EnvironmentIntensity = m_EnvironmentIntensity,
+            .Skybox = m_Skybox,
             .BloomThreshold = m_BloomThreshold,
             .BloomIntensity = m_BloomIntensity,
             .BloomRadius = m_BloomRadius,
@@ -478,6 +490,7 @@ protected:
         m_SceneTexture.reset();
         m_SceneSampler.reset();
         m_Scene.reset();
+        m_Environment = {};
     }
 
 private:
@@ -880,6 +893,12 @@ private:
             // Tonemap exposure is a per-frame SceneView value; the drag edits the member.
             (void)UI::Drag("Exposure", m_Exposure, {.Speed = 0.01f, .Min = 0.0f, .Max = 16.0f});
 
+            // Environment / IBL: the skybox toggle and intensity are per-frame SceneView values
+            // (no recompile); IBL itself is active whenever the environment is bound.
+            (void)UI::Checkbox("Skybox", m_Skybox);
+            (void)UI::Drag("Env Intensity", m_EnvironmentIntensity,
+                           {.Speed = 0.01f, .Min = 0.0f, .Max = 8.0f});
+
             // Bloom on/off and the kernel are topology; threshold/intensity/radius are
             // per-frame SceneView members. The per-bloom knobs grey out when bloom is off.
             if (UI::Checkbox("Bloom", m_SceneSettings.Bloom))
@@ -1133,6 +1152,11 @@ private:
     f32 m_BloomThreshold = 0.5f;
     f32 m_BloomIntensity = 1.5f;
     f32 m_BloomRadius = 1.0f;
+
+    // The HDRI environment for image-based lighting + skybox, and its per-frame knobs.
+    AssetHandle<Environment> m_Environment;
+    f32 m_EnvironmentIntensity = 1.0f;
+    bool m_Skybox = true;
 
     // Skips the per-frame Transform write so the broadphase reads `static`; never set in smoke mode.
     bool m_PauseSpin = false;

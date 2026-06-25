@@ -50,6 +50,11 @@ at cook time:
 - **Textures** take an optional `"max_size"` that downscales the decoded image (aspect-
   preserving, sRGB- or linear-correct) before packing, so high-resolution scan art does not
   bloat the raw-pixel blob.
+- **Environments** (`*.env.json`) are equirectangular HDR panoramas: the `EnvironmentImporter`
+  decodes an OpenEXR `"image"` with **tinyexr** (linked into the cooker, the one runtime-staged
+  vendor lib the cooker also uses), optionally downscales by `"max_size"` (linear), and packs
+  half-float `RGBA16Sfloat` texels behind a `CookedEnvironmentHeader`. The runtime generates the
+  IBL cubemaps from the panorama on the GPU, so the cook stays decode-only.
 
 ## The prefab-cooking relaxation
 

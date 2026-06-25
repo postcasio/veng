@@ -76,6 +76,10 @@ namespace Veng::Cook
             {
                 return AssetType::Animation;
             }
+            if (name == "environment")
+            {
+                return AssetType::Environment;
+            }
 
             return std::nullopt;
         }

@@ -30,5 +30,7 @@ namespace Veng
         Skeleton,
         /// @brief A set of per-bone keyframe tracks animating a skeleton (see CookedAnimationHeader).
         Animation,
+        /// @brief An equirectangular HDR environment map for image-based lighting (see CookedEnvironmentHeader).
+        Environment,
     };
 }

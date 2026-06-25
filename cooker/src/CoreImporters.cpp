@@ -1,6 +1,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 
 #include "Importers/AnimationImporter.h"
+#include "Importers/EnvironmentImporter.h"
 #include "Importers/MaterialImporter.h"
 #include "Importers/MeshImporter.h"
 #include "Importers/RawImporter.h"
@@ -21,5 +22,6 @@ namespace Veng::Cook
         cooker.Register(CreateUnique<MaterialImporter>());
         cooker.Register(CreateUnique<SkeletonImporter>());
         cooker.Register(CreateUnique<AnimationImporter>());
+        cooker.Register(CreateUnique<EnvironmentImporter>());
     }
 }

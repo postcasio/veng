@@ -9,11 +9,13 @@ add_library(veng SHARED
         src/Asset/Level.cpp
         src/Asset/Material.cpp
         src/Asset/Mesh.cpp
+        src/Asset/Environment.cpp
         src/Asset/Prefab.cpp
         src/Asset/Primitives.cpp
         src/Asset/Skeleton.cpp
         src/Asset/Texture.cpp
         src/Asset/Loaders/AnimationLoader.cpp
+        src/Asset/Loaders/EnvironmentLoader.cpp
         src/Asset/Loaders/LevelLoader.cpp
         src/Asset/Loaders/MaterialLoader.cpp
         src/Asset/Loaders/MeshLoader.cpp
@@ -59,6 +61,7 @@ add_library(veng SHARED
         src/Scene/Visibility.cpp
         src/Renderer/SwapChainCompositePass.cpp
         src/Renderer/GatherPass.cpp
+        src/Renderer/EnvironmentIbl.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/SceneRenderer.cpp
         src/Renderer/Viewport.cpp

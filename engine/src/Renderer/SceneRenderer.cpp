@@ -1,6 +1,7 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/ScenePass.h>
 
+#include "EnvironmentIbl.h"
 #include "ShadowScenePass.h"
 #include "PunctualShadowScenePass.h"
 #include "SsaoScenePass.h"
@@ -42,6 +43,7 @@
 #include <Veng/Math/Frustum.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Shader.h>
@@ -300,7 +302,8 @@ namespace Veng::Renderer
 
         // The deferred-lighting fragment push block: g-buffer bindless slots,
         // view-constants index, and light buffer base + live count.
-        // Matches deferred_lighting.frag PushConstants byte-for-byte (eight u32s).
+        // Matches deferred_lighting.frag PushConstants byte-for-byte (twelve u32s — the eight
+        // base fields plus the four IBL fields the split-sum ambient + skybox read).
         struct LightingPushConstants
         {
             u32 AlbedoTexture;
@@ -311,11 +314,15 @@ namespace Veng::Renderer
             u32 ViewConstantsIndex;
             u32 LightBase;
             u32 LightCount;
+            u32 IblEnabled;        // 1 = sample the IBL set's maps; 0 = flat ambient fallback
+            u32 SkyboxEnabled;     // 1 = fill background depth with the radiance cube
+            u32 PrefilterMipCount; // prefiltered specular mip count (roughness → LOD)
+            f32 EnvIntensity;      // scales the IBL + skybox radiance
         };
 
-        // The SSAO-enabled lighting variant's push block: base lighting fields plus
-        // the AO bindless slot. Matches deferred_lighting_ssao.frag PushConstants
-        // byte-for-byte (twelve u32s — three pads reach a 16-byte boundary).
+        // The SSAO-enabled lighting variant's push block: the base + IBL fields plus the AO
+        // bindless slot. Matches deferred_lighting_ssao.frag PushConstants byte-for-byte
+        // (sixteen u32s — three pads reach a 16-byte boundary).
         struct SsaoLightingPushConstants
         {
             u32 AlbedoTexture;
@@ -326,6 +333,10 @@ namespace Veng::Renderer
             u32 ViewConstantsIndex;
             u32 LightBase;
             u32 LightCount;
+            u32 IblEnabled;
+            u32 SkyboxEnabled;
+            u32 PrefilterMipCount;
+            f32 EnvIntensity;
             u32 SsaoTexture;
             u32 Pad0;
             u32 Pad1;
@@ -654,10 +665,12 @@ namespace Veng::Renderer
             DeferredLightingScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
                                       uvec2 extent, bool useSsao, Ref<DescriptorSet> shadowSet,
                                       u32 shadowRingStride, u32 punctualRingStride,
+                                      Ref<DescriptorSet> iblSet, u32 prefilterMipCount,
                                       bool writeToOutput = false)
                 : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent),
                   m_UseSsao(useSsao), m_ShadowSet(std::move(shadowSet)),
                   m_ShadowRingStride(shadowRingStride), m_PunctualRingStride(punctualRingStride),
+                  m_IblSet(std::move(iblSet)), m_PrefilterMipCount(prefilterMipCount),
                   m_WriteToOutput(writeToOutput)
             {
             }
@@ -708,10 +721,12 @@ namespace Veng::Renderer
                     builder.Sample(io.Ssao);
                 }
 
+                const Ref<DescriptorSet> iblSet = m_IblSet;
+                const u32 prefilterMipCount = m_PrefilterMipCount;
                 builder.Execute(
                     [this, albedoHandle, normalHandle, ormHandle, depthHandle, ssaoHandle,
-                     samplerHandle, useSsao, shadowSet, shadowRingStride,
-                     punctualRingStride](PassContext& inner)
+                     samplerHandle, useSsao, shadowSet, shadowRingStride, punctualRingStride,
+                     iblSet, prefilterMipCount](PassContext& inner)
                     {
                         const ScenePassContext ctx = Wrap(inner);
                         CommandBuffer& cmd = ctx.Cmd();
@@ -724,16 +739,25 @@ namespace Veng::Renderer
                         registry.Bind(cmd);
 
                         // Bind set 1 (the shadow system: both atlases, comparison sampler, and
-                        // both ring-buffered dynamic uniforms). Dynamic offsets select the
-                        // current frame-in-flight region, listed in binding order.
+                        // both ring-buffered dynamic uniforms) and set 2 (the IBL maps + sampler,
+                        // always valid). Dynamic offsets select the current frame-in-flight shadow
+                        // region; the IBL set has no dynamic descriptors so the offsets still map
+                        // to set 1's two dynamic uniforms in binding order.
                         const u32 frameSlot = registry.GetCurrentViewConstantsIndex();
                         cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                            .Sets = {shadowSet},
+                            .Sets = {shadowSet, iblSet},
                             .FirstSet = 1,
                             .PipelineBindPoint = PipelineBindPoint::Graphics,
                             .DynamicOffsets = {frameSlot * shadowRingStride,
                                                frameSlot * punctualRingStride},
                         });
+
+                        // IBL is active when the bound environment is resident; the renderer
+                        // generated its maps before the graph ran. EnvIntensity/Skybox ride the
+                        // per-frame SceneView.
+                        const SceneView& view = ctx.View();
+                        const u32 iblEnabled = view.Environment.IsLoaded() ? 1u : 0u;
+                        const u32 skyboxEnabled = (iblEnabled != 0u && view.Skybox) ? 1u : 0u;
 
                         if (useSsao)
                         {
@@ -745,7 +769,11 @@ namespace Veng::Renderer
                                 .Sampler = samplerHandle.Index,
                                 .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
                                 .LightBase = registry.GetCurrentLightBase(),
-                                .LightCount = ctx.View().LightCount,
+                                .LightCount = view.LightCount,
+                                .IblEnabled = iblEnabled,
+                                .SkyboxEnabled = skyboxEnabled,
+                                .PrefilterMipCount = prefilterMipCount,
+                                .EnvIntensity = view.EnvironmentIntensity,
                                 .SsaoTexture = ssaoHandle.Index,
                             });
                         }
@@ -759,7 +787,11 @@ namespace Veng::Renderer
                                 .Sampler = samplerHandle.Index,
                                 .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
                                 .LightBase = registry.GetCurrentLightBase(),
-                                .LightCount = ctx.View().LightCount,
+                                .LightCount = view.LightCount,
+                                .IblEnabled = iblEnabled,
+                                .SkyboxEnabled = skyboxEnabled,
+                                .PrefilterMipCount = prefilterMipCount,
+                                .EnvIntensity = view.EnvironmentIntensity,
                             });
                         }
                         cmd.DrawFullscreenTriangle();
@@ -774,6 +806,8 @@ namespace Veng::Renderer
             Ref<DescriptorSet> m_ShadowSet;
             u32 m_ShadowRingStride = 0;
             u32 m_PunctualRingStride = 0;
+            Ref<DescriptorSet> m_IblSet;
+            u32 m_PrefilterMipCount = 0;
             bool m_WriteToOutput = false;
         };
 
@@ -1227,6 +1261,9 @@ namespace Veng::Renderer
         ClampShadowResolutions();
         ResolveActiveCullMode();
         CreateShadowSystem();
+        // The IBL maps + their consumer set layout exist before the pipelines so the lighting
+        // layout can reserve the set (set 2).
+        m_Ibl = EnvironmentIbl::Create(m_Context, m_Assets);
         CreatePipelines();
 
         CreateOutput();
@@ -1317,12 +1354,13 @@ namespace Veng::Renderer
         };
 
         // Both lighting layouts carry set 1 (the shadow system: atlas + immutable
-        // comparison sampler + ShadowConstants dynamic uniform). Set 0 is the reserved
-        // registry slot prepended by PipelineLayout, so set 1 is at descriptor-set index 1.
+        // comparison sampler + ShadowConstants dynamic uniform) and set 2 (the IBL maps +
+        // sampler). Set 0 is the reserved registry slot prepended by PipelineLayout, so the
+        // shadow set is index 1 and the IBL set index 2.
         m_LightingLayout = PipelineLayout::Create(
             m_Context, {
                            .Name = "SceneRenderer Lighting Layout",
-                           .DescriptorSetLayouts = {m_ShadowSetLayout},
+                           .DescriptorSetLayouts = {m_ShadowSetLayout, m_Ibl->GetSetLayout()},
                            .PushConstantRanges = {PushConstantRange::Of<LightingPushConstants>(
                                ShaderStage::Fragment)},
                        });
@@ -1330,11 +1368,11 @@ namespace Veng::Renderer
                                           m_LightingLayout, lightingFs, HdrFormat);
 
         // SSAO-enabled lighting variant: wider push block (adds the AO slot) and
-        // the AO-fold fragment shader. Same set-1 shadow layout.
+        // the AO-fold fragment shader. Same set-1 shadow + set-2 IBL layout.
         m_SsaoLightingLayout = PipelineLayout::Create(
             m_Context, {
                            .Name = "SceneRenderer SSAO Lighting Layout",
-                           .DescriptorSetLayouts = {m_ShadowSetLayout},
+                           .DescriptorSetLayouts = {m_ShadowSetLayout, m_Ibl->GetSetLayout()},
                            .PushConstantRanges = {PushConstantRange::Of<SsaoLightingPushConstants>(
                                ShaderStage::Fragment)},
                        });
@@ -2759,7 +2797,8 @@ namespace Veng::Renderer
         {
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
-                ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride));
+                ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
+                m_Ibl->GetPrefilterMipCount()));
 
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
             // between lighting and the bloom/tonemap tail.
@@ -2844,7 +2883,8 @@ namespace Veng::Renderer
             // Tints fragments by cascade selection and writes the output directly (no tonemap tail).
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_CascadeDebugPipeline, m_Extent, /*useSsao=*/false, m_ShadowSet,
-                m_ShadowRingStride, m_PunctualRingStride, /*writeToOutput=*/true));
+                m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
+                m_Ibl->GetPrefilterMipCount(), /*writeToOutput=*/true));
             break;
         case DebugView::Bloom:
             // Bloom samples the lit HDR, so the lighting pass runs first; the force-wired bloom
@@ -2852,7 +2892,8 @@ namespace Veng::Renderer
             // shows mip 0 after the up-sweep — the accumulated bloom before composite.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
-                ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride));
+                ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
+                m_Ibl->GetPrefilterMipCount()));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_AlbedoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Bloom));
             break;
@@ -2868,7 +2909,8 @@ namespace Veng::Renderer
             // (DeclareSsr, before this blit); the blit shows the raw reflection target.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_LightingPipeline, m_Extent, /*useSsao=*/false, m_ShadowSet,
-                m_ShadowRingStride, m_PunctualRingStride));
+                m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
+                m_Ibl->GetPrefilterMipCount()));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_AlbedoBlitPipeline, m_Extent,
                 FullscreenBlitScenePass::Source::Reflections));
@@ -4057,6 +4099,20 @@ namespace Veng::Renderer
         {
             bindings.push_back({.Id = m_IndirectId, .Buffer = m_IndirectBuffer});
         }
+        // Image-based lighting: initialize the BRDF LUT + leave the maps in a sampled layout
+        // once, then (re)generate the radiance/irradiance/prefilter maps when the bound
+        // environment changes — a one-time cost recorded before the graph the lighting pass
+        // samples them through. Recorded into cmd before the graph so the cubes are resident
+        // and in their sampled layout when the lighting pass runs.
+        m_Ibl->EnsureInitialized(cmd);
+        const Environment* environment =
+            view.Environment.IsLoaded() ? view.Environment.Get() : nullptr;
+        if (environment != nullptr && environment != m_LastEnvironment)
+        {
+            m_Ibl->Generate(cmd, *environment);
+        }
+        m_LastEnvironment = environment;
+
         m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
 
         // Capture this frame's camera + matrix for next frame's history comparison and

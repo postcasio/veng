@@ -39,6 +39,10 @@
     { "id": 17153908925538740214, "type": "shader", "source": "shaders/ssr_blur_down.comp.shader.json" },
     { "id": 5825948086578327969, "type": "shader", "source": "shaders/ssr_composite.frag.shader.json" },
     { "id": 10653949101260228506, "type": "shader", "source": "shaders/ssr_hiz_reduce.comp.shader.json" },
+    { "id": 15529445843628382280, "type": "shader", "source": "shaders/ibl_equirect_to_cube.comp.shader.json" },
+    { "id": 8370908130628051935,  "type": "shader", "source": "shaders/ibl_irradiance.comp.shader.json" },
+    { "id": 427731706800222545,   "type": "shader", "source": "shaders/ibl_prefilter.comp.shader.json" },
+    { "id": 9944075845009600008,  "type": "shader", "source": "shaders/ibl_brdf_lut.comp.shader.json" },
     { "id": 13589203438992884788, "type": "material", "source": "materials/tonemap.vmat.json" }
   ]
 }

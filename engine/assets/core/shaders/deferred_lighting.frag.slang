@@ -26,6 +26,16 @@
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 [[vk::binding(6, 0)]] ByteAddressBuffer g_Lights;
 
+// Set 2: the image-based-lighting maps (off the bindless registry, a closed
+// renderer-owned set). The radiance cube backs the skybox; irradiance is the diffuse
+// term; the prefiltered cube + the BRDF LUT are the split-sum specular term. Always
+// bound and valid; sampling is gated on the IblEnabled push flag.
+[[vk::binding(0, 2)]] TextureCube g_Radiance;
+[[vk::binding(1, 2)]] TextureCube g_Irradiance;
+[[vk::binding(2, 2)]] TextureCube g_Prefilter;
+[[vk::binding(3, 2)]] Texture2D g_BrdfLut;
+[[vk::binding(4, 2)]] SamplerState g_IblSampler;
+
 static const uint LightStride = 64;
 
 // LightType, matching the Light builtin's enum (Directional/Point/Spot).
@@ -53,6 +63,10 @@ struct PushConstants
     uint ViewConstantsIndex;  // current frame-in-flight's view-constants region
     uint LightBase;           // current frame's base index into the light buffer
     uint LightCount;          // live light count this frame
+    uint IblEnabled;          // 1 = split-sum IBL ambient; 0 = flat ambient fallback
+    uint SkyboxEnabled;       // 1 = fill cleared-depth background with the radiance cube
+    uint PrefilterMipCount;   // prefiltered specular mip count (roughness -> LOD)
+    float EnvIntensity;       // scales the IBL ambient + skybox radiance
 #if VE_USE_SSAO
     uint SsaoTexture;         // screen-space AO bindless index (the SSAO variant only)
     uint Pad0;
@@ -101,6 +115,14 @@ float GeometrySmith(float nDotV, float nDotL, float roughness)
 float3 FresnelSchlick(float cosTheta, float3 f0)
 {
     return f0 + (1.0 - f0) * pow(saturate(1.0 - cosTheta), 5.0);
+}
+
+// Roughness-aware Fresnel for the IBL ambient term: a rough surface's grazing
+// reflectance is bounded by its f0 rather than rising to white.
+float3 FresnelSchlickRoughness(float cosTheta, float3 f0, float roughness)
+{
+    float3 fr = max(float3(1.0 - roughness), f0);
+    return f0 + (fr - f0) * pow(saturate(1.0 - cosTheta), 5.0);
 }
 
 // The Cook-Torrance contribution of one light: the surface's specular + diffuse
@@ -173,6 +195,15 @@ float4 fsMain(VSOutput input) : SV_Target
         return float4(0.0, 0.0, 0.0, 1.0);
     return float4(CascadeDebugTint(viewDepth), 1.0);
 #endif
+
+    // Skybox: the cleared-depth background (no geometry) reads the environment radiance
+    // along the view ray. Geometry (depth < 1) falls through to the lit path below.
+    if (g_PC.SkyboxEnabled != 0 && depth >= 1.0)
+    {
+        float3 skyDir = normalize(worldPos - vc.CameraPosition.xyz);
+        float3 sky = g_Radiance.SampleLevel(g_IblSampler, skyDir, 0.0).rgb * g_PC.EnvIntensity;
+        return float4(sky, 1.0);
+    }
 
     float3 V = normalize(vc.CameraPosition.xyz - worldPos);
 
@@ -256,8 +287,32 @@ float4 fsMain(VSOutput input) : SV_Target
     float ambientOcclusion = occlusion;
 #endif
 
-    // Ambient gated by the combined occlusion so the occlusion channel reads.
-    float3 ambient = AmbientColor * albedo * ambientOcclusion;
+    // Indirect (ambient) term. With an environment bound, the flat hemispheric fill is
+    // replaced by split-sum IBL: diffuse irradiance + GGX-prefiltered specular weighted by
+    // the BRDF LUT. Both are gated by the combined occlusion so the occlusion channel reads.
+    float3 ambient;
+    if (g_PC.IblEnabled != 0)
+    {
+        float nDotV = max(dot(N, V), 1e-4);
+        float3 fresnel = FresnelSchlickRoughness(nDotV, f0, roughness);
+        float3 kd = (1.0 - fresnel) * (1.0 - metallic);
+
+        float3 irradiance = g_Irradiance.SampleLevel(g_IblSampler, N, 0.0).rgb;
+        float3 diffuseIbl = kd * irradiance * albedo;
+
+        float3 reflection = reflect(-V, N);
+        float maxMip = float(max(g_PC.PrefilterMipCount, 1u) - 1u);
+        float3 prefiltered =
+            g_Prefilter.SampleLevel(g_IblSampler, reflection, roughness * maxMip).rgb;
+        float2 brdf = g_BrdfLut.SampleLevel(g_IblSampler, float2(nDotV, roughness), 0.0).rg;
+        float3 specularIbl = prefiltered * (fresnel * brdf.x + brdf.y);
+
+        ambient = (diffuseIbl + specularIbl) * g_PC.EnvIntensity * ambientOcclusion;
+    }
+    else
+    {
+        ambient = AmbientColor * albedo * ambientOcclusion;
+    }
 
     // Scalar emissive: the surface's own albedo scaled by the emissive strength.
     float3 emission = albedo * emissive;

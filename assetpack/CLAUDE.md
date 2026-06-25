@@ -48,3 +48,8 @@ serialization — neither importer nor loader.
   (0 = static) and is written in the skinned vertex layout (the canonical attributes plus
   `RGBA16Uint` bone indices and `RGBA32Sfloat` weights); the attribute table is self-describing
   so the loader validates it against the engine's canonical *or* skinned layout by `SkeletonId`.
+- **`AssetType::Environment` carries an equirectangular HDR panorama for image-based lighting.**
+  A **`CookedEnvironmentHeader`** (`CookedEnvironmentVersion`) is a `Format` (always the
+  `RGBA16Sfloat` ordinal), `Width`, and `Height`, followed by `Width * Height` half-float texels
+  (row-major, top-to-bottom). The runtime uploads it as an HDR panorama texture and generates the
+  IBL cubemaps from it on the GPU; the loader rejects a `Version` mismatch.

@@ -50,6 +50,8 @@ namespace Veng::Cook
                 return "skeleton";
             case AssetType::Animation:
                 return "animation";
+            case AssetType::Environment:
+                return "environment";
             }
             return "unknown";
         }

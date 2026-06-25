@@ -233,6 +233,9 @@ namespace Veng::Renderer
             // upscales it to the full (allocation-sized) output, so GetOutput stays full-resolution.
             .RenderScale = ViewRenderScale(),
             .Exposure = m_ViewState.Exposure,
+            .Environment = m_ViewState.Environment,
+            .EnvironmentIntensity = m_ViewState.EnvironmentIntensity,
+            .Skybox = m_ViewState.Skybox,
             .BloomThreshold = m_ViewState.BloomThreshold,
             .BloomIntensity = m_ViewState.BloomIntensity,
             .BloomRadius = m_ViewState.BloomRadius,

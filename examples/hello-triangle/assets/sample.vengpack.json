@@ -21,6 +21,7 @@
     { "id": 2751177482215621782, "type": "mesh",      "source": "characters/nathan/nathan.mesh.json" },
     { "id": 13493236524696338033, "type": "prefab", "source": "prefabs/player.prefab.json" },
     { "id": 11611391513566245589, "type": "prefab", "source": "prefabs/scene.prefab.json" },
-    { "id": 10791442065337163528, "type": "level",  "source": "levels/sample.level.json" }
+    { "id": 10791442065337163528, "type": "level",  "source": "levels/sample.level.json" },
+    { "id": 10517717547470730851, "type": "environment", "source": "hdris/rogland_clear_night.env.json" }
   ]
 }

@@ -252,6 +252,29 @@ recompile); `Threshold` / `Intensity` / `Radius` are per-frame `SceneView` value
 the compute push, so tuning them never recompiles. `DebugView::Bloom` blits pyramid mip 0
 after the up-sweep — the accumulated bloom contribution before composite.
 
+**Image-based lighting is a split-sum IBL battery driven by a per-scene environment map.** A
+resident `AssetHandle<Environment>` rides the per-frame `SceneView` (set by the app through the
+`Viewport`'s `ViewState`, like `Exposure`); a renderer-owned **`EnvironmentIbl`** helper
+(`engine/src/Renderer/EnvironmentIbl.{h,cpp}`) generates the maps it derives — a **radiance
+cubemap** (the skybox source), a **diffuse irradiance cubemap**, a **GGX-prefiltered specular
+cubemap** (roughness mip chain), and the environment-independent **BRDF integration LUT** — all
+through compute (the four `ibl_*.comp` core shaders), mirroring the bloom/hi-Z
+compute-with-manual-barriers pattern (per-face/per-mip storage views, cube sampled views,
+explicit `PrepareForAccess` barriers, all off bindless). Generation is recorded **once when the
+bound environment changes** (a `m_LastEnvironment` gate in `Execute`, into the same command buffer
+before the graph runs); the BRDF LUT is generated once on first use. The four sampled maps + a
+linear sampler reach the deferred lighting pass as **one dedicated descriptor set bound at set 2**
+— **off the set-0 bindless registry**, mirroring the shadow-atlas "closed producer→consumer"
+precedent (a cubemap in a Metal argument buffer is a MoltenVK risk, and a closed resource needs no
+global registration). The lighting fragment replaces its flat hemispheric ambient with `kD ·
+irradiance · albedo` diffuse + `prefiltered · (F · brdf.x + brdf.y)` specular when an environment
+is bound, and **folds the skybox into the same pass** — at cleared-depth background it samples the
+radiance cube along the view ray rather than a separate skybox pass. IBL is a **runtime push flag**
+(`IblEnabled`), not a pipeline variant: the set is always bound and valid (the maps are
+transitioned to a sampled layout at first `Execute` even before an environment arrives), so a scene
+**without** an environment falls back to the exact flat-ambient path and renders unchanged.
+`SceneView::EnvironmentIntensity` and `Skybox` are per-frame push values (no recompile).
+
 Per-view data rides a **ring-buffered view-constants buffer**, not push constants: the
 `InvViewProj`/`CameraPosition` (for world-position reconstruction), the view/projection,
 and the SSAO view/projection live in a per-frame set-0 buffer ringed for frames-in-flight

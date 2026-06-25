@@ -51,6 +51,12 @@ namespace Veng::Renderer
         f32 Delta = 0.0f;
         /// @brief Exposure scale applied before the tone curve.
         f32 Exposure = 1.0f;
+        /// @brief Environment map driving image-based lighting and the skybox; empty for none.
+        AssetHandle<Environment> Environment;
+        /// @brief Scales the IBL ambient + skybox radiance.
+        f32 EnvironmentIntensity = 1.0f;
+        /// @brief Whether the environment renders as the background skybox.
+        bool Skybox = true;
         /// @brief Bloom bright-pass luminance knee.
         f32 BloomThreshold = 1.0f;
         /// @brief Bloom composite mix intensity.
