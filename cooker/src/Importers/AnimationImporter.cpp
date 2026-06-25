@@ -1,22 +1,162 @@
 #include "AnimationImporter.h"
 
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <sstream>
+#include <utility>
 
 #include <fmt/format.h>
+
+#include <glm/common.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <assimp/Importer.hpp>
 #include <assimp/config.h>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 
+#include <Veng/Asset/Animation.h>
 #include <Veng/Asset/CookedBlobs.h>
 
 #include "SkeletonSource.h"
 
 namespace Veng::Cook
 {
+    namespace
+    {
+        // Clamp-and-lerp sample of a vec3 track, matching the runtime SampleVec3. Used only to
+        // synthesize a boundary key when trimming a track that has no key exactly at the cut.
+        vec3 SampleVec3At(const vector<Vec3Key>& keys, f32 t)
+        {
+            if (keys.empty())
+            {
+                return vec3(0.0f);
+            }
+            if (t <= keys.front().Time)
+            {
+                return keys.front().Value;
+            }
+            if (t >= keys.back().Time)
+            {
+                return keys.back().Value;
+            }
+            for (usize i = 0; i + 1 < keys.size(); ++i)
+            {
+                if (t < keys[i + 1].Time)
+                {
+                    const f32 span = keys[i + 1].Time - keys[i].Time;
+                    const f32 alpha = span > 0.0f ? (t - keys[i].Time) / span : 0.0f;
+                    return glm::mix(keys[i].Value, keys[i + 1].Value, alpha);
+                }
+            }
+            return keys.back().Value;
+        }
+
+        // Clamp-and-slerp sample of a rotation track, matching the runtime SampleQuat.
+        quat SampleQuatAt(const vector<QuatKey>& keys, f32 t)
+        {
+            if (keys.empty())
+            {
+                return quat(1.0f, 0.0f, 0.0f, 0.0f);
+            }
+            if (t <= keys.front().Time)
+            {
+                return keys.front().Value;
+            }
+            if (t >= keys.back().Time)
+            {
+                return keys.back().Value;
+            }
+            for (usize i = 0; i + 1 < keys.size(); ++i)
+            {
+                if (t < keys[i + 1].Time)
+                {
+                    const f32 span = keys[i + 1].Time - keys[i].Time;
+                    const f32 alpha = span > 0.0f ? (t - keys[i].Time) / span : 0.0f;
+                    return glm::slerp(keys[i].Value, keys[i + 1].Value, alpha);
+                }
+            }
+            return keys.back().Value;
+        }
+
+        // Restricts a track to [startTime, endTime] and re-bases it to start at 0, preserving the
+        // sampled motion across the window: a key at each boundary is synthesized when the track
+        // has none there, so a constant or sparsely-keyed track keeps its value.
+        void TrimVec3(vector<Vec3Key>& keys, f32 startTime, f32 endTime)
+        {
+            if (keys.empty())
+            {
+                return;
+            }
+            constexpr f32 Epsilon = 1e-6f;
+            vector<Vec3Key> trimmed;
+            bool hasStart = false;
+            bool hasEnd = false;
+            for (const Vec3Key& key : keys)
+            {
+                if (key.Time >= startTime - Epsilon && key.Time <= endTime + Epsilon)
+                {
+                    trimmed.push_back(key);
+                    hasStart = hasStart || std::fabs(key.Time - startTime) <= Epsilon;
+                    hasEnd = hasEnd || std::fabs(key.Time - endTime) <= Epsilon;
+                }
+            }
+            if (!hasStart)
+            {
+                const Vec3Key boundary{.Time = startTime, .Value = SampleVec3At(keys, startTime)};
+                trimmed.insert(trimmed.begin(), boundary);
+            }
+            if (!hasEnd)
+            {
+                const Vec3Key boundary{.Time = endTime, .Value = SampleVec3At(keys, endTime)};
+                trimmed.push_back(boundary);
+            }
+            for (Vec3Key& key : trimmed)
+            {
+                key.Time -= startTime;
+            }
+            keys.swap(trimmed);
+        }
+
+        // The rotation-track sibling of TrimVec3.
+        void TrimQuat(vector<QuatKey>& keys, f32 startTime, f32 endTime)
+        {
+            if (keys.empty())
+            {
+                return;
+            }
+            constexpr f32 Epsilon = 1e-6f;
+            vector<QuatKey> trimmed;
+            bool hasStart = false;
+            bool hasEnd = false;
+            for (const QuatKey& key : keys)
+            {
+                if (key.Time >= startTime - Epsilon && key.Time <= endTime + Epsilon)
+                {
+                    trimmed.push_back(key);
+                    hasStart = hasStart || std::fabs(key.Time - startTime) <= Epsilon;
+                    hasEnd = hasEnd || std::fabs(key.Time - endTime) <= Epsilon;
+                }
+            }
+            if (!hasStart)
+            {
+                const QuatKey boundary{.Time = startTime, .Value = SampleQuatAt(keys, startTime)};
+                trimmed.insert(trimmed.begin(), boundary);
+            }
+            if (!hasEnd)
+            {
+                const QuatKey boundary{.Time = endTime, .Value = SampleQuatAt(keys, endTime)};
+                trimmed.push_back(boundary);
+            }
+            for (QuatKey& key : trimmed)
+            {
+                key.Time -= startTime;
+            }
+            keys.swap(trimmed);
+        }
+    }
+
     Result<vector<u8>> AnimationImporter::Cook(const CookContext& context, const json& entry) const
     {
         if (!entry.contains("source") || !entry["source"].is_string())
@@ -87,48 +227,30 @@ namespace Veng::Cook
         const auto toSeconds = [&](double ticks)
         { return static_cast<f32>(ticks / ticksPerSecond); };
 
-        // Build the channel table and the contiguous key region in one pass: each channel's
-        // position, rotation, then scale keys are appended to the key blob and the channel
-        // records their byte offsets within it.
-        vector<CookedAnimChannel> channels;
-        vector<u8> keyRegion;
+        // Optional lead-in/out trim, counted in whole keyframes of the clip's densest track. Some
+        // mocap exports (RenderPeople among them) bake a neutral bind-pose frame at time 0; left
+        // in, a looped clip snaps to that pose for one frame on every wrap. Trimming drops those
+        // frames and re-bases the timeline so the loop is seamless.
+        const u32 trimStart =
+            animJson.contains("trimStart") && animJson["trimStart"].is_number_unsigned()
+                ? animJson["trimStart"].get<u32>()
+                : 0u;
+        const u32 trimEnd = animJson.contains("trimEnd") && animJson["trimEnd"].is_number_unsigned()
+                                ? animJson["trimEnd"].get<u32>()
+                                : 0u;
 
-        const auto appendVec3Keys = [&](u32 count, auto&& valueAt, auto&& timeAt) -> u32
+        // Decode every in-skeleton channel's tracks into seconds-keyed lists up front, so the
+        // optional trim resamples them before they are serialized into the key region.
+        struct ChannelTracks
         {
-            const u32 offset = static_cast<u32>(keyRegion.size());
-            for (u32 k = 0; k < count; ++k)
-            {
-                CookedVec3Key key{};
-                key.Time = toSeconds(timeAt(k));
-                const aiVector3D v = valueAt(k);
-                key.Value[0] = v.x;
-                key.Value[1] = v.y;
-                key.Value[2] = v.z;
-                const usize at = keyRegion.size();
-                keyRegion.resize(at + sizeof(CookedVec3Key));
-                std::memcpy(keyRegion.data() + at, &key, sizeof(key));
-            }
-            return offset;
+            u32 BoneIndex = 0;
+            vector<Vec3Key> Position;
+            vector<QuatKey> Rotation;
+            vector<Vec3Key> Scale;
         };
 
-        const auto appendQuatKeys = [&](u32 count, auto&& valueAt, auto&& timeAt) -> u32
-        {
-            const u32 offset = static_cast<u32>(keyRegion.size());
-            for (u32 k = 0; k < count; ++k)
-            {
-                CookedQuatKey key{};
-                key.Time = toSeconds(timeAt(k));
-                const aiQuaternion q = valueAt(k);
-                key.Value[0] = q.x;
-                key.Value[1] = q.y;
-                key.Value[2] = q.z;
-                key.Value[3] = q.w;
-                const usize at = keyRegion.size();
-                keyRegion.resize(at + sizeof(CookedQuatKey));
-                std::memcpy(keyRegion.data() + at, &key, sizeof(key));
-            }
-            return offset;
-        };
+        vector<ChannelTracks> tracks;
+        vector<f32> referenceTimes;
 
         for (unsigned int c = 0; c < anim->mNumChannels; ++c)
         {
@@ -140,39 +262,140 @@ namespace Veng::Cook
                 continue;
             }
 
-            CookedAnimChannel record{};
+            ChannelTracks record;
             record.BoneIndex = static_cast<u32>(bone->second);
 
-            record.PositionKeyCount = channel->mNumPositionKeys;
-            record.PositionKeyOffset = appendVec3Keys(
-                channel->mNumPositionKeys, [&](u32 k) { return channel->mPositionKeys[k].mValue; },
-                [&](u32 k) { return channel->mPositionKeys[k].mTime; });
+            record.Position.resize(channel->mNumPositionKeys);
+            for (unsigned int k = 0; k < channel->mNumPositionKeys; ++k)
+            {
+                const aiVector3D v = channel->mPositionKeys[k].mValue;
+                record.Position[k] = Vec3Key{.Time = toSeconds(channel->mPositionKeys[k].mTime),
+                                             .Value = vec3(v.x, v.y, v.z)};
+            }
+            record.Rotation.resize(channel->mNumRotationKeys);
+            for (unsigned int k = 0; k < channel->mNumRotationKeys; ++k)
+            {
+                const aiQuaternion q = channel->mRotationKeys[k].mValue;
+                record.Rotation[k] = QuatKey{.Time = toSeconds(channel->mRotationKeys[k].mTime),
+                                             .Value = quat(q.w, q.x, q.y, q.z)};
+            }
+            record.Scale.resize(channel->mNumScalingKeys);
+            for (unsigned int k = 0; k < channel->mNumScalingKeys; ++k)
+            {
+                const aiVector3D v = channel->mScalingKeys[k].mValue;
+                record.Scale[k] = Vec3Key{.Time = toSeconds(channel->mScalingKeys[k].mTime),
+                                          .Value = vec3(v.x, v.y, v.z)};
+            }
 
-            record.RotationKeyCount = channel->mNumRotationKeys;
-            record.RotationKeyOffset = appendQuatKeys(
-                channel->mNumRotationKeys, [&](u32 k) { return channel->mRotationKeys[k].mValue; },
-                [&](u32 k) { return channel->mRotationKeys[k].mTime; });
+            // The trim's frame grid is the longest track seen — a per-frame-keyed bone, not a
+            // constant one whose value is held by a single key.
+            const auto consider = [&](const auto& keys)
+            {
+                if (keys.size() > referenceTimes.size())
+                {
+                    referenceTimes.clear();
+                    referenceTimes.reserve(keys.size());
+                    for (const auto& key : keys)
+                    {
+                        referenceTimes.push_back(key.Time);
+                    }
+                }
+            };
+            consider(record.Position);
+            consider(record.Rotation);
+            consider(record.Scale);
 
-            record.ScaleKeyCount = channel->mNumScalingKeys;
-            record.ScaleKeyOffset = appendVec3Keys(
-                channel->mNumScalingKeys, [&](u32 k) { return channel->mScalingKeys[k].mValue; },
-                [&](u32 k) { return channel->mScalingKeys[k].mTime; });
-
-            channels.push_back(record);
+            tracks.push_back(std::move(record));
         }
 
-        if (channels.empty())
+        if (tracks.empty())
         {
             return std::unexpected(
                 fmt::format("animation importer: '{}': clip {} animates no skeleton bones",
                             sourcePath.string(), clipIndex));
         }
 
+        f32 clipDuration = toSeconds(anim->mDuration);
+
+        if (trimStart != 0 || trimEnd != 0)
+        {
+            const usize frameCount = referenceTimes.size();
+            if (static_cast<usize>(trimStart) + trimEnd + 1 > frameCount)
+            {
+                return std::unexpected(fmt::format(
+                    "animation importer: '{}': trimStart {} + trimEnd {} leaves no frames of {}",
+                    sourcePath.string(), trimStart, trimEnd, frameCount));
+            }
+            const f32 startTime = referenceTimes[trimStart];
+            const f32 endTime = referenceTimes[frameCount - 1 - trimEnd];
+
+            for (ChannelTracks& record : tracks)
+            {
+                TrimVec3(record.Position, startTime, endTime);
+                TrimQuat(record.Rotation, startTime, endTime);
+                TrimVec3(record.Scale, startTime, endTime);
+            }
+            clipDuration = endTime - startTime;
+        }
+
+        // Serialize the (possibly trimmed) tracks: each channel's position, rotation, then scale
+        // keys are appended to the key region and the channel records their byte offsets within it.
+        vector<CookedAnimChannel> channels;
+        vector<u8> keyRegion;
+
+        const auto appendVec3Keys = [&](const vector<Vec3Key>& keys) -> u32
+        {
+            const u32 offset = static_cast<u32>(keyRegion.size());
+            for (const Vec3Key& key : keys)
+            {
+                CookedVec3Key out{};
+                out.Time = key.Time;
+                out.Value[0] = key.Value.x;
+                out.Value[1] = key.Value.y;
+                out.Value[2] = key.Value.z;
+                const usize at = keyRegion.size();
+                keyRegion.resize(at + sizeof(CookedVec3Key));
+                std::memcpy(keyRegion.data() + at, &out, sizeof(out));
+            }
+            return offset;
+        };
+
+        const auto appendQuatKeys = [&](const vector<QuatKey>& keys) -> u32
+        {
+            const u32 offset = static_cast<u32>(keyRegion.size());
+            for (const QuatKey& key : keys)
+            {
+                CookedQuatKey out{};
+                out.Time = key.Time;
+                out.Value[0] = key.Value.x;
+                out.Value[1] = key.Value.y;
+                out.Value[2] = key.Value.z;
+                out.Value[3] = key.Value.w;
+                const usize at = keyRegion.size();
+                keyRegion.resize(at + sizeof(CookedQuatKey));
+                std::memcpy(keyRegion.data() + at, &out, sizeof(out));
+            }
+            return offset;
+        };
+
+        for (const ChannelTracks& record : tracks)
+        {
+            CookedAnimChannel out{};
+            out.BoneIndex = record.BoneIndex;
+            out.PositionKeyCount = static_cast<u32>(record.Position.size());
+            out.PositionKeyOffset = appendVec3Keys(record.Position);
+            out.RotationKeyCount = static_cast<u32>(record.Rotation.size());
+            out.RotationKeyOffset = appendQuatKeys(record.Rotation);
+            out.ScaleKeyCount = static_cast<u32>(record.Scale.size());
+            out.ScaleKeyOffset = appendVec3Keys(record.Scale);
+            channels.push_back(out);
+        }
+
         CookedAnimationHeader header{};
         header.Version = CookedAnimationVersion;
         header.ChannelCount = static_cast<u32>(channels.size());
         header.KeyRegionBytes = static_cast<u32>(keyRegion.size());
-        header.Duration = toSeconds(anim->mDuration);
+        header.Duration = clipDuration;
 
         const usize channelBytes = channels.size() * sizeof(CookedAnimChannel);
         vector<u8> blob(sizeof(CookedAnimationHeader) + channelBytes + keyRegion.size());
