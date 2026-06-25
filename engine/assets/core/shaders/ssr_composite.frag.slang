@@ -4,7 +4,9 @@
 // reads a coarser, blurrier mip). Writes the combined linear HDR the bloom/tonemap
 // tail consumes — SSR slots in where TAA does, so the rest of the tail is unchanged.
 //
-// SSR forces full render resolution, so g-buffer reads use the plain logical UV.
+// The composite runs at full render resolution: it reads the g-buffer at the plain logical
+// UV (SSR disables the dynamic-resolution sub-rect) and SampleLevel-upsamples the reflection
+// chain, which may be at a lower resolution than the target.
 #include "view_constants.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];

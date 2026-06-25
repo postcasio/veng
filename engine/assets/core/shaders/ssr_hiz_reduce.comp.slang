@@ -39,44 +39,23 @@ void csMain(uint3 id : SV_DispatchThreadID)
     if (id.x >= g_PC.DestExtent.x || id.y >= g_PC.DestExtent.y)
         return;
 
-    int2 dst = int2(id.xy);
+    // Each dest texel folds the MIN of its proportional source footprint — the closest surface
+    // over that region. The footprint is [start, end) per axis, an exclusive ceil so adjacent
+    // dest cells share a boundary texel: overlap only makes the min more conservative (it never
+    // reports a region emptier than it is, so it never skips a real hit). This one mapping covers
+    // the 1:1 mip-0 copy at full SSR resolution, the 2:1 chain steps (including an odd parent
+    // dimension), and the N:1 mip-0 downsample when SSR runs below full resolution (4:1 at quarter).
+    uint2 start = (id.xy * g_PC.SourceExtent) / g_PC.DestExtent;
+    uint2 end = ((id.xy + 1u) * g_PC.SourceExtent + g_PC.DestExtent - 1u) / g_PC.DestExtent;
 
-    // Mip 0 ingests the depth target 1:1 (source and dest extents match).
-    if (g_PC.SourceExtent.x == g_PC.DestExtent.x && g_PC.SourceExtent.y == g_PC.DestExtent.y)
+    float m = 1.0; // engine far depth (background); a nearer surface wins the min
+    for (uint y = start.y; y < end.y; ++y)
     {
-        g_Dest[dst] = LoadClamped(dst);
-        return;
+        for (uint x = start.x; x < end.x; ++x)
+        {
+            m = min(m, LoadClamped(int2(int(x), int(y))));
+        }
     }
 
-    int2 base = dst * 2;
-
-    float m = LoadClamped(base);
-    m = min(m, LoadClamped(base + int2(1, 0)));
-    m = min(m, LoadClamped(base + int2(0, 1)));
-    m = min(m, LoadClamped(base + int2(1, 1)));
-
-    // An odd parent dimension drops its last row/column from every 2x2 footprint; fold it
-    // in with min so no near sample is lost (a dropped near sample would make the pyramid
-    // non-conservative — it would report a region emptier than it is and skip a real hit).
-    bool oddX = (g_PC.SourceExtent.x & 1u) != 0u;
-    bool oddY = (g_PC.SourceExtent.y & 1u) != 0u;
-
-    if (oddX)
-    {
-        int x = base.x + 2;
-        m = min(m, LoadClamped(int2(x, base.y)));
-        m = min(m, LoadClamped(int2(x, base.y + 1)));
-    }
-    if (oddY)
-    {
-        int y = base.y + 2;
-        m = min(m, LoadClamped(int2(base.x, y)));
-        m = min(m, LoadClamped(int2(base.x + 1, y)));
-    }
-    if (oddX && oddY)
-    {
-        m = min(m, LoadClamped(int2(base.x + 2, base.y + 2)));
-    }
-
-    g_Dest[dst] = m;
+    g_Dest[int2(id.xy)] = m;
 }

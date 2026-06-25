@@ -172,6 +172,22 @@ namespace Veng::Renderer
             GPU,
         };
 
+        /// @brief Resolution the SSR trace, min-Z pyramid, and blur chain run at.
+        ///
+        /// The trace is SSR's dominant cost; running it at a fraction of the render
+        /// resolution cuts that roughly quadratically. The g-buffer it reads stays
+        /// full-resolution (sampled by normalized UV) and the composite upsamples the
+        /// reflection back to full resolution, so only the reflection working set shrinks.
+        enum class SsrResolution : u8
+        {
+            /// @brief Trace at the full render resolution.
+            Full,
+            /// @brief Trace at half the render resolution per axis (quarter the pixels).
+            Half,
+            /// @brief Trace at a quarter of the render resolution per axis (a sixteenth the pixels).
+            Quarter,
+        };
+
         /// @brief Selects which result the renderer produces; re-wires the pass set on change.
         DebugView Mode = DebugView::Final;
 
@@ -245,9 +261,18 @@ namespace Veng::Renderer
         /// passes between lighting and the bloom/tonemap tail and routes the lit scene color
         /// through an intermediate the SSR composite reflects into. SsrIntensity / SsrMaxDistance
         /// / SsrThickness / SsrMaxRoughness are per-frame values on SceneView and do not recompile.
-        /// Off by default (like TAA): SSR forces full render resolution, so it disables the
-        /// dynamic-resolution sub-rect path while active.
+        /// Off by default (like TAA). SSR disables the dynamic-resolution sub-rect path while
+        /// active (the g-buffer renders at full resolution); SsrResolutionScale sizes the SSR
+        /// trace itself.
         bool SSR = false;
+
+        /// @brief Resolution the SSR trace/min-Z/blur chain runs at relative to the render target.
+        ///
+        /// A topology change: it resizes the SSR reflection chain and min-Z pyramid, so a change
+        /// recompiles. Defaults to Half — the trace cost falls ~4x and the composite upsamples the
+        /// reflection, with little visible loss on the rough/glossy surfaces SSR targets. Ignored
+        /// when SSR is inactive.
+        SsrResolution SsrResolutionScale = SsrResolution::Half;
 
         /// @brief Whether the screen-space ambient occlusion pass runs.
         ///
@@ -681,6 +706,14 @@ namespace Veng::Renderer
         /// pass and the bloom sweep.
         /// @param graph  The renderer's internal graph being rebuilt.
         void DeclareSsr(RenderGraph& graph);
+        /// @brief The pixel extent the SSR trace/min-Z/blur chain runs at.
+        ///
+        /// Folds Settings.SsrResolutionScale onto the render extent (Half halves each axis, Quarter
+        /// quarters it, each clamped to at least 1). The single source of truth CreateSsr sizes
+        /// resources to and DeclareSsr dispatches against; the g-buffer and composite stay at the
+        /// full extent.
+        /// @return The SSR working extent in texels.
+        [[nodiscard]] uvec2 SsrRenderExtent() const;
         /// @brief Recreates the HDR image/view at the current extent and (re-)registers it into bindless.
         void CreateHdr();
         /// @brief Recreates the TAA lit + history targets, or releases them when TAA is off.

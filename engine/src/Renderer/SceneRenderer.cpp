@@ -2402,6 +2402,19 @@ namespace Veng::Renderer
         m_BloomCompositeSet->Write(3, m_BloomResultView);
     }
 
+    uvec2 SceneRenderer::SsrRenderExtent() const
+    {
+        if (m_Settings.SsrResolutionScale == SceneRendererSettings::SsrResolution::Half)
+        {
+            return glm::max(uvec2(1), m_Extent / 2u);
+        }
+        if (m_Settings.SsrResolutionScale == SceneRendererSettings::SsrResolution::Quarter)
+        {
+            return glm::max(uvec2(1), m_Extent / 4u);
+        }
+        return m_Extent;
+    }
+
     void SceneRenderer::CreateSsr()
     {
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
@@ -2444,16 +2457,20 @@ namespace Veng::Renderer
             m_Context, {.Name = "SceneRenderer SSR Scene View", .Image = m_SsrSceneImage});
         m_SsrSceneHandle = bindless.Register(m_SsrSceneView);
 
+        // The trace, min-Z pyramid, and blur chain run at the SSR resolution (the scene color
+        // above stays full-res: the trace samples it by reflected UV, the composite by logical UV).
+        const uvec2 ssrExtent = SsrRenderExtent();
+
         // The reflection mip chain: mip 0 the trace writes, coarser mips the blur produces. The
         // chain stops BloomTileShift levels short of 1×1 (a rough reflection needs no 1-px mip).
-        const u32 maxDim = std::max(m_Extent.x, m_Extent.y);
+        const u32 maxDim = std::max(ssrExtent.x, ssrExtent.y);
         const u32 mipCount =
             maxDim == 0 ? 1u : std::max(1u, std::bit_width(maxDim) - BloomTileShift);
 
         m_SsrReflectionImage =
             Image::Create(m_Context, {
                                          .Name = "SceneRenderer SSR Reflection",
-                                         .Extent = {m_Extent.x, m_Extent.y, 1},
+                                         .Extent = {ssrExtent.x, ssrExtent.y, 1},
                                          .MipLevels = mipCount,
                                          .Format = HdrFormat,
                                          .Usage = ImageUsage::ColorAttachment |
@@ -2523,7 +2540,7 @@ namespace Veng::Renderer
         m_SsrHiZImage =
             Image::Create(m_Context, {
                                          .Name = "SceneRenderer SSR MinZ",
-                                         .Extent = {m_Extent.x, m_Extent.y, 1},
+                                         .Extent = {ssrExtent.x, ssrExtent.y, 1},
                                          .MipLevels = hizMips,
                                          .Format = HiZFormat,
                                          .Usage = ImageUsage::Storage | ImageUsage::Sampled,
@@ -3164,17 +3181,20 @@ namespace Veng::Renderer
     {
         const u32 mipCount = static_cast<u32>(m_SsrReflectionMips.size());
         const u32 hizMips = static_cast<u32>(m_SsrHiZMips.size());
+        const uvec2 ssrExtent = SsrRenderExtent();
 
         // Min-Z reduction: build this frame's closest-surface pyramid from the depth target
-        // before the trace. One dispatch per mip (mip 0 ingests depth, deeper mips halve the
-        // prior). The per-mip graph surface derives the read-after-write barriers; the trace
-        // then reads the whole chain. Mirrors DeclareHiZReduction with the min-Z pipeline.
+        // before the trace. One dispatch per mip; mip 0 ingests the full-res depth target into
+        // the SSR-resolution pyramid (a downsample when SSR runs below full res, a 1:1 copy at
+        // Full), deeper mips halve the prior. The per-mip graph surface derives the
+        // read-after-write barriers; the trace then reads the whole chain. Mirrors
+        // DeclareHiZReduction with the min-Z pipeline.
         for (u32 level = 0; level < hizMips; level++)
         {
-            const u32 dstW = std::max(m_Extent.x >> level, 1u);
-            const u32 dstH = std::max(m_Extent.y >> level, 1u);
-            const u32 srcW = level == 0 ? m_Extent.x : std::max(m_Extent.x >> (level - 1), 1u);
-            const u32 srcH = level == 0 ? m_Extent.y : std::max(m_Extent.y >> (level - 1), 1u);
+            const u32 dstW = std::max(ssrExtent.x >> level, 1u);
+            const u32 dstH = std::max(ssrExtent.y >> level, 1u);
+            const u32 srcW = level == 0 ? m_Extent.x : std::max(ssrExtent.x >> (level - 1), 1u);
+            const u32 srcH = level == 0 ? m_Extent.y : std::max(ssrExtent.y >> (level - 1), 1u);
 
             RenderGraph::PassBuilder builder =
                 graph.AddComputePass(fmt::format("SSR MinZ Reduce Mip {}", level));
@@ -3240,15 +3260,18 @@ namespace Veng::Renderer
             }
             traceBuilder.Execute(
                 [this, sceneHandle, depthHandle, normalHandle, ormHandle, hizHandle, hizMips,
-                 samplerHandle](PassContext& inner)
+                 samplerHandle, ssrExtent](PassContext& inner)
                 {
                     CommandBuffer& cmd = inner.Cmd();
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
                     const auto* viewPtr = static_cast<const SceneView*>(inner.UserData());
                     VE_ASSERT(viewPtr != nullptr, "SSR trace pass: null SceneView");
                     const SceneView& view = *viewPtr;
-                    // SSR forces full render resolution, so the sub-rect is the full extent.
-                    const uvec2 renderExtent = view.RenderExtent;
+                    // The trace writes the SSR-resolution reflection target, so it marches and
+                    // steps at the SSR extent; the g-buffer it reads stays full-res, sampled by
+                    // logical UV. SSR disables the dynamic-resolution sub-rect, so RenderExtent
+                    // is the full extent the SSR extent derives from.
+                    const uvec2 renderExtent = ssrExtent;
 
                     cmd.BindPipeline(m_SsrTracePipeline);
                     cmd.SetViewport({0, 0}, renderExtent);
@@ -3275,7 +3298,7 @@ namespace Veng::Renderer
 
         // Blur down-sweep: build the roughness mip chain (mip k averages mip k-1). The per-mip
         // graph surface derives the read-after-write barrier between writing mip k and reading it.
-        const uvec2 allocExtent = m_Extent;
+        const uvec2 allocExtent = ssrExtent;
         for (u32 level = 1; level < mipCount; level++)
         {
             const u32 dstW = std::max(allocExtent.x >> level, 1u);

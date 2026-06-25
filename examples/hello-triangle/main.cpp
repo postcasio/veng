@@ -293,8 +293,8 @@ protected:
         m_SceneSettings.Bloom = render.Bloom;
         m_SceneSettings.Shadows = render.Shadows;
         m_SceneSettings.AO = render.AO;
-        // SSR is off by default in the engine (it forces full render resolution); the sample opts
-        // in to show reflections off the gradient-roughness ground plane.
+        // SSR is off by default in the engine; the sample opts in to show reflections off the
+        // gradient-roughness ground plane (at the engine-default half SSR resolution).
         m_SceneSettings.SSR = true;
         m_Exposure = render.Exposure;
         m_BloomIntensity = render.BloomIntensity;
@@ -729,6 +729,20 @@ private:
             if (UI::Checkbox("SSR", m_SceneSettings.SSR))
             {
                 ReconfigureScene();
+            }
+            {
+                // The trace/min-Z/blur resolution sizes the SSR working set, so it recompiles;
+                // the combo greys out when SSR is off.
+                auto ssrDisabled = UI::Disabled(!m_SceneSettings.SSR);
+                static constexpr std::array<string_view, 3> ssrResolutionNames{"Full", "Half",
+                                                                               "Quarter"};
+                i32 ssrResolution = static_cast<i32>(m_SceneSettings.SsrResolutionScale);
+                if (UI::Combo("SSR resolution", ssrResolution, ssrResolutionNames))
+                {
+                    m_SceneSettings.SsrResolutionScale =
+                        static_cast<Renderer::SceneRendererSettings::SsrResolution>(ssrResolution);
+                    ReconfigureScene();
+                }
             }
 
             // Shadows on/off and cascade count/resolution size the atlas; each requires ReconfigureScene.

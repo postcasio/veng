@@ -7,8 +7,9 @@
 // The march is a fixed-step linear walk in view space with a binary-search
 // refinement once a crossing is bracketed: simple and robust, current-frame depth,
 // no acceleration structure. (A min-Z hi-Z traversal replaces the inner loop as an
-// optimization.) SSR forces full render resolution, so every g-buffer read is at the
-// plain logical UV — no dynamic-resolution sub-rect remap.
+// optimization.) The trace runs at the reflection target's resolution (Extent), which
+// may be below the render resolution; the g-buffer it reads is full-resolution and is
+// sampled at the plain logical UV (SSR disables the dynamic-resolution sub-rect).
 //
 // View space is the well-behaved domain for the ray: the camera sits at the origin,
 // the view vector to a fragment is its view-space position, and the depth comparison
