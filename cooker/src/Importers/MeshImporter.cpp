@@ -193,7 +193,11 @@ namespace Veng::Cook
         {
             flags |= aiProcess_CalcTangentSpace;
         }
-        if (ImportFlag(import, "flip_uv", false))
+        // assimp emits UVs in the OpenGL convention (origin bottom-left, V up); veng uploads
+        // textures top-row-first and samples them Vulkan-style (origin top-left, V down), so a
+        // model's V must be flipped at import to map correctly. Default on; an asset whose
+        // source is already authored top-left overrides it to false.
+        if (ImportFlag(import, "flip_uv", true))
         {
             flags |= aiProcess_FlipUVs;
         }

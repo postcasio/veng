@@ -8,7 +8,6 @@
     "3": 252717381658754241
   },
   "import": {
-    "flip_uv": false,
     "generate_normals": true,
     "generate_tangents": true,
     "join_identical_vertices": true

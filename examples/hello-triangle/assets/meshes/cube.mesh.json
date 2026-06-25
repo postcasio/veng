@@ -2,7 +2,6 @@
   "model": "cube.obj",
   "import": {
     "scale": 1.0,
-    "flip_uv": false,
     "generate_normals": true,
     "generate_tangents": true,
     "join_identical_vertices": true
