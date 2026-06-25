@@ -106,24 +106,31 @@ namespace Veng::Renderer
         return m_RenderScale;
     }
 
-    void Viewport::SetDynamicResolution(const DynamicResolutionSettings& settings)
+    void Viewport::SetDynamicResolution(const DynamicResolutionSettings& settings,
+                                        const optional<AllocationTierSettings>& tierSettings)
     {
-        // The allocation is sized to MaxScale (the high-water mark the controller can reach), so a
-        // MaxScale change resizes the renderer images — the point of the bound. The current scale
-        // is clamped into the new band so it never exceeds the allocation between this call and the
-        // next controller update (a GetViewRenderScale > 1 would render outside the target).
+        // The allocation is sized to the allocation scale (MaxScale without a tier controller, the
+        // baseline tier with one), so a change resizes the renderer images — the point of the bound.
+        // The current scale is clamped into the new band so it never exceeds the allocation between
+        // this call and the next controller update (a GetViewRenderScale > 1 would render outside).
         const uvec2 priorAlloc = ScaledExtent();
         m_DynamicResolution = settings;
+        m_TierSettings = tierSettings;
+        // Re-seed the tier state to the baseline so the allocation starts at Tiers[0] and the EMA
+        // reads the current operating point afresh, rather than carrying a prior enablement's tier.
+        m_TierState = {};
         m_RenderScale = glm::clamp(m_RenderScale, settings.MinScale, settings.MaxScale);
         DebounceAllocationResize(priorAlloc);
     }
 
     void Viewport::ClearDynamicResolution()
     {
-        // The allocation scale flips from MaxScale back to the (now static) current scale, which
-        // may move the allocation extent and debounce a resize.
+        // The allocation scale flips from the controller's ceiling back to the (now static) current
+        // scale, which may move the allocation extent and debounce a resize.
         const uvec2 priorAlloc = ScaledExtent();
         m_DynamicResolution.reset();
+        m_TierSettings.reset();
+        m_TierState = {};
         DebounceAllocationResize(priorAlloc);
     }
 
@@ -139,11 +146,27 @@ namespace Veng::Renderer
 
     f32 Viewport::GetAllocationScale() const
     {
-        // The allocation is sized to the upper bound of the render scale: MaxScale when the dynamic-
-        // resolution controller owns the scale, else the static scale (its own ceiling). Sizing to
-        // the ceiling is what lets a current-scale move render into a sub-rect without a resize, and
-        // lets a MaxScale below 1 actually shrink the images rather than allocating full-region.
+        // With the outer-loop tier controller on, the allocation follows the sustained sub-rect: it
+        // is the current tier's absolute scale (the HiDPI cap is applied outside, in ExtentForScale).
+        if (m_TierSettings)
+        {
+            return m_TierSettings->Tiers[m_TierState.TierIndex];
+        }
+        // Otherwise the allocation is sized to the upper bound of the render scale: MaxScale when
+        // the inner-loop controller owns the scale, else the static scale (its own ceiling). Sizing
+        // to the ceiling lets a current-scale move render into a sub-rect without a resize, and lets
+        // a sub-1 ceiling actually shrink the images rather than allocating full-region.
         return m_DynamicResolution ? m_DynamicResolution->MaxScale : m_RenderScale;
+    }
+
+    u32 Viewport::GetAllocationTierIndex() const
+    {
+        return m_TierSettings ? m_TierState.TierIndex : 0u;
+    }
+
+    uvec2 Viewport::GetAllocationExtent() const
+    {
+        return ScaledExtent();
     }
 
     uvec2 Viewport::ExtentForScale(f32 scale) const
@@ -196,6 +219,29 @@ namespace Veng::Renderer
             ComputeDynamicResolutionScale(m_RenderScale, gpuFrameTimeMs, *m_DynamicResolution));
     }
 
+    void Viewport::UpdateAllocationTier(f32 delta)
+    {
+        if (!m_TierSettings)
+        {
+            return;
+        }
+
+        // Read the inner loop's freshly-updated sub-rect scale into the long EMA and step the tier.
+        const u32 priorTier = m_TierState.TierIndex;
+        const u32 newTier = StepAllocationTier(m_TierState, m_RenderScale, delta, *m_TierSettings);
+        if (newTier == priorTier)
+        {
+            return;
+        }
+
+        // The tier changed, so the allocation scale changed: debounce the SceneRenderer::Resize to
+        // the next Render through the same path a region change uses, rather than resizing mid-record.
+        // The new allocation is round(region * cap * Tiers[newTier]); the down-step guard inside the
+        // controller already ensures the live sub-rect fits it, so the resize is visually continuous.
+        const uvec2 priorAlloc = ExtentForScale(m_TierSettings->Tiers[priorTier]);
+        DebounceAllocationResize(priorAlloc);
+    }
+
     void Viewport::SetViewState(const ViewState& state)
     {
         m_ViewState = state;
@@ -214,6 +260,10 @@ namespace Veng::Renderer
         // change (scale <= 1) only adjusts the per-frame fraction below — no resize; a supersample
         // boundary change leaves a pending allocation resize applied here.
         UpdateDynamicResolution();
+
+        // Outer loop: steps the quantized allocation tier from the (now updated) sub-rect scale,
+        // debouncing a resize on a tier change to the pending extent applied just below.
+        UpdateAllocationTier(m_ViewState.Delta);
 
         if (m_PendingExtent.x != 0 && m_PendingExtent.y != 0)
         {

@@ -319,6 +319,10 @@ protected:
         // composite tail); the app pushes only a ViewState. Apply the level's topology settings.
         GetPrimaryViewport()->Configure(m_SceneSettings);
 
+        // Mirror the controller state ManagedViewportInfo enabled, so the demo's checkbox and the
+        // greyed read-out start in sync with the viewport (windowed opts in; smoke leaves it off).
+        m_DynamicResolution = GetPrimaryViewport()->IsDynamicResolutionEnabled();
+
         // HT_RENDER_SCALE pins a fixed render scale (the headless capture has no slider): it drives
         // the dynamic-resolution sub-rect so a reduced-resolution render can be captured and diffed.
         if (const char* scaleEnv = std::getenv("HT_RENDER_SCALE"))
@@ -681,16 +685,20 @@ private:
         m_SceneTextureGeneration = GetPrimaryViewport()->GetOutputGeneration();
     }
 
-    // Enables or disables the viewport's adaptive resolution controller from the demo state.
+    // Enables or disables the viewport's adaptive resolution controllers from the demo state. The
+    // inner loop drives the per-frame sub-rect from GPU frame time; the outer-loop tier controller
+    // follows the sustained sub-rect, sizing the allocation down a tier under durable load.
     void ApplyDynamicResolution()
     {
         if (m_DynamicResolution)
         {
-            GetPrimaryViewport()->SetDynamicResolution({
-                .TargetFrameTimeMs = 1000.0f / m_TargetFps,
-                .MinScale = m_DrsMinScale,
-                .MaxScale = m_DrsMaxScale,
-            });
+            GetPrimaryViewport()->SetDynamicResolution(
+                {
+                    .TargetFrameTimeMs = 1000.0f / m_TargetFps,
+                    .MinScale = m_DrsMinScale,
+                    .MaxScale = m_DrsMaxScale,
+                },
+                Renderer::AllocationTierSettings{});
         }
         else
         {
@@ -875,17 +883,21 @@ private:
                 }
             }
 
-            // Render scale is a per-viewport property, not a SceneRendererSettings: with dynamic
-            // resolution off it sizes the render target directly (the on-screen region stays full
-            // size, so the compositor upscales). Below 1.0 the image visibly softens; the Stats
-            // window shows the real extent. The manual field steps by 0.05 from a 0.25 floor and
-            // greys out while the adaptive controller owns the scale.
+            // Render scale is a per-viewport property, not a SceneRendererSettings. While the
+            // controllers are on it reads out the live sub-rect scale (the inner loop owns it);
+            // touching the field is the manual override — it disables both controllers and holds the
+            // value, sizing the render target directly (the region stays full size, so the
+            // compositor upscales; below 1.0 the image visibly softens, the Stats window shows the
+            // real extent). The field steps by 0.05 from a 0.25 floor.
+            if (scaleDrag("Render scale", m_RenderScale, 0.25f, 2.0f))
             {
-                auto manualDisabled = UI::Disabled(m_DynamicResolution);
-                if (scaleDrag("Render scale", m_RenderScale, 0.25f, 2.0f))
+                // Editing the read-out takes manual control: drop the controllers and hold.
+                if (m_DynamicResolution)
                 {
-                    GetPrimaryViewport()->SetRenderScale(m_RenderScale);
+                    m_DynamicResolution = false;
+                    ApplyDynamicResolution();
                 }
+                GetPrimaryViewport()->SetRenderScale(m_RenderScale);
             }
 
             // Tonemap exposure is a per-frame SceneView value; the drag edits the member.
@@ -945,12 +957,21 @@ private:
                                      GetRenderContext().GetLastGpuFrameTimeMs()));
             }
 
-            // The live render scale (the controller writes it while dynamic resolution is on) and
-            // the render-target extent, which shrinks with the scale while the window stays full size.
+            // The live sub-rect scale (the inner loop writes it while dynamic resolution is on) and
+            // the rendered extent, which shrinks with the scale while the window stays full size.
             UI::Text(fmt::format("Render scale: {:.2f}{}", viewport.GetRenderScale(),
                                  m_DynamicResolution ? " (auto)" : ""));
             const Ref<Renderer::Image> target = renderer.GetOutput()->GetImage();
             UI::Text(fmt::format("Render target: {}x{}", target->GetWidth(), target->GetHeight()));
+
+            // The outer loop's allocation: the tier the targets are sized at (the controller steps
+            // it down under sustained load), its scale, and the resulting allocation extent. The
+            // allocation extent and the render target above match at the baseline tier and diverge
+            // once a tier step shrinks the allocation below the rendered sub-rect's high-water mark.
+            const uvec2 allocExtent = viewport.GetAllocationExtent();
+            UI::Text(fmt::format("Allocation tier: {} ({:.2f})", viewport.GetAllocationTierIndex(),
+                                 viewport.GetAllocationScale()));
+            UI::Text(fmt::format("Allocation extent: {}x{}", allocExtent.x, allocExtent.y));
 
             // The cull funnel: gathered submesh candidates → frustum survivors → draws issued.
             const u32 gathered = renderer.GetLastVisibleCount();
@@ -1222,6 +1243,26 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                             // extent. The headless smoke capture has no backing scale, so it stays
                             // uncapped to render at the full HeadlessExtent the golden expects.
                             .MaxAllocationScale = smoke ? 1.0f : 0.5f,
+                            // The windowed app opts into both adaptive-resolution loops: the inner
+                            // loop drives the per-frame sub-rect, the outer-loop tier controller
+                            // follows the sustained sub-rect and sizes the allocation down a tier
+                            // under durable load. The smoke capture leaves them off so the golden
+                            // renders at the fixed baseline (the controller is inert headless
+                            // anyway — no GPU timing means the sub-rect holds at the ceiling).
+                            .DynamicResolution =
+                                smoke
+                                    ? std::nullopt
+                                    : optional<
+                                          Renderer::
+                                              DynamicResolutionSettings>{Renderer::
+                                                                             DynamicResolutionSettings{}},
+                            .AllocationTier =
+                                smoke
+                                    ? std::nullopt
+                                    : optional<
+                                          Renderer::
+                                              AllocationTierSettings>{Renderer::
+                                                                          AllocationTierSettings{}},
                         },
                 },
                 types, systems));

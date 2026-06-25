@@ -84,10 +84,12 @@ namespace Veng
                 .Role = Renderer::ViewportRole::Presented,
             });
 
-            // Opt-in adaptive resolution: the viewport drives its own scale from GPU frame time.
+            // Opt-in adaptive resolution: the viewport drives its own scale from GPU frame time,
+            // and (when configured) the allocation tier follows the sustained sub-rect.
             if (managed.DynamicResolution)
             {
-                m_PrimaryViewport->SetDynamicResolution(*managed.DynamicResolution);
+                m_PrimaryViewport->SetDynamicResolution(*managed.DynamicResolution,
+                                                        managed.AllocationTier);
             }
 
             RegisterViewport(*m_PrimaryViewport);

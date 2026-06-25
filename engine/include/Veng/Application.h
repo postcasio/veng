@@ -63,6 +63,13 @@ namespace Veng
         /// each frame (see Viewport::SetDynamicResolution); inert on a device without GPU timing.
         /// Unset leaves the scale fixed at RenderScale.
         optional<Renderer::DynamicResolutionSettings> DynamicResolution;
+        /// @brief Enables the outer-loop allocation-tier controller on the managed viewport when set.
+        ///
+        /// Folds the per-frame RenderScale into a long EMA and steps a quantized allocation tier so
+        /// the allocation follows the sustained sub-rect (see Viewport::SetDynamicResolution).
+        /// Honored only when DynamicResolution is also set (the inner loop feeds the outer loop);
+        /// unset leaves the allocation at the inner loop's MaxScale.
+        optional<Renderer::AllocationTierSettings> AllocationTier;
     };
 
     /// @brief Construction parameters for Application.
