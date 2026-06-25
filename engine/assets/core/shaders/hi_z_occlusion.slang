@@ -80,7 +80,15 @@ bool IsOccluded(float3 boundsMin, float3 boundsMax, float4x4 prevViewProj,
     // Pick the mip whose texel covers the footprint, so it spans at most a 2x2 texel
     // neighborhood at that level (the standard hi-Z LOD pick). A sub-pixel footprint
     // (maxFootprintPx <= 1) tests mip 0.
-    uint level = CeilLog2(uint(ceil(max(maxFootprintPx, 1.0))));
+    //
+    // The pyramid has firstbithigh(maxDim) + 1 mips (mip 0..floor(log2(maxDim))). A
+    // footprint wider than the largest power of two <= maxDim would pick one mip past
+    // the last (e.g. a 1281..1280-wide footprint picks mip 11 on a 1280-wide pyramid
+    // whose last mip is 10); that Load reads out of range and returns garbage, which a
+    // large object (the ground plane) hits and gets falsely culled by. Clamp to the
+    // last real mip — its single coarse texel is the conservative global max-Z.
+    uint maxLevel = firstbithigh(max(hiZBaseExtent.x, hiZBaseExtent.y));
+    uint level = min(CeilLog2(uint(ceil(max(maxFootprintPx, 1.0)))), maxLevel);
 
     // The mip's extent and the footprint's texel coordinates at that level.
     uint2 levelExtent = uint2(max(hiZBaseExtent.x >> level, 1u),

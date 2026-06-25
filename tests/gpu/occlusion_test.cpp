@@ -105,17 +105,241 @@ namespace
         const vec3 ndc = vec3(clip) / clip.w;
         return Projected{.Uv = vec2(ndc) * 0.5f + 0.5f, .Depth = ndc.z, .W = clip.w};
     }
+
+    // Reduces a row-major R32 depth field (extent w×h) into a real max-Z pyramid through
+    // the core reduction, runs the isolation occlusion test over the candidates against
+    // it with the given previous-frame view-projection, and returns one visibility flag
+    // per candidate (1 = drawn, 0 = occluded). The GPU plumbing every occlusion case shares.
+    std::vector<u32> RunOcclusion(Test::GpuFixture& fix, u32 w, u32 h,
+                                  const std::vector<float>& field,
+                                  const std::vector<Candidate>& candidates,
+                                  const mat4& prevViewProj, f32 depthBias)
+    {
+        AssetManager assets(fix.Context, fix.Tasks, fix.Types);
+        const AssetResult<AssetHandle<Shader>> reduceCs = assets.LoadSync<Shader>(HiZReduceCompId);
+        REQUIRE_MESSAGE(reduceCs.has_value(), "load hi_z_reduce.comp from the core pack");
+        const AssetResult<AssetHandle<Shader>> occlusionCs =
+            assets.LoadSync<Shader>(HiZOcclusionTestCompId);
+        REQUIRE_MESSAGE(occlusionCs.has_value(),
+                        "load hi_z_occlusion_test.comp from the core pack");
+
+        const u32 mips = MipCountFor(w, h);
+
+        auto source =
+            Image::Create(fix.Context, {
+                                           .Name = "Occlusion Source Depth",
+                                           .Extent = {w, h, 1},
+                                           .Format = Format::R32Sfloat,
+                                           .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                                       });
+        source->UploadSync(
+            std::span(reinterpret_cast<const u8*>(field.data()), field.size() * sizeof(float)));
+        auto sourceView =
+            ImageView::Create(fix.Context, {.Name = "Occlusion Source View", .Image = source});
+
+        auto hiZ =
+            Image::Create(fix.Context, {
+                                           .Name = "Occlusion HiZ",
+                                           .Extent = {w, h, 1},
+                                           .MipLevels = mips,
+                                           .Format = Format::R32Sfloat,
+                                           .Usage = ImageUsage::Storage | ImageUsage::Sampled,
+                                       });
+        std::vector<Ref<ImageView>> mipViews;
+        for (u32 k = 0; k < mips; ++k)
+        {
+            mipViews.push_back(ImageView::Create(
+                fix.Context,
+                {.Name = "Occlusion HiZ Mip", .Image = hiZ, .BaseMipLevel = k, .MipLevels = 1}));
+        }
+        auto hiZSampleView = ImageView::Create(
+            fix.Context, {.Name = "Occlusion HiZ Sample", .Image = hiZ, .MipLevels = mips});
+
+        auto reduceSetLayout = DescriptorSetLayout::Create(
+            fix.Context, {
+                             .Name = "Occlusion Reduce Set Layout",
+                             .Bindings =
+                                 {
+                                     {.Binding = 0,
+                                      .Type = DescriptorType::SampledImage,
+                                      .Count = 1,
+                                      .Stages = ShaderStage::Compute},
+                                     {.Binding = 1,
+                                      .Type = DescriptorType::StorageImage,
+                                      .Count = 1,
+                                      .Stages = ShaderStage::Compute},
+                                 },
+                         });
+        auto reduceLayout = PipelineLayout::Create(
+            fix.Context,
+            {
+                .Name = "Occlusion Reduce Layout",
+                .DescriptorSetLayouts = {reduceSetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<ReducePush>(ShaderStage::Compute)},
+            });
+        auto reducePipeline = ComputePipeline::Create(
+            fix.Context,
+            {
+                .Name = "Occlusion Reduce Pipeline",
+                .PipelineLayout = reduceLayout,
+                .ShaderStage = {.Stage = ShaderStage::Compute, .Module = reduceCs->Get()->Module},
+            });
+        std::vector<Ref<DescriptorSet>> reduceSets;
+        for (u32 k = 0; k < mips; ++k)
+        {
+            auto set = DescriptorSet::Create(
+                fix.Context, {.Name = "Occlusion Reduce Set", .Layout = reduceSetLayout});
+            set->Write(0, k == 0 ? sourceView : mipViews[k - 1]);
+            set->Write(1, mipViews[k]);
+            reduceSets.push_back(std::move(set));
+        }
+
+        auto candidateBuffer = Buffer::Create(
+            fix.Context, {
+                             .Name = "Occlusion Candidates",
+                             .Size = candidates.size() * sizeof(Candidate),
+                             .Usage = BufferUsage::Storage | BufferUsage::TransferDst,
+                         });
+        candidateBuffer->UploadSync(std::span(reinterpret_cast<const u8*>(candidates.data()),
+                                              candidates.size() * sizeof(Candidate)));
+
+        auto visibilityBuffer = Buffer::Create(
+            fix.Context, {
+                             .Name = "Occlusion Visibility",
+                             .Size = candidates.size() * sizeof(u32),
+                             .Usage = BufferUsage::Storage | BufferUsage::TransferSrc,
+                         });
+
+        auto occlusionSetLayout = DescriptorSetLayout::Create(
+            fix.Context, {
+                             .Name = "Occlusion Test Set Layout",
+                             .Bindings =
+                                 {
+                                     {.Binding = 0,
+                                      .Type = DescriptorType::SampledImage,
+                                      .Count = 1,
+                                      .Stages = ShaderStage::Compute},
+                                     {.Binding = 1,
+                                      .Type = DescriptorType::StorageBuffer,
+                                      .Count = 1,
+                                      .Stages = ShaderStage::Compute},
+                                     {.Binding = 2,
+                                      .Type = DescriptorType::StorageBuffer,
+                                      .Count = 1,
+                                      .Stages = ShaderStage::Compute},
+                                 },
+                         });
+        auto occlusionLayout = PipelineLayout::Create(
+            fix.Context,
+            {
+                .Name = "Occlusion Test Layout",
+                .DescriptorSetLayouts = {occlusionSetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<OcclusionPush>(ShaderStage::Compute)},
+            });
+        auto occlusionPipeline = ComputePipeline::Create(
+            fix.Context, {
+                             .Name = "Occlusion Test Pipeline",
+                             .PipelineLayout = occlusionLayout,
+                             .ShaderStage = {.Stage = ShaderStage::Compute,
+                                             .Module = occlusionCs->Get()->Module},
+                         });
+        auto occlusionSet = DescriptorSet::Create(
+            fix.Context, {.Name = "Occlusion Test Set", .Layout = occlusionSetLayout});
+        occlusionSet->Write(0, hiZSampleView);
+        occlusionSet->Write(1, candidateBuffer);
+        occlusionSet->Write(2, visibilityBuffer);
+
+        const OcclusionPush occlusionPush{
+            .PrevViewProj = prevViewProj,
+            .HiZBaseExtent = {w, h},
+            .CandidateCount = static_cast<u32>(candidates.size()),
+            .DepthBias = depthBias,
+        };
+
+        fix.Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                RenderGraph graph(fix.Context);
+                const ResourceId sourceId = graph.Import("Occlusion Source");
+                const MipChainId chain = graph.ImportImageMips("Occlusion HiZ", mips);
+
+                for (u32 k = 0; k < mips; ++k)
+                {
+                    const u32 dstW = std::max(w >> k, 1u);
+                    const u32 dstH = std::max(h >> k, 1u);
+                    const u32 srcW = k == 0 ? w : std::max(w >> (k - 1), 1u);
+                    const u32 srcH = k == 0 ? h : std::max(h >> (k - 1), 1u);
+
+                    RenderGraph::PassBuilder builder = graph.AddComputePass("Occlusion Reduce");
+                    if (k == 0)
+                    {
+                        builder.Sample(sourceId);
+                    }
+                    else
+                    {
+                        builder.Sample(chain.Level(k - 1));
+                    }
+                    builder.StorageWrite(chain.Level(k));
+
+                    const Ref<ComputePipeline> pl = reducePipeline;
+                    const Ref<DescriptorSet> set = reduceSets[k];
+                    const ReducePush push{.DestExtent = {dstW, dstH}, .SourceExtent = {srcW, srcH}};
+                    builder.Execute(
+                        [pl, set, push](PassContext& ctx)
+                        {
+                            CommandBuffer& c = ctx.Cmd();
+                            c.BindPipeline(pl);
+                            c.BindDescriptorSets(DescriptorSetBindInfo{
+                                .Sets = {set},
+                                .FirstSet = 1,
+                                .PipelineBindPoint = PipelineBindPoint::Compute,
+                            });
+                            c.PushConstants(push);
+                            c.Dispatch((push.DestExtent.x + 7) / 8, (push.DestExtent.y + 7) / 8, 1);
+                        });
+                }
+
+                RenderGraph::PassBuilder testPass = graph.AddComputePass("Occlusion Test");
+                for (u32 k = 0; k < mips; ++k)
+                {
+                    testPass.Sample(chain.Level(k));
+                }
+                const Ref<ComputePipeline> pl = occlusionPipeline;
+                const Ref<DescriptorSet> set = occlusionSet;
+                const OcclusionPush push = occlusionPush;
+                const u32 count = static_cast<u32>(candidates.size());
+                testPass.Execute(
+                    [pl, set, push, count](PassContext& ctx)
+                    {
+                        CommandBuffer& c = ctx.Cmd();
+                        c.BindPipeline(pl);
+                        c.BindDescriptorSets(DescriptorSetBindInfo{
+                            .Sets = {set},
+                            .FirstSet = 1,
+                            .PipelineBindPoint = PipelineBindPoint::Compute,
+                        });
+                        c.PushConstants(push);
+                        c.Dispatch((count + 63) / 64, 1, 1);
+                    });
+
+                std::vector<RenderGraph::ImportBinding> bindings;
+                bindings.push_back({sourceId, sourceView});
+                for (u32 k = 0; k < mips; ++k)
+                {
+                    bindings.push_back({chain.Level(k), mipViews[k]});
+                }
+                graph.Compile()->Execute(cmd, bindings);
+            });
+
+        const std::vector<u8> bytes = visibilityBuffer->Download();
+        std::vector<u32> visibility(candidates.size());
+        std::memcpy(visibility.data(), bytes.data(), visibility.size() * sizeof(u32));
+        return visibility;
+    }
 }
 
 TEST_CASE_FIXTURE(Test::GpuFixture, "Hi-Z occlusion test reports occluded vs visible candidates")
 {
-    AssetManager assets(Context, Tasks, Types);
-    const AssetResult<AssetHandle<Shader>> reduceCs = assets.LoadSync<Shader>(HiZReduceCompId);
-    REQUIRE_MESSAGE(reduceCs.has_value(), "load hi_z_reduce.comp from the core pack");
-    const AssetResult<AssetHandle<Shader>> occlusionCs =
-        assets.LoadSync<Shader>(HiZOcclusionTestCompId);
-    REQUIRE_MESSAGE(occlusionCs.has_value(), "load hi_z_occlusion_test.comp from the core pack");
-
     // The previous-frame camera: at the origin looking down -Z, Y-flipped Vulkan clip.
     CameraView camera;
     camera.SetPerspective(glm::radians(60.0f), static_cast<f32>(FieldWidth) / FieldHeight, 0.1f,
@@ -137,76 +361,6 @@ TEST_CASE_FIXTURE(Test::GpuFixture, "Hi-Z occlusion test reports occluded vs vis
         }
     }
 
-    const u32 mips = MipCountFor(FieldWidth, FieldHeight);
-
-    auto source = Image::Create(Context, {
-                                             .Name = "Occlusion Source Depth",
-                                             .Extent = {FieldWidth, FieldHeight, 1},
-                                             .Format = Format::R32Sfloat,
-                                             .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
-                                         });
-    source->UploadSync(
-        std::span(reinterpret_cast<const u8*>(field.data()), field.size() * sizeof(float)));
-    auto sourceView =
-        ImageView::Create(Context, {.Name = "Occlusion Source View", .Image = source});
-
-    auto hiZ = Image::Create(Context, {
-                                          .Name = "Occlusion HiZ",
-                                          .Extent = {FieldWidth, FieldHeight, 1},
-                                          .MipLevels = mips,
-                                          .Format = Format::R32Sfloat,
-                                          .Usage = ImageUsage::Storage | ImageUsage::Sampled,
-                                      });
-    std::vector<Ref<ImageView>> mipViews;
-    for (u32 k = 0; k < mips; ++k)
-    {
-        mipViews.push_back(ImageView::Create(
-            Context,
-            {.Name = "Occlusion HiZ Mip", .Image = hiZ, .BaseMipLevel = k, .MipLevels = 1}));
-    }
-    auto hiZSampleView = ImageView::Create(
-        Context, {.Name = "Occlusion HiZ Sample", .Image = hiZ, .MipLevels = mips});
-
-    // ---- Reduction pipeline (mip 0 copy, mip n>0 max of 2x2). ----
-    auto reduceSetLayout =
-        DescriptorSetLayout::Create(Context, {
-                                                 .Name = "Occlusion Reduce Set Layout",
-                                                 .Bindings =
-                                                     {
-                                                         {.Binding = 0,
-                                                          .Type = DescriptorType::SampledImage,
-                                                          .Count = 1,
-                                                          .Stages = ShaderStage::Compute},
-                                                         {.Binding = 1,
-                                                          .Type = DescriptorType::StorageImage,
-                                                          .Count = 1,
-                                                          .Stages = ShaderStage::Compute},
-                                                     },
-                                             });
-    auto reduceLayout = PipelineLayout::Create(
-        Context,
-        {
-            .Name = "Occlusion Reduce Layout",
-            .DescriptorSetLayouts = {reduceSetLayout},
-            .PushConstantRanges = {PushConstantRange::Of<ReducePush>(ShaderStage::Compute)},
-        });
-    auto reducePipeline = ComputePipeline::Create(
-        Context,
-        {
-            .Name = "Occlusion Reduce Pipeline",
-            .PipelineLayout = reduceLayout,
-            .ShaderStage = {.Stage = ShaderStage::Compute, .Module = reduceCs->Get()->Module},
-        });
-    std::vector<Ref<DescriptorSet>> reduceSets;
-    for (u32 k = 0; k < mips; ++k)
-    {
-        auto set = DescriptorSet::Create(
-            Context, {.Name = "Occlusion Reduce Set", .Layout = reduceSetLayout});
-        set->Write(0, k == 0 ? sourceView : mipViews[k - 1]);
-        set->Write(1, mipViews[k]);
-        reduceSets.push_back(std::move(set));
-    }
-
     // ---- Candidates: one AABB per intended outcome. ----
     // A small axis-aligned cube spanning [center - h, center + h].
     const auto cube = [](vec3 center, f32 h)
@@ -225,8 +379,8 @@ TEST_CASE_FIXTURE(Test::GpuFixture, "Hi-Z occlusion test reports occluded vs vis
     const Candidate nearCross = cube(vec3(0.0f, 0.0f, 0.05f), 0.5f);     // straddles the near plane
     const Candidate offScreen = cube(vec3(-200.0f, 0.0f, -20.0f), 0.5f); // far off the left edge
 
-    const std::array<Candidate, 6> candidates = {occluded,   straddle,  inFront,
-                                                 atOccluder, nearCross, offScreen};
+    const std::vector<Candidate> candidates = {occluded,   straddle,  inFront,
+                                               atOccluder, nearCross, offScreen};
     enum Index
     {
         Occluded = 0,
@@ -256,151 +410,9 @@ TEST_CASE_FIXTURE(Test::GpuFixture, "Hi-Z occlusion test reports occluded vs vis
         REQUIRE(n.Depth < occluderDepth);
     }
 
-    auto candidateBuffer =
-        Buffer::Create(Context, {
-                                    .Name = "Occlusion Candidates",
-                                    .Size = candidates.size() * sizeof(Candidate),
-                                    .Usage = BufferUsage::Storage | BufferUsage::TransferDst,
-                                });
-    candidateBuffer->UploadSync(std::span(reinterpret_cast<const u8*>(candidates.data()),
-                                          candidates.size() * sizeof(Candidate)));
-
-    auto visibilityBuffer =
-        Buffer::Create(Context, {
-                                    .Name = "Occlusion Visibility",
-                                    .Size = candidates.size() * sizeof(u32),
-                                    .Usage = BufferUsage::Storage | BufferUsage::TransferSrc,
-                                });
-
-    // ---- Occlusion-test pipeline: set 1 = hiZ + candidates + visibility. ----
-    auto occlusionSetLayout =
-        DescriptorSetLayout::Create(Context, {
-                                                 .Name = "Occlusion Test Set Layout",
-                                                 .Bindings =
-                                                     {
-                                                         {.Binding = 0,
-                                                          .Type = DescriptorType::SampledImage,
-                                                          .Count = 1,
-                                                          .Stages = ShaderStage::Compute},
-                                                         {.Binding = 1,
-                                                          .Type = DescriptorType::StorageBuffer,
-                                                          .Count = 1,
-                                                          .Stages = ShaderStage::Compute},
-                                                         {.Binding = 2,
-                                                          .Type = DescriptorType::StorageBuffer,
-                                                          .Count = 1,
-                                                          .Stages = ShaderStage::Compute},
-                                                     },
-                                             });
-    auto occlusionLayout = PipelineLayout::Create(
-        Context,
-        {
-            .Name = "Occlusion Test Layout",
-            .DescriptorSetLayouts = {occlusionSetLayout},
-            .PushConstantRanges = {PushConstantRange::Of<OcclusionPush>(ShaderStage::Compute)},
-        });
-    auto occlusionPipeline = ComputePipeline::Create(
-        Context,
-        {
-            .Name = "Occlusion Test Pipeline",
-            .PipelineLayout = occlusionLayout,
-            .ShaderStage = {.Stage = ShaderStage::Compute, .Module = occlusionCs->Get()->Module},
-        });
-    auto occlusionSet = DescriptorSet::Create(
-        Context, {.Name = "Occlusion Test Set", .Layout = occlusionSetLayout});
-    occlusionSet->Write(0, hiZSampleView);
-    occlusionSet->Write(1, candidateBuffer);
-    occlusionSet->Write(2, visibilityBuffer);
-
-    const OcclusionPush occlusionPush{
-        .PrevViewProj = viewProj,
-        .HiZBaseExtent = {FieldWidth, FieldHeight},
-        .CandidateCount = static_cast<u32>(candidates.size()),
-        // Small bias: enough to make the tie draw, below the Occluder/background gap.
-        .DepthBias = 0.001f,
-    };
-
-    // ---- The graph: reduce the pyramid, then run the occlusion test. ----
-    Context.ImmediateCommands(
-        [&](CommandBuffer& cmd)
-        {
-            RenderGraph graph(Context);
-            const ResourceId sourceId = graph.Import("Occlusion Source");
-            const MipChainId chain = graph.ImportImageMips("Occlusion HiZ", mips);
-
-            for (u32 k = 0; k < mips; ++k)
-            {
-                const u32 dstW = std::max(FieldWidth >> k, 1u);
-                const u32 dstH = std::max(FieldHeight >> k, 1u);
-                const u32 srcW = k == 0 ? FieldWidth : std::max(FieldWidth >> (k - 1), 1u);
-                const u32 srcH = k == 0 ? FieldHeight : std::max(FieldHeight >> (k - 1), 1u);
-
-                RenderGraph::PassBuilder builder = graph.AddComputePass("Occlusion Reduce");
-                if (k == 0)
-                {
-                    builder.Sample(sourceId);
-                }
-                else
-                {
-                    builder.Sample(chain.Level(k - 1));
-                }
-                builder.StorageWrite(chain.Level(k));
-
-                const Ref<ComputePipeline> pl = reducePipeline;
-                const Ref<DescriptorSet> set = reduceSets[k];
-                const ReducePush push{.DestExtent = {dstW, dstH}, .SourceExtent = {srcW, srcH}};
-                builder.Execute(
-                    [pl, set, push](PassContext& ctx)
-                    {
-                        CommandBuffer& c = ctx.Cmd();
-                        c.BindPipeline(pl);
-                        c.BindDescriptorSets(DescriptorSetBindInfo{
-                            .Sets = {set},
-                            .FirstSet = 1,
-                            .PipelineBindPoint = PipelineBindPoint::Compute,
-                        });
-                        c.PushConstants(push);
-                        c.Dispatch((push.DestExtent.x + 7) / 8, (push.DestExtent.y + 7) / 8, 1);
-                    });
-            }
-
-            // The occlusion test samples the whole reduced chain. Declaring a sample of
-            // each written mip drives the graph's reduction-write -> sample-read barrier.
-            RenderGraph::PassBuilder testPass = graph.AddComputePass("Occlusion Test");
-            for (u32 k = 0; k < mips; ++k)
-            {
-                testPass.Sample(chain.Level(k));
-            }
-            const Ref<ComputePipeline> pl = occlusionPipeline;
-            const Ref<DescriptorSet> set = occlusionSet;
-            const OcclusionPush push = occlusionPush;
-            const u32 count = static_cast<u32>(candidates.size());
-            testPass.Execute(
-                [pl, set, push, count](PassContext& ctx)
-                {
-                    CommandBuffer& c = ctx.Cmd();
-                    c.BindPipeline(pl);
-                    c.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {set},
-                        .FirstSet = 1,
-                        .PipelineBindPoint = PipelineBindPoint::Compute,
-                    });
-                    c.PushConstants(push);
-                    c.Dispatch((count + 63) / 64, 1, 1);
-                });
-
-            std::vector<RenderGraph::ImportBinding> bindings;
-            bindings.push_back({sourceId, sourceView});
-            for (u32 k = 0; k < mips; ++k)
-            {
-                bindings.push_back({chain.Level(k), mipViews[k]});
-            }
-            graph.Compile()->Execute(cmd, bindings);
-        });
-
-    const std::vector<u8> bytes = visibilityBuffer->Download();
-    std::vector<u32> visibility(candidates.size());
-    std::memcpy(visibility.data(), bytes.data(), visibility.size() * sizeof(u32));
+    // Small bias: enough to make the tie draw, below the occluder/background gap.
+    const std::vector<u32> visibility =
+        RunOcclusion(*this, FieldWidth, FieldHeight, field, candidates, viewProj, 0.001f);
 
     // The one candidate that is provably hidden is reported occluded; every
     // uncertainty resolves to drawn — the conservative correctness bar.
@@ -410,4 +422,53 @@ TEST_CASE_FIXTURE(Test::GpuFixture, "Hi-Z occlusion test reports occluded vs vis
     CHECK(visibility[AtOccluder] == 1u);
     CHECK(visibility[NearCross] == 1u);
     CHECK(visibility[OffScreen] == 1u);
+}
+
+TEST_CASE_FIXTURE(Test::GpuFixture,
+                  "Hi-Z occlusion test draws a screen-filling candidate on a non-pot pyramid")
+{
+    // A footprint wider than the largest power of two <= maxDim picks a mip one past the
+    // pyramid's last level (CeilLog2 overflowing bit_width's range). On a non-power-of-two
+    // extent that Load reads out of range — on MoltenVK returning 0 (near), which falsely
+    // occludes the one object large enough to hit it: a screen-filling ground plane. The
+    // mip pick must clamp to the last real mip, whose single coarse texel is the
+    // conservative global max-Z. Width 192 makes a full-screen footprint select that
+    // overflow mip (mips run 0..7; 192 > 128 picks 8).
+    constexpr u32 NonPotWidth = 192;
+    constexpr u32 NonPotHeight = 192;
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), static_cast<f32>(NonPotWidth) / NonPotHeight, 0.1f,
+                          100.0f);
+    camera.SetView(vec3(0.0f), vec3(0.0f, 0.0f, -1.0f), vec3(0.0f, 1.0f, 0.0f));
+    const mat4 viewProj = camera.ViewProjection();
+
+    // A uniform far-background field: nothing occludes, so a correct test must draw the
+    // candidate (its nearest depth is in front of the far background).
+    const std::vector<float> field(static_cast<size_t>(NonPotWidth) * NonPotHeight,
+                                   BackgroundDepth);
+
+    // A near face at z=-2 spanning ±0.9 fills ~78% of the screen (≈150px, selecting the
+    // overflow mip) while its whole footprint stays inside [0,1] uv — so the test exercises
+    // the mip pick rather than early-outing on an off-screen footprint. Nearest corner
+    // (z=-2) is well in front of the far background, so the correct verdict is visible.
+    const std::vector<Candidate> candidates = {Candidate{
+        .BoundsMin = vec4(-0.9f, -0.9f, -10.0f, 0.0f),
+        .BoundsMax = vec4(0.9f, 0.9f, -2.0f, 0.0f),
+    }};
+
+    // Construction sanity: the footprint stays on-screen (so it is not the off-screen
+    // early-out) yet exceeds the largest power of two below the extent.
+    {
+        const Projected lo = Project(viewProj, vec3(-0.9f, -0.9f, -2.0f));
+        const Projected hi = Project(viewProj, vec3(0.9f, 0.9f, -2.0f));
+        REQUIRE(lo.Uv.x > 0.0f);
+        REQUIRE(hi.Uv.x < 1.0f);
+        REQUIRE((hi.Uv.x - lo.Uv.x) * NonPotWidth > 128.0f);
+    }
+
+    const std::vector<u32> visibility =
+        RunOcclusion(*this, NonPotWidth, NonPotHeight, field, candidates, viewProj, 0.001f);
+
+    CHECK(visibility[0] == 1u);
 }
