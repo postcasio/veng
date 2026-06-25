@@ -76,7 +76,9 @@ namespace Veng::Cook
         {
             VerifiedAsset asset{.Id = entry.Id, .Type = entry.Type, .Ok = false};
 
-            const optional<ArchiveEntry> blob = reader.Find(entry.Id);
+            // Re-hash the stored (on-disk) bytes — the TOC hash covers exactly what is on disk,
+            // so verify stays a pure byte re-hash with no zstd decode.
+            const optional<ArchiveEntry> blob = reader.FindStored(entry.Id);
             if (blob)
             {
                 const ContentHash recomputed = Xxh3_128(blob->Blob);

@@ -16,6 +16,12 @@ target_include_directories(libveng_assetpack PUBLIC
 
 target_link_libraries(libveng_assetpack PRIVATE fmt::fmt)
 
+# zstd PUBLIC: the reader inflates a compressed blob on resolve, so the codec
+# reaches every assetpack consumer (libveng included). All zstd calls live in
+# Archive.cpp; the public Archive.h carries only a plain codec field, so no
+# <zstd.h> leaks into the public surface.
+target_link_libraries(libveng_assetpack PUBLIC libzstd_static)
+
 target_compile_options(libveng_assetpack PRIVATE -fno-exceptions)
 
 # veng links libveng_assetpack PUBLIC, so it must join veng's export set for

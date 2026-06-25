@@ -170,6 +170,7 @@ target_include_directories(veng_cook_objs PRIVATE
         ${xxhash_SOURCE_DIR}
         ${tinyexr_SOURCE_DIR}
         $<TARGET_PROPERTY:ZLIB::ZLIB,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:libzstd_static,INTERFACE_INCLUDE_DIRECTORIES>
 )
 
 # tinyexr defaults to exceptions; veng_cook_objs builds -fno-exceptions like the

@@ -19,13 +19,22 @@ serialization — neither importer nor loader.
 - **An archive is built from a pure `{ id, type, source }` manifest.** The format
   carries no per-asset settings — those live in the per-asset JSON sources the
   manifest points at, consumed by the cooker, not by this library.
-- **`.vengpack` is at format v2 and carries content hashes.** Each cooked blob has a
+- **`.vengpack` is at format v3 and carries content hashes.** Each cooked blob has a
   content hash and the table of contents has a digest. `assetpack` **stores the raw
   16 bytes and computes nothing** — the hash function lives only in the cooker and
   `vengc verify`, so this library (and `libveng`) gain no hash dependency. The runtime
   loader **never verifies**; hashing is a tooling concern, checkable with `vengc
   verify`.
-- A version number the format actually checks (the on-disk `v2`) is rejected loudly on
+- **Blobs are stored zstd-compressed or raw, per blob.** Each TOC entry carries an
+  `ArchiveCodec` (`Stored`/`Zstd`) and an `UncompressedSize`. The **cooker** compresses
+  each blob and stores whichever of the raw or compressed bytes is smaller; `assetpack`
+  **chooses nothing** — it stores the codec the cooker passed and inflates a `Zstd` entry
+  **lazily on the first `Find`** into a stable-address, id-keyed, never-evicted cache, so a
+  span stays valid for the reader's lifetime. zstd is the one runtime codec dependency
+  (linked PUBLIC); the content hash and the TOC digest cover the **stored** bytes, so
+  `vengc verify` re-hashes the on-disk bytes with no decode. `Find` is main-thread-only;
+  the lazy inflate is not synchronized.
+- A version number the format actually checks (the on-disk `v3`) is rejected loudly on
   mismatch — a stale/foreign archive does not load silently.
 - **`AssetType::Level` is a world prefab by reference plus level-scoped wiring.** Its
   blob is a **`CookedLevelHeader`** (`CookedLevelVersion`, currently `1`) — `WorldPrefabId`

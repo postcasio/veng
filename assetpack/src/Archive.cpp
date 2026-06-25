@@ -5,6 +5,7 @@
 #include <fstream>
 
 #include <fmt/format.h>
+#include <zstd.h>
 
 namespace Veng
 {
@@ -27,24 +28,28 @@ namespace Veng
         {
             u64 Id;
             u32 Type;
-            u32 Flags;
+            u32 Codec; // ArchiveCodec: 0 = stored, 1 = zstd
             u64 Offset;
-            u64 Size;
-            u64 HashLo; // ContentHash over this entry's blob bytes
+            u64 Size;   // stored (on-disk) blob byte length
+            u64 HashLo; // ContentHash over this entry's stored bytes
             u64 HashHi;
+            u64 UncompressedSize; // inflated blob byte length (== Size when stored)
         };
-        static_assert(sizeof(OnDiskTocEntry) == 48);
+        static_assert(sizeof(OnDiskTocEntry) == 56);
 
         constexpr char ArchiveMagic[8] = {'V', 'E', 'N', 'G', 'P', 'A', 'C', 'K'};
     }
 
-    void ArchiveWriter::Add(AssetId id, AssetType type, std::span<const u8> blob, ContentHash hash)
+    void ArchiveWriter::Add(AssetId id, AssetType type, std::span<const u8> blob, ContentHash hash,
+                            ArchiveCodec codec, optional<u64> uncompressedSize)
     {
         m_Entries.push_back(Entry{
             .Id = id,
             .Type = type,
             .Blob = vector<u8>(blob.begin(), blob.end()),
             .Hash = hash,
+            .Codec = codec,
+            .UncompressedSize = uncompressedSize.value_or(blob.size()),
         });
     }
 
@@ -81,11 +86,12 @@ namespace Veng
             toc.push_back(OnDiskTocEntry{
                 .Id = entry->Id.Value,
                 .Type = static_cast<u32>(entry->Type),
-                .Flags = 0,
+                .Codec = static_cast<u32>(entry->Codec),
                 .Offset = blobOffset,
                 .Size = entry->Blob.size(),
                 .HashLo = entry->Hash.Lo,
                 .HashHi = entry->Hash.Hi,
+                .UncompressedSize = entry->UncompressedSize,
             });
             blobOffset += entry->Blob.size();
         }
@@ -189,8 +195,14 @@ namespace Veng
                     "ArchiveReader::FromBytes: TOC entry blob range out of bounds");
             }
 
+            if (onDisk.Codec > static_cast<u32>(ArchiveCodec::Zstd))
+            {
+                return std::unexpected("ArchiveReader::FromBytes: TOC entry has an unknown codec");
+            }
+
             const AssetId id{.Value = onDisk.Id};
             const auto type = static_cast<AssetType>(onDisk.Type);
+            const auto codec = static_cast<ArchiveCodec>(onDisk.Codec);
             const ContentHash hash{.Lo = onDisk.HashLo, .Hi = onDisk.HashHi};
 
             reader.m_Toc.push_back(InternalTocEntry{
@@ -198,13 +210,17 @@ namespace Veng
                 .Type = type,
                 .Offset = blobRegionStart + onDisk.Offset,
                 .Size = onDisk.Size,
+                .UncompressedSize = onDisk.UncompressedSize,
+                .Codec = codec,
                 .Hash = hash,
             });
 
             reader.m_Entries.push_back(ArchiveTocEntry{
                 .Id = id,
                 .Type = type,
+                .Codec = codec,
                 .Size = onDisk.Size,
+                .UncompressedSize = onDisk.UncompressedSize,
                 .Hash = hash,
             });
         }
@@ -243,6 +259,49 @@ namespace Veng
     }
 
     optional<ArchiveEntry> ArchiveReader::Find(AssetId id) const
+    {
+        const auto it =
+            std::ranges::lower_bound(m_Toc, id.Value, std::ranges::less{},
+                                     [](const InternalTocEntry& entry) { return entry.Id.Value; });
+
+        if (it == m_Toc.end() || it->Id.Value != id.Value)
+        {
+            return std::nullopt;
+        }
+
+        const std::span<const u8> stored(m_Storage.data() + it->Offset, it->Size);
+
+        if (it->Codec == ArchiveCodec::Stored)
+        {
+            return ArchiveEntry{.Id = it->Id, .Type = it->Type, .Blob = stored};
+        }
+
+        // Inflate a zstd entry on first resolve into the stable-address cache; a later
+        // resolve of the same id reuses it. std::map's node storage keeps every prior
+        // span valid across this insertion.
+        const auto cached = m_InflateCache.find(it->Id);
+        if (cached != m_InflateCache.end())
+        {
+            return ArchiveEntry{.Id = it->Id, .Type = it->Type, .Blob = cached->second};
+        }
+
+        vector<u8> inflated(it->UncompressedSize);
+        const usize produced =
+            ZSTD_decompress(inflated.data(), inflated.size(), stored.data(), stored.size());
+        // A blob that fails to inflate, or whose inflated length disagrees with the TOC, is a
+        // corrupt or foreign archive that slipped past the version check. assetpack reports it
+        // as unresolvable; the loader surfaces the asset as missing rather than the format
+        // aborting the runtime.
+        if (ZSTD_isError(produced) != 0u || produced != it->UncompressedSize)
+        {
+            return std::nullopt;
+        }
+
+        const auto [entry, inserted] = m_InflateCache.emplace(it->Id, std::move(inflated));
+        return ArchiveEntry{.Id = it->Id, .Type = it->Type, .Blob = entry->second};
+    }
+
+    optional<ArchiveEntry> ArchiveReader::FindStored(AssetId id) const
     {
         const auto it =
             std::ranges::lower_bound(m_Toc, id.Value, std::ranges::less{},

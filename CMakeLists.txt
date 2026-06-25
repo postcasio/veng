@@ -130,6 +130,27 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(stb)
 
+# zstd — archive-blob compression. Linked PUBLIC by assetpack: the runtime
+# inflates a compressed blob on resolve, so the codec reaches libveng; the cooker
+# gets the compressor transitively. zstd is a codec, not a source importer, so
+# assetpack stays importer-free. Built static, install ON so libzstd_static joins
+# veng's export set (assetpack exposes zstd in its PUBLIC interface). The repo's
+# CMake lives under build/cmake.
+set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+        zstd
+        GIT_REPOSITORY https://github.com/facebook/zstd.git
+        GIT_TAG v1.5.6
+        GIT_SHALLOW TRUE
+        SOURCE_SUBDIR build/cmake
+)
+FetchContent_MakeAvailable(zstd)
+
 # ImGui + imnodes. ImGui/imnodes sources are compiled exactly once, into the
 # veng library itself via engine/src/Vendor/ImGui.cpp (a source-include aggregation
 # TU). imnodes' CMake only needs an imgui target for include propagation, so

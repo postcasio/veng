@@ -7,6 +7,7 @@
 
 #include <fmt/format.h>
 #include <xxhash.h>
+#include <zstd.h>
 
 namespace Veng::Cook
 {
@@ -32,6 +33,33 @@ namespace Veng::Cook
         {
             const XXH128_hash_t h = XXH3_128bits(bytes.data(), bytes.size());
             return ContentHash{.Lo = h.low64, .Hi = h.high64};
+        }
+
+        // zstd compression level. The default (3) is a balanced choice for a one-time
+        // build artifact; the inflate cost is unaffected by the level.
+        constexpr int ZstdLevel = ZSTD_CLEVEL_DEFAULT;
+
+        // Adds a blob to the archive, compressing it with zstd and storing whichever of the
+        // raw or compressed bytes is smaller. The content hash covers the stored bytes, so
+        // verify re-hashes exactly what is on disk. Routes both cooker Add sites through one
+        // path so every blob is considered for compression by construction; an already
+        // incompressible blob keeps the raw, zero-copy resolve path.
+        void EmitBlob(ArchiveWriter& writer, AssetId id, AssetType type, std::span<const u8> blob)
+        {
+            const usize bound = ZSTD_compressBound(blob.size());
+            vector<u8> compressed(bound);
+            const usize produced = ZSTD_compress(compressed.data(), compressed.size(), blob.data(),
+                                                 blob.size(), ZstdLevel);
+
+            if (ZSTD_isError(produced) == 0u && produced < blob.size())
+            {
+                compressed.resize(produced);
+                writer.Add(id, type, compressed, Xxh3_128(compressed), ArchiveCodec::Zstd,
+                           blob.size());
+                return;
+            }
+
+            writer.Add(id, type, blob, Xxh3_128(blob));
         }
 
         optional<AssetType> ParseAssetType(const string& name)
@@ -442,7 +470,7 @@ namespace Veng::Cook
         }
 
         ArchiveWriter writer;
-        writer.Add(id, type, *blob, Xxh3_128(*blob));
+        EmitBlob(writer, id, type, *blob);
 
         const vector<u8> staged = writer.Build();
         const Result<ArchiveReader> reader = ArchiveReader::FromBytes(staged);
@@ -510,7 +538,7 @@ namespace Veng::Cook
             return std::unexpected(blob.error());
         }
 
-        writer.Add(AssetId{.Value = id}, *type, *blob, Xxh3_128(*blob));
+        EmitBlob(writer, AssetId{.Value = id}, *type, *blob);
         return {};
     }
 }

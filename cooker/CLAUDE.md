@@ -17,9 +17,15 @@ reflection), and **nlohmann/json** — are **cooker-only**: gated behind
 runtime gains no importer, no source parser, no Slang, and no re-cook path.
 
 The **content-hash function lives only here** (and in `vengc verify`): the cooker
-writes each blob's xxh3-128 hash and the TOC digest into a `.vengpack` (format v2),
+writes each blob's xxh3-128 hash and the TOC digest into a `.vengpack` (format v3),
 so `assetpack` stores the raw 16 bytes and computes nothing, and `libveng` gains no
 hash dependency. The loader never verifies — hashing is tooling, not the hot path.
+
+The cooker also **zstd-compresses each blob** before adding it, storing whichever of the
+raw or compressed bytes is smaller (an incompressible blob keeps the raw, zero-copy
+resolve path). Both `ArchiveWriter::Add` sites route through one `EmitBlob` helper, so
+every blob is considered for compression by construction; the content hash covers the
+**stored** bytes, so `vengc verify` re-hashes exactly what is on disk with no decode.
 
 ## What `vengc` cooks
 

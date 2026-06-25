@@ -54,7 +54,7 @@ and decodable** and hardcodes the ASTC-default / BC7-selectable seam.
 
 | # | Plan | Summary | Status |
 |---|---|---|---|
-| 00 | Archive zstd compression | Per-blob zstd in the `.vengpack` (format **v3**: a new codec field on the TOC + a new `UncompressedSize`); the cooker compresses + picks stored-vs-zstd, `assetpack` inflates lazily on resolve. Shrinks every asset type on disk. Re-cooks the embedded core pack to v3. Independent of the rest. | proposed |
+| 00 | Archive zstd compression | Per-blob zstd in the `.vengpack` (format **v3**: a new codec field on the TOC + a new `UncompressedSize`); the cooker compresses + picks stored-vs-zstd, `assetpack` inflates lazily on resolve. Shrinks every asset type on disk. Re-cooks the embedded core pack to v3. Independent of the rest. | done |
 | 01 | Texture mip chain | Offline mip generation in the texture cooker (sRGB-/linear-correct), the multi-mip blob layout, and a multi-region upload (a new multi-region `CopyBufferToImage`) — replacing the single-mip-only restriction. Still uncompressed RGBA8; lays the infrastructure Plan 02 needs. | proposed |
 | 02 | BC7 block compression | The format-and-encoder core: `BC7Unorm`/`BC7Srgb` formats + `TypeMapping` + a `FormatInfo` block helper + a `textureCompressionBC` **enable + gate**; a cooker-only BC7 encoder; block-aware upload. Exercised via a BC7 fixture (hello-triangle stays RGBA8 until Plan 04). Depends on 01. | proposed |
 | 03 | ASTC block compression | `ASTC4x4` formats + a cooker-only `astc-encoder` + a `textureCompressionASTC_LDR` **enable + gate** over the same machinery; **ASTC becomes the cook default**, BC7 selectable. Proves both codecs. Depends on 02. | proposed |
