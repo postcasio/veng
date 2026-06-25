@@ -58,12 +58,30 @@ function(veng_add_game NAME)
     # movable directory. The pack target records its cooked-file path as the
     # VENG_ASSET_PACK_OUTPUT property (set by add_asset_pack) so this copy reads it
     # without the caller restating the path.
+    #
+    # The copy is its own output-producing command keyed on the cooked pack, not a
+    # POST_BUILD step on the launcher: a re-cook (e.g. a prefab edit) does not relink
+    # the launcher, so a POST_BUILD copy would never fire and the launcher would mount
+    # a stale pack. Depending on the cooked file makes the copy re-run whenever the
+    # pack changes; depending on the launcher target gives the destination directory
+    # and a stable build order without a cycle (the launcher does not depend back).
     if (ARG_ASSET_PACK)
         add_dependencies(${NAME}-launcher ${ARG_ASSET_PACK})
-        add_custom_command(TARGET ${NAME}-launcher POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_PROPERTY:${ARG_ASSET_PACK},VENG_ASSET_PACK_OUTPUT>
-                $<TARGET_FILE_DIR:${NAME}-launcher>)
+
+        # The launcher sets no custom RUNTIME_OUTPUT_DIRECTORY, so it lands in this
+        # directory's binary dir; the pack copy targets the same dir. A target-dependent
+        # genex is not permitted in a custom command OUTPUT, so the destination is a
+        # plain configure-time path.
+        get_target_property(PACK_OUTPUT ${ARG_ASSET_PACK} VENG_ASSET_PACK_OUTPUT)
+        cmake_path(GET PACK_OUTPUT FILENAME PACK_FILENAME)
+        set(PACK_BESIDE_LAUNCHER ${CMAKE_CURRENT_BINARY_DIR}/${PACK_FILENAME})
+
+        add_custom_command(
+            OUTPUT ${PACK_BESIDE_LAUNCHER}
+            COMMAND ${CMAKE_COMMAND} -E copy ${PACK_OUTPUT} ${PACK_BESIDE_LAUNCHER}
+            DEPENDS ${PACK_OUTPUT} ${NAME}-launcher
+            COMMENT "Copying asset pack beside ${NAME}-launcher")
+        add_custom_target(${NAME}-launcher-pack ALL DEPENDS ${PACK_BESIDE_LAUNCHER})
     endif ()
 
     # Windows has no rpath: the @loader_path/$ORIGIN resolution above is a no-op, so the
