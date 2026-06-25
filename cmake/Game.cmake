@@ -63,8 +63,9 @@ function(veng_add_game NAME)
     # POST_BUILD step on the launcher: a re-cook (e.g. a prefab edit) does not relink
     # the launcher, so a POST_BUILD copy would never fire and the launcher would mount
     # a stale pack. Depending on the cooked file makes the copy re-run whenever the
-    # pack changes; depending on the launcher target gives the destination directory
-    # and a stable build order without a cycle (the launcher does not depend back).
+    # pack changes. The launcher depends on the copy target so building (or running
+    # just) the launcher always lands the pack beside it; the copy does not depend
+    # back on the launcher, so there is no cycle.
     if (ARG_ASSET_PACK)
         add_dependencies(${NAME}-launcher ${ARG_ASSET_PACK})
 
@@ -79,9 +80,10 @@ function(veng_add_game NAME)
         add_custom_command(
             OUTPUT ${PACK_BESIDE_LAUNCHER}
             COMMAND ${CMAKE_COMMAND} -E copy ${PACK_OUTPUT} ${PACK_BESIDE_LAUNCHER}
-            DEPENDS ${PACK_OUTPUT} ${NAME}-launcher
+            DEPENDS ${PACK_OUTPUT}
             COMMENT "Copying asset pack beside ${NAME}-launcher")
-        add_custom_target(${NAME}-launcher-pack ALL DEPENDS ${PACK_BESIDE_LAUNCHER})
+        add_custom_target(${NAME}-launcher-pack DEPENDS ${PACK_BESIDE_LAUNCHER})
+        add_dependencies(${NAME}-launcher ${NAME}-launcher-pack)
     endif ()
 
     # Windows has no rpath: the @loader_path/$ORIGIN resolution above is a no-op, so the
