@@ -568,6 +568,23 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   dependencies**, **output ringing** for an async/off-queue consumer, and a playable
   **splitscreen / monitor sample feature** stay the named follow-ons.
 
+- **[planset-32](planset-32/README.md)** — the render allocation sizes itself. Dynamic resolution
+  already has a fast inner loop (`ComputeDynamicResolutionScale` eases the per-frame sub-rect
+  `RenderScale` toward a GPU-frame-time budget); this planset adds the **slow outer loop** that sizes
+  the **allocation** those targets live in. A pure, device-free **`StepAllocationTier`** (beside the
+  inner-loop controller in `DynamicResolution.h`) folds a multi-second EMA of the sub-rect scale into a
+  **quantized allocation tier** through a **hysteresis band** + **asymmetric dwell timers**, and the
+  `Viewport` debounces a `SceneRenderer::Resize` on a tier change — so the hand-picked `MaxScale`
+  allocation goes away and the allocation tracks what the scene sustains **without thrashing** (the
+  expensive knob never reacts to a fast signal; a tier change keeps the rendered pixel count constant, so
+  reallocation does not pop). Separately, a **`MaxAllocationScale`** cap decouples the allocation
+  baseline from the **swapchain framebuffer extent**, so a small window on a 2× **HiDPI** display is not
+  silently supersampled across every render-graph image — the steady-state fix the originating MoltenVK
+  perf problem needed (scaling the sub-rect barely helped because the allocation footprint and the
+  full-allocation tail — tonemap/upscale, gather + composite, TAA history-copy — did not shrink with it).
+  **Safe-moment reallocation**, a **memory-budget-driven initial tier**, and a **TAA history ping-pong**
+  stay the named follow-ons.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
