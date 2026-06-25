@@ -286,6 +286,32 @@ also yields a window↔view mapping (`WindowToViewport`/`ScreenToWorldRay`, over
 in `Veng/Math/`). It took the viewport slice of this area, the render-driving slice of area 6,
 and left the pointer-routing seam area 4 consumes.
 
+**Delivered — planset-32 (the render allocation sizes itself):** the render-target
+**allocation** became self-determining. Dynamic resolution had a fast inner loop
+(`ComputeDynamicResolutionScale` eases a viewport's per-frame sub-rect `RenderScale` toward a
+GPU-frame-time budget); this added the **slow outer loop** that sizes the allocation those
+targets live in. A pure, device-free **`StepAllocationTier`** (beside the inner-loop controller
+in `Veng/Renderer/DynamicResolution.h`) folds a multi-second EMA of the sub-rect scale into a
+**quantized allocation tier** through a **hysteresis band** + **asymmetric dwell timers**, and the
+`Viewport` debounces a `SceneRenderer::Resize` on a tier change — so the hand-picked `MaxScale`
+allocation is gone and the allocation tracks what the scene sustains **without thrashing** (the
+expensive knob never reacts to a fast signal; a tier change keeps the rendered pixel count
+constant, so reallocation does not pop). Separately, a **`MaxAllocationScale`** cap decouples the
+allocation baseline from the **swapchain framebuffer extent**, so a small window on a 2× **HiDPI**
+display is not silently supersampled across every render-graph image.
+
+**Still future (planset-32's named follow-ons):** **safe-moment reallocation** — deferring the
+tier-change `Resize` to a scene transition / static camera / loading screen rather than firing it
+inline (the dwell already makes the inline hitch rare and acceptable; this is polish).
+**Memory-driven initial tier** — choosing the *initial* tier from a device memory-budget query
+(`VkPhysicalDeviceMemoryProperties`) so a memory-starved device starts low, distinct from the
+perf-driven outer loop; this is the seam where the allocation work meets planset-33's texture
+compression, since ~8:1 block compression materially changes the texture VRAM residency the query
+reads. A **TAA history ping-pong** to remove the TAA history-copy from the full-allocation tail —
+the one full-res cost the sub-rect cannot reduce (it scales with allocation, so a tier step *does*
+help it; the ping-pong removes it entirely), the next lever if TAA stays too expensive once the
+allocation is right.
+
 **Still future:** a **transparent/forward pass** (a second material contract whose fragment
 outputs final color) and **MSAA**, reading the delivered `AABB`/`Frustum`/broadphase facility. The
 BVH broadphase's refinements, behind the same `Sync`/`Cull` + version-gate seam: **incremental tree
