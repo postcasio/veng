@@ -69,6 +69,22 @@ namespace Veng
         AssetHandle<Mesh> Mesh;
     };
 
+    /// @brief How an Animator treats a clip's baked root motion.
+    ///
+    /// Root motion is the locomotion translation a clip bakes onto its root bone, which would
+    /// otherwise slide the whole skeleton out from under the entity. Every mode strips that
+    /// translation from the rendered pose; they differ only in where the extracted per-tick
+    /// delta goes. Integer values are stable — persisted in prefabs.
+    enum class RootMotionMode : u32
+    {
+        /// @brief Strip the root translation and discard it: the entity stays in place.
+        Discard = 0,
+        /// @brief Strip it and apply the delta to the entity's own Transform (View-phase, cosmetic).
+        Presentation = 1,
+        /// @brief Strip it and publish the delta as a RootMotionDelta for a Sim mover to consume.
+        Drive = 2,
+    };
+
     /// @brief Plays an Animation clip on a skinned-mesh entity.
     ///
     /// The animation system advances Time each tick (when Playing), samples Clip against the
@@ -86,6 +102,8 @@ namespace Veng
         bool Loop = true;
         /// @brief Whether playback is advancing.
         bool Playing = true;
+        /// @brief How the clip's baked root motion is handled.
+        RootMotionMode RootMotion = RootMotionMode::Discard;
     };
 
     /// @brief Runtime-only skinning palette for a skinned-mesh entity.
@@ -97,6 +115,19 @@ namespace Veng
     {
         /// @brief Per-bone skinning matrices (GlobalInverse * modelBone * InverseBind).
         vector<mat4> Skinning;
+    };
+
+    /// @brief This tick's root-motion displacement, published by an Animator in Drive mode.
+    ///
+    /// Written by the View-phase animation system each tick for an Animator whose RootMotion is
+    /// Drive, in the entity's model-local frame (the character's own forward/right/up). A
+    /// Sim-phase mover rotates it by the entity's orientation and adds it to the entity's
+    /// position. Because the producer runs in the View phase after the Sim phase, a Sim consumer
+    /// reads the value one tick late. Never serialized (a derived, per-frame product).
+    struct RootMotionDelta
+    {
+        /// @brief Model-local translation extracted from the root bone this tick.
+        vec3 Translation{0.0f};
     };
 
     /// @brief Cube shape recipe: the parameters of Primitives::Cube plus its material.
@@ -469,15 +500,20 @@ VE_REFLECT(::Veng::MeshRenderer, 0x3C5CB13E46E0450BULL)
 VE_FIELD(Mesh, .DisplayName = "Mesh")
 VE_REFLECT_END();
 
+VE_LEAF(::Veng::RootMotionMode, 0x2F4A31CEE94569AFULL, FieldClass::Enum);
+
 VE_REFLECT(::Veng::Animator, 0x2B56DF7335B89F8DULL)
 VE_FIELD(Clip, .DisplayName = "Clip")
 VE_FIELD(Speed, .DisplayName = "Speed", .Min = 0.0)
 VE_FIELD(Loop, .DisplayName = "Loop")
 VE_FIELD(Playing, .DisplayName = "Playing")
+VE_FIELD(RootMotion, .DisplayName = "Root Motion")
 VE_FIELD(Time, .DisplayName = "Time", .Min = 0.0, .ReadOnly = true)
 VE_REFLECT_END();
 
 VE_TYPE(::Veng::SkinnedPose, 0x063C1245B8912FC3ULL);
+
+VE_TYPE(::Veng::RootMotionDelta, 0x10C7034D936A12CEULL);
 
 VE_REFLECT(::Veng::CubeShape, 0x2B758A3FE238BAA5ULL)
 VE_FIELD(Extent, .DisplayName = "Extent", .Min = 0.001)

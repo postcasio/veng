@@ -23,6 +23,7 @@
 #include <Veng/Scene/CameraRig.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Movement.h>
+#include <Veng/Scene/RootMotion.h>
 #include <Veng/Scene/Transforms.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
@@ -1109,6 +1110,11 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     // so they finish before the View-phase camera rig trails the moved pawn.
     host->Systems.Register<ControlSystem>();
     host->Systems.Register<MovementSystem>();
+
+    // Applies any root-motion delta the View-phase AnimationSystem published last tick, so a
+    // Drive-mode clip's baked locomotion moves the pawn. Sim-phase, so the moved pose is final
+    // before the camera rig trails it.
+    host->Systems.Register<RootMotionDriveSystem>();
     host->Systems.Register<CameraRigSystem>();
 
     // Poses skinned characters each tick (View phase): samples the Animator's clip and writes
