@@ -287,7 +287,7 @@ namespace Veng::Renderer
         /// below it renders into a sub-rect without a resize, and a sub-1 MaxScale shrinks the
         /// target instead of allocating full-region.
         /// @return The ceiling scale, > 0.
-        [[nodiscard]] f32 AllocationScale() const;
+        [[nodiscard]] f32 GetAllocationScale() const;
 
         /// @brief The renderer's allocation extent for a given scale, clamped to ≥ 1.
         ///
@@ -297,16 +297,16 @@ namespace Veng::Renderer
 
         /// @brief The renderer's allocation extent at the current allocation scale, clamped to ≥ 1.
         ///
-        /// @return ExtentForScale(AllocationScale()).
+        /// @return ExtentForScale(GetAllocationScale()).
         [[nodiscard]] uvec2 ScaledExtent() const;
 
         /// @brief The per-frame render fraction of the allocation pushed into SceneView::RenderScale.
         ///
-        /// m_RenderScale / AllocationScale(): the fraction of the (allocation-sized) target to
+        /// m_RenderScale / GetAllocationScale(): the fraction of the (allocation-sized) target to
         /// render this frame. At the allocation scale it is 1 (renders the full target); below it a
         /// sub-rect. Clamped to ≤ 1 against a transient current-scale-above-ceiling window.
         /// @return The sub-rect fraction in (0, 1].
-        [[nodiscard]] f32 ViewRenderScale() const;
+        [[nodiscard]] f32 GetViewRenderScale() const;
 
         /// @brief Debounces a SceneRenderer::Resize to the next Render when the allocation moved.
         ///

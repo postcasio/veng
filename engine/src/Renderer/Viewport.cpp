@@ -109,7 +109,7 @@ namespace Veng::Renderer
         // The allocation is sized to MaxScale (the high-water mark the controller can reach), so a
         // MaxScale change resizes the renderer images — the point of the bound. The current scale
         // is clamped into the new band so it never exceeds the allocation between this call and the
-        // next controller update (a ViewRenderScale > 1 would render outside the target).
+        // next controller update (a GetViewRenderScale > 1 would render outside the target).
         const uvec2 priorAlloc = ScaledExtent();
         m_DynamicResolution = settings;
         m_RenderScale = glm::clamp(m_RenderScale, settings.MinScale, settings.MaxScale);
@@ -135,7 +135,7 @@ namespace Veng::Renderer
         return m_OutputGeneration;
     }
 
-    f32 Viewport::AllocationScale() const
+    f32 Viewport::GetAllocationScale() const
     {
         // The allocation is sized to the upper bound of the render scale: MaxScale when the dynamic-
         // resolution controller owns the scale, else the static scale (its own ceiling). Sizing to
@@ -152,15 +152,15 @@ namespace Veng::Renderer
 
     uvec2 Viewport::ScaledExtent() const
     {
-        return ExtentForScale(AllocationScale());
+        return ExtentForScale(GetAllocationScale());
     }
 
-    f32 Viewport::ViewRenderScale() const
+    f32 Viewport::GetViewRenderScale() const
     {
         // The current scale as a fraction of the allocation scale (the ceiling the target is sized
         // to): at the ceiling the fraction is 1 (renders the full target), below it a sub-rect. The
         // clamp guards the window between a MaxScale drop and the next controller update.
-        return glm::min(m_RenderScale / AllocationScale(), 1.0f);
+        return glm::min(m_RenderScale / GetAllocationScale(), 1.0f);
     }
 
     void Viewport::DebounceAllocationResize(uvec2 priorAlloc)
@@ -231,7 +231,7 @@ namespace Veng::Renderer
             .Delta = m_ViewState.Delta,
             // The sub-rect fraction of the allocation to render this frame; the terminal tonemap
             // upscales it to the full (allocation-sized) output, so GetOutput stays full-resolution.
-            .RenderScale = ViewRenderScale(),
+            .RenderScale = GetViewRenderScale(),
             .Exposure = m_ViewState.Exposure,
             .Environment = m_ViewState.Environment,
             .EnvironmentIntensity = m_ViewState.EnvironmentIntensity,
