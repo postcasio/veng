@@ -222,6 +222,13 @@ namespace Veng::Renderer
         /// @brief Returns whether automatic render-scale control is enabled.
         [[nodiscard]] bool IsDynamicResolutionEnabled() const;
 
+        /// @brief Returns whether the outer-loop allocation-tier controller is enabled.
+        ///
+        /// True when SetDynamicResolution was passed tier settings: the allocation follows the
+        /// sustained sub-rect across quantized tiers. False when the allocation is the static
+        /// MaxScale ceiling (the inner loop alone, or no controller at all).
+        [[nodiscard]] bool IsAllocationTierEnabled() const;
+
         /// @brief Returns a counter bumped whenever the output view/handle is replaced.
         ///
         /// GetOutput()/GetOutputHandle() are invalidated by a resize (a region or render-scale

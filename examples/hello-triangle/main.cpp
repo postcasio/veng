@@ -319,9 +319,10 @@ protected:
         // composite tail); the app pushes only a ViewState. Apply the level's topology settings.
         GetPrimaryViewport()->Configure(m_SceneSettings);
 
-        // Mirror the controller state ManagedViewportInfo enabled, so the demo's checkbox and the
+        // Mirror the controller state ManagedViewportInfo enabled, so the demo's checkboxes and the
         // greyed read-out start in sync with the viewport (windowed opts in; smoke leaves it off).
         m_DynamicResolution = GetPrimaryViewport()->IsDynamicResolutionEnabled();
+        m_AllocationTier = GetPrimaryViewport()->IsAllocationTierEnabled();
 
         // HT_RENDER_SCALE pins a fixed render scale (the headless capture has no slider): it drives
         // the dynamic-resolution sub-rect so a reduced-resolution render can be captured and diffed.
@@ -687,18 +688,23 @@ private:
 
     // Enables or disables the viewport's adaptive resolution controllers from the demo state. The
     // inner loop drives the per-frame sub-rect from GPU frame time; the outer-loop tier controller
-    // follows the sustained sub-rect, sizing the allocation down a tier under durable load.
+    // (gated by m_AllocationTier) follows the sustained sub-rect, sizing the allocation down a tier
+    // under durable load. With the tier flag off the allocation stays at the static MaxScale ceiling.
     void ApplyDynamicResolution()
     {
         if (m_DynamicResolution)
         {
+            const optional<Renderer::AllocationTierSettings> tier =
+                m_AllocationTier
+                    ? optional<Renderer::AllocationTierSettings>{Renderer::AllocationTierSettings{}}
+                    : std::nullopt;
             GetPrimaryViewport()->SetDynamicResolution(
                 {
                     .TargetFrameTimeMs = 1000.0f / m_TargetFps,
                     .MinScale = m_DrsMinScale,
                     .MaxScale = m_DrsMaxScale,
                 },
-                Renderer::AllocationTierSettings{});
+                tier);
         }
         else
         {
@@ -881,6 +887,14 @@ private:
                     m_DrsMinScale = glm::min(m_DrsMinScale, m_DrsMaxScale);
                     ApplyDynamicResolution();
                 }
+                // The outer-loop allocation-tier controller, behind its own flag: when on, the
+                // allocation follows the sustained sub-rect down a quantized tier under durable load
+                // (a rare SceneRenderer::Resize); when off, the allocation stays at the Max scale
+                // ceiling and only the per-frame sub-rect moves. Toggle to compare the two.
+                if (UI::Checkbox("Allocation tier", m_AllocationTier))
+                {
+                    ApplyDynamicResolution();
+                }
             }
 
             // Render scale is a per-viewport property, not a SceneRendererSettings. While the
@@ -969,8 +983,9 @@ private:
             // allocation extent and the render target above match at the baseline tier and diverge
             // once a tier step shrinks the allocation below the rendered sub-rect's high-water mark.
             const uvec2 allocExtent = viewport.GetAllocationExtent();
-            UI::Text(fmt::format("Allocation tier: {} ({:.2f})", viewport.GetAllocationTierIndex(),
-                                 viewport.GetAllocationScale()));
+            UI::Text(fmt::format("Allocation tier: {} ({:.2f}){}",
+                                 viewport.GetAllocationTierIndex(), viewport.GetAllocationScale(),
+                                 m_AllocationTier ? " (auto)" : " (static)"));
             UI::Text(fmt::format("Allocation extent: {}x{}", allocExtent.x, allocExtent.y));
 
             // The cull funnel: gathered submesh candidates → frustum survivors → draws issued.
@@ -1155,6 +1170,10 @@ private:
     f32 m_TargetFps = 60.0f;
     f32 m_DrsMinScale = 0.5f;
     f32 m_DrsMaxScale = 1.0f;
+    // Gates the outer-loop allocation-tier controller (only meaningful while m_DynamicResolution is
+    // on, since the inner loop feeds it): on, the allocation follows the sustained sub-rect down a
+    // tier; off, it stays at the Max scale ceiling.
+    bool m_AllocationTier = false;
 
     // Fixed rotation for the smoke capture, in radians.
     static constexpr f32 SmokeAngle = 0.9f;

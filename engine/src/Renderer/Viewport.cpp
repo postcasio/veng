@@ -139,6 +139,11 @@ namespace Veng::Renderer
         return m_DynamicResolution.has_value();
     }
 
+    bool Viewport::IsAllocationTierEnabled() const
+    {
+        return m_TierSettings.has_value();
+    }
+
     u64 Viewport::GetOutputGeneration() const
     {
         return m_OutputGeneration;
