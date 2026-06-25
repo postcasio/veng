@@ -393,7 +393,7 @@ protected:
         {
             m_GpuFrameTimes.Push(GetRenderContext().GetLastGpuFrameTimeMs());
 
-            // Per-pass GPU breakdown, grouped (bloom/hi-Z mip sweeps collapsed) and keyed by
+            // Per-pass GPU breakdown, grouped (bloom/hi-Z/min-Z/blur mip sweeps collapsed) and keyed by
             // group name so each pass keeps its own rolling history across frames. A pass absent
             // this frame (a topology change) stops receiving samples until it returns.
             for (const PassCost& pass : AggregatePasses(GetRenderContext().GetLastGpuPassTimings()))
@@ -534,16 +534,17 @@ private:
         return stats;
     }
 
-    // One pass's GPU time after grouping: the bloom and hi-Z mip sweeps each collapse to a
-    // single named entry, every other pass stays itself.
+    // One pass's GPU time after grouping: the bloom, hi-Z, SSR min-Z, and SSR blur mip sweeps
+    // each collapse to a single named entry, every other pass stays itself.
     struct PassCost
     {
         string Name;
         f32 Milliseconds = 0.0f;
     };
 
-    // Folds a per-scope pass name onto its display group: the per-mip bloom and hi-Z passes
-    // ("Bloom Down Mip 3", "HiZ Reduce Mip 2", …) collapse to "Bloom" / "Hi-Z" so the sweep
+    // Folds a per-scope pass name onto its display group: the per-mip bloom, hi-Z, SSR min-Z,
+    // and SSR blur passes ("Bloom Down Mip 3", "HiZ Reduce Mip 2", "SSR MinZ Reduce Mip 1",
+    // "SSR Blur Mip 2", …) collapse to "Bloom" / "Hi-Z" / "Min-Z" / "SSR Blur" so each sweep
     // reads as one pass; any other name passes through unchanged.
     static string PassGroup(string_view name)
     {
@@ -554,6 +555,14 @@ private:
         if (name.starts_with("HiZ") || name.starts_with("Hi-Z"))
         {
             return "Hi-Z";
+        }
+        if (name.starts_with("SSR MinZ"))
+        {
+            return "Min-Z";
+        }
+        if (name.starts_with("SSR Blur"))
+        {
+            return "SSR Blur";
         }
         return string(name);
     }
@@ -986,7 +995,7 @@ private:
     }
 
     // The frame-time window: one big chart overlaying the whole-frame GPU time (white) with every
-    // grouped pass (bloom/hi-Z mip sweeps collapsed) as a colored line, a two-column legend, and
+    // grouped pass (bloom/hi-Z/min-Z/blur mip sweeps collapsed) as a colored line, a two-column legend, and
     // the CPU whole-frame plot below. The GPU sections appear only when the device exposes
     // timestamp queries; otherwise a note stands in above the CPU plot.
     void RenderFrameTimeGraph()
