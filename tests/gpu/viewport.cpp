@@ -197,6 +197,50 @@ TEST_CASE_FIXTURE(
 
 TEST_CASE_FIXTURE(
     Veng::Test::GpuFixture,
+    "viewport: MaxAllocationScale caps the allocation below the region; resize re-applies the cap")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    // A 2× HiDPI backing extent: the region carries the full backing pixels, and the cap brings the
+    // allocation back to logical-point resolution (half each axis).
+    constexpr uvec2 backing{128, 96};
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Ref<Mesh> cube = PopulateCubeScene(Context, assets, *scene);
+
+    const Unique<Viewport> viewport = Viewport::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Region = {.Offset = {0, 0}, .Extent = backing},
+        .MaxAllocationScale = 0.5f,
+        .Role = ViewportRole::Offscreen,
+    });
+
+    // The region is the full backing extent, but the allocation (GetOutput()) is the capped size.
+    CHECK(viewport->GetRegion().Extent == backing);
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == backing.x / 2);
+    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == backing.y / 2);
+
+    viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(backing), .Delta = 0.0f});
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
+    CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{64, 48});
+
+    // A resize keeps feeding the full backing extent as the region; the cap re-applies, so the new
+    // allocation is the capped size of the new backing extent (resize tracking honors the cap).
+    constexpr uvec2 resizedBacking{96, 64};
+    viewport->SetRegion({.Offset = {0, 0}, .Extent = resizedBacking});
+    viewport->SetViewState(
+        {.World = scene.get(), .Camera = FrontCamera(resizedBacking), .Delta = 0.0f});
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
+    CHECK(viewport->GetRegion().Extent == resizedBacking);
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == resizedBacking.x / 2);
+    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == resizedBacking.y / 2);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
     "viewport: dynamic resolution sizes the allocation to MaxScale; the current scale sub-rects it "
     "without resizing; a MaxScale change resizes")
 {

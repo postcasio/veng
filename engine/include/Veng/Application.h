@@ -49,6 +49,14 @@ namespace Veng
         /// The managed viewport renders at its region extent times this; (0,1] renders below the
         /// window for dynamic resolution scaling, >1 supersamples. Must be > 0.
         f32 RenderScale = 1.0f;
+        /// @brief Caps the managed viewport's allocation to this fraction of the window's pixels.
+        ///
+        /// The HiDPI supersample budget threaded into the viewport's ViewportInfo (see
+        /// Renderer::ViewportInfo::MaxAllocationScale). The managed viewport tracks the full
+        /// swapchain framebuffer extent — 2× the logical window on a HiDPI display — so 0.5 there
+        /// brings the allocation back to logical-point resolution. 1.0 (the default) allocates at
+        /// the full backing extent. Must be > 0.
+        f32 MaxAllocationScale = 1.0f;
         /// @brief Enables automatic render-scale control on the managed viewport when set.
         ///
         /// The viewport eases its RenderScale toward this budget from measured GPU frame time

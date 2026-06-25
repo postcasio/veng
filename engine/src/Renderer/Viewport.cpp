@@ -18,10 +18,12 @@ namespace Veng::Renderer
 
     Viewport::Viewport(const ViewportInfo& info)
         : m_Context(info.Context), m_Region(info.Region), m_RenderScale(info.RenderScale),
-          m_Role(info.Role)
+          m_MaxAllocationScale(info.MaxAllocationScale), m_Role(info.Role)
     {
         VE_ASSERT(info.RenderScale > 0.0f, "Viewport RenderScale must be > 0 (got {})",
                   info.RenderScale);
+        VE_ASSERT(info.MaxAllocationScale > 0.0f,
+                  "Viewport MaxAllocationScale must be > 0 (got {})", info.MaxAllocationScale);
 
         // A struct member cannot default to a value pulled from the Context&, so an
         // Undefined ColorFormat resolves to the window's output format here.
@@ -146,7 +148,9 @@ namespace Veng::Renderer
 
     uvec2 Viewport::ExtentForScale(f32 scale) const
     {
-        const vec2 allocated = glm::round(vec2(m_Region.Extent) * scale);
+        // The HiDPI cap is the outermost factor: it bounds the region (a 2× backing extent) before
+        // the upper-bound allocation scale, so the allocation never sizes to the full backing pixels.
+        const vec2 allocated = glm::round(vec2(m_Region.Extent) * m_MaxAllocationScale * scale);
         return glm::max(uvec2(allocated), uvec2(1));
     }
 

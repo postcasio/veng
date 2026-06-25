@@ -80,6 +80,7 @@ namespace Veng
                 .ColorFormat = managed.ColorFormat,
                 .Settings = managed.Settings,
                 .RenderScale = managed.RenderScale,
+                .MaxAllocationScale = managed.MaxAllocationScale,
                 .Role = Renderer::ViewportRole::Presented,
             });
 

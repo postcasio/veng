@@ -86,6 +86,16 @@ namespace Veng::Renderer
         /// renders below the region and is upscaled; >1 supersamples. Uniform, so the render aspect
         /// matches the region. Must be > 0.
         f32 RenderScale = 1.0f;
+        /// @brief Caps the allocation extent to this fraction of the region's pixels.
+        ///
+        /// The HiDPI supersample budget: the SceneRenderer is allocated no larger than
+        /// round(Region.Extent * MaxAllocationScale * upper-bound-scale), so a region carrying a 2×
+        /// HiDPI backing extent need not size every render-graph image to the full backing pixels.
+        /// 1.0 allocates at the full region (the default behavior); a value < 1.0 caps it (0.5 on a
+        /// 2× display brings the allocation back to logical-point resolution). It is the outermost
+        /// of the three multiplicative scales — the cap, then the upper-bound (MaxScale or static)
+        /// allocation scale, then the per-frame sub-rect — so it bounds them. Must be > 0.
+        f32 MaxAllocationScale = 1.0f;
         /// @brief Whether the engine compositor places this viewport into its region.
         ViewportRole Role = ViewportRole::Offscreen;
     };
@@ -289,10 +299,10 @@ namespace Veng::Renderer
         /// @return The ceiling scale, > 0.
         [[nodiscard]] f32 GetAllocationScale() const;
 
-        /// @brief The renderer's allocation extent for a given scale, clamped to ≥ 1.
+        /// @brief The renderer's allocation extent for a given scale, capped and clamped to ≥ 1.
         ///
         /// @param scale  The render-resolution multiplier to apply.
-        /// @return round(m_Region.Extent * scale), never below {1,1}.
+        /// @return round(m_Region.Extent * m_MaxAllocationScale * scale), never below {1,1}.
         [[nodiscard]] uvec2 ExtentForScale(f32 scale) const;
 
         /// @brief The renderer's allocation extent at the current allocation scale, clamped to ≥ 1.
@@ -331,6 +341,8 @@ namespace Veng::Renderer
         ViewportRegion m_Region;
         /// @brief Uniform render-resolution multiplier on the region extent.
         f32 m_RenderScale = 1.0f;
+        /// @brief Caps the allocation extent to this fraction of the region's pixels (the HiDPI budget).
+        f32 m_MaxAllocationScale = 1.0f;
         /// @brief Automatic render-scale controller tuning; unset when control is disabled.
         optional<DynamicResolutionSettings> m_DynamicResolution;
         /// @brief Whether the engine compositor places this viewport.

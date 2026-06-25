@@ -1215,7 +1215,14 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                     // The engine owns the primary viewport (its SceneRenderer + the gather +
                     // composite tail); the app pushes only a ViewState. Topology is applied
                     // through Configure once the level's render subset is loaded.
-                    .ManagedViewport = ManagedViewportInfo{},
+                    .ManagedViewport =
+                        ManagedViewportInfo{
+                            // This dev machine is a 2× HiDPI Mac; cap the allocation at logical-point
+                            // resolution so the deferred targets are not sized to the 2× backing
+                            // extent. The headless smoke capture has no backing scale, so it stays
+                            // uncapped to render at the full HeadlessExtent the golden expects.
+                            .MaxAllocationScale = smoke ? 1.0f : 0.5f,
+                        },
                 },
                 types, systems));
         });
