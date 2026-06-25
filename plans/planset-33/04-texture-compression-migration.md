@@ -1,9 +1,8 @@
-# Plan 04 — texture-compression migration, golden, docs
+# Plan 04 — texture-compression migration + golden
 
 **Goal:** migrate `examples/hello-triangle` onto the new pipeline (cooked **mips + ASTC** textures over a
-**zstd-compressed** archive), **regenerate the smoke golden** on an ASTC-capable device, gate it for
-devices that lack the codec, and document the texture-compression track across the `CLAUDE.md` set, this
-planset README, and `future/README.md`. The **closer** for the planset. Depends on Plans 00–03.
+**zstd-compressed** archive), **regenerate the smoke golden** on an ASTC-capable device, and gate it for
+devices that lack the codec. Depends on Plans 00–03; the docs pass that closes the planset is Plan 05.
 
 ## What lands
 
@@ -22,32 +21,10 @@ planset README, and `future/README.md`. The **closer** for the planset. Depends 
   the golden is only asserted where it is reproducible. Note in the test that the golden is now
   codec-dependent.
 
-- **What a missing-codec run looks like.** Document (in `engine/CLAUDE.md`) that on a device lacking the
-  cooked codec the texture loader logs `AssetError::Unsupported` once and the affected materials sample
-  their fallback (untextured) — the app still runs and the launcher smoke still exits 0 with a
-  correct-sized PPM; only `smoke_golden` (which skips there) would otherwise diverge.
-
-- **Docs.**
-  - `cooker/CLAUDE.md` — textures cook to **mipped ASTC by default** (BC7 selectable for the Windows
-    target); the per-texture/per-pack codec + footprint authoring is deferred; the new cooker-only
-    encoder deps (`bc7enc_rdo`, `astc-encoder`).
-  - `assetpack/CLAUDE.md` — **format v3**, per-blob zstd, the codec field + `UncompressedSize`, hashing
-    over stored bytes, the lazy-inflate cache + its main-thread-only invariant.
-  - `engine/CLAUDE.md` — the multi-mip + block-compressed texture load path, the `FormatInfo` block
-    helper, the BC/ASTC capability **enable + gate** and the `AssetError::Unsupported` behavior on a
-    device lacking the cooked codec, the multi-region `CopyBufferToImage`.
-  - root `CLAUDE.md` — **zstd added to the runtime dependency list** (the first third-party codec linked
-    into `libveng`, transitively via `assetpack`); note the cooker-only encoder deps stay cooker-only.
-
-- **Roadmap.** Confirm the **deferred developer-control** work is captured as **future area 15 —
-  build configurations & project settings** ([`future/build-configurations.md`](../future/build-configurations.md)):
-  a project-settings concept owning per-platform **build configurations**, each holding the texture
-  **codec policy** as a role → format table; per-asset `*.tex.json` declaring a compression **role**
-  (not a raw codec); the implicit/coarse cook-time dependency (one output pack per config) and the
-  editor's **host-capability preview gate** (build any config, preview only what the host GPU can
-  sample). Append the still-open footprint items (**BC5/BC4 channel specialization**, **wider ASTC
-  footprints**, **HDR ASTC**, an **uncompressed fallback pack**) to that area's open questions. Mark
-  Plans 00–04 `done` in this planset's status column.
+- **What a missing-codec run looks like.** On a device lacking the cooked codec the texture loader logs
+  `AssetError::Unsupported` once and the affected materials sample their fallback (untextured) — the app
+  still runs and the launcher smoke still exits 0 with a correct-sized PPM; only `smoke_golden` (which
+  skips there) would otherwise diverge. (Plan 05 records this behavior in `engine/CLAUDE.md`.)
 
 ## Files
 
@@ -56,8 +33,6 @@ planset README, and `future/README.md`. The **closer** for the planset. Depends 
 | `examples/hello-triangle/assets/…` | Texture sources / manifest cook to mipped ASTC; confirm the pack builds and shrinks. |
 | `tests/golden/hello_triangle_scene.png` | Regenerated capture (ASTC-lossy), on an ASTC-capable device. |
 | `tests/…` (`smoke_golden`) | Gate the golden to skip on a non-ASTC device; note codec-dependence + encoder tag/preset. |
-| `cooker/CLAUDE.md`, `assetpack/CLAUDE.md`, `engine/CLAUDE.md`, `CLAUDE.md` | The doc updates above. |
-| `plans/future/README.md` | The deferred developer-control area (area 15) + appended open footprint items. |
 | `plans/planset-33/README.md` | Status column → `done` for 00–04. |
 
 ## Verification

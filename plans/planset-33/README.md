@@ -58,7 +58,8 @@ and decodable** and hardcodes the ASTC-default / BC7-selectable seam.
 | 01 | Texture mip chain | Offline mip generation in the texture cooker (sRGB-/linear-correct), the multi-mip blob layout, and a multi-region upload (a new multi-region `CopyBufferToImage`) — replacing the single-mip-only restriction. Still uncompressed RGBA8; lays the infrastructure Plan 02 needs. | proposed |
 | 02 | BC7 block compression | The format-and-encoder core: `BC7Unorm`/`BC7Srgb` formats + `TypeMapping` + a `FormatInfo` block helper + a `textureCompressionBC` **enable + gate**; a cooker-only BC7 encoder; block-aware upload. Exercised via a BC7 fixture (hello-triangle stays RGBA8 until Plan 04). Depends on 01. | proposed |
 | 03 | ASTC block compression | `ASTC4x4` formats + a cooker-only `astc-encoder` + a `textureCompressionASTC_LDR` **enable + gate** over the same machinery; **ASTC becomes the cook default**, BC7 selectable. Proves both codecs. Depends on 02. | proposed |
-| 04 | Migration + golden + docs | Migrate hello-triangle (mipped **ASTC** over a zstd pack), regenerate the smoke golden on an ASTC-capable device, document the track across the `CLAUDE.md` set + `future/README.md`. Depends on 00–03. | proposed |
+| 04 | Migration + golden | Migrate hello-triangle (mipped **ASTC** over a zstd pack) and regenerate the smoke golden on an ASTC-capable device, gating it to skip on a non-ASTC device. Depends on 00–03. | proposed |
+| 05 | Docs + roadmap | Document the track across the `CLAUDE.md` set + root `CLAUDE.md`, capture the deferred developer-control work as `future/README.md` area 15, and run the full verification band. The closer. Depends on 00–04. | proposed |
 
 > Status legend: `proposed` = drafted, awaiting review; `ready` = reviewed and approved;
 > `done` = implemented, migrated, verified, committed.
@@ -68,8 +69,9 @@ and decodable** and hardcodes the ASTC-default / BC7-selectable seam.
 **00** (archive zstd) is standalone and parallel to everything. **01 → 02 → 03** is a strict chain: 01
 lays the multi-mip blob + multi-region upload, 02 adds the BC7 formats / encoder / capability gate /
 block-aware sizing over it, 03 slots ASTC into 02's machinery and flips the default. **04** (migration +
-golden + docs) depends on 00–03 and is last. Worktree-isolated dispatch branches 02 from the 01
-integration commit and 03 from the 02 one — see [[project_megaexec_worktree_base]].
+golden) depends on 00–03, and **05** (docs + roadmap) is the closer, depending on 00–04. Worktree-isolated
+dispatch branches 02 from the 01 integration commit and 03 from the 02 one — see
+[[project_megaexec_worktree_base]].
 
 **Shared-file caveat:** 01, 02, and 03 all touch `cooker/src/Importers/TextureImporter.cpp`,
 `engine/src/Asset/Loaders/TextureLoader.cpp`, and (02/03) `Renderer/Types.h` + `TypeMapping.h` +
