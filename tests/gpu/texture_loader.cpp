@@ -192,6 +192,112 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "texture loader: a BC7 cooked fixture loads and samples (skips without BC)")
+{
+    if (!Context.IsBlockCompressionSupported())
+    {
+        MESSAGE("textureCompressionBC unsupported on this device; skipping BC7 load test");
+        return;
+    }
+
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "texture_bc7_pack.json";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_gpu_texture_bc7.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Texture>> handle =
+        assets.LoadSync<Texture>(AssetId{0x3B7ECB6D353F7974ULL});
+    REQUIRE(handle.has_value());
+    REQUIRE(handle->IsLoaded());
+
+    const Texture& texture = *handle->Get();
+    // Linear (srgb: false) BC7 — the loader bridged the cooked Format ordinal 21 back to BC7Unorm.
+    CHECK(texture.GetFormat() == Format::BC7Unorm);
+    CHECK(texture.GetExtent() == uvec2{8, 8});
+    // The 8x8 source's block-compressed mip chain (8, 4, 2, 1) uploaded from the cooked blob.
+    CHECK(texture.GetImage()->GetMipLevels() == 4u);
+    CHECK(texture.GetHandle().IsValid());
+    CHECK(texture.GetSamplerHandle().IsValid());
+
+    auto outputImage =
+        Image::Create(Context, {
+                                   .Name = "BC7 Sample Output",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    auto outputView =
+        ImageView::Create(Context, {.Name = "BC7 Sample Output View", .Image = outputImage});
+
+    AssetManager shaderAssets(Context, Tasks, Types);
+    REQUIRE(shaderAssets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    const AssetResult<AssetHandle<Shader>> vertexAsset =
+        shaderAssets.LoadSync<Shader>(AssetId{0x1F42});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset =
+        shaderAssets.LoadSync<Shader>(AssetId{0x1F44});
+    REQUIRE(vertexAsset.has_value());
+    REQUIRE(fragmentAsset.has_value());
+
+    Ref<PipelineLayout> layout;
+    auto pipeline = CreateSamplePipeline(Context, layout, vertexAsset->Get()->Module,
+                                         fragmentAsset->Get()->Module);
+
+    auto& bindless = Context.GetBindlessRegistry();
+
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            RenderGraph graph(Context);
+            const ResourceId outputId = graph.Import("Output");
+
+            graph.AddPass("Sample BC7 Texture")
+                .Color({
+                    .Resource = outputId,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                })
+                .Execute(
+                    [&](PassContext& ctx)
+                    {
+                        CommandBuffer& passCmd = ctx.Cmd();
+                        passCmd.BindPipeline(pipeline);
+                        passCmd.SetViewport({0, 0}, {Size, Size});
+                        passCmd.SetScissor({0, 0}, {Size, Size});
+                        bindless.Bind(passCmd);
+                        passCmd.PushConstants(SamplePushConstants{
+                            .TextureIndex = texture.GetHandle().Index,
+                            .SamplerIndex = texture.GetSamplerHandle().Index,
+                        });
+                        passCmd.DrawFullscreenTriangle();
+                    });
+
+            const RenderGraph::ImportBinding binding{.Id = outputId, .View = outputView};
+            graph.Compile()->Execute(cmd, {&binding, 1});
+        });
+
+    // The solid-color source survives BC7's lossy encode close to its original value; assert the
+    // sampled output is roughly the source color rather than the cleared black, proving the BC
+    // image created with the feature enabled samples through the bindless set.
+    const vector<u8> pixels = outputImage->Download();
+    REQUIRE(pixels.size() == static_cast<size_t>(Size) * Size * 4);
+    CHECK(pixels[0] > 150);
+    CHECK(pixels[1] > 40);
+    CHECK(pixels[1] < 130);
+    CHECK(pixels[3] > 200);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "texture loader: async Load returns pending, becomes resident after a pump")
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);

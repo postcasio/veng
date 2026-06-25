@@ -263,5 +263,11 @@ namespace Veng::Renderer
         /// The GPU-driven cull path (multiDrawIndirect command buffer + candidate index
         /// in firstInstance) is available only when both are present; set in CreateDevice.
         bool GpuDrivenCullingSupported = false;
+
+        /// @brief True when textureCompressionBC was supported and enabled at device creation.
+        ///
+        /// Sampling a BC block-compressed image is legal only with the feature enabled; set in
+        /// CreateDevice from the physical device's reported support.
+        bool BlockCompressionSupported = false;
     };
 }

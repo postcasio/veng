@@ -1,10 +1,12 @@
 #include "TextureImporter.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <fstream>
 #include <sstream>
 
+#include <bc7enc.h>
 #include <fmt/format.h>
 #include <stb_image.h>
 #include <stb_image_resize2.h>
@@ -15,6 +17,88 @@ namespace Veng::Cook
 {
     namespace
     {
+        // The texture cook's compression codec. None packs uncompressed RGBA8; BC7 is the only
+        // block codec so far. This is the minimal internal seam where a per-texture/per-pack codec
+        // choice attaches — a texture opts into BC7 with "compression": "bc7", and absent the key
+        // a texture stays uncompressed RGBA8.
+        enum class TextureCodec
+        {
+            None,
+            BC7,
+        };
+
+        optional<TextureCodec> ParseCodec(const string& name)
+        {
+            if (name == "none")
+            {
+                return TextureCodec::None;
+            }
+            if (name == "bc7")
+            {
+                return TextureCodec::BC7;
+            }
+            return std::nullopt;
+        }
+
+        // Renderer::Format ordinals (Types.h), hand-synced per the cycle-avoidance rule:
+        // 2 = RGBA8Unorm, 3 = RGBA8Srgb, 21 = BC7Unorm, 22 = BC7Srgb. CookedTextureHeader.Format
+        // stores these literals and the engine's TextureLoader::BridgeFormat reads them back.
+        constexpr u32 RGBA8UnormFormat = 2;
+        constexpr u32 RGBA8SrgbFormat = 3;
+        constexpr u32 BC7UnormFormat = 21;
+        constexpr u32 BC7SrgbFormat = 22;
+
+        // BC7 encodes a 4x4 texel tile into one 16-byte block; the full mip chain (down to 1x1)
+        // pads partial edge tiles by replicating the level's edge texels into the 4x4 block.
+        constexpr u32 BlockSize = 4;
+        constexpr usize BlockBytes = 16;
+
+        // BC7 quality preset. Golden stability depends on this preset staying fixed: a higher
+        // uber level or partition count would re-encode every block and move any golden capture.
+        // Defaults (perceptual weights, all modes, 64 partitions) at uber level 1 — a balanced
+        // quality/speed point above the level-0 default.
+        constexpr u32 BC7UberLevel = 1;
+
+        // Encodes one RGBA8 mip level (tightly packed, row-major) to BC7 blocks. Partial edge
+        // tiles on a non-multiple-of-4 level replicate the nearest in-bounds texel into the 4x4
+        // source block, the standard edge-padding for block compression.
+        vector<u8> EncodeBc7Level(const u8* rgba, u32 width, u32 height,
+                                  const bc7enc_compress_block_params& params)
+        {
+            const u32 blocksWide = (width + BlockSize - 1) / BlockSize;
+            const u32 blocksHigh = (height + BlockSize - 1) / BlockSize;
+
+            vector<u8> blocks(static_cast<usize>(blocksWide) * blocksHigh * BlockBytes);
+
+            for (u32 by = 0; by < blocksHigh; by++)
+            {
+                for (u32 bx = 0; bx < blocksWide; bx++)
+                {
+                    std::array<u8, BlockSize * BlockSize * 4> source{};
+                    for (u32 py = 0; py < BlockSize; py++)
+                    {
+                        const u32 sy = std::min(by * BlockSize + py, height - 1);
+                        for (u32 px = 0; px < BlockSize; px++)
+                        {
+                            const u32 sx = std::min(bx * BlockSize + px, width - 1);
+                            const usize src = (static_cast<usize>(sy) * width + sx) * 4;
+                            const usize dst = (static_cast<usize>(py) * BlockSize + px) * 4;
+                            source[dst + 0] = rgba[src + 0];
+                            source[dst + 1] = rgba[src + 1];
+                            source[dst + 2] = rgba[src + 2];
+                            source[dst + 3] = rgba[src + 3];
+                        }
+                    }
+
+                    const usize blockIndex = static_cast<usize>(by) * blocksWide + bx;
+                    bc7enc_compress_block(blocks.data() + blockIndex * BlockBytes, source.data(),
+                                          &params);
+                }
+            }
+
+            return blocks;
+        }
+
         // The Parse* helpers below mirror Veng::Renderer::Filter / MipmapMode /
         // AddressMode ordinals (Renderer/Types.h) — kept in sync by hand per the
         // cycle-avoidance rule documented in assetpack's CookedBlobs.h.
@@ -106,6 +190,23 @@ namespace Veng::Cook
         const bool srgb =
             texJson.contains("srgb") && texJson["srgb"].is_boolean() && texJson["srgb"].get<bool>();
 
+        // The codec-selection seam: "compression" picks the block codec (BC7 only so far);
+        // absent or "none" cooks uncompressed RGBA8. sRGB-aware — the format pair is chosen from
+        // the texture's sRGB flag below.
+        TextureCodec codec = TextureCodec::None;
+        if (texJson.contains("compression") && texJson["compression"].is_string())
+        {
+            const string codecName = texJson["compression"].get<string>();
+            const optional<TextureCodec> parsed = ParseCodec(codecName);
+            if (!parsed)
+            {
+                return std::unexpected(fmt::format(
+                    "texture importer: '{}': invalid compression '{}' (expected 'none' or 'bc7')",
+                    sourcePath.string(), codecName));
+            }
+            codec = *parsed;
+        }
+
         const path imagePath = sourcePath.parent_path() / texJson["image"].get<string>();
         context.RecordDependency(imagePath);
 
@@ -178,8 +279,21 @@ namespace Veng::Cook
             }
         }
 
+        // Format is the codec's sRGB-aware pair: BC7Srgb/Unorm for the block codec, RGBA8Srgb/Unorm
+        // uncompressed, keyed off the texture's sRGB flag.
+        u32 format = 0;
+        switch (codec)
+        {
+        case TextureCodec::BC7:
+            format = srgb ? BC7SrgbFormat : BC7UnormFormat;
+            break;
+        case TextureCodec::None:
+            format = srgb ? RGBA8SrgbFormat : RGBA8UnormFormat;
+            break;
+        }
+
         CookedTextureHeader header{};
-        header.Format = srgb ? 3u /* RGBA8Srgb */ : 2u /* RGBA8Unorm */;
+        header.Format = format;
         header.Width = baseWidth;
         header.Height = baseHeight;
         header.MipCount = mipCount;
@@ -270,39 +384,78 @@ namespace Veng::Cook
             }
         }
 
-        // The mip chain is generated by repeatedly halving the base level, sRGB-correct for an
-        // sRGB source and linear otherwise, down to 1x1; each level appends to the blob largest-
-        // first. A level is resized from the *full-resolution* base rather than the previous mip
-        // so rounding does not accumulate across the chain.
-        usize totalPixelBytes = pixelBytes;
-        for (u32 level = 1; level < mipCount; level++)
+        // The byte size of one mip level in the chosen codec: BC7 blocks (ceil(w/4)*ceil(h/4)*16)
+        // or uncompressed RGBA8 (w*h*4). Mirrors the engine's BytesForLevel.
+        const auto levelBytes = [codec](u32 levelWidth, u32 levelHeight) -> usize
+        {
+            if (codec == TextureCodec::BC7)
+            {
+                const u32 blocksWide = (levelWidth + BlockSize - 1) / BlockSize;
+                const u32 blocksHigh = (levelHeight + BlockSize - 1) / BlockSize;
+                return static_cast<usize>(blocksWide) * blocksHigh * BlockBytes;
+            }
+            return static_cast<usize>(levelWidth) * levelHeight * 4;
+        };
+
+        // Encodes one RGBA8 level into the codec's on-disk bytes at blob[writeOffset]. BC7 packs
+        // 4x4 blocks; None copies the RGBA8 bytes through unchanged.
+        bc7enc_compress_block_params params{};
+        if (codec == TextureCodec::BC7)
+        {
+            bc7enc_compress_block_init();
+            bc7enc_compress_block_params_init(&params);
+            params.m_uber_level = BC7UberLevel;
+        }
+
+        const auto packLevel =
+            [&](vector<u8>& blob, usize writeOffset, const u8* rgba, u32 lw, u32 lh)
+        {
+            if (codec == TextureCodec::BC7)
+            {
+                const vector<u8> blocks = EncodeBc7Level(rgba, lw, lh, params);
+                std::memcpy(blob.data() + writeOffset, blocks.data(), blocks.size());
+            }
+            else
+            {
+                std::memcpy(blob.data() + writeOffset, rgba, static_cast<usize>(lw) * lh * 4);
+            }
+        };
+
+        // Each mip's RGBA8 pixels are generated (level 0 is the decoded base; each successive
+        // level is resized from the full-resolution base, sRGB-correct for an sRGB source and
+        // linear otherwise, so rounding does not accumulate), then packed largest-first in the
+        // chosen codec. Resizing from the base rather than the previous mip keeps quality stable.
+        usize totalLevelBytes = 0;
+        for (u32 level = 0; level < mipCount; level++)
         {
             const u32 levelWidth = std::max(1u, baseWidth >> level);
             const u32 levelHeight = std::max(1u, baseHeight >> level);
-            totalPixelBytes += static_cast<usize>(levelWidth) * levelHeight * 4;
+            totalLevelBytes += levelBytes(levelWidth, levelHeight);
         }
 
-        vector<u8> blob(sizeof(CookedTextureHeader) + totalPixelBytes);
+        vector<u8> blob(sizeof(CookedTextureHeader) + totalLevelBytes);
         std::memcpy(blob.data(), &header, sizeof(header));
 
         usize writeOffset = sizeof(header);
-        std::memcpy(blob.data() + writeOffset, pixelData.data(), pixelBytes);
-        writeOffset += pixelBytes;
+
+        // Level 0 packs from the decoded (possibly downscaled) base pixels directly.
+        packLevel(blob, writeOffset, pixelData.data(), baseWidth, baseHeight);
+        writeOffset += levelBytes(baseWidth, baseHeight);
 
         for (u32 level = 1; level < mipCount; level++)
         {
             const u32 levelWidth = std::max(1u, baseWidth >> level);
             const u32 levelHeight = std::max(1u, baseHeight >> level);
+
+            vector<u8> levelRgba(static_cast<usize>(levelWidth) * levelHeight * 4);
 
             const stbir_pixel_layout layout = STBIR_RGBA;
             const unsigned char* resized =
                 srgb ? stbir_resize_uint8_srgb(pixelData.data(), targetWidth, targetHeight, 0,
-                                               blob.data() + writeOffset,
-                                               static_cast<int>(levelWidth),
+                                               levelRgba.data(), static_cast<int>(levelWidth),
                                                static_cast<int>(levelHeight), 0, layout)
                      : stbir_resize_uint8_linear(pixelData.data(), targetWidth, targetHeight, 0,
-                                                 blob.data() + writeOffset,
-                                                 static_cast<int>(levelWidth),
+                                                 levelRgba.data(), static_cast<int>(levelWidth),
                                                  static_cast<int>(levelHeight), 0, layout);
             if (resized == nullptr)
             {
@@ -311,7 +464,8 @@ namespace Veng::Cook
                                 sourcePath.string(), level));
             }
 
-            writeOffset += static_cast<usize>(levelWidth) * levelHeight * 4;
+            packLevel(blob, writeOffset, levelRgba.data(), levelWidth, levelHeight);
+            writeOffset += levelBytes(levelWidth, levelHeight);
         }
 
         return blob;

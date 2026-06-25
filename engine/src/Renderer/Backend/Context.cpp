@@ -568,6 +568,11 @@ namespace Veng::Renderer
         return m_Native->GpuDrivenCullingSupported;
     }
 
+    bool Context::IsBlockCompressionSupported() const
+    {
+        return m_Native->BlockCompressionSupported;
+    }
+
     bool Context::IsGpuTimingSupported() const
     {
         return m_GpuTimingSupported;
@@ -1061,6 +1066,14 @@ namespace Veng::Renderer
         features2.features.multiDrawIndirect = gpuDrivenCullingSupported ? vk::True : vk::False;
         features2.features.drawIndirectFirstInstance =
             gpuDrivenCullingSupported ? vk::True : vk::False;
+
+        // textureCompressionBC is a core feature that must be enabled (not just queried) for
+        // sampling a BC image to be legal. Enable it only when supported; a BC-cooked texture on
+        // a device without it is rejected by the loader (AssetError::Unsupported), never decoded.
+        // MoltenVK exposes it on Apple Silicon only.
+        const bool blockCompressionSupported = features2.features.textureCompressionBC;
+        BlockCompressionSupported = blockCompressionSupported;
+        features2.features.textureCompressionBC = blockCompressionSupported ? vk::True : vk::False;
 
         // Timeline semaphores are required for the async-upload sync channel.
         // Fatal-assert if the device lacks support before enabling the feature.

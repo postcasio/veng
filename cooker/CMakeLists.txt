@@ -27,6 +27,22 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(xxhash)
 
+# bc7enc_rdo — BC7 block encoder for the TextureImporter, cooker-only (behind
+# VENG_BUILD_TOOLS like stb/assimp/Slang; never linked into libveng, which uploads
+# the cooked blocks and never encodes). The repo's CMakeLists builds a standalone
+# app, so SOURCE_SUBDIR points at a directory with no CMakeLists — the populate adds
+# the sources without any of its targets (the stb header-only pattern). bc7enc.cpp /
+# bc7enc.h are a self-contained pair (libc + <algorithm> only); the encoder TU is
+# compiled directly into veng_cook_objs below. Pinned to a concrete commit (the repo
+# carries no release tags).
+FetchContent_Declare(
+        bc7enc_rdo
+        GIT_REPOSITORY https://github.com/richgel999/bc7enc_rdo.git
+        GIT_TAG dbe416d28a5530b4e8cc45b14bf034dc6b96bbde
+        SOURCE_SUBDIR cmake
+)
+FetchContent_MakeAvailable(bc7enc_rdo)
+
 # nlohmann/json — pack + per-asset JSON parsing (cooker-only; the runtime
 # reads the binary archive, never JSON).
 set(JSON_BuildTests OFF CACHE INTERNAL "")
@@ -148,6 +164,7 @@ add_library(veng_cook_objs OBJECT
         src/Vendor/StbImage.cpp
         src/Vendor/TinyExr.cpp
         src/Vendor/XxHash.cpp
+        ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp
 )
 
 target_include_directories(veng_cook_objs PUBLIC
@@ -169,6 +186,7 @@ target_include_directories(veng_cook_objs PRIVATE
         ${stb_SOURCE_DIR}
         ${xxhash_SOURCE_DIR}
         ${tinyexr_SOURCE_DIR}
+        ${bc7enc_rdo_SOURCE_DIR}
         $<TARGET_PROPERTY:ZLIB::ZLIB,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:libzstd_static,INTERFACE_INCLUDE_DIRECTORIES>
 )

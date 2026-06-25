@@ -129,6 +129,15 @@ namespace Veng::Renderer
         /// CullMode::GPU is unavailable otherwise and the CPU path is the fallback.
         [[nodiscard]] bool IsGpuDrivenCullingSupported() const;
 
+        /// @brief Returns true when BC block-compressed formats can be sampled by the device.
+        ///
+        /// True only when textureCompressionBC was supported by the physical device and was
+        /// therefore enabled at device creation — a core VkPhysicalDeviceFeatures boolean that
+        /// must be enabled for sampling a BC image to be legal, not merely queried. MoltenVK
+        /// exposes it on Apple Silicon; an Intel-Mac / non-BC device reports false, and the
+        /// texture loader returns AssetError::Unsupported for a BC-cooked texture there.
+        [[nodiscard]] bool IsBlockCompressionSupported() const;
+
         /// @brief Returns true when the graphics queue can timestamp GPU work.
         ///
         /// True when the graphics queue family reports a non-zero timestampValidBits and the

@@ -59,6 +59,14 @@ namespace Veng::Renderer
         ///        The skinned-mesh bone-index attribute format. Appended for cooked-blob
         ///        integer stability.
         RGBA16Uint,
+        /// @brief BC7 block-compressed RGBA, normalized [0,1], linear-encoded (4x4 16-byte blocks).
+        ///        Appended at the fixed ordinal 21 for cooked-blob integer stability; the cooker
+        ///        writes the literal and the texture loader reads it.
+        BC7Unorm,
+        /// @brief BC7 block-compressed RGBA, sRGB-encoded (4x4 16-byte blocks).
+        ///        Appended at the fixed ordinal 22 for cooked-blob integer stability; the cooker
+        ///        writes the literal and the texture loader reads it.
+        BC7Srgb,
     };
 
     /// @brief Requested display output mode for the presentable swapchain.

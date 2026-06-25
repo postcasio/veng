@@ -6,6 +6,9 @@
 #include <fmt/format.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Log.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/FormatInfo.h>
 #include <Veng/Task/TaskSystem.h>
 
 namespace Veng
@@ -26,9 +29,20 @@ namespace Veng
                 return Renderer::Format::RGBA8Unorm;
             case 3:
                 return Renderer::Format::RGBA8Srgb;
+            case 21:
+                return Renderer::Format::BC7Unorm;
+            case 22:
+                return Renderer::Format::BC7Srgb;
             default:
                 return std::nullopt;
             }
+        }
+
+        // True when the format is a BC block-compressed format, which requires the device's
+        // textureCompressionBC feature to sample.
+        bool IsBlockCompressed(Renderer::Format format)
+        {
+            return format == Renderer::Format::BC7Unorm || format == Renderer::Format::BC7Srgb;
         }
 
         optional<Renderer::Filter> BridgeFilter(u32 value)
@@ -120,14 +134,34 @@ namespace Veng
             });
         }
 
-        // The mip levels are tightly packed largest-first; each uncompressed level's size derives
-        // from its halved dimensions, so the total is a pure arithmetic walk (no offset table).
+        // A BC-cooked texture cannot be sampled on a device without textureCompressionBC, and the
+        // runtime does not transcode — reject rather than crash or CPU-decode. Logged once so the
+        // missing capability is observable without flooding the log per texture.
+        if (IsBlockCompressed(*format) && !context.IsBlockCompressionSupported())
+        {
+            static bool s_BlockCompressionWarned = false;
+            if (!s_BlockCompressionWarned)
+            {
+                Log::Warn("TextureLoader: a BC-compressed texture was cooked but the device lacks "
+                          "textureCompressionBC; the texture is unsupported on this device.");
+                s_BlockCompressionWarned = true;
+            }
+            return std::unexpected(AssetLoadError{
+                .Kind = AssetError::Unsupported,
+                .Id = id,
+                .Detail = "texture: BC block compression unsupported on this device",
+            });
+        }
+
+        // The mip levels are tightly packed largest-first; each level's size derives from its
+        // halved dimensions through BytesForLevel (block-aware), so the total is a pure arithmetic
+        // walk (no offset table) for both uncompressed and block-compressed formats.
         usize pixelBytes = 0;
         for (u32 level = 0; level < header.MipCount; level++)
         {
             const u32 levelWidth = std::max(1u, header.Width >> level);
             const u32 levelHeight = std::max(1u, header.Height >> level);
-            pixelBytes += static_cast<usize>(levelWidth) * levelHeight * 4;
+            pixelBytes += Renderer::BytesForLevel(*format, levelWidth, levelHeight);
         }
 
         if (cooked.size() < sizeof(header) + pixelBytes)

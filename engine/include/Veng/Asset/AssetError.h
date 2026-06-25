@@ -25,6 +25,11 @@ namespace Veng
         MissingDependency,
         /// @brief Loader-specific failure (e.g. no loader registered for the type).
         LoadFailed,
+        /// @brief The device cannot use the cooked encoding (e.g. a BC texture on a non-BC device).
+        ///
+        /// A hard condition: the runtime does not transcode, so a pack cooked in a codec the host
+        /// GPU lacks is unloadable rather than substituted.
+        Unsupported,
     };
 
     /// @brief Structured load-failure carrying the error kind, the failing id, and a detail message.

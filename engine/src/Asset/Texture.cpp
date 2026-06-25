@@ -7,6 +7,7 @@
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/FormatInfo.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
@@ -18,9 +19,11 @@ namespace Veng
 
     namespace
     {
-        // Builds one tightly-packed copy region per mip level of a 2D RGBA8 image: each level's
-        // pixels begin where the previous level ended, with dimensions halved (floored at 1).
-        vector<BufferImageCopyRegion> BuildMipCopyRegions(uvec2 extent, u32 mipLevels)
+        // Builds one tightly-packed copy region per mip level of a 2D image: each level's pixels
+        // begin where the previous level ended, with dimensions halved (floored at 1). Level byte
+        // sizes flow through BytesForLevel, so a block-compressed format packs by its block size.
+        vector<BufferImageCopyRegion> BuildMipCopyRegions(uvec2 extent, u32 mipLevels,
+                                                          Format format)
         {
             vector<BufferImageCopyRegion> regions;
             regions.reserve(mipLevels);
@@ -37,7 +40,7 @@ namespace Veng
                     .Extent = {levelWidth, levelHeight, 1},
                 });
 
-                offset += static_cast<u64>(levelWidth) * levelHeight * 4;
+                offset += BytesForLevel(format, levelWidth, levelHeight);
             }
 
             return regions;
@@ -78,7 +81,7 @@ namespace Veng
         if (data.MipLevels > 1)
         {
             const vector<BufferImageCopyRegion> regions =
-                BuildMipCopyRegions(data.Extent, data.MipLevels);
+                BuildMipCopyRegions(data.Extent, data.MipLevels, data.Format);
             texture->m_Image->UploadSync(data.Pixels, regions);
         }
         else
@@ -97,7 +100,7 @@ namespace Veng
         if (data.MipLevels > 1)
         {
             const vector<BufferImageCopyRegion> regions =
-                BuildMipCopyRegions(data.Extent, data.MipLevels);
+                BuildMipCopyRegions(data.Extent, data.MipLevels, data.Format);
             outUpload = texture->m_Image->Upload(tasks, data.Pixels, regions);
         }
         else
