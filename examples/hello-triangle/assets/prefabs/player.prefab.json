@@ -15,7 +15,7 @@
             -0.3051774799823761,
             0.0,
             0.0,
-            0.95229560136795044
+            0.9522956013679504
           ],
           "Scale": [
             1.0,
@@ -69,7 +69,7 @@
         "::Veng::Transform": {
           "Position": [
             0.0,
-            1.0,
+            0.0,
             0.0
           ],
           "Rotation": [
@@ -84,18 +84,6 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
-            "type": "::Veng::CapsuleShape",
-            "value": {
-              "Radius": 0.4,
-              "Height": 1.0,
-              "Segments": 20,
-              "Rings": 6,
-              "Material": 1003
-            }
-          }
-        },
         "::Veng::Intent": {},
         "::Veng::Mover": {
           "MoveSpeed": 5.0,
@@ -104,6 +92,43 @@
         "::Veng::Authority": {
           "Tier": 0,
           "Owner": 0
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Player Mesh"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          "Scale": [
+            0.02,
+            0.02,
+            0.02
+          ]
+        },
+        "::Veng::Hierarchy": {
+          "Parent": 2
+        },
+        "::Veng::MeshRenderer": {
+          "Mesh": 2751177482215621782
+        },
+        "::Veng::Animator": {
+          "Clip": 4971316837671446691,
+          "Speed": 1.0,
+          "Loop": true,
+          "Playing": true
         }
       }
     }
