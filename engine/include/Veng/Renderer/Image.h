@@ -20,6 +20,7 @@ namespace Veng::Renderer
     class CommandBuffer;
     class SwapChain;
     class Context;
+    struct BufferImageCopyRegion;
 
     /// @brief Creation parameters for a GPU image.
     struct ImageInfo
@@ -112,6 +113,17 @@ namespace Veng::Renderer
         /// @param span Source pixels, in the image's format and full extent.
         void UploadSync(std::span<const u8> span);
 
+        /// @brief Uploads a precooked mip chain synchronously, one copy region per level.
+        ///
+        /// Records one VkBufferImageCopy per region from a single staging buffer and performs no
+        /// GPU mip generation — every level's pixels come precomputed in `span`. Blocks until the
+        /// copy completes. Used by the cooked-texture loader; runtime-built single-mip textures
+        /// use the GPU-mipgen UploadSync(span) overload instead.
+        /// @param span    All mip levels' pixels, tightly packed largest-first.
+        /// @param regions One entry per mip level; BufferOffset indexes into `span`.
+        /// @pre The image was created with MipLevels == regions.size() and ImageUsage::TransferDst.
+        void UploadSync(std::span<const u8> span, std::span<const BufferImageCopyRegion> regions);
+
         /// @brief Copies data into the image on a worker thread, returning immediately.
         ///
         /// The copy is recorded onto the worker's transfer command buffer and submitted
@@ -125,6 +137,18 @@ namespace Veng::Renderer
         /// @param data  Source pixels, in the image's format and full extent.
         /// @return A Task that completes once the transfer has been submitted.
         [[nodiscard]] Task<void> Upload(TaskSystem& tasks, std::span<const u8> data);
+
+        /// @brief Uploads a precooked mip chain on a worker thread, one copy region per level.
+        ///
+        /// The transfer-queue sibling of UploadSync(span, regions): records one VkBufferImageCopy
+        /// per region from a single staging buffer and performs no GPU mip generation. Lifetime
+        /// and queue-handoff semantics match Upload(tasks, data).
+        /// @param tasks   The task system to dispatch the upload job on.
+        /// @param data    All mip levels' pixels, tightly packed largest-first.
+        /// @param regions One entry per mip level; BufferOffset indexes into `data`.
+        /// @return A Task that completes once the transfer has been submitted.
+        [[nodiscard]] Task<void> Upload(TaskSystem& tasks, std::span<const u8> data,
+                                        std::span<const BufferImageCopyRegion> regions);
 
         /// @brief Downloads the full image contents to the host, blocking until complete.
         /// @return A byte vector containing a snapshot of the image.

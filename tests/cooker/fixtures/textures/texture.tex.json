@@ -1,6 +1,7 @@
 {
   "image": "texture_4x4.png",
   "srgb": false,
+  "generate_mips": false,
   "sampler": {
     "min": "nearest",
     "mag": "nearest",

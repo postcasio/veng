@@ -36,7 +36,9 @@ namespace Veng
         uvec2 Extent;
         /// @brief Pixel format.
         Renderer::Format Format;
-        /// @brief Source pixel data.
+        /// @brief Number of mip levels packed in Pixels (>= 1).
+        u32 MipLevels = 1;
+        /// @brief Source pixel data: all mip levels tightly packed largest-first, in the image's format.
         std::span<const u8> Pixels;
         /// @brief Sampler parameters.
         Renderer::SamplerInfo Sampler;

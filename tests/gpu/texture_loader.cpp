@@ -163,6 +163,35 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "texture loader: a multi-mip cooked texture loads with the right MipLevels")
+{
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "texture_mipped_pack.json";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_gpu_texture_mipped.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Texture>> handle =
+        assets.LoadSync<Texture>(AssetId{0x6725A9A1089EF916});
+    REQUIRE(handle.has_value());
+    REQUIRE(handle->IsLoaded());
+
+    const Texture& texture = *handle->Get();
+    CHECK(texture.GetExtent() == uvec2{8, 8});
+    // An 8x8 source mips through 8, 4, 2, 1 — four levels, all uploaded from the cooked blob.
+    CHECK(texture.GetImage()->GetMipLevels() == 4u);
+    CHECK(texture.GetHandle().IsValid());
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "texture loader: async Load returns pending, becomes resident after a pump")
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);

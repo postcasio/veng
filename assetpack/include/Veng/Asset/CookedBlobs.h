@@ -21,8 +21,14 @@ namespace Veng
     /// @brief Cooked header for a texture asset.
     ///
     /// Sampler fields mirror Veng::Renderer::SamplerInfo, stored as underlying integer/float
-    /// types per the cycle-avoidance rule above. The header is followed by
-    /// Width * Height * bytes-per-pixel(Format) raw pixel bytes.
+    /// types per the cycle-avoidance rule above.
+    ///
+    /// The header is followed by MipCount mip levels, tightly packed largest-first (level 0 =
+    /// the full-resolution image, then each successive halving down to 1x1). For an
+    /// uncompressed format a level's byte size derives purely from its dimensions —
+    /// max(1, Width >> i) * max(1, Height >> i) * bytes-per-pixel(Format) — so the blob carries
+    /// no per-level offset table; the loader walks the levels arithmetically. A single-mip
+    /// texture (MipCount == 1) is the degenerate one-level case of this layout.
     struct CookedTextureHeader
     {
         /// @brief Pixel format; underlying Renderer::Format integer.

@@ -327,6 +327,35 @@ namespace Veng::Renderer
                                                   vk::ImageLayout::eTransferDstOptimal, 1, &region);
     }
 
+    void CommandBuffer::CopyBufferToImage(const Ref<Buffer>& buffer, const Ref<Image>& image,
+                                          const std::span<const BufferImageCopyRegion> regions)
+    {
+        const vk::ImageAspectFlags aspect = Utils::GetAspectFlags(ToVk(image->GetFormat()));
+        const u32 layerCount = image->GetLayers();
+
+        vector<vk::BufferImageCopy> copies;
+        copies.reserve(regions.size());
+        for (const BufferImageCopyRegion& region : regions)
+        {
+            copies.emplace_back(
+                vk::BufferImageCopy{.bufferOffset = region.BufferOffset,
+                                    .bufferRowLength = 0,
+                                    .bufferImageHeight = 0,
+                                    .imageSubresource = {.aspectMask = aspect,
+                                                         .mipLevel = region.MipLevel,
+                                                         .baseArrayLayer = 0,
+                                                         .layerCount = layerCount},
+                                    .imageOffset = {.x = 0, .y = 0, .z = 0},
+                                    .imageExtent = {.width = region.Extent.x,
+                                                    .height = region.Extent.y,
+                                                    .depth = region.Extent.z}});
+        }
+
+        m_Native->CommandBuffer.copyBufferToImage(
+            buffer->GetNative().Buffer, image->GetNative().Image,
+            vk::ImageLayout::eTransferDstOptimal, static_cast<u32>(copies.size()), copies.data());
+    }
+
     void CommandBuffer::CopyImageToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer)
     {
         const auto extent = image->GetExtent();

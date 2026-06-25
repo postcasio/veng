@@ -1,8 +1,11 @@
 #include <Veng/Asset/Texture.h>
 
+#include <algorithm>
+
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetBuild.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
@@ -13,12 +16,43 @@ namespace Veng
 {
     using namespace Renderer;
 
+    namespace
+    {
+        // Builds one tightly-packed copy region per mip level of a 2D RGBA8 image: each level's
+        // pixels begin where the previous level ended, with dimensions halved (floored at 1).
+        vector<BufferImageCopyRegion> BuildMipCopyRegions(uvec2 extent, u32 mipLevels)
+        {
+            vector<BufferImageCopyRegion> regions;
+            regions.reserve(mipLevels);
+
+            u64 offset = 0;
+            for (u32 level = 0; level < mipLevels; level++)
+            {
+                const u32 levelWidth = std::max(1u, extent.x >> level);
+                const u32 levelHeight = std::max(1u, extent.y >> level);
+
+                regions.emplace_back(BufferImageCopyRegion{
+                    .BufferOffset = offset,
+                    .MipLevel = level,
+                    .Extent = {levelWidth, levelHeight, 1},
+                });
+
+                offset += static_cast<u64>(levelWidth) * levelHeight * 4;
+            }
+
+            return regions;
+        }
+    }
+
     Texture::Texture(Context& context, const TextureData& info)
         : m_Context(context), m_Name(info.Name), m_Extent(info.Extent), m_Format(info.Format)
     {
+        const u32 mipLevels = std::max(1u, info.MipLevels);
+
         m_Image = Image::Create(context, {
                                              .Name = m_Name,
                                              .Extent = {info.Extent.x, info.Extent.y, 1},
+                                             .MipLevels = mipLevels,
                                              .Format = info.Format,
                                              .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
                                          });
@@ -26,6 +60,7 @@ namespace Veng
         m_View = ImageView::Create(context, {
                                                 .Name = m_Name + " View",
                                                 .Image = m_Image,
+                                                .MipLevels = mipLevels,
                                             });
 
         SamplerInfo samplerInfo = info.Sampler;
@@ -36,7 +71,21 @@ namespace Veng
     Ref<Texture> Texture::PrepareSync(Context& context, const TextureData& data)
     {
         Ref<Texture> texture(new Texture(context, data));
-        texture->m_Image->UploadSync(data.Pixels);
+
+        // A precooked chain (MipLevels > 1) uploads one copy region per level with no GPU mipgen;
+        // a single-mip texture takes the plain copy path (which a runtime-built texture may extend
+        // with GenerateMipmaps when its image was allocated with more levels).
+        if (data.MipLevels > 1)
+        {
+            const vector<BufferImageCopyRegion> regions =
+                BuildMipCopyRegions(data.Extent, data.MipLevels);
+            texture->m_Image->UploadSync(data.Pixels, regions);
+        }
+        else
+        {
+            texture->m_Image->UploadSync(data.Pixels);
+        }
+
         return texture;
     }
 
@@ -44,7 +93,18 @@ namespace Veng
                                        Task<void>& outUpload)
     {
         Ref<Texture> texture(new Texture(context, data));
-        outUpload = texture->m_Image->Upload(tasks, data.Pixels);
+
+        if (data.MipLevels > 1)
+        {
+            const vector<BufferImageCopyRegion> regions =
+                BuildMipCopyRegions(data.Extent, data.MipLevels);
+            outUpload = texture->m_Image->Upload(tasks, data.Pixels, regions);
+        }
+        else
+        {
+            outUpload = texture->m_Image->Upload(tasks, data.Pixels);
+        }
+
         return texture;
     }
 

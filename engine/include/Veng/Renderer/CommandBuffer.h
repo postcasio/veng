@@ -1,5 +1,7 @@
 #pragma once
 
+#include <span>
+
 #include <Veng/Assert.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/ComputePipeline.h>
@@ -79,6 +81,21 @@ namespace Veng::Renderer
         /// across the bound sets, in binding order — selects the live region of a ring-buffered
         /// dynamic buffer at bind. Empty for sets with no dynamic descriptors.
         vector<u32> DynamicOffsets;
+    };
+
+    /// @brief One buffer-to-image copy region targeting a single mip level.
+    ///
+    /// The source pixels for the level begin at BufferOffset in the staging buffer and are tightly
+    /// packed (no row padding); Extent is the level's texel dimensions. Used to upload a precooked
+    /// mip chain from one staging buffer in a single CopyBufferToImage.
+    struct BufferImageCopyRegion
+    {
+        /// @brief Byte offset of this level's pixels within the staging buffer.
+        u64 BufferOffset = 0;
+        /// @brief Destination mip level.
+        u32 MipLevel = 0;
+        /// @brief This level's texel dimensions (width, height, depth).
+        uvec3 Extent = {1, 1, 1};
     };
 
     /// @brief Parameters for a blit between two images, with explicit mip levels and offsets.
@@ -215,8 +232,19 @@ namespace Veng::Renderer
         /// @brief Records a fullscreen triangle draw (no vertex buffer needed).
         void DrawFullscreenTriangle();
 
-        /// @brief Copies the contents of a buffer into an image.
+        /// @brief Copies the contents of a buffer into an image's mip 0 as a single region.
         void CopyBufferToImage(const Ref<Buffer>& buffer, const Ref<Image>& image);
+
+        /// @brief Copies a buffer into an image as one region per supplied mip level.
+        ///
+        /// Records one VkBufferImageCopy per region — each pulling a level's tightly-packed pixels
+        /// from BufferOffset in the staging buffer — so a precooked mip chain uploads in a single
+        /// command with no GPU mip generation. Every region targets all array layers.
+        /// @param buffer  Staging buffer holding every level's pixels, largest-first.
+        /// @param image   Destination image, already transitioned to TransferDst.
+        /// @param regions One entry per mip level to copy.
+        void CopyBufferToImage(const Ref<Buffer>& buffer, const Ref<Image>& image,
+                               std::span<const BufferImageCopyRegion> regions);
 
         /// @brief Copies the contents of an image into a buffer.
         void CopyImageToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer);

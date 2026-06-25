@@ -1,6 +1,7 @@
 #include <Veng/Renderer/Image.h>
 
 #include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/TimelineSemaphore.h>
@@ -177,6 +178,37 @@ namespace Veng::Renderer
         m_Context.SubmitImmediateCommands(*commandBuffer);
     }
 
+    /// @brief Uploads a precooked mip chain synchronously, one copy region per level.
+    ///
+    /// Records one buffer-to-image copy per level from a single staging buffer and transitions
+    /// every level to ShaderReadOnly — no GPU mip generation, since the levels are precomputed.
+    /// @param span     All mip levels' pixels, tightly packed largest-first.
+    /// @param regions  One copy region per mip level; BufferOffset indexes into `span`.
+    void Image::UploadSync(std::span<const u8> span,
+                           const std::span<const BufferImageCopyRegion> regions)
+    {
+        auto stagingBuffer = Buffer::Create(m_Context, {
+                                                           .Name = m_Name + " (Upload)",
+                                                           .Size = span.size(),
+                                                           .Usage = BufferUsage::TransferSrc,
+                                                       });
+
+        stagingBuffer->UploadSync(span);
+
+        auto commandBuffer = CommandBuffer::Create(m_Context);
+
+        commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
+        Backend::TransitionImage(*commandBuffer, *this, ImageLayout::TransferDst, 0, m_Layers, 0,
+                                 m_MipLevels);
+        commandBuffer->CopyBufferToImage(stagingBuffer, shared_from_this(), regions);
+        Backend::TransitionImage(*commandBuffer, *this, ImageLayout::ShaderReadOnly, 0, m_Layers, 0,
+                                 m_MipLevels);
+
+        commandBuffer->End();
+
+        m_Context.SubmitImmediateCommands(*commandBuffer);
+    }
+
     /// @brief Uploads pixel data asynchronously via the transfer queue.
     ///
     /// Records the copy on a worker's transfer command buffer and signals the transfer timeline.
@@ -227,6 +259,61 @@ namespace Veng::Renderer
 
                 // The staging buffer must live until the transfer timeline value it signalled;
                 // letting Buffer::~Buffer run would queue it on the per-frame graphics fence, not the transfer fence.
+                const ReleasedBuffer released = ReleaseBuffer(*staging);
+                context.GetNative().RetireOnTransfer(released.Buffer, released.Allocation, value);
+            });
+    }
+
+    /// @brief Uploads a precooked mip chain asynchronously via the transfer queue.
+    ///
+    /// The transfer-queue sibling of UploadSync(span, regions): records one copy region per level
+    /// onto a worker's transfer command buffer, performs no GPU mip generation, and releases the
+    /// image to the graphics queue. Lifetime and queue-handoff semantics match Upload(tasks, data).
+    /// @param tasks    The task system; determines the worker context and transfer pool.
+    /// @param data     All mip levels' pixels; a private copy is made.
+    /// @param regions  One copy region per mip level; BufferOffset indexes into `data`.
+    /// @return A task that completes when the transfer has been submitted.
+    Task<void> Image::Upload(TaskSystem& tasks, const std::span<const u8> data,
+                             const std::span<const BufferImageCopyRegion> regions)
+    {
+        // Capture owning refs and private copies: the image must outlive the worker, and the
+        // caller's span/regions may not.
+        Ref<Image> self = shared_from_this();
+        vector<u8> bytes(data.begin(), data.end());
+        vector<BufferImageCopyRegion> copyRegions(regions.begin(), regions.end());
+
+        return tasks.Submit(
+            [self = std::move(self), bytes = std::move(bytes), copyRegions = std::move(copyRegions)]
+            {
+                Context& context = self->m_Context;
+                const u32 workerIndex = TaskSystem::GetCurrentWorkerIndex();
+
+                const QueueFamilyIndices& families = context.GetQueueFamilies();
+                const u32 transferFamily =
+                    families.TransferFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
+                const u32 graphicsFamily =
+                    families.GraphicsFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
+
+                auto staging = Buffer::Create(context, {
+                                                           .Name = self->m_Name + " (Upload)",
+                                                           .Size = bytes.size(),
+                                                           .Usage = BufferUsage::TransferSrc,
+                                                       });
+                staging->UploadSync(bytes);
+
+                CommandBuffer& cmd = context.BeginTransferRecording(workerIndex);
+
+                Backend::TransitionImage(cmd, *self, ImageLayout::TransferDst, 0, self->m_Layers, 0,
+                                         self->m_MipLevels);
+                cmd.CopyBufferToImage(staging, self, copyRegions);
+
+                Backend::ReleaseImageToGraphicsQueue(cmd, *self, transferFamily, graphicsFamily);
+
+                const u64 value =
+                    context.SubmitTransfer(workerIndex, context.GetTransferTimeline());
+
+                Backend::MarkProducedOn(*self, transferFamily, value);
+
                 const ReleasedBuffer released = ReleaseBuffer(*staging);
                 context.GetNative().RetireOnTransfer(released.Buffer, released.Allocation, value);
             });

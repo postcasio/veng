@@ -1,5 +1,6 @@
 #include "TextureLoader.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include <fmt/format.h>
@@ -91,14 +92,13 @@ namespace Veng
         CookedTextureHeader header;
         std::memcpy(&header, cooked.data(), sizeof(header));
 
-        if (header.MipCount != 1)
+        if (header.MipCount < 1)
         {
             return std::unexpected(AssetLoadError{
                 .Kind = AssetError::Corrupt,
                 .Id = id,
-                .Detail = fmt::format(
-                    "texture: unsupported MipCount {} (only single-mip textures are supported)",
-                    header.MipCount),
+                .Detail =
+                    fmt::format("texture: invalid MipCount {} (must be >= 1)", header.MipCount),
             });
         }
 
@@ -120,13 +120,22 @@ namespace Veng
             });
         }
 
-        const usize pixelBytes = static_cast<usize>(header.Width) * header.Height * 4;
+        // The mip levels are tightly packed largest-first; each uncompressed level's size derives
+        // from its halved dimensions, so the total is a pure arithmetic walk (no offset table).
+        usize pixelBytes = 0;
+        for (u32 level = 0; level < header.MipCount; level++)
+        {
+            const u32 levelWidth = std::max(1u, header.Width >> level);
+            const u32 levelHeight = std::max(1u, header.Height >> level);
+            pixelBytes += static_cast<usize>(levelWidth) * levelHeight * 4;
+        }
+
         if (cooked.size() < sizeof(header) + pixelBytes)
         {
             return std::unexpected(AssetLoadError{
                 .Kind = AssetError::Corrupt,
                 .Id = id,
-                .Detail = "texture: cooked blob smaller than header + pixel data",
+                .Detail = "texture: cooked blob smaller than header + mip-level data",
             });
         }
 
@@ -134,6 +143,7 @@ namespace Veng
             .Name = fmt::format("Texture {}", id.Value),
             .Extent = {header.Width, header.Height},
             .Format = *format,
+            .MipLevels = header.MipCount,
             .Pixels = cooked.subspan(sizeof(header), pixelBytes),
             .Sampler =
                 {
