@@ -293,8 +293,19 @@ protected:
         m_SceneSettings.Bloom = render.Bloom;
         m_SceneSettings.Shadows = render.Shadows;
         m_SceneSettings.AO = render.AO;
+        // SSR is off by default in the engine (it forces full render resolution); the sample opts
+        // in to show reflections off the gradient-roughness ground plane.
+        m_SceneSettings.SSR = true;
         m_Exposure = render.Exposure;
         m_BloomIntensity = render.BloomIntensity;
+
+        // HT_DEBUG_VIEW pins a debug visualization mode by its DebugView enum index (the headless
+        // capture has no combo): it overrides the level's Final mode so a g-buffer/battery target
+        // can be captured and inspected.
+        if (const char* dv = std::getenv("HT_DEBUG_VIEW"))
+        {
+            m_SceneSettings.Mode = static_cast<Renderer::DebugView>(std::atoi(dv));
+        }
 
         // The engine owns the primary viewport (its SceneRenderer, output, and the gather +
         // composite tail); the app pushes only a ViewState. Apply the level's topology settings.
@@ -321,6 +332,8 @@ protected:
             translucent(theme.SurfaceRaised, 0.78f);
             translucent(theme.SurfaceHovered, 0.78f);
             translucent(theme.SurfaceActive, 0.78f);
+            // Show the title-bar collapse arrow so the debug windows fold away with a click.
+            theme.ShowWindowCollapseButton = true;
             UI::SetTheme(theme);
             GetImGuiLayer()->ApplyTheme();
 
@@ -686,10 +699,11 @@ private:
         if (auto sceneWindow = UI::Window("Scene"))
         {
             // Entries mirror the DebugView enum in declaration order; combo index == enum value.
-            static constexpr std::array<string_view, 13> modeNames{
-                "Final",         "Albedo", "Normal",  "Depth",    "Roughness",        "Metallic",
-                "Occlusion",     "AO",     "Shadows", "Cascades", "Punctual shadows", "Bloom",
-                "Motion vectors"};
+            static constexpr std::array<string_view, 14> modeNames{
+                "Final",          "Albedo",     "Normal",           "Depth",
+                "Roughness",      "Metallic",   "Occlusion",        "AO",
+                "Shadows",        "Cascades",   "Punctual shadows", "Bloom",
+                "Motion vectors", "Reflections"};
             i32 mode = static_cast<i32>(m_SceneSettings.Mode);
             if (UI::Combo("View", mode, modeNames))
             {
@@ -706,6 +720,13 @@ private:
             // TAA is a topology change: it inserts the resolve/history passes and jitters
             // the projection. Visible as the orbiting view converges to a crisp image.
             if (UI::Checkbox("TAA", m_SceneSettings.TAA))
+            {
+                ReconfigureScene();
+            }
+
+            // SSR is a topology change: it inserts the min-Z reduction, trace, blur, and
+            // composite passes. Reflections appear on the low-roughness ground plane.
+            if (UI::Checkbox("SSR", m_SceneSettings.SSR))
             {
                 ReconfigureScene();
             }

@@ -1,0 +1,11 @@
+{
+  "image": "ground_white.png",
+  "srgb": true,
+  "sampler": {
+    "min": "linear",
+    "mag": "linear",
+    "mipmap": "linear",
+    "wrap_u": "clamp_to_edge",
+    "wrap_v": "clamp_to_edge"
+  }
+}

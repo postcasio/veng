@@ -35,6 +35,10 @@
     { "id": 17471639324806791998, "type": "shader", "source": "shaders/taa_resolve.frag.shader.json" },
     { "id": 572832496162056639, "type": "shader", "source": "shaders/taa_history_copy.frag.shader.json" },
     { "id": 14759435582217356029, "type": "shader", "source": "shaders/motion_blit.frag.shader.json" },
+    { "id": 13672220138851212916, "type": "shader", "source": "shaders/ssr_trace.frag.shader.json" },
+    { "id": 17153908925538740214, "type": "shader", "source": "shaders/ssr_blur_down.comp.shader.json" },
+    { "id": 5825948086578327969, "type": "shader", "source": "shaders/ssr_composite.frag.shader.json" },
+    { "id": 10653949101260228506, "type": "shader", "source": "shaders/ssr_hiz_reduce.comp.shader.json" },
     { "id": 13589203438992884788, "type": "material", "source": "materials/tonemap.vmat.json" }
   ]
 }

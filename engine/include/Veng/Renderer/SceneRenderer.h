@@ -130,6 +130,8 @@ namespace Veng::Renderer
         Bloom,
         /// @brief Per-object velocity (g-buffer channel G3) as an optical-flow field.
         MotionVectors,
+        /// @brief Raw SSR reflection target (rgb radiance, force-wires the SSR pass).
+        Reflections,
     };
 
     /// @brief Selects the bloom pyramid's down/up filter kernel.
@@ -236,6 +238,16 @@ namespace Veng::Renderer
         ///
         /// Recompile-safe: it changes the cascade fit, not the atlas size or topology.
         f32 CascadeSplitLambda = 0.85f;
+
+        /// @brief Whether screen-space reflections run.
+        ///
+        /// A topology change: it inserts the SSR min-Z reduction, trace, blur, and composite
+        /// passes between lighting and the bloom/tonemap tail and routes the lit scene color
+        /// through an intermediate the SSR composite reflects into. SsrIntensity / SsrMaxDistance
+        /// / SsrThickness / SsrMaxRoughness are per-frame values on SceneView and do not recompile.
+        /// Off by default (like TAA): SSR forces full render resolution, so it disables the
+        /// dynamic-resolution sub-rect path while active.
+        bool SSR = false;
 
         /// @brief Whether the screen-space ambient occlusion pass runs.
         ///
@@ -350,6 +362,18 @@ namespace Veng::Renderer
         /// larger value spreads the glow wider. Rides the compute push (no recompile). Ignored
         /// when bloom is inactive.
         f32 BloomRadius = 1.0f;
+
+        /// @brief SSR reflection mix scale; pushed to the SSR composite each Execute.
+        ///
+        /// Scales the Fresnel-weighted reflection added back into the scene color. Rides the push
+        /// (no recompile). Ignored when SSR is inactive.
+        f32 SsrIntensity = 1.0f;
+        /// @brief SSR maximum ray length in view-space units; pushed to the SSR trace each Execute.
+        f32 SsrMaxDistance = 12.0f;
+        /// @brief SSR view-space depth thickness accepted as a ray hit; pushed to the SSR trace.
+        f32 SsrThickness = 0.5f;
+        /// @brief SSR roughness cutoff; surfaces rougher than this trace no reflection ray.
+        f32 SsrMaxRoughness = 0.8f;
 
         /// @brief RAW (non-tile-remapped) per-cascade world → light-clip transforms this frame.
         ///
@@ -643,6 +667,20 @@ namespace Veng::Renderer
         /// Intensity / Radius ride the compute push, read from the SceneView at record time.
         /// @param graph  The renderer's internal graph being rebuilt.
         void DeclareBloom(RenderGraph& graph);
+        /// @brief Recreates the SSR scene-color intermediate, reflection mip chain, and min-Z pyramid.
+        ///
+        /// Allocates the targets and per-level descriptor sets when Settings.SSR is set; otherwise
+        /// releases any previously-created ones. Mirrors CreateBloom (the reflection blur chain) and
+        /// CreateHiZ (the min-Z pyramid). Called from Create and every Resize/Configure.
+        void CreateSsr();
+        /// @brief Declares the SSR min-Z reduction, trace, blur, and composite passes into the graph.
+        ///
+        /// Reduces this frame's depth to a min-Z pyramid, traces reflections against it into the
+        /// reflection chain's mip 0, blurs the chain for rough reflections, then composites the
+        /// reflection into the HDR target the bloom/tonemap tail reads. Declared between the lighting
+        /// pass and the bloom sweep.
+        /// @param graph  The renderer's internal graph being rebuilt.
+        void DeclareSsr(RenderGraph& graph);
         /// @brief Recreates the HDR image/view at the current extent and (re-)registers it into bindless.
         void CreateHdr();
         /// @brief Recreates the TAA lit + history targets, or releases them when TAA is off.
@@ -861,6 +899,65 @@ namespace Veng::Renderer
         Ref<Image> m_BloomResultImage;
         /// @brief View over m_BloomResultImage.
         Ref<ImageView> m_BloomResultView;
+
+        /// @brief Lit scene-color intermediate the SSR trace samples and the composite adds onto.
+        ///
+        /// When SSR is active the lighting pass (or the TAA resolve) writes here instead of the HDR
+        /// target; the SSR composite reflects into it and writes the HDR target, so the bloom/tonemap
+        /// tail is unchanged (SSR slots in exactly where TAA does). Null when SSR is off. HdrFormat,
+        /// full extent; recreated on Resize/Configure.
+        Ref<Image> m_SsrSceneImage;
+        /// @brief View over m_SsrSceneImage.
+        Ref<ImageView> m_SsrSceneView;
+        /// @brief Bindless slot for the scene-color intermediate (trace + composite sample it).
+        TextureHandle m_SsrSceneHandle;
+
+        /// @brief SSR reflection mip chain: mip 0 the trace writes, coarser mips the blur produces.
+        ///
+        /// HdrFormat, sized to m_Extent with a mip chain (ColorAttachment | Storage | Sampled). The
+        /// composite samples it by a roughness-selected LOD (a coarser mip is a blurrier reflection).
+        /// Null when SSR is off. Recreated on Resize/Configure.
+        Ref<Image> m_SsrReflectionImage;
+        /// @brief One single-mip view per reflection level (mip 0 a color target, deeper mips storage dests).
+        vector<Ref<ImageView>> m_SsrReflectionMips;
+        /// @brief Whole-chain sampled view of the reflection pyramid; the composite samples it by LOD.
+        Ref<ImageView> m_SsrReflectionSampleView;
+        /// @brief Bindless slot for the reflection sample view.
+        TextureHandle m_SsrReflectionSampleHandle;
+        /// @brief Trilinear clamp-to-edge sampler over the reflection mip chain (roughness LOD).
+        Ref<Sampler> m_SsrReflectionSampler;
+        /// @brief Bindless slot for the reflection sampler.
+        SamplerHandle m_SsrReflectionSamplerHandle;
+        /// @brief One blur-downsample set per produced level k (reads mip k-1, writes mip k).
+        vector<Ref<DescriptorSet>> m_SsrBlurSets;
+
+        /// @brief SSR min-Z depth pyramid: the closest-surface mip chain the hi-Z trace marches.
+        ///
+        /// R32Sfloat, sized to the depth target with a full mip chain (Storage | Sampled). A compute
+        /// reduction (min operator) builds it from this frame's depth before the trace; distinct from
+        /// the occlusion-culling max-Z pyramid (opposite reduction, this-frame timing). Null when SSR
+        /// is off. Recreated on Resize/Configure.
+        Ref<Image> m_SsrHiZImage;
+        /// @brief One single-mip storage view per min-Z level (the reduction writes each).
+        vector<Ref<ImageView>> m_SsrHiZMips;
+        /// @brief Whole-chain sampled view of the min-Z pyramid; the trace Loads levels from it.
+        Ref<ImageView> m_SsrHiZSampleView;
+        /// @brief Bindless slot for the min-Z sample view.
+        TextureHandle m_SsrHiZSampleHandle;
+        /// @brief One reduction set per min-Z level (binds the source and destination mip views).
+        vector<Ref<DescriptorSet>> m_SsrHiZReduceSets;
+
+        /// @brief SSR trace pipeline (fullscreen, writes the reflection chain's mip 0) + layout.
+        Ref<class GraphicsPipeline> m_SsrTracePipeline;
+        Ref<class PipelineLayout> m_SsrTraceLayout;
+        /// @brief SSR composite pipeline (fullscreen, writes the HDR target) + layout.
+        Ref<class GraphicsPipeline> m_SsrCompositePipeline;
+        Ref<class PipelineLayout> m_SsrCompositeLayout;
+        /// @brief SSR reflection blur-downsample compute pipeline (reuses the bloom down/up set layout) + layout.
+        Ref<class ComputePipeline> m_SsrBlurPipeline;
+        Ref<class PipelineLayout> m_SsrBlurLayout;
+        /// @brief SSR min-Z reduction compute pipeline (reuses the hi-Z reduce layout/set layout).
+        Ref<class ComputePipeline> m_SsrHiZReducePipeline;
 
         /// @brief Shared sampler fullscreen passes use to sample the g-buffer and HDR target.
         Ref<Sampler> m_Sampler;
@@ -1237,6 +1334,12 @@ namespace Veng::Renderer
         ResourceId m_ShadowId;
         /// @brief Imported id for the SSAO target.
         ResourceId m_SsaoId;
+        /// @brief Imported id for the SSR lit scene-color intermediate.
+        ResourceId m_SsrSceneId;
+        /// @brief Per-mip subresource handle for the SSR reflection pyramid (trace + blur).
+        MipChainId m_SsrReflectionChainId;
+        /// @brief Per-mip subresource handle for the SSR min-Z pyramid (reduction + trace).
+        MipChainId m_SsrHiZChainId;
         /// @brief Imported id for the final output target.
         ResourceId m_OutputId;
         /// @brief Imported id for the depth source the reduction reads into hi-Z mip 0.
@@ -1305,6 +1408,10 @@ namespace Veng::Renderer
         bool m_SsaoActive = false;
         /// @brief Non-owning pointer into m_Passes to the SsaoScenePass; null when AO is off.
         class SsaoScenePass* m_SsaoPass = nullptr;
+
+        /// @brief True when the last Rebuild wired the SSR passes (Final mode + Settings.SSR, or the
+        ///        Reflections debug arm). Execute binds the SSR imports only when true.
+        bool m_SsrActive = false;
 
         /// @brief Opaque compiled graph; replayed every Execute.
         ///

@@ -125,6 +125,15 @@ namespace Veng::Renderer
         /// @brief Bindless slot for the velocity target (always valid — written every frame).
         TextureHandle VelocityHandle;
 
+        /// @brief SSR reflection target (mip 0) produced by the SSR trace; blitted by the Reflections debug arm.
+        ///
+        /// Valid only when the SSR pass is wired (Final + Settings.SSR, or the Reflections debug
+        /// mode). The debug blit declares .Sample so the graph derives the attachment → shader-read
+        /// transition. An invalid handle means no SSR pass is active.
+        ResourceId SsrReflection;
+        /// @brief Bindless slot for the SSR reflection sample view; invalid when SSR is off.
+        TextureHandle SsrReflectionHandle;
+
         /// @brief Shared sampler bindless slot used by fullscreen passes.
         SamplerHandle SamplerHandle;
 
