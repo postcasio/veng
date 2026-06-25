@@ -19,15 +19,22 @@ settings struct + a pure step, reviewable against the inner loop's contract on i
 ## What lands
 
 - **`AllocationTierSettings` — the outer-loop tuning.**
-  - `std::array<f32, N>` (or a small fixed `vector<f32>`) **`Tiers`** — the allowed allocation scales,
-    descending, e.g. `{1.0f, 0.75f, 0.5f}`. The first is the baseline (full allocation); the last is the
-    floor. Tier *index* is the controller's state, not the float.
+  - `std::array<f32, 3>` **`Tiers`** — the allowed allocation scales, descending, defaulting to
+    `{1.0f, 0.75f, 0.5f}`. The first is the baseline (full allocation); the last is the floor. Tier
+    *index* is the controller's state, not the float. A fixed-size `std::array` (not `vector<f32>`) keeps
+    the settings struct trivially copyable and header-only over `<array>`; three tiers is the default
+    quantization (few tiers ⇒ few possible transitions).
   - `f32 EmaHalfLifeSeconds = 2.0f` — the half-life of the long EMA the controller folds the per-frame
     sub-rect scale into. This is what makes the decision react to the *sustained* operating point, not
-    an instantaneous spike; converted to a per-update alpha from the frame `deltaSeconds`.
+    an instantaneous spike; converted to a per-update alpha from the frame `deltaSeconds`. It is
+    deliberately an order of magnitude longer than the inner loop's settling time
+    (`ComputeDynamicResolutionScale`'s deadband + rate limit settle a step in tens of frames, well under
+    a second), so the EMA reads the inner loop's *settled* operating point, never its transient.
   - `f32 DownMargin = 0.03f` — step **down** a tier when the sustained scale falls below
     `Tiers[next] + DownMargin` (i.e. the sub-rect is consistently using almost all of the next-smaller
-    tier, so the current larger allocation is wasted).
+    tier, so the current larger allocation is wasted). The step-down is additionally gated on the
+    *instantaneous* `currentRenderScale ≤ Tiers[next]` (see decision 6) so the smaller allocation can
+    always hold the sub-rect the moment the `Resize` lands.
   - `f32 UpHysteresis = 0.12f` — step **up** a tier only when the sustained scale rises above
     `Tiers[current] + UpHysteresis`. The gap between the down-threshold and this up-threshold is the
     dead band a scene parked near a boundary lives in without flipping.
@@ -49,6 +56,11 @@ settings struct + a pure step, reviewable against the inner loop's contract on i
   state, touches no device, no clock — `deltaSeconds` is supplied), so it is deterministic and testable.
   A non-positive `deltaSeconds` (no frame this tick) holds the state. The returned index maps to a scale
   via `Tiers[index]`; the caller multiplies the region extent by it to get the allocation extent.
+
+- **Lower the inner-loop `DynamicResolutionSettings::MinScale` default to `0.25f`** (from `0.5f`). The
+  outer loop's floor tier (default `0.5`) then sits strictly above the inner-loop floor, so at the floor
+  tier the sub-rect still has headroom to absorb a spike rather than the two floors coinciding (see
+  decision 7). This is a one-line default change in the same header, naturally grouped with the tier work.
 
 ## Decisions
 
@@ -77,12 +89,29 @@ settings struct + a pure step, reviewable against the inner loop's contract on i
    controller"; the outer loop is the same subsystem at a slower timescale, so it shares the header
    rather than spawning a parallel one. The two structs read as inner/outer halves of one story.
 
+6. **A down-step requires the instantaneous sub-rect to already fit the smaller tier.** The step-down
+   condition is `SustainedScale < Tiers[next] + DownMargin` **and** `currentRenderScale ≤ Tiers[next]`.
+   This is what makes the visual-continuity guarantee true rather than approximate: at the moment the
+   `Resize` shrinks the allocation to `Tiers[next]`, the sub-rect already fits inside it, so the
+   re-derived `ViewRenderScale` (= `renderScale / allocScale`) does not exceed 1.0 and the rendered
+   pixel count is preserved across the `Resize`. Without this guard a down-step taken while the sub-rect
+   still rode high would force the sub-rect to render larger than the new allocation, which the consumer
+   clamps to 1.0 — a visible pop, the exact thing the continuity claim forbids.
+
+7. **The floor tier degenerating to fixed-scale is acceptable.** If a tier ever equals the inner-loop
+   `MinScale`, the sub-rect at that tier is full (`ViewRenderScale = 1.0`) and dynamic resolution has no
+   headroom left — the allocation is then a plain fixed-scale render. That is a fine terminal state (the
+   device is genuinely saturated; there is nothing left to give), so the controller does not forbid it.
+   The default tiers (`{1.0, 0.75, 0.5}`) keep the floor strictly above the lowered `MinScale` (`0.25`)
+   so the common case retains headroom; the degenerate case is only reached if a caller configures a tier
+   down at `MinScale`.
+
 ## Files
 
 | File | Change |
 |---|---|
-| `engine/include/Veng/Renderer/DynamicResolution.h` | Add `AllocationTierSettings`, `AllocationTierState`, and the inline `StepAllocationTier` (full Doxygen, in the house style of the existing `ComputeDynamicResolutionScale`). |
-| `tests/unit/…` | A new pure-math case: drive `StepAllocationTier` over synthetic scale traces. Assert (a) a steady scale parked just above a boundary never changes tier (no oscillation); (b) a sustained drop steps down only after `ShrinkDwellSeconds`, one tier at a time; (c) a recovery steps up only after `GrowDwellSeconds` and only past `UpHysteresis`; (d) a single-frame spike inside an otherwise steady trace never moves the tier; (e) the result is clamped to the `Tiers` bounds. |
+| `engine/include/Veng/Renderer/DynamicResolution.h` | Add `AllocationTierSettings`, `AllocationTierState`, and the inline `StepAllocationTier` (full Doxygen, in the house style of the existing `ComputeDynamicResolutionScale`); lower `DynamicResolutionSettings::MinScale` default to `0.25f`. |
+| `tests/unit/…` | A new pure-math case: drive `StepAllocationTier` over synthetic scale traces. Assert (a) a steady scale parked just above a boundary never changes tier (no oscillation); (b) a sustained drop steps down only after `ShrinkDwellSeconds`, one tier at a time; (c) a recovery steps up only after `GrowDwellSeconds` and only past `UpHysteresis`; (d) a single-frame spike inside an otherwise steady trace never moves the tier; (e) the result is clamped to the `Tiers` bounds; (f) a **slow drift** (a ramp/sinusoid spanning the full hysteresis band over many dwell periods) produces a **bounded total transition count**, not a slow limit cycle — the guarantee is "no oscillation," verified against drift, not just against noise; (g) a down-step is withheld while `currentRenderScale` still exceeds `Tiers[next]` even though `SustainedScale` has crossed the threshold (decision 6). |
 
 ## Verification
 

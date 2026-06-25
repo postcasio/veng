@@ -27,19 +27,26 @@ HiDPI display"); this plan acts on it.
 
 ## What lands
 
-- **`f32 MaxAllocationScale = 1.0f` on `ManagedViewportInfo` (and `ViewportInfo`).** The cap on the
-  allocation extent **relative to the region/backing extent**. `1.0` keeps today's behavior (allocate at
-  the full backing extent); a value `< 1.0` caps it (e.g. `0.5` on a 2× display brings the allocation
-  back to logical-point resolution). Applied where the managed viewport derives the extent it hands to
-  the viewport/`SceneRenderer`: the allocation extent is `round(backingExtent · MaxAllocationScale)`,
-  clamped to ≥ 1. Documented as "render no larger than this fraction of the window's backing pixels —
-  the HiDPI supersample budget."
+- **`f32 MaxAllocationScale = 1.0f` on `ViewportInfo` (threaded through `ManagedViewportInfo`).** The cap
+  on the allocation extent **relative to the region extent**. `1.0` keeps today's behavior (allocate at
+  the full region/backing extent); a value `< 1.0` caps it (e.g. `0.5` on a 2× display brings the
+  allocation back to logical-point resolution). Documented as "render no larger than this fraction of the
+  region's pixels — the HiDPI supersample budget."
 
-- **The cap composes with, and bounds, the dynamic-resolution `MaxScale`.** The allocation baseline is
-  `MaxAllocationScale` of the backing extent; the inner-loop sub-rect (`MinScale..MaxScale`) and the
-  outer-loop tier (Plan 02) operate **within** that baseline. So `MaxAllocationScale` is the absolute
-  ceiling on rendered resolution and `MaxScale`/the tiers only ever reduce below it. (A viewport with no
-  dynamic resolution simply allocates at the capped baseline and renders full into it.)
+- **The cap is applied in exactly one place: the viewport's allocation-extent derivation.**
+  `Viewport::ExtentForScale`/`ScaledExtent` fold `MaxAllocationScale` into the extent so the allocation is
+  `round(region · MaxAllocationScale · AllocationScale())`, clamped to ≥ 1. `Application` keeps feeding the
+  **full** swapchain framebuffer extent as the managed viewport's region and only **threads the field
+  through** — it does **not** pre-cap the region. One application point means no double-apply, the cap is
+  available to a non-managed viewport (an editor panel) for free, and `GetOutput()` reflects the capped
+  size.
+
+- **The cap composes with, and bounds, the dynamic-resolution `MaxScale` and the Plan 02 tier.** With the
+  allocation extent `= round(region · MaxAllocationScale · AllocationScale())`, `MaxAllocationScale` is the
+  absolute ceiling and `AllocationScale()` (the `MaxScale`-bounded tier, Plan 02) only ever reduces below
+  it; the inner-loop sub-rect rides inside that via `ViewRenderScale`. So the three scales multiply,
+  `MaxAllocationScale` outermost. (A viewport with no dynamic resolution has `AllocationScale() == 1` and
+  simply allocates at the capped baseline.)
 
 - **Resize tracking honors the cap.** When the swapchain resizes, the managed viewport recomputes its
   capped allocation extent the same way, so the cap holds across window resize and display changes (a
@@ -66,10 +73,10 @@ HiDPI display"); this plan acts on it.
 
 | File | Change |
 |---|---|
-| `engine/include/Veng/Application.h` | `f32 MaxAllocationScale = 1.0f` on `ManagedViewportInfo` (full Doxygen). |
-| `engine/include/Veng/Renderer/Viewport.h` | `f32 MaxAllocationScale = 1.0f` on `ViewportInfo` (full Doxygen) — the viewport's own allocation cap, so a non-managed viewport (editor panel) can use it too. |
-| `engine/src/Application.cpp` | Apply the cap where the managed viewport's tracked extent is derived from the swapchain framebuffer extent (and on resize tracking). |
-| `engine/src/Renderer/Viewport.cpp` | Fold `MaxAllocationScale` into the allocation-extent derivation alongside `AllocationScale()`. |
+| `engine/include/Veng/Renderer/Viewport.h` | `f32 MaxAllocationScale = 1.0f` on `ViewportInfo` (full Doxygen) — the canonical home for the cap, so a non-managed viewport (editor panel) can use it too. |
+| `engine/include/Veng/Application.h` | `f32 MaxAllocationScale = 1.0f` on `ManagedViewportInfo` (full Doxygen), threaded into the `ViewportInfo` the managed path builds. |
+| `engine/src/Application.cpp` | Thread `MaxAllocationScale` into the managed viewport's `ViewportInfo` (and on resize tracking, keep feeding the full backing extent as the region). Does **not** apply the cap itself. |
+| `engine/src/Renderer/Viewport.cpp` | Apply `MaxAllocationScale` in `ExtentForScale`/`ScaledExtent` — the single point where the allocation extent is `round(region · MaxAllocationScale · AllocationScale())`. |
 | `examples/hello-triangle/main.cpp` | Set `MaxAllocationScale` on the managed viewport (a comment giving the local reason: avoid 2× HiDPI supersampling on this dev machine). |
 | `tests/…` | A test asserting a viewport created over a backing extent with `MaxAllocationScale < 1` allocates the capped extent (its `SceneRenderer` output / `GetOutput()` is the capped size), and that resize tracking re-applies the cap. |
 

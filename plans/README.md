@@ -585,6 +585,23 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   **Safe-moment reallocation**, a **memory-budget-driven initial tier**, and a **TAA history ping-pong**
   stay the named follow-ons.
 
+- **[planset-33](planset-33/README.md)** — textures cook compressed and mipped. The texture path cooks
+  **raw, single-mip RGBA8**, the `Renderer::Format` enum has **no compressed formats**, and the
+  `.vengpack` stores blobs **uncompressed** (a 2048² albedo is a flat 16 MB on disk and in VRAM). This
+  planset shrinks that on three composable axes: **per-blob zstd** in the archive (format **v3**: a codec
+  field + `UncompressedSize` on the TOC, lazy inflate on resolve — shrinks every asset type on disk); an
+  **offline mip chain** (sRGB-correct, multi-region upload, the prerequisite for block compression since
+  a compressed image cannot be GPU-blit-mipgen'd); and **ASTC/BC7 block compression** through one
+  `FormatInfo::BytesForLevel` helper (~8:1 that persists to sampling). **ASTC is the cook default** (the
+  Metal-blessed, broadly-supported codec on the primary MoltenVK platform), **BC7 selectable** for the
+  anticipated Windows target; both are enabled at device creation and gated, and a device lacking the
+  cooked codec reports `AssetError::Unsupported` (the runtime does **not** transcode). All developer codec
+  control — per-platform **build configurations**, role-based per-asset compression, the editor's
+  host-capability preview gate — is deferred to **future area 15**. Originally drafted as planset-32's
+  "Track B"; split out as its own phase since it shares no files with the allocation work. The two meet at
+  one seam: planset-33's compression changes the texture-VRAM budget planset-32's memory-driven
+  initial-tier follow-on would read.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
