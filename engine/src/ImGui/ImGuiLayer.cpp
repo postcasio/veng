@@ -194,7 +194,8 @@ namespace Veng
         style.ScrollbarSize = theme.ScrollbarSize;
         style.GrabMinSize = theme.GrabMinSize;
         style.WindowTitleAlign = ImVec2(0.0f, 0.5f);
-        style.WindowMenuButtonPosition = ImGuiDir_None;
+        style.WindowMenuButtonPosition =
+            theme.ShowWindowCollapseButton ? ImGuiDir_Left : ImGuiDir_None;
         style.SeparatorTextBorderSize = 1.0f;
         style.DockingSeparatorSize = 1.0f;
 

@@ -91,6 +91,13 @@ namespace Veng::UI
         f32 ScrollbarSize;
         /// @brief Minimum length of a slider/scrollbar grab.
         f32 GrabMinSize;
+
+        /// @brief Whether a window's title bar shows the collapse-toggle arrow.
+        ///
+        /// When `false`, the title bar carries no collapse button; a window still collapses
+        /// by double-clicking its title bar. When `true`, the arrow is shown at the title
+        /// bar's leading edge.
+        bool ShowWindowCollapseButton;
     };
 
     /// @brief Returns the built-in dark theme.

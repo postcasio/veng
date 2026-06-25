@@ -63,6 +63,8 @@ namespace Veng::UI
                 .ItemInnerSpacing = vec2(6.0f, 5.0f),
                 .ScrollbarSize = 12.0f,
                 .GrabMinSize = 10.0f,
+
+                .ShowWindowCollapseButton = false,
             };
         }
 
