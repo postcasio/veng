@@ -22,6 +22,13 @@ HiDPI baseline becomes a **budget decision** (an allocation cap relative to the 
 than the backing extent itself, so the steady state is right and the outer loop is only a safety net
 for genuine sustained overload.
 
+**This planset carries a second, independent track — texture compression.** Alongside the allocation
+work it shrinks packed-asset size and texture memory through three composable axes: **zstd-compressed
+archive blobs** (every asset type, on-disk size), an **offline mip chain**, and **BC7/ASTC GPU block
+compression** (defaulting to **BC7**, persisting ~8:1 through to VRAM and sampling bandwidth). It shares
+**no files** with the allocation track and is described under [Track B](#track-b--texture-compression)
+below; the two tracks land in parallel.
+
 ## The shape
 
 ```
@@ -99,6 +106,11 @@ verbatim as the outer loop's input signal.
 | 01 | HiDPI allocation cap | `MaxAllocationScale` (cap on the allocation relative to the swapchain framebuffer extent) on `ViewportInfo`/`ManagedViewportInfo`, applied where the managed viewport derives its extent. Decouples the allocation baseline from the 2× backing extent. Independent of 00. | proposed |
 | 02 | Viewport tier wiring | Drive the allocation tier from the inner loop: `Viewport` tracks the long EMA of `m_RenderScale`, steps the tier via `StepAllocationTier`, and on a tier change debounces a `SceneRenderer::Resize(round(region · tier))` — replacing the static `AllocationScale() == MaxScale`. Migrate hello-triangle (auto allocation; expose the tier in Stats). Depends on 00 (+ 01 for the baseline). | proposed |
 | 03 | Docs + roadmap | `engine/CLAUDE.md` (the two-loop allocation model on the `SceneRenderer`/`Viewport` sections), `future/README.md` area 8, this record. Full `ctest` + `smoke_golden` + `validation_gate` green. | proposed |
+| 04 | Archive zstd compression | **Track B.** Per-blob zstd in the `.vengpack` (format **v3**: the `flags` field carries the codec, the TOC entry gains `UncompressedSize`); the cooker compresses + picks stored-vs-zstd, `assetpack` inflates lazily on resolve. Shrinks every asset type on disk. Independent of the rest of Track B. | proposed |
+| 05 | Texture mip chain | **Track B.** Offline mip generation in the texture cooker (sRGB-/linear-correct), the multi-mip blob layout, and a multi-region upload — replacing the single-mip-only restriction. Still uncompressed RGBA8; lays the infrastructure Plan 06 needs. | proposed |
+| 06 | BC7 block compression | **Track B.** The default codec: `BC7Unorm`/`BC7Srgb` formats + `TypeMapping` + a `FormatInfo` block helper + a `textureCompressionBC` gate; a cooker-only BC7 encoder; block-aware upload. Cooks every texture to BC7 by default. Depends on 05. | proposed |
+| 07 | ASTC block compression | **Track B.** `ASTC4x4` formats + a cooker-only `astc-encoder` + a `textureCompressionASTC_LDR` gate over the same machinery — proving both codecs. BC7 stays default; ASTC selectable internally. Depends on 06. | proposed |
+| 08 | Texture-compression migration | **Track B.** Migrate hello-triangle (mipped BC7 over a zstd pack), regenerate the smoke golden on a BC-capable device, document the track across the `CLAUDE.md` set + `future/README.md` (the deferred developer-control work). Depends on 04–07. | proposed |
 
 > Status legend: `proposed` = drafted, awaiting review; `ready` = reviewed and approved;
 > `done` = implemented, migrated, verified, committed.
@@ -115,6 +127,54 @@ consumes it) and 01 and 02 both touch `Viewport.h`/`Viewport.cpp` and `Applicati
 (01 adds the cap to the extent derivation, 02 adds the tier state + the debounced `Resize`). Merge in
 number order (01 then 02) rather than expecting a conflict-free parallel merge on those files.
 
+**Track B (texture compression) is independent of Track A** — they share no files. Within Track B:
+**04** (archive zstd) is standalone and parallel to everything. **05 → 06 → 07** is a strict chain:
+05 lays the multi-mip blob + multi-region upload, 06 adds the BC7 formats / encoder / capability gate /
+block-aware sizing over it, 07 slots ASTC into 06's machinery. **08** (migration + golden + docs)
+depends on 04–07 and is last. Worktree-isolated dispatch branches 06 from the 05 integration commit and
+07 from the 06 one — see [[project_megaexec_worktree_base]].
+
+**Track B shared-file caveat:** 05, 06, and 07 all touch `cooker/src/Importers/TextureImporter.cpp`,
+`engine/src/Asset/Loaders/TextureLoader.cpp`, and (06/07) `Renderer/Types.h` + `TypeMapping.h` +
+`FormatInfo.h`. Because they form a sequential chain this is merge-in-order by construction, not a
+parallel-merge hazard.
+
+## Track B — texture compression
+
+The current texture path cooks **raw, single-mip RGBA8** ([`TextureImporter.cpp`](../../cooker/src/Importers/TextureImporter.cpp)),
+the `Renderer::Format` enum has **no compressed formats**, and the `.vengpack` stores blobs
+**uncompressed** — so a 2048² albedo sits in the pack and in VRAM as a flat 16 MB. This track attacks
+that on three composable axes:
+
+1. **On-disk size (every asset) — zstd archive blobs (Plan 04).** A container-level change in
+   `assetpack` + the cooker, orthogonal to texture formats: each cooked blob is zstd-compressed (the
+   cooker picks stored-vs-compressed per blob) and the reader inflates lazily on resolve. Helps meshes
+   and prefabs too, but only shrinks the *download* — pixels still inflate to full RGBA8 in VRAM.
+
+2. **A prerequisite — the offline mip chain (Plan 05).** Mips are generated at cook (sRGB-correct) and
+   stored in the blob, uploaded as one copy region per level. This is required for block compression
+   both in value (a single-mip compressed texture aliases) and in mechanism: a compressed image
+   **cannot** be GPU-blit-mipgen'd (`vkCmdBlitImage` rejects compressed formats), so its mips must be
+   precomputed. Landed first on uncompressed RGBA8 to prove the blob + upload in isolation.
+
+3. **VRAM + bandwidth — BC7/ASTC block compression (Plans 06–07).** The real win: a
+   hardware-compressed format the GPU samples *directly*, ~8:1 that persists to sampling. **BC7 is the
+   default** (Plan 06); **ASTC** is added over the same machinery (Plan 07) so both codecs work. The
+   axes stack — a BC7 blob still benefits from zstd on top.
+
+**The capability reality the gates encode.** Under MoltenVK, `textureCompressionBC` is **Apple-Silicon
+only**, while `textureCompressionASTC_LDR` is **broad on Apple GPUs** (the natively-Metal-blessed
+family); BC7 is the desktop/Windows standard. A device lacking the cooked codec's feature gets a logged
+`AssetError::Unsupported` (the runtime does **not** transcode). This track makes both codecs cookable
+and decodable, **defaulting to BC7**; **all developer control of the codec is deferred** to future
+**area 15 — build configurations & project settings** ([`future/build-configurations.md`](../future/build-configurations.md)):
+a project owns per-platform **build configurations** that hold the codec policy (a role → format
+table), a texture declares a compression **role** rather than a raw codec, the cook-time config
+dependency is implicit/coarse (one output pack per config), and the **editor gates preview to host
+capability** (build any config, preview only what the host GPU can sample — so "ASTC on Windows" is
+structurally impossible). Choosing the codec per device, an uncompressed fallback pack, BC5/BC4 channel
+specialization, and wider ASTC footprints all live there.
+
 ## The decisions this planset settles
 
 - **The allocation is self-determining.** The hand-picked `MaxScale` allocation goes away; the
@@ -126,6 +186,17 @@ number order (01 then 02) rather than expecting a conflict-free parallel merge o
   correctness.
 - **HiDPI is a budget, not a backing extent.** The allocation baseline is decoupled from the swapchain
   framebuffer extent, so the steady state on a HiDPI display is right and the controller is a safety net.
+- **Textures cook compressed and mipped by default; the engine supports both BC7 and ASTC.** Raw
+  single-mip RGBA8 is gone — the cook default is mipped BC7, with ASTC available over the same path, and
+  the archive is zstd-compressed. The runtime does not transcode: a device lacking the cooked codec
+  reports `AssetError::Unsupported`.
+- **The codec abstraction is one block-info helper.** Upload sizing and the loader's per-level walk go
+  through `FormatInfo::BytesForLevel` for every format (uncompressed = a 1×1 block), so adding a codec
+  is a format row + a `TypeMapping` row + an encoder arm — not a new upload path.
+- **Developer-facing codec control is deferred, by design.** This track hardcodes the BC7 default; the
+  whole authoring layer — per-platform **build configurations** holding the codec policy, role-based
+  per-asset compression, the coarse cook-time config dependency, and the editor's host-capability
+  preview gate — is future **area 15** ([`future/build-configurations.md`](../future/build-configurations.md)).
 
 ## What remains (future)
 

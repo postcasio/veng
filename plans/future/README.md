@@ -458,6 +458,32 @@ A natural **precursor to node→Slang codegen** (area 13): generated fragment sh
 `#include` the engine material header rather than each carrying a copy, and will emit their
 own `MaterialParams` struct — exactly the split this lands.
 
+### 15. Build configurations & project settings — texture-compression authoring
+
+**Motivated by planset-32's texture-compression track**, which ships the BC7/ASTC
+codec plumbing but **hardcodes BC7 as the cook default** and defers all developer
+control. This area adds that control: a **project-settings** concept owning a set of
+**build configurations** (one per ship target — Windows / macOS / Linux / mobile),
+each holding the **texture codec policy** as a **role → concrete-format** table, with
+per-asset `*.tex.json` declaring a compression **role/intent** (Color / Normal / Mask
+/ HDR) rather than a raw codec. The codec is **per-platform by nature** (BC needs
+`textureCompressionBC` — Apple-Silicon/Windows; ASTC needs
+`textureCompressionASTC_LDR` — broad on Apple GPUs), so it belongs on the build
+config, not a flat default or a per-texture knob.
+
+Two design pillars beyond the settings tiers: the **cook-time dependency is implicit
+and coarse** (the active config is a central depfile input over a whole-pack cook; one
+output pack per config makes per-config invalidation fall out — no fine-grained
+per-asset edges, the content-addressed per-asset cook cache stays a separate cooker
+optimization); and the **editor gates preview to host capability** — building any
+config is unrestricted (the encoder is CPU), but *previewing through* one is bounded
+by what the host GPU can sample, with a host-safe default preview so "ASTC on Windows"
+is structurally impossible. The settings structs are reflected, so the editor panels
+come free through `DrawFieldWidget`. **Gate met** by planset-32 (the formats, the
+`FormatInfo` block math, the `IsBlockCompressionSupported()` / `IsAstcSupported()`
+queries, the cooker codec selection). **Design overview:**
+[build-configurations.md](build-configurations.md).
+
 ## Ordering & dependencies
 
 The order to *take the remaining areas up* (each becomes its own planset), not a
@@ -536,6 +562,8 @@ resolution / shadow LOD** + the **BVH broadphase's refinements** (incremental tr
 maintenance / GPU/occlusion culling / per-submesh leaves / a Scene-shared tree) +
 history-buffer ringing / cross-queue
 sync, area 9's culling / multi-queue /
-parallel recording, area 10's **cross-compiled cooking**, and area 12's **drive
+parallel recording, area 10's **cross-compiled cooking**, area 12's **drive
 imgui private** + stateful editor-widget classes (the base `Veng::UI` vocab + full
-migration delivered by planset-17). Each becomes its own planset when taken up.
+migration delivered by planset-17), and area 15's **build configurations & project
+settings** (texture-compression authoring — the developer-control layer planset-32
+defers). Each becomes its own planset when taken up.
