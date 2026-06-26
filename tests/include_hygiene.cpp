@@ -72,6 +72,11 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Reflection/Variant.h>
 
+#include <Veng/Project/BuildConfiguration.h>
+#include <Veng/Project/CompressionFormat.h>
+#include <Veng/Project/CompressionRole.h>
+#include <Veng/Project/ProjectSettings.h>
+
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
