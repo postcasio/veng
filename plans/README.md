@@ -618,7 +618,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   **future area 16** to design against a real consumer.
 
 - **[planset-35](planset-35/README.md)** — build configurations & the minimal game template
-  (proposed, 7 plans). Takes up future [area 15](future/README.md#15-build-configurations--project-settings--texture-compression-authoring):
+  (✅ done, 7 plans). Takes up future [area 15](future/README.md#15-build-configurations--project-settings--remaining-footprint-specialization-persistence-cross-compile):
   the developer-control layer planset-33 shipped the codec *plumbing* for and deferred. A
   **project-settings** concept owns a set of **build configurations** (one per ship target —
   macOS / Windows / Linux / mobile), each holding the texture codec policy as a **role → format**

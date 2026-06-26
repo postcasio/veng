@@ -136,7 +136,34 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
 - **The texture editor is the template.** `TextureEditorPanel` previews via a render
   target (`CreateTexture` → `ImGui::Image`), edits `.tex.json` settings (sRGB + sampler
   filter/wrap), recooks live (300ms-debounced), and round-trips the JSON on save —
-  patching known keys, preserving unknown ones.
+  patching known keys, preserving unknown ones. It carries a **compression-role combo**
+  over the same round-trip (writing/clearing the `"role"` key) and shows the **resolved
+  format read-only** for the active configuration ("→ ASTC4x4Srgb for 'macos'"), so the
+  artist picks intent and reads the platform's codec without choosing one.
+- **Project Settings is a host-level panel.** `ProjectSettingsPanel` (opened from the
+  Window menu, like the asset browser) lists and edits the host-owned `ProjectSettings` —
+  the array of `BuildConfiguration`s and the `ActiveConfiguration` selector — through the
+  shared reflection inspector (`DrawFieldWidget` / `PropertyTable`): reflection draws the
+  rows, the `CompressionRole` / `CompressionFormat` enum combos come from registered field
+  widgets (the same way `LightType` does), and the configuration-array add/remove widget
+  comes from the inspector's `FieldClass::Array` arm. Save writes `project.veng` and each
+  configuration's `*.buildcfg` sibling through the editor's own nlohmann, using the shared
+  enum⇄name tables the cooker parses by — so the editor *writes* exactly what the cooker
+  *reads*.
+- **Live preview is gated to host GPU capability.** Building any configuration is
+  unrestricted (the encoder is CPU); *previewing through* one is bounded by what the host
+  GPU can sample, so "ASTC on Windows" is structurally impossible rather than merely warned
+  against. `editor/src/PreviewCapability.{h,cpp}` gates on the device **feature** (not a
+  platform label) by reusing the engine's `Context::IsBlockCompressionSupported()` /
+  `IsAstcSupported()` queries: `IsFormatPreviewable` / `IsConfigPreviewable` intersect a
+  configuration's resolved role formats with the host's enabled features, and
+  `HostSafeFormats` builds an uncompressed, always-samplable role table. The editor's
+  default live-cook target is that host-safe profile — independent of which ship
+  configuration is selected for editing — so it never hands the GPU an unsamplable blob.
+  **"Preview as ship config" is opt-in** (the Project Settings panel's selector); a
+  host-incompatible configuration is greyed out with the stated reason, and an
+  all-incompatible project previews host-safe behind a banner. The same query is both the
+  "active config not supported on this GPU" warning and the preview-eligibility gate.
 - **`VengEditor/NodeGraph/` is a named, reusable node-graph surface.** A generic,
   imnodes-free, device-free **topology core** (`NodeGraph` — generational `NodeId`, `PinType`,
   the mutation vocabulary, direction/arity/acyclicity validation, a construction-time

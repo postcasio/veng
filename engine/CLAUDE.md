@@ -997,7 +997,12 @@ The reflection layer (`Veng/Reflection/`): an **open** `TypeId` space (a game ad
 leaf/struct/component with no engine change — a leaf or enum through the `VE_LEAF` seam)
 and a **closed** `FieldClass`
 (`Scalar`/`Vector`/`Quaternion`/`Matrix`/`String`/`AssetHandle`/`Reference`/`Struct`/
-`Enum`/`Variant`) a generic walker switches on. **`FieldClass::Variant`** is the
+`Enum`/`Variant`/`Array`) a generic walker switches on. **`FieldClass::Array`** is a dynamic
+list (a `vector<T>` of one registered element type) authored with **`VE_ARRAY_FIELD`**; the
+element type and four type-erased container shims (`ArraySize` / `ArrayElement` /
+`ArrayElementConst` / `ArrayResize`) ride the `FieldDescriptor`, so the generic walker, the
+name-keyed serializer, and the editor inspector each drive the list through the shims rather
+than by offset — the same erased-ops shape `Variant` uses. **`FieldClass::Variant`** is the
 tagged-union meta-kind: a `Variant<Ts...>` field (`Veng/Reflection/Variant.h`,
 authored with `VE_VARIANT`) holds one of several registered struct alternatives, and
 reflection reaches its active member only through type-erased thunks on the variant's
@@ -1154,3 +1159,51 @@ prefab into a fresh `Scene`, builds a `SceneSimulation` from the level's `System
 against the catalog, and seeds a `Session` entity from the game-mode config, returning a
 `LevelInstance { Unique<Scene> World; Unique<SceneSimulation> Simulation; }` the app ticks
 and renders. A game is assembled as authored data, not hand-spawned in `main.cpp`.
+
+## Project settings & build configurations
+
+`Veng/Project/` is the engine's home for **per-platform build policy** — the reflected data
+model the cooker and editor both read. `libveng` carries the structs and the enum⇄name
+tables; the JSON lives entirely in the consumers (the cooker hand-parses, the editor writes
+nlohmann), so `libveng` gains no JSON dependency.
+
+- **`ProjectSettings`** (`Veng/Project/ProjectSettings.h`) — one per project (the JSON file
+  `project.veng`): a reflected `vector<BuildConfiguration> Configurations` (a genuine
+  `FieldClass::Array` field, so adding/removing a config is reflection, not a fixed cap) plus
+  the `ActiveConfiguration` name the editor previews through and the cook defaults to.
+- **`BuildConfiguration`** (`Veng/Project/BuildConfiguration.h`) — a named ship target: a
+  `RoleToFormat` codec table, a zstd `CompressionLevel`, a `Target` label, and an
+  `OutputSuffix` (the single source of truth for the per-config pack name). `RoleToFormat` is
+  a fixed record — one `CompressionFormat` field per role — since the role set is closed.
+- **`CompressionRole`** (Color / Normal / Mask / HDR / UI) is a texture's **intent**, the
+  stable authoring surface; **`CompressionFormat`** is the closed set of codec outputs a role
+  table may name (uncompressed unorm/sRGB, BC7, ASTC 4×4, the HDR float). Both are
+  `VE_LEAF(FieldClass::Enum)` so the editor draws a combo, serialized **by name** (never
+  ordinal) through shared `ToString`/`Parse` tables. `CompressionFormat` is deliberately
+  *not* `Renderer::Format` (which carries depth/swapchain/index formats nonsensical as a
+  texture codec); a free `ToRendererFormat()` switch lowers it to the engine format at cook
+  time. The role taxonomy is settled, but its per-codec specialization is not: under the two
+  current codecs every role maps full-channel (`Color`→sRGB, the rest→unorm), and the
+  channel-specialized mappings (`Normal`→BC5, `Mask`→BC4) ride future codec follow-ons.
+
+The cook resolution and CMake host-default selection are in
+[cooker/CLAUDE.md](../cooker/CLAUDE.md); the editor surface + host-capability preview gate in
+[editor/CLAUDE.md](../editor/CLAUDE.md).
+
+## The two co-migrated examples
+
+The engine ships **two** sample game modules, co-migrated on every breaking change (the
+**Working norms** rule in the [root CLAUDE.md](../CLAUDE.md)):
+
+- **`examples/hello-triangle`** — the **maximal** sample: every renderer battery, the full
+  debug UI, a cooked prefab/level world, and a `macos`/`windows` build-configuration pair.
+- **`examples/template`** — the **minimal** one a new developer copies. The smallest correct
+  `veng_add_game` app: `main.cpp` mounts its pack, builds three entities in code (a `Camera`,
+  a directional `Light`, and a cube whose mesh is a `Primitives::Cube` recipe built with
+  `BuildSync<Mesh>`), opts into the engine-owned **managed primary viewport**
+  (`ApplicationInfo::ManagedViewport`), and rotates the cube inline in `OnUpdate` — no custom
+  component, system, prefab, debug UI, or `SceneRenderer`/composite wiring. It ships **no
+  `project.veng`**, relying on the zero-config cook default to stay minimal, and carries a
+  **build-only launcher smoke** (`template_launcher_smoke` — exit 0 + a correct-sized capture,
+  no pixel golden) so it stays low-maintenance. It is the minimal **conformance** check: if
+  the smallest app stops compiling or running, a breaking change missed it.

@@ -1,5 +1,19 @@
 # Build configurations & project settings — design overview (vision)
 
+> **Delivered by [planset-35](../planset-35/README.md).** The developer-control layer this
+> document designs — the project-settings / build-configuration concept, the role → format
+> table, the coarse per-config cook dependency, the host-default CMake selection, and the
+> editor host-capability preview gate — landed in planset-35 and is documented in the
+> `CLAUDE.md` set (engine `Veng/Project/`, the cooker resolution + CMake selection, the editor
+> Project Settings panel + preview gate). What remains future is the **footprint** work in
+> "Open questions" below — each a new format/encoder or an orthogonal concern, not
+> settings-tier work: **BC5/BC4 channel specialization**, **wider ASTC footprints**, **HDR
+> ASTC**, an **uncompressed fallback pack**, **editor active-config persistence**, and the
+> **Windows cross-compile constraint**. The role *taxonomy* is settled; its *per-codec
+> specialization* is not — under the two current codecs every role maps full-channel
+> (`Color`→sRGB, the rest→unorm), and the channel-specialized mappings (`Normal`→BC5,
+> `Mask`→BC4) plus the ASTC normal-packing convention ride those footprint follow-ons.
+
 > **Motivated by planset-33's texture-compression track.** That track ships the
 > codec *plumbing* — BC7/ASTC formats, the `FormatInfo` block helper, the
 > `textureCompressionBC` / `textureCompressionASTC_LDR` capability queries, the

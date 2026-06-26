@@ -42,11 +42,17 @@ is thin (shared deps + `add_subdirectory` per lib).
   (the graphics stack is linked but never initialized).
 - `editor/` — `libveng_editor`, the editor framework (a separate exe, not the
   runtime). Links `libveng`; the `<name>-editor` exe also links `libveng_cook`.
-- `examples/hello-triangle/` — the canonical sample app and the smoke test. It is
-  a **game module + launcher**, not one binary: `veng_add_game` builds
+- `examples/hello-triangle/` — the canonical **maximal** sample app and the smoke
+  test. It is a **game module + launcher**, not one binary: `veng_add_game` builds
   `libhello_triangle` (shared, the app) plus `hello_triangle-launcher` (the exe
   that `dlopen`s it). `assets/` holds its hand-written asset pack (cooked at build
-  time, copied beside the launcher).
+  time, copied beside the launcher); `configs/` holds its build configurations
+  (`project.veng` + a `*.buildcfg` per ship target).
+- `examples/template/` — the **minimal** sample: the smallest correct app a new
+  developer copies to start (`veng_add_game`, a window + a rotating cube, world built
+  in code, no debug UI, zero-config cook). It is the engine's minimal conformance
+  surface — **co-migrated with `hello-triangle` on every breaking change** (see
+  **Working norms**).
 - `tests/` — `include_hygiene`, `headless_smoke`, `compute_dispatch`, plus the
   `unit`, `death`, `gpu`, and `cooker` suites (and `shaders/`, `support/`).
 - `plans/` — the roadmap. See **Working norms** below.
@@ -160,6 +166,31 @@ deps (nlohmann/json, assimp, and Slang for shader compile + reflection, plus the
 **`bc7enc_rdo` / `astc-encoder` texture encoders**) are **cooker-only** — gated behind
 `VENG_BUILD_TOOLS` and never linked into `libveng` or its consumers, which load the
 *binary* archive and never parse or encode a source asset.
+
+### Build configurations — role on the asset, format on the platform
+
+A texture's codec is a **platform** decision, not a per-asset one. The project owns
+the build policy as a small reflected data model (`Veng/Project/`): a
+**`ProjectSettings`** (one per project, the JSON file `project.veng`) owns a list of
+**`BuildConfiguration`**s, one per ship target (macOS / Windows / Linux / mobile), each
+a `*.buildcfg` JSON file holding a **role → format** table (`RoleToFormat`), a zstd
+compression level, and an output-pack suffix. A texture's `*.tex.json` declares a
+compression **role** — its *intent*, one of the closed `CompressionRole` set
+(Color / Normal / Mask / HDR / UI) — never a raw codec; the active configuration
+resolves role → concrete `CompressionFormat` per platform (the raw `"compression"` key
+stays as a per-texture escape hatch). The cook reads the active configuration and emits
+**one output pack per configuration**.
+
+A bare `cmake --build` cooks the **host-matching configuration** by default:
+`VENG_BUILD_CONFIG` is a cache variable defaulted from the host triple
+(`cmake/BuildConfig.cmake`'s `veng_host_default_config_name`), so building on a Mac cooks
+the macOS/ASTC pack with no flag. Override with `-DVENG_BUILD_CONFIG=windows` to cook a
+foreign config (always allowed — the encoder is CPU), and the `cook-all-packs` aggregate
+target builds every configuration's pack for CI / ship. A pack with **no** `project.veng`
+cooks under the zero-config codec default (the hardcoded ASTC fallback), so the minimal
+`examples/template` needs none. The data model is in `engine/CLAUDE.md`, the cook
+resolution + CMake selection in `cooker/CLAUDE.md`, and the editor surface + host-capability
+preview gate in `editor/CLAUDE.md`.
 
 ### The validation build (`VE_DEBUG`)
 

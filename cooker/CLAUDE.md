@@ -69,8 +69,8 @@ at cook time:
   (`BC7Srgb` / `BC7Unorm`) is selectable through a minimal internal codec seam for the anticipated
   Windows target. Both ride a documented encoder quality preset, since the smoke golden is
   codec-dependent. The header's `Format` integer (hand-synced to the `Renderer::Format` ordinals)
-  is what the loader bridges back. Per-texture / per-pack codec and footprint authoring is **not**
-  in the manifest — it is the deferred developer-control layer (future area 15).
+  is what the loader bridges back. **The codec is chosen by a build configuration's role table,
+  not the manifest** — a texture declares a `role`; see [build configurations](#build-configurations--role--format-resolution) below.
 - **Textures** take an optional `"max_size"` that downscales the decoded image (aspect-
   preserving, sRGB- or linear-correct) before packing, so high-resolution scan art does not
   bloat the blob.
@@ -79,6 +79,34 @@ at cook time:
   vendor lib the cooker also uses), optionally downscales by `"max_size"` (linear), and packs
   half-float `RGBA16Sfloat` texels behind a `CookedEnvironmentHeader`. The runtime generates the
   IBL cubemaps from the panorama on the GPU, so the cook stays decode-only.
+
+## Build configurations — role → format resolution
+
+The texture codec is a **per-platform** choice owned by a build configuration, not the
+manifest. The reflected data model — `ProjectSettings` (the config list + the active one)
+and `BuildConfiguration` (a `CompressionRole → CompressionFormat` table + target + zstd
+level + output suffix) — lives in `libveng` (`Veng/Project/`, see
+[engine/CLAUDE.md](../engine/CLAUDE.md)); the cooker **hand-parses** the `project.veng` /
+`*.buildcfg` JSON authoring files into those structs (`ParseBuildConfiguration` in
+`Cooker.cpp`), exactly as it hand-parses every other source — enums by name through the
+shared `ToString`/`Parse` tables, never ordinal. The runtime carries no JSON parser.
+
+- **`CookContext` gains `const BuildConfiguration* Config`** (beside `Types` / `Systems`).
+  `vengc cook … --config <file>` parses one `*.buildcfg` and threads it through. With no
+  `--config` the field is null.
+- **The `TextureImporter` resolves `role → format` through it.** A `*.tex.json` declares a
+  `role` (the intent — Color / Normal / Mask / HDR / UI); the importer reads the config's
+  `RoleToFormat` table for that role and lowers the resulting `CompressionFormat` to the
+  cook's encode-path codec. The resolution chain is **raw `"compression"` (the escape
+  hatch) wins, else the config's role table, else the hardcoded ASTC zero-config default** —
+  so a pack with no configuration cooks exactly as it did before configurations existed. The
+  config's `CompressionLevel` drives the output archive's zstd.
+- **The configuration file is one central depfile input.** The cooker records the
+  `--config` file in the depfile centrally (like the pack JSON), not as a per-importer
+  edge: a config edit re-cooks the whole pack anyway, so a fine-grained per-asset edge would
+  buy nothing. Because **each configuration is its own output pack**, editing
+  `windows.buildcfg` re-cooks only that config's pack — per-config invalidation falls out
+  for free, with no shared mutable "active codec" to reason about.
 
 ## The prefab-cooking relaxation
 
@@ -119,7 +147,9 @@ loader share one encoder.
 ## `vengc` subcommands
 
 - **`cook`** — build a `.vengpack` from a manifest (`--module <lib>` to reflect a
-  game module's types **and systems** for prefab and level validation).
+  game module's types **and systems** for prefab and level validation; `--config <file>`
+  to select the build configuration whose role → format table the texture cook resolves
+  through).
 - **`verify`** — re-hash a `.vengpack`'s blobs + TOC digest and exit nonzero on any
   mismatch.
 - **`generate-id`** — mint a collision-free `AssetId` (prints hex for C++ literals and
@@ -133,3 +163,14 @@ loader share one encoder.
 pack containing prefabs cooks after its game module is built; packs without prefabs
 stay module-independent. `veng_add_game` wires the example's prefab pack to depend on
 `libhello_triangle`.
+
+`add_asset_pack(... CONFIG <file.buildcfg>)` grows a **per-configuration** dimension:
+each `CONFIG` cooks one output pack under that configuration (reading its `OutputSuffix`
+from the file as the single source of truth for the per-config pack name), passing
+`--config` to `vengc`. The host-default configuration's pack is the one
+`veng_add_game` copies beside the launcher; `cmake/BuildConfig.cmake` owns
+`VENG_BUILD_CONFIG` (host-triple-defaulted), the `cook-all-packs` aggregate, and
+`veng_register_all_packs_target` for feeding every config's pack into it.
+`hello-triangle` declares a `macos`/`windows` config pair and cooks the host-default one
+by default; the minimal `examples/template` declares **no** configuration and cooks under
+the zero-config default.

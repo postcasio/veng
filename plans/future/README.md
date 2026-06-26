@@ -16,7 +16,7 @@ pending area builds on directly. The substance of this document is the
 editor's scene editor (area 6, sub-area D), **engine-owned material shader header +
 cross-pack Slang includes (area 14)**, **multi-seat input routing + networking (area 4),
 now that the event-routed input core is delivered** — and the named still-future increments
-of the areas done in part (areas 1, 2, 7, 8, 9, 10, 12).
+of the areas done in part (areas 1, 2, 7, 8, 9, 10, 12, 15).
 
 ### 1. Asset system — remaining: hot-reload
 
@@ -484,47 +484,38 @@ A natural **precursor to node→Slang codegen** (area 13): generated fragment sh
 `#include` the engine material header rather than each carrying a copy, and will emit their
 own `MaterialParams` struct — exactly the split this lands.
 
-### 15. Build configurations & project settings — texture-compression authoring
+### 15. Build configurations & project settings — remaining: footprint specialization, persistence, cross-compile
 
-> **Taken up by [planset-35](../planset-35/README.md) (proposed).** The developer-control layer
-> below — the project-settings/build-configuration concept, the role → format table, the coarse
-> per-config cook dependency, the host-default CMake selection, and the editor host-capability preview
-> gate — is scoped into planset-35; the still-open **footprint** items (BC5/BC4, wider ASTC, HDR ASTC,
-> the uncompressed fallback pack), **editor active-config persistence**, and the **Windows
-> cross-compile constraint** stay future behind it. Marked delivered when that planset lands.
+Delivered by [planset-35](../planset-35/README.md): the developer-control layer planset-33
+shipped the codec plumbing for and deferred — a **project-settings** concept owning a set of
+**build configurations** (one per ship target), each a **role → concrete-format** table; a
+texture declaring a compression **role/intent** (Color / Normal / Mask / HDR / UI) rather than
+a raw codec; the **coarse per-config cook dependency** (the config a central depfile input,
+one output pack per config); the **host-default CMake selection** (`VENG_BUILD_CONFIG`,
+host-triple-defaulted; `cook-all-packs`); and the editor's **host-capability preview gate**
+(building any config unrestricted, previewing one bounded by `IsBlockCompressionSupported()` /
+`IsAstcSupported()`, so "ASTC on Windows" is structurally impossible). The reflected settings
+structs (`Veng/Project/`) draw their editor panels free through `DrawFieldWidget`. **Design
+overview:** [build-configurations.md](build-configurations.md).
 
-**Motivated by planset-33's texture-compression track**, which ships the BC7/ASTC
-codec plumbing but **hardcodes ASTC as the cook default** (BC7 selectable through a
-minimal internal seam) and defers all developer control. This area adds that control: a
-**project-settings** concept owning a set of **build configurations** (one per ship
-target — Windows / macOS / Linux / mobile), each holding the **texture codec policy** as
-a **role → concrete-format** table, with per-asset `*.tex.json` declaring a compression
-**role/intent** (Color / Normal / Mask / HDR) rather than a raw codec. The codec is
-**per-platform by nature** (BC needs `textureCompressionBC` — Apple-Silicon/Windows; ASTC
-needs `textureCompressionASTC_LDR` — broad on Apple GPUs), so it belongs on the build
-config, not a flat default or a per-texture knob.
+**Still future — new formats/encoders and orthogonal concerns, not settings-tier work.** The
+role *taxonomy* is settled, but its *per-codec specialization* is not: under the two current
+codecs every role maps full-channel (`Color`→sRGB, the rest→unorm), and the channel-specialized
+mappings ride the footprint follow-ons. The right home for each is the role → format table a
+build configuration already owns:
 
-Two design pillars beyond the settings tiers: the **cook-time dependency is implicit
-and coarse** (the active config is a central depfile input over a whole-pack cook; one
-output pack per config makes per-config invalidation fall out — no fine-grained
-per-asset edges, the content-addressed per-asset cook cache stays a separate cooker
-optimization); and the **editor gates preview to host capability** — building any
-config is unrestricted (the encoder is CPU), but *previewing through* one is bounded
-by what the host GPU can sample, with a host-safe default preview so "ASTC on Windows"
-is structurally impossible. The settings structs are reflected, so the editor panels
-come free through `DrawFieldWidget`. **Gate met** by planset-33 (the BC7/ASTC formats, the
-`FormatInfo` block math, the `IsBlockCompressionSupported()` / `IsAstcSupported()`
-queries, the cooker codec selection). **Design overview:**
-[build-configurations.md](build-configurations.md).
-
-**Still-open footprint work** rides this area's open questions, since the right home for
-each is the role → format table a build configuration owns: **BC5/BC4 channel
-specialization** (two-channel normals / single-channel masks — `Normal → BC5`, `Mask →
-BC4` rather than full BC7/ASTC); **wider ASTC footprints** (6×6, 8×8 — more compression at
-lower quality, a per-role footprint choice); **HDR ASTC** (the LDR codec this track ships
-does not cover HDR sources — environments keep their own `RGBA16Sfloat` panorama path); and
-an **uncompressed fallback pack** for a device that supports neither cooked codec (today
-such a device gets `AssetError::Unsupported` per texture).
+- **BC5/BC4 channel specialization** — two-channel normals / single-channel masks (`Normal →
+  BC5`, `Mask → BC4` rather than full BC7/ASTC), plus the ASTC normal-packing convention ASTC
+  needs since it has no two-channel mode.
+- **Wider ASTC footprints** (6×6, 8×8) — more compression at lower quality, a per-role choice.
+- **HDR ASTC** — the cooked block codec is LDR-only; HDR sources keep their `RGBA16Sfloat`
+  panorama path.
+- **Uncompressed fallback pack** — for a device that supports neither cooked codec (today such a
+  device gets `AssetError::Unsupported` per texture).
+- **Editor active-config persistence** — per-project vs per-user editor state.
+- **The Windows cross-compile constraint** — a foreign-platform pack is CPU-only and fine, but
+  `--module` prefab reflection still loads a *host* lib (area 10's recorded cross-compiled-cooking
+  limit), so a fully cross-compiled build inherits that latent constraint.
 
 ### 16. Dynamic meshes — mutable runtime geometry
 
@@ -639,6 +630,7 @@ history-buffer ringing / cross-queue
 sync, area 9's culling / multi-queue /
 parallel recording, area 10's **cross-compiled cooking**, area 12's **drive
 imgui private** + stateful editor-widget classes (the base `Veng::UI` vocab + full
-migration delivered by planset-17), and area 15's **build configurations & project
-settings** (texture-compression authoring — the developer-control layer planset-32
-defers). Each becomes its own planset when taken up.
+migration delivered by planset-17), and area 15's **footprint specialization** (BC5/BC4,
+wider ASTC, HDR ASTC, an uncompressed fallback pack) + **editor active-config persistence**
++ the **Windows cross-compile constraint** (the build-configuration developer-control layer
+delivered by planset-35). Each becomes its own planset when taken up.
