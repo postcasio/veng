@@ -4,8 +4,8 @@ The minimal veng game: the smallest app that opens a window and renders a lit,
 rotating cube. **Copy this directory to start a new veng game.**
 
 Where `hello-triangle` is the engine's *maximal* sample — every battery, the full
-debug UI, multiple build configurations — this is its *minimal* counterpart: no
-debug UI, no tuning panels, no custom component or system, the smallest correct
+debug UI, the ECS/systems/prefab/level story — this is its *minimal* counterpart:
+no debug UI, no tuning panels, no custom component or system, the smallest correct
 app. Both are migrated in the same pass as every breaking change, so the template
 is the standing check that a newcomer's starting point still compiles and runs.
 
@@ -25,9 +25,12 @@ is the standing check that a newcomer's starting point still compiles and runs.
 
 The asset pack (`assets/`) is one trivial flat surface material plus its fragment
 shader; the cube is a recipe and the world is built in code, so there is nothing
-else to cook. It ships **no `project.veng`**, cooking via the zero-config codec
-default — the template demonstrates the smallest app, not the build-configuration
-surface.
+else to cook. It ships a `configs/` set (`project.veng` + a `*.buildcfg` per ship
+target — macOS / Windows / Linux), so a copy starts with the per-platform cook
+already wired: a bare `cmake --build` cooks the host-matching configuration, and
+`cook-all-packs` builds them all. The build-configuration surface is the same one
+`hello-triangle` demonstrates; the texture codec each role resolves to is edited in
+the editor's **Project Settings** panel.
 
 Build and run (from the repo root):
 

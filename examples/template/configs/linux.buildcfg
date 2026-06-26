@@ -1,0 +1,13 @@
+{
+  "name": "linux",
+  "target": "linux-x64",
+  "outputSuffix": "-linux",
+  "compressionLevel": 19,
+  "formats": {
+    "Color": "BC7Srgb",
+    "Normal": "BC7Unorm",
+    "Mask": "BC7Unorm",
+    "HDR": "RGBA16Sfloat",
+    "UI": "BC7Unorm"
+  }
+}

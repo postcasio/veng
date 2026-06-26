@@ -50,7 +50,9 @@ is thin (shared deps + `add_subdirectory` per lib).
   (`project.veng` + a `*.buildcfg` per ship target).
 - `examples/template/` — the **minimal** sample: the smallest correct app a new
   developer copies to start (`veng_add_game`, a window + a rotating cube, world built
-  in code, no debug UI, zero-config cook). It is the engine's minimal conformance
+  in code, no debug UI). Like `hello-triangle` it ships a `configs/` set
+  (`project.veng` + a `*.buildcfg` per ship target: macOS / Windows / Linux), so a copy
+  starts with the per-platform cook already wired. It is the engine's minimal conformance
   surface — **co-migrated with `hello-triangle` on every breaking change** (see
   **Working norms**).
 - `tests/` — `include_hygiene`, `headless_smoke`, `compute_dispatch`, plus the
@@ -187,8 +189,8 @@ A bare `cmake --build` cooks the **host-matching configuration** by default:
 the macOS/ASTC pack with no flag. Override with `-DVENG_BUILD_CONFIG=windows` to cook a
 foreign config (always allowed — the encoder is CPU), and the `cook-all-packs` aggregate
 target builds every configuration's pack for CI / ship. A pack with **no** `project.veng`
-cooks under the zero-config codec default (the hardcoded ASTC fallback), so the minimal
-`examples/template` needs none. The data model is in `engine/CLAUDE.md`, the cook
+cooks under the zero-config codec default (the hardcoded ASTC fallback); both example apps
+ship a `configs/` set, so neither relies on it. The data model is in `engine/CLAUDE.md`, the cook
 resolution + CMake selection in `cooker/CLAUDE.md`, and the editor surface + host-capability
 preview gate in `editor/CLAUDE.md`.
 

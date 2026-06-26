@@ -10,7 +10,8 @@ set(HT_ASSET_DIR "${CMAKE_CURRENT_BINARY_DIR}/assets")
 # from the host triple) names the configuration the launcher's pack cooks under.
 set(HT_CONFIG_macos   ${CMAKE_CURRENT_SOURCE_DIR}/configs/macos.buildcfg)
 set(HT_CONFIG_windows ${CMAKE_CURRENT_SOURCE_DIR}/configs/windows.buildcfg)
-set(HT_SHIP_CONFIGS macos windows)
+set(HT_CONFIG_linux   ${CMAKE_CURRENT_SOURCE_DIR}/configs/linux.buildcfg)
+set(HT_SHIP_CONFIGS macos windows linux)
 
 if (NOT DEFINED HT_CONFIG_${VENG_BUILD_CONFIG})
     message(FATAL_ERROR
