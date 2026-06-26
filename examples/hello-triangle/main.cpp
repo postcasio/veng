@@ -199,17 +199,19 @@ class SpawnPlayerRule final : public SceneSystem
 public:
     void OnStart(Scene& scene, const SystemContext& context) override
     {
-        const Entity session = FindSession(scene);
-        if (session == Entity::Null || scene.Get<Session>(session).Phase != SessionPhase::Playing)
+        // The game-mode config is a scene component on the level's settings entity; find it by
+        // type rather than a well-known entity (Scene::TryGetFirst).
+        const Session* session = scene.TryGetFirst<Session>();
+        if (session == nullptr || session->Phase != SessionPhase::Playing)
         {
             return;
         }
 
-        const GameModeConfig& config = scene.Get<GameModeConfig>(session);
+        const GameModeConfig* config = scene.TryGetFirst<GameModeConfig>();
 
         // The config's player prefab is eager-loaded as a dependency of the scene prefab,
         // so it is resident by the time the simulation starts; skip if it is not.
-        if (!config.PlayerPrefab.IsLoaded())
+        if (config == nullptr || !config->PlayerPrefab.IsLoaded())
         {
             return;
         }
@@ -217,7 +219,7 @@ public:
         // The player prefab uses a cooked, already-resident mesh, so nothing waits on the
         // spawn's batch here; a primitive player would carry a pending batch this rule could
         // surface. Each spawn owns its own batch — the level's does not cover sim-spawned content.
-        m_Spawned = config.PlayerPrefab.Get()->SpawnInto(scene, context.Assets).Roots;
+        m_Spawned = config->PlayerPrefab.Get()->SpawnInto(scene, context.Assets).Roots;
     }
 
     void OnUpdate(Scene& scene, const f32, const SystemContext&) override
@@ -225,9 +227,8 @@ public:
         // The spawn happens once at OnStart; a scoring / win-condition rule is the obvious
         // second system. Here the only per-tick rule action is tearing the player down when
         // the session ends.
-        const Entity session = FindSession(scene);
-        if (session != Entity::Null && !m_Spawned.empty() &&
-            scene.Get<Session>(session).Phase == SessionPhase::Ended)
+        const Session* session = scene.TryGetFirst<Session>();
+        if (session != nullptr && !m_Spawned.empty() && session->Phase == SessionPhase::Ended)
         {
             Despawn(scene);
         }
@@ -236,16 +237,6 @@ public:
     void OnStop(Scene& scene, const SystemContext&) override { Despawn(scene); }
 
 private:
-    // Returns the well-known session entity (the one carrying both Session and its config),
-    // or Entity::Null if the scene authors no game mode.
-    static Entity FindSession(Scene& scene)
-    {
-        Entity found = Entity::Null;
-        scene.Each<Session, GameModeConfig>([&found](const Entity entity, Session&, GameModeConfig&)
-                                            { found = entity; });
-        return found;
-    }
-
     void Despawn(Scene& scene)
     {
         for (const Entity entity : m_Spawned)
@@ -311,13 +302,16 @@ protected:
     // The engine has mounted the pack, loaded the startup level, spawned the world, and seeded the
     // managed view from the level's render settings; the sample seeds its own editable topology
     // copy here, adds its extras, and (smoke) waits on residency before the deterministic capture.
-    void OnWorldLoaded(Scene&, ResidencyBatch& pending) override
+    void OnWorldLoaded(Scene& world, ResidencyBatch& pending) override
     {
-        // Seed the editable topology copy from the same level render settings the engine applied
-        // to the per-frame view, so the debug RenderSettingsEditor starts in sync. The HDRI
-        // environment, exposure, and bloom intensity already rode the engine's view push.
-        const LevelRenderSettings& render = GetWorldLevel().Get()->GetRender();
-        ApplyLevelRenderSettings(render, m_SceneSettings, GetWorldViewState());
+        // Seed the editable topology copy from the level's render settings — now a scene component
+        // the engine seeded, read by the same TryGetFirst query the engine used — so the debug
+        // RenderSettingsEditor starts in sync. The HDRI environment, exposure, and bloom intensity
+        // already rode the engine's view push. Absent (no settings authored) leaves the defaults.
+        if (const LevelRenderSettings* render = world.TryGetFirst<LevelRenderSettings>())
+        {
+            ApplyLevelRenderSettings(*render, m_SceneSettings, GetWorldViewState());
+        }
 
         // SSR is off by default in the engine; the sample opts in to show reflections off the
         // gradient-roughness ground plane (at the engine-default half SSR resolution).

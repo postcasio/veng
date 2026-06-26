@@ -240,6 +240,43 @@ namespace Veng
             return static_cast<const T*>(TryGetRaw(entity, m_Registry->IdOf<T>()));
         }
 
+        /// @brief Returns the first component of type T in the scene, or nullptr if none exists.
+        ///
+        /// The lookup for world-scoped config held on an unspecified "settings" entity: a consumer
+        /// queries the component **type**, not a well-known entity, so the config can live on any
+        /// entity (a level seeds one, a prefab authors one). One such component is the expected
+        /// case and is returned; with several, the first in pool order wins and the rest are
+        /// ignored — a loose convention, not an enforced singleton. O(1).
+        /// @tparam T  The component type to find.
+        /// @return Pointer to the first T, or nullptr when the scene has none.
+        template <class T>
+        [[nodiscard]] T* TryGetFirst()
+        {
+            const TypeId id = m_Registry->IdOf<T>();
+            if (PoolCount(id) == 0)
+            {
+                return nullptr;
+            }
+            return static_cast<T*>(TryGetRaw(DensePtr(id)[0], id));
+        }
+
+        /// @brief Returns a const pointer to the first component of type T, or nullptr if none.
+        ///
+        /// The const counterpart of the mutable TryGetFirst; it never bumps the spatial version,
+        /// so a read-only consumer querying world config each frame forces no broadphase rebuild.
+        /// @tparam T  The component type to find.
+        /// @return Const pointer to the first T, or nullptr when the scene has none.
+        template <class T>
+        [[nodiscard]] const T* TryGetFirst() const
+        {
+            const TypeId id = m_Registry->IdOf<T>();
+            if (PoolCount(id) == 0)
+            {
+                return nullptr;
+            }
+            return static_cast<const T*>(TryGetRaw(DensePtr(id)[0], id));
+        }
+
         /// @brief Returns a reference to component T on the entity; fatal assert if absent.
         template <class T>
         [[nodiscard]] T& Get(Entity entity)

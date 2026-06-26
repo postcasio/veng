@@ -109,7 +109,7 @@ namespace VengEditor
             }
         }
 
-        SeedSession(scene, m_GameMode);
+        SeedLevel(scene, m_GameMode, m_Render);
     }
 
     void LevelEditorPanel::LoadConfig()

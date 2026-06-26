@@ -100,15 +100,19 @@ namespace Veng
         LevelRenderSettings m_Render;
     };
 
-    /// @brief Creates the well-known session entity a spawn rule reads to start the game.
+    /// @brief Materializes a level's runtime config onto a settings entity in the scene.
     ///
-    /// Adds one entity carrying a Playing Session plus @p gameMode to @p scene — the
-    /// well-known session FindSession locates. Level::LoadInto calls this after spawning the
-    /// world; the editor's Play calls it too, so a play session reaches the same initialized
-    /// state the runtime does from one code path.
-    /// @param scene     The scene the session entity is created in.
+    /// Adds one entity carrying a Playing Session plus the level's @p gameMode and @p render —
+    /// the level's authored config made available as scene components, so rule systems read the
+    /// game mode (and Session) and the engine reads the render settings by querying the scene
+    /// (Scene::TryGetFirst), never assuming a particular entity. The configs stay authored on the
+    /// Level (and edited as separate level-editor panels); this is where that data enters the
+    /// running world. Level::LoadInto calls this after spawning the world; the editor's Play
+    /// calls it too, so a play session reaches the same initialized state the runtime does.
+    /// @param scene     The scene the settings entity is created in.
     /// @param gameMode  The game-mode config carried beside the Playing Session.
-    void SeedSession(Scene& scene, const GameModeConfig& gameMode);
+    /// @param render    The render settings the engine resolves onto the renderer.
+    void SeedLevel(Scene& scene, const GameModeConfig& gameMode, const LevelRenderSettings& render);
 
     /// @brief AssetTypeTrait specialization mapping Level to AssetType::Level.
     template <>

@@ -402,3 +402,32 @@ TEST_CASE("ComputeWorldMatrices matches per-entity WorldMatrix for a forest")
         CHECK(MatrixApproxEqual(all[i], WorldMatrix(*scene, transformEntities[i])));
     }
 }
+
+// --- TryGetFirst -------------------------------------------------------------
+
+TEST_CASE("TryGetFirst returns the first component in dense order, or nullptr when none")
+{
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    // Empty pool (and an unpooled type) resolve to nullptr, not a fault.
+    CHECK(scene->TryGetFirst<A>() == nullptr);
+
+    const Entity e0 = scene->CreateEntity();
+    const Entity e1 = scene->CreateEntity();
+    scene->Add<A>(e0, A{10});
+    scene->Add<A>(e1, A{11});
+
+    // First in dense (insertion) order wins; the rest are ignored.
+    A* first = scene->TryGetFirst<A>();
+    REQUIRE(first != nullptr);
+    CHECK(first->Value == 10);
+
+    // The const overload reads the same component without bumping the spatial version.
+    const u64 version = scene->GetSpatialVersion();
+    const Scene& constScene = *scene;
+    const A* constFirst = constScene.TryGetFirst<A>();
+    REQUIRE(constFirst != nullptr);
+    CHECK(constFirst->Value == 10);
+    CHECK(scene->GetSpatialVersion() == version);
+}

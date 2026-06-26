@@ -1166,12 +1166,24 @@ is the whole scheduling mechanism: no dependency graph, no parallelism.
 
 **A game mode is a `Session` state component + rule systems — no object, no registry.** A
 **`Session { Phase, Elapsed, Score }`** component (`SessionPhase { NotStarted, Playing,
-Ended }`) holds the mode's server-authoritative state on a well-known session entity; a
+Ended }`) holds the mode's server-authoritative state on a settings entity; a
 **`GameModeConfig`** beside it names the player prefab and mode parameters (its JSON key is
 `"gameMode"`). The "mode" is a *selectable set of rule systems* (spawn-on-start, scoring,
 win-condition) reading and writing the `Session`; begin/end-play is the systems'
 `OnStart`/`OnStop` plus `SessionPhase` transitions. Selecting a mode is choosing a config
 plus a registered rule set — no C++ path picks it, no `GameModeRegistry`, no ABI bump.
+
+**World-scoped config is a component found by type, not on a designated entity.** A rule
+system reads the `Session`/`GameModeConfig` (and the engine reads `LevelRenderSettings`)
+through **`Scene::TryGetFirst<T>()`** — the first component of a type, or `nullptr`. So
+world/level config lives on *some* settings entity without any consumer naming a well-known
+one: a `Level` seeds level-scoped config onto one (see `Level`), and genuinely world-scoped
+config (a future `PhysicsSettings` holding gravity, say) is just authored as a component on
+an entity in the world prefab. One such component is the expected case; with several the
+first wins and the rest are ignored — a loose convention, deliberately **not** an enforced
+singleton or a side-channel resource store (the data stays ordinary component data, riding
+the one cook/serialize/inspector/replication pipeline). Absent → the consumer falls back to a
+default, the same schema-tolerance a missing input gets.
 
 **Systems are a catalog; selection and order are level data; config is components.** A
 `SceneSystem` declares a stable **`SystemId`** (a `u64` id space alongside `AssetId`/`TypeId`,
@@ -1206,11 +1218,16 @@ asset refs resolve as ordinary load-time dependencies. **`Level::LoadInto(AssetM
 const SystemRegistry&) → LevelInstance`** is what *starts the game*: it spawns the world
 prefab into a fresh `Scene`, builds a `SceneSimulation` from the level's `SystemId` set
 against the catalog and **attaches it to the `Scene`** (`Scene::SetSimulation` — the scene
-owns its simulation), and seeds a `Session` entity from the game-mode config, returning a
+owns its simulation), and **`SeedLevel`s a settings entity** carrying a Playing `Session` plus
+the level's `GameModeConfig` and `LevelRenderSettings` as components, returning a
 `LevelInstance { Unique<Scene> World; ResidencyBatch Pending; }` the app ticks (via
-`Scene::TickSimulation`) and renders. A game is assembled as authored data, not hand-spawned
-in `main.cpp`; the engine-managed game world (see **Application**) drives this end to end so a
-minimal `main.cpp` writes none of it.
+`Scene::TickSimulation`) and renders. The level's config (game mode, render settings) stays
+**authored on the `Level`** (edited as separate level-editor panels, cooked into the level
+blob) but enters the running world as scene components — so rule systems and the engine read
+it by `Scene::TryGetFirst<T>()`, the engine resolving `LevelRenderSettings` onto the renderer
+from the scene rather than the `Level` object. A game is assembled as authored data, not
+hand-spawned in `main.cpp`; the engine-managed game world (see **Application**) drives this end
+to end so a minimal `main.cpp` writes none of it.
 
 ## Project settings & build configurations
 

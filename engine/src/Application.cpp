@@ -145,17 +145,23 @@ namespace Veng
         VE_ASSERT(level.has_value(), "{}", level.error().Detail);
         m_WorldLevel = *level;
 
-        // Seed the managed viewport's topology and the per-frame view knobs from the level's render
-        // settings, starting from the configured initial settings, then apply the topology.
-        Renderer::SceneRendererSettings settings = m_Info.ManagedViewport->Settings;
-        ApplyLevelRenderSettings(m_WorldLevel.Get()->GetRender(), settings, m_WorldView);
-        m_PrimaryViewport->Configure(settings);
-
-        // Spawn the world (the scene owns the level's simulation) and hand it to the subclass before
-        // the simulation starts, so a game can wait on residency or capture input focus first.
+        // Spawn the world first (the scene owns the level's simulation): LoadInto seeds the level's
+        // render settings onto a settings entity, so the renderer config is read from the scene by
+        // the same TryGetFirst query a system uses, never from the Level asset directly.
         LevelInstance instance = m_WorldLevel.Get()->LoadInto(*m_AssetManager, m_SystemRegistry);
         m_World = std::move(instance.World);
 
+        // Seed the managed viewport's topology and the per-frame view knobs from the level's render
+        // settings (a scene component now), starting from the configured initial settings.
+        Renderer::SceneRendererSettings settings = m_Info.ManagedViewport->Settings;
+        if (const LevelRenderSettings* render = m_World->TryGetFirst<LevelRenderSettings>())
+        {
+            ApplyLevelRenderSettings(*render, settings, m_WorldView);
+        }
+        m_PrimaryViewport->Configure(settings);
+
+        // Hand the world to the subclass before the simulation starts, so a game can read its
+        // config from the scene, wait on residency, or capture input focus first.
         OnWorldLoaded(*m_World, instance.Pending);
 
         m_World->StartSimulation(SystemContext{.Assets = *m_AssetManager, .Input = *m_Input});

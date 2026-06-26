@@ -41,17 +41,18 @@ namespace Veng
         Prefab::SpawnResult spawned = m_World.Get()->SpawnInto(*instance.World, manager);
         instance.Pending = std::move(spawned.Pending);
 
-        // The Session entity is level-scoped, not world-content, so the loader seeds it from
-        // the level's game-mode config rather than the world authoring it.
-        SeedSession(*instance.World, m_GameMode);
+        // The level's config is level-scoped, not world-content, so the loader materializes it
+        // onto a settings entity from the level's data rather than the world prefab authoring it.
+        SeedLevel(*instance.World, m_GameMode, m_Render);
 
         return instance;
     }
 
-    void SeedSession(Scene& scene, const GameModeConfig& gameMode)
+    void SeedLevel(Scene& scene, const GameModeConfig& gameMode, const LevelRenderSettings& render)
     {
-        const Entity session = scene.CreateEntity();
-        scene.Add<Session>(session, Session{.Phase = SessionPhase::Playing});
-        scene.Add<GameModeConfig>(session, gameMode);
+        const Entity settings = scene.CreateEntity();
+        scene.Add<Session>(settings, Session{.Phase = SessionPhase::Playing});
+        scene.Add<GameModeConfig>(settings, gameMode);
+        scene.Add<LevelRenderSettings>(settings, render);
     }
 }

@@ -78,12 +78,12 @@ namespace VengEditor
             return &m_Systems;
         }
 
-        /// @brief Seeds the play clone with the level's Session + game-mode config, player prefab made resident.
+        /// @brief Seeds the play clone with the level's settings entity, player prefab made resident.
         ///
         /// Drives the play clone to the same initialized state Level::LoadInto reaches at
-        /// runtime: SeedSession adds the Playing Session the spawn rule reads, and the
-        /// game-mode player prefab is forced resident (a LoadSync, skipped when already loaded)
-        /// so the rule has something to spawn at Start.
+        /// runtime: SeedLevel adds the Playing Session, game-mode config, and render settings the
+        /// systems and engine read, and the game-mode player prefab is forced resident (a
+        /// LoadSync, skipped when already loaded) so the rule has something to spawn at Start.
         /// @param scene The play clone the level systems run over.
         void SeedPlayScene(Veng::Scene& scene) override;
 
