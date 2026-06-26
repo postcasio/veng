@@ -624,6 +624,13 @@ if (VENG_BUILD_TESTS)
     add_test(NAME headless_smoke COMMAND veng_test_headless_smoke)
     set_tests_properties(headless_smoke PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
 
+    # ASTC capability probe for smoke_golden. The migrated hello-triangle scene
+    # cooks ASTC textures, so the golden is reproducible only on a device that
+    # supports textureCompressionASTC_LDR; this binary exits 77 when the codec is
+    # absent (or no ICD is present) so the golden check skips rather than fails.
+    add_executable(veng_test_astc_probe tests/astc_probe.cpp)
+    target_link_libraries(veng_test_astc_probe PRIVATE veng_test_support)
+
     # Compute dispatch test (plan 05): headless graphics -> compute -> graphics
     # render graph proving cmd.Dispatch and the storage-image barrier chain.
     # Skips (SKIP_RETURN_CODE 77) with no Vulkan ICD.
@@ -834,6 +841,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
             -D VENG_SMOKE_BIN=$<TARGET_FILE:hello_triangle-launcher>
             -D VENG_COMPARE_BIN=$<TARGET_FILE:veng_test_golden_compare>
             -D VENG_PROBE_BIN=$<TARGET_FILE:veng_test_headless_smoke>
+            -D VENG_ASTC_PROBE_BIN=$<TARGET_FILE:veng_test_astc_probe>
             -D VENG_GOLDEN=${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/hello_triangle_scene.png
             -D VENG_TMP=${CMAKE_CURRENT_BINARY_DIR}/smoke_golden_capture.ppm
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SmokeGolden.cmake

@@ -1,7 +1,6 @@
 {
   "image": "ground_orm_gradient.png",
   "srgb": false,
-  "compression": "none",
   "sampler": {
     "min": "linear",
     "mag": "linear",

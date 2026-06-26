@@ -15,4 +15,10 @@ namespace Veng::Test
     // present and usable). Creates and immediately destroys a throwaway
     // instance; cheap enough to call once at the top of a GPU test's main().
     [[nodiscard]] bool HasVulkanDriver();
+
+    // True if any present physical device reports textureCompressionASTC_LDR.
+    // Gates a test whose cooked assets are ASTC-compressed: a device without the
+    // codec gets AssetError::Unsupported and samples the fallback, so such a test
+    // must skip rather than fail. Returns false when no usable driver is present.
+    [[nodiscard]] bool HasAstcSupport();
 }

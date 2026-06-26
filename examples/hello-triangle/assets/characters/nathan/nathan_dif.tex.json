@@ -1,7 +1,6 @@
 {
   "image": "tex/nathan_dif.jpg",
   "srgb": true,
-  "compression": "none",
   "max_size": 2048,
   "sampler": {
     "min": "linear",

@@ -3,11 +3,16 @@
 // Plain Vulkan C API on purpose: this TU links Vulkan PRIVATE and has nothing
 // to do with veng's vulkan.hpp / -fno-exceptions configuration, so the C API
 // keeps the probe self-contained and free of that setup.
+#include <vector>
+
 #include <vulkan/vulkan.h>
 
-namespace Veng::Test
+namespace
 {
-    bool HasVulkanDriver()
+    // Creates a throwaway instance with the portability bits MoltenVK needs.
+    // Returns VK_NULL_HANDLE when no loader + ICD is present; the caller owns
+    // and destroys the instance on success.
+    VkInstance CreateProbeInstance()
     {
         VkApplicationInfo app{};
         app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -30,10 +35,54 @@ namespace Veng::Test
         VkInstance instance = VK_NULL_HANDLE;
         if (vkCreateInstance(&info, nullptr, &instance) != VK_SUCCESS)
         {
+            return VK_NULL_HANDLE;
+        }
+        return instance;
+    }
+}
+
+namespace Veng::Test
+{
+    bool HasVulkanDriver()
+    {
+        VkInstance instance = CreateProbeInstance();
+        if (instance == VK_NULL_HANDLE)
+        {
+            return false;
+        }
+        vkDestroyInstance(instance, nullptr);
+        return true;
+    }
+
+    bool HasAstcSupport()
+    {
+        VkInstance instance = CreateProbeInstance();
+        if (instance == VK_NULL_HANDLE)
+        {
             return false;
         }
 
+        uint32_t deviceCount = 0;
+        vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+        std::vector<VkPhysicalDevice> devices(deviceCount);
+        if (deviceCount > 0)
+        {
+            vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+        }
+
+        bool supported = false;
+        for (VkPhysicalDevice device : devices)
+        {
+            VkPhysicalDeviceFeatures features{};
+            vkGetPhysicalDeviceFeatures(device, &features);
+            if (features.textureCompressionASTC_LDR == VK_TRUE)
+            {
+                supported = true;
+                break;
+            }
+        }
+
         vkDestroyInstance(instance, nullptr);
-        return true;
+        return supported;
     }
 }

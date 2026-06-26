@@ -8,12 +8,20 @@
 # renders a fixed pose (HelloTriangleApp::SmokeAngle), so the capture is
 # reproducible run to run and a fuzzy compare catches render regressions.
 #
-# Skip contract: hello_triangle has no Vulkan-ICD probe of its own, so this
-# script runs veng_test_headless_smoke first purely as a probe — if it exits 77 (no
-# usable ICD) the golden check is skipped and the script succeeds, the same way
-# validation_gate treats a 77 from its binaries.
+# The golden is codec-dependent: hello-triangle's textures cook to ASTC 4x4 LDR
+# (the cook default), so the capture is only reproducible on a device that
+# supports textureCompressionASTC_LDR. It was shot on Apple M2 (MoltenVK) with
+# the astc-encoder ASTCENC_PRE_MEDIUM preset; the default golden_compare
+# tolerance (channel delta 8 over <=0.5% of pixels) absorbs GPU float jitter.
+#
+# Skip contract: hello_triangle has no probe of its own, so this script runs two
+# probes first. veng_test_headless_smoke exits 77 when no usable Vulkan ICD is
+# present; veng_test_astc_probe exits 77 when no present device supports ASTC. On
+# either 77 the golden check is skipped and the script succeeds (a device without
+# ASTC gets AssetError::Unsupported and renders the scene untextured, so the
+# golden would diverge), the same way validation_gate treats a 77.
 
-foreach (VAR VENG_SMOKE_BIN VENG_COMPARE_BIN VENG_PROBE_BIN VENG_GOLDEN VENG_TMP)
+foreach (VAR VENG_SMOKE_BIN VENG_COMPARE_BIN VENG_PROBE_BIN VENG_ASTC_PROBE_BIN VENG_GOLDEN VENG_TMP)
     if (NOT DEFINED ${VAR})
         message(FATAL_ERROR "smoke_golden: ${VAR} not set")
     endif ()
@@ -24,6 +32,16 @@ execute_process(COMMAND "${VENG_PROBE_BIN}" RESULT_VARIABLE PROBE_RESULT
                 OUTPUT_QUIET ERROR_QUIET)
 if (PROBE_RESULT EQUAL 77)
     message(STATUS "smoke_golden: skipped (no Vulkan ICD)")
+    return ()
+endif ()
+
+# ---- ASTC capability probe --------------------------------------------------
+# The golden is codec-dependent: skip where ASTC is unavailable, since the scene
+# would render untextured and diverge from the ASTC-shot golden.
+execute_process(COMMAND "${VENG_ASTC_PROBE_BIN}" RESULT_VARIABLE ASTC_PROBE_RESULT
+                OUTPUT_QUIET ERROR_QUIET)
+if (ASTC_PROBE_RESULT EQUAL 77)
+    message(STATUS "smoke_golden: skipped (device lacks textureCompressionASTC_LDR)")
     return ()
 endif ()
 
