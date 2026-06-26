@@ -33,16 +33,38 @@ namespace Veng
                 return Renderer::Format::BC7Unorm;
             case 22:
                 return Renderer::Format::BC7Srgb;
+            case 23:
+                return Renderer::Format::ASTC4x4Unorm;
+            case 24:
+                return Renderer::Format::ASTC4x4Srgb;
             default:
                 return std::nullopt;
             }
         }
 
-        // True when the format is a BC block-compressed format, which requires the device's
-        // textureCompressionBC feature to sample.
-        bool IsBlockCompressed(Renderer::Format format)
+        // The compressed-codec family a format belongs to, gating it against the matching device
+        // capability. A cooked block-compressed blob is sampled directly (no transcode), so the
+        // device must support the family the cook chose.
+        enum class CompressedCodec
         {
-            return format == Renderer::Format::BC7Unorm || format == Renderer::Format::BC7Srgb;
+            None,
+            BC,
+            ASTC,
+        };
+
+        CompressedCodec CodecOf(Renderer::Format format)
+        {
+            switch (format)
+            {
+            case Renderer::Format::BC7Unorm:
+            case Renderer::Format::BC7Srgb:
+                return CompressedCodec::BC;
+            case Renderer::Format::ASTC4x4Unorm:
+            case Renderer::Format::ASTC4x4Srgb:
+                return CompressedCodec::ASTC;
+            default:
+                return CompressedCodec::None;
+            }
         }
 
         optional<Renderer::Filter> BridgeFilter(u32 value)
@@ -134,10 +156,12 @@ namespace Veng
             });
         }
 
-        // A BC-cooked texture cannot be sampled on a device without textureCompressionBC, and the
-        // runtime does not transcode — reject rather than crash or CPU-decode. Logged once so the
-        // missing capability is observable without flooding the log per texture.
-        if (IsBlockCompressed(*format) && !context.IsBlockCompressionSupported())
+        // A block-compressed texture is sampled directly with no transcode, so the device must
+        // support the codec's feature the cook chose. A device lacking it gets a recoverable
+        // Unsupported, not a crash or CPU-decode — logged once per codec so the missing capability
+        // is observable without flooding the log per texture.
+        const CompressedCodec codec = CodecOf(*format);
+        if (codec == CompressedCodec::BC && !context.IsBlockCompressionSupported())
         {
             static bool s_BlockCompressionWarned = false;
             if (!s_BlockCompressionWarned)
@@ -150,6 +174,22 @@ namespace Veng
                 .Kind = AssetError::Unsupported,
                 .Id = id,
                 .Detail = "texture: BC block compression unsupported on this device",
+            });
+        }
+        if (codec == CompressedCodec::ASTC && !context.IsAstcSupported())
+        {
+            static bool s_AstcWarned = false;
+            if (!s_AstcWarned)
+            {
+                Log::Warn("TextureLoader: an ASTC-compressed texture was cooked but the device "
+                          "lacks textureCompressionASTC_LDR; the texture is unsupported on this "
+                          "device.");
+                s_AstcWarned = true;
+            }
+            return std::unexpected(AssetLoadError{
+                .Kind = AssetError::Unsupported,
+                .Id = id,
+                .Detail = "texture: ASTC block compression unsupported on this device",
             });
         }
 

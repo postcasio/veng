@@ -1,7 +1,7 @@
 {
-  "image": "ground_flatnormal.png",
+  "image": "texture_8x8.png",
   "srgb": false,
-  "compression": "none",
+  "compression": "astc",
   "sampler": {
     "min": "linear",
     "mag": "linear",

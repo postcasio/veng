@@ -6,8 +6,9 @@
 /// @brief Format block geometry and per-level byte sizing, shared by upload-region math and
 ///        the cooked-texture loader's level walk.
 ///
-/// Block-compressed formats (BC7) store one encoded block per @c BlockWidth x @c BlockHeight
-/// texel tile; uncompressed formats report a 1x1 block, so a single helper sizes every format.
+/// Block-compressed formats (BC7, ASTC 4x4) store one encoded block per @c BlockWidth x
+/// @c BlockHeight texel tile; uncompressed formats report a 1x1 block, so a single helper sizes
+/// every format.
 /// This header is plain integer arithmetic over Renderer::Format — it pulls in no backend type,
 /// keeping it inside the public-header hygiene guarantee.
 namespace Veng::Renderer
@@ -39,6 +40,8 @@ namespace Veng::Renderer
         {
         case Format::BC7Unorm:
         case Format::BC7Srgb:
+        case Format::ASTC4x4Unorm:
+        case Format::ASTC4x4Srgb:
             return {.BlockWidth = 4, .BlockHeight = 4, .Bytes = 16};
         case Format::R8Unorm:
             return {.BlockWidth = 1, .BlockHeight = 1, .Bytes = 1};

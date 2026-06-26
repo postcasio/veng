@@ -1,6 +1,7 @@
 {
   "image": "brick_normal.jpg",
   "srgb": false,
+  "compression": "none",
   "sampler": {
     "min": "linear",
     "mag": "linear",

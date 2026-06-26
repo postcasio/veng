@@ -1,6 +1,7 @@
 {
   "image": "brick_basecolor.jpg",
   "srgb": true,
+  "compression": "none",
   "sampler": {
     "min": "linear",
     "mag": "linear",

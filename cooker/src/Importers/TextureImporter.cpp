@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 
+#include <astcenc.h>
 #include <bc7enc.h>
 #include <fmt/format.h>
 #include <stb_image.h>
@@ -17,14 +18,16 @@ namespace Veng::Cook
 {
     namespace
     {
-        // The texture cook's compression codec. None packs uncompressed RGBA8; BC7 is the only
-        // block codec so far. This is the minimal internal seam where a per-texture/per-pack codec
-        // choice attaches — a texture opts into BC7 with "compression": "bc7", and absent the key
-        // a texture stays uncompressed RGBA8.
+        // The texture cook's compression codec. ASTC is the default (the Metal-blessed codec on the
+        // primary MoltenVK platform); BC7 is selectable for the desktop/Windows target; None packs
+        // uncompressed RGBA8. This is the minimal internal seam where a per-texture/per-pack codec
+        // choice attaches — a texture selects one with "compression": "astc"/"bc7"/"none", and
+        // absent the key a texture cooks to the default (ASTC).
         enum class TextureCodec
         {
             None,
             BC7,
+            ASTC,
         };
 
         optional<TextureCodec> ParseCodec(const string& name)
@@ -37,19 +40,27 @@ namespace Veng::Cook
             {
                 return TextureCodec::BC7;
             }
+            if (name == "astc")
+            {
+                return TextureCodec::ASTC;
+            }
             return std::nullopt;
         }
 
         // Renderer::Format ordinals (Types.h), hand-synced per the cycle-avoidance rule:
-        // 2 = RGBA8Unorm, 3 = RGBA8Srgb, 21 = BC7Unorm, 22 = BC7Srgb. CookedTextureHeader.Format
-        // stores these literals and the engine's TextureLoader::BridgeFormat reads them back.
+        // 2 = RGBA8Unorm, 3 = RGBA8Srgb, 21 = BC7Unorm, 22 = BC7Srgb, 23 = ASTC4x4Unorm,
+        // 24 = ASTC4x4Srgb. CookedTextureHeader.Format stores these literals and the engine's
+        // TextureLoader::BridgeFormat reads them back.
         constexpr u32 RGBA8UnormFormat = 2;
         constexpr u32 RGBA8SrgbFormat = 3;
         constexpr u32 BC7UnormFormat = 21;
         constexpr u32 BC7SrgbFormat = 22;
+        constexpr u32 ASTC4x4UnormFormat = 23;
+        constexpr u32 ASTC4x4SrgbFormat = 24;
 
-        // BC7 encodes a 4x4 texel tile into one 16-byte block; the full mip chain (down to 1x1)
-        // pads partial edge tiles by replicating the level's edge texels into the 4x4 block.
+        // BC7 and ASTC 4x4 both encode a 4x4 texel tile into one 16-byte block; the full mip chain
+        // (down to 1x1) pads partial edge tiles by replicating the level's edge texels into the 4x4
+        // block.
         constexpr u32 BlockSize = 4;
         constexpr usize BlockBytes = 16;
 
@@ -58,6 +69,68 @@ namespace Veng::Cook
         // Defaults (perceptual weights, all modes, 64 partitions) at uber level 1 — a balanced
         // quality/speed point above the level-0 default.
         constexpr u32 BC7UberLevel = 1;
+
+        // ASTC 4x4 quality preset, expressed as an astcenc effort level in [0, 100]. Golden and
+        // cook determinism depend on this staying fixed: ASTCENC_PRE_MEDIUM (60) paired with the
+        // ISA "none" scalar codec and ASTCENC_INVARIANCE produces reproducible blocks run to run, a
+        // balanced quality/speed point. (ASTCENC_PRE_MEDIUM is a static const float, not constexpr.)
+        const f32 AstcQuality = ASTCENC_PRE_MEDIUM;
+
+        // Encodes one RGBA8 mip level (tightly packed, row-major) to ASTC 4x4 LDR blocks through the
+        // ARM astc-encoder. The encoder pads partial edge tiles internally, so the full chain down
+        // to 1x1 encodes. @p profile selects the sRGB-aware LDR profile.
+        Result<vector<u8>> EncodeAstcLevel(u8* rgba, u32 width, u32 height, astcenc_profile profile)
+        {
+            astcenc_config config{};
+            const astcenc_error configStatus =
+                astcenc_config_init(profile, BlockSize, BlockSize, 1, AstcQuality,
+                                    ASTCENC_FLG_USE_DECODE_UNORM8, &config);
+            if (configStatus != ASTCENC_SUCCESS)
+            {
+                return std::unexpected(fmt::format("texture importer: ASTC config init failed: {}",
+                                                   astcenc_get_error_string(configStatus)));
+            }
+
+            astcenc_context* context = nullptr;
+            const astcenc_error allocStatus = astcenc_context_alloc(&config, 1, &context);
+            if (allocStatus != ASTCENC_SUCCESS)
+            {
+                return std::unexpected(
+                    fmt::format("texture importer: ASTC context alloc failed: {}",
+                                astcenc_get_error_string(allocStatus)));
+            }
+
+            void* slice = rgba;
+            astcenc_image image{
+                .dim_x = width,
+                .dim_y = height,
+                .dim_z = 1,
+                .data_type = ASTCENC_TYPE_U8,
+                .data = &slice,
+            };
+
+            const astcenc_swizzle swizzle{
+                .r = ASTCENC_SWZ_R,
+                .g = ASTCENC_SWZ_G,
+                .b = ASTCENC_SWZ_B,
+                .a = ASTCENC_SWZ_A,
+            };
+
+            const u32 blocksWide = (width + BlockSize - 1) / BlockSize;
+            const u32 blocksHigh = (height + BlockSize - 1) / BlockSize;
+            vector<u8> blocks(static_cast<usize>(blocksWide) * blocksHigh * BlockBytes);
+
+            const astcenc_error compressStatus =
+                astcenc_compress_image(context, &image, &swizzle, blocks.data(), blocks.size(), 0);
+            astcenc_context_free(context);
+            if (compressStatus != ASTCENC_SUCCESS)
+            {
+                return std::unexpected(fmt::format("texture importer: ASTC compress failed: {}",
+                                                   astcenc_get_error_string(compressStatus)));
+            }
+
+            return blocks;
+        }
 
         // Encodes one RGBA8 mip level (tightly packed, row-major) to BC7 blocks. Partial edge
         // tiles on a non-multiple-of-4 level replicate the nearest in-bounds texel into the 4x4
@@ -190,19 +263,21 @@ namespace Veng::Cook
         const bool srgb =
             texJson.contains("srgb") && texJson["srgb"].is_boolean() && texJson["srgb"].get<bool>();
 
-        // The codec-selection seam: "compression" picks the block codec (BC7 only so far);
-        // absent or "none" cooks uncompressed RGBA8. sRGB-aware — the format pair is chosen from
-        // the texture's sRGB flag below.
-        TextureCodec codec = TextureCodec::None;
+        // The codec-selection seam: "compression" picks the codec; absent the key a texture cooks to
+        // the default (ASTC), the Metal-blessed codec on the primary platform. "bc7" selects BC7 for
+        // the desktop/Windows target, "none" stays uncompressed RGBA8. sRGB-aware — the format pair
+        // is chosen from the texture's sRGB flag below.
+        TextureCodec codec = TextureCodec::ASTC;
         if (texJson.contains("compression") && texJson["compression"].is_string())
         {
             const string codecName = texJson["compression"].get<string>();
             const optional<TextureCodec> parsed = ParseCodec(codecName);
             if (!parsed)
             {
-                return std::unexpected(fmt::format(
-                    "texture importer: '{}': invalid compression '{}' (expected 'none' or 'bc7')",
-                    sourcePath.string(), codecName));
+                return std::unexpected(
+                    fmt::format("texture importer: '{}': invalid compression '{}' (expected "
+                                "'astc', 'bc7', or 'none')",
+                                sourcePath.string(), codecName));
             }
             codec = *parsed;
         }
@@ -279,11 +354,14 @@ namespace Veng::Cook
             }
         }
 
-        // Format is the codec's sRGB-aware pair: BC7Srgb/Unorm for the block codec, RGBA8Srgb/Unorm
+        // Format is the codec's sRGB-aware pair: ASTC4x4Srgb/Unorm, BC7Srgb/Unorm, or RGBA8Srgb/Unorm
         // uncompressed, keyed off the texture's sRGB flag.
         u32 format = 0;
         switch (codec)
         {
+        case TextureCodec::ASTC:
+            format = srgb ? ASTC4x4SrgbFormat : ASTC4x4UnormFormat;
+            break;
         case TextureCodec::BC7:
             format = srgb ? BC7SrgbFormat : BC7UnormFormat;
             break;
@@ -384,11 +462,13 @@ namespace Veng::Cook
             }
         }
 
-        // The byte size of one mip level in the chosen codec: BC7 blocks (ceil(w/4)*ceil(h/4)*16)
-        // or uncompressed RGBA8 (w*h*4). Mirrors the engine's BytesForLevel.
-        const auto levelBytes = [codec](u32 levelWidth, u32 levelHeight) -> usize
+        // The byte size of one mip level in the chosen codec: 4x4 16-byte blocks
+        // (ceil(w/4)*ceil(h/4)*16) for BC7 and ASTC, or uncompressed RGBA8 (w*h*4). Mirrors the
+        // engine's BytesForLevel.
+        const bool blockCodec = codec == TextureCodec::BC7 || codec == TextureCodec::ASTC;
+        const auto levelBytes = [blockCodec](u32 levelWidth, u32 levelHeight) -> usize
         {
-            if (codec == TextureCodec::BC7)
+            if (blockCodec)
             {
                 const u32 blocksWide = (levelWidth + BlockSize - 1) / BlockSize;
                 const u32 blocksHigh = (levelHeight + BlockSize - 1) / BlockSize;
@@ -397,8 +477,9 @@ namespace Veng::Cook
             return static_cast<usize>(levelWidth) * levelHeight * 4;
         };
 
-        // Encodes one RGBA8 level into the codec's on-disk bytes at blob[writeOffset]. BC7 packs
-        // 4x4 blocks; None copies the RGBA8 bytes through unchanged.
+        // Encodes one RGBA8 level into the codec's on-disk bytes at blob[writeOffset]. BC7 and ASTC
+        // pack 4x4 blocks; None copies the RGBA8 bytes through unchanged. The ASTC profile is the
+        // sRGB-aware LDR profile matching the chosen format pair.
         bc7enc_compress_block_params params{};
         if (codec == TextureCodec::BC7)
         {
@@ -406,19 +487,30 @@ namespace Veng::Cook
             bc7enc_compress_block_params_init(&params);
             params.m_uber_level = BC7UberLevel;
         }
+        const astcenc_profile astcProfile = srgb ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR;
 
-        const auto packLevel =
-            [&](vector<u8>& blob, usize writeOffset, const u8* rgba, u32 lw, u32 lh)
+        const auto packLevel = [&](vector<u8>& blob, usize writeOffset, u8* rgba, u32 lw,
+                                   u32 lh) -> VoidResult
         {
             if (codec == TextureCodec::BC7)
             {
                 const vector<u8> blocks = EncodeBc7Level(rgba, lw, lh, params);
                 std::memcpy(blob.data() + writeOffset, blocks.data(), blocks.size());
             }
+            else if (codec == TextureCodec::ASTC)
+            {
+                const Result<vector<u8>> blocks = EncodeAstcLevel(rgba, lw, lh, astcProfile);
+                if (!blocks)
+                {
+                    return std::unexpected(blocks.error());
+                }
+                std::memcpy(blob.data() + writeOffset, blocks->data(), blocks->size());
+            }
             else
             {
                 std::memcpy(blob.data() + writeOffset, rgba, static_cast<usize>(lw) * lh * 4);
             }
+            return {};
         };
 
         // Each mip's RGBA8 pixels are generated (level 0 is the decoded base; each successive
@@ -439,7 +531,12 @@ namespace Veng::Cook
         usize writeOffset = sizeof(header);
 
         // Level 0 packs from the decoded (possibly downscaled) base pixels directly.
-        packLevel(blob, writeOffset, pixelData.data(), baseWidth, baseHeight);
+        if (const VoidResult packed =
+                packLevel(blob, writeOffset, pixelData.data(), baseWidth, baseHeight);
+            !packed)
+        {
+            return std::unexpected(packed.error());
+        }
         writeOffset += levelBytes(baseWidth, baseHeight);
 
         for (u32 level = 1; level < mipCount; level++)
@@ -464,7 +561,12 @@ namespace Veng::Cook
                                 sourcePath.string(), level));
             }
 
-            packLevel(blob, writeOffset, levelRgba.data(), levelWidth, levelHeight);
+            if (const VoidResult packed =
+                    packLevel(blob, writeOffset, levelRgba.data(), levelWidth, levelHeight);
+                !packed)
+            {
+                return std::unexpected(packed.error());
+            }
             writeOffset += levelBytes(levelWidth, levelHeight);
         }
 

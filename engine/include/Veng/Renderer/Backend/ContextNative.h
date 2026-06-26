@@ -269,5 +269,11 @@ namespace Veng::Renderer
         /// Sampling a BC block-compressed image is legal only with the feature enabled; set in
         /// CreateDevice from the physical device's reported support.
         bool BlockCompressionSupported = false;
+
+        /// @brief True when textureCompressionASTC_LDR was supported and enabled at device creation.
+        ///
+        /// Sampling an ASTC LDR block-compressed image is legal only with the feature enabled; set
+        /// in CreateDevice from the physical device's reported support.
+        bool AstcSupported = false;
     };
 }

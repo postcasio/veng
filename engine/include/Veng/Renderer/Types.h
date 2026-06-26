@@ -67,6 +67,14 @@ namespace Veng::Renderer
         ///        Appended at the fixed ordinal 22 for cooked-blob integer stability; the cooker
         ///        writes the literal and the texture loader reads it.
         BC7Srgb,
+        /// @brief ASTC LDR block-compressed RGBA, normalized [0,1], linear-encoded (4x4 16-byte
+        ///        blocks). Appended at the fixed ordinal 23 for cooked-blob integer stability; the
+        ///        cooker writes the literal and the texture loader reads it.
+        ASTC4x4Unorm,
+        /// @brief ASTC LDR block-compressed RGBA, sRGB-encoded (4x4 16-byte blocks).
+        ///        Appended at the fixed ordinal 24 for cooked-blob integer stability; the cooker
+        ///        writes the literal and the texture loader reads it.
+        ASTC4x4Srgb,
     };
 
     /// @brief Requested display output mode for the presentable swapchain.

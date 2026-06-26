@@ -184,3 +184,65 @@ TEST_CASE("Cooker: the BC7 sRGB/Unorm ordinals match Renderer::Format")
     CHECK(static_cast<u32>(Renderer::Format::BC7Unorm) == 21);
     CHECK(static_cast<u32>(Renderer::Format::BC7Srgb) == 22);
 }
+
+TEST_CASE("Cooker: cooks an ASTC texture to Format 23/24 with the expected per-level block sizes")
+{
+    const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
+    const path packJson = fixtureDir / "texture_astc_pack.json";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_texture_astc.vengpack";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    const VoidResult cookResult = cooker.CookPack(packJson, outArchive);
+    REQUIRE(cookResult.has_value());
+
+    const Result<ArchiveReader> reader = ArchiveReader::Open(outArchive);
+    REQUIRE(reader.has_value());
+
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xD8C88B8D55FEEB1BULL});
+    REQUIRE(entry.has_value());
+    CHECK(entry->Type == AssetType::Texture);
+
+    REQUIRE(entry->Blob.size() >= sizeof(CookedTextureHeader));
+
+    CookedTextureHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+
+    // The fixture is a linear (srgb: false) ASTC texture: Format ordinal 23 = ASTC4x4Unorm. The
+    // ordinal is hand-synced to Renderer::Format, so assert against the enum to catch a
+    // transposition.
+    CHECK(header.Format == 23);
+    CHECK(header.Format == static_cast<u32>(Renderer::Format::ASTC4x4Unorm));
+    CHECK(header.Width == 8);
+    CHECK(header.Height == 8);
+    // An 8x8 source halves through 8, 4, 2, 1 — four levels.
+    CHECK(header.MipCount == 4);
+
+    // Each level is ASTC 4x4 blocks: ceil(w/4) * ceil(h/4) * 16 bytes — the same block geometry as
+    // BC7. The 2x2 and 1x1 levels are partial edge blocks padded to a full 4x4 block.
+    usize expectedBlockBytes = 0;
+    for (u32 level = 0; level < header.MipCount; level++)
+    {
+        const u32 levelWidth = std::max(1u, header.Width >> level);
+        const u32 levelHeight = std::max(1u, header.Height >> level);
+        const u32 blocksWide = (levelWidth + 3) / 4;
+        const u32 blocksHigh = (levelHeight + 3) / 4;
+        expectedBlockBytes += static_cast<usize>(blocksWide) * blocksHigh * 16;
+    }
+    // 8x8 -> 4 blocks (64B); 4x4 -> 1 (16B); 2x2 -> 1 (16B); 1x1 -> 1 (16B): 112 bytes total.
+    CHECK(expectedBlockBytes == 112);
+    REQUIRE(entry->Blob.size() == sizeof(CookedTextureHeader) + expectedBlockBytes);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: the ASTC sRGB/Unorm ordinals match Renderer::Format")
+{
+    // Guards the hand-synced cycle-avoidance contract: the cooker writes 23/24 and the engine's
+    // BridgeFormat reads them back into these exact Renderer::Format enumerators. A transposition
+    // (23 <-> 24) would slip past a self-consistent round-trip but fail this ordinal pin.
+    CHECK(static_cast<u32>(Renderer::Format::ASTC4x4Unorm) == 23);
+    CHECK(static_cast<u32>(Renderer::Format::ASTC4x4Srgb) == 24);
+}

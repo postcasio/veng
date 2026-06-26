@@ -573,6 +573,11 @@ namespace Veng::Renderer
         return m_Native->BlockCompressionSupported;
     }
 
+    bool Context::IsAstcSupported() const
+    {
+        return m_Native->AstcSupported;
+    }
+
     bool Context::IsGpuTimingSupported() const
     {
         return m_GpuTimingSupported;
@@ -1074,6 +1079,14 @@ namespace Veng::Renderer
         const bool blockCompressionSupported = features2.features.textureCompressionBC;
         BlockCompressionSupported = blockCompressionSupported;
         features2.features.textureCompressionBC = blockCompressionSupported ? vk::True : vk::False;
+
+        // textureCompressionASTC_LDR is the second compressed-format capability, enabled the same
+        // way: a core feature that must be enabled (not just queried) for sampling an ASTC image to
+        // be legal. MoltenVK exposes ASTC broadly on Apple GPUs (wider than BC), so it is the cook
+        // default; an ASTC-cooked texture on a device without it is rejected by the loader.
+        const bool astcSupported = features2.features.textureCompressionASTC_LDR;
+        AstcSupported = astcSupported;
+        features2.features.textureCompressionASTC_LDR = astcSupported ? vk::True : vk::False;
 
         // Timeline semaphores are required for the async-upload sync channel.
         // Fatal-assert if the device lacks support before enabling the feature.

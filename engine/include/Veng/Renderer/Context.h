@@ -138,6 +138,16 @@ namespace Veng::Renderer
         /// texture loader returns AssetError::Unsupported for a BC-cooked texture there.
         [[nodiscard]] bool IsBlockCompressionSupported() const;
 
+        /// @brief Returns true when ASTC LDR block-compressed formats can be sampled by the device.
+        ///
+        /// True only when textureCompressionASTC_LDR was supported by the physical device and was
+        /// therefore enabled at device creation — a core VkPhysicalDeviceFeatures boolean that must
+        /// be enabled for sampling an ASTC image to be legal, not merely queried. MoltenVK exposes
+        /// ASTC broadly on Apple GPUs (the Metal-blessed family, wider support than BC); a device
+        /// without it reports false, and the texture loader returns AssetError::Unsupported for an
+        /// ASTC-cooked texture there.
+        [[nodiscard]] bool IsAstcSupported() const;
+
         /// @brief Returns true when the graphics queue can timestamp GPU work.
         ///
         /// True when the graphics queue family reports a non-zero timestampValidBits and the

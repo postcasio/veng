@@ -43,6 +43,28 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(bc7enc_rdo)
 
+# astc-encoder (ARM) — ASTC LDR block encoder for the TextureImporter, cooker-only (behind
+# VENG_BUILD_TOOLS; never linked into libveng, which uploads the cooked blocks and never encodes).
+# A proper CMake project: build only the scalar-reference (ISA "none") static codec library
+# astcenc-none-static — portable and deterministic, which keeps the cook reproducible — with no
+# CLI, no shared lib, no tests. Pinned to a tagged release.
+# ISA "none" is the portable scalar reference codec; it cannot coexist with the macOS-default
+# universal build, so disable that. ASTCENC_INVARIANCE keeps the encode bit-reproducible run to run.
+set(ASTCENC_ISA_NONE ON CACHE INTERNAL "")
+set(ASTCENC_ISA_NATIVE OFF CACHE INTERNAL "")
+set(ASTCENC_UNIVERSAL_BUILD OFF CACHE INTERNAL "")
+set(ASTCENC_CLI OFF CACHE INTERNAL "")
+set(ASTCENC_SHAREDLIB OFF CACHE INTERNAL "")
+set(ASTCENC_UNITTEST OFF CACHE INTERNAL "")
+set(ASTCENC_INVARIANCE ON CACHE INTERNAL "")
+FetchContent_Declare(
+        astc_encoder
+        GIT_REPOSITORY https://github.com/ARM-software/astc-encoder.git
+        GIT_TAG 5.3.0
+        GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(astc_encoder)
+
 # nlohmann/json — pack + per-asset JSON parsing (cooker-only; the runtime
 # reads the binary archive, never JSON).
 set(JSON_BuildTests OFF CACHE INTERNAL "")
@@ -187,6 +209,7 @@ target_include_directories(veng_cook_objs PRIVATE
         ${xxhash_SOURCE_DIR}
         ${tinyexr_SOURCE_DIR}
         ${bc7enc_rdo_SOURCE_DIR}
+        $<TARGET_PROPERTY:astcenc-none-static,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:ZLIB::ZLIB,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:libzstd_static,INTERFACE_INCLUDE_DIRECTORIES>
 )
@@ -249,7 +272,8 @@ add_library(libveng_cook STATIC
         src/Importers/LevelImporter.cpp)
 add_library(veng::cook ALIAS libveng_cook)
 target_link_libraries(libveng_cook PUBLIC veng_cook_objs veng::veng veng::assetpack)
-target_link_libraries(libveng_cook PRIVATE fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB)
+target_link_libraries(libveng_cook PRIVATE
+        fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB astcenc-none-static)
 target_compile_options(libveng_cook PRIVATE -fno-exceptions)
 
 add_executable(vengc tool/main.cpp)
@@ -261,6 +285,7 @@ target_link_libraries(vengc PRIVATE veng::cook fmt::fmt)
 # vengc links veng, but this one does not, so veng can depend on it.
 add_executable(veng_cook_bootstrap tool/bootstrap_main.cpp)
 target_link_libraries(veng_cook_bootstrap PRIVATE
-        veng_cook_objs veng::assetpack fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB)
+        veng_cook_objs veng::assetpack fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB
+        astcenc-none-static)
 target_compile_options(veng_cook_bootstrap PRIVATE -fno-exceptions)
 target_compile_options(vengc PRIVATE -fno-exceptions)

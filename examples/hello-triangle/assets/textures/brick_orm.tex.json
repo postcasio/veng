@@ -1,6 +1,7 @@
 {
   "image": "brick_orm.png",
   "srgb": false,
+  "compression": "none",
   "sampler": {
     "min": "linear",
     "mag": "linear",

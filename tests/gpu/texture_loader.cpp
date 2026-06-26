@@ -298,6 +298,113 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "texture loader: an ASTC cooked fixture loads and samples (skips without ASTC)")
+{
+    if (!Context.IsAstcSupported())
+    {
+        MESSAGE("textureCompressionASTC_LDR unsupported on this device; skipping ASTC load test");
+        return;
+    }
+
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "texture_astc_pack.json";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_gpu_texture_astc.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Texture>> handle =
+        assets.LoadSync<Texture>(AssetId{0xD8C88B8D55FEEB1BULL});
+    REQUIRE(handle.has_value());
+    REQUIRE(handle->IsLoaded());
+
+    const Texture& texture = *handle->Get();
+    // Linear (srgb: false) ASTC — the loader bridged the cooked Format ordinal 23 to ASTC4x4Unorm.
+    CHECK(texture.GetFormat() == Format::ASTC4x4Unorm);
+    CHECK(texture.GetExtent() == uvec2{8, 8});
+    // The 8x8 source's block-compressed mip chain (8, 4, 2, 1) uploaded from the cooked blob — the
+    // 2x2 and 1x1 levels are non-multiple-of-4 partial-block uploads.
+    CHECK(texture.GetImage()->GetMipLevels() == 4u);
+    CHECK(texture.GetHandle().IsValid());
+    CHECK(texture.GetSamplerHandle().IsValid());
+
+    auto outputImage =
+        Image::Create(Context, {
+                                   .Name = "ASTC Sample Output",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    auto outputView =
+        ImageView::Create(Context, {.Name = "ASTC Sample Output View", .Image = outputImage});
+
+    AssetManager shaderAssets(Context, Tasks, Types);
+    REQUIRE(shaderAssets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    const AssetResult<AssetHandle<Shader>> vertexAsset =
+        shaderAssets.LoadSync<Shader>(AssetId{0x1F42});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset =
+        shaderAssets.LoadSync<Shader>(AssetId{0x1F44});
+    REQUIRE(vertexAsset.has_value());
+    REQUIRE(fragmentAsset.has_value());
+
+    Ref<PipelineLayout> layout;
+    auto pipeline = CreateSamplePipeline(Context, layout, vertexAsset->Get()->Module,
+                                         fragmentAsset->Get()->Module);
+
+    auto& bindless = Context.GetBindlessRegistry();
+
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            RenderGraph graph(Context);
+            const ResourceId outputId = graph.Import("Output");
+
+            graph.AddPass("Sample ASTC Texture")
+                .Color({
+                    .Resource = outputId,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                })
+                .Execute(
+                    [&](PassContext& ctx)
+                    {
+                        CommandBuffer& passCmd = ctx.Cmd();
+                        passCmd.BindPipeline(pipeline);
+                        passCmd.SetViewport({0, 0}, {Size, Size});
+                        passCmd.SetScissor({0, 0}, {Size, Size});
+                        bindless.Bind(passCmd);
+                        passCmd.PushConstants(SamplePushConstants{
+                            .TextureIndex = texture.GetHandle().Index,
+                            .SamplerIndex = texture.GetSamplerHandle().Index,
+                        });
+                        passCmd.DrawFullscreenTriangle();
+                    });
+
+            const RenderGraph::ImportBinding binding{.Id = outputId, .View = outputView};
+            graph.Compile()->Execute(cmd, {&binding, 1});
+        });
+
+    // The solid-color source survives ASTC's lossy encode close to its original value; assert the
+    // sampled output is roughly the source color rather than the cleared black, proving the ASTC
+    // image created with the feature enabled samples through the bindless set.
+    const vector<u8> pixels = outputImage->Download();
+    REQUIRE(pixels.size() == static_cast<size_t>(Size) * Size * 4);
+    CHECK(pixels[0] > 150);
+    CHECK(pixels[1] > 40);
+    CHECK(pixels[1] < 130);
+    CHECK(pixels[3] > 200);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "texture loader: async Load returns pending, becomes resident after a pump")
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);

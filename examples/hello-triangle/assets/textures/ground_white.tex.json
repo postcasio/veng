@@ -1,6 +1,7 @@
 {
   "image": "ground_white.png",
   "srgb": true,
+  "compression": "none",
   "sampler": {
     "min": "linear",
     "mag": "linear",
