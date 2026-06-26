@@ -45,6 +45,7 @@ add_library(veng SHARED
         src/UI/Layout.cpp
         src/UI/Scopes.cpp
         src/UI/Query.cpp
+        src/UI/DebugPanels.cpp
         src/Reflection/Serialize.cpp
         src/Scene/AnimationSystem.cpp
         src/Scene/BuiltinTypes.cpp
