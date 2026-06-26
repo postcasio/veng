@@ -1,25 +1,21 @@
 #include <Veng/Application.h>
 #include <Veng/Module/Module.h>
-#include <Veng/Scene/Motion.h>
 
 using namespace Veng;
 
 // The smallest veng game: open a window and draw one slowly rotating lit cube. The world is
 // authored entirely as data — a cooked Level (named by the pack's startupLevel header) that
 // references a world Prefab (a camera, a directional light, and a cube whose mesh is an inline
-// CubeShape recipe and which carries a ConstantMotion to spin). The engine bootstraps and drives
-// it: it mounts the pack, loads the startup level, owns the running scene + simulation, ticks the
-// level's system set, and pushes the resolved camera into the managed viewport every frame. The
-// only registration is selecting the engine's ConstantMotionSystem the level names — there is no
-// custom component or system and no lifecycle or per-frame code. Copy this directory to start a new
-// veng game; see examples/hello-triangle for the richer surface (custom components and systems,
-// gameplay, the debug UI, build configurations).
+// CubeShape recipe and which carries a ConstantMotion the engine's ConstantMotionSystem spins).
+// The engine bootstraps and drives it: it mounts the pack, loads the startup level, owns the
+// running scene + simulation, ticks the level's system set (the builtin systems the host
+// pre-registers), and pushes the resolved camera into the managed viewport every frame. So the
+// whole game is a VengModuleRegister that registers a bare Application — no custom component or
+// system, no system registration, no lifecycle or per-frame code. Copy this directory to start a
+// new veng game; see examples/hello-triangle for the richer surface (custom components and
+// systems, gameplay, the debug UI, build configurations).
 extern "C" void VengModuleRegister(VengModuleHost* host)
 {
-    // The level's system set names ConstantMotionSystem; register it so the simulation resolves it
-    // and the authored cube spins. An id the registry lacks is silently skipped.
-    host->Systems.Register<ConstantMotionSystem>();
-
     host->App.RegisterApplication(
         [](TypeRegistry& types, SystemRegistry& systems)
         {

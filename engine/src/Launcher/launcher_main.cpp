@@ -5,6 +5,7 @@
 #include <Veng/Module/Module.h>
 #include <Veng/Module/ModuleLoader.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/BuiltinSystems.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/SystemRegistry.h>
 
@@ -25,8 +26,10 @@ int main(const int argc, char** argv)
     Veng::TypeRegistry types;
     Veng::SystemRegistry systems;
 
-    // Builtins must be present before the module registers its types (game components may reference them).
+    // Builtins must be present before the module registers its own: game components may reference
+    // builtin types, and a level names the builtin systems the engine pre-registers here.
     Veng::RegisterBuiltinTypes(types);
+    Veng::RegisterBuiltinSystems(systems);
 
     Veng::VengModuleHost host{.App = apps, .Types = types, .Systems = systems, .Editor = nullptr};
     module->Register(host);

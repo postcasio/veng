@@ -81,10 +81,16 @@ custom runtime types — loaded by a thin **launcher** (the shipped exe). The
 launcher `dlopen`s the module and calls one C-ABI entry,
 `VengModuleRegister(VengModuleHost*)`; the module registers its `Application`
 factory into the host-owned `ApplicationRegistry` (`host->App.RegisterApplication(
-[]{ … })`, one per module), **registers its reflected component/type descriptors
+[]{ … })`, one per module), **registers its own reflected component/type descriptors
 into the host-owned `TypeRegistry`** (`host->Types`, `Register<T>()` per type), **and
-registers its gameplay `SceneSystem`s into the host-owned `SystemRegistry`**
-(`host->Systems`, `Register<T>()` per system). `Application` borrows the `TypeRegistry`
+registers its own gameplay `SceneSystem`s into the host-owned `SystemRegistry`**
+(`host->Systems`, `Register<T>()` per system). A module registers only what is **its
+own**: the host pre-registers the engine builtins into both registries before the module
+runs — `RegisterBuiltinTypes` for the builtin components and `RegisterBuiltinSystems` for
+the engine's reusable systems (`MovementSystem`, `CameraRigSystem`, `RootMotionDriveSystem`,
+`AnimationSystem`, `ConstantMotionSystem`) — so a level names them without the game
+re-declaring them, exactly as a game component can reference a builtin type. `Application`
+borrows the `TypeRegistry`
 and the `SystemRegistry` (`GetTypeRegistry()` / `GetSystemRegistry()`) and still owns
 `Context`/`AssetManager`/`TaskSystem` unchanged — the
 launcher reads the factory back, constructs the app, and calls `Run()`.
@@ -1139,8 +1145,8 @@ constant rate of change of the `Transform` — a drift and/or spin — that the 
 entity's `Local` frame or its parent `World` frame. Unlike `MovementSystem` it reads no `Intent`
 — the motion is autonomous, authored data, not a command — so a spinning prop carries no controller
 and rides no wire. It is a builtin component (`RegisterBuiltinTypes`) selected per level like any
-other system; the minimal template uses it to spin its cube as data, with `ConstantMotionSystem` the
-only system its module registers.
+other system; the minimal template uses it to spin its cube as data, naming the host-registered
+builtin `ConstantMotionSystem` in its level — its module registers no system of its own.
 
 **The tick is split Sim / View, and entities carry `Authority`.** A `SceneSystem`
 (`Veng/Scene/SceneSystem.h`) declares a **`Phase { Sim, View }`** (default `Sim`); a
@@ -1172,10 +1178,14 @@ plus a registered rule set — no C++ path picks it, no `GameModeRegistry`, no A
 minted with `vengc generate-id`) + a display name through the **`VE_SYSTEM(Type, 0x…ULL,
 "Name")`** trait macro — the system analogue of `VE_REFLECT`'s identity. The host-owned
 **`SystemRegistry`** (`Veng/Scene/SystemRegistry.h`, mirroring the `TypeRegistry`: the host
-constructs it, the module fills it through `VengModuleRegister`, `Application` borrows it)
-stores `{ SystemId, Name, factory }`, **enumerates the catalog** without instantiating
-anything, resolves an id, and fatally rejects a duplicate id. Registration is GPU-free
-(building a system touches no `Context`/device), preserving the headless/cooker contract. A
+constructs it, **pre-registers the engine's reusable systems with `RegisterBuiltinSystems`**
+(`Veng/Scene/BuiltinSystems.h` — the system analogue of `RegisterBuiltinTypes`), the module
+fills its own through `VengModuleRegister`, `Application` borrows it) stores
+`{ SystemId, Name, factory }`, **enumerates the catalog** without instantiating anything,
+resolves an id, and fatally rejects a duplicate id. Registration is GPU-free (building a
+system touches no `Context`/device), so `RegisterBuiltinSystems` is callable in the headless
+cooker with no ICD — the cook reflects a level's named systems against the same builtins +
+module catalog the runtime resolves. A
 `SceneSimulation` is built either from an **ordered `SystemId` set** selecting catalog
 entries (run in that order, honoring the phase split) or from the whole registry as the "all
 registered" convenience. A system's **parameters are authored as components** — a settings
@@ -1244,15 +1254,16 @@ The engine ships **two** sample game modules, co-migrated on every breaking chan
 - **`examples/template`** — the **minimal** one a new developer copies. The smallest correct
   `veng_add_game` app: `main.cpp` is **only** a `VengModuleRegister` that registers a **bare
   `Application`** (no subclass) with a `ManagedViewport` and a `World`
-  (`GameWorldInfo{ .AssetPack = "template.vengpack" }`), plus a single
-  `host->Systems.Register<ConstantMotionSystem>()` selecting the one engine system the level
-  names. The engine bootstraps everything — it mounts the pack, loads the pack's **cooked
-  startup level** (a world `Prefab`: a `Camera`, a directional `Light`, and a cube whose mesh is
-  an inline `CubeShape` recipe and which carries a `ConstantMotion` to spin), owns the running
-  scene + simulation, ticks the level's system set (the engine `ConstantMotionSystem`), and
-  pushes the resolved camera each frame. So the file has **no** lifecycle override, per-frame
-  code, custom component or system, or debug UI — the rotating cube is authored as cooked data
-  and driven by an engine system selected by name, not built or driven in code. Its
+  (`GameWorldInfo{ .AssetPack = "template.vengpack" }`) — and registers **nothing else** (the
+  level's one named system, `ConstantMotionSystem`, is an engine builtin the host
+  pre-registers). The engine bootstraps everything — it mounts the pack, loads the pack's
+  **cooked startup level** (a world `Prefab`: a `Camera`, a directional `Light`, and a cube
+  whose mesh is an inline `CubeShape` recipe and which carries a `ConstantMotion` to spin), owns
+  the running scene + simulation, ticks the level's system set (the engine
+  `ConstantMotionSystem`), and pushes the resolved camera each frame. So the file has **no**
+  lifecycle override, per-frame code, custom component or system, system registration, or debug
+  UI — the rotating cube is authored as cooked data and driven by an engine system, not built or
+  driven in code. Its
   `configs/project.veng` names the `startupLevel` the cook writes into the pack header
   (`add_asset_pack(... PROJECT ...)`), and its pack carries a prefab + level, so the cook
   reflects `libtemplate` via `MODULE template` (only engine builtins, no custom types). It is the

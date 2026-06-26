@@ -7,6 +7,7 @@
 #include <Veng/Module/Module.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Scene/BuiltinSystems.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/UI/UI.h>
@@ -348,6 +349,7 @@ namespace VengEditor
         auto registries = CreateUnique<Registries>();
 
         RegisterBuiltinTypes(registries->Types);
+        RegisterBuiltinSystems(registries->Systems);
 
         Result<LoadedModule> gameModule = ModuleLoader::Load(info.GameModulePath);
         VE_ASSERT(gameModule.has_value(), "editor: failed to load game module {}: {}",

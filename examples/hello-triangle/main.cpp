@@ -541,29 +541,19 @@ private:
 // Factory captures the headless flag so the launcher stays game-agnostic.
 extern "C" void VengModuleRegister(VengModuleHost* host)
 {
+    // The game registers only its own component and systems; the engine's reusable systems
+    // (MovementSystem, CameraRigSystem, RootMotionDriveSystem, AnimationSystem) are pre-registered
+    // by the host. The level's ordered SystemId set names the run order across both.
     host->Types.Register<Spinner>();
     host->Systems.Register<SpinnerSystem>();
 
-    // The game-mode rule runs first: it spawns the configured player prefab at the
-    // session's start, so the pawn and seat exist before the control pipeline ticks.
+    // The game-mode rule spawns the configured player prefab at the session's start, so the pawn
+    // and seat exist before the control pipeline ticks.
     host->Systems.Register<SpawnPlayerRule>();
 
-    // The control pipeline runs in order: the game-specific control mapping produces
-    // Intent, then the engine's generic movement system consumes it. Registration order
-    // is run order, so ControlSystem must precede MovementSystem. All three are Sim-phase,
-    // so they finish before the View-phase camera rig trails the moved pawn.
+    // The game-specific control mapping: reads input into a PlayerInput snapshot and produces the
+    // Intent the engine's MovementSystem consumes.
     host->Systems.Register<ControlSystem>();
-    host->Systems.Register<MovementSystem>();
-
-    // Applies any root-motion delta the View-phase AnimationSystem published last tick, so a
-    // Drive-mode clip's baked locomotion moves the pawn. Sim-phase, so the moved pose is final
-    // before the camera rig trails it.
-    host->Systems.Register<RootMotionDriveSystem>();
-    host->Systems.Register<CameraRigSystem>();
-
-    // Poses skinned characters each tick (View phase): samples the Animator's clip and writes
-    // the entity's SkinnedPose for the renderer's skinning palette.
-    host->Systems.Register<AnimationSystem>();
 
     // Smoke mode: no window or swapchain, render off-screen and dump — the display-free CI path.
     const bool smoke = std::getenv("HT_SMOKE") != nullptr;
