@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/DebugDraw.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
@@ -314,6 +315,14 @@ namespace Veng::Renderer
         /// the cull compute pass drops the provably-occluded against the previous-frame pyramid.
         /// Ignored under CullMode::CPU. A history-invalid frame is frustum-only regardless.
         bool Occlusion = true;
+
+        /// @brief Whether the immediate-mode debug-draw pass runs (off by default).
+        ///
+        /// A topology change: it inserts the DebugDrawScenePass after the terminal tonemap (Final
+        /// mode only), flushing the renderer's DebugDraw accumulator (GetDebugDraw()) into the LDR
+        /// scene color. The pass samples the g-buffer depth for a depth-aware occluded fade rather
+        /// than hardware depth-testing. Off by default, so the default render is unchanged.
+        bool DebugDraw = false;
     };
 
     /// @brief Construction parameters for SceneRenderer.
@@ -687,6 +696,16 @@ namespace Veng::Renderer
         /// lighting pass. Renderer-owned; invalidated by Resize and Configure. Exposed for
         /// the render-pass handoff and for tests inspecting the atlas extent.
         [[nodiscard]] Ref<ImageView> GetPunctualShadowView() const;
+
+        /// @brief Returns the immediate-mode debug-draw accumulator for this renderer.
+        ///
+        /// A caller pushes lines/billboards each frame; the DebugDrawScenePass flushes them when
+        /// SceneRendererSettings::DebugDraw is on. The accumulator clears at the start of every
+        /// Execute, so a primitive is re-pushed each frame it should appear. A mutable reference
+        /// from a const method by the Native-idiom rule: the renderer's constness is its own
+        /// identity, not the per-frame accumulator state.
+        /// @return The renderer-owned DebugDraw accumulator.
+        [[nodiscard]] DebugDraw& GetDebugDraw() const;
 
     private:
         explicit SceneRenderer(const SceneRendererInfo& info);
@@ -1486,6 +1505,13 @@ namespace Veng::Renderer
         /// Generation re-runs only when the bound environment differs from this. Non-owning —
         /// the AssetHandle keeps the Environment alive.
         const Environment* m_LastEnvironment = nullptr;
+
+        /// @brief Immediate-mode debug-draw accumulator flushed by the DebugDrawScenePass.
+        ///
+        /// Mutable so GetDebugDraw() (a const accessor) hands out a writable reference: the
+        /// renderer's constness is its own identity, not the per-frame accumulator. Cleared at
+        /// the start of every Execute.
+        mutable DebugDraw m_DebugDraw;
 
         /// @brief Opaque compiled graph; replayed every Execute.
         ///

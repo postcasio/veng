@@ -262,6 +262,16 @@ namespace VengEditor
         const VoidResult mount = GetAssetManager().Mount(ExecutableDirectory() / "sample.vengpack");
         VE_ASSERT(mount, "{}", mount.error());
 
+        // The editor's own icon pack (light/camera billboard textures) sits beside the exe.
+        // The engine ships no icon content; the viewport gizmos resolve their TextureHandles
+        // from these. Mounting is best-effort — a missing pack only drops the gizmo icons.
+        const VoidResult iconMount =
+            GetAssetManager().Mount(ExecutableDirectory() / "editor_icons.vengpack");
+        if (!iconMount)
+        {
+            Log::Warn("editor: icon pack not mounted: {}", iconMount.error());
+        }
+
         // Parsed once; an empty index when no manifest is configured keeps the picker
         // candidate-free rather than absent.
         m_Sources = CreateUnique<AssetSourceIndex>(

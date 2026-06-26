@@ -319,6 +319,15 @@ namespace Veng::Renderer
         /// Native-idiom rule: the wrapper's constness is its own identity, not the GPU state.
         [[nodiscard]] SceneRenderer& GetRenderer() const;
 
+        /// @brief Returns the owned renderer's immediate-mode debug-draw accumulator.
+        ///
+        /// The per-viewport channel for pushing debug lines/billboards: the accumulator and the
+        /// depth target the flush pass tests against are per-renderer, so split-screen viewports
+        /// each composite their own gizmos. Forwards to SceneRenderer::GetDebugDraw; the pass runs
+        /// only when SceneRendererSettings::DebugDraw is enabled.
+        /// @return The viewport renderer's DebugDraw accumulator.
+        [[nodiscard]] DebugDraw& GetDebugDraw() const;
+
         /// @brief Binds this viewport to a drive-list it self-unregisters from on destruction.
         ///
         /// Application::RegisterViewport calls this with its drive-list after appending this

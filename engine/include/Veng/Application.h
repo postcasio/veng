@@ -193,6 +193,19 @@ namespace Veng
             return m_PrimaryViewport.get();
         }
 
+        /// @brief Returns the managed primary viewport's debug-draw accumulator, or null when unconfigured.
+        ///
+        /// The single-viewport convenience for the canonical per-SceneView DebugDraw channel: it
+        /// forwards to GetPrimaryViewport()->GetDebugDraw(). Null when no managed viewport is
+        /// configured (ApplicationInfo::ManagedViewport unset), in which case a caller owning its
+        /// own Viewport reaches the accumulator through that viewport directly. The debug-draw pass
+        /// renders only when the viewport's SceneRendererSettings::DebugDraw is enabled.
+        /// @return The primary viewport's DebugDraw accumulator, or nullptr.
+        [[nodiscard]] Renderer::DebugDraw* GetDebugDraw() const
+        {
+            return m_PrimaryViewport ? &m_PrimaryViewport->GetDebugDraw() : nullptr;
+        }
+
     protected:
         /// @brief Called once after all engine systems are initialized.
         virtual void OnInitialize() {}

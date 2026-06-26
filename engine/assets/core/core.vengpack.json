@@ -5,6 +5,7 @@
     { "id": 5802985661779036512, "type": "vertex_layout", "source": "layouts/screenspace.vlayout.json" },
     { "id": 9444255541371061951, "type": "vertex_layout", "source": "layouts/positiononly.vlayout.json" },
     { "id": 15320822976973617713, "type": "vertex_layout", "source": "layouts/skinned.vlayout.json" },
+    { "id": 15017974748652859786, "type": "vertex_layout", "source": "layouts/debugline.vlayout.json" },
     { "id": 17612966569144354344, "type": "shader", "source": "shaders/fullscreen.vert.shader.json" },
     { "id": 7619531439638779021, "type": "shader", "source": "shaders/surface.vert.shader.json" },
     { "id": 10974119373792664188, "type": "shader", "source": "shaders/surface_skinned.vert.shader.json" },
@@ -44,6 +45,10 @@
     { "id": 427731706800222545,   "type": "shader", "source": "shaders/ibl_prefilter.comp.shader.json" },
     { "id": 9944075845009600008,  "type": "shader", "source": "shaders/ibl_brdf_lut.comp.shader.json" },
     { "id": 18205072294976643471, "type": "shader", "source": "shaders/skybox.frag.shader.json" },
+    { "id": 11583985665354890033, "type": "shader", "source": "shaders/debug_line.vert.shader.json" },
+    { "id": 7909061617139444202, "type": "shader", "source": "shaders/debug_line.frag.shader.json" },
+    { "id": 4042385539205693696, "type": "shader", "source": "shaders/debug_billboard.vert.shader.json" },
+    { "id": 3834025836854019546, "type": "shader", "source": "shaders/debug_billboard.frag.shader.json" },
     { "id": 13589203438992884788, "type": "material", "source": "materials/tonemap.vmat.json" }
   ]
 }

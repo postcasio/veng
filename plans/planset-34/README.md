@@ -50,7 +50,7 @@ open.
 | 02 | Residency on spawn | Break `Prefab::SpawnInto` → `SpawnResult { Roots, Pending }`; a `ResidencyBatch` with `IsResident()` / progress / blocking `WaitResident(TaskSystem&)`. `LevelInstance` surfaces it. Delete the sample's `WaitForPrimitiveResidency`. Depends on 01. | proposed |
 | 03 | À-la-carte debug UI | Extract `UI::RendererStatsPanel` / `UI::FrameTimeGraph` / `UI::RenderSettingsEditor` into `Veng::UI`; migrate the sample to consume them. Sequences after 00–02 (all rewrite `main.cpp`). | proposed |
 | 04 | Editor Play seeds the session | Factor session-seeding out of `Level::LoadInto` into a shared helper; add a `SeedPlayScene(Scene&)` hook the base `Play()` calls post-clone; `LevelEditorPanel` seeds `Session`+`GameModeConfig` and makes the player prefab resident. The game's `SpawnPlayerRule` then fires. Reads atop 02. | done |
-| 05 | Engine debug-draw + gizmos | An immediate-mode `DebugDraw` accumulator (lines + textured billboards) flushed by a `ScenePass` inside `SceneRenderer`, depth-tested with a dim occluded fallback, gated by a `SceneRendererSettings` toggle. A new editor icon pack; `SceneViewportPanel` pushes a billboard per `Light`/`Camera`. | proposed |
+| 05 | Engine debug-draw + gizmos | An immediate-mode `DebugDraw` accumulator (lines + textured billboards) flushed by a `ScenePass` inside `SceneRenderer`, depth-tested with a dim occluded fallback, gated by a `SceneRendererSettings` toggle. A new editor icon pack; `SceneViewportPanel` pushes a billboard per `Light`/`Camera`. | done |
 
 > Status legend: `proposed` = drafted, awaiting review; `ready` = reviewed and approved;
 > `done` = implemented, migrated, verified, committed.

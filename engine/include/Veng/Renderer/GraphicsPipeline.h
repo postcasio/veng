@@ -36,6 +36,8 @@ namespace Veng::Renderer
         vector<PipelineShaderStageInfo> ShaderStages;
         /// @brief Fill, line, or point rasterization.
         PolygonMode PolygonMode = PolygonMode::Fill;
+        /// @brief Primitive assembly topology (triangle list by default).
+        PrimitiveTopology Topology = PrimitiveTopology::TriangleList;
         /// @brief Face culling mode.
         CullMode CullMode = CullMode::None;
         /// @brief Enable depth testing.

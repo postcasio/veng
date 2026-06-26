@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Asset/AssetHandle.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Scene/Camera.h>
@@ -17,6 +18,7 @@ namespace Veng
     class ImGuiTexture;
     class Input;
     class InputRouter;
+    class Texture;
     struct LevelRenderSettings;
 
     namespace Renderer
@@ -83,6 +85,16 @@ namespace VengEditor
         /// @brief Frames the camera on the selected entities, or the whole scene when none are selected.
         void FrameSelection();
 
+        /// @brief Walks the scene and pushes a debug-draw billboard + wireframe gizmo per Light/Camera.
+        ///
+        /// Pushes into the viewport's DebugDraw accumulator (consumed by the DebugDrawScenePass next
+        /// render): an icon billboard at each Light/Camera's world position, a light's range sphere
+        /// (point) or spot cone (spot), and a camera's frustum. A no-op when the icon handles failed
+        /// to resolve (no icon pack mounted). The DebugDraw battery toggle is forced on while gizmos
+        /// are pushed. Click-to-select is out of scope; Viewport::ScreenToWorldRay is the seam a
+        /// later billboard-picking follow-on extends.
+        void PushGizmos();
+
         Veng::AssetManager& m_Assets;
         Veng::ImGuiLayer& m_ImGui;
         PrefabEditContext& m_Ctx;
@@ -113,5 +125,10 @@ namespace VengEditor
 
         /// @brief Last extent the ImGui texture was fetched at; re-fetch when the viewport resizes.
         Veng::uvec2 m_TextureExtent{};
+
+        /// @brief Resident light-icon texture (keeps its bindless TextureHandle alive); null if unmounted.
+        Veng::AssetHandle<Veng::Texture> m_LightIcon;
+        /// @brief Resident camera-icon texture (keeps its bindless TextureHandle alive); null if unmounted.
+        Veng::AssetHandle<Veng::Texture> m_CameraIcon;
     };
 }

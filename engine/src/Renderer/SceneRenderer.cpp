@@ -1,6 +1,7 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/ScenePass.h>
 
+#include "DebugDrawScenePass.h"
 #include "EnvironmentIbl.h"
 #include "ShadowScenePass.h"
 #include "PunctualShadowScenePass.h"
@@ -2857,6 +2858,16 @@ namespace Veng::Renderer
                                                        .SamplerField = "HdrSampler",
                                                    },
                                                    m_OutputId, m_OutputFormat, m_Extent));
+
+            // Debug-draw composites the accumulator over the tonemapped LDR scene color, after
+            // the terminal tonemap, so gizmos render at native resolution with exact colors. It
+            // samples the g-buffer depth for the occluded fade (no hardware depth test).
+            if (m_Settings.DebugDraw)
+            {
+                m_Passes.push_back(CreateUnique<DebugDrawScenePass>(
+                    m_Context, m_Assets, &m_DebugDraw, m_OutputFormat, m_SamplerHandle,
+                    m_Context.GetMaxFramesInFlight(), m_Extent));
+            }
             break;
         }
         case DebugView::Albedo:
@@ -3890,6 +3901,14 @@ namespace Veng::Renderer
 
     void SceneRenderer::Execute(CommandBuffer& cmd, const SceneView& view)
     {
+        // The DebugDrawScenePass consumes this frame's accumulator below; clear it after so the
+        // next frame starts empty (immediate-mode: every primitive is re-pushed each frame).
+        struct DebugDrawClearGuard
+        {
+            DebugDraw& Accumulator;
+            ~DebugDrawClearGuard() { Accumulator.Clear(); }
+        } debugDrawClearGuard{m_DebugDraw};
+
         // Dynamic resolution: render into the top-left round(allocExtent * scale) sub-rect of the
         // (high-water-mark-allocated) targets; the terminal tonemap upscales it to the full output.
         // Scale applies only on the Final path with the sub-rect-aware battery set: a debug view, the
@@ -4281,5 +4300,9 @@ namespace Veng::Renderer
     Ref<ImageView> SceneRenderer::GetPunctualShadowView() const
     {
         return m_PunctualShadowView;
+    }
+    DebugDraw& SceneRenderer::GetDebugDraw() const
+    {
+        return m_DebugDraw;
     }
 }

@@ -85,3 +85,19 @@ set(VENG_EDITOR_COOK_SESSION "${CMAKE_CURRENT_SOURCE_DIR}/src/CookSession.cpp"
     CACHE INTERNAL "veng editor cook-on-demand source")
 set(VENG_EDITOR_EXE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/src"
     CACHE INTERNAL "veng editor exe-private include dir (CookSession.h)")
+
+# ---------------------------------------------------------------------------
+# Editor icon pack — light/camera billboard icons for the scene viewport gizmos
+# ---------------------------------------------------------------------------
+#
+# The engine ships no icon content; the editor cooks its own icon textures and
+# resolves them to bindless TextureHandles for the debug-draw billboards. Cooked
+# once here and copied beside every editor exe by veng_add_editor, mounted by
+# EditorHost from ExecutableDirectory().
+if (VENG_BUILD_TOOLS)
+    add_asset_pack(veng_editor_icons
+            PACK   assets/icons/editor_icons.vengpack.json
+            OUTPUT ${CMAKE_BINARY_DIR}/editor_icons.vengpack)
+    set(VENG_EDITOR_ICON_PACK "${CMAKE_BINARY_DIR}/editor_icons.vengpack"
+        CACHE INTERNAL "veng editor icon pack (cooked)")
+endif ()

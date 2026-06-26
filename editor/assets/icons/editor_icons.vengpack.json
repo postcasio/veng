@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "assets": [
+    { "id": 11214326246509566196, "type": "texture", "source": "light.tex.json" },
+    { "id": 75671398121622365, "type": "texture", "source": "camera.tex.json" }
+  ]
+}
