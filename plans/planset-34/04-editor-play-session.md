@@ -3,7 +3,10 @@
 **Goal:** pressing Play in the editor should drop into the same initialized, playable state the
 runtime reaches through `Level::LoadInto` — a seeded `Session`, the game-mode config applied, the
 player spawned. Today Play runs the simulation over a clone with no session, so the spawn rule bails
-and the scene is inert. Reads atop **Plan 02** (it reuses the residency wait for the play scene).
+and the scene is inert. The core — seeding the session — is **independent** of every other plan; the
+only touchpoint with **Plan 02** is the player-prefab residency, which has a `LoadSync` form needing
+nothing from 02 (see below). So this plan can be authored against `origin/main`; if 02 has already
+landed, it prefers 02's `WaitResident`.
 
 ## The bug
 
@@ -21,10 +24,10 @@ The [`LevelEditorPanel`](../../editor/src/panels/LevelEditorPanel.cpp) already e
 ## What lands
 
 - **A shared session-seed helper.** Factor the session creation out of `Level::LoadInto` into a
-  reusable engine function — `SeedSession(Scene&, const GameModeConfig&)` (or a small
-  `Level`-adjacent helper) — that creates the well-known session entity with `Session{Phase =
-  Playing}` + the config. `LoadInto` calls it; the editor calls it too, so the runtime and editor
-  seed identically from one code path.
+  reusable engine function, `SeedSession(Scene&, const GameModeConfig&)` in
+  [`Level.cpp`](../../engine/src/Asset/Level.cpp), that creates the well-known session entity with
+  `Session{Phase = Playing}` + the config. `LoadInto` calls it; the editor calls it too, so the
+  runtime and editor seed identically from one code path.
 
 - **A `SeedPlayScene` hook on the base.** `PrefabEditorPanel::Play` gains a virtual
   `SeedPlayScene(Scene&)` called after the clone and before `Start`. The base is a no-op (a bare
@@ -35,8 +38,10 @@ The [`LevelEditorPanel`](../../editor/src/panels/LevelEditorPanel.cpp) already e
 - **Player-prefab residency before Start.** `GameModeConfig::PlayerPrefab` is an `AssetHandle<Prefab>`
   edited through the inspector picker; on Play it must be resident or `SpawnPlayerRule::OnStart` bails
   the same way the runtime relies on the level loader eager-resolving it. `LevelEditorPanel::Play`
-  ensures the handle is resident (a `LoadSync`, or a `WaitResident` on the player's spawn batch from
-  Plan 02) before `Start`.
+  forces it resident before `Start` with a `LoadSync` — the form that depends on nothing from Plan 02,
+  so this plan stands alone. If Plan 02 has landed, prefer its `WaitResident` (it pumps the task
+  system so continuations land, rather than a hard block). First check `IsLoaded()` — in the common
+  case the player prefab is already a resolved dependency of the level prefab, so neither call blocks.
 
 - **No change to player ownership.** Per the planset decision, the player stays in `GameModeConfig`
   spawned by the game's `SpawnPlayerRule`; this plan only makes the editor seed the session that rule

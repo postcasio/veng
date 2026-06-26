@@ -29,15 +29,24 @@ it introduced.
   resident (kept alive while pending, since a handle is refcounted indirection). It offers
   `IsResident()`, a progress read-out (resident / total, for a loading bar), and a blocking
   `WaitResident(TaskSystem&)` that owns the pump-and-sleep loop the sample hand-rolls today. Empty
-  batch ⇒ already resident.
+  batch ⇒ already resident. `WaitResident` carries **no timeout** — a handle that never becomes
+  resident hangs the loop — so it documents that contract on its declaration; a watchdog that
+  `VE_ASSERT`s after a bounded number of pumps (an abort is easier to diagnose than a silent hang) is
+  the conservative form, given this loop is now reachable from editor Play and any loading screen, not
+  just the smoke test.
 
 - **`SpawnInto` returns `SpawnResult`.** Break the signature: `Prefab::SpawnInto(Scene&,
   AssetManager&) → SpawnResult { vector<Entity> Roots; ResidencyBatch Pending; }`. After the populate
   pass (which, post-Plan-01, is where recipe sources and cooked handles both resolve), `SpawnInto`
   walks the spawned components for `FieldClass::AssetHandle` fields — reusing the
   [`CollectHandleDeps`](../../engine/src/Asset/Loaders/PrefabLoader.cpp)-style reflection walk over
-  the *live* components — and collects the not-yet-resident handles into `Pending`. This captures
-  both rehydrated cooked handles (if the prefab was loaded async) and recipe-built handles, uniformly.
+  the *live* components — and collects the not-yet-resident handles into `Pending`. The walk is
+  uniform over every `AssetHandle` field, but in practice the cooked handles are already resident: the
+  populate pass asserts each embedded cooked dependency is resident at spawn
+  ([`Prefab.cpp`](../../engine/src/Asset/Prefab.cpp), the `is not resident` assert), so a not-yet-resident
+  cooked handle aborts before this collection runs. `Pending` therefore holds the **recipe-built**
+  handles a spawn introduced; the uniform walk is what makes that fall out without special-casing the
+  recipe source, not a claim that cooked handles are ever pending here.
 
 - **Every caller updated.** `Roots` replaces the old return at each call site:
   [`Level::LoadInto`](../../engine/src/Asset/Level.cpp), the editor's

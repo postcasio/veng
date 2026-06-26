@@ -60,18 +60,37 @@ whose source can be a recipe.
   edits it through the existing `Variant`/`AssetHandle` field widgets — selecting cooked-vs-shape and
   the per-shape parameters. An edit re-loads the derived mesh (re-`Build`), the same shape as
   repointing a cooked asset field; the editor triggers it on the inspector changed-bool, replacing the
-  bespoke `ResolveComponents` call. The three editor paths that called `ResolveComponents`
-  (Add Component, field edit, duplicate) collapse to "the mesh source re-resolves like any asset
-  field."
+  bespoke `ResolveComponents` call.
+
+- **The editor resolve seam.** The editor's `ResolveComponents` calls funnel through one helper —
+  `PrefabEditContext::ResolveEntity`
+  ([`PrefabEditContext.h`](../../editor/src/panels/PrefabEditContext.h)) — which the panels call after
+  add-component and field-edit (the inspector changed-bool above). Two of the three triggers collapse
+  into "the mesh source re-resolves like any asset field." The **duplicate** path is different and
+  must be handled explicitly: `PrefabExplorerPanel::DuplicateSubtree`
+  ([`PrefabExplorerPanel.cpp`](../../editor/src/panels/PrefabExplorerPanel.cpp)) copies a component's
+  raw bytes through `ReadFields`, with **no inspector edit and no changed-bool to hook**. Under the new
+  model a byte copy yields a `MeshRenderer` whose source is set but whose `AssetHandle<Mesh>` was never
+  built, so the duplicate path must rebuild the derived mesh from the copied source (the surviving
+  `BuildShapeMeshData`/`Build<Mesh>` helper) where it currently calls `ResolveEntity`.
 
 - **Sample migration.** The sample prefabs that author `Primitive` components
   ([`scene.prefab.json`](../../examples/hello-triangle/assets/prefabs/scene.prefab.json)) move to the
   mesh-source recipe form. Behavior is identical — the same shapes stream in the same few frames late.
 
-- **Future-area writeup.** Add [`future/dynamic-meshes.md`](../future/dynamic-meshes.md) (area 16) and
-  its index entry: the mutable-`Mesh` substrate (sculpting, voxels, CSG/destruction,
-  gameplay-generated geometry) the recipe model deliberately does **not** cover, to design against a
-  real consumer later.
+- **Doc migration.** Retiring `SpawnResolve`/`VE_RESOLVE`/`ResolveComponents`/`Primitive` removes
+  surface that both module guides document as architecture, so they migrate in the same pass:
+  `engine/CLAUDE.md` (the spawn-resolve-thunk / `VE_RESOLVE` / post-populate-pass prose) is rewritten
+  to the mesh-source model, and `editor/CLAUDE.md` (the "any editor path that adds or edits a
+  resolver-bearing component must call `ResolveComponents`" contract and the `Primitive` inspector
+  example) is rewritten to "a mesh source re-resolves like any asset field, with the duplicate path
+  rebuilding from the copied source."
+
+- **Future-area writeup.** Finalize [`future/dynamic-meshes.md`](../future/dynamic-meshes.md) (area 16,
+  already drafted and registered in [`future/README.md`](../future/README.md)): the mutable-`Mesh`
+  substrate (sculpting, voxels, CSG/destruction, gameplay-generated geometry) the recipe model
+  deliberately does **not** cover, to design against a real consumer later. Verify it reads correctly
+  against the model this plan lands rather than re-authoring it.
 
 ## Decisions
 
@@ -97,7 +116,19 @@ whose source can be a recipe.
 
 ## Verification
 
-Clean build, full `ctest` (the prefab/spawn unit + cooker suites cover the recipe round-trip),
-`smoke_golden` and `validation_gate` green. The sample renders identically. The editor opens the
-migrated prefab, edits a shape's parameters, and sees the mesh rebuild — with no `ResolveComponents`
-call anywhere in the tree.
+Clean build, full `ctest`, `smoke_golden` and `validation_gate` green. The sample renders identically.
+The editor opens the migrated prefab, edits a shape's parameters, and sees the mesh rebuild — with no
+`ResolveComponents` call anywhere in the tree.
+
+The test suites built on the retired surface do not compile against this change and are migrated in
+the same pass — they are not covered by "the prefab/spawn suites" today:
+
+- `tests/unit/spawn_resolve.cpp` and `tests/gpu/spawn_resolve.cpp` test the `SpawnResolve` seam itself
+  (`HasSpawnResolver<T>`, the `TypeInfo::SpawnResolve` thunk slot, the post-populate resolver pass).
+  The seam is gone, so they are **deleted**.
+- `tests/unit/primitive_resolve.cpp` and `tests/gpu/primitive_resolve.cpp` test the `Primitive` →
+  `ResolveComponents` → `MeshRenderer.Mesh` streaming path. They are **rewritten** to exercise the
+  mesh-source recipe round-trip (a recipe source resolving to a pending handle through the populate
+  pass), preserving the streaming-resolution coverage under the new model.
+- Every other `Primitive`-authoring test (the gpu scene/viewport suites) moves to the mesh-source
+  recipe form, the same migration the sample prefabs take.

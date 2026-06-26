@@ -45,10 +45,10 @@ open.
 
 | # | Plan | Summary | Status |
 |---|---|---|---|
-| 00 | Lift the resolution cap | Default `MaxAllocationScale` to `1.0` (native HiDPI); let the allocation-tier outer loop discover the operating point. Re-frame the engine docs/comments that justified `0.5`. Smoke golden unaffected (already `1.0`). | proposed |
-| 01 | Mesh-source unification | A mesh reference's source is `cooked AssetId \| inline recipe`, both resolved to a pending `AssetHandle<Mesh>` through the load path during the populate pass. Retire the `Primitive` component and the `SpawnResolve`/`VE_RESOLVE` pass (2b). Migrate the sample prefabs. Write `future/dynamic-meshes.md`. | proposed |
+| 00 | Lift the resolution cap | Drop the sample's `0.5` override of the default `1.0` `MaxAllocationScale` (the engine default is already `1.0`); let the allocation-tier outer loop discover the operating point. Re-frame the engine docs/comments that justified `0.5`. Smoke golden unaffected (already `1.0`). | proposed |
+| 01 | Mesh-source unification | A mesh reference's source is `cooked AssetId \| inline recipe`, both resolved to a pending `AssetHandle<Mesh>` through the load path during the populate pass. Retire the `Primitive` component and the `SpawnResolve`/`VE_RESOLVE` pass (2b). Migrate the sample prefabs and the `*_resolve` test suites; migrate both module guides. Finalize the already-drafted `future/dynamic-meshes.md`. | proposed |
 | 02 | Residency on spawn | Break `Prefab::SpawnInto` → `SpawnResult { Roots, Pending }`; a `ResidencyBatch` with `IsResident()` / progress / blocking `WaitResident(TaskSystem&)`. `LevelInstance` surfaces it. Delete the sample's `WaitForPrimitiveResidency`. Depends on 01. | proposed |
-| 03 | À-la-carte debug UI | Extract `UI::RendererStatsPanel` / `FrameTimeGraph` / `RenderSettingsEditor` into `Veng::UI`; migrate the sample to consume them. Sequences after 00–02 (all rewrite `main.cpp`). | proposed |
+| 03 | À-la-carte debug UI | Extract `UI::RendererStatsPanel` / `UI::FrameTimeGraph` / `UI::RenderSettingsEditor` into `Veng::UI`; migrate the sample to consume them. Sequences after 00–02 (all rewrite `main.cpp`). | proposed |
 | 04 | Editor Play seeds the session | Factor session-seeding out of `Level::LoadInto` into a shared helper; add a `SeedPlayScene(Scene&)` hook the base `Play()` calls post-clone; `LevelEditorPanel` seeds `Session`+`GameModeConfig` and makes the player prefab resident. The game's `SpawnPlayerRule` then fires. Reads atop 02. | proposed |
 | 05 | Engine debug-draw + gizmos | An immediate-mode `DebugDraw` accumulator (lines + textured billboards) flushed by a `ScenePass` inside `SceneRenderer`, depth-tested with a dim occluded fallback, gated by a `SceneRendererSettings` toggle. A new editor icon pack; `SceneViewportPanel` pushes a billboard per `Light`/`Camera`. | proposed |
 
@@ -61,14 +61,18 @@ open.
 - **01** is independent and foundational; **02** depends on it (so a procedural mesh is an ordinary
   pending handle the residency walk captures, and `SpawnInto` is rewritten once).
 - **03** touches `main.cpp` heavily, as do 00–02; sequence it last in that chain.
-- **04** reads atop **02** (it reuses the residency wait for the play scene), but its core — seeding
-  the session — is independent.
+- **04** is **independent**: its core (seeding the session) stands alone, and its only Plan 02
+  touchpoint — player-prefab residency — uses a `LoadSync` that needs nothing from 02 (it prefers 02's
+  `WaitResident` if that has landed, but does not require it).
 - **05** is independent and the heaviest; it lands last.
 
-Worktree-isolated parallel dispatch should branch **02** from the **01** integration commit and
-**03** from the 00→01→02 chain — see [[project_megaexec_worktree_base]]. The main.cpp-touching
-chain (00→01→02→03) merges in number order; 04 and 05 are engine+editor work that merges cleanly
-beside it.
+Dependent plans must build on the *prior plan's integration commit*, not `origin/main`. Per
+[[project_megaexec_worktree_base]], `isolation: "worktree"` branches from `origin/main`, so it will
+**not** see a locally-committed-but-unpushed base: dispatch **02** non-isolated against a manual
+worktree cut from **01**'s integration commit, and **03** non-isolated against the 00→01→02 chain.
+The independent plans (**00**, **01**, **04**, **05**) can use `isolation: "worktree"` directly. The
+main.cpp-touching chain (00→01→02→03) merges in number order; 04 and 05 are engine+editor work that
+merges cleanly beside it.
 
 ## The decisions this planset settles
 

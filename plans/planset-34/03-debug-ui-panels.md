@@ -1,8 +1,9 @@
 # Plan 03 — à-la-carte debug UI panels
 
-**Goal:** pull the sample's ~550 lines of hand-written debug UI into reusable `Veng::UI` helpers a
-game composes, so a renderer stats read-out, a frame-time graph, and a render-settings editor are
-engine surface, not copy-paste per app. Sequences after **00–02** (all rewrite parts of
+**Goal:** pull the sample's hand-written **renderer** debug UI — the stats read-out, the frame-time
+graph, and the render-settings editor — into reusable `Veng::UI` helpers a game composes, so they are
+engine surface, not copy-paste per app. The game-specific UI (Scene window, input/capture chrome)
+stays in the sample. Sequences after **00–02** (all rewrite parts of
 [`main.cpp`](../../examples/hello-triangle/main.cpp)).
 
 ## What is being extracted
@@ -19,19 +20,20 @@ Three à-la-carte helpers under `Veng::UI` (`engine/include/Veng/UI/`,
 [engine/src/UI/](../../engine/src/UI/)), each authored against the existing `Veng::UI` vocabulary and
 imgui-free in its signatures (within the `include_hygiene` guarantee):
 
-- **`UI::RendererStatsPanel`** — given a `const Renderer::Viewport&` (or its `SceneRenderer`), draws
-  the read-only stats: allocation tier index + scale + auto/static, render scale, the cull funnel
-  (`GetLastVisibleCount` → `GetFrustumSurvivedCount` → `GetLastDrawnCount`, `GetLastGpuSurvivorCount`),
-  broadphase rebuild + node count. Pure read-out; no return.
+- **`UI::RendererStatsPanel`** — `RendererStatsPanel(const Renderer::Viewport&)`, reading the viewport's
+  `SceneRenderer` for the read-only stats: allocation tier index + scale + auto/static, render scale,
+  the cull funnel (`GetLastVisibleCount` → `GetFrustumSurvivedCount` → `GetLastDrawnCount`,
+  `GetLastGpuSurvivorCount`), broadphase rebuild + node count. Pure read-out; no return.
 
 - **`UI::FrameTimeGraph`** — a small **stateful** widget owning its GPU-frame-time ring buffer (the
   one ImGui-pattern departure from the stateless wrappers: a `FrameTimeGraph` value the caller holds
   across frames). `Push(f32 ms)` + `Draw()` (or a `Draw(viewport)` that reads
   `Context::GetLastGpuFrameTimeMs()` itself). Plots the history with min/avg/max.
 
-- **`UI::RenderSettingsEditor`** — draws the renderer toggles/sliders against a
-  `SceneRendererSettings&` (and the per-frame `SceneView` knobs: exposure, bloom, the DRS/tier
-  controls). Returns `[[nodiscard]] bool changed` per the editable-widget idiom, so the **caller**
+- **`UI::RenderSettingsEditor`** — `[[nodiscard]] bool RenderSettingsEditor(SceneRendererSettings&,
+  SceneView&)`, drawing the renderer toggles/sliders against the `SceneRendererSettings` and the
+  per-frame `SceneView` knobs (exposure, bloom, the DRS/tier controls) in one panel. Returns the
+  `changed` bool per the editable-widget idiom, so the **caller**
   decides whether to call `Viewport::Configure` (a topology change) versus just letting per-frame
   values ride — the engine helper does not own the reconfigure, matching the lifetime split where
   `Configure` is the owner's call.

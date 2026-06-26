@@ -1,9 +1,10 @@
 # Plan 00 — lift the resolution cap
 
 **Goal:** stop the sample from clamping the render allocation to half the swapchain backing extent.
-Default `MaxAllocationScale` to `1.0` so the managed viewport renders at native HiDPI resolution,
-and let the allocation-tier outer loop discover the operating point under load — which is what
-planset-32 built it to do. Independent of every other plan in this set.
+The engine default for `MaxAllocationScale` is **already** `1.0`; the sample overrides it to `0.5` in
+the windowed path. Drop that override so the managed viewport renders at native HiDPI resolution, and
+let the allocation-tier outer loop discover the operating point under load — which is what planset-32
+built it to do. Independent of every other plan in this set.
 
 ## The problem
 
@@ -31,9 +32,12 @@ quantized tier under sustained load. The fixed `0.5` pre-empts that discovery en
 - **Sample default → `1.0`.** Drop the `smoke ? 1.0f : 0.5f` split; the windowed app uses the same
   full-native ceiling smoke already uses. The tier controller (`{1.0, 0.75, 0.5}`) discovers downward
   under load; the inner loop's per-frame sub-rect absorbs spikes. The hand-picked cap is gone.
-- **Engine documentation re-framed.** The engine CLAUDE.md and the
+- **Engine documentation re-framed.** The engine CLAUDE.md, the
   [`DynamicResolution.h`](../../engine/include/Veng/Renderer/DynamicResolution.h) /
-  [`Viewport.h`](../../engine/include/Veng/Renderer/Viewport.h) doc comments currently describe
+  [`Viewport.h`](../../engine/include/Veng/Renderer/Viewport.h) doc comments, the
+  [`Viewport.cpp`](../../engine/src/Renderer/Viewport.cpp) `ExtentForScale` inline comments carrying
+  the same framing, and the sample's own `MaxAllocationScale` comment in
+  [`main.cpp`](../../examples/hello-triangle/main.cpp) currently describe
   `MaxAllocationScale` as "the HiDPI baseline budget" whose point is to bring the allocation "back to
   logical-point resolution rather than silently supersampling every render-graph image to the backing
   pixels." That framing is what justified the `0.5`. Rewrite it: `MaxAllocationScale` is a **ceiling**
