@@ -7,6 +7,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/Skeleton.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/TypedBuffers.h>
 #include <Veng/Task/TaskSystem.h>

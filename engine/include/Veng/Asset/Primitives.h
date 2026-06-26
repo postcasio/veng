@@ -2,8 +2,12 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
-#include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h> // MeshData, CanonicalVertex
+
+namespace Veng
+{
+    class Material;
+}
 
 /// @brief Runtime primitive mesh generators.
 ///

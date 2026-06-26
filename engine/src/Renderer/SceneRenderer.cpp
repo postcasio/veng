@@ -49,6 +49,7 @@
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Shader.h>
+#include <Veng/Asset/Skeleton.h>
 
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>

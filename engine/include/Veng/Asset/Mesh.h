@@ -7,8 +7,6 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
-#include <Veng/Asset/Material.h>
-#include <Veng/Asset/Skeleton.h>
 #include <Veng/Math/AABB.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/TypedBuffers.h>
@@ -22,6 +20,9 @@ namespace Veng::Renderer
 
 namespace Veng
 {
+    class Material;
+    struct Skeleton;
+
     /// @brief One draw range within a mesh's index buffer.
     ///
     /// MaterialIndex selects an entry in the owning Mesh's material list;

@@ -7,6 +7,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Environment.h>
+#include <Veng/Asset/Prefab.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>

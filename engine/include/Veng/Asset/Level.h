@@ -4,7 +4,6 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
-#include <Veng/Asset/Prefab.h>
 #include <Veng/Asset/ResidencyBatch.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/SceneSystem.h>
@@ -16,6 +15,7 @@ namespace Veng
     class TypeRegistry;
     class SystemRegistry;
     class SceneSimulation;
+    class Prefab;
 
     /// @brief A running game: the Scene a level spawned plus the SceneSimulation driving it.
     ///

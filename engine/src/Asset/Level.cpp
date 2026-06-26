@@ -1,6 +1,7 @@
 #include <Veng/Asset/Level.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Prefab.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Scene.h>

@@ -1,6 +1,7 @@
 #include "panels/LevelEditorPanel.h"
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Prefab.h>
 #include <Veng/Log.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/SceneSystem.h>

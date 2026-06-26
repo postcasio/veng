@@ -1,7 +1,6 @@
 #pragma once
 
 #include <Veng/Veng.h>
-#include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Scene/Entity.h>
 

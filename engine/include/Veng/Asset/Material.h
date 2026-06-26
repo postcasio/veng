@@ -8,7 +8,6 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/Shader.h>
-#include <Veng/Asset/Texture.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 
@@ -20,6 +19,8 @@ namespace Veng::Renderer
 
 namespace Veng
 {
+    class Texture;
+
     /// @brief Selects a material's output contract, pipeline shape, standard vertex shader, and invocation site.
     ///
     /// Surface writes the g-buffer and is drawn per submesh by the geometry pass; PostProcess writes a
