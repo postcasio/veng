@@ -617,6 +617,32 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   **light/camera gizmos**. A **mutable** mesh (sculpting, voxels, destruction) is split out to
   **future area 16** to design against a real consumer.
 
+- **[planset-35](planset-35/README.md)** — build configurations & the minimal game template
+  (proposed, 7 plans). Takes up future [area 15](future/README.md#15-build-configurations--project-settings--texture-compression-authoring):
+  the developer-control layer planset-33 shipped the codec *plumbing* for and deferred. A
+  **project-settings** concept owns a set of **build configurations** (one per ship target —
+  macOS / Windows / Linux / mobile), each holding the texture codec policy as a **role → format**
+  table; a texture declares a compression **role/intent** (Color / Normal / Mask / HDR / UI), not a raw
+  codec, and the configuration resolves role → concrete format per platform (the standard cross-engine
+  factoring — Unreal `TextureCompressionSettings`, Unity per-platform overrides, Godot import/export
+  presets). The cook reads the active configuration (`vengc cook --config`) and emits **one output pack
+  per configuration**, with the cook-time dependency **implicit and coarse** (the config file is one
+  central depfile input; per-config invalidation falls out). A bare `cmake --build` cooks the
+  **host-matching configuration** by default (`VENG_BUILD_CONFIG`, defaulted from the host triple — a
+  Mac build cooks the macOS/ASTC pack with no flag; `cook-all-packs` builds every platform's). The
+  editor surfaces the settings through the reflection inspector (reflected `ProjectSettings` /
+  `BuildConfiguration` structs draw for free) and **gates live preview to host GPU capability**
+  (`IsBlockCompressionSupported()`/`IsAstcSupported()`) so "ASTC on Windows" is structurally
+  impossible — building any configuration stays unrestricted (the encoder is CPU). The closer adds a
+  **minimal game template** (`examples/template/`): the absolute-minimum app that opens a window and
+  renders a rotating cube — world built in code, the cube a planset-34 primitive recipe, rotated inline
+  in `OnUpdate`, no custom component/system/prefab/debug-UI — the **copy-to-start** point for new
+  developers, **co-migrated** with `hello-triangle` on every breaking change (the minimal conformance
+  surface to the maximal one). **Gate met by planset-33** (the BC7/ASTC formats, the `FormatInfo` block
+  math, the device-capability queries, the cooker codec selection); ships **no new codec** — BC5/BC4
+  channel specialization, wider ASTC footprints, HDR ASTC, and an uncompressed fallback pack stay named
+  area-15 follow-ons behind the delivered role → format table.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the

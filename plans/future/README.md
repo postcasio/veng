@@ -486,6 +486,13 @@ own `MaterialParams` struct — exactly the split this lands.
 
 ### 15. Build configurations & project settings — texture-compression authoring
 
+> **Taken up by [planset-35](../planset-35/README.md) (proposed).** The developer-control layer
+> below — the project-settings/build-configuration concept, the role → format table, the coarse
+> per-config cook dependency, the host-default CMake selection, and the editor host-capability preview
+> gate — is scoped into planset-35; the still-open **footprint** items (BC5/BC4, wider ASTC, HDR ASTC,
+> the uncompressed fallback pack), **editor active-config persistence**, and the **Windows
+> cross-compile constraint** stay future behind it. Marked delivered when that planset lands.
+
 **Motivated by planset-33's texture-compression track**, which ships the BC7/ASTC
 codec plumbing but **hardcodes ASTC as the cook default** (BC7 selectable through a
 minimal internal seam) and defers all developer control. This area adds that control: a
