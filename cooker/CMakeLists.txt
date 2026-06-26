@@ -45,12 +45,23 @@ FetchContent_MakeAvailable(bc7enc_rdo)
 
 # astc-encoder (ARM) — ASTC LDR block encoder for the TextureImporter, cooker-only (behind
 # VENG_BUILD_TOOLS; never linked into libveng, which uploads the cooked blocks and never encodes).
-# A proper CMake project: build only the scalar-reference (ISA "none") static codec library
-# astcenc-none-static — portable and deterministic, which keeps the cook reproducible — with no
-# CLI, no shared lib, no tests. Pinned to a tagged release.
-# ISA "none" is the portable scalar reference codec; it cannot coexist with the macOS-default
-# universal build, so disable that. ASTCENC_INVARIANCE keeps the encode bit-reproducible run to run.
-set(ASTCENC_ISA_NONE ON CACHE INTERNAL "")
+# A proper CMake project: build one per-architecture SIMD static codec library — NEON on Apple
+# Silicon, SSE4.1 on x86_64 — with no CLI, no shared lib, no tests. Pinned to a tagged release.
+#
+# The SIMD codec is many times faster than the scalar "none" reference. ASTCENC_INVARIANCE keeps
+# the encode bit-reproducible across runs, threads, and machines of the same architecture, so the
+# cook stays deterministic — but cross-ISA output differs, so the smoke golden is regenerated when
+# the codec ISA changes. astc-encoder's own universal (lipo) build is off: a single-arch SIMD lib
+# matches veng's single-arch build (a universal veng build would need the scalar "none" codec).
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+    set(ASTCENC_ISA_NEON ON CACHE INTERNAL "")
+    set(VENG_ASTCENC_TARGET astcenc-neon-static)
+else ()
+    set(ASTCENC_ISA_SSE41 ON CACHE INTERNAL "")
+    set(VENG_ASTCENC_TARGET astcenc-sse4.1-static)
+endif ()
+message(STATUS "veng: ASTC encoder ISA target = ${VENG_ASTCENC_TARGET}")
+set(ASTCENC_ISA_NONE OFF CACHE INTERNAL "")
 set(ASTCENC_ISA_NATIVE OFF CACHE INTERNAL "")
 set(ASTCENC_UNIVERSAL_BUILD OFF CACHE INTERNAL "")
 set(ASTCENC_CLI OFF CACHE INTERNAL "")
@@ -64,6 +75,17 @@ FetchContent_Declare(
         GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(astc_encoder)
+
+# Optimize the ASTC codec even in a Debug build: it is a third-party hot loop nobody step-debugs,
+# and an -O0 scalar/Debug encode dominates the cook wall-clock. Release keeps the codec's own -O3.
+target_compile_options(${VENG_ASTCENC_TARGET} PRIVATE $<$<CONFIG:Debug>:-O2>)
+
+# Same reasoning for the BC7 encoder TU and the TextureImporter's mip-resize + block-encode loops:
+# force -O2 in Debug so the cook does not run them unoptimized. Release inherits its own -O3.
+set_source_files_properties(
+        ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp
+        src/Importers/TextureImporter.cpp
+        PROPERTIES COMPILE_OPTIONS $<$<CONFIG:Debug>:-O2>)
 
 # nlohmann/json — pack + per-asset JSON parsing (cooker-only; the runtime
 # reads the binary archive, never JSON).
@@ -209,7 +231,7 @@ target_include_directories(veng_cook_objs PRIVATE
         ${xxhash_SOURCE_DIR}
         ${tinyexr_SOURCE_DIR}
         ${bc7enc_rdo_SOURCE_DIR}
-        $<TARGET_PROPERTY:astcenc-none-static,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:${VENG_ASTCENC_TARGET},INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:ZLIB::ZLIB,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:libzstd_static,INTERFACE_INCLUDE_DIRECTORIES>
 )
@@ -273,7 +295,7 @@ add_library(libveng_cook STATIC
 add_library(veng::cook ALIAS libveng_cook)
 target_link_libraries(libveng_cook PUBLIC veng_cook_objs veng::veng veng::assetpack)
 target_link_libraries(libveng_cook PRIVATE
-        fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB astcenc-none-static)
+        fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB ${VENG_ASTCENC_TARGET})
 target_compile_options(libveng_cook PRIVATE -fno-exceptions)
 
 add_executable(vengc tool/main.cpp)
@@ -286,6 +308,6 @@ target_link_libraries(vengc PRIVATE veng::cook fmt::fmt)
 add_executable(veng_cook_bootstrap tool/bootstrap_main.cpp)
 target_link_libraries(veng_cook_bootstrap PRIVATE
         veng_cook_objs veng::assetpack fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB
-        astcenc-none-static)
+        ${VENG_ASTCENC_TARGET})
 target_compile_options(veng_cook_bootstrap PRIVATE -fno-exceptions)
 target_compile_options(vengc PRIVATE -fno-exceptions)

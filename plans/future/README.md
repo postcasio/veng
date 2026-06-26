@@ -540,6 +540,25 @@ consumer exists to design it against; the single-mesh-slot model from planset-34
 (a dynamic mesh produces a `Mesh` into the same `MeshRenderer.Mesh` slot). **Design overview:**
 [dynamic-meshes.md](dynamic-meshes.md).
 
+### 17. Cook performance — parallel texture encode — PRIORITIZED (near-term quick win)
+
+**Motivated by the texture cook dominating build wall-clock.** The cook's cost is texture
+block-encoding, and two of the three levers are already pulled in the cooker build: the ASTC codec now
+builds the **SIMD ISA** (NEON on Apple Silicon, SSE4.1 on x86_64) instead of the scalar `none`
+reference, and the ASTC/BC7 encoders + the `TextureImporter` mip/block loops are compiled **`-O2`
+even in Debug** (they were inheriting `-O0`, the dominant cost in a CLion Debug build). What remains is
+**threading**: a single sample cook still pins one core for ~25 s because `EncodeAstcLevel` allocs the
+`astcenc_context` with `thread_count = 1` and calls `astcenc_compress_image(…, 0)` on one thread.
+
+**The work:** alloc the context with `thread_count = std::thread::hardware_concurrency()` and run that
+many worker threads, each calling `astcenc_compress_image` with its own thread index (the encoder's
+documented multithreading model). **Golden-safe by construction:** `ASTCENC_INVARIANCE` is on, which
+guarantees the encode is independent of thread count, so the smoke golden does not move. Expected ~4×
+on the 4-perf-core dev machine, taking the sample cook from ~25 s to single digits. A natural extension
+is cross-texture parallelism (a thread pool over the importer), but within-texture threading is the
+cleaner first step and is what astc-encoder is built for. Optionally pairs with a content-addressed
+per-asset cook cache (area 15, Decision 3) so an unchanged texture is not re-encoded at all.
+
 ## Ordering & dependencies
 
 The order to *take the remaining areas up* (each becomes its own planset), not a
