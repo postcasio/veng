@@ -42,5 +42,22 @@ namespace Veng
         bool ReadOnly = false;
         /// @brief Optional inspector category group for this field.
         string Category;
+
+        /// @brief Array-only: the element type's TypeId; InvalidTypeId for a non-array field.
+        ///
+        /// For a FieldClass::Array field, Type names the container (a synthetic id),
+        /// and this names the registered element type the array shims address.
+        TypeId ElementType = InvalidTypeId;
+        /// @brief Array-only: number of elements held; null for a non-array field.
+        ///
+        /// All four array shims take the field pointer (the `vector<T>` storage), never
+        /// an element, and are null on every non-array descriptor.
+        usize (*ArraySize)(const void* arrayPtr) = nullptr;
+        /// @brief Array-only: returns mutable storage for the element at `index`; null for a non-array field.
+        void* (*ArrayElement)(void* arrayPtr, usize index) = nullptr;
+        /// @brief Array-only: returns const storage for the element at `index`; null for a non-array field.
+        const void* (*ArrayElementConst)(const void* arrayPtr, usize index) = nullptr;
+        /// @brief Array-only: resizes the array to `count` default-constructed elements; null for a non-array field.
+        void (*ArrayResize)(void* arrayPtr, usize count) = nullptr;
     };
 }

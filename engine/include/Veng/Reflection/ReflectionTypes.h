@@ -46,6 +46,8 @@ namespace Veng
         Enum,
         /// @brief A tagged union — at most one of several registered alternatives, reached through the TypeInfo variant ops.
         Variant,
+        /// @brief A dynamic array (a `vector<T>`) of a single registered element type, walked through the FieldDescriptor's array shims.
+        Array,
     };
 
     /// @brief A registered type's spelling split into its enclosing namespace and bare name.

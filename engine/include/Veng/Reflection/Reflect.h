@@ -39,6 +39,31 @@ namespace Veng::Detail
         return desc;
     }
 
+    /// @brief Fills the array shims of `desc` for a `vector<Element>` field.
+    ///
+    /// The four shims are type-erased over `Array = vector<Element>`: they take the
+    /// field pointer (the vector storage) and address elements by index, so the
+    /// generic serializer walks an array without naming Element. Sets ElementType to
+    /// the element's authored TypeId so the read side resolves its schema.
+    /// @tparam Element  The array's element type.
+    /// @param desc  The descriptor to populate; Class must already be Array.
+    /// @return The descriptor with its array shims and ElementType set.
+    template <class Element>
+    FieldDescriptor FinishArrayField(FieldDescriptor desc)
+    {
+        using Array = vector<Element>;
+        desc.ElementType = TypeIdOf<Element>();
+        desc.ArraySize = [](const void* arrayPtr)
+        { return static_cast<const Array*>(arrayPtr)->size(); };
+        desc.ArrayElement = [](void* arrayPtr, usize index) -> void*
+        { return &(*static_cast<Array*>(arrayPtr))[index]; };
+        desc.ArrayElementConst = [](const void* arrayPtr, usize index) -> const void*
+        { return &(*static_cast<const Array*>(arrayPtr))[index]; };
+        desc.ArrayResize = [](void* arrayPtr, usize count)
+        { static_cast<Array*>(arrayPtr)->resize(count); };
+        return desc;
+    }
+
     /// @brief Sink that the describe-block drives once to collect a type's fields.
     struct FieldCollector
     {
@@ -52,6 +77,15 @@ namespace Veng::Detail
         void Field_(FieldDescriptor desc)
         {
             Fields.push_back(FinishField(std::move(desc)));
+        }
+
+        /// @brief Appends one finished array-field descriptor, populating its element shims.
+        /// @tparam Owner    The struct type declaring the field.
+        /// @tparam Element  The array's element type.
+        template <class Owner, class Element>
+        void ArrayField_(FieldDescriptor desc)
+        {
+            Fields.push_back(FinishField(FinishArrayField<Element>(std::move(desc))));
         }
     };
 
@@ -71,6 +105,15 @@ namespace Veng::Detail
         void Field_(const FieldDescriptor&)
         {
             Registry.Register<Field>();
+        }
+
+        /// @brief Registers an array field's *element* type — the container has no trait.
+        /// @tparam Owner    The struct type declaring the field.
+        /// @tparam Element  The array's element type, registered into the registry.
+        template <class Owner, class Element>
+        void ArrayField_(const FieldDescriptor&)
+        {
+            Registry.Register<Element>();
         }
     };
 }
@@ -107,6 +150,20 @@ namespace Veng::Detail
         ::Veng::FieldDescriptor{.Name = #Member,                                                   \
                                 .Type = ::Veng::TypeIdOf<decltype(Owner::Member)>(),               \
                                 .Class = ::Veng::FieldClassOf<decltype(Owner::Member)>(),          \
+                                .Offset = offsetof(Owner, Member),                                 \
+                                __VA_ARGS__});
+
+/// @brief Declares one array-field record (a `vector<T>` member) within a VE_REFLECT block.
+///
+/// The element type is read off the member's `value_type` at compile time; the
+/// descriptor carries Class = Array and the element-access shims, and the element
+/// type is auto-registered like any other field type. The container itself carries
+/// no trait, so Type stays InvalidTypeId — the element schema lives in ElementType.
+/// The trailing … are optional designated-initialiser editor metadata.
+#define VE_ARRAY_FIELD(Member, ...)                                                                \
+    sink.template ArrayField_<Owner, typename decltype(Owner::Member)::value_type>(                \
+        ::Veng::FieldDescriptor{.Name = #Member,                                                   \
+                                .Class = ::Veng::FieldClass::Array,                                \
                                 .Offset = offsetof(Owner, Member),                                 \
                                 __VA_ARGS__});
 

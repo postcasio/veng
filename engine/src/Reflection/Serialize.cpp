@@ -100,6 +100,24 @@ namespace Veng
                 }
                 break;
             }
+            case FieldClass::Array:
+            {
+                // Length-prefixed: a u32 element count then each element written by
+                // its own class through a synthetic element descriptor.
+                const usize count = field.ArraySize(fieldPtr);
+                AppendU32(out, static_cast<u32>(count));
+
+                const TypeInfo& element = registry.Info(field.ElementType);
+                FieldDescriptor elementDesc;
+                elementDesc.Type = field.ElementType;
+                elementDesc.Class = element.Class;
+                for (usize i = 0; i < count; ++i)
+                {
+                    const void* elementPtr = field.ArrayElementConst(fieldPtr, i);
+                    WriteValue(out, elementPtr, elementDesc, registry);
+                }
+                break;
+            }
             }
         }
 
@@ -229,6 +247,30 @@ namespace Veng
                     return std::unexpected(consumed.error());
                 }
                 cursor += *consumed;
+                break;
+            }
+            case FieldClass::Array:
+            {
+                const Result<u32> count = ReadU32(in, cursor);
+                if (!count)
+                {
+                    return std::unexpected(count.error());
+                }
+                field.ArrayResize(fieldPtr, *count);
+
+                const TypeInfo& element = registry.Info(field.ElementType);
+                FieldDescriptor elementDesc;
+                elementDesc.Type = field.ElementType;
+                elementDesc.Class = element.Class;
+                for (u32 i = 0; i < *count; ++i)
+                {
+                    void* elementPtr = field.ArrayElement(fieldPtr, i);
+                    if (VoidResult read = ReadValue(in, cursor, elementPtr, elementDesc, registry);
+                        !read)
+                    {
+                        return std::unexpected(read.error());
+                    }
+                }
                 break;
             }
             }
