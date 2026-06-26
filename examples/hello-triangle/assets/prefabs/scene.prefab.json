@@ -23,8 +23,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::ConeShape",
             "value": {
               "Radius": 0.439,
@@ -67,8 +67,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.317,
@@ -112,8 +112,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CapsuleShape",
             "value": {
               "Radius": 0.256,
@@ -157,8 +157,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.32,
@@ -202,8 +202,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.628,
@@ -244,8 +244,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.652,
@@ -286,8 +286,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.311,
@@ -330,8 +330,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.75,
@@ -372,8 +372,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.287,
@@ -416,8 +416,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.369,
@@ -461,8 +461,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::IcosphereShape",
             "value": {
               "Radius": 0.421,
@@ -504,8 +504,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.353,
@@ -549,8 +549,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.522,
@@ -591,8 +591,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::ConeShape",
             "value": {
               "Radius": 0.308,
@@ -635,8 +635,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.585,
@@ -677,8 +677,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CapsuleShape",
             "value": {
               "Radius": 0.277,
@@ -722,8 +722,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::IcosphereShape",
             "value": {
               "Radius": 0.365,
@@ -765,8 +765,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::ConeShape",
             "value": {
               "Radius": 0.307,
@@ -809,8 +809,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::IcosphereShape",
             "value": {
               "Radius": 0.427,
@@ -852,8 +852,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::SphereShape",
             "value": {
               "Radius": 0.379,
@@ -896,8 +896,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CapsuleShape",
             "value": {
               "Radius": 0.286,
@@ -941,8 +941,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::ConeShape",
             "value": {
               "Radius": 0.368,
@@ -985,8 +985,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.331,
@@ -1029,8 +1029,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.356,
@@ -1074,8 +1074,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.713,
@@ -1116,8 +1116,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::SphereShape",
             "value": {
               "Radius": 0.347,
@@ -1160,8 +1160,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.393,
@@ -1204,8 +1204,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::ConeShape",
             "value": {
               "Radius": 0.322,
@@ -1248,8 +1248,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.629,
@@ -1290,8 +1290,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::SphereShape",
             "value": {
               "Radius": 0.308,
@@ -1334,8 +1334,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.26,
@@ -1378,8 +1378,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::ConeShape",
             "value": {
               "Radius": 0.34,
@@ -1422,8 +1422,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.342,
@@ -1466,8 +1466,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.399,
@@ -1511,8 +1511,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CapsuleShape",
             "value": {
               "Radius": 0.296,
@@ -1556,8 +1556,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::SphereShape",
             "value": {
               "Radius": 0.408,
@@ -1600,8 +1600,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.332,
@@ -1645,8 +1645,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.344,
@@ -1690,8 +1690,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::IcosphereShape",
             "value": {
               "Radius": 0.417,
@@ -1733,8 +1733,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::SphereShape",
             "value": {
               "Radius": 0.438,
@@ -1777,8 +1777,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::ConeShape",
             "value": {
               "Radius": 0.357,
@@ -1821,8 +1821,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CapsuleShape",
             "value": {
               "Radius": 0.248,
@@ -1866,8 +1866,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.309,
@@ -1911,8 +1911,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CapsuleShape",
             "value": {
               "Radius": 0.313,
@@ -1956,8 +1956,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.399,
@@ -2000,8 +2000,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::ConeShape",
             "value": {
               "Radius": 0.357,
@@ -2044,8 +2044,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::SphereShape",
             "value": {
               "Radius": 0.345,
@@ -2088,8 +2088,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.321,
@@ -2133,8 +2133,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::ConeShape",
             "value": {
               "Radius": 0.445,
@@ -2177,8 +2177,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::SphereShape",
             "value": {
               "Radius": 0.376,
@@ -2221,8 +2221,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.304,
@@ -2266,8 +2266,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::SphereShape",
             "value": {
               "Radius": 0.322,
@@ -2310,8 +2310,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CapsuleShape",
             "value": {
               "Radius": 0.285,
@@ -2355,8 +2355,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.372,
@@ -2400,8 +2400,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::SphereShape",
             "value": {
               "Radius": 0.413,
@@ -2444,8 +2444,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.363,
@@ -2489,8 +2489,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.351,
@@ -2533,8 +2533,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.303,
@@ -2577,8 +2577,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.715,
@@ -2619,8 +2619,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.366,
@@ -2664,8 +2664,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.523,
@@ -2706,8 +2706,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.337,
@@ -2750,8 +2750,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.629,
@@ -2792,8 +2792,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.299,
@@ -2836,8 +2836,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::SphereShape",
             "value": {
               "Radius": 0.311,
@@ -2880,8 +2880,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.366,
@@ -2925,8 +2925,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.5,
@@ -2967,8 +2967,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::SphereShape",
             "value": {
               "Radius": 0.309,
@@ -3011,8 +3011,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.754,
@@ -3053,8 +3053,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::IcosphereShape",
             "value": {
               "Radius": 0.378,
@@ -3096,8 +3096,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::SphereShape",
             "value": {
               "Radius": 0.403,
@@ -3140,8 +3140,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CapsuleShape",
             "value": {
               "Radius": 0.261,
@@ -3185,8 +3185,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.332,
@@ -3230,8 +3230,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CapsuleShape",
             "value": {
               "Radius": 0.299,
@@ -3275,8 +3275,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.343,
@@ -3319,8 +3319,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.395,
@@ -3363,8 +3363,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.278,
@@ -3407,8 +3407,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CapsuleShape",
             "value": {
               "Radius": 0.301,
@@ -3452,8 +3452,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CapsuleShape",
             "value": {
               "Radius": 0.228,
@@ -3497,8 +3497,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.628,
@@ -3539,8 +3539,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::ConeShape",
             "value": {
               "Radius": 0.413,
@@ -3583,8 +3583,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::IcosphereShape",
             "value": {
               "Radius": 0.342,
@@ -3626,8 +3626,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.305,
@@ -3670,8 +3670,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::IcosphereShape",
             "value": {
               "Radius": 0.388,
@@ -3713,8 +3713,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.322,
@@ -3758,8 +3758,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.621,
@@ -3800,8 +3800,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.74,
@@ -3842,8 +3842,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.304,
@@ -3887,8 +3887,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.262,
@@ -3931,8 +3931,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CylinderShape",
             "value": {
               "Radius": 0.334,
@@ -3975,8 +3975,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::ConeShape",
             "value": {
               "Radius": 0.401,
@@ -4019,8 +4019,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.543,
@@ -4061,8 +4061,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CapsuleShape",
             "value": {
               "Radius": 0.282,
@@ -4106,8 +4106,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CapsuleShape",
             "value": {
               "Radius": 0.247,
@@ -4151,8 +4151,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::ConeShape",
             "value": {
               "Radius": 0.332,
@@ -4195,8 +4195,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::IcosphereShape",
             "value": {
               "Radius": 0.421,
@@ -4238,8 +4238,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::TorusShape",
             "value": {
               "MajorRadius": 0.393,
@@ -4283,8 +4283,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.729,
@@ -4325,8 +4325,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::SphereShape",
             "value": {
               "Radius": 0.406,
@@ -4369,8 +4369,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 0.698,
@@ -4592,8 +4592,8 @@
             1.0
           ]
         },
-        "::Veng::Primitive": {
-          "Shape": {
+        "::Veng::MeshRenderer": {
+          "Source": {
             "type": "::Veng::PlaneShape",
             "value": {
               "Size": [

@@ -6,6 +6,7 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/Scene/Resolve.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneClone.h>
 
@@ -112,25 +113,17 @@ namespace Veng
                 // here would be an engine invariant violation, not bad data.
                 ReadFields(component.Record, slot, typeInfo, registry).value();
                 Resolve(slot, typeInfo, registry, spawned, manager);
-            }
-        }
 
-        // 2b. Fire each spawned component's resolver, now that every entity and
-        //     component exists (a resolver may read sibling entities). A resolver may
-        //     add a component (a MeshRenderer), so iterate the prefab's authored
-        //     component list — not a live pool — and fetch storage fresh by TypeId.
-        //     This runs before the hierarchy rebuild; adding a renderable does not
-        //     affect parent edges.
-        for (usize i = 0; i < m_Entities.size(); ++i)
-        {
-            const Entity entity = spawned[i];
-            for (const Component& component : m_Entities[i].Components)
-            {
-                const TypeInfo& typeInfo = registry.Info(component.Type);
-                if (typeInfo.SpawnResolve != nullptr)
+                // A MeshRenderer's inline recipe source builds into its Mesh through the
+                // ordinary async load path, yielding a pending handle exactly like the
+                // cooked-mesh dependency a sibling entity would carry.
+                if (component.Type == TypeIdOf<MeshRenderer>())
                 {
-                    void* slot = scene.TryGetComponent(entity, component.Type);
-                    typeInfo.SpawnResolve(slot, scene, entity, manager);
+                    auto& renderer = *static_cast<MeshRenderer*>(slot);
+                    if (renderer.Source.ActiveType() != InvalidTypeId)
+                    {
+                        renderer.Mesh = BuildPrimitiveMesh(manager, renderer.Source);
+                    }
                 }
             }
         }

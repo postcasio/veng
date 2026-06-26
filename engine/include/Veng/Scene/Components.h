@@ -60,77 +60,6 @@ namespace Veng
         Entity NextSibling = Entity::Null;
     };
 
-    /// @brief Component that binds a scene entity to a renderable mesh.
-    ///
-    /// The mesh owns its materials, so a renderer queries (Transform, MeshRenderer)
-    /// and draws each submesh with its material.
-    struct MeshRenderer
-    {
-        /// @brief The mesh this entity draws.
-        AssetHandle<Mesh> Mesh;
-    };
-
-    /// @brief How an Animator treats a clip's baked root motion.
-    ///
-    /// Root motion is the locomotion translation a clip bakes onto its root bone, which would
-    /// otherwise slide the whole skeleton out from under the entity. Every mode strips that
-    /// translation from the rendered pose; they differ only in where the extracted per-tick
-    /// delta goes. Integer values are stable — persisted in prefabs.
-    enum class RootMotionMode : u32
-    {
-        /// @brief Strip the root translation and discard it: the entity stays in place.
-        Discard = 0,
-        /// @brief Strip it and apply the delta to the entity's own Transform (View-phase, cosmetic).
-        Presentation = 1,
-        /// @brief Strip it and publish the delta as a RootMotionDelta for a Sim mover to consume.
-        Drive = 2,
-    };
-
-    /// @brief Plays an Animation clip on a skinned-mesh entity.
-    ///
-    /// The animation system advances Time each tick (when Playing), samples Clip against the
-    /// entity mesh's Skeleton, and writes the result into the entity's SkinnedPose for the
-    /// renderer to upload. A skinned mesh with no Animator shows its bind pose.
-    struct Animator
-    {
-        /// @brief The animation clip to play.
-        AssetHandle<Animation> Clip;
-        /// @brief Current playback time in seconds (advanced by the system).
-        f32 Time = 0.0f;
-        /// @brief Playback rate multiplier.
-        f32 Speed = 1.0f;
-        /// @brief Whether playback loops at the clip's end.
-        bool Loop = true;
-        /// @brief Whether playback is advancing.
-        bool Playing = true;
-        /// @brief How the clip's baked root motion is handled.
-        RootMotionMode RootMotion = RootMotionMode::Discard;
-    };
-
-    /// @brief Runtime-only skinning palette for a skinned-mesh entity.
-    ///
-    /// Holds the bone matrices the animation system computes each tick and the renderer
-    /// uploads into the GPU skinning palette. Never serialized (a derived, per-frame product);
-    /// added automatically to a skinned entity by the animation system.
-    struct SkinnedPose
-    {
-        /// @brief Per-bone skinning matrices (GlobalInverse * modelBone * InverseBind).
-        vector<mat4> Skinning;
-    };
-
-    /// @brief This tick's root-motion displacement, published by an Animator in Drive mode.
-    ///
-    /// Written by the View-phase animation system each tick for an Animator whose RootMotion is
-    /// Drive, in the entity's model-local frame (the character's own forward/right/up). A
-    /// Sim-phase mover rotates it by the entity's orientation and adds it to the entity's
-    /// position. Because the producer runs in the View phase after the Sim phase, a Sim consumer
-    /// reads the value one tick late. Never serialized (a derived, per-frame product).
-    struct RootMotionDelta
-    {
-        /// @brief Model-local translation extracted from the root bone this tick.
-        vec3 Translation{0.0f};
-    };
-
     /// @brief Cube shape recipe: the parameters of Primitives::Cube plus its material.
     struct CubeShape
     {
@@ -231,33 +160,99 @@ namespace Veng
         AssetHandle<Material> Material;
     };
 
-    /// @brief The tagged union of shape recipes a Primitive can hold.
-    using PrimitiveShapeVariant = Variant<CubeShape, PlaneShape, SphereShape, IcosphereShape,
-                                          CylinderShape, ConeShape, TorusShape, CapsuleShape>;
-
-    /// @brief A procedural-mesh recipe: regenerated into the entity's MeshRenderer at spawn.
+    /// @brief The inline procedural source of a MeshRenderer's mesh: one shape recipe or empty.
     ///
-    /// The active alternative of Shape is the primitive kind and carries that kind's
-    /// parameters plus its material. A registered resolver turns the active shape into a
-    /// streamed Mesh at spawn/edit and stores the handle in the entity's MeshRenderer; an
-    /// empty Shape produces no mesh.
-    struct Primitive
+    /// The active alternative is the primitive kind and carries that kind's parameters plus
+    /// its material. Empty means the MeshRenderer's cooked Mesh is used as authored; a
+    /// non-empty alternative is built into the MeshRenderer's Mesh at spawn/edit.
+    using MeshSource = Variant<CubeShape, PlaneShape, SphereShape, IcosphereShape, CylinderShape,
+                               ConeShape, TorusShape, CapsuleShape>;
+
+    /// @brief Component that binds a scene entity to a renderable mesh.
+    ///
+    /// The mesh owns its materials, so a renderer queries (Transform, MeshRenderer)
+    /// and draws each submesh with its material. The mesh's source is either a cooked
+    /// AssetId (Mesh, authored directly) or an inline procedural recipe (Source, the
+    /// active shape variant). A non-empty Source is built into Mesh during the prefab
+    /// populate pass, yielding a pending handle exactly like a cooked async load — the
+    /// renderer query (Transform, MeshRenderer) and every draw path read the one Mesh
+    /// handle regardless of which source produced it.
+    struct MeshRenderer
     {
-        /// @brief The active shape recipe, or empty for no mesh.
-        PrimitiveShapeVariant Shape;
+        /// @brief The resolved mesh this entity draws.
+        ///
+        /// Holds the cooked mesh when Source is empty, or the built recipe mesh when
+        /// Source carries a shape. The renderer query and draw paths read this handle.
+        AssetHandle<Mesh> Mesh;
+        /// @brief Inline procedural source for Mesh, or empty to use the cooked Mesh as authored.
+        ///
+        /// The active alternative is the primitive kind, carrying that kind's parameters
+        /// and material. When non-empty it is built into Mesh at spawn/edit through the
+        /// ordinary async load path, replacing any authored cooked Mesh; an empty Source
+        /// leaves the authored cooked Mesh in place.
+        MeshSource Source;
     };
 
-    /// @brief Resolver for Primitive: builds the active shape's mesh and points the
-    ///        entity's MeshRenderer at it.
+    /// @brief How an Animator treats a clip's baked root motion.
     ///
-    /// Builds the active shape through BuildPrimitiveMesh, adding a MeshRenderer when the
-    /// entity has none. An empty Shape leaves the renderer untouched. Wired onto the type by
-    /// VE_RESOLVE; fired by Prefab::SpawnInto and ResolveComponents.
-    /// @param primitive  The component carrying the shape recipe.
-    /// @param scene      The scene holding the entity.
-    /// @param entity     The entity whose MeshRenderer receives the mesh.
-    /// @param manager    The asset manager the generated mesh streams through.
-    void ResolvePrimitive(Primitive& primitive, Scene& scene, Entity entity, AssetManager& manager);
+    /// Root motion is the locomotion translation a clip bakes onto its root bone, which would
+    /// otherwise slide the whole skeleton out from under the entity. Every mode strips that
+    /// translation from the rendered pose; they differ only in where the extracted per-tick
+    /// delta goes. Integer values are stable — persisted in prefabs.
+    enum class RootMotionMode : u32
+    {
+        /// @brief Strip the root translation and discard it: the entity stays in place.
+        Discard = 0,
+        /// @brief Strip it and apply the delta to the entity's own Transform (View-phase, cosmetic).
+        Presentation = 1,
+        /// @brief Strip it and publish the delta as a RootMotionDelta for a Sim mover to consume.
+        Drive = 2,
+    };
+
+    /// @brief Plays an Animation clip on a skinned-mesh entity.
+    ///
+    /// The animation system advances Time each tick (when Playing), samples Clip against the
+    /// entity mesh's Skeleton, and writes the result into the entity's SkinnedPose for the
+    /// renderer to upload. A skinned mesh with no Animator shows its bind pose.
+    struct Animator
+    {
+        /// @brief The animation clip to play.
+        AssetHandle<Animation> Clip;
+        /// @brief Current playback time in seconds (advanced by the system).
+        f32 Time = 0.0f;
+        /// @brief Playback rate multiplier.
+        f32 Speed = 1.0f;
+        /// @brief Whether playback loops at the clip's end.
+        bool Loop = true;
+        /// @brief Whether playback is advancing.
+        bool Playing = true;
+        /// @brief How the clip's baked root motion is handled.
+        RootMotionMode RootMotion = RootMotionMode::Discard;
+    };
+
+    /// @brief Runtime-only skinning palette for a skinned-mesh entity.
+    ///
+    /// Holds the bone matrices the animation system computes each tick and the renderer
+    /// uploads into the GPU skinning palette. Never serialized (a derived, per-frame product);
+    /// added automatically to a skinned entity by the animation system.
+    struct SkinnedPose
+    {
+        /// @brief Per-bone skinning matrices (GlobalInverse * modelBone * InverseBind).
+        vector<mat4> Skinning;
+    };
+
+    /// @brief This tick's root-motion displacement, published by an Animator in Drive mode.
+    ///
+    /// Written by the View-phase animation system each tick for an Animator whose RootMotion is
+    /// Drive, in the entity's model-local frame (the character's own forward/right/up). A
+    /// Sim-phase mover rotates it by the entity's orientation and adds it to the entity's
+    /// position. Because the producer runs in the View phase after the Sim phase, a Sim consumer
+    /// reads the value one tick late. Never serialized (a derived, per-frame product).
+    struct RootMotionDelta
+    {
+        /// @brief Model-local translation extracted from the root bone this tick.
+        vec3 Translation{0.0f};
+    };
 
     /// @brief Selects how the deferred lighting pass attenuates a light.
     ///
@@ -506,25 +501,6 @@ VE_REFLECT(::Veng::Hierarchy, 0x5C9855E287465C5EULL)
 VE_FIELD(Parent, .DisplayName = "Parent", .ReadOnly = true)
 VE_REFLECT_END();
 
-VE_REFLECT(::Veng::MeshRenderer, 0x3C5CB13E46E0450BULL)
-VE_FIELD(Mesh, .DisplayName = "Mesh")
-VE_REFLECT_END();
-
-VE_LEAF(::Veng::RootMotionMode, 0x2F4A31CEE94569AFULL, FieldClass::Enum);
-
-VE_REFLECT(::Veng::Animator, 0x2B56DF7335B89F8DULL)
-VE_FIELD(Clip, .DisplayName = "Clip")
-VE_FIELD(Speed, .DisplayName = "Speed", .Min = 0.0)
-VE_FIELD(Loop, .DisplayName = "Loop")
-VE_FIELD(Playing, .DisplayName = "Playing")
-VE_FIELD(RootMotion, .DisplayName = "Root Motion")
-VE_FIELD(Time, .DisplayName = "Time", .Min = 0.0, .ReadOnly = true)
-VE_REFLECT_END();
-
-VE_TYPE(::Veng::SkinnedPose, 0x063C1245B8912FC3ULL);
-
-VE_TYPE(::Veng::RootMotionDelta, 0x10C7034D936A12CEULL);
-
 VE_REFLECT(::Veng::CubeShape, 0x2B758A3FE238BAA5ULL)
 VE_FIELD(Extent, .DisplayName = "Extent", .Min = 0.001)
 VE_FIELD(Material, .DisplayName = "Material")
@@ -579,13 +555,27 @@ VE_FIELD(Rings, .DisplayName = "Rings", .Min = 1)
 VE_FIELD(Material, .DisplayName = "Material")
 VE_REFLECT_END();
 
-VE_VARIANT(::Veng::PrimitiveShapeVariant, 0xC64CE2B415C54D22ULL);
+VE_VARIANT(::Veng::MeshSource, 0xC64CE2B415C54D22ULL);
 
-VE_REFLECT(::Veng::Primitive, 0x491B7EC1B0DF276BULL)
-VE_FIELD(Shape, .DisplayName = "Shape")
+VE_REFLECT(::Veng::MeshRenderer, 0x3C5CB13E46E0450BULL)
+VE_FIELD(Mesh, .DisplayName = "Mesh")
+VE_FIELD(Source, .DisplayName = "Source")
 VE_REFLECT_END();
 
-VE_RESOLVE(::Veng::Primitive, ::Veng::ResolvePrimitive);
+VE_LEAF(::Veng::RootMotionMode, 0x2F4A31CEE94569AFULL, FieldClass::Enum);
+
+VE_REFLECT(::Veng::Animator, 0x2B56DF7335B89F8DULL)
+VE_FIELD(Clip, .DisplayName = "Clip")
+VE_FIELD(Speed, .DisplayName = "Speed", .Min = 0.0)
+VE_FIELD(Loop, .DisplayName = "Loop")
+VE_FIELD(Playing, .DisplayName = "Playing")
+VE_FIELD(RootMotion, .DisplayName = "Root Motion")
+VE_FIELD(Time, .DisplayName = "Time", .Min = 0.0, .ReadOnly = true)
+VE_REFLECT_END();
+
+VE_TYPE(::Veng::SkinnedPose, 0x063C1245B8912FC3ULL);
+
+VE_TYPE(::Veng::RootMotionDelta, 0x10C7034D936A12CEULL);
 
 VE_REFLECT(::Veng::Light, 0xECF6442708DF7C00ULL)
 VE_FIELD(Type, .DisplayName = "Type")

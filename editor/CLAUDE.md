@@ -73,17 +73,20 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
   filter and row/empty-space context menus. Every structural edit is **queued during the
   draw and applied after** the snapshot walk returns, so nothing mutates the scene
   mid-iteration (the `Scene` contract). Duplicating an entity round-trips its components into
-  the copy but builds no derived resource, so `DuplicateSubtree` calls `ResolveEntity` on each
-  copy after its children recurse.
-- **Resolver-bearing components are resolved on every editing path.** A component that carries
-  a recipe whose resources are generated (a `Primitive`) builds its mesh through a
-  spawn-resolve thunk ([engine/CLAUDE.md](../engine/CLAUDE.md)). Spawning a prefab resolves
-  automatically inside `Prefab::SpawnInto`; there is no per-frame scan. **Any editor path that
-  adds or edits a resolver-bearing component must call `ResolveComponents` on the touched
-  entity** — funnelled through `PrefabEditContext::ResolveEntity`. Today that is three paths:
-  Add Component (`InspectorPanel`), an inspector field edit (`InspectorPanel`, gated on the
-  `DrawFieldWidget` changed-bool), and duplicate (`PrefabExplorerPanel`). A future structural op
-  (paste, undo) must add its own trigger.
+  the copy but builds no derived mesh, so `DuplicateSubtree` calls `ResolveEntity` on each
+  copy after its children recurse — the byte copy carries the recipe `Source` forward but
+  never the built handle.
+- **A mesh source re-resolves like any asset field.** A `MeshRenderer` carrying an inline
+  recipe `Source` ([engine/CLAUDE.md](../engine/CLAUDE.md)) builds its mesh during
+  `Prefab::SpawnInto`'s populate pass; there is no per-frame scan. An inspector edit to the
+  source repoints the mesh exactly as repointing a cooked `AssetHandle` field would, so two
+  of the editor's resolve triggers collapse into "the source re-resolves on the changed-bool":
+  Add Component (`InspectorPanel`) and an inspector field edit (`InspectorPanel`, gated on the
+  `DrawFieldWidget` changed-bool). The **duplicate** path is different — a `DuplicateSubtree`
+  byte copy has no inspector edit and no changed-bool to hook, so it rebuilds the derived mesh
+  from the copied source explicitly. All three funnel through `PrefabEditContext::ResolveEntity`,
+  which rebuilds the entity's `Mesh` from a non-empty `Source` via `BuildPrimitiveMesh`; a
+  future structural op (paste, undo) adds its own trigger.
 - **Reflection-driven inspector.** `InspectorPanel` edits `PrefabEditContext::Active`: an
   editable name header, a searchable **Add Component** picker (every registered
   `FieldClass::Struct` type not already present, minus the hierarchy-owned `Hierarchy`), and
@@ -97,11 +100,12 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
   rows, makes enums editable (with a registered `LightType` combo), and turns `Reference`
   fields into Entity drop targets. The **`Variant` widget** is a combo over the alternatives'
   display names (plus "(none)") that `SetActive`s the chosen alternative on change and recurses
-  the active member's fields as indented rows — so a `Primitive`'s shape variant gives
-  primitive-kind selection and per-shape parameter editing for free. `DrawFieldWidget` returns a
-  `bool changed` (accumulated through its nested-struct/variant recursion); `DrawComponent` ORs it
-  across the component's fields and, when true, calls `PrefabEditContext::ResolveEntity` so an edit
-  to a recipe (a primitive's shape/parameters) rebuilds its derived mesh. A `RegisterFieldWidget`
+  the active member's fields as indented rows — so a `MeshRenderer`'s `Source` shape variant
+  gives primitive-kind selection and per-shape parameter editing for free. `DrawFieldWidget`
+  returns a `bool changed` (accumulated through its nested-struct/variant recursion);
+  `DrawComponent` ORs it across the component's fields and, when true, calls
+  `PrefabEditContext::ResolveEntity` so an edit to a recipe source (its shape/parameters)
+  rebuilds the derived mesh. A `RegisterFieldWidget`
   entry overrides the built-in for a given `TypeId`; the entity inspector and the node-property
   inspector both call `DrawFieldWidget`, so the two share identical widget behavior. The
   `AssetHandle` widget is an asset **picker** (a combo over the `AssetSourceIndex` entries of the
