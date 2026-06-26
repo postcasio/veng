@@ -29,6 +29,10 @@ namespace Veng
         registry.Register<Possesses>();
         registry.Register<Mover>();
 
+        // Autonomous constant transform velocity (drift + spin) the ConstantMotionSystem
+        // integrates. MotionSpace registers transitively through ConstantMotion.
+        registry.Register<ConstantMotion>();
+
         // Net-anticipation seam: the ownership annotation and the camera-rig follow
         // relationship the View-phase rig reads.
         registry.Register<Tier>();

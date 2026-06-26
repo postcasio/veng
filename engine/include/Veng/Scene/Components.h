@@ -355,6 +355,38 @@ namespace Veng
         f32 TurnSpeed = 2.0f;
     };
 
+    /// @brief Frame a ConstantMotion's velocities are applied in.
+    ///
+    /// Integer values are stable — persisted in prefabs.
+    enum class MotionSpace : u32
+    {
+        /// @brief Apply in the entity's own frame: linear velocity along its local axes,
+        ///        rotation about its local axis (post-multiplied onto the orientation).
+        Local = 0,
+        /// @brief Apply in the parent frame: linear velocity along the parent axes,
+        ///        rotation about the parent axis (pre-multiplied onto the orientation).
+        World = 1,
+    };
+
+    /// @brief Constant per-tick transform velocity: drifts and/or spins an entity at a fixed rate.
+    ///
+    /// Authored data the ConstantMotionSystem integrates each tick — a rate of change of the
+    /// Transform, not a curve. Both velocities are zero by default, so a drift-only or
+    /// spin-only entity sets just the one it needs. AngularVelocity is an axis-angle vector:
+    /// its direction is the spin axis and its magnitude is the angular speed in radians per
+    /// second (a zero vector does not spin). Space selects whether the velocities are applied
+    /// in the entity's local frame or its parent frame.
+    struct ConstantMotion
+    {
+        /// @brief Linear velocity in units per second.
+        vec3 LinearVelocity = vec3(0.0f);
+        /// @brief Angular velocity as an axis-angle vector: direction is the spin axis,
+        ///        magnitude is radians per second.
+        vec3 AngularVelocity = vec3(0.0f);
+        /// @brief Frame the velocities are applied in.
+        MotionSpace Space = MotionSpace::World;
+    };
+
     /// @brief Who simulates and owns an entity: the ownership tier of an Authority.
     ///
     /// The minimal set ahead of a net layer. Integer values are stable — persisted in
@@ -605,6 +637,15 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::Mover, 0x7774F1C2B00DE07EULL)
 VE_FIELD(MoveSpeed, .DisplayName = "Move Speed", .Min = 0.0)
 VE_FIELD(TurnSpeed, .DisplayName = "Turn Speed", .Min = 0.0)
+VE_REFLECT_END();
+
+VE_LEAF(::Veng::MotionSpace, 0x46914AC0C743D776ULL, FieldClass::Enum);
+
+VE_REFLECT(::Veng::ConstantMotion, 0xEBB74CB78D872F9FULL)
+VE_FIELD(LinearVelocity, .DisplayName = "Linear Velocity", .Tooltip = "Units per second")
+VE_FIELD(AngularVelocity, .DisplayName = "Angular Velocity",
+         .Tooltip = "Axis-angle vector: direction is the spin axis, magnitude is radians/sec")
+VE_FIELD(Space, .DisplayName = "Space", .Tooltip = "Local (own frame) or World (parent frame)")
 VE_REFLECT_END();
 
 VE_LEAF(::Veng::Tier, 0x45470D3410320AB9ULL, FieldClass::Enum);

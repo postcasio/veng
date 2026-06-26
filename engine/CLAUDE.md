@@ -1103,6 +1103,17 @@ players write through — both are drop-in `Intent` producers, no movement chang
 independent of `Viewer.Camera` (a spectator views without possessing; a cutscene
 retargets the camera without un-possessing).
 
+**`ConstantMotion` is the input-free counterpart** (`Veng/Scene/Motion.h`): an authored
+**`ConstantMotion { vec3 LinearVelocity; vec3 AngularVelocity; MotionSpace Space }`** is a
+constant rate of change of the `Transform` — a drift and/or spin — that the engine
+**`ConstantMotionSystem`** integrates each Sim tick. `AngularVelocity` is an axis-angle vector
+(direction is the spin axis, magnitude is radians/sec); `Space` applies both velocities in the
+entity's `Local` frame or its parent `World` frame. Unlike `MovementSystem` it reads no `Intent`
+— the motion is autonomous, authored data, not a command — so a spinning prop carries no controller
+and rides no wire. It is a builtin component (`RegisterBuiltinTypes`) selected per level like any
+other system; the minimal template uses it to spin its cube as data, with `ConstantMotionSystem` the
+only system its module registers.
+
 **The tick is split Sim / View, and entities carry `Authority`.** A `SceneSystem`
 (`Veng/Scene/SceneSystem.h`) declares a **`Phase { Sim, View }`** (default `Sim`); a
 **`SceneSimulation`** (`Veng/Scene/SceneSimulation.h`) runs all Sim systems, then all View

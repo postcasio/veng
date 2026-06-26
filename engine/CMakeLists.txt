@@ -53,6 +53,7 @@ add_library(veng SHARED
         src/Scene/Camera.cpp
         src/Scene/CameraRig.cpp
         src/Scene/ComponentPool.cpp
+        src/Scene/Motion.cpp
         src/Scene/Movement.cpp
         src/Scene/Resolve.cpp
         src/Scene/RootMotion.cpp

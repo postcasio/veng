@@ -421,6 +421,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/camera.cpp
             tests/unit/camera_resolve.cpp
             tests/unit/control_movement.cpp
+            tests/unit/constant_motion.cpp
             tests/unit/camera_rig.cpp
             tests/unit/game_mode.cpp
             tests/unit/material_params.cpp
