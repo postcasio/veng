@@ -3,6 +3,7 @@
 #include <Veng/Log.h>
 
 #include <fstream>
+#include <span>
 #include <sstream>
 
 #include <nlohmann/json.hpp>
@@ -98,6 +99,20 @@ namespace VengEditor
             };
         }
 
+        return index;
+    }
+
+    AssetSourceIndex AssetSourceIndex::ParsePacks(std::span<const path> manifestPaths)
+    {
+        AssetSourceIndex index;
+        for (const path& manifestPath : manifestPaths)
+        {
+            const AssetSourceIndex one = Parse(manifestPath);
+            for (const auto& [id, entry] : one.m_Entries)
+            {
+                index.m_Entries[id] = entry;
+            }
+        }
         return index;
     }
 

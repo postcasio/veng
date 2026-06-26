@@ -41,10 +41,10 @@ scene through `GetPrimaryViewport()->SetViewState` each frame. The editor leaves
 viewports.
 
 **`Application` optionally bootstraps and drives the whole game world.** Set
-`ApplicationInfo::World` (`GameWorldInfo { path AssetPack; }`, alongside `ManagedViewport`)
-and `Application` runs the game: at the end of `Initialize` (after `OnInitialize`) it mounts
-the pack beside the executable, reads the pack's **cooked startup level**
-(`AssetManager::GetStartupLevel()`, from the archive header), seeds the managed viewport's
+`ApplicationInfo::World` (`GameWorldInfo { path Project; }`, alongside `ManagedViewport`)
+and `Application` runs the game: at the end of `Initialize` (after `OnInitialize`) it reads
+the **cooked project** (`<name>.vengproj`) beside the executable (`ReadCookedProject`), mounts
+each pack it names, loads its **startup level** (declared by the cooked project), seeds the managed viewport's
 topology + per-frame view from the level's `LevelRenderSettings` (`ApplyLevelRenderSettings`),
 spawns the world (`Level::LoadInto`, the `Scene` owning its `SceneSimulation`), fires the
 `OnWorldLoaded(Scene&, ResidencyBatch&)` hook, then starts the simulation. Each `Frame` it
@@ -113,10 +113,11 @@ SOURCES …)`** is its editor sibling — it emits `lib<name>_editor` (SHARED, l
   existing `SystemRegistry`/`TypeRegistry` or authored as data, never through a new host
   entry. That ECS-native shape is what keeps it lighter than an actor-derived game-mode
   object would: nothing here is a host-ABI institution.
-- **The relocatable trio.** The module resolves **beside the launcher** via an
-  `$ORIGIN`/`@loader_path` rpath, and assets resolve via `ExecutableDirectory()`
-  (the public executable-relative path helper) with `veng_add_game` copying the
-  cooked pack beside the launcher — so launcher + lib + pack move as one directory.
+- **The relocatable set.** The module resolves **beside the launcher** via an
+  `$ORIGIN`/`@loader_path` rpath, and the cooked project + packs resolve via
+  `ExecutableDirectory()` (the public executable-relative path helper) with `veng_add_game`
+  copying the project + packs beside the launcher — so launcher + lib + project + packs move
+  as one directory.
 - **`EditorRegistry*` is the editor-host seam.** The host struct carries `{
   ApplicationRegistry& App; TypeRegistry& Types; SystemRegistry& Systems;
   EditorRegistry* Editor; }`; the
@@ -705,7 +706,7 @@ there is no cook-on-demand, no source parser, no re-cook path in `libveng`. The
 build) turns a hand-written JSON **asset pack** into a single `.vengpack`
 archive; the engine *mounts* archives and resolves assets against them.
 
-- **`.vengpack` archives (format v3) carry content hashes.** Every cooked blob
+- **`.vengpack` archives (format v5) carry content hashes.** Every cooked blob
   gets a content hash and the table of contents gets a digest (over the serialized
   TOC bytes), cooker-written via xxh3-128 and checkable with **`vengc verify`** (it
   re-hashes the blobs + digest and exits nonzero on any mismatch). **The loader
@@ -1239,9 +1240,11 @@ nlohmann), so `libveng` gains no JSON dependency.
 - **`ProjectSettings`** (`Veng/Project/ProjectSettings.h`) — one per project (the JSON file
   `project.veng`): a reflected `vector<BuildConfiguration> Configurations` (a genuine
   `FieldClass::Array` field, so adding/removing a config is reflection, not a fixed cap), the
-  `ActiveConfiguration` name the editor previews through and the cook defaults to, and a
-  `StartupLevel` `AssetId` (the level the engine bootstraps; persisted by hand through the
-  `"startupLevel"` key, kept off the reflected field list, cooked into the pack header).
+  `ActiveConfiguration` name the editor previews through and the cook defaults to, a
+  `vector<path> Packs` (the pack manifests the project owns), and a `StartupLevel` `AssetId`
+  (the level the engine bootstraps). `Packs` and `StartupLevel` are persisted by hand through
+  the `"packs"`/`"startupLevel"` keys, kept off the reflected field list; the cook writes the
+  startup level + pack mount names into the cooked project file (`.vengproj`), not the pack header.
 - **`BuildConfiguration`** (`Veng/Project/BuildConfiguration.h`) — a named ship target: a
   `RoleToFormat` codec table, a zstd `CompressionLevel`, a `Target` label, and an
   `OutputSuffix` (the single source of truth for the per-config pack name). `RoleToFormat` is
@@ -1267,21 +1270,21 @@ The engine ships **two** sample game modules, co-migrated on every breaking chan
 **Working norms** rule in the [root CLAUDE.md](../CLAUDE.md)):
 
 - **`examples/hello-triangle`** — the **maximal** sample: every renderer battery, the full
-  debug UI, a cooked prefab/level world, and a `macos`/`windows` build-configuration pair.
+  debug UI, a cooked prefab/level world, and a macOS / Windows / Linux build-configuration set.
 - **`examples/template`** — the **minimal** one a new developer copies. The smallest correct
   `veng_add_game` app: `main.cpp` is **only** a `VengModuleRegister` that registers a **bare
   `Application`** (no subclass) with a `ManagedViewport` and a `World`
-  (`GameWorldInfo{ .AssetPack = "template.vengpack" }`) — and registers **nothing else** (the
+  (`GameWorldInfo{ .Project = "project.vengproj" }`) — and registers **nothing else** (the
   level's one named system, `ConstantMotionSystem`, is an engine builtin the host
-  pre-registers). The engine bootstraps everything — it mounts the pack, loads the pack's
-  **cooked startup level** (a world `Prefab`: a `Camera`, a directional `Light`, and a cube
-  whose mesh is an inline `CubeShape` recipe and which carries a `ConstantMotion` to spin), owns
-  the running scene + simulation, ticks the level's system set (the engine
-  `ConstantMotionSystem`), and pushes the resolved camera each frame. So the file has **no**
-  lifecycle override, per-frame code, custom component or system, system registration, or debug
-  UI — the rotating cube is authored as cooked data and driven by an engine system, not built or
-  driven in code. Its
-  `configs/project.veng` names the `startupLevel` the cook writes into the pack header
-  (`add_asset_pack(... PROJECT ...)`), and its pack carries a prefab + level, so the cook
-  reflects `libtemplate` via `MODULE template` (only engine builtins, no custom types). It is the
-  minimal **conformance** check: if the smallest app stops compiling, a breaking change missed it.
+  pre-registers). The engine bootstraps everything — it reads the cooked project, mounts the
+  packs it names, loads the project's **startup level** (a world `Prefab`: a `Camera`, a
+  directional `Light`, and a cube whose mesh is an inline `CubeShape` recipe and which carries a
+  `ConstantMotion` to spin), owns the running scene + simulation, ticks the level's system set
+  (the engine `ConstantMotionSystem`), and pushes the resolved camera each frame. So the file
+  has **no** lifecycle override, per-frame code, custom component or system, system
+  registration, or debug UI — the rotating cube is authored as cooked data and driven by an
+  engine system, not built or driven in code. Its `project.veng` (at the example root) lists its
+  pack and names the `startupLevel` the cook writes into the cooked project (`add_project`), and
+  its pack carries a prefab + level, so the cook reflects `libtemplate` via `MODULE template`
+  (only engine builtins, no custom types). It is the minimal **conformance** check: if the
+  smallest app stops compiling, a breaking change missed it.

@@ -45,17 +45,18 @@ is thin (shared deps + `add_subdirectory` per lib).
 - `examples/hello-triangle/` — the canonical **maximal** sample app and the smoke
   test. It is a **game module + launcher**, not one binary: `veng_add_game` builds
   `libhello_triangle` (shared, the app) plus `hello_triangle-launcher` (the exe
-  that `dlopen`s it). `assets/` holds its hand-written asset pack (cooked at build
-  time, copied beside the launcher); `configs/` holds its build configurations
-  (`project.veng` + a `*.buildcfg` per ship target).
+  that `dlopen`s it). A root `project.veng` is the entrypoint: it lists the pack(s) under
+  `assets/` (hand-written, cooked at build time, copied beside the launcher) and the
+  `*.buildcfg` ship targets under `configs/`.
 - `examples/template/` — the **minimal** sample: the smallest correct app a new
   developer copies to start (`veng_add_game`, a window + a rotating cube, no debug UI).
   Its `main.cpp` is a bare `Application` with a managed viewport + game world: the engine
-  mounts the pack, loads the project's startup level, and drives the world — the world is
-  authored as cooked data and bootstrapped by the engine, not built or driven in code. Like
-  `hello-triangle` it ships a `configs/` set (`project.veng` — which names the `startupLevel`
-  cooked into the pack — + a `*.buildcfg` per ship target: macOS / Windows / Linux), so a copy
-  starts with the per-platform cook already wired. It is the engine's minimal conformance
+  reads the cooked project, mounts its packs, loads the project's startup level, and drives
+  the world — the world is authored as cooked data and bootstrapped by the engine, not built
+  or driven in code. Like `hello-triangle` it has a root `project.veng` (listing its pack
+  under `assets/`, naming the `startupLevel` the cook writes into the cooked project, and
+  referencing a `*.buildcfg` per ship target under `configs/`: macOS / Windows / Linux), so a
+  copy starts with the per-platform cook already wired. It is the engine's minimal conformance
   surface — **co-migrated with `hello-triangle` on every breaking change** (see
   **Working norms**).
 - `tests/` — `include_hygiene`, `headless_smoke`, `compute_dispatch`, plus the
@@ -176,24 +177,27 @@ deps (nlohmann/json, assimp, and Slang for shader compile + reflection, plus the
 
 A texture's codec is a **platform** decision, not a per-asset one. The project owns
 the build policy as a small reflected data model (`Veng/Project/`): a
-**`ProjectSettings`** (one per project, the JSON file `project.veng`) owns a list of
-**`BuildConfiguration`**s, one per ship target (macOS / Windows / Linux / mobile), each
-a `*.buildcfg` JSON file holding a **role → format** table (`RoleToFormat`), a zstd
-compression level, and an output-pack suffix. A texture's `*.tex.json` declares a
+**`ProjectSettings`** (one per project, the JSON file `project.veng`) is the project
+entrypoint: it lists the asset **packs** it owns, a list of **`BuildConfiguration`**s
+(one per ship target — macOS / Windows / Linux / mobile, each a `*.buildcfg` JSON file
+holding a **role → format** table (`RoleToFormat`), a zstd compression level, and an
+output-pack suffix), and the startup level. A texture's `*.tex.json` declares a
 compression **role** — its *intent*, one of the closed `CompressionRole` set
 (Color / Normal / Mask / HDR / UI) — never a raw codec; the active configuration
 resolves role → concrete `CompressionFormat` per platform (the raw `"compression"` key
-stays as a per-texture escape hatch). The cook reads the active configuration and emits
-**one output pack per configuration**.
+stays as a per-texture escape hatch). The cook reads each configuration and emits, per
+configuration, **its packs plus a cooked project file (`.vengproj`)** — the runtime
+entrypoint naming the packs to mount and the startup level.
 
 A bare `cmake --build` cooks the **host-matching configuration** by default:
 `VENG_BUILD_CONFIG` is a cache variable defaulted from the host triple
 (`cmake/BuildConfig.cmake`'s `veng_host_default_config_name`), so building on a Mac cooks
 the macOS/ASTC pack with no flag. Override with `-DVENG_BUILD_CONFIG=windows` to cook a
 foreign config (always allowed — the encoder is CPU), and the `cook-all-packs` aggregate
-target builds every configuration's pack for CI / ship. A pack with **no** `project.veng`
-cooks under the zero-config codec default (the hardcoded ASTC fallback); both example apps
-ship a `configs/` set, so neither relies on it. The data model is in `engine/CLAUDE.md`, the cook
+target builds every configuration's output for CI / ship. An engine-internal pack cooked
+through `add_asset_pack` with **no** configuration uses the zero-config codec default (the
+hardcoded ASTC fallback); both example apps drive `add_project` from a root `project.veng`,
+so neither relies on it. The data model is in `engine/CLAUDE.md`, the cook
 resolution + CMake selection in `cooker/CLAUDE.md`, and the editor surface + host-capability
 preview gate in `editor/CLAUDE.md`.
 
@@ -228,12 +232,12 @@ cmake --build build-debug -j 4
   runs `hello_triangle-launcher` under `HT_SMOKE` and asserts exit 0 — the one test
   exercising the full `dlopen` → `VengModuleRegister` → registry → `Run()` chain
   end-to-end. Labelled `gpu` (`SKIP_RETURN_CODE 77`), it skips with no device and
-  runs under the validation gate like the rest of the `gpu` band. The launcher + lib
-  + pack are a **relocatable trio**: copy the launcher, `libhello_triangle.*`, and
-  `sample.vengpack` into a fresh directory and run from an unrelated working
-  directory — the module (`@loader_path`/`$ORIGIN` rpath) and the pack
-  (`ExecutableDirectory()`-relative mount) resolve beside the launcher, so it still
-  writes a correct-sized PPM and exits 0.
+  runs under the validation gate like the rest of the `gpu` band. The launcher + lib +
+  project + pack are a **relocatable set**: copy the launcher, `libhello_triangle.*`,
+  `project.vengproj`, and `sample.vengpack` into a fresh directory and run from an unrelated
+  working directory — the module (`@loader_path`/`$ORIGIN` rpath), the cooked project, and the
+  pack (`ExecutableDirectory()`-relative) resolve beside the launcher, so it still writes a
+  correct-sized PPM and exits 0.
 - **Validation errors do NOT fail tests by themselves.** The debug-messenger
   callback (`engine/src/Renderer/Backend/Context.cpp`) only `Log::Error`s on validation
   errors — it never aborts. So a green `ctest` under `VE_DEBUG` only means

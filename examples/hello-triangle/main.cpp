@@ -601,10 +601,10 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                                               AllocationTierSettings>{Renderer::
                                                                           AllocationTierSettings{}},
                         },
-                    // The engine bootstraps the world: it mounts the pack, loads its cooked startup
-                    // level, owns the running scene + simulation, and ticks + pushes the view each
-                    // frame. The sample customizes the loaded world in OnWorldLoaded.
-                    .World = GameWorldInfo{.AssetPack = "sample.vengpack"},
+                    // The engine bootstraps the world: it reads the cooked project, mounts its
+                    // packs, loads the startup level, owns the running scene + simulation, and ticks
+                    // + pushes the view each frame. The sample customizes the world in OnWorldLoaded.
+                    .World = GameWorldInfo{.Project = "project.vengproj"},
                 },
                 types, systems));
         });

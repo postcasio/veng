@@ -17,7 +17,7 @@ reflection), and **nlohmann/json** — are **cooker-only**: gated behind
 runtime gains no importer, no source parser, no Slang, and no re-cook path.
 
 The **content-hash function lives only here** (and in `vengc verify`): the cooker
-writes each blob's xxh3-128 hash and the TOC digest into a `.vengpack` (format v3),
+writes each blob's xxh3-128 hash and the TOC digest into a `.vengpack` (format v5),
 so `assetpack` stores the raw 16 bytes and computes nothing, and `libveng` gains no
 hash dependency. The loader never verifies — hashing is tooling, not the hot path.
 
@@ -146,12 +146,17 @@ loader share one encoder.
 
 ## `vengc` subcommands
 
-- **`cook`** — build a `.vengpack` from a manifest (`--module <lib>` to reflect a
+- **`cook`** — build a `.vengpack` from a single manifest (`--module <lib>` to reflect a
   game module's types **and systems** for prefab and level validation; `--config <file>`
   to select the build configuration whose role → format table the texture cook resolves
-  through; `--project <project.veng>` to read the project's `startupLevel` and write it into
-  the archive header — `ParseProjectStartupLevel` hand-parses it, the runtime reads it back
-  to bootstrap a managed game world. `add_asset_pack(... PROJECT <project.veng>)` wires it).
+  through). Engine-internal packs (the core pack, the editor icons) cook this way.
+- **`cook-project`** — cook a whole **project** for one configuration: `vengc cook-project
+  <project.veng> --config <name> --out-dir <dir> [--module <lib>] [--reference <pack>]...`.
+  `ParseProject` hand-parses the project's `packs`, `configurations`, and `startupLevel`;
+  the named configuration is matched by `BuildConfiguration.Name`; each pack cooks into
+  `<stem><suffix>.vengpack` and a `<projstem><suffix>.vengproj` (`WriteCookedProject`) names
+  the packs' un-suffixed mount names + the startup level — the runtime entrypoint. One
+  combined depfile covers every pack source + the project + the buildcfg. `add_project` wires it.
 - **`verify`** — re-hash a `.vengpack`'s blobs + TOC digest and exit nonzero on any
   mismatch.
 - **`generate-id`** — mint a collision-free `AssetId` (prints hex for C++ literals and
@@ -166,13 +171,15 @@ pack containing prefabs cooks after its game module is built; packs without pref
 stay module-independent. `veng_add_game` wires the example's prefab pack to depend on
 `libhello_triangle`.
 
-`add_asset_pack(... CONFIG <file.buildcfg>)` grows a **per-configuration** dimension:
-each `CONFIG` cooks one output pack under that configuration (reading its `OutputSuffix`
-from the file as the single source of truth for the per-config pack name), passing
-`--config` to `vengc`. The host-default configuration's pack is the one
-`veng_add_game` copies beside the launcher; `cmake/BuildConfig.cmake` owns
-`VENG_BUILD_CONFIG` (host-triple-defaulted), the `cook-all-packs` aggregate, and
-`veng_register_all_packs_target` for feeding every config's pack into it.
-`hello-triangle` declares a `macos`/`windows` config pair and cooks the host-default one
-by default; the minimal `examples/template` declares **no** configuration and cooks under
-the zero-config default.
+`add_project(... PROJECT <project.veng> OUTPUT_DIR <dir>)` (`cmake/Project.cmake`) is the
+game-project entry: it reads `packs` + `configurations` from `project.veng` at configure
+time and, **per configuration**, issues one `vengc cook-project --config <name>` command
+producing that config's packs + `.vengproj` (suffix from each buildcfg's `outputSuffix`,
+the single source of truth). Each `${target}-<configname>` is registered into
+`cook-all-packs`; the host-default configuration's target is returned as
+`${target}_HOST_TARGET` and carries the properties `veng_add_game` reads to copy the
+project + packs beside the launcher and `veng_add_editor` reads to bake the editor's project
+path. `cmake/BuildConfig.cmake` owns `VENG_BUILD_CONFIG` (host-triple-defaulted), the
+`cook-all-packs` aggregate, and `veng_register_all_packs_target`. Both examples declare a
+macOS / Windows / Linux configuration set and cook the host-default one by default;
+`add_asset_pack` remains for engine-internal single packs (the core pack, editor icons).

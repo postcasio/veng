@@ -1,3 +1,4 @@
+#include <Veng/Asset/CookedProject.h>
 #include <Veng/Cook/AssetPack.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
@@ -20,7 +21,9 @@ namespace
         fmt::print(stderr, "usage:\n"
                            "  vengc cook <pack.json> [-o <out.vengpack>] [--reference "
                            "<pack.json>]... [--module <lib>] [--config <file.buildcfg>] "
-                           "[--project <project.veng>] [--depfile <out.d>]\n"
+                           "[--depfile <out.d>]\n"
+                           "  vengc cook-project <project.veng> --config <name> --out-dir <dir> "
+                           "[--reference <pack.json>]... [--module <lib>] [--depfile <out.d>]\n"
                            "  vengc generate-id [--reference <pack.json>]...\n"
                            "  vengc generate-type-id [--module <lib>]\n"
                            "  vengc verify <archive.vengpack>\n");
@@ -70,7 +73,6 @@ int main(int argc, char** argv)
         vector<path> referencePacks;
         optional<path> modulePath;
         optional<path> configPath;
-        optional<path> projectPath;
         optional<path> depfilePath;
 
         for (usize i = 1; i < args.size(); ++i)
@@ -119,15 +121,6 @@ int main(int argc, char** argv)
                     return 1;
                 }
                 configPath = path(args[++i]);
-            }
-            else if (args[i] == "--project")
-            {
-                if (i + 1 >= args.size())
-                {
-                    fmt::print(stderr, "vengc: --project requires an argument\n");
-                    return 1;
-                }
-                projectPath = path(args[++i]);
             }
             else if (!packPath)
             {
@@ -184,28 +177,14 @@ int main(int argc, char** argv)
             config = std::move(*parsed);
         }
 
-        // The project file carries the startup level cooked into the archive header; absent
-        // --project the pack declares none (the invalid id).
-        AssetId startupLevel;
-        if (projectPath)
-        {
-            Result<AssetId> parsed = ParseProjectStartupLevel(*projectPath);
-            if (!parsed)
-            {
-                fmt::print(stderr, "vengc: {}\n", parsed.error());
-                return 1;
-            }
-            startupLevel = *parsed;
-        }
-
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
 
         vector<path> dependencies;
-        const VoidResult result = cooker.CookPack(
-            *packPath, *outPath, referencePacks, types, systems,
-            depfilePath ? &dependencies : nullptr, config ? &*config : nullptr,
-            configPath ? *configPath : path{}, startupLevel, projectPath ? *projectPath : path{});
+        const VoidResult result =
+            cooker.CookPack(*packPath, *outPath, referencePacks, types, systems,
+                            depfilePath ? &dependencies : nullptr, config ? &*config : nullptr,
+                            configPath ? *configPath : path{});
         if (!result)
         {
             fmt::print(stderr, "vengc: {}\n", result.error());
@@ -215,6 +194,187 @@ int main(int argc, char** argv)
         if (depfilePath)
         {
             const VoidResult depResult = WriteDepfile(*depfilePath, *outPath, dependencies);
+            if (!depResult)
+            {
+                fmt::print(stderr, "vengc: {}\n", depResult.error());
+                return 1;
+            }
+        }
+
+        return 0;
+    }
+
+    // -------------------------------------------------------------------
+    // vengc cook-project
+    // -------------------------------------------------------------------
+    if (subcommand == "cook-project")
+    {
+        optional<path> projectPath;
+        optional<string> configName;
+        optional<path> outDir;
+        optional<path> modulePath;
+        optional<path> depfilePath;
+        vector<path> referencePacks;
+
+        for (usize i = 1; i < args.size(); ++i)
+        {
+            if (args[i] == "--config")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --config requires an argument\n");
+                    return 1;
+                }
+                configName = args[++i];
+            }
+            else if (args[i] == "--out-dir")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --out-dir requires an argument\n");
+                    return 1;
+                }
+                outDir = path(args[++i]);
+            }
+            else if (args[i] == "--module")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --module requires an argument\n");
+                    return 1;
+                }
+                modulePath = path(args[++i]);
+            }
+            else if (args[i] == "--reference")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --reference requires an argument\n");
+                    return 1;
+                }
+                referencePacks.emplace_back(args[++i]);
+            }
+            else if (args[i] == "--depfile")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --depfile requires an argument\n");
+                    return 1;
+                }
+                depfilePath = path(args[++i]);
+            }
+            else if (!projectPath)
+            {
+                projectPath = path(args[i]);
+            }
+            else
+            {
+                fmt::print(stderr, "vengc: unexpected argument '{}'\n", args[i]);
+                return 1;
+            }
+        }
+
+        if (!projectPath || !configName || !outDir)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        const Result<CookProject> project = ParseProject(*projectPath);
+        if (!project)
+        {
+            fmt::print(stderr, "vengc: {}\n", project.error());
+            return 1;
+        }
+
+        // Select the named configuration by parsing each *.buildcfg and matching its Name.
+        optional<BuildConfiguration> config;
+        path configFile;
+        for (const path& candidate : project->ConfigFiles)
+        {
+            Result<BuildConfiguration> parsed = ParseBuildConfiguration(candidate);
+            if (!parsed)
+            {
+                fmt::print(stderr, "vengc: {}\n", parsed.error());
+                return 1;
+            }
+            if (parsed->Name == *configName)
+            {
+                config = std::move(*parsed);
+                configFile = candidate;
+                break;
+            }
+        }
+        if (!config)
+        {
+            fmt::print(stderr, "vengc: project '{}' has no configuration named '{}'\n",
+                       projectPath->string(), *configName);
+            return 1;
+        }
+
+        // The module image and its registry must outlive the cook.
+        optional<LoadedModuleTypes> moduleTypes;
+        if (modulePath)
+        {
+            Result<LoadedModuleTypes> loaded = LoadModuleTypes(*modulePath);
+            if (!loaded)
+            {
+                fmt::print(stderr, "vengc: {}\n", loaded.error());
+                return 1;
+            }
+            moduleTypes = std::move(*loaded);
+            PrintTypeManifest(moduleTypes->Types);
+        }
+
+        const TypeRegistry* types = moduleTypes ? &moduleTypes->Types : nullptr;
+        const SystemRegistry* systems = moduleTypes ? &moduleTypes->Systems : nullptr;
+
+        Cooker cooker;
+        RegisterBuiltinImporters(cooker);
+
+        // Cook each pack under the selected configuration and collect both the runtime mount names
+        // (un-suffixed, the names the launcher mounts) and every source for one combined depfile.
+        CookedProject cooked;
+        cooked.StartupLevel = project->StartupLevel;
+
+        vector<path> dependencies;
+        for (const path& packManifest : project->Packs)
+        {
+            const path mountName =
+                packManifest.stem(); // template.vengpack.json -> template.vengpack
+            const string outPackName =
+                mountName.stem().string() + config->OutputSuffix + mountName.extension().string();
+            const path outPack = *outDir / outPackName;
+
+            vector<path> packDeps;
+            const VoidResult result =
+                cooker.CookPack(packManifest, outPack, referencePacks, types, systems,
+                                depfilePath ? &packDeps : nullptr, &*config, configFile);
+            if (!result)
+            {
+                fmt::print(stderr, "vengc: {}\n", result.error());
+                return 1;
+            }
+
+            cooked.PackMountNames.push_back(mountName.string());
+            dependencies.insert(dependencies.end(), packDeps.begin(), packDeps.end());
+        }
+
+        const string projStem = projectPath->stem().string();
+        const path outProject = *outDir / (projStem + config->OutputSuffix + ".vengproj");
+        const VoidResult written = WriteCookedProject(outProject, cooked);
+        if (!written)
+        {
+            fmt::print(stderr, "vengc: {}\n", written.error());
+            return 1;
+        }
+
+        if (depfilePath)
+        {
+            // The single command produces every pack plus the .vengproj together; a depfile keyed on
+            // the project output re-runs the whole cook when any pack source or the project changes.
+            dependencies.push_back(*projectPath);
+            const VoidResult depResult = WriteDepfile(*depfilePath, outProject, dependencies);
             if (!depResult)
             {
                 fmt::print(stderr, "vengc: {}\n", depResult.error());

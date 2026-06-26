@@ -154,6 +154,19 @@ namespace VengEditor
             }
 
             const path dir = projectFile.parent_path();
+
+            // The packs the project owns, resolved to absolute source-manifest paths.
+            if (project->contains("packs") && (*project)["packs"].is_array())
+            {
+                for (const nlohmann::json& entry : (*project)["packs"])
+                {
+                    if (entry.is_string())
+                    {
+                        settings.Packs.push_back(dir / entry.get<string>());
+                    }
+                }
+            }
+
             if (project->contains("configurations") && (*project)["configurations"].is_array())
             {
                 for (const nlohmann::json& entry : (*project)["configurations"])
@@ -449,8 +462,23 @@ namespace VengEditor
     {
         VE_ASSERT(GetImGuiLayer() != nullptr, "editor host requires the ImGui layer");
 
-        const VoidResult mount = GetAssetManager().Mount(ExecutableDirectory() / "sample.vengpack");
-        VE_ASSERT(mount, "{}", mount.error());
+        // The project is the editor's entrypoint: load it (or stay at the empty zero-config state)
+        // and remember its path so the panel saves there.
+        if (m_Info.ProjectPath)
+        {
+            m_ProjectFile = *m_Info.ProjectPath;
+            m_ProjectSettings = LoadProjectSettings(m_ProjectFile);
+        }
+
+        // Mount each cooked pack the project names. The cooked pack sits beside the exe (copied by
+        // veng_add_game) under the source manifest's stem: assets/sample.vengpack.json ->
+        // sample.vengpack.
+        for (const path& packSource : m_ProjectSettings.Packs)
+        {
+            const path mountName = packSource.stem();
+            const VoidResult mount = GetAssetManager().Mount(ExecutableDirectory() / mountName);
+            VE_ASSERT(mount, "{}", mount.error());
+        }
 
         // The editor's own icon pack (light/camera billboard textures) sits beside the exe.
         // The engine ships no icon content; the viewport gizmos resolve their TextureHandles
@@ -462,24 +490,15 @@ namespace VengEditor
             Log::Warn("editor: icon pack not mounted: {}", iconMount.error());
         }
 
-        // Parsed once; an empty index when no manifest is configured keeps the picker
-        // candidate-free rather than absent.
-        m_Sources = CreateUnique<AssetSourceIndex>(
-            m_Info.AssetManifestPath ? AssetSourceIndex::Parse(*m_Info.AssetManifestPath)
-                                     : AssetSourceIndex{});
+        // Built from the union of the project's pack manifests; an empty index when no project is
+        // configured keeps the picker candidate-free rather than absent.
+        m_Sources =
+            CreateUnique<AssetSourceIndex>(AssetSourceIndex::ParsePacks(m_ProjectSettings.Packs));
 
         // The project-settings panel inspects ProjectSettings through reflection and draws the
         // two compression enums as named combos; register both before the panel is built.
         GetTypeRegistry().Register<ProjectSettings>();
         RegisterCompressionWidgets(m_Registries->Editor);
-
-        // project.veng lives beside the manifest; load it (or stay at the empty zero-config
-        // state) and remember the path so the panel saves there.
-        if (m_Info.AssetManifestPath)
-        {
-            m_ProjectFile = m_Info.AssetManifestPath->parent_path() / "project.veng";
-            m_ProjectSettings = LoadProjectSettings(m_ProjectFile);
-        }
 
         // A prefab is edited live in a spawned Scene, so its editor needs no manifest
         // source; register it unconditionally.
@@ -490,7 +509,7 @@ namespace VengEditor
                                               GetInput(), GetInputRouter(), GetSystemRegistry()));
 
         // try_emplace no-ops if the game module already registered a factory for these types.
-        if (m_Info.AssetManifestPath)
+        if (m_Info.ProjectPath)
         {
             auto cookFor = [this]
             {
@@ -518,9 +537,13 @@ namespace VengEditor
                                       GetInputRouter(), GetSystemRegistry(), cookFor()));
         }
 
-        m_Panels.push_back({CreateUnique<AssetBrowserPanel>(
-                                ExecutableDirectory() / "sample.vengpack", *m_Sources, *this),
-                            true});
+        // The asset browser reads the first mounted pack (cooked beside the exe under the source
+        // manifest's stem); an unconfigured project leaves it with an empty path.
+        const path browserPack =
+            m_ProjectSettings.Packs.empty()
+                ? path{}
+                : ExecutableDirectory() / m_ProjectSettings.Packs.front().stem();
+        m_Panels.push_back({CreateUnique<AssetBrowserPanel>(browserPack, *m_Sources, *this), true});
         m_Panels.push_back({CreateUnique<ConsolePanel>(), true});
         m_Panels.push_back(
             {CreateUnique<ProjectSettingsPanel>(
@@ -551,12 +574,12 @@ namespace VengEditor
             return;
         }
 
-        // Inject the manifest path so the cook resolves cross-asset references by AssetId;
-        // panels build manifest-agnostic requests.
+        // Inject the project's first pack manifest so the cook resolves cross-asset references by
+        // AssetId; panels build manifest-agnostic requests.
         CookRequest resolved = request;
-        if (m_Info.AssetManifestPath)
+        if (!m_ProjectSettings.Packs.empty())
         {
-            resolved.ReferenceManifest = *m_Info.AssetManifestPath;
+            resolved.ReferenceManifest = m_ProjectSettings.Packs.front();
         }
 
         // A level cook validates its system ids and config against the module's reflected

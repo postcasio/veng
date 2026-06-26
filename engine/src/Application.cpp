@@ -1,6 +1,7 @@
 #include <Veng/Application.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/CookedProject.h>
 #include <Veng/Log.h>
 #include <Veng/Time.h>
 
@@ -132,16 +133,23 @@ namespace Veng
 
     void Application::BootstrapWorld()
     {
-        // Executable-relative so the pack resolves wherever the launcher is copied.
-        const VoidResult mounted =
-            m_AssetManager->Mount(ExecutableDirectory() / m_Info.World->AssetPack);
-        VE_ASSERT(mounted, "{}", mounted.error());
+        // The cooked project names the packs to mount and the startup level; everything resolves
+        // beside the executable so the launcher + project + packs move as one directory.
+        const path projectFile = ExecutableDirectory() / m_Info.World->Project;
+        const Result<CookedProject> project = ReadCookedProject(projectFile);
+        VE_ASSERT(project, "{}", project.error());
 
-        const optional<AssetId> startup = m_AssetManager->GetStartupLevel();
-        VE_ASSERT(startup.has_value(), "world pack '{}' declares no startup level",
-                  m_Info.World->AssetPack.string());
+        for (const string& packName : project->PackMountNames)
+        {
+            const VoidResult mounted = m_AssetManager->Mount(ExecutableDirectory() / packName);
+            VE_ASSERT(mounted, "{}", mounted.error());
+        }
 
-        const AssetResult<AssetHandle<Level>> level = m_AssetManager->LoadSync<Level>(*startup);
+        VE_ASSERT(project->StartupLevel.IsValid(), "project '{}' declares no startup level",
+                  m_Info.World->Project.string());
+
+        const AssetResult<AssetHandle<Level>> level =
+            m_AssetManager->LoadSync<Level>(project->StartupLevel);
         VE_ASSERT(level.has_value(), "{}", level.error().Detail);
         m_WorldLevel = *level;
 

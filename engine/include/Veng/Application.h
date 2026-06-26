@@ -77,19 +77,20 @@ namespace Veng
     /// @brief Opt-in configuration for the engine-managed game world.
     ///
     /// Set ApplicationInfo::World to this to have Application bootstrap and drive the running
-    /// game: it mounts the named pack beside the executable, reads the pack's cooked startup
-    /// level, spawns it into a Scene (with the level's SceneSimulation attached), seeds the
-    /// renderer from the level's render settings, and each frame ticks the simulation and pushes
-    /// the resolved camera into the managed primary viewport. A game reaches the running world
-    /// through GetWorld() and customizes it in OnWorldLoaded; the minimal game needs no code at
-    /// all. Requires ManagedViewport to be set (the world renders through the managed viewport).
+    /// game: it reads the cooked project file beside the executable, mounts each pack it names,
+    /// loads the project's startup level, spawns it into a Scene (with the level's SceneSimulation
+    /// attached), seeds the renderer from the level's render settings, and each frame ticks the
+    /// simulation and pushes the resolved camera into the managed primary viewport. A game reaches
+    /// the running world through GetWorld() and customizes it in OnWorldLoaded; the minimal game
+    /// needs no code at all. Requires ManagedViewport to be set (the world renders through the
+    /// managed viewport).
     struct GameWorldInfo
     {
-        /// @brief Asset pack to mount and bootstrap from, resolved relative to the executable.
+        /// @brief Cooked project file to bootstrap from, resolved relative to the executable.
         ///
-        /// Mounted at ExecutableDirectory() / AssetPack; its cooked archive header names the
-        /// startup level the engine loads and runs.
-        path AssetPack;
+        /// Read from ExecutableDirectory() / Project; it names the packs to mount (each resolved
+        /// beside the executable too) and the startup level the engine loads and runs.
+        path Project;
     };
 
     /// @brief Construction parameters for Application.

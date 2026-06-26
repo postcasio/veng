@@ -4,6 +4,8 @@
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Veng.h>
 
+#include <span>
+
 /// @brief Maps an AssetId to its per-asset JSON source file by parsing the pack
 /// manifest (.vengpack.json). The archive TOC carries no source path; this index
 /// is the only bridge from a mounted AssetId back to the file an asset editor edits.
@@ -35,6 +37,14 @@ namespace VengEditor
         /// yields an empty index (logged via Log::Error).
         /// @param manifestPath Path to the .vengpack.json manifest.
         static AssetSourceIndex Parse(const Veng::path& manifestPath);
+
+        /// @brief Parses several manifests and returns their merged index.
+        ///
+        /// The project's packs are parsed in order and their entries unioned (a later pack's
+        /// entry for the same id wins). Used by the editor host to index every pack the project
+        /// owns from one AssetId→source map.
+        /// @param manifestPaths The pack manifests to merge.
+        static AssetSourceIndex ParsePacks(std::span<const Veng::path> manifestPaths);
 
         /// @brief Returns the source entry for an id, or nullptr when not in the manifest.
         [[nodiscard]] const Entry* Find(Veng::AssetId id) const;

@@ -27,11 +27,12 @@ namespace VengEditor
         /// @brief Optional game editor-extension module. nullopt skips it.
         Veng::optional<Veng::path> EditorModulePath;
 
-        /// @brief Source-pack manifest (.vengpack.json). Maps an AssetId to its
-        /// per-asset JSON source so asset editors know which file to edit and recook.
+        /// @brief Authoring project file (project.veng) the editor opens.
         ///
-        /// nullopt disables source resolution; asset editors have no source to open.
-        Veng::optional<Veng::path> AssetManifestPath;
+        /// The editor reads the packs the project owns to map an AssetId to its per-asset JSON
+        /// source (so asset editors know which file to edit and recook) and loads the build
+        /// configurations. nullopt disables source resolution; asset editors have no source to open.
+        Veng::optional<Veng::path> ProjectPath;
 
         /// @brief Engine application parameters.
         Veng::ApplicationInfo App;

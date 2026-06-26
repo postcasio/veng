@@ -1,0 +1,12 @@
+{
+  "packs": [
+    "assets/template.vengpack.json"
+  ],
+  "configurations": [
+    "configs/macos.buildcfg",
+    "configs/windows.buildcfg",
+    "configs/linux.buildcfg"
+  ],
+  "activeConfiguration": "macos",
+  "startupLevel": 9915789321268550643
+}

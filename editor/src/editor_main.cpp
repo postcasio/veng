@@ -13,9 +13,8 @@ int main(const int argc, char** argv)
 #ifdef VENG_EDITOR_EDITOR_MODULE
         .EditorModulePath = Veng::ExecutableDirectory() / VENG_EDITOR_EDITOR_MODULE,
 #endif
-#ifdef VENG_EDITOR_ASSET_MANIFEST
-        .AssetManifestPath =
-            Veng::path(VENG_EDITOR_ASSET_MANIFEST), // baked absolute by veng_add_editor
+#ifdef VENG_EDITOR_PROJECT
+        .ProjectPath = Veng::path(VENG_EDITOR_PROJECT), // baked absolute by veng_add_editor
 #endif
         .App =
             {

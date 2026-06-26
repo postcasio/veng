@@ -1,9 +1,9 @@
 # veng_add_editor(<name>
 #     GAME_MODULE    <game target>        # libgame to dlopen at runtime
 #     [EDITOR_MODULE <editor target>]     # optional libgame_editor
-#     [ASSET_PACK    <pack target>]       # an add_asset_pack target whose source
-#                                         # manifest the editor reads to resolve an
-#                                         # AssetId to its per-asset JSON source
+#     [PROJECT       <add_project host target>] # the project whose project.veng the
+#                                         # editor opens (reads its packs to resolve an
+#                                         # AssetId to its per-asset JSON source)
 # )
 #
 # Produces lib<name>_editor (SHARED, links veng_editor::veng_editor) and
@@ -19,7 +19,7 @@
 # out of the framework library and never reaches libveng or libgame.
 
 function(veng_add_editor NAME)
-    cmake_parse_arguments(ARG "" "GAME_MODULE;EDITOR_MODULE;ASSET_PACK" "" ${ARGN})
+    cmake_parse_arguments(ARG "" "GAME_MODULE;EDITOR_MODULE;PROJECT" "" ${ARGN})
 
     if (NOT ARG_GAME_MODULE)
         message(FATAL_ERROR "veng_add_editor(${NAME}): GAME_MODULE is required")
@@ -54,14 +54,14 @@ function(veng_add_editor NAME)
         add_dependencies(${NAME}-editor ${ARG_GAME_MODULE}-launcher)
     endif ()
 
-    # The editor reads the pack's source manifest to map an AssetId to its
-    # per-asset JSON source (so the texture editor knows which .tex.json to edit
-    # and recook). The path is the in-tree source manifest, baked absolute — the
-    # editor is in-tree only, editing the live source files.
-    if (ARG_ASSET_PACK)
+    # The editor opens the project's project.veng: it reads the packs the project owns to
+    # map an AssetId to its per-asset JSON source (so the texture editor knows which
+    # .tex.json to edit and recook) and loads the build configurations. The path is the
+    # in-tree source, baked absolute — the editor is in-tree only, editing live sources.
+    if (ARG_PROJECT)
         target_compile_definitions(${NAME}-editor PRIVATE
-                VENG_EDITOR_ASSET_MANIFEST="$<TARGET_PROPERTY:${ARG_ASSET_PACK},VENG_ASSET_PACK_SOURCE>")
-        add_dependencies(${NAME}-editor ${ARG_ASSET_PACK})
+                VENG_EDITOR_PROJECT="$<TARGET_PROPERTY:${ARG_PROJECT},VENG_PROJECT_SOURCE>")
+        add_dependencies(${NAME}-editor ${ARG_PROJECT})
     endif ()
 
     # Copy the cooked editor icon pack beside the editor exe so EditorHost mounts it

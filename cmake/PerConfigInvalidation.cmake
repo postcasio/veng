@@ -3,8 +3,8 @@
 # Run via `cmake -P PerConfigInvalidation.cmake -D VENG_BUILD_DIR=<dir> ...`
 # (see the `cook_per_config_invalidation` test registration in the root CMakeLists.txt).
 #
-# Asserts add_asset_pack's central guarantee through the real build graph: each
-# (pack x configuration) is its own output, custom target, and depfile, so editing one
+# Asserts add_project's central guarantee through the real build graph: each
+# configuration is its own output set, custom target, and depfile, so editing one
 # configuration re-cooks only its pack. It builds cook-all-packs (both the macOS/ASTC
 # and Windows/BC7 hello-triangle packs), records the macOS pack's timestamp, touches
 # windows.buildcfg, rebuilds cook-all-packs, and asserts the macOS pack is untouched

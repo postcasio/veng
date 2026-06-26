@@ -133,19 +133,6 @@ namespace Veng
                       [&archive](const MountedArchive& mount) { return mount.Path == archive; });
     }
 
-    optional<AssetId> AssetManager::GetStartupLevel() const
-    {
-        for (const MountedArchive& mount : m_Mounts)
-        {
-            const AssetId level = mount.Reader.StartupLevel();
-            if (level.IsValid())
-            {
-                return level;
-            }
-        }
-        return std::nullopt;
-    }
-
     void AssetManager::CollectGarbage()
     {
         // A pending (not-yet-resident) entry is referenced by its PendingLoad, so

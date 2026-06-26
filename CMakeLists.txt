@@ -28,6 +28,7 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AssetPack.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildConfig.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Project.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Game.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Editor.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Docs.cmake)
@@ -397,6 +398,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/shader_interface.cpp
             tests/unit/transient_allocation.cpp
             tests/unit/asset_archive.cpp
+            tests/unit/cooked_project.cpp
             tests/unit/asset_manager.cpp
             tests/unit/primitives.cpp
             tests/unit/bounds.cpp
@@ -912,8 +914,8 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle_assets-macos
         COMMAND ${CMAKE_COMMAND}
             -D VENG_BUILD_DIR=${CMAKE_BINARY_DIR}
             -D VENG_WINDOWS_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/examples/hello-triangle/configs/windows.buildcfg
-            -D VENG_MACOS_PACK=$<TARGET_PROPERTY:hello_triangle_assets-macos,VENG_ASSET_PACK_OUTPUT>
-            -D VENG_WINDOWS_PACK=$<TARGET_PROPERTY:hello_triangle_assets-windows,VENG_ASSET_PACK_OUTPUT>
+            -D VENG_MACOS_PACK=$<TARGET_PROPERTY:hello_triangle_assets-macos,VENG_PACK_OUTPUTS>
+            -D VENG_WINDOWS_PACK=$<TARGET_PROPERTY:hello_triangle_assets-windows,VENG_PACK_OUTPUTS>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PerConfigInvalidation.cmake
     )
     # Serialized: it touches a config and rebuilds the cooked packs, so it must not race

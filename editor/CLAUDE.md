@@ -140,16 +140,24 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
   over the same round-trip (writing/clearing the `"role"` key) and shows the **resolved
   format read-only** for the active configuration ("→ ASTC4x4Srgb for 'macos'"), so the
   artist picks intent and reads the platform's codec without choosing one.
+- **The editor opens the project, not a manifest.** `EditorHostInfo::ProjectPath` (the
+  `project.veng`, baked absolute by `veng_add_editor`) is the editor's entrypoint:
+  `EditorHost` reads it through `LoadProjectSettings` (the host-owned `ProjectSettings` — its
+  `Configurations`, `ActiveConfiguration`, `Packs`, `StartupLevel`), mounts each cooked pack the
+  project names (beside the exe, under the source manifest's stem), and builds its
+  `AssetSourceIndex` from the **union** of the project's pack manifests
+  (`AssetSourceIndex::ParsePacks`). The runtime `.vengproj` is a game-launch artifact the editor
+  does not consume.
 - **Project Settings is a host-level panel.** `ProjectSettingsPanel` (opened from the
   Window menu, like the asset browser) lists and edits the host-owned `ProjectSettings` —
   the array of `BuildConfiguration`s and the `ActiveConfiguration` selector — through the
   shared reflection inspector (`DrawFieldWidget` / `PropertyTable`): reflection draws the
   rows, the `CompressionRole` / `CompressionFormat` enum combos come from registered field
   widgets (the same way `LightType` does), and the configuration-array add/remove widget
-  comes from the inspector's `FieldClass::Array` arm. Save writes `project.veng` and each
-  configuration's `*.buildcfg` sibling through the editor's own nlohmann, using the shared
-  enum⇄name tables the cooker parses by — so the editor *writes* exactly what the cooker
-  *reads*.
+  comes from the inspector's `FieldClass::Array` arm. Save round-trips `project.veng`
+  (preserving the `packs` key) and rewrites each configuration's `*.buildcfg` at its referenced
+  path (under `configs/`) through the editor's own nlohmann, using the shared enum⇄name tables
+  the cooker parses by — so the editor *writes* exactly what the cooker *reads*.
 - **Live preview is gated to host GPU capability.** Building any configuration is
   unrestricted (the encoder is CPU); *previewing through* one is bounded by what the host
   GPU can sample, so "ASTC on Windows" is structurally impossible rather than merely warned

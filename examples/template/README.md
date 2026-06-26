@@ -19,14 +19,14 @@ ApplicationInfo{
     .Name = "Template",
     .WindowInfo = { .Extent = {1280, 720}, .Title = "veng — Template" },
     .ManagedViewport = ManagedViewportInfo{},
-    .World = GameWorldInfo{ .AssetPack = "template.vengpack" },
+    .World = GameWorldInfo{ .Project = "project.vengproj" },
 }
 ```
 
-The engine does the rest. With `World` set it mounts the pack
-(`ExecutableDirectory()`-relative, so the launcher + module + pack move as one
-directory), reads the **startup level** the cook wrote into the pack header (named by
-`configs/project.veng`'s `startupLevel`), spawns its world **`Prefab`** into a `Scene`
+The engine does the rest. With `World` set it reads the **cooked project**
+(`ExecutableDirectory()`-relative, so the launcher + module + project + pack move as one
+directory), mounts the packs it names, loads the **startup level** the project declares
+(`project.veng`'s `startupLevel`), spawns its world **`Prefab`** into a `Scene`
 that owns the level's `SceneSimulation`, and each frame ticks the simulation and pushes
 the resolved camera into the managed viewport. So there is **no** lifecycle override, no
 per-frame code, no `SceneRenderer`/composite/ImGui wiring — the world is authored as data
@@ -45,11 +45,11 @@ The world is authored as **cooked assets** under `assets/`, not built in code:
 
 Because the pack carries a prefab and a level, the cook reflects `libtemplate`'s types
 and systems (`MODULE template` in `CMakeLists.txt`) — here only the engine builtins.
-It ships a `configs/` set (`project.veng` + a `*.buildcfg` per ship target — macOS /
-Windows / Linux), so a copy starts with the per-platform cook already wired: a bare
-`cmake --build` cooks the host-matching configuration, and `cook-all-packs` builds them
-all. The texture codec each role resolves to is edited in the editor's **Project
-Settings** panel.
+It ships a `project.veng` at the example root (listing its pack under `assets/` and a
+`*.buildcfg` per ship target under `configs/` — macOS / Windows / Linux), so a copy starts
+with the per-platform cook already wired: a bare `cmake --build` cooks the host-matching
+configuration, and `cook-all-packs` builds them all. The texture codec each role resolves
+to is edited in the editor's **Project Settings** panel.
 
 Build and run (from the repo root):
 

@@ -37,15 +37,34 @@ namespace Veng::Cook
     /// @return The parsed configuration, or a located error.
     [[nodiscard]] Result<BuildConfiguration> ParseBuildConfiguration(const path& configFile);
 
-    /// @brief Hand-parses a `project.veng` JSON authoring file's startup-level AssetId.
+    /// @brief A `project.veng` authoring file parsed into the cook's project inputs.
     ///
-    /// Reads the project file's `"startupLevel"` key (a decimal AssetId) — the level the engine
-    /// bootstraps when a managed game world mounts the cooked pack. The cook writes it into the
-    /// archive header. An absent or zero key yields the invalid id (the project declares no
-    /// startup level). Errors are located: `"project '<path>': <reason>"`.
+    /// Holds the project's pack manifests and build-configuration files (resolved to absolute
+    /// paths relative to the project file's directory), the active configuration name, and the
+    /// startup level the cook writes into the cooked project (.vengproj).
+    struct CookProject
+    {
+        /// @brief The project file's own directory; relative paths above resolve against it.
+        path Directory;
+        /// @brief The asset-pack manifests the project cooks, as absolute paths.
+        vector<path> Packs;
+        /// @brief The build-configuration (`*.buildcfg`) files, as absolute paths.
+        vector<path> ConfigFiles;
+        /// @brief The Name of the configuration the cook defaults to.
+        string ActiveConfiguration;
+        /// @brief The startup level written into the cooked project; the invalid id means none.
+        AssetId StartupLevel;
+    };
+
+    /// @brief Hand-parses a `project.veng` JSON authoring file into a CookProject.
+    ///
+    /// Reads the `"packs"`, `"configurations"`, `"activeConfiguration"`, and `"startupLevel"` keys;
+    /// relative `packs`/`configurations` entries resolve against the project file's directory. The
+    /// `"startupLevel"` is a decimal AssetId; an absent or zero key yields the invalid id. Errors
+    /// are located: `"project '<path>': <reason>"`.
     /// @param projectFile  Path to the `project.veng` JSON file.
-    /// @return The parsed startup-level id (invalid id when absent), or a located error.
-    [[nodiscard]] Result<AssetId> ParseProjectStartupLevel(const path& projectFile);
+    /// @return The parsed project on success, or a located error.
+    [[nodiscard]] Result<CookProject> ParseProject(const path& projectFile);
 
     /// @brief Writes a GCC-style depfile declaring `target` as depending on every path in `dependencies`.
     ///
@@ -87,14 +106,11 @@ namespace Veng::Cook
         /// @param outDependencies If non-null, receives the sorted, de-duplicated dependency list.
         /// @param config          Active build configuration driving the cook, or nullptr.
         /// @param configFile      Source file of `config`, recorded as a central dependency; empty if none.
-        /// @param startupLevel    Startup-level AssetId written into the archive header; invalid id for none.
-        /// @param projectFile     Source file of `startupLevel`, recorded as a central dependency; empty if none.
         [[nodiscard]] VoidResult
         CookPack(const path& packJson, const path& outArchive,
                  std::span<const path> referencePacks = {}, const TypeRegistry* types = nullptr,
                  const SystemRegistry* systems = nullptr, vector<path>* outDependencies = nullptr,
-                 const BuildConfiguration* config = nullptr, const path& configFile = {},
-                 AssetId startupLevel = {}, const path& projectFile = {}) const;
+                 const BuildConfiguration* config = nullptr, const path& configFile = {}) const;
 
         /// @brief Cooks one source asset and returns a complete single-entry .vengpack as in-memory bytes.
         ///

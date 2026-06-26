@@ -235,27 +235,6 @@ TEST_CASE("ArchiveReader: a span held across a later inflating Find stays valid"
     CHECK(std::ranges::equal(firstSpan, firstBlob));
 }
 
-TEST_CASE("ArchiveWriter/Reader: round-trips the startup level header field")
-{
-    ArchiveWriter writer;
-    writer.Add(AssetId{0x1}, AssetType::Raw, Bytes({1}));
-    writer.SetStartupLevel(AssetId{0xABCDEF0123456789ULL});
-
-    const Result<ArchiveReader> reader = ArchiveReader::FromBytes(writer.Build());
-    REQUIRE(reader.has_value());
-    CHECK(reader->StartupLevel().Value == 0xABCDEF0123456789ULL);
-}
-
-TEST_CASE("ArchiveReader: startup level defaults to the invalid id when unset")
-{
-    ArchiveWriter writer;
-    writer.Add(AssetId{0x1}, AssetType::Raw, Bytes({1}));
-
-    const Result<ArchiveReader> reader = ArchiveReader::FromBytes(writer.Build());
-    REQUIRE(reader.has_value());
-    CHECK_FALSE(reader->StartupLevel().IsValid());
-}
-
 TEST_CASE("ArchiveReader: rejects a v2 archive")
 {
     ArchiveWriter writer;

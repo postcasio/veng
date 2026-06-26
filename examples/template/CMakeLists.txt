@@ -1,49 +1,26 @@
-# Cook the template asset pack with vengc at build time, into the build tree.
-# veng_add_game copies the host-default config's cooked pack beside the launcher
-# (renamed to the un-suffixed mount name); the app mounts it from
-# ExecutableDirectory() so the launcher + module + pack are relocatable.
+# Cook the template project with vengc at build time, into the build tree. add_project
+# reads project.veng for the packs and ship configurations and cooks each config's packs
+# plus its cooked project file (.vengproj); veng_add_game copies the host-default config's
+# project + packs beside the launcher (renamed to their un-suffixed mount names), so the
+# launcher + module + project + pack are a relocatable directory.
 set(TEMPLATE_ASSET_DIR "${CMAKE_CURRENT_BINARY_DIR}/assets")
 
-# The project owns its configuration set (configs/project.veng lists the three ship
-# targets with macOS active) and the host -> config map: a name -> buildcfg lookup,
-# since the engine owns only the selection variable and host-triple default.
-# VENG_BUILD_CONFIG (defaulting from the host triple) names the configuration the
-# launcher's pack cooks under.
-set(TEMPLATE_CONFIG_macos   ${CMAKE_CURRENT_SOURCE_DIR}/configs/macos.buildcfg)
-set(TEMPLATE_CONFIG_windows ${CMAKE_CURRENT_SOURCE_DIR}/configs/windows.buildcfg)
-set(TEMPLATE_CONFIG_linux   ${CMAKE_CURRENT_SOURCE_DIR}/configs/linux.buildcfg)
-set(TEMPLATE_SHIP_CONFIGS macos windows linux)
+# The project owns its pack + configuration set (project.veng lists assets/template.vengpack.json
+# and the three ship targets with macOS active). VENG_BUILD_CONFIG (defaulting from the host
+# triple) names the configuration the launcher's artifacts cook under.
+add_project(template_assets
+        PROJECT    project.veng
+        OUTPUT_DIR ${TEMPLATE_ASSET_DIR}
+        # The pack carries a prefab + level, so the cook reflects libtemplate's types and
+        # systems via --module (here only the engine builtins).
+        MODULE     template
+        # The material's vertex shader references the core canonical vertex layout by
+        # AssetId; resolve it from the engine core pack.
+        REFERENCE  ${CMAKE_SOURCE_DIR}/engine/assets/core/core.vengpack.json)
 
-if (NOT DEFINED TEMPLATE_CONFIG_${VENG_BUILD_CONFIG})
-    message(FATAL_ERROR
-            "template: no build configuration '${VENG_BUILD_CONFIG}' (have: ${TEMPLATE_SHIP_CONFIGS})")
-endif ()
-
-# Cook every ship configuration into its own per-config pack target so cook-all-packs
-# can build them all; the launcher copy below wires only the host-default pack.
-foreach (CFG IN LISTS TEMPLATE_SHIP_CONFIGS)
-    add_asset_pack(template_assets
-            PACK   assets/template.vengpack.json
-            OUTPUT ${TEMPLATE_ASSET_DIR}/template.vengpack
-            CONFIG ${TEMPLATE_CONFIG_${CFG}}
-            # The material's vertex shader references the core canonical vertex layout
-            # by AssetId; resolve it from the engine core pack.
-            REFERENCE ${CMAKE_SOURCE_DIR}/engine/assets/core/core.vengpack.json
-            # The pack carries a prefab + level, so the cook reflects libtemplate's
-            # types and systems via --module (here only the engine builtins).
-            MODULE template
-            # The project's startupLevel is cooked into the pack header; the engine
-            # bootstraps it when the managed game world mounts the pack.
-            PROJECT configs/project.veng)
-    veng_register_all_packs_target(${template_assets_TARGET})
-    if (CFG STREQUAL VENG_BUILD_CONFIG)
-        set(TEMPLATE_HOST_PACK_TARGET ${template_assets_TARGET})
-    endif ()
-endforeach ()
-
-# The game splits into libtemplate (the runtime) and template-launcher (the shipped exe
-# that dlopens it). veng_add_game copies the host-default config's cooked pack beside the
-# launcher so the trio is a relocatable directory.
+# The game splits into libtemplate (the runtime) and template-launcher (the shipped exe that
+# dlopens it). veng_add_game copies the host-default config's cooked project + packs beside the
+# launcher so the set is a relocatable directory.
 veng_add_game(template
-        SOURCES    main.cpp
-        ASSET_PACK ${TEMPLATE_HOST_PACK_TARGET})
+        SOURCES main.cpp
+        PROJECT ${template_assets_HOST_TARGET})

@@ -375,7 +375,7 @@ namespace Veng::Cook
         return config;
     }
 
-    Result<AssetId> ParseProjectStartupLevel(const path& projectFile)
+    Result<CookProject> ParseProject(const path& projectFile)
     {
         const std::ifstream file(projectFile, std::ios::binary);
         if (!file)
@@ -392,16 +392,58 @@ namespace Veng::Cook
             return std::unexpected(fmt::format("project '{}': invalid JSON", projectFile.string()));
         }
 
-        if (!project.contains("startupLevel"))
+        CookProject parsed;
+        parsed.Directory = projectFile.parent_path();
+
+        // packs and configurations are file paths relative to the project file's directory.
+        const auto resolveList = [&](const char* key, vector<path>& out) -> VoidResult
         {
-            return AssetId{};
-        }
-        if (!project["startupLevel"].is_number_unsigned())
+            if (!project.contains(key))
+            {
+                return {};
+            }
+            if (!project[key].is_array())
+            {
+                return std::unexpected(
+                    fmt::format("project '{}': '{}' is not an array", projectFile.string(), key));
+            }
+            for (const json& entry : project[key])
+            {
+                if (!entry.is_string())
+                {
+                    return std::unexpected(fmt::format("project '{}': '{}' entry is not a string",
+                                                       projectFile.string(), key));
+                }
+                out.push_back(parsed.Directory / entry.get<string>());
+            }
+            return {};
+        };
+
+        if (const VoidResult packs = resolveList("packs", parsed.Packs); !packs)
         {
-            return std::unexpected(fmt::format(
-                "project '{}': startupLevel is not an unsigned integer", projectFile.string()));
+            return std::unexpected(packs.error());
         }
-        return AssetId{.Value = project["startupLevel"].get<u64>()};
+        if (const VoidResult configs = resolveList("configurations", parsed.ConfigFiles); !configs)
+        {
+            return std::unexpected(configs.error());
+        }
+
+        if (project.contains("activeConfiguration") && project["activeConfiguration"].is_string())
+        {
+            parsed.ActiveConfiguration = project["activeConfiguration"].get<string>();
+        }
+
+        if (project.contains("startupLevel"))
+        {
+            if (!project["startupLevel"].is_number_unsigned())
+            {
+                return std::unexpected(fmt::format(
+                    "project '{}': startupLevel is not an unsigned integer", projectFile.string()));
+            }
+            parsed.StartupLevel = AssetId{.Value = project["startupLevel"].get<u64>()};
+        }
+
+        return parsed;
     }
 
     VoidResult WriteDepfile(const path& depfilePath, const path& target,
@@ -460,8 +502,7 @@ namespace Veng::Cook
     VoidResult Cooker::CookPack(const path& packJson, const path& outArchive,
                                 std::span<const path> referencePacks, const TypeRegistry* types,
                                 const SystemRegistry* systems, vector<path>* outDependencies,
-                                const BuildConfiguration* config, const path& configFile,
-                                AssetId startupLevel, const path& projectFile) const
+                                const BuildConfiguration* config, const path& configFile) const
     {
         const Result<json> packResult = ReadAndValidatePack(packJson);
         if (!packResult)
@@ -530,13 +571,6 @@ namespace Veng::Cook
             record(configFile);
         }
 
-        // The project file is the source of the startup-level header field; record it centrally
-        // like the configuration so a change to project.veng re-cooks the pack.
-        if (!projectFile.empty())
-        {
-            record(projectFile);
-        }
-
         // Resolve searches the main pack first, then reference packs in order.
         const AssetPack& mainPack = *mainPackResult;
         auto resolve = [&mainPack, &refPacks, &record](AssetId id) -> optional<ResolvedSource>
@@ -581,9 +615,6 @@ namespace Veng::Cook
         const int level = config != nullptr ? config->CompressionLevel : ZstdLevel;
 
         ArchiveWriter writer;
-        // The startup level rides the archive header (outside the hashed TOC range), so it is set
-        // once up front and the digest staging below is unaffected.
-        writer.SetStartupLevel(startupLevel);
         std::set<u64> seenIds;
 
         const json& assets = pack["assets"];

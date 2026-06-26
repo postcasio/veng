@@ -14,6 +14,8 @@
 #include <VengEditor/EditorRegistry.h>
 
 #include <fstream>
+#include <sstream>
+#include <unordered_map>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -243,29 +245,78 @@ namespace VengEditor
     {
         m_Error.reset();
 
-        // Each configuration writes a sibling <name>.buildcfg; project.veng references them by
-        // file name and names the active one. The cooker reads the same *.buildcfg schema.
         const path dir = m_ProjectFile.parent_path();
 
+        // Round-trip the existing project.veng so keys the panel does not own (packs) survive, and
+        // each configuration rewrites its *.buildcfg where it already lives (e.g. under configs/).
         nlohmann::json project = nlohmann::json::object();
-        project["activeConfiguration"] = m_Settings.ActiveConfiguration;
+        {
+            std::ifstream in(m_ProjectFile, std::ios::binary);
+            if (in)
+            {
+                std::ostringstream contents;
+                contents << in.rdbuf();
+                nlohmann::json parsed = nlohmann::json::parse(contents.str(), nullptr, false);
+                if (!parsed.is_discarded() && parsed.is_object())
+                {
+                    project = std::move(parsed);
+                }
+            }
+        }
 
-        // The startup level the cook writes into each pack header; omit it when none is set so an
-        // unconfigured project stays free of the key.
+        // Map each existing configuration's name to its referenced relative path, so a save
+        // rewrites the *.buildcfg in place rather than beside the project file.
+        std::unordered_map<string, string> pathByName;
+        if (project.contains("configurations") && project["configurations"].is_array())
+        {
+            for (const nlohmann::json& entry : project["configurations"])
+            {
+                if (!entry.is_string())
+                {
+                    continue;
+                }
+                const string rel = entry.get<string>();
+                std::ifstream cf(dir / rel, std::ios::binary);
+                if (!cf)
+                {
+                    continue;
+                }
+                std::ostringstream cc;
+                cc << cf.rdbuf();
+                const nlohmann::json cj = nlohmann::json::parse(cc.str(), nullptr, false);
+                if (cj.is_object() && cj.contains("name") && cj["name"].is_string())
+                {
+                    pathByName[cj["name"].get<string>()] = rel;
+                }
+            }
+        }
+
+        project["activeConfiguration"] = m_Settings.ActiveConfiguration;
         if (m_Settings.StartupLevel.IsValid())
         {
             project["startupLevel"] = m_Settings.StartupLevel.Value;
+        }
+        else
+        {
+            project.erase("startupLevel");
         }
 
         nlohmann::json configurations = nlohmann::json::array();
         for (const BuildConfiguration& config : m_Settings.Configurations)
         {
-            const string fileName = config.Name + ".buildcfg";
-            configurations.push_back(fileName);
+            // Reuse the existing referenced path; a configuration added in the editor defaults under
+            // configs/, matching the example layout.
+            const auto it = pathByName.find(config.Name);
+            const string rel =
+                it != pathByName.end() ? it->second : ("configs/" + config.Name + ".buildcfg");
+            configurations.push_back(rel);
 
-            if (!WriteJson(dir / fileName, ConfigToJson(config)))
+            const path outFile = dir / rel;
+            std::error_code ec;
+            std::filesystem::create_directories(outFile.parent_path(), ec);
+            if (!WriteJson(outFile, ConfigToJson(config)))
             {
-                m_Error = fmt::format("failed to write {}", (dir / fileName).string());
+                m_Error = fmt::format("failed to write {}", outFile.string());
                 Log::Error("Project settings: {}", *m_Error);
                 return false;
             }
