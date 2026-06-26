@@ -19,7 +19,8 @@ namespace
     {
         fmt::print(stderr, "usage:\n"
                            "  vengc cook <pack.json> [-o <out.vengpack>] [--reference "
-                           "<pack.json>]... [--module <lib>] [--depfile <out.d>]\n"
+                           "<pack.json>]... [--module <lib>] [--config <file.buildcfg>] "
+                           "[--depfile <out.d>]\n"
                            "  vengc generate-id [--reference <pack.json>]...\n"
                            "  vengc generate-type-id [--module <lib>]\n"
                            "  vengc verify <archive.vengpack>\n");
@@ -68,6 +69,7 @@ int main(int argc, char** argv)
         optional<path> outPath;
         vector<path> referencePacks;
         optional<path> modulePath;
+        optional<path> configPath;
         optional<path> depfilePath;
 
         for (usize i = 1; i < args.size(); ++i)
@@ -107,6 +109,15 @@ int main(int argc, char** argv)
                     return 1;
                 }
                 modulePath = path(args[++i]);
+            }
+            else if (args[i] == "--config")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --config requires an argument\n");
+                    return 1;
+                }
+                configPath = path(args[++i]);
             }
             else if (!packPath)
             {
@@ -148,12 +159,29 @@ int main(int argc, char** argv)
         const TypeRegistry* types = moduleTypes ? &moduleTypes->Types : nullptr;
         const SystemRegistry* systems = moduleTypes ? &moduleTypes->Systems : nullptr;
 
+        // The resolved build configuration drives the texture role → format resolution, the
+        // archive compression level, and is recorded as a central depfile input. Absent --config
+        // the cook is the zero-config ASTC default.
+        optional<BuildConfiguration> config;
+        if (configPath)
+        {
+            Result<BuildConfiguration> parsed = ParseBuildConfiguration(*configPath);
+            if (!parsed)
+            {
+                fmt::print(stderr, "vengc: {}\n", parsed.error());
+                return 1;
+            }
+            config = std::move(*parsed);
+        }
+
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
 
         vector<path> dependencies;
-        const VoidResult result = cooker.CookPack(*packPath, *outPath, referencePacks, types,
-                                                  systems, depfilePath ? &dependencies : nullptr);
+        const VoidResult result =
+            cooker.CookPack(*packPath, *outPath, referencePacks, types, systems,
+                            depfilePath ? &dependencies : nullptr, config ? &*config : nullptr,
+                            configPath ? *configPath : path{});
         if (!result)
         {
             fmt::print(stderr, "vengc: {}\n", result.error());
