@@ -678,14 +678,16 @@ there is no cook-on-demand, no source parser, no re-cook path in `libveng`. The
 build) turns a hand-written JSON **asset pack** into a single `.vengpack`
 archive; the engine *mounts* archives and resolves assets against them.
 
-- **`.vengpack` archives (format v2) carry content hashes.** Every cooked blob
+- **`.vengpack` archives (format v3) carry content hashes.** Every cooked blob
   gets a content hash and the table of contents gets a digest (over the serialized
   TOC bytes), cooker-written via xxh3-128 and checkable with **`vengc verify`** (it
   re-hashes the blobs + digest and exits nonzero on any mismatch). **The loader
   never verifies** — hashing is tooling, not the hot path; the runtime trusts its
   packs. The hash function lives **only** in the cooker/verify tool, so `assetpack`
   (which stores the raw 16 bytes and computes nothing) and `libveng` gain no hash
-  dependency.
+  dependency. Blobs are stored **per-blob zstd-compressed or raw**; `assetpack`
+  inflates a compressed entry lazily on resolve (the codec + sizes live in the TOC, the
+  inflate in `assetpack` — see [assetpack/CLAUDE.md](../assetpack/CLAUDE.md)).
 - **An asset pack is a pure `{ id, type, source }` manifest.** It carries no
   per-asset settings. **Every** asset type — texture, mesh, shader, material,
   prefab — has its own per-asset JSON source file (`*.tex.json` / `*.mesh.json` /
@@ -740,6 +742,24 @@ The same split runs underneath at the resource level: `Buffer/Image::Upload`
 records the copy on the transfer queue, and never blocks — while `UploadSync`
 is the blocking path (host memcpy + `WaitIdle`) the sync loaders, tests, and
 smoke render use.
+
+**Textures load multi-mip and block-compressed.** A cooked texture carries a full mip
+chain (largest-first) in a GPU block format (ASTC 4×4 by default, BC7 selectable) or an
+uncompressed format. `TextureLoader` walks the levels with **`Renderer::FormatInfo`** — a
+header-only block-geometry helper (`Veng/Renderer/FormatInfo.h`, no backend include) whose
+`BytesForLevel(format, w, h)` is `ceil(w/bw)·ceil(h/bh)·bytesPerBlock`; an uncompressed format
+reports a **1×1 block**, so one helper sizes every format and the blob needs no per-level offset
+table. Upload records **one `VkBufferImageCopy` region per level** from a single staging buffer
+through the multi-region `CommandBuffer::CopyBufferToImage` overload (no `GenerateMipmaps` — a
+block-compressed image cannot be blit-mipgen'd; GPU mipgen stays scoped to runtime-built
+uncompressed textures). A **compressed format must be enabled at `createDevice`, not merely
+queried** — `textureCompressionBC` / `textureCompressionASTC_LDR` are core
+`VkPhysicalDeviceFeatures` booleans `Context` enables when the physical device supports them, and
+`Context::IsBlockCompressionSupported()` / `IsAstcSupported()` reflect the **enabled** state
+(sampling a block image without the enable is a validation error). The runtime does **not**
+transcode: on a device lacking the cooked codec's feature the loader logs **once** and returns a
+recoverable `AssetError::Unsupported`, so the affected materials sample their fallback (untextured)
+and the app still runs — only `smoke_golden` (gated to skip on a non-ASTC device) would diverge.
 - **`AssetHandle<T>` is refcounted indirection into the manager's cache**, not a
   `Ref` to a GPU resource (see the root CLAUDE.md ownership rule). Apps drop their handles in
   `OnDispose()` like any other engine resource; `CollectGarbage()` evicts entries

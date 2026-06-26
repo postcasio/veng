@@ -486,15 +486,15 @@ own `MaterialParams` struct — exactly the split this lands.
 
 ### 15. Build configurations & project settings — texture-compression authoring
 
-**Motivated by planset-32's texture-compression track**, which ships the BC7/ASTC
-codec plumbing but **hardcodes BC7 as the cook default** and defers all developer
-control. This area adds that control: a **project-settings** concept owning a set of
-**build configurations** (one per ship target — Windows / macOS / Linux / mobile),
-each holding the **texture codec policy** as a **role → concrete-format** table, with
-per-asset `*.tex.json` declaring a compression **role/intent** (Color / Normal / Mask
-/ HDR) rather than a raw codec. The codec is **per-platform by nature** (BC needs
-`textureCompressionBC` — Apple-Silicon/Windows; ASTC needs
-`textureCompressionASTC_LDR` — broad on Apple GPUs), so it belongs on the build
+**Motivated by planset-33's texture-compression track**, which ships the BC7/ASTC
+codec plumbing but **hardcodes ASTC as the cook default** (BC7 selectable through a
+minimal internal seam) and defers all developer control. This area adds that control: a
+**project-settings** concept owning a set of **build configurations** (one per ship
+target — Windows / macOS / Linux / mobile), each holding the **texture codec policy** as
+a **role → concrete-format** table, with per-asset `*.tex.json` declaring a compression
+**role/intent** (Color / Normal / Mask / HDR) rather than a raw codec. The codec is
+**per-platform by nature** (BC needs `textureCompressionBC` — Apple-Silicon/Windows; ASTC
+needs `textureCompressionASTC_LDR` — broad on Apple GPUs), so it belongs on the build
 config, not a flat default or a per-texture knob.
 
 Two design pillars beyond the settings tiers: the **cook-time dependency is implicit
@@ -505,10 +505,19 @@ optimization); and the **editor gates preview to host capability** — building 
 config is unrestricted (the encoder is CPU), but *previewing through* one is bounded
 by what the host GPU can sample, with a host-safe default preview so "ASTC on Windows"
 is structurally impossible. The settings structs are reflected, so the editor panels
-come free through `DrawFieldWidget`. **Gate met** by planset-32 (the formats, the
+come free through `DrawFieldWidget`. **Gate met** by planset-33 (the BC7/ASTC formats, the
 `FormatInfo` block math, the `IsBlockCompressionSupported()` / `IsAstcSupported()`
 queries, the cooker codec selection). **Design overview:**
 [build-configurations.md](build-configurations.md).
+
+**Still-open footprint work** rides this area's open questions, since the right home for
+each is the role → format table a build configuration owns: **BC5/BC4 channel
+specialization** (two-channel normals / single-channel masks — `Normal → BC5`, `Mask →
+BC4` rather than full BC7/ASTC); **wider ASTC footprints** (6×6, 8×8 — more compression at
+lower quality, a per-role footprint choice); **HDR ASTC** (the LDR codec this track ships
+does not cover HDR sources — environments keep their own `RGBA16Sfloat` panorama path); and
+an **uncompressed fallback pack** for a device that supports neither cooked codec (today
+such a device gets `AssetError::Unsupported` per texture).
 
 ### 16. Dynamic meshes — mutable runtime geometry
 

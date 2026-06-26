@@ -150,13 +150,16 @@ adds a `docs` target that renders the public-header Doxygen comments into an HTM
 API reference under `build/docs/html` (`cmake --build build --target docs`). The
 wiring lives in `cmake/Docs.cmake`; the target is absent without Doxygen.
 
-Dependencies (fmt, VMA, nfd, tinyexr, stb, ImGui, imnodes) are pulled via
+Dependencies (fmt, VMA, nfd, tinyexr, stb, ImGui, imnodes, zstd) are pulled via
 `FetchContent` with pinned tags — no system install needed beyond Vulkan, GLFW,
-glm, and zlib (`find_package`). The cooker's heavy/toolchain deps
-(nlohmann/json, assimp, and Slang for shader compile + reflection) are
-**cooker-only** — gated behind `VENG_BUILD_TOOLS` and never linked into
-`libveng` or its consumers, which load the *binary* archive and never parse a
-source asset.
+glm, and zlib (`find_package`). **zstd is the one third-party codec linked into
+`libveng`** (transitively, PUBLIC through `assetpack`, which inflates compressed
+archive blobs at runtime); it adds no public-header include (the codec is a plain
+enum field, all zstd calls confined to `Archive.cpp`). The cooker's heavy/toolchain
+deps (nlohmann/json, assimp, and Slang for shader compile + reflection, plus the
+**`bc7enc_rdo` / `astc-encoder` texture encoders**) are **cooker-only** — gated behind
+`VENG_BUILD_TOOLS` and never linked into `libveng` or its consumers, which load the
+*binary* archive and never parse or encode a source asset.
 
 ### The validation build (`VE_DEBUG`)
 

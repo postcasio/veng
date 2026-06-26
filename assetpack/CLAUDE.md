@@ -35,7 +35,19 @@ serialization — neither importer nor loader.
   `vengc verify` re-hashes the on-disk bytes with no decode. `Find` is main-thread-only;
   the lazy inflate is not synchronized.
 - A version number the format actually checks (the on-disk `v3`) is rejected loudly on
-  mismatch — a stale/foreign archive does not load silently.
+  mismatch — a stale/foreign archive does not load silently. The `v3` bump is **global** —
+  every `.vengpack`, including the **embedded core pack** the engine ships via `#embed`. A
+  format change re-cooks the core pack, but ccache does **not** track an `#embed`-ed file as a
+  dependency, so a stale core-pack object can mount an older pack into a `v3` runtime and fail
+  every run with "asset … not found"; rebuild the embed with `CCACHE_DISABLE=1` (or delete the
+  embed `.o`) after a format bump.
+- **`AssetType::Texture` carries a mipped, block-compressed image.** A **`CookedTextureHeader`**
+  (`Format`, `Width`, `Height`, `MipCount`) is followed by the mip levels **tightly packed,
+  largest-first** — no offset table, since each level's byte size derives from its halved
+  dimensions and the format's block geometry. `Format` is a `Renderer::Format` integer that may
+  be a block-compressed codec (BC7 / ASTC 4×4) as well as an uncompressed format; `assetpack`
+  treats the level bytes as opaque and computes nothing from the format. A single-mip texture is
+  the degenerate one-level case.
 - **`AssetType::Level` is a world prefab by reference plus level-scoped wiring.** Its
   blob is a **`CookedLevelHeader`** (`CookedLevelVersion`, currently `1`) — `WorldPrefabId`
   (the world prefab's `AssetId`, resolved as a load-time dependency), `SystemCount`, and the

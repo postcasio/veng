@@ -1,14 +1,14 @@
 # Build configurations & project settings — design overview (vision)
 
-> **Motivated by planset-32's texture-compression track.** That track ships the
+> **Motivated by planset-33's texture-compression track.** That track ships the
 > codec *plumbing* — BC7/ASTC formats, the `FormatInfo` block helper, the
 > `textureCompressionBC` / `textureCompressionASTC_LDR` capability queries, the
-> cooker encoders, the block-aware upload — and deliberately **hardcodes BC7 as the
-> cook default**, deferring all *developer control* of which codec a texture cooks
-> to. This document is that deferred control layer. It is **not scheduled**; it
-> becomes its own planset when taken up.
+> cooker encoders, the block-aware upload — and deliberately **hardcodes ASTC as the
+> cook default** (BC7 selectable through a minimal internal seam), deferring all
+> *developer control* of which codec a texture cooks to. This document is that deferred
+> control layer. It is **not scheduled**; it becomes its own planset when taken up.
 >
-> **The gate is met by planset-32:** the formats, the per-format block math, the
+> **The gate is met by planset-33:** the formats, the per-format block math, the
 > device-capability queries, and a cooker that selects a codec per texture all
 > exist by the end of that track — this area only adds the *authoring* surface that
 > chooses the codec, plus the project/build-settings concept that surface lives on.
@@ -125,7 +125,7 @@ path** mounting an ASTC blob and handing it to a GPU that lacks
 - **Editing a config is always allowed** (author the mobile/ASTC config on Windows);
   only **previewing/playing *through* it** is gated.
 - **Gate on device features, not platform labels.** The editor queries the host
-  `Context` for `IsBlockCompressionSupported()` / `IsAstcSupported()` (the planset-32
+  `Context` for `IsBlockCompressionSupported()` / `IsAstcSupported()` (the planset-33
   queries) and intersects a config's resolved formats with them. Gate on the
   *feature*, not a "macOS" string — an Intel Mac (no BC) and an Apple-Silicon Mac (BC
   + ASTC) are both "macOS" but differ in exactly the bit that matters.
@@ -162,7 +162,7 @@ recook-and-hot-reload path, triggered by a config change instead of a source edi
   grows a config dimension (one output pack per configuration). The editor's
   cook-on-demand passes the active config (host-clamped for preview).
 - **Host capability** — reuse `Context::IsBlockCompressionSupported()` /
-  `IsAstcSupported()` from planset-32 for the preview gate and the warning.
+  `IsAstcSupported()` from planset-33 for the preview gate and the warning.
 
 ## Decisions settled
 
@@ -186,7 +186,16 @@ recook-and-hot-reload path, triggered by a config change instead of a source edi
   each role's per-codec format (e.g. `Normal → BC5` vs `ASTC4x4` — ASTC has no
   two-channel mode, so a normal map under ASTC needs a packing convention).
 - **Default config / no-config** — what a pack with no project settings cooks to (the
-  planset-32 hardcoded BC7 stays the zero-config default).
+  planset-33 hardcoded ASTC default stays the zero-config default).
+- **Footprint specialization** — the still-open codec footprints the role table would
+  pick among: **BC5/BC4 channel specialization** (two-channel normals / single-channel
+  masks rather than full BC7); **wider ASTC footprints** (6×6, 8×8 — more compression,
+  lower quality, a per-role choice); and **HDR ASTC** (the cooked codec is LDR-only;
+  HDR sources have no compressed path yet — environments keep their `RGBA16Sfloat`
+  panorama).
+- **Uncompressed fallback pack** — a config (or a fallback within one) targeting a device
+  that supports neither cooked codec, so a texture is samplable instead of
+  `AssetError::Unsupported`.
 - **Editor active-config persistence** — per-project vs per-user editor state.
 - **The Windows cross-compile constraint** — building a foreign-platform pack is
   CPU-only and fine, but the `--module` prefab reflection still loads a *host* lib

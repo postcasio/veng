@@ -27,6 +27,11 @@ resolve path). Both `ArchiveWriter::Add` sites route through one `EmitBlob` help
 every blob is considered for compression by construction; the content hash covers the
 **stored** bytes, so `vengc verify` re-hashes exactly what is on disk with no decode.
 
+The **texture-encoder deps — `bc7enc_rdo` (BC7) and ARM's `astc-encoder` (ASTC LDR) —
+are cooker-only**, gated behind `VENG_BUILD_TOOLS` and never linked into `libveng`, like
+stb / assimp / Slang. The runtime samples the cooked block-compressed format directly; only
+the cook encodes it.
+
 ## What `vengc` cooks
 
 An asset pack is a pure `{ id, type, source }` manifest carrying no per-asset
@@ -53,9 +58,22 @@ at cook time:
   the assimp node hierarchy), so a vertex's bone index, the skeleton's bone array, and an
   animation channel's target all agree. A skinned mesh keeps raw model units (bone bind /
   animation translations are not scaled) — scale a character via its entity `Transform`.
+- **Textures cook mipped and block-compressed.** The `TextureImporter` generates a full
+  **mip chain** offline — halving with `stbir_resize_uint8_srgb` / `_linear` (sRGB-correct for
+  an sRGB source, linear otherwise) down to 1×1, setting `MipCount = floor(log2(max(W, H))) + 1`
+  — then encodes **every** level to a GPU block format and packs the levels largest-first behind
+  the `CookedTextureHeader`. Offline mips are mandatory for a block format (a compressed image
+  cannot be GPU-blit-mipgen'd) and sRGB-correct; `generate_mips: false` opts back out to a single
+  mip. The **codec defaults to ASTC 4×4 LDR** (`ASTC4x4Srgb` / `ASTC4x4Unorm` by the source's sRGB
+  flag) — the Metal-blessed, broadly-supported codec on the primary MoltenVK platform; **BC7**
+  (`BC7Srgb` / `BC7Unorm`) is selectable through a minimal internal codec seam for the anticipated
+  Windows target. Both ride a documented encoder quality preset, since the smoke golden is
+  codec-dependent. The header's `Format` integer (hand-synced to the `Renderer::Format` ordinals)
+  is what the loader bridges back. Per-texture / per-pack codec and footprint authoring is **not**
+  in the manifest — it is the deferred developer-control layer (future area 15).
 - **Textures** take an optional `"max_size"` that downscales the decoded image (aspect-
   preserving, sRGB- or linear-correct) before packing, so high-resolution scan art does not
-  bloat the raw-pixel blob.
+  bloat the blob.
 - **Environments** (`*.env.json`) are equirectangular HDR panoramas: the `EnvironmentImporter`
   decodes an OpenEXR `"image"` with **tinyexr** (linked into the cooker, the one runtime-staged
   vendor lib the cooker also uses), optionally downscales by `"max_size"` (linear), and packs

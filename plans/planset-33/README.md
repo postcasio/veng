@@ -59,7 +59,7 @@ and decodable** and hardcodes the ASTC-default / BC7-selectable seam.
 | 02 | BC7 block compression | The format-and-encoder core: `BC7Unorm`/`BC7Srgb` formats + `TypeMapping` + a `FormatInfo` block helper + a `textureCompressionBC` **enable + gate**; a cooker-only BC7 encoder; block-aware upload. Exercised via a BC7 fixture (hello-triangle stays RGBA8 until Plan 04). Depends on 01. | done |
 | 03 | ASTC block compression | `ASTC4x4` formats + a cooker-only `astc-encoder` + a `textureCompressionASTC_LDR` **enable + gate** over the same machinery; **ASTC becomes the cook default**, BC7 selectable. Proves both codecs. Depends on 02. | done |
 | 04 | Migration + golden | Migrate hello-triangle (mipped **ASTC** over a zstd pack) and regenerate the smoke golden on an ASTC-capable device, gating it to skip on a non-ASTC device. Depends on 00–03. | done |
-| 05 | Docs + roadmap | Document the track across the `CLAUDE.md` set + root `CLAUDE.md`, capture the deferred developer-control work as `future/README.md` area 15, and run the full verification band. The closer. Depends on 00–04. | proposed |
+| 05 | Docs + roadmap | Document the track across the `CLAUDE.md` set + root `CLAUDE.md`, capture the deferred developer-control work as `future/README.md` area 15, and run the full verification band. The closer. Depends on 00–04. | done |
 
 > Status legend: `proposed` = drafted, awaiting review; `ready` = reviewed and approved;
 > `done` = implemented, migrated, verified, committed.
