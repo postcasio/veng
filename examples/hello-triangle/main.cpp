@@ -1257,11 +1257,11 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                     // through Configure once the level's render subset is loaded.
                     .ManagedViewport =
                         ManagedViewportInfo{
-                            // This dev machine is a 2× HiDPI Mac; cap the allocation at logical-point
-                            // resolution so the deferred targets are not sized to the 2× backing
-                            // extent. The headless smoke capture has no backing scale, so it stays
-                            // uncapped to render at the full HeadlessExtent the golden expects.
-                            .MaxAllocationScale = smoke ? 1.0f : 0.5f,
+                            // Render at the full backing extent — native resolution on a HiDPI
+                            // display, not supersampling. The allocation-tier outer loop reclaims
+                            // footprint under sustained load; a lower ceiling is the knob for a fixed
+                            // perf budget, not the default posture.
+                            .MaxAllocationScale = 1.0f,
                             // The windowed app opts into both adaptive-resolution loops: the inner
                             // loop drives the per-frame sub-rect, the outer-loop tier controller
                             // follows the sustained sub-rect and sizes the allocation down a tier

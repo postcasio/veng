@@ -88,13 +88,14 @@ namespace Veng::Renderer
         f32 RenderScale = 1.0f;
         /// @brief Caps the allocation extent to this fraction of the region's pixels.
         ///
-        /// The HiDPI supersample budget: the SceneRenderer is allocated no larger than
-        /// round(Region.Extent * MaxAllocationScale * upper-bound-scale), so a region carrying a 2×
-        /// HiDPI backing extent need not size every render-graph image to the full backing pixels.
-        /// 1.0 allocates at the full region (the default behavior); a value < 1.0 caps it (0.5 on a
-        /// 2× display brings the allocation back to logical-point resolution). It is the outermost
-        /// of the three multiplicative scales — the cap, then the upper-bound (MaxScale or static)
-        /// allocation scale, then the per-frame sub-rect — so it bounds them. Must be > 0.
+        /// A ceiling on the allocation relative to the region's backing extent: the SceneRenderer is
+        /// allocated no larger than round(Region.Extent * MaxAllocationScale * upper-bound-scale). The
+        /// default 1.0 allocates at the full region — on a 2× HiDPI display that is native resolution
+        /// at the backing pixels, not supersampling. A value < 1.0 is a deliberate lower ceiling (a
+        /// fixed perf budget); reclaiming footprint under sustained load is the allocation-tier outer
+        /// loop's job, not this cap's. It is the outermost of the three multiplicative scales — the
+        /// cap, then the upper-bound (MaxScale or static) allocation scale, then the per-frame
+        /// sub-rect — so it bounds them. Must be > 0.
         f32 MaxAllocationScale = 1.0f;
         /// @brief Whether the engine compositor places this viewport into its region.
         ViewportRole Role = ViewportRole::Offscreen;
@@ -179,7 +180,7 @@ namespace Veng::Renderer
 
         /// @brief Returns the renderer's current allocation extent in pixels.
         ///
-        /// round(GetRegion().Extent * the HiDPI cap * GetAllocationScale()), clamped to ≥ {1,1}:
+        /// round(GetRegion().Extent * MaxAllocationScale * GetAllocationScale()), clamped to ≥ {1,1}:
         /// the size every render-graph target is allocated at. The rendered sub-rect is this times
         /// GetRenderScale()/GetAllocationScale() (reported by SceneRenderer::GetValidExtent()).
         /// @return The allocation extent.
@@ -389,7 +390,7 @@ namespace Veng::Renderer
         ViewportRegion m_Region;
         /// @brief Uniform render-resolution multiplier on the region extent.
         f32 m_RenderScale = 1.0f;
-        /// @brief Caps the allocation extent to this fraction of the region's pixels (the HiDPI budget).
+        /// @brief Ceiling on the allocation extent as a fraction of the region's backing pixels.
         f32 m_MaxAllocationScale = 1.0f;
         /// @brief Automatic render-scale controller tuning; unset when control is disabled.
         optional<DynamicResolutionSettings> m_DynamicResolution;

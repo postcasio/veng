@@ -569,18 +569,19 @@ timescales — shrinking 1.0→0.5 turns a sub-rect riding at "0.5-of-1.0" into 
 continuity holds exactly. The outer loop reclaims footprint and bandwidth it was not
 using; it is not a quality decision.
 
-**`MaxAllocationScale` is the HiDPI baseline budget, decoupling the allocation from the
-swapchain backing extent.** It caps the allocation to a fraction of the region's pixels
-and is the **outermost** of three multiplicative scales — the allocation extent is
+**`MaxAllocationScale` is a ceiling on the allocation relative to the backing extent,
+defaulting to `1.0` (full native).** It caps the allocation to a fraction of the region's
+pixels and is the **outermost** of three multiplicative scales — the allocation extent is
 `round(region · MaxAllocationScale · GetAllocationScale())` (`ExtentForScale`), then the
 sub-rect rides inside it as `GetViewRenderScale()`. A managed viewport tracks the full
-swapchain framebuffer extent — 2× the logical window on a HiDPI display — so a cap of
-`0.5` brings the allocation back to logical-point resolution rather than silently
-supersampling every render-graph image to the backing pixels. With the baseline right the
-outer loop rarely fires; it is the safety net for sustained overload, not the steady
-state. The managed primary viewport exposes all of this through `ManagedViewportInfo`
-(`RenderScale`, `MaxAllocationScale`, `DynamicResolution`, `AllocationTier`); `AllocationTier`
-is honored only alongside `DynamicResolution`, since the inner loop feeds the outer one.
+swapchain framebuffer extent — 2× the logical window on a HiDPI display — and the default
+`1.0` renders at those backing pixels: **native resolution on a HiDPI display, not
+supersampling**. Reclaiming footprint under load is the allocation-tier outer loop's job,
+not the cap's. A value below `1.0` is a deliberate lower ceiling for an app that wants a
+fixed perf budget; it is not the default posture. The managed primary viewport exposes all
+of this through `ManagedViewportInfo` (`RenderScale`, `MaxAllocationScale`,
+`DynamicResolution`, `AllocationTier`); `AllocationTier` is honored only alongside
+`DynamicResolution`, since the inner loop feeds the outer one.
 
 **The registration-order RTT contract.** An `Offscreen` viewport's `GetOutputHandle`
 can be bound into a material (`Material::SetTextureHandle`) so one viewport samples
