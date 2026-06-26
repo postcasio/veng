@@ -13,6 +13,7 @@
 #include <Veng/Vendor/ImGui.h>
 
 #include "AssetSourceIndex.h"
+#include "PreviewCapability.h"
 #include "panels/AssetBrowserPanel.h"
 #include "panels/ConsolePanel.h"
 #include "panels/InspectorPanel.h"
@@ -171,9 +172,11 @@ namespace VengEditor
         public:
             TextureEditorFactory(const AssetSourceIndex& index, Renderer::Context& context,
                                  AssetManager& assets, ImGuiLayer& imgui,
-                                 VengEditor::CookDriver cook, ActiveConfigAccessor activeConfig)
+                                 VengEditor::CookDriver cook, ActiveConfigAccessor activeConfig,
+                                 PreviewConfigAccessor previewConfig)
                 : m_Index(index), m_Context(context), m_Assets(assets), m_ImGui(imgui),
-                  m_Cook(std::move(cook)), m_ActiveConfig(std::move(activeConfig))
+                  m_Cook(std::move(cook)), m_ActiveConfig(std::move(activeConfig)),
+                  m_PreviewConfig(std::move(previewConfig))
             {
             }
 
@@ -188,7 +191,8 @@ namespace VengEditor
                 }
 
                 return CreateUnique<TextureEditorPanel>(id, entry->Source, m_Context, m_Assets,
-                                                        m_ImGui, m_Cook, m_ActiveConfig);
+                                                        m_ImGui, m_Cook, m_ActiveConfig,
+                                                        m_PreviewConfig);
             }
 
         private:
@@ -198,6 +202,7 @@ namespace VengEditor
             ImGuiLayer& m_ImGui;
             VengEditor::CookDriver m_Cook;
             ActiveConfigAccessor m_ActiveConfig;
+            PreviewConfigAccessor m_PreviewConfig;
         };
 
         // Resolves a material AssetId to its .vmat.json source through the manifest
@@ -403,6 +408,35 @@ namespace VengEditor
         return nullptr;
     }
 
+    BuildConfiguration EditorHost::GetPreviewConfiguration()
+    {
+        // "Preview as ship config" is honored only while the named configuration stays
+        // previewable on this GPU; otherwise (and by default) the editor previews host-safe so
+        // it can never hand the device a blob it cannot sample.
+        if (m_PreviewShipConfig)
+        {
+            for (const BuildConfiguration& config : m_ProjectSettings.Configurations)
+            {
+                if (config.Name == *m_PreviewShipConfig &&
+                    IsConfigPreviewable(config, GetRenderContext()).Previewable)
+                {
+                    return config;
+                }
+            }
+        }
+        return HostSafeConfiguration();
+    }
+
+    const optional<string>& EditorHost::GetPreviewShipConfig() const
+    {
+        return m_PreviewShipConfig;
+    }
+
+    void EditorHost::SetPreviewShipConfig(optional<string> name)
+    {
+        m_PreviewShipConfig = std::move(name);
+    }
+
     void EditorHost::OnInitialize()
     {
         VE_ASSERT(GetImGuiLayer() != nullptr, "editor host requires the ImGui layer");
@@ -459,9 +493,10 @@ namespace VengEditor
 
             m_Registries->Editor.RegisterAssetEditor(
                 AssetType::Texture,
-                CreateUnique<TextureEditorFactory>(*m_Sources, GetRenderContext(),
-                                                   GetAssetManager(), *GetImGuiLayer(), cookFor(),
-                                                   [this] { return GetActiveConfiguration(); }));
+                CreateUnique<TextureEditorFactory>(
+                    *m_Sources, GetRenderContext(), GetAssetManager(), *GetImGuiLayer(), cookFor(),
+                    [this] { return GetActiveConfiguration(); },
+                    [this] { return GetPreviewConfiguration(); }));
 
             m_Registries->Editor.RegisterAssetEditor(
                 AssetType::Material, CreateUnique<MaterialEditorFactory>(
@@ -480,8 +515,11 @@ namespace VengEditor
                             true});
         m_Panels.push_back({CreateUnique<ConsolePanel>(), true});
         m_Panels.push_back(
-            {CreateUnique<ProjectSettingsPanel>(m_ProjectSettings, m_ProjectFile, GetAssetManager(),
-                                                m_Registries->Editor, *m_Sources),
+            {CreateUnique<ProjectSettingsPanel>(
+                 m_ProjectSettings, m_ProjectFile, GetAssetManager(), m_Registries->Editor,
+                 *m_Sources, GetRenderContext(),
+                 [this]() -> const optional<string>& { return GetPreviewShipConfig(); },
+                 [this](optional<string> name) { SetPreviewShipConfig(std::move(name)); }),
              true});
 
         for (Unique<EditorPanel>& panel : m_Registries->Editor.Panels())
@@ -517,12 +555,12 @@ namespace VengEditor
         // catalogs, so inject the game module path; non-level cooks ignore an empty value.
         resolved.ModulePath = m_Info.GameModulePath;
 
-        // Thread the active configuration so a texture recook resolves roles the same way the
-        // build does; a null active configuration leaves the request unset (zero-config cook).
-        if (const BuildConfiguration* active = GetActiveConfiguration())
-        {
-            resolved.ActiveConfig = *active;
-        }
+        // Thread the *preview* configuration, not the selected ship configuration: it is
+        // host-safe by default (an uncompressed profile every GPU can sample), so the editor's
+        // live preview can never cook a blob the device cannot sample. Opting into "preview as
+        // ship config" substitutes a previewable ship configuration; the build of any
+        // configuration stays unrestricted, only this editor cook is clamped.
+        resolved.ActiveConfig = GetPreviewConfiguration();
 
         Task<vector<u8>> task = m_Info.Cook(resolved, GetTaskSystem());
 

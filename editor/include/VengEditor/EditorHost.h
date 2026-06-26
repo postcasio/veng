@@ -79,6 +79,31 @@ namespace VengEditor
         /// texture editor for its resolved-format read-out and by the cook to resolve roles.
         [[nodiscard]] const Veng::BuildConfiguration* GetActiveConfiguration() const;
 
+        /// @brief Returns the configuration the editor cooks its live preview against.
+        ///
+        /// Host-safe by default, independent of the selected ship configuration: an uncompressed
+        /// profile every GPU can sample, so the editor never hands the device an unsamplable blob.
+        /// When the author opts into "preview as ship config" through SetPreviewShipConfig and the
+        /// named configuration is previewable on this GPU, that configuration is returned instead.
+        /// Building any configuration stays unrestricted — this clamps only the editor's own cook.
+        [[nodiscard]] Veng::BuildConfiguration GetPreviewConfiguration();
+
+        /// @brief Returns the name of the ship configuration preview is opted into, or nullopt.
+        ///
+        /// nullopt is the default host-safe preview. A non-null name is honored by
+        /// GetPreviewConfiguration only while that configuration is previewable on this GPU.
+        [[nodiscard]] const Veng::optional<Veng::string>& GetPreviewShipConfig() const;
+
+        /// @brief Opts live preview into a named ship configuration, or back to host-safe.
+        ///
+        /// Passing a configuration name makes GetPreviewConfiguration resolve through it (WYSIWYG
+        /// of that target's real codec artifacts) as long as it stays host-previewable; nullopt
+        /// reverts to the host-safe default. The caller is expected to offer only previewable
+        /// configurations, but the getter re-validates so a config that becomes incompatible falls
+        /// back to host-safe rather than failing.
+        /// @param name  The ship configuration to preview through, or nullopt for host-safe.
+        void SetPreviewShipConfig(Veng::optional<Veng::string> name);
+
     protected:
         /// @brief Initializes the panel set and source index.
         void OnInitialize() override;
@@ -127,6 +152,13 @@ namespace VengEditor
         /// @brief Absolute path project.veng saves to (its directory holds the *.buildcfg files).
         /// Empty when no manifest path is configured, which disables saving project settings.
         Veng::path m_ProjectFile;
+
+        /// @brief Ship configuration live preview is opted into, or nullopt for host-safe.
+        ///
+        /// nullopt (the default) previews against the host-safe uncompressed profile; a name
+        /// previews against that ship configuration's real codec formats while it stays
+        /// host-previewable. Drives GetPreviewConfiguration.
+        Veng::optional<Veng::string> m_PreviewShipConfig;
 
         /// @brief One open panel slot with its Window-menu visibility flag.
         struct PanelSlot

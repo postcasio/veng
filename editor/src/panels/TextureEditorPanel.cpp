@@ -69,9 +69,11 @@ namespace VengEditor
 
     TextureEditorPanel::TextureEditorPanel(AssetId id, path sourcePath, Renderer::Context& context,
                                            AssetManager& assets, ImGuiLayer& imgui, CookDriver cook,
-                                           ActiveConfigAccessor activeConfig)
+                                           ActiveConfigAccessor activeConfig,
+                                           PreviewConfigAccessor previewConfig)
         : m_Id(id), m_SourcePath(std::move(sourcePath)), m_Context(context), m_Assets(assets),
-          m_ImGui(imgui), m_Cook(std::move(cook)), m_ActiveConfig(std::move(activeConfig))
+          m_ImGui(imgui), m_Cook(std::move(cook)), m_ActiveConfig(std::move(activeConfig)),
+          m_PreviewConfig(std::move(previewConfig))
     {
         m_Title = fmt::format("Texture: {}", m_SourcePath.filename().string());
 
@@ -219,6 +221,11 @@ namespace VengEditor
         m_Cooking = true;
         m_CookError.reset();
 
+        // Record which preview configuration this cook ran through so OnUI re-cooks when the
+        // author flips the preview selection. The cook itself resolves through the host's
+        // host-clamped preview config in RequestCook.
+        m_PreviewConfigName = m_PreviewConfig ? m_PreviewConfig().Name : string{};
+
         m_Cook({.SourcePath = m_SourcePath, .TargetId = m_Id, .Type = AssetType::Texture},
                [this](Result<MountHandle> mount)
                {
@@ -248,6 +255,14 @@ namespace VengEditor
                 m_CookPending = false;
                 TriggerCook();
             }
+        }
+
+        // Flipping the preview configuration (host-safe ↔ a ship config) re-cooks so the preview
+        // shows the newly selected target's artifacts; the same recook + remount path a settings
+        // edit takes, triggered by a configuration change instead.
+        if (m_PreviewConfig && !m_Cooking && m_PreviewConfig().Name != m_PreviewConfigName)
+        {
+            TriggerCook();
         }
 
         // Rebuild the preview once the freshly cooked texture is resident.
@@ -331,6 +346,14 @@ namespace VengEditor
             {
                 UI::TextDisabled("→ no active build configuration (zero-config ASTC default)");
             }
+        }
+
+        // What the live preview actually samples: the host-clamped preview configuration, which is
+        // host-safe (uncompressed) unless the author opted into a previewable ship config. This is
+        // independent of the resolved-format read-out above, which shows the *build* output.
+        if (m_PreviewConfig)
+        {
+            UI::TextDisabled(fmt::format("Previewing through '{}'", m_PreviewConfig().Name));
         }
 
         auto filterCombo = [&](string_view label, Filter& value)

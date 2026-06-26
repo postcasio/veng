@@ -585,6 +585,7 @@ if (VENG_BUILD_TESTS)
             tests/editor/field_widget.cpp
             tests/editor/asset_source_index.cpp
             tests/editor/editor_camera.cpp
+            tests/editor/preview_capability.cpp
     )
     # The serialization cases drive the JSON object directly, so the test target
     # links nlohmann/json (PRIVATE in libveng_editor — never exposed in a header).

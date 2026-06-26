@@ -2,6 +2,7 @@
 
 #include "AssetSourceIndex.h"
 #include "FieldWidget.h"
+#include "PreviewCapability.h"
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Log.h>
@@ -77,9 +78,13 @@ namespace VengEditor
 
     ProjectSettingsPanel::ProjectSettingsPanel(ProjectSettings& settings, path projectFile,
                                                AssetManager& assets, const EditorRegistry& editors,
-                                               const AssetSourceIndex& sources)
+                                               const AssetSourceIndex& sources,
+                                               const Renderer::Context& context,
+                                               PreviewConfigGetter getPreview,
+                                               PreviewConfigSetter setPreview)
         : m_Settings(settings), m_ProjectFile(std::move(projectFile)), m_Assets(assets),
-          m_Editors(editors), m_Sources(sources)
+          m_Editors(editors), m_Sources(sources), m_Context(context),
+          m_GetPreview(std::move(getPreview)), m_SetPreview(std::move(setPreview))
     {
     }
 
@@ -139,6 +144,8 @@ namespace VengEditor
             UI::TextDisabled("No configurations defined");
         }
 
+        DrawPreviewGate();
+
         UI::Separator();
 
         const bool canSave = !m_ProjectFile.empty();
@@ -158,6 +165,77 @@ namespace VengEditor
         if (m_Error)
         {
             UI::TextColored({0.9f, 0.3f, 0.3f, 1.0f}, fmt::format("Save error: {}", *m_Error));
+        }
+    }
+
+    void ProjectSettingsPanel::DrawPreviewGate()
+    {
+        UI::SeparatorText("Live preview");
+
+        // The same capability query both warns about the active configuration and gates the
+        // selector — one query, two uses.
+        for (const BuildConfiguration& config : m_Settings.Configurations)
+        {
+            if (config.Name != m_Settings.ActiveConfiguration)
+            {
+                continue;
+            }
+            const PreviewCapability cap = IsConfigPreviewable(config, m_Context);
+            if (!cap.Previewable)
+            {
+                UI::TextColored(
+                    {0.95f, 0.7f, 0.25f, 1.0f},
+                    fmt::format("Active configuration '{}' {}", config.Name, cap.Reason));
+            }
+            break;
+        }
+
+        // The default preview is host-safe (uncompressed) regardless of the selected ship
+        // configuration. "Preview as ship config" is the opt-in to that target's real codec
+        // artifacts; host-incompatible configurations are greyed out with their reason. Whether
+        // any configuration is previewable, the editor stays host-safe and fully editable.
+        // Copied, not referenced: a Selectable below mutates the host's opt-in through m_SetPreview
+        // mid-loop, which would invalidate a reference into it.
+        const optional<string> current = m_GetPreview();
+        const string preview = current ? *current : string("Host-safe (uncompressed)");
+
+        usize previewableCount = 0;
+        for (const BuildConfiguration& config : m_Settings.Configurations)
+        {
+            if (IsConfigPreviewable(config, m_Context).Previewable)
+            {
+                ++previewableCount;
+            }
+        }
+
+        if (auto combo = UI::ComboBox("Preview as ship config", preview))
+        {
+            // The host-safe default is always selectable; it is the never-stuck fallback.
+            if (UI::Selectable("Host-safe (uncompressed)", !current))
+            {
+                m_SetPreview(std::nullopt);
+            }
+
+            for (const BuildConfiguration& config : m_Settings.Configurations)
+            {
+                const PreviewCapability cap = IsConfigPreviewable(config, m_Context);
+                const bool selected = current && *current == config.Name;
+
+                auto disabled = UI::Disabled(!cap.Previewable);
+                const string label =
+                    cap.Previewable ? config.Name : fmt::format("{} ({})", config.Name, cap.Reason);
+                if (UI::Selectable(label, selected) && cap.Previewable)
+                {
+                    m_SetPreview(config.Name);
+                }
+            }
+        }
+
+        // The never-stuck fallback: a project whose every configuration targets a codec this GPU
+        // cannot sample still previews host-safe, stated plainly so the author is not surprised.
+        if (!m_Settings.Configurations.empty() && previewableCount == 0)
+        {
+            UI::TextDisabled("previewing uncompressed; no build configuration targets this GPU");
         }
     }
 

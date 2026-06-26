@@ -38,6 +38,13 @@ namespace VengEditor
     /// the Project Settings panel while this editor is open.
     using ActiveConfigAccessor = Veng::function<const Veng::BuildConfiguration*()>;
 
+    /// @brief Reads the host-clamped configuration the editor's live preview cooks through.
+    ///
+    /// Host-safe by default and never an unsamplable codec; "preview as ship config" substitutes
+    /// a previewable ship configuration. Read each frame so flipping the preview selection
+    /// re-cooks the open texture editor, and to label the preview with what it shows.
+    using PreviewConfigAccessor = Veng::function<Veng::BuildConfiguration()>;
+
     /// @brief Docked panel for previewing and editing a .tex.json texture source.
     ///
     /// Shows the decoded texture in a live preview, exposes sampler and sRGB
@@ -49,7 +56,7 @@ namespace VengEditor
         TextureEditorPanel(Veng::AssetId id, Veng::path sourcePath,
                            Veng::Renderer::Context& context, Veng::AssetManager& assets,
                            Veng::ImGuiLayer& imgui, CookDriver cook,
-                           ActiveConfigAccessor activeConfig);
+                           ActiveConfigAccessor activeConfig, PreviewConfigAccessor previewConfig);
         ~TextureEditorPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
@@ -104,6 +111,10 @@ namespace VengEditor
         Veng::ImGuiLayer& m_ImGui;
         CookDriver m_Cook;
         ActiveConfigAccessor m_ActiveConfig;
+        PreviewConfigAccessor m_PreviewConfig;
+
+        /// @brief Name of the preview configuration the last cook ran through; a change re-cooks.
+        Veng::string m_PreviewConfigName;
 
         Settings m_Settings;
 
