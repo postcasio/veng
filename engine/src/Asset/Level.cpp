@@ -33,8 +33,11 @@ namespace Veng
         };
 
         // The spawned root entities are not retained — the world prefab authors its own
-        // hierarchy and the simulation queries the scene, not the root list.
-        (void)m_World.Get()->SpawnInto(*instance.World, manager);
+        // hierarchy and the simulation queries the scene, not the root list. The spawn's
+        // residency batch (the recipe-built meshes streaming in) surfaces on the instance, so
+        // a caller can gate on the world being resident before its first capture.
+        Prefab::SpawnResult spawned = m_World.Get()->SpawnInto(*instance.World, manager);
+        instance.Pending = std::move(spawned.Pending);
 
         // The Session entity is level-scoped, not world-content, so the loader seeds it from
         // the level's game-mode config rather than the world authoring it.

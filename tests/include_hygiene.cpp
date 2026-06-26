@@ -28,6 +28,7 @@
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Asset/Primitives.h>
 #include <Veng/Asset/RawAsset.h>
+#include <Veng/Asset/ResidencyBatch.h>
 #include <Veng/Asset/Shader.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Asset/VertexLayout.h>

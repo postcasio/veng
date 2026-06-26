@@ -61,6 +61,40 @@ namespace Veng
 
             RemapComponentReferences(obj, type, registry, remap, rehydrate);
         }
+
+        // Walk a live component for FieldClass::AssetHandle fields and track each not-yet-resident
+        // one into the batch, recursing into struct fields and a variant's active alternative — the
+        // CollectHandleDeps shape, run over the spawned (rehydrated, recipe-built) components rather
+        // than the cooked records. The walk is uniform over every handle field; a cooked embedded
+        // dependency is already resident (the rehydrate above asserts it), so in practice the batch
+        // captures the recipe-built mesh handles a spawn introduces.
+        void CollectPendingHandles(const void* obj, const TypeInfo& type,
+                                   const TypeRegistry& registry, ResidencyBatch& batch)
+        {
+            for (const FieldDescriptor& field : type.Fields)
+            {
+                const void* fieldPtr = static_cast<const u8*>(obj) + field.Offset;
+
+                if (field.Class == FieldClass::AssetHandle)
+                {
+                    batch.TrackHandleField(fieldPtr);
+                }
+                else if (field.Class == FieldClass::Struct)
+                {
+                    CollectPendingHandles(fieldPtr, registry.Info(field.Type), registry, batch);
+                }
+                else if (field.Class == FieldClass::Variant)
+                {
+                    const TypeInfo& variant = registry.Info(field.Type);
+                    const TypeId active = variant.VariantActiveType(fieldPtr);
+                    if (active != InvalidTypeId)
+                    {
+                        CollectPendingHandles(variant.VariantActivePtrConst(fieldPtr),
+                                              registry.Info(active), registry, batch);
+                    }
+                }
+            }
+        }
     }
 
     Prefab::Prefab(vector<PrefabEntity> entities, vector<Ref<Detail::AssetCacheEntry>> dependencies)
@@ -74,7 +108,7 @@ namespace Veng
         return Ref<Prefab>(new Prefab(std::move(entities), std::move(dependencies)));
     }
 
-    vector<Entity> Prefab::SpawnInto(Scene& scene, AssetManager& manager) const
+    Prefab::SpawnResult Prefab::SpawnInto(Scene& scene, AssetManager& manager) const
     {
         const TypeRegistry& registry = scene.GetTypeRegistry();
 
@@ -161,6 +195,17 @@ namespace Veng
             }
         }
 
-        return roots;
+        // Collect the handles this spawn left pending — the recipe-built meshes, plus any cooked
+        // handle a future loader path leaves unresolved. Walk the live components (rehydrated and
+        // recipe-built above), not the cooked records, so the batch reflects the spawned state.
+        ResidencyBatch pending;
+        for (const Entity entity : spawned)
+        {
+            scene.ForEachComponent(
+                entity, [&](TypeId type, void* component)
+                { CollectPendingHandles(component, registry.Info(type), registry, pending); });
+        }
+
+        return SpawnResult{.Roots = std::move(roots), .Pending = std::move(pending)};
     }
 }

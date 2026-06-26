@@ -36,12 +36,10 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <span>
-#include <thread>
 
 using namespace Veng;
 
@@ -217,7 +215,10 @@ public:
             return;
         }
 
-        m_Spawned = config.PlayerPrefab.Get()->SpawnInto(scene, context.Assets);
+        // The player prefab uses a cooked, already-resident mesh, so nothing waits on the
+        // spawn's batch here; a primitive player would carry a pending batch this rule could
+        // surface. Each spawn owns its own batch — the level's does not cover sim-spawned content.
+        m_Spawned = config.PlayerPrefab.Get()->SpawnInto(scene, context.Assets).Roots;
     }
 
     void OnUpdate(Scene& scene, const f32, const SystemContext&) override
@@ -370,11 +371,11 @@ protected:
         m_Scene = std::move(instance.World);
         m_Simulation = std::move(instance.Simulation);
 
-        // Smoke renders a fixed pose, so block until the streamed primitives are resident
-        // before the capture frame; the windowed app lets them appear over a few frames.
+        // Smoke renders a fixed pose, so block until the world spawn's streamed meshes are
+        // resident before the capture frame; the windowed app lets them appear over a few frames.
         if (m_SmokeOutput)
         {
-            WaitForPrimitiveResidency();
+            instance.Pending.WaitResident(GetTaskSystem());
         }
 
         // Start the simulation, so the Sim-phase SpawnPlayerRule instantiates the player at
@@ -647,34 +648,6 @@ private:
         view.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
         view.SetView(vec3(0.0f, 10.0f, 14.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
         return view;
-    }
-
-    // Drains the task system until every recipe-sourced mesh is resident.
-    // A MeshRenderer whose Source carries a shape built its mesh through the async path at
-    // spawn, so its handle streams in over a few frames; the build finalizes on the
-    // main-thread continuation pump, so each iteration pumps it and yields the worker a
-    // moment to complete the upload.
-    void WaitForPrimitiveResidency()
-    {
-        const auto allResident = [this]
-        {
-            bool resident = true;
-            m_Scene->Each<MeshRenderer>(
-                [&resident](Entity, MeshRenderer& renderer)
-                {
-                    if (renderer.Source.ActiveType() != InvalidTypeId && !renderer.Mesh.IsLoaded())
-                    {
-                        resident = false;
-                    }
-                });
-            return resident;
-        };
-
-        while (!allResident())
-        {
-            GetTaskSystem().PumpMainThread();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
     }
 
     // Configure can recreate the viewport's output image, so the ImGui texture must be re-fetched

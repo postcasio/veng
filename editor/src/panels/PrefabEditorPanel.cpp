@@ -191,10 +191,10 @@ namespace VengEditor
         }
         m_Prefab = *prefab;
 
-        const vector<Entity> roots = m_Prefab.Get()->SpawnInto(*m_Scene, m_Assets);
-        if (!roots.empty())
+        const Prefab::SpawnResult spawned = m_Prefab.Get()->SpawnInto(*m_Scene, m_Assets);
+        if (!spawned.Roots.empty())
         {
-            m_Context.SelectOnly(roots[0]);
+            m_Context.SelectOnly(spawned.Roots[0]);
         }
 
         // Light the scene when the prefab carries none, so the spawned content is visible.

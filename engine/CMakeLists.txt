@@ -12,6 +12,7 @@ add_library(veng SHARED
         src/Asset/Environment.cpp
         src/Asset/Prefab.cpp
         src/Asset/Primitives.cpp
+        src/Asset/ResidencyBatch.cpp
         src/Asset/Skeleton.cpp
         src/Asset/Texture.cpp
         src/Asset/Loaders/AnimationLoader.cpp

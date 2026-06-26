@@ -112,7 +112,7 @@ TEST_CASE_FIXTURE(PrefabFixture, "SpawnInto populates components and returns the
     entities.push_back({{MakeComponent(Types, Name{"hero"}), MakeComponent(Types, transform)}});
 
     const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
-    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets);
+    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets).Roots;
 
     REQUIRE(roots.size() == 1);
     CHECK(Stage->IsAlive(roots[0]));
@@ -131,7 +131,7 @@ TEST_CASE_FIXTURE(PrefabFixture, "Roots are entities with no parent link, in aut
     entities.push_back({{MakeComponent(Types, Name{"c"})}});
 
     const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
-    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets);
+    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets).Roots;
 
     REQUIRE(roots.size() == 2);
     CHECK(Stage->Get<Name>(roots[0]).Value == "a");
@@ -173,7 +173,7 @@ TEST_CASE_FIXTURE(PrefabFixture, "Two children under one parent both survive the
           MakeComponent(Types, Hierarchy{.Parent = Entity{.Index = 0, .Generation = 0}})}});
 
     const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
-    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets);
+    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets).Roots;
 
     REQUIRE(roots.size() == 1);
     CHECK(Stage->Get<Name>(roots[0]).Value == "p");
@@ -199,7 +199,7 @@ TEST_CASE_FIXTURE(PrefabFixture,
     entities.push_back({{MakeComponent(Types, Name{"target"})}});
 
     const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
-    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets);
+    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets).Roots;
 
     REQUIRE(roots.size() == 2);
     const Entity target = Stage->Get<Link>(roots[0]).Target;
@@ -214,7 +214,7 @@ TEST_CASE_FIXTURE(PrefabFixture, "A null entity reference stays null after spawn
     entities.push_back({{MakeComponent(Types, Link{Entity::Null})}});
 
     const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
-    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets);
+    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets).Roots;
 
     REQUIRE(roots.size() == 1);
     CHECK(Stage->Get<Link>(roots[0]).Target.IsNull());
@@ -226,8 +226,8 @@ TEST_CASE_FIXTURE(PrefabFixture, "Spawning the same prefab twice yields independ
     entities.push_back({{MakeComponent(Types, Name{"x"})}});
 
     const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
-    const vector<Entity> first = prefab->SpawnInto(*Stage, *Assets);
-    const vector<Entity> second = prefab->SpawnInto(*Stage, *Assets);
+    const vector<Entity> first = prefab->SpawnInto(*Stage, *Assets).Roots;
+    const vector<Entity> second = prefab->SpawnInto(*Stage, *Assets).Roots;
 
     REQUIRE(first.size() == 1);
     REQUIRE(second.size() == 1);
@@ -248,7 +248,7 @@ TEST_CASE_FIXTURE(PrefabFixture, "An embedded AssetHandle with an invalid id sta
     entities.push_back({{MakeComponent(Types, MeshRenderer{})}});
 
     const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
-    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets);
+    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets).Roots;
 
     REQUIRE(roots.size() == 1);
     const MeshRenderer& renderer = Stage->Get<MeshRenderer>(roots[0]);
@@ -270,7 +270,7 @@ TEST_CASE_FIXTURE(PrefabFixture,
     entities.push_back({{MakeComponent(Types, Name{"target"})}});
 
     const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
-    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets);
+    const vector<Entity> roots = prefab->SpawnInto(*Stage, *Assets).Roots;
 
     REQUIRE(roots.size() == 2);
     const VariantHolder& spawned = Stage->Get<VariantHolder>(roots[0]);

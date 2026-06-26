@@ -4,6 +4,7 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
+#include <Veng/Asset/ResidencyBatch.h>
 #include <Veng/Reflection/TypeId.h>
 
 #include <span>
@@ -41,18 +42,37 @@ namespace Veng
             vector<Component> Components;
         };
 
+        /// @brief The product of a spawn: the spawned roots plus the residency batch the spawn introduced.
+        struct SpawnResult
+        {
+            /// @brief The spawned root entities (no parent link), in authoring order.
+            vector<Entity> Roots;
+            /// @brief The not-yet-resident assets this spawn introduced (recipe-built meshes in practice).
+            ResidencyBatch Pending;
+        };
+
         /// @brief Creates a Prefab from a list of entities and their resolved dependency entries.
         static Ref<Prefab> Create(vector<PrefabEntity> entities,
                                   vector<Ref<Detail::AssetCacheEntry>> dependencies);
 
         /// @brief Spawns this prefab's entities and components into `scene`.
         ///
-        /// Returns the spawned root entities (those with no parent link — no Hierarchy or a null
-        /// Hierarchy parent), in authoring order. Remaps intra-prefab Entity references to freshly
-        /// created handles, rehydrates AssetHandle fields via `manager`, and rebuilds the intrusive
-        /// Hierarchy sibling/child links from each entity's parent edge (children kept in authored
-        /// order). Spawning twice produces two independent copies.
-        [[nodiscard]] vector<Entity> SpawnInto(Scene& scene, AssetManager& manager) const;
+        /// Returns the spawned roots (those with no parent link — no Hierarchy or a null Hierarchy
+        /// parent), in authoring order, plus a ResidencyBatch of the not-yet-resident assets this
+        /// spawn introduced. Remaps intra-prefab Entity references to freshly created handles,
+        /// rehydrates AssetHandle fields via `manager`, builds inline recipe mesh sources, and
+        /// rebuilds the intrusive Hierarchy sibling/child links from each entity's parent edge
+        /// (children kept in authored order). Spawning twice produces two independent copies.
+        ///
+        /// The batch holds the handles this spawn left pending — in practice the recipe-built
+        /// meshes (a non-empty MeshRenderer.Source streams in async), since the prefab loader
+        /// already asserted every cooked embedded dependency resident before spawn. The caller
+        /// owns the batch and decides whether to wait on it (a loading screen, the smoke path)
+        /// or let the content stream in over frames.
+        /// @param scene    The scene the entities are created in.
+        /// @param manager  The asset manager rehydration and recipe builds resolve through.
+        /// @return The spawned roots and the residency batch this spawn introduced.
+        [[nodiscard]] SpawnResult SpawnInto(Scene& scene, AssetManager& manager) const;
 
         /// @brief Returns the list of prefab entities.
         [[nodiscard]] const vector<PrefabEntity>& Entities() const { return m_Entities; }

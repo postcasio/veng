@@ -5,6 +5,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/Prefab.h>
+#include <Veng/Asset/ResidencyBatch.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/SceneSystem.h>
 
@@ -20,15 +21,19 @@ namespace Veng
     ///
     /// Returned by Level::LoadInto — the bundle an app owns and drives. The Scene holds the
     /// spawned world plus the seeded Session entity; the SceneSimulation holds the level's
-    /// ordered system set. The app ticks the simulation and renders the scene; it drops both
-    /// in OnDispose like any other engine resource. The Scene outlives nothing it was built
-    /// from except the TypeRegistry, which must outlive it.
+    /// ordered system set; Pending is the world spawn's residency batch (its recipe-built
+    /// meshes streaming in). The app ticks the simulation and renders the scene, optionally
+    /// waiting on Pending before a deterministic capture; it drops both in OnDispose like any
+    /// other engine resource. The Scene outlives nothing it was built from except the
+    /// TypeRegistry, which must outlive it.
     struct LevelInstance
     {
         /// @brief The runtime ECS world the level spawned its world prefab into.
         Unique<Scene> World;
         /// @brief The simulation driving the level's ordered active system set.
         Unique<SceneSimulation> Simulation;
+        /// @brief The world spawn's not-yet-resident assets; wait on it before a deterministic capture.
+        ResidencyBatch Pending;
     };
 
     /// @brief Cached, immutable cooked-level asset: a world prefab by reference plus level-scoped wiring.
