@@ -87,6 +87,30 @@ namespace VengEditor
 
     LevelEditorPanel::~LevelEditorPanel() = default;
 
+    void LevelEditorPanel::SeedPlayScene(Scene& scene)
+    {
+        // The player prefab is usually already a resolved dependency of the world prefab, so
+        // the common case takes neither branch; force it resident otherwise, since the spawn
+        // rule bails on a non-resident prefab the way the runtime relies on the loader having
+        // eager-resolved it.
+        if (!m_GameMode.PlayerPrefab.IsLoaded())
+        {
+            const AssetResult<AssetHandle<Prefab>> player =
+                m_AssetManager.LoadSync<Prefab>(m_GameMode.PlayerPrefab.Id());
+            if (!player.has_value())
+            {
+                Log::Error("Level editor: failed to load player prefab 0x{:X}: {}",
+                           m_GameMode.PlayerPrefab.Id().Value, player.error().Detail);
+            }
+            else
+            {
+                m_GameMode.PlayerPrefab = *player;
+            }
+        }
+
+        SeedSession(scene, m_GameMode);
+    }
+
     void LevelEditorPanel::LoadConfig()
     {
         m_Systems.clear();

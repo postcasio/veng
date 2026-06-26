@@ -86,6 +86,10 @@ namespace VengEditor
         m_Context.Scene = m_PlayScene.get();
         m_Context.Play = PlayState::Playing;
 
+        // Seed any document-scoped state (a level seeds its Session) before Start, so the spawn
+        // rules a system set runs at OnStart see the same initialized scene the runtime does.
+        SeedPlayScene(*m_PlayScene);
+
         if (m_Simulation == nullptr)
         {
             // A prefab document runs every registered system; a level document runs the
