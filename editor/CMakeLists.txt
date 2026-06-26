@@ -53,6 +53,11 @@ target_link_libraries(veng_editor PUBLIC veng::veng)
 target_compile_options(veng_editor PRIVATE -fno-exceptions)
 target_compile_definitions(veng_editor PRIVATE VE_BUILD_SHARED)
 
+# Precompile the foundational Veng.h here too (most editor TUs include it). Its own
+# PCH rather than REUSE_PRECOMPILE_HEADER_FROM veng: the predefine sets differ
+# (veng's private IMGUI_USER_CONFIG / tinyexr macros), which would reject a shared PCH.
+target_precompile_headers(veng_editor PRIVATE <Veng/Veng.h>)
+
 # Auto-export all symbols on MSVC so the editor exe links against this shared library
 # without the VE_API annotation being complete — mirrors macOS/Linux default visibility.
 if (MSVC)

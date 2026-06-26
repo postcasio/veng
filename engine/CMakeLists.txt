@@ -186,3 +186,16 @@ target_link_libraries(veng PRIVATE
         ZLIB::ZLIB
         ${CMAKE_DL_LIBS}
 )
+
+# Veng.h is the foundational header every TU includes (std + glm + fmt + house
+# aliases); precompiling it once cuts that front-end cost across the library.
+target_precompile_headers(veng PRIVATE include/Veng/Veng.h)
+
+# The vendor aggregation TUs #include third-party .c/.cpp and set feature macros
+# before their includes; force-injecting Veng.h ahead of that is unsafe, and the
+# generated embed TUs are bare byte arrays that gain nothing from it.
+set_source_files_properties(
+        src/Vendor/ImGui.cpp
+        src/Vendor/StbImage.cpp
+        src/Vendor/TinyExr.cpp
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)

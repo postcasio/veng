@@ -15,6 +15,14 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN OFF)
 # per-TU flags, whether or not the in-build linter (below) is enabled.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Route compilation through ccache when present, so unchanged TUs are served from
+# cache across rebuilds, clean builds, and branch switches. The #embed / bin2cpp
+# machinery below is written to keep ccache's view of generated sources correct.
+find_program(CCACHE_PROGRAM ccache)
+if (CCACHE_PROGRAM)
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+endif ()
+
 include(FetchContent)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
