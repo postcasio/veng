@@ -5,6 +5,7 @@
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/SceneClone.h>
+#include <Veng/Scene/SceneSimulation.h>
 
 #include "ComponentPool.h"
 
@@ -79,6 +80,35 @@ namespace Veng
     {
         // Private constructor: raw new, not CreateUnique.
         return Unique<Scene>(new Scene(registry));
+    }
+
+    void Scene::SetSimulation(Unique<SceneSimulation> simulation)
+    {
+        m_Simulation = std::move(simulation);
+    }
+
+    void Scene::StartSimulation(const SystemContext& context)
+    {
+        if (m_Simulation)
+        {
+            m_Simulation->Start(*this, context);
+        }
+    }
+
+    void Scene::TickSimulation(const f32 delta, const SystemContext& context)
+    {
+        if (m_Simulation)
+        {
+            m_Simulation->Update(*this, delta, context);
+        }
+    }
+
+    void Scene::StopSimulation(const SystemContext& context)
+    {
+        if (m_Simulation)
+        {
+            m_Simulation->Stop(*this, context);
+        }
     }
 
     Unique<Scene> Scene::Clone() const

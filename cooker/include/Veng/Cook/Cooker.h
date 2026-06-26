@@ -37,6 +37,16 @@ namespace Veng::Cook
     /// @return The parsed configuration, or a located error.
     [[nodiscard]] Result<BuildConfiguration> ParseBuildConfiguration(const path& configFile);
 
+    /// @brief Hand-parses a `project.veng` JSON authoring file's startup-level AssetId.
+    ///
+    /// Reads the project file's `"startupLevel"` key (a decimal AssetId) — the level the engine
+    /// bootstraps when a managed game world mounts the cooked pack. The cook writes it into the
+    /// archive header. An absent or zero key yields the invalid id (the project declares no
+    /// startup level). Errors are located: `"project '<path>': <reason>"`.
+    /// @param projectFile  Path to the `project.veng` JSON file.
+    /// @return The parsed startup-level id (invalid id when absent), or a located error.
+    [[nodiscard]] Result<AssetId> ParseProjectStartupLevel(const path& projectFile);
+
     /// @brief Writes a GCC-style depfile declaring `target` as depending on every path in `dependencies`.
     ///
     /// Intended for `add_custom_command(DEPFILE ...)` so the cook re-runs when any recorded
@@ -77,11 +87,14 @@ namespace Veng::Cook
         /// @param outDependencies If non-null, receives the sorted, de-duplicated dependency list.
         /// @param config          Active build configuration driving the cook, or nullptr.
         /// @param configFile      Source file of `config`, recorded as a central dependency; empty if none.
+        /// @param startupLevel    Startup-level AssetId written into the archive header; invalid id for none.
+        /// @param projectFile     Source file of `startupLevel`, recorded as a central dependency; empty if none.
         [[nodiscard]] VoidResult
         CookPack(const path& packJson, const path& outArchive,
                  std::span<const path> referencePacks = {}, const TypeRegistry* types = nullptr,
                  const SystemRegistry* systems = nullptr, vector<path>* outDependencies = nullptr,
-                 const BuildConfiguration* config = nullptr, const path& configFile = {}) const;
+                 const BuildConfiguration* config = nullptr, const path& configFile = {},
+                 AssetId startupLevel = {}, const path& projectFile = {}) const;
 
         /// @brief Cooks one source asset and returns a complete single-entry .vengpack as in-memory bytes.
         ///

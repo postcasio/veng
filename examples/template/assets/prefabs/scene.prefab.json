@@ -1,0 +1,64 @@
+{
+  "entities": [
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Camera"
+        },
+        "::Veng::Transform": {
+          "Position": [0.0, 1.5, 4.0],
+          "Rotation": [-0.1784245, 0.0, 0.0, 0.9839534],
+          "Scale": [1.0, 1.0, 1.0]
+        },
+        "::Veng::Camera": {
+          "FovY": 1.0471975511965976,
+          "Near": 0.1,
+          "Far": 100.0
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Sun"
+        },
+        "::Veng::Transform": {
+          "Position": [0.0, 0.0, 0.0],
+          "Rotation": [0.0, 0.0, 0.0, 1.0],
+          "Scale": [1.0, 1.0, 1.0]
+        },
+        "::Veng::Light": {
+          "Type": 0,
+          "Direction": [-0.324442, -0.811107, -0.486664],
+          "Color": [1.0, 1.0, 1.0],
+          "Intensity": 3.0
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Cube"
+        },
+        "::Veng::Transform": {
+          "Position": [0.0, 0.0, 0.0],
+          "Rotation": [0.0, 0.0, 0.0, 1.0],
+          "Scale": [1.0, 1.0, 1.0]
+        },
+        "::Veng::ConstantMotion": {
+          "AngularVelocity": [0.0, 0.6, 0.0],
+          "Space": 1
+        },
+        "::Veng::MeshRenderer": {
+          "Source": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 1.0,
+              "Material": 4166528937578239323
+            }
+          }
+        }
+      }
+    }
+  ]
+}

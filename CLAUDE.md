@@ -49,9 +49,12 @@ is thin (shared deps + `add_subdirectory` per lib).
   time, copied beside the launcher); `configs/` holds its build configurations
   (`project.veng` + a `*.buildcfg` per ship target).
 - `examples/template/` — the **minimal** sample: the smallest correct app a new
-  developer copies to start (`veng_add_game`, a window + a rotating cube, world built
-  in code, no debug UI). Like `hello-triangle` it ships a `configs/` set
-  (`project.veng` + a `*.buildcfg` per ship target: macOS / Windows / Linux), so a copy
+  developer copies to start (`veng_add_game`, a window + a rotating cube, no debug UI).
+  Its `main.cpp` is a bare `Application` with a managed viewport + game world: the engine
+  mounts the pack, loads the project's startup level, and drives the world — the world is
+  authored as cooked data and bootstrapped by the engine, not built or driven in code. Like
+  `hello-triangle` it ships a `configs/` set (`project.veng` — which names the `startupLevel`
+  cooked into the pack — + a `*.buildcfg` per ship target: macOS / Windows / Linux), so a copy
   starts with the per-platform cook already wired. It is the engine's minimal conformance
   surface — **co-migrated with `hello-triangle` on every breaking change** (see
   **Working norms**).

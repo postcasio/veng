@@ -40,6 +40,26 @@ scene through `GetPrimaryViewport()->SetViewState` each frame. The editor leaves
 `ManagedViewport` unset, so `GetPrimaryViewport()` is null and it registers its own
 viewports.
 
+**`Application` optionally bootstraps and drives the whole game world.** Set
+`ApplicationInfo::World` (`GameWorldInfo { path AssetPack; }`, alongside `ManagedViewport`)
+and `Application` runs the game: at the end of `Initialize` (after `OnInitialize`) it mounts
+the pack beside the executable, reads the pack's **cooked startup level**
+(`AssetManager::GetStartupLevel()`, from the archive header), seeds the managed viewport's
+topology + per-frame view from the level's `LevelRenderSettings` (`ApplyLevelRenderSettings`),
+spawns the world (`Level::LoadInto`, the `Scene` owning its `SceneSimulation`), fires the
+`OnWorldLoaded(Scene&, ResidencyBatch&)` hook, then starts the simulation. Each `Frame` it
+ticks the world (`Scene::TickSimulation`, unless `SetWorldPaused`), calls `OnUpdate`, then
+**resolves the primary camera and pushes the `ViewState`** into the managed viewport
+(`PushSceneView`, in `Veng/Scene/SceneViewport.h` — the gameplay→render bridge that keeps
+`Renderer::Viewport` gameplay-agnostic, falling back to `DefaultCameraView` when the scene
+resolves none). A game reaches the running world through `GetWorld()` / `GetWorldViewState()`
+/ `GetWorldLevel()` and customizes it in `OnWorldLoaded`; the **minimal game writes no
+lifecycle or per-frame code at all** (a bare `Application` registered with a managed viewport
+and world). `World` unset leaves the app to load and drive its own world (the editor, or a
+game wanting full control) — the explicit `Mount` → `LoadSync<Level>` → `LoadInto` →
+`StartSimulation` → per-frame `TickSimulation`/`PushSceneView` path the managed world
+automates.
+
 The **engine render phase** runs between `BeginFrame()` and `EndFrame()`, uniform
 for every app and not overridable: render every registered viewport in
 registration order (each does its own `Execute` + `PrepareForAccess(Sample)`), so
@@ -1060,10 +1080,18 @@ the union/expand/center/extents/corners/transform algebra and an empty sentinel.
 Gribb-Hartmann from a view-projection matrix (Vulkan ZO clip), with a conservative
 `Intersects(Frustum, AABB)` p-vertex test (never a false cull).
 
-A `Scene` is **`Unique`, single-owner** — nothing holds a `Ref` to it; the app owns it
-and a renderer reads it per frame as a `const Scene&`. Drop it in `OnDispose()` like
-any other engine resource. The `TypeRegistry` it was created with must outlive it and
-must already have every component type registered.
+A `Scene` is **`Unique`, single-owner** — nothing holds a `Ref` to it; the app (or the
+engine-managed world) owns it and a renderer reads it per frame as a `const Scene&`. The
+`TypeRegistry` it was created with must outlive it and must already have every component type
+registered.
+
+**A `Scene` optionally owns the `SceneSimulation` that drives it.** `Scene::SetSimulation`
+attaches one and `GetSimulation` returns it; `StartSimulation` / `TickSimulation` /
+`StopSimulation` forward `*this` to the held simulation (no-ops when none). `Level::LoadInto`
+builds the level's simulation and attaches it here, so the running scene is a self-contained
+bundle. The simulation is optional — the editor's Play mode owns its own `SceneSimulation`
+driving a play-clone scene rather than attaching one, and a bare `Scene` (a static render
+source, a test world) has none. `Clone()` does **not** copy the simulation.
 
 ## Gameplay: cameras, control, systems, game modes, levels
 
@@ -1167,9 +1195,12 @@ ordinary `AssetManager::Load`/`LoadSync` path; its world prefab and that prefab'
 asset refs resolve as ordinary load-time dependencies. **`Level::LoadInto(AssetManager&,
 const SystemRegistry&) → LevelInstance`** is what *starts the game*: it spawns the world
 prefab into a fresh `Scene`, builds a `SceneSimulation` from the level's `SystemId` set
-against the catalog, and seeds a `Session` entity from the game-mode config, returning a
-`LevelInstance { Unique<Scene> World; Unique<SceneSimulation> Simulation; }` the app ticks
-and renders. A game is assembled as authored data, not hand-spawned in `main.cpp`.
+against the catalog and **attaches it to the `Scene`** (`Scene::SetSimulation` — the scene
+owns its simulation), and seeds a `Session` entity from the game-mode config, returning a
+`LevelInstance { Unique<Scene> World; ResidencyBatch Pending; }` the app ticks (via
+`Scene::TickSimulation`) and renders. A game is assembled as authored data, not hand-spawned
+in `main.cpp`; the engine-managed game world (see **Application**) drives this end to end so a
+minimal `main.cpp` writes none of it.
 
 ## Project settings & build configurations
 
@@ -1180,8 +1211,10 @@ nlohmann), so `libveng` gains no JSON dependency.
 
 - **`ProjectSettings`** (`Veng/Project/ProjectSettings.h`) — one per project (the JSON file
   `project.veng`): a reflected `vector<BuildConfiguration> Configurations` (a genuine
-  `FieldClass::Array` field, so adding/removing a config is reflection, not a fixed cap) plus
-  the `ActiveConfiguration` name the editor previews through and the cook defaults to.
+  `FieldClass::Array` field, so adding/removing a config is reflection, not a fixed cap), the
+  `ActiveConfiguration` name the editor previews through and the cook defaults to, and a
+  `StartupLevel` `AssetId` (the level the engine bootstraps; persisted by hand through the
+  `"startupLevel"` key, kept off the reflected field list, cooked into the pack header).
 - **`BuildConfiguration`** (`Veng/Project/BuildConfiguration.h`) — a named ship target: a
   `RoleToFormat` codec table, a zstd `CompressionLevel`, a `Target` label, and an
   `OutputSuffix` (the single source of truth for the per-config pack name). `RoleToFormat` is
@@ -1209,12 +1242,18 @@ The engine ships **two** sample game modules, co-migrated on every breaking chan
 - **`examples/hello-triangle`** — the **maximal** sample: every renderer battery, the full
   debug UI, a cooked prefab/level world, and a `macos`/`windows` build-configuration pair.
 - **`examples/template`** — the **minimal** one a new developer copies. The smallest correct
-  `veng_add_game` app: `main.cpp` mounts its pack, builds three entities in code (a `Camera`,
-  a directional `Light`, and a cube whose mesh is a `Primitives::Cube` recipe built with
-  `BuildSync<Mesh>`), opts into the engine-owned **managed primary viewport**
-  (`ApplicationInfo::ManagedViewport`), and rotates the cube inline in `OnUpdate` — no custom
-  component, system, prefab, debug UI, or `SceneRenderer`/composite wiring. It ships **no
-  `project.veng`**, relying on the zero-config cook default to stay minimal, and carries a
-  **build-only launcher smoke** (`template_launcher_smoke` — exit 0 + a correct-sized capture,
-  no pixel golden) so it stays low-maintenance. It is the minimal **conformance** check: if
-  the smallest app stops compiling or running, a breaking change missed it.
+  `veng_add_game` app: `main.cpp` is **only** a `VengModuleRegister` that registers a **bare
+  `Application`** (no subclass) with a `ManagedViewport` and a `World`
+  (`GameWorldInfo{ .AssetPack = "template.vengpack" }`), plus a single
+  `host->Systems.Register<ConstantMotionSystem>()` selecting the one engine system the level
+  names. The engine bootstraps everything — it mounts the pack, loads the pack's **cooked
+  startup level** (a world `Prefab`: a `Camera`, a directional `Light`, and a cube whose mesh is
+  an inline `CubeShape` recipe and which carries a `ConstantMotion` to spin), owns the running
+  scene + simulation, ticks the level's system set (the engine `ConstantMotionSystem`), and
+  pushes the resolved camera each frame. So the file has **no** lifecycle override, per-frame
+  code, custom component or system, or debug UI — the rotating cube is authored as cooked data
+  and driven by an engine system selected by name, not built or driven in code. Its
+  `configs/project.veng` names the `startupLevel` the cook writes into the pack header
+  (`add_asset_pack(... PROJECT ...)`), and its pack carries a prefab + level, so the cook
+  reflects `libtemplate` via `MODULE template` (only engine builtins, no custom types). It is the
+  minimal **conformance** check: if the smallest app stops compiling, a breaking change missed it.

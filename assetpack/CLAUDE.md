@@ -19,12 +19,18 @@ serialization — neither importer nor loader.
 - **An archive is built from a pure `{ id, type, source }` manifest.** The format
   carries no per-asset settings — those live in the per-asset JSON sources the
   manifest points at, consumed by the cooker, not by this library.
-- **`.vengpack` is at format v3 and carries content hashes.** Each cooked blob has a
+- **`.vengpack` is at format v4 and carries content hashes.** Each cooked blob has a
   content hash and the table of contents has a digest. `assetpack` **stores the raw
   16 bytes and computes nothing** — the hash function lives only in the cooker and
   `vengc verify`, so this library (and `libveng`) gain no hash dependency. The runtime
   loader **never verifies**; hashing is a tooling concern, checkable with `vengc
   verify`.
+- **The header carries the pack's startup level.** A `u64` `StartupLevel` field
+  (`ArchiveReader::StartupLevel()`, 0 = none) names the `Level` the engine bootstraps
+  when a managed game world mounts the pack. The cooker writes it from the project
+  settings (`vengc cook --project project.veng`); `assetpack` stores it verbatim and
+  never resolves it. It sits in the header outside the hashed TOC range, so it does not
+  perturb the digest.
 - **Blobs are stored zstd-compressed or raw, per blob.** Each TOC entry carries an
   `ArchiveCodec` (`Stored`/`Zstd`) and an `UncompressedSize`. The **cooker** compresses
   each blob and stores whichever of the raw or compressed bytes is smaller; `assetpack`
@@ -34,11 +40,11 @@ serialization — neither importer nor loader.
   (linked PUBLIC); the content hash and the TOC digest cover the **stored** bytes, so
   `vengc verify` re-hashes the on-disk bytes with no decode. `Find` is main-thread-only;
   the lazy inflate is not synchronized.
-- A version number the format actually checks (the on-disk `v3`) is rejected loudly on
-  mismatch — a stale/foreign archive does not load silently. The `v3` bump is **global** —
+- A version number the format actually checks (the on-disk `v4`) is rejected loudly on
+  mismatch — a stale/foreign archive does not load silently. The version bump is **global** —
   every `.vengpack`, including the **embedded core pack** the engine ships via `#embed`. A
   format change re-cooks the core pack, but ccache does **not** track an `#embed`-ed file as a
-  dependency, so a stale core-pack object can mount an older pack into a `v3` runtime and fail
+  dependency, so a stale core-pack object can mount an older pack into a `v4` runtime and fail
   every run with "asset … not found"; rebuild the embed with `CCACHE_DISABLE=1` (or delete the
   embed `.o`) after a format bump.
 - **`AssetType::Texture` carries a mipped, block-compressed image.** A **`CookedTextureHeader`**

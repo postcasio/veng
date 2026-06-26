@@ -20,7 +20,7 @@ namespace
         fmt::print(stderr, "usage:\n"
                            "  vengc cook <pack.json> [-o <out.vengpack>] [--reference "
                            "<pack.json>]... [--module <lib>] [--config <file.buildcfg>] "
-                           "[--depfile <out.d>]\n"
+                           "[--project <project.veng>] [--depfile <out.d>]\n"
                            "  vengc generate-id [--reference <pack.json>]...\n"
                            "  vengc generate-type-id [--module <lib>]\n"
                            "  vengc verify <archive.vengpack>\n");
@@ -70,6 +70,7 @@ int main(int argc, char** argv)
         vector<path> referencePacks;
         optional<path> modulePath;
         optional<path> configPath;
+        optional<path> projectPath;
         optional<path> depfilePath;
 
         for (usize i = 1; i < args.size(); ++i)
@@ -118,6 +119,15 @@ int main(int argc, char** argv)
                     return 1;
                 }
                 configPath = path(args[++i]);
+            }
+            else if (args[i] == "--project")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --project requires an argument\n");
+                    return 1;
+                }
+                projectPath = path(args[++i]);
             }
             else if (!packPath)
             {
@@ -174,14 +184,28 @@ int main(int argc, char** argv)
             config = std::move(*parsed);
         }
 
+        // The project file carries the startup level cooked into the archive header; absent
+        // --project the pack declares none (the invalid id).
+        AssetId startupLevel;
+        if (projectPath)
+        {
+            Result<AssetId> parsed = ParseProjectStartupLevel(*projectPath);
+            if (!parsed)
+            {
+                fmt::print(stderr, "vengc: {}\n", parsed.error());
+                return 1;
+            }
+            startupLevel = *parsed;
+        }
+
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
 
         vector<path> dependencies;
-        const VoidResult result =
-            cooker.CookPack(*packPath, *outPath, referencePacks, types, systems,
-                            depfilePath ? &dependencies : nullptr, config ? &*config : nullptr,
-                            configPath ? *configPath : path{});
+        const VoidResult result = cooker.CookPack(
+            *packPath, *outPath, referencePacks, types, systems,
+            depfilePath ? &dependencies : nullptr, config ? &*config : nullptr,
+            configPath ? *configPath : path{}, startupLevel, projectPath ? *projectPath : path{});
         if (!result)
         {
             fmt::print(stderr, "vengc: {}\n", result.error());

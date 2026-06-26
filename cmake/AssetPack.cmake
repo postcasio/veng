@@ -34,7 +34,7 @@
 # in the parent scope as ${TARGET_NAME}_TARGET, so a caller threading the
 # host-default CONFIG does not need to know the suffix to depend on the target.
 function(add_asset_pack TARGET_NAME)
-    cmake_parse_arguments(ARG "" "PACK;OUTPUT;MODULE;CONFIG" "DEPENDS;REFERENCE" ${ARGN})
+    cmake_parse_arguments(ARG "" "PACK;OUTPUT;MODULE;CONFIG;PROJECT" "DEPENDS;REFERENCE" ${ARGN})
 
     if (NOT ARG_PACK)
         message(FATAL_ERROR "add_asset_pack(${TARGET_NAME}): PACK is required")
@@ -107,6 +107,21 @@ function(add_asset_pack TARGET_NAME)
         set(MODULE_DEP ${ARG_MODULE})
     endif ()
 
+    # A PROJECT pack carries the project.veng whose startupLevel the cook writes into the
+    # archive header. It is a central depfile/DEPENDS input so editing it re-cooks the pack.
+    set(PROJECT_ARGS)
+    set(PROJECT_DEP)
+    if (ARG_PROJECT)
+        cmake_path(ABSOLUTE_PATH ARG_PROJECT
+                BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} NORMALIZE
+                OUTPUT_VARIABLE PROJECT_ABS)
+        if (NOT EXISTS ${PROJECT_ABS})
+            message(FATAL_ERROR "add_asset_pack(${TARGET_NAME}): PROJECT '${PROJECT_ABS}' not found")
+        endif ()
+        set(PROJECT_ARGS --project ${PROJECT_ABS})
+        set(PROJECT_DEP ${PROJECT_ABS})
+    endif ()
+
     # vengc writes a depfile naming every source it read (the manifest, each
     # reference pack, the per-asset JSONs, and their binary payloads — images,
     # models, shader sources and their includes). DEPFILE feeds it to the build
@@ -115,8 +130,8 @@ function(add_asset_pack TARGET_NAME)
     add_custom_command(
             OUTPUT ${PACK_OUTPUT}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTPUT_DIR}
-            COMMAND $<TARGET_FILE:vengc> cook ${PACK_ABS} -o ${PACK_OUTPUT} ${REFERENCE_ARGS} ${MODULE_ARGS} ${CONFIG_ARGS} --depfile ${PACK_OUTPUT}.d
-            DEPENDS vengc ${PACK_ABS} ${ARG_DEPENDS} ${MODULE_DEP} ${CONFIG_DEP}
+            COMMAND $<TARGET_FILE:vengc> cook ${PACK_ABS} -o ${PACK_OUTPUT} ${REFERENCE_ARGS} ${MODULE_ARGS} ${CONFIG_ARGS} ${PROJECT_ARGS} --depfile ${PACK_OUTPUT}.d
+            DEPENDS vengc ${PACK_ABS} ${ARG_DEPENDS} ${MODULE_DEP} ${CONFIG_DEP} ${PROJECT_DEP}
             DEPFILE ${PACK_OUTPUT}.d
             COMMENT "Cooking asset pack ${PACK_TARGET}")
 

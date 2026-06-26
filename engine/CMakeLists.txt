@@ -60,6 +60,7 @@ add_library(veng SHARED
         src/Scene/Scene.cpp
         src/Scene/SceneBroadphase.cpp
         src/Scene/SceneSimulation.cpp
+        src/Scene/SceneViewport.cpp
         src/Scene/SystemRegistry.cpp
         src/Scene/Transforms.cpp
         src/Scene/Visibility.cpp

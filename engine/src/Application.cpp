@@ -10,6 +10,9 @@
 #include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/Renderer/Viewport.h>
 
+#include <Veng/Scene/SceneSystem.h>
+#include <Veng/Scene/SceneViewport.h>
+
 #include <algorithm>
 
 namespace Veng
@@ -117,6 +120,45 @@ namespace Veng
         }
 
         OnInitialize();
+
+        // The engine-managed game world bootstraps after OnInitialize, so a subclass has already
+        // set up its ImGui surface and read the managed viewport. It renders through the managed
+        // viewport, so it is gated on one being present.
+        if (m_Info.World && m_PrimaryViewport)
+        {
+            BootstrapWorld();
+        }
+    }
+
+    void Application::BootstrapWorld()
+    {
+        // Executable-relative so the pack resolves wherever the launcher is copied.
+        const VoidResult mounted =
+            m_AssetManager->Mount(ExecutableDirectory() / m_Info.World->AssetPack);
+        VE_ASSERT(mounted, "{}", mounted.error());
+
+        const optional<AssetId> startup = m_AssetManager->GetStartupLevel();
+        VE_ASSERT(startup.has_value(), "world pack '{}' declares no startup level",
+                  m_Info.World->AssetPack.string());
+
+        const AssetResult<AssetHandle<Level>> level = m_AssetManager->LoadSync<Level>(*startup);
+        VE_ASSERT(level.has_value(), "{}", level.error().Detail);
+        m_WorldLevel = *level;
+
+        // Seed the managed viewport's topology and the per-frame view knobs from the level's render
+        // settings, starting from the configured initial settings, then apply the topology.
+        Renderer::SceneRendererSettings settings = m_Info.ManagedViewport->Settings;
+        ApplyLevelRenderSettings(m_WorldLevel.Get()->GetRender(), settings, m_WorldView);
+        m_PrimaryViewport->Configure(settings);
+
+        // Spawn the world (the scene owns the level's simulation) and hand it to the subclass before
+        // the simulation starts, so a game can wait on residency or capture input focus first.
+        LevelInstance instance = m_WorldLevel.Get()->LoadInto(*m_AssetManager, m_SystemRegistry);
+        m_World = std::move(instance.World);
+
+        OnWorldLoaded(*m_World, instance.Pending);
+
+        m_World->StartSimulation(SystemContext{.Assets = *m_AssetManager, .Input = *m_Input});
     }
 
     void Application::InitializeManagedTail()
@@ -256,6 +298,12 @@ namespace Veng
 
         OnDispose();
 
+        // Drop the engine-managed world before the asset manager so its components' AssetHandles
+        // (and the per-frame view's environment + the level handle) retire through the deferred path.
+        m_World.reset();
+        m_WorldLevel = {};
+        m_WorldView.Environment = {};
+
         // Drop the engine-owned managed tail and primary viewport before the context: the gather
         // and composite hold GPU resources, and the primary viewport self-unregisters from the
         // still-live drive-list. A subclass's panel-owned viewports are released in OnDispose
@@ -320,7 +368,23 @@ namespace Veng
             m_ImGuiLayer->BeginFrame();
         }
 
+        // Tick the managed world's simulation (Sim then View) unless paused (a fixed-pose capture
+        // or a game-controlled pause), so OnUpdate and the view push see this tick's finalized state.
+        if (m_World && !m_WorldPaused)
+        {
+            m_World->TickSimulation(delta,
+                                    SystemContext{.Assets = *m_AssetManager, .Input = *m_Input});
+        }
+
         OnUpdate(delta);
+
+        // Push the managed world's render source into the managed viewport: the primary camera
+        // resolved at the viewport's aspect plus the per-frame view knobs. After OnUpdate so a
+        // game's per-frame scene edits are reflected; before the viewport render phase reads it.
+        if (m_World && m_PrimaryViewport)
+        {
+            PushSceneView(*m_PrimaryViewport, *m_World, m_WorldView, delta);
+        }
 
         m_RenderContext.BeginFrame();
 

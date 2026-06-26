@@ -30,6 +30,7 @@
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/Scene/SceneSimulation.h>
+#include <Veng/Scene/SceneViewport.h>
 #include <Veng/Task/TaskSystem.h>
 
 #include <glm/gtc/packing.hpp>
@@ -275,56 +276,6 @@ protected:
     {
         m_SmokeOutput = std::getenv("HT_SMOKE");
 
-        // Executable-relative so the pack resolves wherever the launcher is copied.
-        const VoidResult mountResult =
-            GetAssetManager().Mount(ExecutableDirectory() / "sample.vengpack");
-        VE_ASSERT(mountResult, "{}", mountResult.error());
-
-        // The level is the authored home for the world, the active system set, the game-mode
-        // config, and the render settings. Loading it resolves the world prefab (and the
-        // game-mode player prefab) as ordinary load-time dependencies.
-        const AssetResult<AssetHandle<Level>> level =
-            GetAssetManager().LoadSync<Level>(AssetId{0x95C2E76206A11F08ULL});
-        VE_ASSERT(level.has_value(), "{}", level.error().Detail);
-
-        // The level's render subset seeds the renderer settings and the per-frame knobs, applied
-        // to the engine-owned managed viewport so the first frame renders with the authored values.
-        const LevelRenderSettings& render = level->Get()->GetRender();
-        m_SceneSettings.Bloom = render.Bloom;
-        m_SceneSettings.Shadows = render.Shadows;
-        m_SceneSettings.AO = render.AO;
-        // SSR is off by default in the engine; the sample opts in to show reflections off the
-        // gradient-roughness ground plane (at the engine-default half SSR resolution).
-        m_SceneSettings.SSR = true;
-        m_View.Exposure = render.Exposure;
-        m_View.BloomIntensity = render.BloomIntensity;
-
-        // The HDRI environment drives image-based lighting and the skybox. The level loader
-        // resolved it as a dependency, so it arrives resident; the renderer generates the IBL
-        // cubemaps the first frame it is bound. Skybox is a topology toggle; intensity is per-frame.
-        m_View.Environment = render.Environment;
-        m_View.EnvironmentIntensity = render.EnvironmentIntensity;
-        m_SceneSettings.Skybox = render.Skybox;
-
-        // HT_DEBUG_VIEW pins a debug visualization mode by its DebugView enum index (the headless
-        // capture has no combo): it overrides the level's Final mode so a g-buffer/battery target
-        // can be captured and inspected.
-        if (const char* dv = std::getenv("HT_DEBUG_VIEW"))
-        {
-            m_SceneSettings.Mode = static_cast<Renderer::DebugView>(std::atoi(dv));
-        }
-
-        // The engine owns the primary viewport (its SceneRenderer, output, and the gather +
-        // composite tail); the app pushes only a ViewState. Apply the level's topology settings.
-        GetPrimaryViewport()->Configure(m_SceneSettings);
-
-        // HT_RENDER_SCALE pins a fixed render scale (the headless capture has no slider): it drives
-        // the dynamic-resolution sub-rect so a reduced-resolution render can be captured and diffed.
-        if (const char* scaleEnv = std::getenv("HT_RENDER_SCALE"))
-        {
-            GetPrimaryViewport()->SetRenderScale(std::strtof(scaleEnv, nullptr));
-        }
-
         if (GetImGuiLayer())
         {
             // Translucent debug windows so the lit scene shows through behind the
@@ -355,97 +306,98 @@ protected:
             m_SceneTexture =
                 GetImGuiLayer()->CreateTexture(*m_SceneSampler, *GetPrimaryViewport()->GetOutput());
         }
+    }
 
-        // Starting the game: the level spawns its world into a fresh scene, builds the
-        // simulation from its ordered system set, and seeds the Session entity from the
-        // game-mode config. The app owns and drives the returned bundle.
-        LevelInstance instance = level->Get()->LoadInto(GetAssetManager(), GetSystemRegistry());
-        m_Scene = std::move(instance.World);
-        m_Simulation = std::move(instance.Simulation);
+    // The engine has mounted the pack, loaded the startup level, spawned the world, and seeded the
+    // managed view from the level's render settings; the sample seeds its own editable topology
+    // copy here, adds its extras, and (smoke) waits on residency before the deterministic capture.
+    void OnWorldLoaded(Scene&, ResidencyBatch& pending) override
+    {
+        // Seed the editable topology copy from the same level render settings the engine applied
+        // to the per-frame view, so the debug RenderSettingsEditor starts in sync. The HDRI
+        // environment, exposure, and bloom intensity already rode the engine's view push.
+        const LevelRenderSettings& render = GetWorldLevel().Get()->GetRender();
+        ApplyLevelRenderSettings(render, m_SceneSettings, GetWorldViewState());
 
-        // Smoke renders a fixed pose, so block until the world spawn's streamed meshes are
-        // resident before the capture frame; the windowed app lets them appear over a few frames.
-        if (m_SmokeOutput)
+        // SSR is off by default in the engine; the sample opts in to show reflections off the
+        // gradient-roughness ground plane (at the engine-default half SSR resolution).
+        m_SceneSettings.SSR = true;
+
+        // BloomThreshold is not a level field; the sample lifts the knee so the weak lights bloom.
+        GetWorldViewState().BloomThreshold = 0.5f;
+
+        // HT_DEBUG_VIEW pins a debug visualization mode by its DebugView enum index (the headless
+        // capture has no combo): it overrides the level's Final mode so a g-buffer/battery target
+        // can be captured and inspected.
+        if (const char* dv = std::getenv("HT_DEBUG_VIEW"))
         {
-            instance.Pending.WaitResident(GetTaskSystem());
+            m_SceneSettings.Mode = static_cast<Renderer::DebugView>(std::atoi(dv));
         }
 
-        // Start the simulation, so the Sim-phase SpawnPlayerRule instantiates the player at
-        // OnStart in headless smoke too. Smoke still never ticks Update, so nothing moves after
-        // the deterministic spawn and the View-phase camera rig does not run — the capture is
-        // the spawned camera's authored pose.
-        m_Simulation->Start(*m_Scene,
-                            SystemContext{.Assets = GetAssetManager(), .Input = GetInput()});
+        // Apply the sample's topology to the managed viewport; the engine already configured it
+        // from the level, so this layers the sample's extras on. Recreates the scene texture.
+        ReconfigureScene();
 
-        // The shipped game owns input: capture the mouse in the window so the player's
-        // mouse-look runs against a hidden, locked cursor (Escape frees it for the debug UI;
-        // a click on the scene re-captures it). Smoke is headless with no window, so it skips.
-        if (!m_SmokeOutput)
+        // HT_RENDER_SCALE pins a fixed render scale (the headless capture has no slider): it drives
+        // the dynamic-resolution sub-rect so a reduced-resolution render can be captured and diffed.
+        if (const char* scaleEnv = std::getenv("HT_RENDER_SCALE"))
         {
+            GetPrimaryViewport()->SetRenderScale(std::strtof(scaleEnv, nullptr));
+        }
+
+        if (m_SmokeOutput)
+        {
+            // Smoke renders a fixed pose: pause the simulation so the spinners hold the pinned
+            // SmokeAngle (set in OnUpdate) and the View-phase camera rig does not trail, and block
+            // until the world spawn's streamed meshes are resident before the capture frame.
+            SetWorldPaused(true);
+            pending.WaitResident(GetTaskSystem());
+        }
+        else
+        {
+            // The shipped game owns input: capture the mouse in the window so the player's
+            // mouse-look runs against a hidden, locked cursor (Escape frees it for the debug UI;
+            // a click on the scene re-captures it).
             GetInputRouter().PushFocus(InputFocus::Gameplay);
         }
     }
 
-    void OnUpdate(const f32 delta) override
+    void OnUpdate(const f32) override
     {
-        m_LastDelta = delta;
-
-        // Smoke mode pins a fixed pose for golden comparison and never ticks the simulation,
-        // so the capture is byte-identical run to run; the windowed app advances the spinners
-        // through the registered systems.
+        // The engine ticks the managed world's simulation (control, movement, spinners) and pushes
+        // the resolved camera into the viewport each frame; the sample handles only smoke capture
+        // and gameplay input focus here.
         if (m_SmokeOutput)
         {
-            m_Scene->Each<Transform, Spinner>(
+            // Smoke pins a fixed pose for golden comparison: the world is paused (no tick), so the
+            // sample writes the deterministic SmokeAngle each frame and the engine pushes the
+            // authored camera — byte-identical run to run.
+            GetWorld()->Each<Transform, Spinner>(
                 [](Entity, Transform& transform, Spinner& spinner)
                 { transform.Rotation = glm::angleAxis(SmokeAngle, glm::normalize(spinner.Axis)); });
-        }
-        else
-        {
-            // Escape frees the mouse to drive the debug UI; a left click on the scene (outside
-            // any ImGui window) re-captures it and resumes mouse-look. ImGui's NewFrame already
-            // ran this frame, so WantCaptureMouse reflects this frame's cursor.
-            if (GetInputRouter().IsGameplayFocused())
-            {
-                if (GetInput().WasKeyPressed(Key::Escape))
-                {
-                    GetInputRouter().PopFocus();
-                }
-            }
-            else if (GetInput().WasMouseButtonPressed(MouseButton::Left) && !UI::WantCaptureMouse())
-            {
-                GetInputRouter().PushFocus(InputFocus::Gameplay);
-            }
 
-            if (!m_PauseSpin && m_Simulation)
+            // Runs before this frame's commands record, so the image holds the previous frame.
+            if (++m_FrameCount == 20)
             {
-                // Skipping the tick stops every Transform write, so the broadphase reads `static`.
-                m_Simulation->Update(
-                    *m_Scene, delta,
-                    SystemContext{.Assets = GetAssetManager(), .Input = GetInput()});
+                WriteSceneCapture(m_SmokeOutput);
+                RequestExit();
             }
+            return;
         }
 
-        // Push this frame's render source into the engine-owned managed viewport: the resolved
-        // camera plus the per-frame tonemap/bloom knobs the "Scene" window edits. The engine
-        // renders the viewport in its drive-list phase, before OnRender builds the UI.
-        const Ref<Renderer::ImageView> output = GetPrimaryViewport()->GetOutput();
-        const f32 aspect = static_cast<f32>(output->GetImage()->GetWidth()) /
-                           static_cast<f32>(output->GetImage()->GetHeight());
-        const CameraView camera =
-            ResolvePrimaryCameraView(*m_Scene, aspect).value_or(DefaultCameraView(aspect));
-
-        // The editable tonemap/bloom/environment knobs live on m_View (the RenderSettingsEditor
-        // edits them in place); the per-frame scene/camera/delta are filled fresh each frame.
-        m_View.World = m_Scene.get();
-        m_View.Camera = camera;
-        m_View.Delta = m_LastDelta;
-        GetPrimaryViewport()->SetViewState(m_View);
-
-        // Runs before this frame's commands record, so the image holds the previous frame's contents.
-        if (m_SmokeOutput && ++m_FrameCount == 20)
+        // Escape frees the mouse to drive the debug UI; a left click on the scene (outside any
+        // ImGui window) re-captures it and resumes mouse-look. ImGui's NewFrame already ran this
+        // frame, so WantCaptureMouse reflects this frame's cursor.
+        if (GetInputRouter().IsGameplayFocused())
         {
-            WriteSceneCapture(m_SmokeOutput);
-            RequestExit();
+            if (GetInput().WasKeyPressed(Key::Escape))
+            {
+                GetInputRouter().PopFocus();
+            }
+        }
+        else if (GetInput().WasMouseButtonPressed(MouseButton::Left) && !UI::WantCaptureMouse())
+        {
+            GetInputRouter().PushFocus(InputFocus::Gameplay);
         }
     }
 
@@ -459,33 +411,24 @@ protected:
 
     void OnDispose() override
     {
-        m_Simulation.reset();
         m_SceneTexture.reset();
         m_SceneSampler.reset();
-        m_Scene.reset();
-        m_View.Environment = {};
     }
 
 private:
-    // The fallback view when the scene resolves no camera: the fixed pose that frames the
-    // 10x10 grid from above, pulled back and elevated.
-    static CameraView DefaultCameraView(const f32 aspect)
-    {
-        CameraView view;
-        view.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
-        view.SetView(vec3(0.0f, 10.0f, 14.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
-        return view;
-    }
-
     // Configure can recreate the viewport's output image, so the ImGui texture must be re-fetched
     // after each call. The engine's gather reads the viewport output fresh per frame as its
-    // placement, so it picks up the new view with no re-pointing here.
+    // placement, so it picks up the new view with no re-pointing here. Headless (smoke) has no
+    // ImGui layer, so only the topology applies — there is no scene texture to refresh.
     void ReconfigureScene()
     {
         GetPrimaryViewport()->Configure(m_SceneSettings);
-        m_SceneTexture =
-            GetImGuiLayer()->CreateTexture(*m_SceneSampler, *GetPrimaryViewport()->GetOutput());
-        m_SceneTextureGeneration = GetPrimaryViewport()->GetOutputGeneration();
+        if (GetImGuiLayer())
+        {
+            m_SceneTexture =
+                GetImGuiLayer()->CreateTexture(*m_SceneSampler, *GetPrimaryViewport()->GetOutput());
+            m_SceneTextureGeneration = GetPrimaryViewport()->GetOutputGeneration();
+        }
     }
 
     void RenderUserInterface()
@@ -503,10 +446,11 @@ private:
 
         // The renderer toggles, sliders, and per-frame view knobs are engine UI; a true return
         // means a topology field changed, so the sample owns the Configure (the engine helper
-        // reports the edit but never reconfigures). The per-frame m_View edits ride the next push.
+        // reports the edit but never reconfigures). The per-frame view knobs are the engine's
+        // managed-world ViewState, edited in place and pushed by the engine each frame.
         if (auto settingsWindow = UI::Window("Render Settings"))
         {
-            if (UI::RenderSettingsEditor(m_SceneSettings, m_View, viewport))
+            if (UI::RenderSettingsEditor(m_SceneSettings, GetWorldViewState(), viewport))
             {
                 ReconfigureScene();
             }
@@ -517,9 +461,12 @@ private:
         {
             UI::RendererStatsPanel(viewport);
 
-            // Flips the broadphase read-out between rebuilt/static by stopping the per-frame
-            // Transform write — a game-specific control, so it stays in the sample.
-            (void)UI::Checkbox("Pause spin", m_PauseSpin);
+            // Pauses the managed world's simulation, flipping the broadphase read-out between
+            // rebuilt/static by stopping every per-tick Transform write — a game-specific control.
+            if (UI::Checkbox("Pause spin", m_PauseSpin))
+            {
+                SetWorldPaused(m_PauseSpin);
+            }
         }
 
         // The GPU frame-time history graph; the stateful helper samples the device timer itself.
@@ -568,8 +515,9 @@ private:
     // The GPU frame-time history graph, owning its sample ring across frames.
     UI::FrameTimeGraph m_FrameTimeGraph;
 
-    // Topology/sizing knobs applied to the managed viewport through Configure; the per-frame
-    // tonemap/bloom values ride m_View instead.
+    // Topology/sizing knobs applied to the managed viewport through Configure; seeded from the
+    // level (plus the sample's SSR/debug-view extras) in OnWorldLoaded. The per-frame tonemap/bloom
+    // values ride the engine's managed-world ViewState (GetWorldViewState) instead.
     Renderer::SceneRendererSettings m_SceneSettings;
 
     // Recreated when Configure invalidates the viewport's output image.
@@ -583,29 +531,10 @@ private:
     // Fixed rotation for the smoke capture, in radians.
     static constexpr f32 SmokeAngle = 0.9f;
 
-    Unique<Scene> m_Scene;
-
-    // Drives the registered scene systems. Started in both paths so the spawn rule runs;
-    // only the windowed path ticks Update.
-    Unique<SceneSimulation> m_Simulation;
-
-    f32 m_LastDelta = 0.0f;
     u32 m_FrameCount = 0;
     const char* m_SmokeOutput = nullptr;
 
-    // The per-frame view source pushed into the managed viewport each frame: the editable
-    // tonemap/bloom/environment knobs the RenderSettingsEditor mutates, plus the scene, camera,
-    // and delta filled fresh in OnUpdate. Exposure is lifted from 1.0 so the weak directional +
-    // orbiting point lights read on the grid; the skybox on/off is a topology setting on
-    // m_SceneSettings.
-    Renderer::ViewState m_View{
-        .Exposure = 2.5f,
-        .BloomThreshold = 0.5f,
-        .BloomIntensity = 1.5f,
-        .BloomRadius = 1.0f,
-    };
-
-    // Skips the per-frame Transform write so the broadphase reads `static`; never set in smoke mode.
+    // Pauses the managed world's simulation so the broadphase reads `static`; never set in smoke.
     bool m_PauseSpin = false;
 };
 
@@ -688,6 +617,10 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                                               AllocationTierSettings>{Renderer::
                                                                           AllocationTierSettings{}},
                         },
+                    // The engine bootstraps the world: it mounts the pack, loads its cooked startup
+                    // level, owns the running scene + simulation, and ticks + pushes the view each
+                    // frame. The sample customizes the loaded world in OnWorldLoaded.
+                    .World = GameWorldInfo{.AssetPack = "sample.vengpack"},
                 },
                 types, systems));
         });

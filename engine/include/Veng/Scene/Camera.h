@@ -150,6 +150,21 @@ namespace Veng
     /// @return The resolved view, or nullopt if the scene has no resolvable camera.
     [[nodiscard]] VE_API optional<CameraView> ResolvePrimaryCameraView(const Scene& scene,
                                                                        f32 aspect);
+
+    /// @brief Returns a default framing view for a scene that resolves no camera.
+    ///
+    /// A 45° perspective pulled back and elevated, looking at the origin — the safety-net view a
+    /// renderer falls back to when ResolvePrimaryCameraView yields nullopt, so an unconfigured or
+    /// camera-less scene still renders something rather than nothing.
+    /// @param aspect  Viewport width divided by height.
+    /// @return The fallback view.
+    [[nodiscard]] inline CameraView DefaultCameraView(f32 aspect)
+    {
+        CameraView view;
+        view.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+        view.SetView(vec3(0.0f, 10.0f, 14.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+        return view;
+    }
 }
 
 VE_REFLECT(::Veng::Camera, 0x6598EF5F5C0A7B10ULL)

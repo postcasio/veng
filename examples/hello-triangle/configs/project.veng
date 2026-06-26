@@ -1,5 +1,6 @@
 {
   "activeConfiguration": "macos",
+  "startupLevel": 10791442065337163528,
   "configurations": [
     "macos.buildcfg",
     "windows.buildcfg",

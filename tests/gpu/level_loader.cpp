@@ -113,7 +113,7 @@ TEST_CASE_FIXTURE(LevelFixture,
     LevelInstance instance = level->LoadInto(*Assets, Systems);
 
     REQUIRE(instance.World != nullptr);
-    REQUIRE(instance.Simulation != nullptr);
+    REQUIRE(instance.World->GetSimulation() != nullptr);
 
     // The world prefab's single root spawned.
     bool sawWorldRoot = false;
@@ -139,7 +139,7 @@ TEST_CASE_FIXTURE(LevelFixture,
     // satisfies the SystemContext aggregate without a Window-bound Input.
     alignas(16) unsigned char inputBytes[64]{};
     const SystemContext context{.Assets = *Assets, .Input = *reinterpret_cast<Input*>(inputBytes)};
-    instance.Simulation->Update(*instance.World, 0.016f, context);
+    instance.World->TickSimulation(0.016f, context);
     CHECK(g_RanA == 0);
     CHECK(g_RanB == 1);
 }

@@ -21,8 +21,9 @@ namespace Veng
             u32 Count;
             u64 DigestLo; // ContentHash over the serialized TOC bytes
             u64 DigestHi;
+            u64 StartupLevel; // AssetId of the pack's startup level, 0 = none
         };
-        static_assert(sizeof(OnDiskHeader) == 32);
+        static_assert(sizeof(OnDiskHeader) == 40);
 
         struct OnDiskTocEntry
         {
@@ -58,6 +59,11 @@ namespace Veng
         m_ArchiveDigest = digest;
     }
 
+    void ArchiveWriter::SetStartupLevel(AssetId level)
+    {
+        m_StartupLevel = level;
+    }
+
     vector<u8> ArchiveWriter::Build() const
     {
         vector<const Entry*> sorted;
@@ -76,6 +82,7 @@ namespace Veng
         header.Count = static_cast<u32>(sorted.size());
         header.DigestLo = m_ArchiveDigest.Lo;
         header.DigestHi = m_ArchiveDigest.Hi;
+        header.StartupLevel = m_StartupLevel.Value;
 
         vector<OnDiskTocEntry> toc;
         toc.reserve(sorted.size());
@@ -172,6 +179,7 @@ namespace Veng
         reader.m_Storage.assign(bytes.begin(), bytes.end());
 
         reader.m_ArchiveDigest = ContentHash{.Lo = header.DigestLo, .Hi = header.DigestHi};
+        reader.m_StartupLevel = AssetId{.Value = header.StartupLevel};
         reader.m_TocOffset = sizeof(OnDiskHeader);
         reader.m_TocSize = tocBytes;
 

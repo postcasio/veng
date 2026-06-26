@@ -88,9 +88,9 @@ TEST_CASE("ArchiveReader::Find: hits and misses")
 
 TEST_CASE("ArchiveReader: rejects bad magic")
 {
-    // A full (32-byte) header's worth of zeroes, so the magic check is the
+    // A full (40-byte) header's worth of zeroes, so the magic check is the
     // first thing to fail rather than the buffer-too-small guard.
-    vector<u8> bytes(32, 0);
+    vector<u8> bytes(40, 0);
     bytes[0] = 'N';
     bytes[1] = 'O';
     bytes[2] = 'P';
@@ -235,6 +235,27 @@ TEST_CASE("ArchiveReader: a span held across a later inflating Find stays valid"
     CHECK(std::ranges::equal(firstSpan, firstBlob));
 }
 
+TEST_CASE("ArchiveWriter/Reader: round-trips the startup level header field")
+{
+    ArchiveWriter writer;
+    writer.Add(AssetId{0x1}, AssetType::Raw, Bytes({1}));
+    writer.SetStartupLevel(AssetId{0xABCDEF0123456789ULL});
+
+    const Result<ArchiveReader> reader = ArchiveReader::FromBytes(writer.Build());
+    REQUIRE(reader.has_value());
+    CHECK(reader->StartupLevel().Value == 0xABCDEF0123456789ULL);
+}
+
+TEST_CASE("ArchiveReader: startup level defaults to the invalid id when unset")
+{
+    ArchiveWriter writer;
+    writer.Add(AssetId{0x1}, AssetType::Raw, Bytes({1}));
+
+    const Result<ArchiveReader> reader = ArchiveReader::FromBytes(writer.Build());
+    REQUIRE(reader.has_value());
+    CHECK_FALSE(reader->StartupLevel().IsValid());
+}
+
 TEST_CASE("ArchiveReader: rejects a v2 archive")
 {
     ArchiveWriter writer;
@@ -242,7 +263,7 @@ TEST_CASE("ArchiveReader: rejects a v2 archive")
 
     vector<u8> archive = writer.Build();
 
-    // Stamp the header version back to v2; a v3 reader must reject the old layout.
+    // Stamp the header version back to v2; the current reader must reject the old layout.
     const u32 v2 = 2;
     std::memcpy(archive.data() + 8, &v2, sizeof(v2));
 

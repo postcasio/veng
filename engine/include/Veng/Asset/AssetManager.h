@@ -93,6 +93,15 @@ namespace Veng
         /// @brief Unmounts the archive at the given path.
         void Unmount(const path& archive);
 
+        /// @brief Returns the startup level declared by a mounted on-disk archive, if any.
+        ///
+        /// The cook writes a pack's startup level into its archive header; a managed game world
+        /// reads it back here to bootstrap. Scans on-disk mounts in mount order and returns the
+        /// first non-zero header field, so the primary pack (mounted first) wins. Memory mounts
+        /// (the editor's cook-on-demand scratch) are ignored.
+        /// @return The startup level's AssetId, or nullopt when no mounted pack declares one.
+        [[nodiscard]] optional<AssetId> GetStartupLevel() const;
+
         /// @brief Mounts an in-memory archive, copying the bytes into the reader's own storage.
         ///
         /// Deduplicates by identity (a synthetic path string such as "<core>"); mounting the

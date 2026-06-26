@@ -17,21 +17,20 @@ namespace Veng
     class SceneSimulation;
     class Prefab;
 
-    /// @brief A running game: the Scene a level spawned plus the SceneSimulation driving it.
+    /// @brief A running game: the Scene a level spawned, with its driving SceneSimulation attached.
     ///
     /// Returned by Level::LoadInto — the bundle an app owns and drives. The Scene holds the
-    /// spawned world plus the seeded Session entity; the SceneSimulation holds the level's
-    /// ordered system set; Pending is the world spawn's residency batch (its recipe-built
-    /// meshes streaming in). The app ticks the simulation and renders the scene, optionally
-    /// waiting on Pending before a deterministic capture; it drops both in OnDispose like any
-    /// other engine resource. The Scene outlives nothing it was built from except the
-    /// TypeRegistry, which must outlive it.
+    /// spawned world plus the seeded Session entity, and owns the SceneSimulation built from the
+    /// level's ordered system set (Scene::GetSimulation / TickSimulation). Pending is the world
+    /// spawn's residency batch (its recipe-built meshes streaming in). The app ticks the scene's
+    /// simulation and renders the scene, optionally waiting on Pending before a deterministic
+    /// capture; it drops the Scene in OnDispose like any other engine resource. The Scene outlives
+    /// nothing it was built from except the TypeRegistry, which must outlive it.
     struct LevelInstance
     {
-        /// @brief The runtime ECS world the level spawned its world prefab into.
+        /// @brief The runtime ECS world the level spawned its world prefab into, with its
+        ///        SceneSimulation attached (Scene::GetSimulation).
         Unique<Scene> World;
-        /// @brief The simulation driving the level's ordered active system set.
-        Unique<SceneSimulation> Simulation;
         /// @brief The world spawn's not-yet-resident assets; wait on it before a deterministic capture.
         ResidencyBatch Pending;
     };
@@ -63,14 +62,15 @@ namespace Veng
         /// @brief Spawns the world, builds the simulation, and seeds the Session — starting the game.
         ///
         /// Creates a fresh Scene, spawns the world prefab into it (Prefab::SpawnInto), constructs
-        /// a SceneSimulation from the level's ordered SystemId set against `registry` (Plan 05's
-        /// id-list construction, honoring the Sim/View phases), and creates one Session entity
-        /// carrying a Playing Session plus the level's game-mode config. Returns the bundle the
-        /// app drives. The simulation is returned not-yet-started — the caller calls Start.
+        /// a SceneSimulation from the level's ordered SystemId set against `registry` (honoring the
+        /// Sim/View phases) and attaches it to the Scene (Scene::SetSimulation), and creates one
+        /// Session entity carrying a Playing Session plus the level's game-mode config. Returns the
+        /// bundle the app drives. The simulation is returned not-yet-started — the caller calls
+        /// Scene::StartSimulation.
         /// @param manager   The asset manager the world spawns and its dependencies resolve through.
         /// @param registry  The host-owned system catalog the level's ids resolve against.
         /// @pre The world prefab handle IsLoaded().
-        /// @return The Scene + SceneSimulation bundle.
+        /// @return The Scene (with its SceneSimulation attached) + residency bundle.
         [[nodiscard]] LevelInstance LoadInto(AssetManager& manager,
                                              const SystemRegistry& registry) const;
 

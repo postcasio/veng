@@ -20,12 +20,13 @@ using namespace Veng::Cook;
 
 namespace
 {
-    // On-disk layout offsets (Archive.h): a 32-byte header — magic[8],
-    // version@8, count@12, archiveDigest(16)@16 — then count 48-byte TOC entries
-    // starting at 32: id@0, type@8, flags@12, offset@16, size@24, hash(16)@32.
-    constexpr usize HeaderSize = 32;
+    // On-disk layout offsets (Archive.h): a 40-byte header — magic[8],
+    // version@8, count@12, archiveDigest(16)@16, startupLevel@32 — then count
+    // 56-byte TOC entries: id@0, type@8, codec@12, offset@16, size@24, hash(16)@32,
+    // uncompressedSize@48.
+    constexpr usize HeaderSize = 40;
     constexpr usize ArchiveDigestOffset = 16;
-    constexpr usize TocEntrySize = 48;
+    constexpr usize TocEntrySize = 56;
     constexpr usize TocEntryHashOffset = 32;
 
     vector<u8> ReadFile(const path& filePath)

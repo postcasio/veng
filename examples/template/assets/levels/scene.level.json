@@ -1,0 +1,11 @@
+{
+  "world": 16552220004907887153,
+  "systems": [11007756290098703250],
+  "render": {
+    "Exposure": 1.0,
+    "Bloom": false,
+    "Shadows": false,
+    "AO": false,
+    "Skybox": false
+  }
+}

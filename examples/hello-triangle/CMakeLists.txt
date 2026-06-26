@@ -30,7 +30,10 @@ foreach (CFG IN LISTS HT_SHIP_CONFIGS)
             REFERENCE ${CMAKE_SOURCE_DIR}/engine/assets/core/core.vengpack.json
             # The pack carries a prefab whose components include the game's Spinner,
             # so the cook reflects libhello_triangle's native types via --module.
-            MODULE hello_triangle)
+            MODULE hello_triangle
+            # The project's startupLevel is cooked into the pack header; the engine
+            # bootstraps it when the managed game world mounts the pack.
+            PROJECT configs/project.veng)
     veng_register_all_packs_target(${hello_triangle_assets_TARGET})
     if (CFG STREQUAL VENG_BUILD_CONFIG)
         set(HT_HOST_PACK_TARGET ${hello_triangle_assets_TARGET})

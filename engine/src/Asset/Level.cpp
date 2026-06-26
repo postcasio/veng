@@ -28,10 +28,11 @@ namespace Veng
         VE_ASSERT(m_World.IsLoaded(), "Level::LoadInto: world prefab {} is not resident",
                   m_World.Id().Value);
 
-        LevelInstance instance{
-            .World = Scene::Create(manager.GetTypeRegistry()),
-            .Simulation = CreateUnique<SceneSimulation>(registry, m_Systems),
-        };
+        LevelInstance instance{.World = Scene::Create(manager.GetTypeRegistry())};
+
+        // The scene owns the simulation built from the level's ordered system set; the app ticks
+        // it through Scene::TickSimulation.
+        instance.World->SetSimulation(CreateUnique<SceneSimulation>(registry, m_Systems));
 
         // The spawned root entities are not retained — the world prefab authors its own
         // hierarchy and the simulation queries the scene, not the root list. The spawn's

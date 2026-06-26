@@ -14,6 +14,7 @@
 //     u32         version
 //     u32         count           // number of TOC entries
 //     ContentHash archiveDigest   // xxh3-128 over the serialized TOC bytes
+//     u64         startupLevel    // AssetId of the pack's startup level, 0 = none
 //   TOC[count]                    // sorted by AssetId for binary-search lookup
 //     u64         id              // AssetId
 //     u32         type            // AssetType
@@ -35,7 +36,7 @@ namespace Veng
     ///
     /// A mismatch produces a clean VersionMismatch error (see AssetError.h), not a crash.
     /// Bump on any layout change.
-    inline constexpr u32 ArchiveFormatVersion = 3;
+    inline constexpr u32 ArchiveFormatVersion = 4;
 
     /// @brief How a blob is stored in the archive's blob region.
     ///
@@ -132,6 +133,14 @@ namespace Veng
         /// @param digest  The caller-computed xxh3-128 digest over the serialized TOC.
         void SetArchiveDigest(ContentHash digest);
 
+        /// @brief Sets the pack's startup level, stored in the archive header.
+        ///
+        /// The AssetId of the Level the engine bootstraps when a managed game world mounts this
+        /// pack. assetpack stores it verbatim and never resolves it; the cooker reads it from the
+        /// project settings and the runtime reads it back via ArchiveReader::StartupLevel.
+        /// @param level  The startup level's AssetId; the invalid id (0) means the pack has none.
+        void SetStartupLevel(AssetId level);
+
         /// @brief Serializes the archive to a byte buffer.
         /// @return The complete archive bytes, suitable for writing to disk or passing to ArchiveReader::FromBytes().
         [[nodiscard]] vector<u8> Build() const;
@@ -163,6 +172,8 @@ namespace Veng
         vector<Entry> m_Entries;
         /// @brief TOC digest set via SetArchiveDigest; zero until set.
         ContentHash m_ArchiveDigest;
+        /// @brief Startup level set via SetStartupLevel; the invalid id (none) until set.
+        AssetId m_StartupLevel;
     };
 
     /// @brief Reads a .vengpack archive from a file or an in-memory buffer.
@@ -219,6 +230,13 @@ namespace Veng
         /// @return The stored xxh3-128 digest over the serialized TOC bytes.
         [[nodiscard]] ContentHash ArchiveDigest() const { return m_ArchiveDigest; }
 
+        /// @brief Returns the pack's startup level as stored in the archive header.
+        ///
+        /// The AssetId the engine bootstraps when a managed game world mounts this pack.
+        /// assetpack stores it verbatim and never resolves it.
+        /// @return The startup level's AssetId, or the invalid id (0) when the pack declares none.
+        [[nodiscard]] AssetId StartupLevel() const { return m_StartupLevel; }
+
         /// @brief Returns the raw serialized TOC byte region from the archive.
         ///
         /// This is the contiguous on-disk region between the header and the blob region,
@@ -262,6 +280,8 @@ namespace Veng
         vector<ArchiveTocEntry> m_Entries;
         /// @brief Stored archive digest (from the header).
         ContentHash m_ArchiveDigest;
+        /// @brief Stored startup level (from the header); the invalid id when the pack declares none.
+        AssetId m_StartupLevel;
         /// @brief Byte offset of the serialized TOC region within m_Storage.
         usize m_TocOffset = 0;
         /// @brief Byte length of the serialized TOC region.

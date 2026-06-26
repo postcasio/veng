@@ -5,6 +5,7 @@
 #include <Veng/Input.h>
 #include <Veng/InputRouter.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Level.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Viewport.h>
@@ -14,6 +15,7 @@
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SystemRegistry.h>
 
 namespace Veng
@@ -72,6 +74,24 @@ namespace Veng
         optional<Renderer::AllocationTierSettings> AllocationTier;
     };
 
+    /// @brief Opt-in configuration for the engine-managed game world.
+    ///
+    /// Set ApplicationInfo::World to this to have Application bootstrap and drive the running
+    /// game: it mounts the named pack beside the executable, reads the pack's cooked startup
+    /// level, spawns it into a Scene (with the level's SceneSimulation attached), seeds the
+    /// renderer from the level's render settings, and each frame ticks the simulation and pushes
+    /// the resolved camera into the managed primary viewport. A game reaches the running world
+    /// through GetWorld() and customizes it in OnWorldLoaded; the minimal game needs no code at
+    /// all. Requires ManagedViewport to be set (the world renders through the managed viewport).
+    struct GameWorldInfo
+    {
+        /// @brief Asset pack to mount and bootstrap from, resolved relative to the executable.
+        ///
+        /// Mounted at ExecutableDirectory() / AssetPack; its cooked archive header names the
+        /// startup level the engine loads and runs.
+        path AssetPack;
+    };
+
     /// @brief Construction parameters for Application.
     struct ApplicationInfo
     {
@@ -109,6 +129,13 @@ namespace Veng
         /// it, tracks swapchain resize, and exposes it via GetPrimaryViewport(). The plug-and-play
         /// path for a game. Unset (the editor) means GetPrimaryViewport() returns null.
         optional<ManagedViewportInfo> ManagedViewport = std::nullopt;
+        /// @brief Opt-in engine-managed game world; nullopt leaves the app to load and drive its own.
+        ///
+        /// When set (and ManagedViewport is too), Application mounts the named pack, loads the
+        /// pack's startup level, owns the running Scene + SceneSimulation, and ticks + pushes the
+        /// view each frame. Unset means the app loads and drives its own world (the editor, or a
+        /// game wanting full control).
+        optional<GameWorldInfo> World = std::nullopt;
     };
 
     /// @brief Base class for a veng application; subclass and override the lifecycle hooks.
@@ -206,9 +233,53 @@ namespace Veng
             return m_PrimaryViewport ? &m_PrimaryViewport->GetDebugDraw() : nullptr;
         }
 
+        /// @brief Returns the engine-managed game world's Scene, or null when unmanaged.
+        ///
+        /// Non-null only when ApplicationInfo::World is set, after the world is bootstrapped. The
+        /// Scene owns the level's SceneSimulation (Scene::GetSimulation); a game reads and edits
+        /// the world through it.
+        /// @return The managed world's Scene, or nullptr.
+        [[nodiscard]] Scene* GetWorld() const { return m_World.get(); }
+
+        /// @brief Returns the level the managed world was bootstrapped from, or an empty handle.
+        ///
+        /// Valid only with a managed world; a game reads the level's render settings or game-mode
+        /// config from it (e.g. to seed its own editable render-settings copy).
+        /// @return The managed world's level handle.
+        [[nodiscard]] const AssetHandle<Level>& GetWorldLevel() const { return m_WorldLevel; }
+
+        /// @brief Returns the per-frame view knobs the managed world pushes into the primary viewport.
+        ///
+        /// Seeded from the level's render settings at bootstrap; a game edits it in place (the
+        /// tone/bloom/environment knobs a render-settings UI mutates) and the engine fills in the
+        /// scene/camera/delta each frame before pushing. Meaningless without a managed world.
+        /// @return The mutable managed-world ViewState.
+        [[nodiscard]] Renderer::ViewState& GetWorldViewState() { return m_WorldView; }
+
+        /// @brief Pauses or resumes the managed world's per-frame simulation tick.
+        ///
+        /// Paused, the engine still pushes the view each frame (the camera resolves and the scene
+        /// renders), but runs no simulation tick — the path a fixed-pose capture or a game pause
+        /// menu takes. A game mutating the paused scene directly still sees its edits rendered.
+        /// @param paused  True to stop ticking the simulation, false to resume.
+        void SetWorldPaused(bool paused) { m_WorldPaused = paused; }
+
+        /// @brief Returns whether the managed world's simulation tick is paused.
+        [[nodiscard]] bool IsWorldPaused() const { return m_WorldPaused; }
+
     protected:
         /// @brief Called once after all engine systems are initialized.
         virtual void OnInitialize() {}
+
+        /// @brief Called once after the managed world is loaded, before its simulation starts.
+        ///
+        /// Only fires when ApplicationInfo::World is set. The Scene is spawned and the renderer is
+        /// seeded from the level by this point, but the simulation has not started — a game seeds
+        /// its own editable render-settings copy, captures input focus, or waits on @p pending
+        /// before a deterministic capture here. Default is a no-op (the minimal game needs none).
+        /// @param world    The managed world's Scene (its SceneSimulation attached but not started).
+        /// @param pending  The world spawn's not-yet-resident assets; wait on it before a capture.
+        virtual void OnWorldLoaded(Scene& world, ResidencyBatch& pending) {}
 
         /// @brief Called once per frame before rendering.
         /// @param delta  Time in seconds since the previous frame.
@@ -231,6 +302,14 @@ namespace Veng
     private:
         void Initialize();
         void Frame();
+
+        /// @brief Mounts the world pack, loads its startup level, and starts the running world.
+        ///
+        /// Called at the end of Initialize when ApplicationInfo::World is set: mounts the pack
+        /// beside the executable, reads its cooked startup level, seeds the managed viewport from
+        /// the level's render settings, spawns the world (LoadInto), fires OnWorldLoaded, then
+        /// starts the scene's simulation. A missing pack or startup level is a fatal assert.
+        void BootstrapWorld();
 
         /// @brief Constructs the managed gather pass and swapchain composite tail.
         ///
@@ -282,6 +361,15 @@ namespace Veng
 
         /// @brief The engine-owned managed primary viewport; null when ManagedViewport is unset.
         Unique<Renderer::Viewport> m_PrimaryViewport;
+
+        /// @brief The engine-managed game world's Scene (sim attached); null when World is unset.
+        Unique<Scene> m_World;
+        /// @brief The level the managed world was bootstrapped from; empty when World is unset.
+        AssetHandle<Level> m_WorldLevel;
+        /// @brief Per-frame view knobs pushed into the managed viewport; seeded from the level.
+        Renderer::ViewState m_WorldView;
+        /// @brief When true, the managed world's simulation tick is skipped (the view still pushes).
+        bool m_WorldPaused = false;
 
         /// @brief The managed gather pass assembling the Presented viewports; present only with ImGui.
         Unique<Renderer::GatherPass> m_Gather;

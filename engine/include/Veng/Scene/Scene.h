@@ -14,6 +14,8 @@ namespace Veng
     class SceneView;
 
     class Scene;
+    class SceneSimulation;
+    struct SystemContext;
     struct AABB;
     struct Hierarchy;
     struct VisibleMesh;
@@ -147,6 +149,37 @@ namespace Veng
         /// The registry its components' descriptors are resolved against; prefab
         /// spawning walks descriptors through it.
         [[nodiscard]] TypeRegistry& GetTypeRegistry() const { return *m_Registry; }
+
+        /// @brief Attaches (or replaces) the simulation that drives this scene's systems.
+        ///
+        /// A Scene optionally owns the SceneSimulation that runs over it: Level::LoadInto builds
+        /// one from the level's ordered system set and attaches it here, and the editor's Play
+        /// clone attaches its own. Passing a null pointer detaches and destroys the held one. The
+        /// scene drives it through Start/Tick/StopSimulation, which forward `*this`.
+        /// @param simulation  The simulation to own, or null to detach.
+        void SetSimulation(Unique<SceneSimulation> simulation);
+
+        /// @brief Returns the attached simulation, or null when the scene has none.
+        [[nodiscard]] SceneSimulation* GetSimulation() const { return m_Simulation.get(); }
+
+        /// @brief Starts the attached simulation over this scene; a no-op when none is attached.
+        ///
+        /// Forwards to SceneSimulation::Start(*this, context) — calls OnStart on each system.
+        /// @param context  Per-tick services forwarded to each system.
+        void StartSimulation(const SystemContext& context);
+
+        /// @brief Advances the attached simulation one tick over this scene; a no-op when none.
+        ///
+        /// Forwards to SceneSimulation::Update(*this, delta, context) — the Sim-then-View phase pass.
+        /// @param delta    Time in seconds since the previous tick.
+        /// @param context  Per-tick services forwarded to each system.
+        void TickSimulation(f32 delta, const SystemContext& context);
+
+        /// @brief Stops the attached simulation over this scene; a no-op when none is attached.
+        ///
+        /// Forwards to SceneSimulation::Stop(*this, context) — calls OnStop on each system.
+        /// @param context  Per-tick services forwarded to each system.
+        void StopSimulation(const SystemContext& context);
 
         /// @brief Type-erased add: default-constructs a component of the given TypeId onto the entity.
         ///
@@ -440,6 +473,9 @@ namespace Veng
 
         /// @brief Component pools, keyed by TypeId, created lazily.
         unordered_map<TypeId, Unique<ComponentPool>> m_Pools;
+
+        /// @brief The simulation driving this scene's systems, or null when none is attached.
+        Unique<SceneSimulation> m_Simulation;
 
         template <class...>
         friend class SceneView;

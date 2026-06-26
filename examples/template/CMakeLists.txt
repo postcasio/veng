@@ -28,7 +28,13 @@ foreach (CFG IN LISTS TEMPLATE_SHIP_CONFIGS)
             CONFIG ${TEMPLATE_CONFIG_${CFG}}
             # The material's vertex shader references the core canonical vertex layout
             # by AssetId; resolve it from the engine core pack.
-            REFERENCE ${CMAKE_SOURCE_DIR}/engine/assets/core/core.vengpack.json)
+            REFERENCE ${CMAKE_SOURCE_DIR}/engine/assets/core/core.vengpack.json
+            # The pack carries a prefab + level, so the cook reflects libtemplate's
+            # types and systems via --module (here only the engine builtins).
+            MODULE template
+            # The project's startupLevel is cooked into the pack header; the engine
+            # bootstraps it when the managed game world mounts the pack.
+            PROJECT configs/project.veng)
     veng_register_all_packs_target(${template_assets_TARGET})
     if (CFG STREQUAL VENG_BUILD_CONFIG)
         set(TEMPLATE_HOST_PACK_TARGET ${template_assets_TARGET})

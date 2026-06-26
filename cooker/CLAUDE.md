@@ -149,7 +149,9 @@ loader share one encoder.
 - **`cook`** — build a `.vengpack` from a manifest (`--module <lib>` to reflect a
   game module's types **and systems** for prefab and level validation; `--config <file>`
   to select the build configuration whose role → format table the texture cook resolves
-  through).
+  through; `--project <project.veng>` to read the project's `startupLevel` and write it into
+  the archive header — `ParseProjectStartupLevel` hand-parses it, the runtime reads it back
+  to bootstrap a managed game world. `add_asset_pack(... PROJECT <project.veng>)` wires it).
 - **`verify`** — re-hash a `.vengpack`'s blobs + TOC digest and exit nonzero on any
   mismatch.
 - **`generate-id`** — mint a collision-free `AssetId` (prints hex for C++ literals and

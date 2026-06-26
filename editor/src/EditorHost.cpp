@@ -146,6 +146,12 @@ namespace VengEditor
                 settings.ActiveConfiguration = (*project)["activeConfiguration"].get<string>();
             }
 
+            if (project->contains("startupLevel") &&
+                (*project)["startupLevel"].is_number_unsigned())
+            {
+                settings.StartupLevel = AssetId{.Value = (*project)["startupLevel"].get<u64>()};
+            }
+
             const path dir = projectFile.parent_path();
             if (project->contains("configurations") && (*project)["configurations"].is_array())
             {

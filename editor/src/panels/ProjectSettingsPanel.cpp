@@ -250,6 +250,13 @@ namespace VengEditor
         nlohmann::json project = nlohmann::json::object();
         project["activeConfiguration"] = m_Settings.ActiveConfiguration;
 
+        // The startup level the cook writes into each pack header; omit it when none is set so an
+        // unconfigured project stays free of the key.
+        if (m_Settings.StartupLevel.IsValid())
+        {
+            project["startupLevel"] = m_Settings.StartupLevel.Value;
+        }
+
         nlohmann::json configurations = nlohmann::json::array();
         for (const BuildConfiguration& config : m_Settings.Configurations)
         {
