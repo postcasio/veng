@@ -152,7 +152,7 @@ namespace Veng::Renderer
     f32 Viewport::GetAllocationScale() const
     {
         // With the outer-loop tier controller on, the allocation follows the sustained sub-rect: it
-        // is the current tier's absolute scale (the HiDPI cap is applied outside, in ExtentForScale).
+        // is the current tier's absolute scale (MaxAllocationScale is applied outside, in ExtentForScale).
         if (m_TierSettings)
         {
             return m_TierSettings->Tiers[m_TierState.TierIndex];
@@ -176,8 +176,9 @@ namespace Veng::Renderer
 
     uvec2 Viewport::ExtentForScale(f32 scale) const
     {
-        // The HiDPI cap is the outermost factor: it bounds the region (a 2× backing extent) before
-        // the upper-bound allocation scale, so the allocation never sizes to the full backing pixels.
+        // MaxAllocationScale is the outermost factor: it caps the region before the upper-bound
+        // allocation scale. At the default 1.0 the allocation is the full region (native resolution
+        // on a HiDPI backing extent); a lower ceiling bounds it below that.
         const vec2 allocated = glm::round(vec2(m_Region.Extent) * m_MaxAllocationScale * scale);
         return glm::max(uvec2(allocated), uvec2(1));
     }

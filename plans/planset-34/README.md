@@ -45,7 +45,7 @@ open.
 
 | # | Plan | Summary | Status |
 |---|---|---|---|
-| 00 | Lift the resolution cap | Drop the sample's `0.5` override of the default `1.0` `MaxAllocationScale` (the engine default is already `1.0`); let the allocation-tier outer loop discover the operating point. Re-frame the engine docs/comments that justified `0.5`. Smoke golden unaffected (already `1.0`). | proposed |
+| 00 | Lift the resolution cap | Drop the sample's `0.5` override of the default `1.0` `MaxAllocationScale` (the engine default is already `1.0`); let the allocation-tier outer loop discover the operating point. Re-frame the engine docs/comments that justified `0.5`. Smoke golden unaffected (already `1.0`). | done |
 | 01 | Mesh-source unification | A mesh reference's source is `cooked AssetId \| inline recipe`, both resolved to a pending `AssetHandle<Mesh>` through the load path during the populate pass. Retire the `Primitive` component and the `SpawnResolve`/`VE_RESOLVE` pass (2b). Migrate the sample prefabs and the `*_resolve` test suites; migrate both module guides. Finalize the already-drafted `future/dynamic-meshes.md`. | proposed |
 | 02 | Residency on spawn | Break `Prefab::SpawnInto` → `SpawnResult { Roots, Pending }`; a `ResidencyBatch` with `IsResident()` / progress / blocking `WaitResident(TaskSystem&)`. `LevelInstance` surfaces it. Delete the sample's `WaitForPrimitiveResidency`. Depends on 01. | proposed |
 | 03 | À-la-carte debug UI | Extract `UI::RendererStatsPanel` / `UI::FrameTimeGraph` / `UI::RenderSettingsEditor` into `Veng::UI`; migrate the sample to consume them. Sequences after 00–02 (all rewrite `main.cpp`). | proposed |
