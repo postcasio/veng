@@ -3,45 +3,13 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Primitives.h>
-#include <Veng/Reflection/TypeRegistry.h>
-#include <Veng/Scene/Entity.h>
-#include <Veng/Scene/Scene.h>
 
 namespace Veng
 {
-    void ResolveComponents(Scene& scene, Entity entity, AssetManager& manager)
+    optional<MeshData> BuildShapeMeshData(const MeshSource& source)
     {
-        const TypeRegistry& registry = scene.GetTypeRegistry();
-
-        // Collect the resolver-bearing component types first, then fire outside the
-        // walk: a resolver may Add a component, which is a structural change illegal
-        // mid-iteration.
-        vector<TypeId> resolvers;
-        scene.ForEachComponent(entity,
-                               [&](TypeId id, void*)
-                               {
-                                   if (registry.Info(id).SpawnResolve != nullptr)
-                                   {
-                                       resolvers.push_back(id);
-                                   }
-                               });
-
-        for (const TypeId id : resolvers)
-        {
-            // Fetch the storage fresh by TypeId: a prior resolver's Add may have grown
-            // a pool, dangling any pointer held across it.
-            void* slot = scene.TryGetComponent(entity, id);
-            if (slot != nullptr)
-            {
-                registry.Info(id).SpawnResolve(slot, scene, entity, manager);
-            }
-        }
-    }
-
-    optional<MeshData> BuildShapeMeshData(const PrimitiveShapeVariant& shape)
-    {
-        const TypeId kind = shape.ActiveType();
-        const void* member = shape.ActivePtr();
+        const TypeId kind = source.ActiveType();
+        const void* member = source.ActivePtr();
         if (kind == InvalidTypeId || member == nullptr)
         {
             return std::nullopt;
@@ -95,31 +63,15 @@ namespace Veng
         return std::nullopt;
     }
 
-    AssetHandle<Mesh> BuildPrimitiveMesh(AssetManager& manager, const PrimitiveShapeVariant& shape)
+    AssetHandle<Mesh> BuildPrimitiveMesh(AssetManager& manager, const MeshSource& source)
     {
-        optional<MeshData> data = BuildShapeMeshData(shape);
+        optional<MeshData> data = BuildShapeMeshData(source);
         if (!data)
         {
             return {};
         }
 
-        const string name = fmt::format("Primitive {:#018x}", shape.ActiveType());
+        const string name = fmt::format("Primitive {:#018x}", source.ActiveType());
         return manager.Build<Mesh>(std::move(*data), name);
-    }
-
-    void ResolvePrimitive(Primitive& primitive, Scene& scene, Entity entity, AssetManager& manager)
-    {
-        // An empty variant has no shape to build; leave the renderer untouched.
-        if (primitive.Shape.ActiveType() == InvalidTypeId)
-        {
-            return;
-        }
-
-        AssetHandle<Mesh> mesh = BuildPrimitiveMesh(manager, primitive.Shape);
-        if (scene.TryGet<MeshRenderer>(entity) == nullptr)
-        {
-            scene.Add<MeshRenderer>(entity);
-        }
-        scene.Get<MeshRenderer>(entity).Mesh = std::move(mesh);
     }
 }

@@ -1,4 +1,4 @@
-# Dynamic meshes — mutable runtime geometry (DRAFT / vision)
+# Dynamic meshes — mutable runtime geometry (vision)
 
 > Future area 16. Direction, not a plan. Becomes its own planset when a concrete consumer
 > (sculpting, voxel terrain, destruction) is taken up.

@@ -649,18 +649,20 @@ private:
         return view;
     }
 
-    // Drains the task system until every Primitive's streamed mesh is resident.
-    // The async build finalizes on the main-thread continuation pump, so each iteration
-    // pumps it and yields the worker a moment to complete the upload.
+    // Drains the task system until every recipe-sourced mesh is resident.
+    // A MeshRenderer whose Source carries a shape built its mesh through the async path at
+    // spawn, so its handle streams in over a few frames; the build finalizes on the
+    // main-thread continuation pump, so each iteration pumps it and yields the worker a
+    // moment to complete the upload.
     void WaitForPrimitiveResidency()
     {
         const auto allResident = [this]
         {
             bool resident = true;
-            m_Scene->Each<Primitive, MeshRenderer>(
-                [&resident](Entity, Primitive&, MeshRenderer& renderer)
+            m_Scene->Each<MeshRenderer>(
+                [&resident](Entity, MeshRenderer& renderer)
                 {
-                    if (!renderer.Mesh.IsLoaded())
+                    if (renderer.Source.ActiveType() != InvalidTypeId && !renderer.Mesh.IsLoaded())
                     {
                         resident = false;
                     }

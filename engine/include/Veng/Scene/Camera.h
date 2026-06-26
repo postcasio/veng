@@ -13,7 +13,7 @@ namespace Veng
     ///
     /// The render-ready view-projection the renderer consumes through SceneView, the
     /// resolved side of the recipe→resolved pairing (a Camera component produces a
-    /// CameraView, as a Primitive produces a Mesh). Pure math, no backend handles.
+    /// CameraView). Pure math, no backend handles.
     /// Projection follows the engine's Vulkan clip conventions: a column-major GLM
     /// perspective with Y flipped (Vulkan clip space has Y pointing down). Matrices are
     /// recomputed on demand from stored parameters.

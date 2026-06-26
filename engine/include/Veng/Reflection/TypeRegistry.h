@@ -9,37 +9,8 @@
 #include <string_view>
 #include <utility>
 
-// Forward declarations only — the SpawnResolve typedef names these as opaque
-// references, so the Reflection layer gains no upward include and the concrete
-// resolvers live where these types are complete.
 namespace Veng
 {
-    class Scene;
-    class AssetManager;
-    struct Entity;
-}
-
-namespace Veng
-{
-    /// @brief Opt-in resolver trait for a component type that generates derived resources.
-    ///
-    /// Unspecialised by default — a component without a VE_RESOLVE has no
-    /// specialisation, so HasSpawnResolver\<T\> is false and its TypeInfo::SpawnResolve
-    /// stays null. VE_RESOLVE specialises this trait with a static `Thunk` that erases a
-    /// typed `void(T&, Scene&, Entity, AssetManager&)` resolver to the registry's stored
-    /// `void(void*, Scene&, Entity, AssetManager&)` form. The specialisation must be
-    /// visible at every Register\<T\>() site, or the resolver is silently never wired.
-    /// @tparam T The component type the resolver is authored for.
-    template <class T>
-    struct VengResolver;
-
-    /// @brief True when T has a VE_RESOLVE specialisation of VengResolver\<T\>.
-    ///
-    /// Drives RegisterImpl's compile-time branch that wires TypeInfo::SpawnResolve.
-    /// @tparam T The component type queried.
-    template <class T>
-    concept HasSpawnResolver = requires { &VengResolver<T>::Thunk; };
-
     /// @brief The recorded description of a registered type.
     ///
     /// Carries the name, layout, construct/destruct/move thunks a type-erased
@@ -101,17 +72,6 @@ namespace Veng
         ///
         /// Null for non-variant types.
         void (*VariantClear)(void*) = nullptr;
-
-        /// @brief Optional: fired by Prefab::SpawnInto (and ResolveComponents) after the
-        ///        component is populated, to generate/assign derived resources.
-        ///
-        /// Null for a component that declares no resolver. The erased form the registry
-        /// stores; authors write a typed resolver (`void(T&, Scene&, Entity,
-        /// AssetManager&)`) and VE_RESOLVE generates the void*→T* trampoline assigned here.
-        /// The parameter set is frozen: a resolver reaches anything further through
-        /// Scene/AssetManager, never by widening the signature.
-        void (*SpawnResolve)(void* component, Scene& scene, Entity entity,
-                             AssetManager& manager) = nullptr;
     };
 
     /// @brief Maps authored TypeIds to their TypeInfo records.
@@ -243,13 +203,6 @@ namespace Veng
                 info.VariantAlternatives = VengReflect<T>::Alternatives();
             }
 
-            // A component that opts in with VE_RESOLVE carries an erased resolver the
-            // spawn/edit path fires; one without leaves SpawnResolve null.
-            if constexpr (HasSpawnResolver<T>)
-            {
-                info.SpawnResolve = &VengResolver<T>::Thunk;
-            }
-
             m_Types.emplace(id, std::move(info));
             return id;
         }
@@ -296,24 +249,4 @@ namespace Veng
         static ::Veng::string Name() { return #Type; }                                             \
         static ::Veng::vector<::Veng::FieldDescriptor> Fields() { return {}; }                     \
         static void RegisterDependencies(::Veng::TypeRegistry&) {}                                 \
-    }
-
-/// @brief Opts Type into the spawn-resolve seam, wiring its typed resolver Fn.
-///
-/// Specialises VengResolver\<Type\> with a Thunk that casts the erased `void*` to
-/// `Type*` and forwards to the typed resolver `Fn(Type&, Scene&, Entity,
-/// AssetManager&)` — so an author never writes `void*`. Placed next to the
-/// component (beside its VE_REFLECT), it must be visible at every Register\<Type\>()
-/// site; if it is not, HasSpawnResolver\<Type\> detects nothing and the resolver
-/// silently never fires. The trampoline names Scene/Entity/AssetManager, so it is
-/// emitted in a translation unit where those are complete.
-#define VE_RESOLVE(Type, Fn)                                                                       \
-    template <>                                                                                    \
-    struct ::Veng::VengResolver<Type>                                                              \
-    {                                                                                              \
-        static void Thunk(void* component, ::Veng::Scene& scene, ::Veng::Entity entity,            \
-                          ::Veng::AssetManager& manager)                                           \
-        {                                                                                          \
-            Fn(*static_cast<Type*>(component), scene, entity, manager);                            \
-        }                                                                                          \
     }

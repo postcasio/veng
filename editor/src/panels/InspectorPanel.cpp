@@ -172,8 +172,8 @@ namespace VengEditor
             }
         }
 
-        // An edit to a recipe (a Primitive's shape/parameters) regenerates no resource on its
-        // own; re-resolve the touched entity so the derived mesh rebuilds.
+        // An edit to a MeshRenderer's recipe source (its shape/parameters) regenerates no
+        // mesh on its own; re-resolve the touched entity so the derived mesh rebuilds.
         if (changed)
         {
             m_Ctx.ResolveEntity(entity);
@@ -230,7 +230,7 @@ namespace VengEditor
             if (picked)
             {
                 scene->AddComponent(entity, id);
-                // A newly added recipe (a Primitive) builds no resource until resolved.
+                // A newly added MeshRenderer carrying a recipe source builds no mesh until resolved.
                 m_Ctx.ResolveEntity(entity);
             }
         }

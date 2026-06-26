@@ -448,9 +448,10 @@ namespace VengEditor
             DuplicateSubtree(child, copy);
         }
 
-        // Round-tripping the components copies a recipe but builds no derived resource;
-        // resolve so a duplicated Primitive streams its mesh in. Fired after the children
-        // recurse so a resolver reading the subtree sees it complete.
+        // Round-tripping the components copies a MeshRenderer's recipe source but builds no
+        // mesh; rebuild the derived mesh from the copied source so the duplicate streams it
+        // in. There is no inspector edit or changed-bool on a byte copy to hook, so the
+        // duplicate path drives the rebuild explicitly.
         m_Ctx.ResolveEntity(copy);
 
         return copy;

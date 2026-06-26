@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Resolve.h>
 #include <Veng/Scene/Scene.h>
@@ -114,17 +115,24 @@ namespace VengEditor
             }
         }
 
-        /// @brief Fires every resolver-bearing component on @p entity through ResolveComponents.
+        /// @brief Rebuilds @p entity's MeshRenderer mesh from its inline recipe source.
         ///
-        /// Any editor path that adds or edits a resolver-bearing component (a Primitive,
-        /// say) must call this on the touched entity so its derived resource streams in;
-        /// there is no per-frame scan that would otherwise catch the change.
-        /// @param entity  The entity whose components are resolved; must be alive.
+        /// Any editor path that adds or edits a MeshRenderer carrying a recipe Source (a
+        /// shape and its parameters) calls this on the touched entity so its derived mesh
+        /// streams in through the ordinary async load path; there is no per-frame scan
+        /// that would otherwise catch the change. An empty Source leaves the cooked Mesh
+        /// untouched.
+        /// @param entity  The entity whose MeshRenderer is re-resolved; must be alive.
         void ResolveEntity(Veng::Entity entity)
         {
-            if (Scene != nullptr && Assets != nullptr && Scene->IsAlive(entity))
+            if (Scene == nullptr || Assets == nullptr || !Scene->IsAlive(entity))
             {
-                Veng::ResolveComponents(*Scene, entity, *Assets);
+                return;
+            }
+            auto* renderer = Scene->TryGet<Veng::MeshRenderer>(entity);
+            if (renderer != nullptr && renderer->Source.ActiveType() != Veng::InvalidTypeId)
+            {
+                renderer->Mesh = Veng::BuildPrimitiveMesh(*Assets, renderer->Source);
             }
         }
 

@@ -1,18 +1,24 @@
-// The Primitive resolver end to end: ResolveComponents builds the active
-// shape into a streamed Mesh through BuildPrimitiveMesh and stores it in the entity's
-// MeshRenderer. Covers residency after pumping, that identical shapes resolve to
-// distinct meshes (no dedup), re-resolution swapping the handle, and an empty variant
-// leaving the renderer untouched.
+// The mesh-source recipe path end to end: a MeshRenderer whose Source carries a shape
+// recipe is built into its Mesh during Prefab::SpawnInto's populate pass, yielding a
+// pending handle that streams to residency through the ordinary async load path.
+// Covers residency after pumping, that identical recipes resolve to distinct meshes
+// (no dedup), and that an empty Source leaves the cooked Mesh untouched.
+//
+// It lives in the GPU band because SpawnInto + Build<Mesh> need an AssetManager, whose
+// constructor takes a Context; the bodies here touch no device beyond the upload.
 
 #include <doctest/doctest.h>
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/Prefab.h>
 #include <Veng/Asset/Primitives.h>
 #include <Veng/Math/AABB.h>
+#include <Veng/Reflection/Serialize.h>
+#include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
-#include <Veng/Scene/Resolve.h>
+#include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Task/TaskSystem.h>
 
@@ -23,7 +29,7 @@ using namespace Veng;
 namespace
 {
     // Pumps the worker drain + main-thread continuation + finalize so pending
-    // Adopt handles flip resident.
+    // Build handles flip resident.
     void PumpUntilResident(TaskSystem& tasks, AssetManager& manager)
     {
         tasks.WaitForAll();
@@ -31,132 +37,128 @@ namespace
         manager.PumpFinalizes();
     }
 
-    Entity SpawnPrimitive(Scene& scene, const PrimitiveShapeVariant& shape)
+    template <class Shape>
+    MeshSource SourceOf(const Shape& value)
     {
-        const Entity entity = scene.CreateEntity();
-        scene.Add<Transform>(entity);
-        scene.Add<Primitive>(entity).Shape = shape;
-        return entity;
+        MeshSource source;
+        *static_cast<Shape*>(source.SetActive(TypeIdOf<Shape>())) = value;
+        return source;
     }
 
-    PrimitiveShapeVariant CubeVariant(f32 extent)
+    template <class T>
+    Prefab::Component MakeComponent(const TypeRegistry& registry, const T& value)
     {
-        PrimitiveShapeVariant variant;
-        static_cast<CubeShape*>(variant.SetActive(TypeIdOf<CubeShape>()))->Extent = extent;
-        return variant;
+        Prefab::Component component;
+        component.Type = registry.IdOf<T>();
+        WriteFields(component.Record, &value, registry.Info(component.Type), registry);
+        return component;
     }
 
-    PrimitiveShapeVariant CylinderVariant(f32 radius, f32 height, u32 segments)
+    // Builds a one-entity prefab whose lone component is a MeshRenderer with the given
+    // recipe source, then spawns it and returns the spawned root.
+    Entity SpawnRecipe(const TypeRegistry& types, Scene& scene, AssetManager& manager,
+                       const MeshSource& source)
     {
-        PrimitiveShapeVariant variant;
-        auto* shape = static_cast<CylinderShape*>(variant.SetActive(TypeIdOf<CylinderShape>()));
-        shape->Radius = radius;
-        shape->Height = height;
-        shape->Segments = segments;
-        return variant;
+        MeshRenderer renderer;
+        renderer.Source = source;
+
+        vector<Prefab::PrefabEntity> entities;
+        entities.push_back({{MakeComponent(types, renderer)}});
+        const Ref<Prefab> prefab = Prefab::Create(std::move(entities), {});
+        const vector<Entity> roots = prefab->SpawnInto(scene, manager);
+        REQUIRE(roots.size() == 1);
+        return roots[0];
     }
+
+    MeshSource CubeSource(f32 extent)
+    {
+        return SourceOf(CubeShape{.Extent = extent});
+    }
+
+    MeshSource CylinderSource(f32 radius, f32 height, u32 segments)
+    {
+        return SourceOf(CylinderShape{.Radius = radius, .Height = height, .Segments = segments});
+    }
+
+    struct RecipeFixture : Veng::Test::GpuFixture
+    {
+        Unique<Scene> Stage;
+        Unique<AssetManager> Assets;
+
+        RecipeFixture()
+        {
+            RegisterBuiltinTypes(Types);
+            Stage = Scene::Create(Types);
+            Assets = CreateUnique<AssetManager>(Context, Tasks, Types);
+        }
+    };
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "ResolveComponents streams in a primitive mesh")
+TEST_CASE_FIXTURE(RecipeFixture, "SpawnInto streams in a recipe-sourced mesh")
 {
-    RegisterBuiltinTypes(Types);
-    AssetManager assets(Context, Tasks, Types);
-    Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = SpawnRecipe(Types, *Stage, *Assets, CubeSource(1.0f));
 
-    const Entity entity = SpawnPrimitive(*scene, CubeVariant(1.0f));
-
-    ResolveComponents(*scene, entity, assets);
-
-    // The MeshRenderer was added and holds a pending (not-yet-resident) handle.
-    const MeshRenderer* renderer = scene->TryGet<MeshRenderer>(entity);
+    // The MeshRenderer holds a pending (not-yet-resident) handle right after spawn.
+    const MeshRenderer* renderer = Stage->TryGet<MeshRenderer>(entity);
     REQUIRE(renderer != nullptr);
     CHECK_FALSE(renderer->Mesh.IsLoaded());
 
-    PumpUntilResident(Tasks, assets);
+    PumpUntilResident(Tasks, *Assets);
 
-    REQUIRE(scene->Get<MeshRenderer>(entity).Mesh.IsLoaded());
-    CHECK(scene->Get<MeshRenderer>(entity).Mesh->GetIndexCount() ==
+    REQUIRE(Stage->Get<MeshRenderer>(entity).Mesh.IsLoaded());
+    CHECK(Stage->Get<MeshRenderer>(entity).Mesh->GetIndexCount() ==
           Primitives::Cube(1.0f).Indices.size());
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "ResolveComponents streams in a new-shape primitive mesh")
+TEST_CASE_FIXTURE(RecipeFixture, "SpawnInto streams in a cylinder recipe mesh")
 {
-    RegisterBuiltinTypes(Types);
-    AssetManager assets(Context, Tasks, Types);
-    Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = SpawnRecipe(Types, *Stage, *Assets, CylinderSource(0.5f, 1.0f, 24));
 
-    const Entity entity = SpawnPrimitive(*scene, CylinderVariant(0.5f, 1.0f, 24));
+    PumpUntilResident(Tasks, *Assets);
 
-    ResolveComponents(*scene, entity, assets);
-    PumpUntilResident(Tasks, assets);
-
-    // A cylinder rides the unchanged resolve path; its mesh streams to residency
-    // with the generator's index count.
-    REQUIRE(scene->Get<MeshRenderer>(entity).Mesh.IsLoaded());
-    CHECK(scene->Get<MeshRenderer>(entity).Mesh->GetIndexCount() ==
+    REQUIRE(Stage->Get<MeshRenderer>(entity).Mesh.IsLoaded());
+    CHECK(Stage->Get<MeshRenderer>(entity).Mesh->GetIndexCount() ==
           Primitives::Cylinder(0.5f, 1.0f, 24).Indices.size());
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "Identical shapes resolve to distinct meshes")
+TEST_CASE_FIXTURE(RecipeFixture, "Identical recipes resolve to distinct meshes")
 {
-    RegisterBuiltinTypes(Types);
-    AssetManager assets(Context, Tasks, Types);
-    Unique<Scene> scene = Scene::Create(Types);
+    const Entity a = SpawnRecipe(Types, *Stage, *Assets, CubeSource(1.0f));
+    const Entity b = SpawnRecipe(Types, *Stage, *Assets, CubeSource(1.0f));
 
-    const Entity a = SpawnPrimitive(*scene, CubeVariant(1.0f));
-    const Entity b = SpawnPrimitive(*scene, CubeVariant(1.0f));
+    PumpUntilResident(Tasks, *Assets);
 
-    ResolveComponents(*scene, a, assets);
-    ResolveComponents(*scene, b, assets);
-    PumpUntilResident(Tasks, assets);
-
-    const MeshRenderer& ra = scene->Get<MeshRenderer>(a);
-    const MeshRenderer& rb = scene->Get<MeshRenderer>(b);
+    const MeshRenderer& ra = Stage->Get<MeshRenderer>(a);
+    const MeshRenderer& rb = Stage->Get<MeshRenderer>(b);
     REQUIRE(ra.Mesh.IsLoaded());
     REQUIRE(rb.Mesh.IsLoaded());
-    // No dedup cache: each entity builds its own mesh.
+    // No dedup cache: each spawn builds its own mesh.
     CHECK(ra.Mesh.Get() != rb.Mesh.Get());
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "Re-resolving a changed shape swaps the handle")
+TEST_CASE_FIXTURE(RecipeFixture, "A larger recipe builds a larger mesh")
 {
-    RegisterBuiltinTypes(Types);
-    AssetManager assets(Context, Tasks, Types);
-    Unique<Scene> scene = Scene::Create(Types);
+    const Entity small = SpawnRecipe(Types, *Stage, *Assets, CubeSource(1.0f));
+    const Entity large = SpawnRecipe(Types, *Stage, *Assets, CubeSource(2.0f));
 
-    const Entity entity = SpawnPrimitive(*scene, CubeVariant(1.0f));
+    PumpUntilResident(Tasks, *Assets);
 
-    ResolveComponents(*scene, entity, assets);
-    PumpUntilResident(Tasks, assets);
+    const AssetHandle<Mesh> smallMesh = Stage->Get<MeshRenderer>(small).Mesh;
+    const AssetHandle<Mesh> largeMesh = Stage->Get<MeshRenderer>(large).Mesh;
+    REQUIRE(smallMesh.IsLoaded());
+    REQUIRE(largeMesh.IsLoaded());
 
-    // Hold the first mesh so it does not free (and the allocator cannot reuse its
-    // address for the second mesh).
-    const AssetHandle<Mesh> firstHandle = scene->Get<MeshRenderer>(entity).Mesh;
-    REQUIRE(firstHandle.IsLoaded());
-    const AABB firstBounds = firstHandle->GetBounds();
-
-    scene->Get<Primitive>(entity).Shape = CubeVariant(2.0f);
-    ResolveComponents(*scene, entity, assets);
-    PumpUntilResident(Tasks, assets);
-
-    const AssetHandle<Mesh> secondHandle = scene->Get<MeshRenderer>(entity).Mesh;
-    REQUIRE(secondHandle.IsLoaded());
-
-    // The handle swapped to the new shape's mesh: a 2.0 cube is larger than a 1.0 cube.
-    CHECK(secondHandle.Get() != firstHandle.Get());
-    CHECK(secondHandle->GetBounds().Max.x > firstBounds.Max.x);
+    // The 2.0 cube's bounds exceed the 1.0 cube's: the source drove the geometry.
+    CHECK(largeMesh->GetBounds().Max.x > smallMesh->GetBounds().Max.x);
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "An empty variant leaves the renderer empty")
+TEST_CASE_FIXTURE(RecipeFixture, "An empty source leaves the cooked Mesh untouched")
 {
-    RegisterBuiltinTypes(Types);
-    AssetManager assets(Context, Tasks, Types);
-    Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = SpawnRecipe(Types, *Stage, *Assets, MeshSource{});
 
-    const Entity entity = SpawnPrimitive(*scene, PrimitiveShapeVariant{});
-
-    ResolveComponents(*scene, entity, assets);
-
-    // No shape to build: no MeshRenderer is added.
-    CHECK(scene->TryGet<MeshRenderer>(entity) == nullptr);
+    // No recipe to build: the MeshRenderer's Mesh stays the authored (empty) handle.
+    const MeshRenderer* renderer = Stage->TryGet<MeshRenderer>(entity);
+    REQUIRE(renderer != nullptr);
+    CHECK_FALSE(renderer->Mesh.IsLoaded());
+    CHECK(renderer->Source.ActiveType() == InvalidTypeId);
 }
