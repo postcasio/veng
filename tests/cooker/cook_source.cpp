@@ -4,13 +4,17 @@
 // thread — and checks the bytes parse as a valid archive carrying the target id.
 // CPU-only: the texture importer never links into libveng.
 
+#include <cstring>
 #include <filesystem>
 
 #include <doctest/doctest.h>
 
 #include <Veng/Asset/Archive.h>
+#include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
+#include <Veng/Project/BuildConfiguration.h>
+#include <Veng/Renderer/Types.h>
 
 using namespace Veng;
 using namespace Veng::Cook;
@@ -34,6 +38,49 @@ TEST_CASE("Cooker: CookSource produces a mountable in-memory archive for a textu
     REQUIRE(entry.has_value());
     CHECK(entry->Type == AssetType::Texture);
     CHECK_FALSE(entry->Blob.empty());
+}
+
+TEST_CASE("Cooker: CookSource threads the active configuration into role resolution")
+{
+    // The editor cook-on-demand path resolves a texture's compression role through the active
+    // build configuration exactly as the file-based build does. texture_role.tex.json declares
+    // "role": "Color"; without a configuration the cook uses the zero-config ASTC default, and
+    // under the windows configuration (Color → BC7Srgb) it resolves to BC7.
+    const path source = path(VENG_COOKER_TEST_FIXTURE_DIR) / "textures" / "texture_role.tex.json";
+    const path configFile = path(VENG_COOKER_TEST_FIXTURE_DIR) / "windows.buildcfg";
+    const AssetId targetId{0xC00C0DE000000003ULL};
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    const auto cookedFormat = [&](const BuildConfiguration* config) -> u32
+    {
+        const Result<vector<u8>> bytes =
+            cooker.CookSource(source, targetId, AssetType::Texture, {}, nullptr, nullptr, config);
+        REQUIRE(bytes.has_value());
+
+        const Result<ArchiveReader> reader = ArchiveReader::FromBytes(*bytes);
+        REQUIRE(reader.has_value());
+        const optional<ArchiveEntry> entry = reader->Find(targetId);
+        REQUIRE(entry.has_value());
+        REQUIRE(entry->Blob.size() >= sizeof(CookedTextureHeader));
+
+        CookedTextureHeader header{};
+        std::memcpy(&header, entry->Blob.data(), sizeof(header));
+        return header.Format;
+    };
+
+    SUBCASE("a null configuration uses the zero-config ASTC default")
+    {
+        CHECK(cookedFormat(nullptr) == static_cast<u32>(Renderer::Format::ASTC4x4Srgb));
+    }
+
+    SUBCASE("the windows configuration resolves Color to BC7Srgb")
+    {
+        const Result<BuildConfiguration> config = ParseBuildConfiguration(configFile);
+        REQUIRE(config.has_value());
+        CHECK(cookedFormat(&*config) == static_cast<u32>(Renderer::Format::BC7Srgb));
+    }
 }
 
 TEST_CASE("Cooker: CookSource on a missing source reports a located error")

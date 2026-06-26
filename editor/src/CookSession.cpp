@@ -43,8 +43,14 @@ namespace VengEditor
                     systems = &moduleTypes->Systems;
                 }
 
+                // The active build configuration, when set, resolves a texture's role to a
+                // concrete format exactly as the file-based build does; an unset config cooks
+                // with the zero-config defaults.
+                const BuildConfiguration* config =
+                    request.ActiveConfig ? &*request.ActiveConfig : nullptr;
+
                 return cooker.CookSource(request.SourcePath, request.TargetId, request.Type,
-                                         referencePacks, types, systems);
+                                         referencePacks, types, systems, config);
             });
     }
 }

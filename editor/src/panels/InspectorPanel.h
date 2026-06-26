@@ -17,6 +17,15 @@ namespace VengEditor
 {
     class AssetSourceIndex;
 
+    /// @brief Registers the named combo widgets for the project-settings enums.
+    ///
+    /// CompressionRole and CompressionFormat draw a name-table combo rather than the generic
+    /// editable-integer enum widget, mirroring the LightType combo the inspector registers.
+    /// The host calls this once at startup so the combos are available to the project-settings
+    /// panel regardless of whether a prefab editor is open. Idempotent.
+    /// @param editors  The shared editor registry receiving the widget registrations.
+    void RegisterCompressionWidgets(Veng::EditorRegistry& editors);
+
     /// @brief Reflection-driven property inspector for the prefab editor's active entity.
     ///
     /// Reads the active entity from the shared PrefabEditContext and walks its components

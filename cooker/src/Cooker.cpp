@@ -580,8 +580,8 @@ namespace Veng::Cook
 
     Result<vector<u8>> Cooker::CookSource(const path& sourcePath, AssetId id, AssetType type,
                                           std::span<const path> referencePacks,
-                                          const TypeRegistry* types,
-                                          const SystemRegistry* systems) const
+                                          const TypeRegistry* types, const SystemRegistry* systems,
+                                          const BuildConfiguration* config) const
     {
         const auto importerIt = m_Importers.find(type);
         if (importerIt == m_Importers.end())
@@ -619,13 +619,15 @@ namespace Veng::Cook
             return std::nullopt;
         };
 
-        // CookSource writes no files, so RecordDependency is a no-op. It carries no build
-        // configuration: the editor cook-on-demand path uses the zero-config defaults.
+        // CookSource writes no files, so RecordDependency is a no-op. The configuration, when
+        // supplied, drives role→format resolution exactly as a file-based cook does; a null
+        // configuration uses the zero-config defaults.
         const CookContext context{
             .PackDir = sourcePath.parent_path(),
             .Resolve = resolve,
             .Types = types,
             .Systems = systems,
+            .Config = config,
             .RecordDependency = [](const path&) {},
         };
 

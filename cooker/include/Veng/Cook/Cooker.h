@@ -95,11 +95,13 @@ namespace Veng::Cook
         /// @param referencePacks Additional packs for cross-asset AssetId resolution.
         /// @param types          Reflected module type registry, or nullptr.
         /// @param systems        Reflected module system catalog (level id validation), or nullptr.
-        [[nodiscard]] Result<vector<u8>> CookSource(const path& sourcePath, AssetId id,
-                                                    AssetType type,
-                                                    std::span<const path> referencePacks = {},
-                                                    const TypeRegistry* types = nullptr,
-                                                    const SystemRegistry* systems = nullptr) const;
+        /// @param config         Active build configuration driving role→format resolution, or
+        ///                       nullptr for the zero-config defaults.
+        [[nodiscard]] Result<vector<u8>>
+        CookSource(const path& sourcePath, AssetId id, AssetType type,
+                   std::span<const path> referencePacks = {}, const TypeRegistry* types = nullptr,
+                   const SystemRegistry* systems = nullptr,
+                   const BuildConfiguration* config = nullptr) const;
 
     private:
         /// @brief Cooks one pack entry JSON into the archive at `level`, enforcing id uniqueness.

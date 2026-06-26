@@ -4,6 +4,8 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Texture.h>
+#include <Veng/Project/BuildConfiguration.h>
+#include <Veng/Project/CompressionRole.h>
 
 #include <VengEditor/CookRequest.h>
 #include <VengEditor/EditorPanel.h>
@@ -30,6 +32,12 @@ namespace VengEditor
     using CookDriver = Veng::function<void(const CookRequest&,
                                            Veng::function<void(Veng::Result<Veng::MountHandle>)>)>;
 
+    /// @brief Reads the project's active build configuration (or null for the zero-config state).
+    ///
+    /// Read each frame so the resolved-format read-out tracks a configuration change made in
+    /// the Project Settings panel while this editor is open.
+    using ActiveConfigAccessor = Veng::function<const Veng::BuildConfiguration*()>;
+
     /// @brief Docked panel for previewing and editing a .tex.json texture source.
     ///
     /// Shows the decoded texture in a live preview, exposes sampler and sRGB
@@ -40,7 +48,8 @@ namespace VengEditor
         /// @brief Opens the editor for the texture at @p id / @p sourcePath.
         TextureEditorPanel(Veng::AssetId id, Veng::path sourcePath,
                            Veng::Renderer::Context& context, Veng::AssetManager& assets,
-                           Veng::ImGuiLayer& imgui, CookDriver cook);
+                           Veng::ImGuiLayer& imgui, CookDriver cook,
+                           ActiveConfigAccessor activeConfig);
         ~TextureEditorPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
@@ -71,6 +80,8 @@ namespace VengEditor
             Filter Mipmap = Filter::Linear;
             Wrap WrapU = Wrap::Repeat;
             Wrap WrapV = Wrap::Repeat;
+            /// @brief The authored compression role, or nullopt to fall back to the sRGB guess.
+            Veng::optional<Veng::CompressionRole> Role;
         };
 
         /// @brief Reads the on-disk .tex.json into m_Settings; absent fields keep defaults.
@@ -92,6 +103,7 @@ namespace VengEditor
         Veng::AssetManager& m_Assets;
         Veng::ImGuiLayer& m_ImGui;
         CookDriver m_Cook;
+        ActiveConfigAccessor m_ActiveConfig;
 
         Settings m_Settings;
 

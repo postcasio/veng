@@ -206,7 +206,8 @@ namespace VengEditor
     }
 
     // Recurses each non-hidden field of a struct/active-alternative as an indented row;
-    // shared by the Struct and Variant cases. Returns true when any nested field changed.
+    // shared by the Struct, Variant, and Array-element cases. Returns true when any nested
+    // field changed.
     static bool DrawStructFields(void* base, const TypeInfo& info, const FieldWidgetContext& ctx)
     {
         bool changed = false;
@@ -323,6 +324,64 @@ namespace VengEditor
             }
             return changed;
         }
+
+        // An add/remove list over a FieldClass::Array field. The label row carries an Add
+        // button; each element flattens its fields as indented rows beneath a per-element row
+        // bearing a Remove button. Reorder is not offered — the configuration list is order-
+        // independent. Returns true when an element was added, removed, or edited.
+        bool DrawArray(void* fieldPtr, const FieldDescriptor& field, string_view label,
+                       const FieldWidgetContext& ctx)
+        {
+            const TypeRegistry& registry = ctx.Assets.GetTypeRegistry();
+            const TypeInfo& elementInfo = registry.Info(field.ElementType);
+
+            bool changed = false;
+
+            // The value cell of the field's own row holds the Add button.
+            if (UI::SmallButton(fmt::format("Add##add{}", label)))
+            {
+                const usize count = field.ArraySize(fieldPtr);
+                field.ArrayResize(fieldPtr, count + 1);
+                changed = true;
+            }
+
+            const usize count = field.ArraySize(fieldPtr);
+            UI::Indent();
+            // A remove defers to after the element loop so the array is not resized mid-walk.
+            optional<usize> removeAt;
+            for (usize i = 0; i < count; ++i)
+            {
+                void* element = field.ArrayElement(fieldPtr, i);
+                auto elementScope = UI::PushId(fmt::format("{}elem{}", label, i));
+
+                UI::PropertyLabel(fmt::format("[{}]", i));
+                if (UI::SmallButton("Remove##remove"))
+                {
+                    removeAt = i;
+                }
+
+                changed |= DrawStructFields(element, elementInfo, ctx);
+            }
+            UI::Unindent();
+
+            if (removeAt)
+            {
+                // Shift each later element down one by destruct + move-construct, then drop the
+                // tail: ArrayResize destructs the now-moved-from last slot. Uses only the
+                // Destruct/MoveConstruct ops the reflection layer exposes (no element copy).
+                for (usize i = *removeAt; i + 1 < count; ++i)
+                {
+                    void* dst = field.ArrayElement(fieldPtr, i);
+                    void* src = field.ArrayElement(fieldPtr, i + 1);
+                    elementInfo.Destruct(dst);
+                    elementInfo.MoveConstruct(dst, src);
+                }
+                field.ArrayResize(fieldPtr, count - 1);
+                changed = true;
+            }
+
+            return changed;
+        }
     }
 
     bool DrawFieldWidget(void* fieldPtr, const FieldDescriptor& field,
@@ -368,6 +427,20 @@ namespace VengEditor
             UI::PropertyLabel(displayName);
             auto variantScope = UI::PushId(valueLabel);
             const bool changed = DrawVariant(fieldPtr, field, valueLabel, ctx);
+            if (!field.Tooltip.empty())
+            {
+                UI::Tooltip(field.Tooltip);
+            }
+            return changed;
+        }
+
+        // An array draws an Add button on its own row, then flattens each element's fields into
+        // indented rows beneath a per-element row carrying a Remove button.
+        if (field.Class == FieldClass::Array)
+        {
+            UI::PropertyLabel(displayName);
+            auto arrayScope = UI::PushId(valueLabel);
+            const bool changed = DrawArray(fieldPtr, field, valueLabel, ctx);
             if (!field.Tooltip.empty())
             {
                 UI::Tooltip(field.Tooltip);
@@ -498,6 +571,7 @@ namespace VengEditor
         case FieldClass::Reference:
         case FieldClass::Struct:
         case FieldClass::Variant:
+        case FieldClass::Array:
         {
             // Handled above the switch; unreachable here.
             break;

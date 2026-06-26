@@ -4,6 +4,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/AssetType.h>
+#include <Veng/Project/BuildConfiguration.h>
 #include <Veng/Task/TaskSystem.h>
 
 /// @brief Cook-on-demand contract as seen by libveng_editor.
@@ -42,6 +43,14 @@ namespace VengEditor
         /// that needs no module reflection (texture, material). The host fills it from its
         /// configured game-module path; a panel leaves it empty.
         Veng::path ModulePath;
+
+        /// @brief Active build configuration resolving a texture's compression role to a format.
+        ///
+        /// A texture cook resolves its role through this configuration's role table, the same
+        /// way the file-based build does. nullopt means no project settings: the importer falls
+        /// back to its hardcoded ASTC default, the zero-config behavior. The host fills it from
+        /// its ProjectSettings; a panel leaves it unset.
+        Veng::optional<Veng::BuildConfiguration> ActiveConfig;
     };
 
     /// @brief Cook backend the editor exe injects into the host.

@@ -3,6 +3,8 @@
 #include "FieldWidget.h"
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Project/CompressionFormat.h>
+#include <Veng/Project/CompressionRole.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
@@ -14,6 +16,7 @@
 #include <array>
 #include <cctype>
 #include <cstring>
+#include <span>
 
 namespace VengEditor
 {
@@ -33,6 +36,49 @@ namespace VengEditor
             const auto it = std::ranges::search(haystack, needle, {}, lower, lower).begin();
             return it != haystack.end();
         }
+
+        // Draws a name-table combo over a closed u8-backed enum: the field byte selects the
+        // entry, the combo lists each enumerator's canonical name. Shared by the CompressionRole
+        // and CompressionFormat widgets.
+        template <typename Enum, usize N>
+        void DrawNamedEnumCombo(void* fieldPtr, string_view comboLabel,
+                                const std::array<Enum, N>& values)
+        {
+            std::array<string_view, N> names;
+            for (usize i = 0; i < N; ++i)
+            {
+                names[i] = ToString(values[i]);
+            }
+
+            u8 raw = 0;
+            std::memcpy(&raw, fieldPtr, sizeof(raw));
+            i32 index = 0;
+            for (usize i = 0; i < N; ++i)
+            {
+                if (static_cast<u8>(values[i]) == raw)
+                {
+                    index = static_cast<i32>(i);
+                    break;
+                }
+            }
+
+            if (UI::Combo(comboLabel, index, std::span<const string_view>(names)))
+            {
+                raw = static_cast<u8>(values[static_cast<usize>(index)]);
+                std::memcpy(fieldPtr, &raw, sizeof(raw));
+            }
+        }
+    }
+
+    void RegisterCompressionWidgets(EditorRegistry& editors)
+    {
+        editors.RegisterFieldWidget(
+            TypeIdOf<CompressionRole>(), [](void* fieldPtr, const FieldDescriptor&)
+            { DrawNamedEnumCombo(fieldPtr, "##compressionrole", CompressionRoles); });
+
+        editors.RegisterFieldWidget(
+            TypeIdOf<CompressionFormat>(), [](void* fieldPtr, const FieldDescriptor&)
+            { DrawNamedEnumCombo(fieldPtr, "##compressionformat", CompressionFormats); });
     }
 
     InspectorPanel::InspectorPanel(AssetManager& assets, EditorRegistry& editors,

@@ -3,6 +3,7 @@
 #include <Veng/Application.h>
 #include <Veng/Module/ApplicationRegistry.h>
 #include <Veng/Module/ModuleLoader.h>
+#include <Veng/Project/ProjectSettings.h>
 #include <Veng/Reflection/TypeRegistry.h>
 
 #include <VengEditor/CookRequest.h>
@@ -71,6 +72,13 @@ namespace VengEditor
         void RequestCook(const VengEditor::CookRequest& request,
                          Veng::function<void(Veng::Result<Veng::MountHandle>)> onComplete);
 
+        /// @brief Returns the project's active build configuration, or nullptr when none resolves.
+        ///
+        /// Looks the ActiveConfiguration name up in the configuration list. Null when the project
+        /// has no configurations or the active name names none — the zero-config state. Used by the
+        /// texture editor for its resolved-format read-out and by the cook to resolve roles.
+        [[nodiscard]] const Veng::BuildConfiguration* GetActiveConfiguration() const;
+
     protected:
         /// @brief Initializes the panel set and source index.
         void OnInitialize() override;
@@ -111,6 +119,14 @@ namespace VengEditor
         /// @brief AssetId to source-file index, parsed once from the manifest.
         /// nullptr when no manifest path is configured.
         Veng::Unique<AssetSourceIndex> m_Sources;
+
+        /// @brief The host-owned project settings: the build-configuration list and the active
+        /// one. Loaded from project.veng beside the manifest at startup, or left empty.
+        Veng::ProjectSettings m_ProjectSettings;
+
+        /// @brief Absolute path project.veng saves to (its directory holds the *.buildcfg files).
+        /// Empty when no manifest path is configured, which disables saving project settings.
+        Veng::path m_ProjectFile;
 
         /// @brief One open panel slot with its Window-menu visibility flag.
         struct PanelSlot

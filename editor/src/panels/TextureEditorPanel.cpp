@@ -5,6 +5,9 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/ImGui/ImGuiTexture.h>
 #include <Veng/Log.h>
+#include <Veng/Project/BuildConfiguration.h>
+#include <Veng/Project/CompressionFormat.h>
+#include <Veng/Project/CompressionRole.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Time.h>
@@ -12,6 +15,7 @@
 
 #include <array>
 #include <fstream>
+#include <span>
 #include <sstream>
 
 #include <nlohmann/json.hpp>
@@ -42,12 +46,32 @@ namespace VengEditor
             }
             return std::nullopt;
         }
+
+        // Reads the format a role resolves to from a configuration's fixed RoleToFormat record.
+        CompressionFormat RoleFormat(const RoleToFormat& table, CompressionRole role)
+        {
+            switch (role)
+            {
+            case CompressionRole::Color:
+                return table.Color;
+            case CompressionRole::Normal:
+                return table.Normal;
+            case CompressionRole::Mask:
+                return table.Mask;
+            case CompressionRole::HDR:
+                return table.HDR;
+            case CompressionRole::UI:
+                return table.UI;
+            }
+            return table.Color;
+        }
     }
 
     TextureEditorPanel::TextureEditorPanel(AssetId id, path sourcePath, Renderer::Context& context,
-                                           AssetManager& assets, ImGuiLayer& imgui, CookDriver cook)
+                                           AssetManager& assets, ImGuiLayer& imgui, CookDriver cook,
+                                           ActiveConfigAccessor activeConfig)
         : m_Id(id), m_SourcePath(std::move(sourcePath)), m_Context(context), m_Assets(assets),
-          m_ImGui(imgui), m_Cook(std::move(cook))
+          m_ImGui(imgui), m_Cook(std::move(cook)), m_ActiveConfig(std::move(activeConfig))
     {
         m_Title = fmt::format("Texture: {}", m_SourcePath.filename().string());
 
@@ -88,6 +112,13 @@ namespace VengEditor
         if (tex.contains("srgb") && tex["srgb"].is_boolean())
         {
             m_Settings.Srgb = tex["srgb"].get<bool>();
+        }
+
+        // An absent or unparseable role leaves m_Settings.Role unset (the sRGB guess); an
+        // explicit role overrides it.
+        if (tex.contains("role") && tex["role"].is_string())
+        {
+            m_Settings.Role = ParseCompressionRole(tex["role"].get<std::string>());
         }
 
         if (tex.contains("sampler") && tex["sampler"].is_object())
@@ -144,6 +175,18 @@ namespace VengEditor
         }
 
         tex["srgb"] = m_Settings.Srgb;
+
+        // An authored role writes the "role" key; clearing it removes the key so the cook reverts
+        // to the sRGB guess. The raw "compression" escape-hatch key, if present, is left untouched.
+        if (m_Settings.Role)
+        {
+            tex["role"] = std::string(ToString(*m_Settings.Role));
+        }
+        else
+        {
+            tex.erase("role");
+        }
+
         nlohmann::json& sampler = tex["sampler"];
         if (!sampler.is_object())
         {
@@ -243,6 +286,52 @@ namespace VengEditor
 
         bool changed = false;
         changed |= UI::Checkbox("sRGB", m_Settings.Srgb);
+
+        // The compression role: index 0 clears it (the sRGB guess), index N+1 authors role N.
+        // The texture declares a role (its intent); a build configuration owns the codec, so the
+        // raw "compression" escape hatch is not authored here.
+        {
+            std::array<string_view, CompressionRoles.size() + 1> roleItems;
+            roleItems[0] = "(guess from sRGB)";
+            for (usize i = 0; i < CompressionRoles.size(); ++i)
+            {
+                roleItems[i + 1] = ToString(CompressionRoles[i]);
+            }
+
+            i32 roleIndex = 0;
+            if (m_Settings.Role)
+            {
+                roleIndex = static_cast<i32>(static_cast<u8>(*m_Settings.Role)) + 1;
+            }
+            if (UI::Combo("Role", roleIndex, std::span<const string_view>(roleItems)))
+            {
+                m_Settings.Role = roleIndex == 0
+                                      ? optional<CompressionRole>{}
+                                      : CompressionRoles[static_cast<usize>(roleIndex) - 1];
+                changed = true;
+            }
+        }
+
+        // The resolved-format read-out: the format the texture *resolves to* under the active
+        // configuration, computed from the effective role (authored or the sRGB guess) and the
+        // configuration's role table. Recomputed each frame so it tracks a configuration change.
+        {
+            const CompressionRole effectiveRole =
+                m_Settings.Role
+                    ? *m_Settings.Role
+                    : (m_Settings.Srgb ? CompressionRole::Color : CompressionRole::Mask);
+            const BuildConfiguration* config = m_ActiveConfig ? m_ActiveConfig() : nullptr;
+            if (config != nullptr)
+            {
+                const CompressionFormat format = RoleFormat(config->Formats, effectiveRole);
+                UI::TextDisabled(
+                    fmt::format("→ {} for active config '{}'", ToString(format), config->Name));
+            }
+            else
+            {
+                UI::TextDisabled("→ no active build configuration (zero-config ASTC default)");
+            }
+        }
 
         auto filterCombo = [&](string_view label, Filter& value)
         {
