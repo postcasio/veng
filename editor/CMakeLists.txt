@@ -23,6 +23,7 @@ add_library(veng_editor SHARED
         src/panels/MaterialEditorPanel.cpp
         src/panels/PrefabEditorPanel.cpp
         src/panels/PrefabExplorerPanel.cpp
+        src/panels/ProjectSettingsPanel.cpp
         src/panels/SceneViewportPanel.cpp
         src/panels/TextureEditorPanel.cpp
         src/FieldWidget.cpp

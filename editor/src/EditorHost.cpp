@@ -15,10 +15,20 @@
 #include "AssetSourceIndex.h"
 #include "panels/AssetBrowserPanel.h"
 #include "panels/ConsolePanel.h"
+#include "panels/InspectorPanel.h"
 #include "panels/LevelEditorPanel.h"
 #include "panels/MaterialEditorPanel.h"
 #include "panels/PrefabEditorPanel.h"
+#include "panels/ProjectSettingsPanel.h"
 #include "panels/TextureEditorPanel.h"
+
+#include <Veng/Project/CompressionFormat.h>
+#include <Veng/Project/CompressionRole.h>
+
+#include <fstream>
+#include <sstream>
+
+#include <nlohmann/json.hpp>
 
 namespace VengEditor
 {
@@ -29,6 +39,131 @@ namespace VengEditor
         // The hello-triangle pack's sphere prefab, opened as the initial document.
         constexpr AssetId SampleScenePrefabId{0xA123F30FD219F2D5ULL};
 
+        // Writes the format a role resolves to into the fixed RoleToFormat record.
+        void SetRoleFormat(RoleToFormat& table, CompressionRole role, CompressionFormat format)
+        {
+            switch (role)
+            {
+            case CompressionRole::Color:
+                table.Color = format;
+                return;
+            case CompressionRole::Normal:
+                table.Normal = format;
+                return;
+            case CompressionRole::Mask:
+                table.Mask = format;
+                return;
+            case CompressionRole::HDR:
+                table.HDR = format;
+                return;
+            case CompressionRole::UI:
+                table.UI = format;
+                return;
+            }
+        }
+
+        // Reads a JSON file into a parsed object, or nullopt on missing/malformed input.
+        optional<nlohmann::json> ReadJsonObject(const path& file)
+        {
+            const std::ifstream stream(file, std::ios::binary);
+            if (!stream)
+            {
+                return std::nullopt;
+            }
+            std::ostringstream contents;
+            contents << stream.rdbuf();
+            nlohmann::json parsed = nlohmann::json::parse(contents.str(), nullptr, false);
+            if (parsed.is_discarded() || !parsed.is_object())
+            {
+                return std::nullopt;
+            }
+            return parsed;
+        }
+
+        // Parses one *.buildcfg authoring file into a BuildConfiguration, the same schema the
+        // ProjectSettingsPanel writes and the cooker reads. Enums parse by name; an absent field
+        // keeps its default.
+        optional<BuildConfiguration> ParseBuildConfigFile(const path& file)
+        {
+            const optional<nlohmann::json> cfg = ReadJsonObject(file);
+            if (!cfg)
+            {
+                return std::nullopt;
+            }
+
+            BuildConfiguration config;
+            if (cfg->contains("name") && (*cfg)["name"].is_string())
+            {
+                config.Name = (*cfg)["name"].get<string>();
+            }
+            if (cfg->contains("target") && (*cfg)["target"].is_string())
+            {
+                config.Target = (*cfg)["target"].get<string>();
+            }
+            if (cfg->contains("outputSuffix") && (*cfg)["outputSuffix"].is_string())
+            {
+                config.OutputSuffix = (*cfg)["outputSuffix"].get<string>();
+            }
+            if (cfg->contains("compressionLevel") && (*cfg)["compressionLevel"].is_number_integer())
+            {
+                config.CompressionLevel = (*cfg)["compressionLevel"].get<i32>();
+            }
+            if (cfg->contains("formats") && (*cfg)["formats"].is_object())
+            {
+                const nlohmann::json& formats = (*cfg)["formats"];
+                for (const CompressionRole role : CompressionRoles)
+                {
+                    const string roleName{ToString(role)};
+                    if (!formats.contains(roleName) || !formats[roleName].is_string())
+                    {
+                        continue;
+                    }
+                    if (const optional<CompressionFormat> format =
+                            ParseCompressionFormat(formats[roleName].get<string>()))
+                    {
+                        SetRoleFormat(config.Formats, role, *format);
+                    }
+                }
+            }
+            return config;
+        }
+
+        // Loads project.veng (a list of *.buildcfg file names + the active configuration name)
+        // into a ProjectSettings. A missing or malformed file yields the empty zero-config state.
+        ProjectSettings LoadProjectSettings(const path& projectFile)
+        {
+            ProjectSettings settings;
+            const optional<nlohmann::json> project = ReadJsonObject(projectFile);
+            if (!project)
+            {
+                return settings;
+            }
+
+            if (project->contains("activeConfiguration") &&
+                (*project)["activeConfiguration"].is_string())
+            {
+                settings.ActiveConfiguration = (*project)["activeConfiguration"].get<string>();
+            }
+
+            const path dir = projectFile.parent_path();
+            if (project->contains("configurations") && (*project)["configurations"].is_array())
+            {
+                for (const nlohmann::json& entry : (*project)["configurations"])
+                {
+                    if (!entry.is_string())
+                    {
+                        continue;
+                    }
+                    if (optional<BuildConfiguration> config =
+                            ParseBuildConfigFile(dir / entry.get<string>()))
+                    {
+                        settings.Configurations.push_back(std::move(*config));
+                    }
+                }
+            }
+            return settings;
+        }
+
         // Resolves a texture AssetId to its .tex.json source through the manifest
         // index, then opens a TextureEditorPanel wired to the host's engine refs.
         class TextureEditorFactory final : public AssetEditorFactory
@@ -36,9 +171,9 @@ namespace VengEditor
         public:
             TextureEditorFactory(const AssetSourceIndex& index, Renderer::Context& context,
                                  AssetManager& assets, ImGuiLayer& imgui,
-                                 VengEditor::CookDriver cook)
+                                 VengEditor::CookDriver cook, ActiveConfigAccessor activeConfig)
                 : m_Index(index), m_Context(context), m_Assets(assets), m_ImGui(imgui),
-                  m_Cook(std::move(cook))
+                  m_Cook(std::move(cook)), m_ActiveConfig(std::move(activeConfig))
             {
             }
 
@@ -53,7 +188,7 @@ namespace VengEditor
                 }
 
                 return CreateUnique<TextureEditorPanel>(id, entry->Source, m_Context, m_Assets,
-                                                        m_ImGui, m_Cook);
+                                                        m_ImGui, m_Cook, m_ActiveConfig);
             }
 
         private:
@@ -62,6 +197,7 @@ namespace VengEditor
             AssetManager& m_Assets;
             ImGuiLayer& m_ImGui;
             VengEditor::CookDriver m_Cook;
+            ActiveConfigAccessor m_ActiveConfig;
         };
 
         // Resolves a material AssetId to its .vmat.json source through the manifest
@@ -255,6 +391,18 @@ namespace VengEditor
         return m_Registries->Editor.AssetEditorFor(type) != nullptr;
     }
 
+    const BuildConfiguration* EditorHost::GetActiveConfiguration() const
+    {
+        for (const BuildConfiguration& config : m_ProjectSettings.Configurations)
+        {
+            if (config.Name == m_ProjectSettings.ActiveConfiguration)
+            {
+                return &config;
+            }
+        }
+        return nullptr;
+    }
+
     void EditorHost::OnInitialize()
     {
         VE_ASSERT(GetImGuiLayer() != nullptr, "editor host requires the ImGui layer");
@@ -278,6 +426,19 @@ namespace VengEditor
             m_Info.AssetManifestPath ? AssetSourceIndex::Parse(*m_Info.AssetManifestPath)
                                      : AssetSourceIndex{});
 
+        // The project-settings panel inspects ProjectSettings through reflection and draws the
+        // two compression enums as named combos; register both before the panel is built.
+        GetTypeRegistry().Register<ProjectSettings>();
+        RegisterCompressionWidgets(m_Registries->Editor);
+
+        // project.veng lives beside the manifest; load it (or stay at the empty zero-config
+        // state) and remember the path so the panel saves there.
+        if (m_Info.AssetManifestPath)
+        {
+            m_ProjectFile = m_Info.AssetManifestPath->parent_path() / "project.veng";
+            m_ProjectSettings = LoadProjectSettings(m_ProjectFile);
+        }
+
         // A prefab is edited live in a spawned Scene, so its editor needs no manifest
         // source; register it unconditionally.
         m_Registries->Editor.RegisterAssetEditor(
@@ -299,7 +460,8 @@ namespace VengEditor
             m_Registries->Editor.RegisterAssetEditor(
                 AssetType::Texture,
                 CreateUnique<TextureEditorFactory>(*m_Sources, GetRenderContext(),
-                                                   GetAssetManager(), *GetImGuiLayer(), cookFor()));
+                                                   GetAssetManager(), *GetImGuiLayer(), cookFor(),
+                                                   [this] { return GetActiveConfiguration(); }));
 
             m_Registries->Editor.RegisterAssetEditor(
                 AssetType::Material, CreateUnique<MaterialEditorFactory>(
@@ -317,6 +479,10 @@ namespace VengEditor
                                 ExecutableDirectory() / "sample.vengpack", *m_Sources, *this),
                             true});
         m_Panels.push_back({CreateUnique<ConsolePanel>(), true});
+        m_Panels.push_back(
+            {CreateUnique<ProjectSettingsPanel>(m_ProjectSettings, m_ProjectFile, GetAssetManager(),
+                                                m_Registries->Editor, *m_Sources),
+             true});
 
         for (Unique<EditorPanel>& panel : m_Registries->Editor.Panels())
         {
@@ -350,6 +516,13 @@ namespace VengEditor
         // A level cook validates its system ids and config against the module's reflected
         // catalogs, so inject the game module path; non-level cooks ignore an empty value.
         resolved.ModulePath = m_Info.GameModulePath;
+
+        // Thread the active configuration so a texture recook resolves roles the same way the
+        // build does; a null active configuration leaves the request unset (zero-config cook).
+        if (const BuildConfiguration* active = GetActiveConfiguration())
+        {
+            resolved.ActiveConfig = *active;
+        }
 
         Task<vector<u8>> task = m_Info.Cook(resolved, GetTaskSystem());
 
