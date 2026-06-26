@@ -623,6 +623,13 @@ if (VENG_BUILD_TESTS)
     add_executable(veng_test_golden_compare tests/golden_compare.cpp)
     target_include_directories(veng_test_golden_compare PRIVATE ${stb_SOURCE_DIR})
 
+    # Size + non-blank checker for the template smoke (template_launcher_smoke,
+    # registered after the examples). Links no veng/Vulkan — just stb_image to decode
+    # the PPM capture — so it runs with or without a GPU. The template carries no pixel
+    # golden, so this cheap "drew something" guard is its only image assertion.
+    add_executable(veng_test_template_capture_check tests/template_capture_check.cpp)
+    target_include_directories(veng_test_template_capture_check PRIVATE ${stb_SOURCE_DIR})
+
     # Headless smoke test: brings up a windowless context, renders off-screen and
     # verifies downloaded pixels. Skips (SKIP_RETURN_CODE 77) with no Vulkan ICD.
     add_executable(veng_test_headless_smoke tests/headless_smoke.cpp)
@@ -894,6 +901,26 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidationGate.cmake
     )
     set_tests_properties(validation_gate PROPERTIES LABELS validation)
+endif ()
+
+# Template launcher smoke: runs the minimal template through the real dlopen ->
+# VengModuleRegister -> registry -> Run() path headless and asserts exit 0 + a
+# correctly-sized, non-blank capture. Build-only — no pixel golden — so a deliberate
+# render change regenerates only hello-triangle's golden, never the template's. Labelled
+# `gpu`; the driver script runs the headless-smoke probe first and skips cleanly (passing
+# without rendering) when no Vulkan ICD is present, the same way smoke_golden does.
+if (VENG_BUILD_TESTS AND TARGET template-launcher AND TARGET veng_test_template_capture_check)
+    add_test(NAME template_launcher_smoke
+        COMMAND ${CMAKE_COMMAND}
+            -D VENG_SMOKE_BIN=$<TARGET_FILE:template-launcher>
+            -D VENG_CHECK_BIN=$<TARGET_FILE:veng_test_template_capture_check>
+            -D VENG_PROBE_BIN=$<TARGET_FILE:veng_test_headless_smoke>
+            -D VENG_TMP=${CMAKE_CURRENT_BINARY_DIR}/template_launcher_smoke.ppm
+            -D VENG_WIDTH=1280
+            -D VENG_HEIGHT=720
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/TemplateSmoke.cmake
+    )
+    set_tests_properties(template_launcher_smoke PROPERTIES LABELS gpu)
 endif ()
 
 # ---------------------------------------------------------------------------
