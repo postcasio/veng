@@ -346,9 +346,22 @@ int main(int argc, char** argv)
                 mountName.stem().string() + config->OutputSuffix + mountName.extension().string();
             const path outPack = *outDir / outPackName;
 
+            // A project's packs share one AssetId namespace: every pack resolves the others'
+            // ids at cook time, so an asset in one pack may reference an asset declared in a
+            // sibling. The reference set is the CLI references (e.g. the engine core pack) plus
+            // every other project pack.
+            vector<path> packRefs = referencePacks;
+            for (const path& sibling : project->Packs)
+            {
+                if (sibling != packManifest)
+                {
+                    packRefs.push_back(sibling);
+                }
+            }
+
             vector<path> packDeps;
             const VoidResult result =
-                cooker.CookPack(packManifest, outPack, referencePacks, types, systems,
+                cooker.CookPack(packManifest, outPack, packRefs, types, systems,
                                 depfilePath ? &packDeps : nullptr, &*config, configFile);
             if (!result)
             {

@@ -17,11 +17,9 @@ namespace VengEditor
                 Cook::Cooker cooker;
                 Cook::RegisterBuiltinImporters(cooker);
 
-                vector<path> referencePacks;
-                if (!request.ReferenceManifest.empty())
-                {
-                    referencePacks.push_back(request.ReferenceManifest);
-                }
+                // The project's packs share one AssetId namespace; cooking one source resolves
+                // ids against every pack the host passed.
+                const vector<path>& referencePacks = request.ReferenceManifests;
 
                 // A level cook validates its system ids and config fields against the
                 // module's reflected catalogs; reflect the module on the worker when one

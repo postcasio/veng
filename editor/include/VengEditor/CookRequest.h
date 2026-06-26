@@ -29,12 +29,14 @@ namespace VengEditor
         /// @brief Asset type, used to select the correct importer.
         Veng::AssetType Type{};
 
-        /// @brief Project source-pack manifest, used to resolve cross-asset references
+        /// @brief Project source-pack manifests, used to resolve cross-asset references
         /// (e.g. a material's shaders and textures) by AssetId during the cook.
         ///
-        /// Empty for a source with no cross-asset references. The host fills it from
-        /// its configured manifest path; a panel leaves it empty.
-        Veng::path ReferenceManifest;
+        /// The project's packs share one AssetId namespace, so the cook resolves an id against
+        /// every pack the project owns — an asset edited in one pack may reference an asset in a
+        /// sibling. Empty for a source with no cross-asset references. The host fills it from the
+        /// project's packs; a panel leaves it empty.
+        Veng::vector<Veng::path> ReferenceManifests;
 
         /// @brief Game module reflected for type/system validation during the cook.
         ///

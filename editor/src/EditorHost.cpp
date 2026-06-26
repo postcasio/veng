@@ -574,13 +574,10 @@ namespace VengEditor
             return;
         }
 
-        // Inject the project's first pack manifest so the cook resolves cross-asset references by
-        // AssetId; panels build manifest-agnostic requests.
+        // Inject every project pack manifest so the cook resolves cross-asset references by
+        // AssetId across the whole project (one namespace); panels build manifest-agnostic requests.
         CookRequest resolved = request;
-        if (!m_ProjectSettings.Packs.empty())
-        {
-            resolved.ReferenceManifest = m_ProjectSettings.Packs.front();
-        }
+        resolved.ReferenceManifests = m_ProjectSettings.Packs;
 
         // A level cook validates its system ids and config against the module's reflected
         // catalogs, so inject the game module path; non-level cooks ignore an empty value.

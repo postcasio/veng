@@ -147,7 +147,9 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
   project names (beside the exe, under the source manifest's stem), and builds its
   `AssetSourceIndex` from the **union** of the project's pack manifests
   (`AssetSourceIndex::ParsePacks`). The runtime `.vengproj` is a game-launch artifact the editor
-  does not consume.
+  does not consume. Cook-on-demand passes **every** project pack as a reference
+  (`CookRequest::ReferenceManifests`), so an edited asset resolves cross-asset ids across the
+  whole project's one AssetId namespace, not just its own pack.
 - **Project Settings is a host-level panel.** `ProjectSettingsPanel` (opened from the
   Window menu, like the asset browser) lists and edits the host-owned `ProjectSettings` —
   the array of `BuildConfiguration`s and the `ActiveConfiguration` selector — through the

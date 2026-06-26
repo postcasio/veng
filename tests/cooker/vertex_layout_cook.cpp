@@ -88,3 +88,35 @@ TEST_CASE("Cooker: cooking a shader with mismatched vertex inputs fails")
     // Clean up if the file was (incorrectly) written.
     std::filesystem::remove(outArchive);
 }
+
+TEST_CASE("Cooker: a shader resolves a vertex layout declared in a sibling pack")
+{
+    // crosspack_shader.json holds only the shader (mesh.vert, referencing layout id 7001);
+    // crosspack_layout.json holds only that layout. Passing the layout pack as a reference
+    // resolves the cross-pack AssetId at cook time — the same path a project's packs use to
+    // reference each other (and the engine core pack). Without the reference the cook fails.
+    const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
+    const path shaderPack = fixtureDir / "crosspack_shader.json";
+    const path layoutPack = fixtureDir / "crosspack_layout.json";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_crosspack.vengpack";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    // Without the sibling reference the layout id is unresolvable and the shader cook fails.
+    CHECK_FALSE(cooker.CookPack(shaderPack, outArchive).has_value());
+
+    // With the sibling pack referenced, the cross-pack layout resolves and the shader cooks.
+    const path refs[] = {layoutPack};
+    const VoidResult cooked = cooker.CookPack(shaderPack, outArchive, refs);
+    REQUIRE(cooked.has_value());
+
+    const Result<ArchiveReader> reader = ArchiveReader::Open(outArchive);
+    REQUIRE(reader.has_value());
+    const optional<ArchiveEntry> shader = reader->Find(AssetId{0x0FA1}); // 4001
+    REQUIRE(shader.has_value());
+    CHECK(shader->Type == AssetType::Shader);
+
+    std::filesystem::remove(outArchive);
+}

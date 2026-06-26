@@ -156,7 +156,11 @@ loader share one encoder.
   the named configuration is matched by `BuildConfiguration.Name`; each pack cooks into
   `<stem><suffix>.vengpack` and a `<projstem><suffix>.vengproj` (`WriteCookedProject`) names
   the packs' un-suffixed mount names + the startup level — the runtime entrypoint. One
-  combined depfile covers every pack source + the project + the buildcfg. `add_project` wires it.
+  combined depfile covers every pack source + the project + the buildcfg. **A project's packs
+  share one AssetId namespace:** each pack is cooked with the project's *other* packs (plus the
+  CLI `--reference` packs) as references, so an asset in one pack may reference an asset declared
+  in a sibling — resolution is by-id over source manifests, needing no cooked sibling and no
+  build-order edge between packs. `add_project` wires it.
 - **`verify`** — re-hash a `.vengpack`'s blobs + TOC digest and exit nonzero on any
   mismatch.
 - **`generate-id`** — mint a collision-free `AssetId` (prints hex for C++ literals and
