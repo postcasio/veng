@@ -122,6 +122,15 @@ namespace VengEditor
             return nullptr;
         }
 
+        /// @brief Seeds the play clone with any document-scoped entities, before the simulation Starts.
+        ///
+        /// Called by Play after cloning the edit scene and before the simulation's Start, so the
+        /// clone reaches the same initialized state the runtime does. The base is a no-op (a bare
+        /// prefab has no session); the level editor overrides it to seed the Session + game-mode
+        /// config its spawn rule reads.
+        /// @param scene The play clone the systems run over.
+        virtual void SeedPlayScene(Veng::Scene& /*scene*/) {}
+
         /// @brief Adds the viewport / explorer / inspector children over the shared edit context.
         ///
         /// Called by a subclass after the base constructor has built the scene, so the level

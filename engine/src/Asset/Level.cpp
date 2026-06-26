@@ -36,13 +36,17 @@ namespace Veng
         // hierarchy and the simulation queries the scene, not the root list.
         (void)m_World.Get()->SpawnInto(*instance.World, manager);
 
-        // The Session entity is level-scoped, not world-content, so the loader creates it
-        // from the level's game-mode config rather than the world authoring it. A spawn rule
-        // reads the Playing phase at the simulation's Start and instantiates the player prefab.
-        const Entity session = instance.World->CreateEntity();
-        instance.World->Add<Session>(session, Session{.Phase = SessionPhase::Playing});
-        instance.World->Add<GameModeConfig>(session, m_GameMode);
+        // The Session entity is level-scoped, not world-content, so the loader seeds it from
+        // the level's game-mode config rather than the world authoring it.
+        SeedSession(*instance.World, m_GameMode);
 
         return instance;
+    }
+
+    void SeedSession(Scene& scene, const GameModeConfig& gameMode)
+    {
+        const Entity session = scene.CreateEntity();
+        scene.Add<Session>(session, Session{.Phase = SessionPhase::Playing});
+        scene.Add<GameModeConfig>(session, gameMode);
     }
 }
