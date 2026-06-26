@@ -27,6 +27,7 @@ include(FetchContent)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AssetPack.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildConfig.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Game.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Editor.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Docs.cmake)
@@ -923,6 +924,27 @@ if (VENG_BUILD_TESTS AND TARGET template-launcher AND TARGET veng_test_template_
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/TemplateSmoke.cmake
     )
     set_tests_properties(template_launcher_smoke PROPERTIES LABELS gpu)
+endif ()
+
+# Per-config cook isolation: asserts editing one build configuration re-cooks only its
+# pack. Drives the real build graph (cook-all-packs) over hello-triangle's macOS/ASTC +
+# Windows/BC7 configuration pair, so it is registered after the examples subdirectory
+# defines those packs and needs VENG_BUILD_TOOLS (vengc). ICD-free — a texture cook needs
+# no GPU — so it runs unconditionally.
+if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle_assets-macos
+        AND TARGET hello_triangle_assets-windows)
+    add_test(NAME cook_per_config_invalidation
+        COMMAND ${CMAKE_COMMAND}
+            -D VENG_BUILD_DIR=${CMAKE_BINARY_DIR}
+            -D VENG_WINDOWS_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/examples/hello-triangle/configs/windows.buildcfg
+            -D VENG_MACOS_PACK=$<TARGET_PROPERTY:hello_triangle_assets-macos,VENG_ASSET_PACK_OUTPUT>
+            -D VENG_WINDOWS_PACK=$<TARGET_PROPERTY:hello_triangle_assets-windows,VENG_ASSET_PACK_OUTPUT>
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PerConfigInvalidation.cmake
+    )
+    # Serialized: it touches a config and rebuilds the cooked packs, so it must not race
+    # a test mounting the same build-tree pack.
+    set_tests_properties(cook_per_config_invalidation PROPERTIES
+        LABELS cooker RUN_SERIAL ON)
 endif ()
 
 # ---------------------------------------------------------------------------

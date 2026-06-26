@@ -1,0 +1,13 @@
+{
+  "name": "macos",
+  "target": "macos-arm64",
+  "outputSuffix": "-macos",
+  "compressionLevel": 19,
+  "formats": {
+    "Color": "ASTC4x4Srgb",
+    "Normal": "ASTC4x4Unorm",
+    "Mask": "ASTC4x4Unorm",
+    "HDR": "RGBA16Sfloat",
+    "UI": "ASTC4x4Unorm"
+  }
+}

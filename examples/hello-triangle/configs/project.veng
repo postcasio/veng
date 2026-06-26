@@ -1,0 +1,7 @@
+{
+  "activeConfiguration": "macos",
+  "configurations": [
+    "macos.buildcfg",
+    "windows.buildcfg"
+  ]
+}

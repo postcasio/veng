@@ -55,9 +55,12 @@ function(veng_add_game NAME)
 
     # Copy the cooked pack beside the launcher so ExecutableDirectory()-relative
     # mounting finds it; the trio (launcher + lib + pack) is then a self-contained,
-    # movable directory. The pack target records its cooked-file path as the
-    # VENG_ASSET_PACK_OUTPUT property (set by add_asset_pack) so this copy reads it
-    # without the caller restating the path.
+    # movable directory. The pack target records the cooked-file path
+    # (VENG_ASSET_PACK_OUTPUT, possibly suffixed per build configuration) and the
+    # un-suffixed name the app mounts (VENG_ASSET_PACK_MOUNT_NAME), both set by
+    # add_asset_pack, so this copy reads them without the caller restating the path.
+    # The copy renames source -> mount name, so the per-config suffix never leaves
+    # the build tree and the launcher mounts the same name whichever config cooked it.
     #
     # The copy is its own output-producing command keyed on the cooked pack, not a
     # POST_BUILD step on the launcher: a re-cook (e.g. a prefab edit) does not relink
@@ -74,8 +77,8 @@ function(veng_add_game NAME)
         # genex is not permitted in a custom command OUTPUT, so the destination is a
         # plain configure-time path.
         get_target_property(PACK_OUTPUT ${ARG_ASSET_PACK} VENG_ASSET_PACK_OUTPUT)
-        cmake_path(GET PACK_OUTPUT FILENAME PACK_FILENAME)
-        set(PACK_BESIDE_LAUNCHER ${CMAKE_CURRENT_BINARY_DIR}/${PACK_FILENAME})
+        get_target_property(PACK_MOUNT_NAME ${ARG_ASSET_PACK} VENG_ASSET_PACK_MOUNT_NAME)
+        set(PACK_BESIDE_LAUNCHER ${CMAKE_CURRENT_BINARY_DIR}/${PACK_MOUNT_NAME})
 
         add_custom_command(
             OUTPUT ${PACK_BESIDE_LAUNCHER}
