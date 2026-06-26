@@ -321,6 +321,15 @@ namespace Veng::Renderer
         Point,
     };
 
+    /// @brief Primitive assembly topology for a graphics pipeline.
+    enum class PrimitiveTopology : u8
+    {
+        /// @brief Each three consecutive vertices form one triangle (the default).
+        TriangleList,
+        /// @brief Each two consecutive vertices form one independent line segment.
+        LineList,
+    };
+
     /// @brief Texture filtering mode.
     enum class Filter : u8
     {

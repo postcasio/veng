@@ -388,4 +388,9 @@ namespace Veng::Renderer
     {
         return *m_Renderer;
     }
+
+    DebugDraw& Viewport::GetDebugDraw() const
+    {
+        return m_Renderer->GetDebugDraw();
+    }
 }

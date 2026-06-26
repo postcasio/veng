@@ -109,7 +109,7 @@ namespace Veng::Renderer
         }
 
         const vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
-            .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = VK_FALSE};
+            .topology = ToVk(info.Topology), .primitiveRestartEnable = VK_FALSE};
 
         const vk::PipelineTessellationStateCreateInfo tessellationState{.patchControlPoints = 0};
 

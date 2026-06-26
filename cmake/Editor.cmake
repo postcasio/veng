@@ -64,6 +64,17 @@ function(veng_add_editor NAME)
         add_dependencies(${NAME}-editor ${ARG_ASSET_PACK})
     endif ()
 
+    # Copy the cooked editor icon pack beside the editor exe so EditorHost mounts it
+    # from ExecutableDirectory() (the same relocatable-trio rule the game pack follows).
+    # The engine ships no icon content; these are the editor's own light/camera billboards.
+    if (TARGET veng_editor_icons)
+        add_dependencies(${NAME}-editor veng_editor_icons)
+        add_custom_command(TARGET ${NAME}-editor POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${VENG_EDITOR_ICON_PACK} $<TARGET_FILE_DIR:${NAME}-editor>
+                COMMENT "Copying editor icon pack beside ${NAME}-editor")
+    endif ()
+
     if (ARG_EDITOR_MODULE)
         target_compile_definitions(${NAME}-editor PRIVATE
                 VENG_EDITOR_EDITOR_MODULE="$<TARGET_FILE_NAME:${ARG_EDITOR_MODULE}>")

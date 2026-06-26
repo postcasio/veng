@@ -1,14 +1,18 @@
 #include "panels/SceneViewportPanel.h"
 
 #include <Veng/Application.h>
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/Texture.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/ImGui/ImGuiTexture.h>
 #include <Veng/Input.h>
 #include <Veng/InputRouter.h>
 #include <Veng/Math/AABB.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/DebugDraw.h>
 #include <Veng/Renderer/Sampler.h>
+#include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
@@ -24,6 +28,19 @@ namespace VengEditor
 {
     using namespace Veng;
 
+    namespace
+    {
+        // The editor icon-pack texture ids (editor_icons.vengpack, mounted by EditorHost).
+        constexpr AssetId LightIconId{0x9BA14A4E1E8AD8F4ULL};
+        constexpr AssetId CameraIconId{0x010CD6BC54B24B5DULL};
+
+        // Linear-RGBA gizmo colors.
+        constexpr vec4 LightGizmoColor{1.0f, 0.85f, 0.4f, 1.0f};
+        constexpr vec4 CameraGizmoColor{0.5f, 0.8f, 1.0f, 1.0f};
+        // World-unit edge length of an icon billboard.
+        constexpr f32 IconSize = 0.6f;
+    }
+
     SceneViewportPanel::SceneViewportPanel(Application& app, AssetManager& assets,
                                            ImGuiLayer& imgui, PrefabEditContext& ctx, Input& input,
                                            InputRouter& router, PrefabEditorPanel& document)
@@ -33,6 +50,10 @@ namespace VengEditor
         Renderer::Context& context = app.GetRenderContext();
         // A first-frame placeholder; the panel's content rect drives the real region each OnUI.
         const uvec2 extent = {1280, 720};
+
+        // The editor draws light/camera gizmos through the engine debug-draw pass; enable it
+        // from the start so the viewport's renderer wires the pass.
+        m_Settings.DebugDraw = true;
 
         m_Viewport = Renderer::Viewport::Create({
             .Context = context,
@@ -58,6 +79,18 @@ namespace VengEditor
                          .AddressModeW = Renderer::AddressMode::ClampToEdge,
                      });
         m_SceneTexture = imgui.CreateTexture(*m_SceneSampler, *m_Viewport->GetOutput());
+
+        // Resolve the gizmo icon textures from the editor icon pack (mounted by EditorHost).
+        // A missing pack only drops the icon billboards; the wireframe gizmos still draw.
+        if (const AssetResult<AssetHandle<Texture>> light = m_Assets.LoadSync<Texture>(LightIconId))
+        {
+            m_LightIcon = *light;
+        }
+        if (const AssetResult<AssetHandle<Texture>> camera =
+                m_Assets.LoadSync<Texture>(CameraIconId))
+        {
+            m_CameraIcon = *camera;
+        }
     }
 
     SceneViewportPanel::~SceneViewportPanel()
@@ -104,6 +137,98 @@ namespace VengEditor
         const vec3 center = bounds.Center();
         const f32 radius = glm::max(glm::length(bounds.Extents()), 0.1f);
         m_Camera.Frame(center, radius);
+    }
+
+    void SceneViewportPanel::PushGizmos()
+    {
+        if (m_Ctx.Scene == nullptr)
+        {
+            return;
+        }
+
+        Renderer::DebugDraw& debug = m_Viewport->GetDebugDraw();
+
+        // Lights: an icon billboard plus a wireframe of the falloff volume.
+        for (auto [entity, transform, light] : m_Ctx.Scene->View<Transform, Light>())
+        {
+            const vec3 position = vec3(WorldMatrix(*m_Ctx.Scene, entity)[3]);
+
+            if (m_LightIcon.IsLoaded())
+            {
+                debug.DrawBillboard(position, IconSize, m_LightIcon.Get()->GetHandle(),
+                                    LightGizmoColor);
+            }
+
+            switch (light.Type)
+            {
+            case LightType::Point:
+                debug.DrawSphere(position, light.Range, LightGizmoColor);
+                break;
+            case LightType::Spot:
+            {
+                // A spot cone: a ring at the falloff range plus four edges to the apex,
+                // sized by the outer half-angle. The light's Direction is the cone axis.
+                const vec3 axis = glm::length(light.Direction) > 0.0f
+                                      ? glm::normalize(light.Direction)
+                                      : vec3(0.0f, -1.0f, 0.0f);
+                const f32 coneRadius = light.Range * std::tan(light.OuterCone);
+                const vec3 center = position + axis * light.Range;
+
+                // Build a basis around the axis for the cone ring.
+                const vec3 up =
+                    std::abs(axis.y) < 0.99f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
+                const vec3 right = glm::normalize(glm::cross(axis, up));
+                const vec3 bitangent = glm::cross(axis, right);
+
+                constexpr u32 segments = 24;
+                vec3 prev{};
+                for (u32 i = 0; i <= segments; ++i)
+                {
+                    const f32 a =
+                        glm::two_pi<f32>() * static_cast<f32>(i) / static_cast<f32>(segments);
+                    const vec3 point =
+                        center + coneRadius * (std::cos(a) * right + std::sin(a) * bitangent);
+                    if (i > 0)
+                    {
+                        debug.DrawLine(prev, point, LightGizmoColor);
+                    }
+                    if (i % (segments / 4) == 0)
+                    {
+                        debug.DrawLine(position, point, LightGizmoColor);
+                    }
+                    prev = point;
+                }
+                break;
+            }
+            case LightType::Directional:
+                // A directional light has no position-bound volume; a short arrow shows its axis.
+                {
+                    const vec3 axis = glm::length(light.Direction) > 0.0f
+                                          ? glm::normalize(light.Direction)
+                                          : vec3(0.0f, -1.0f, 0.0f);
+                    debug.DrawLine(position, position + axis * 1.5f, LightGizmoColor);
+                }
+                break;
+            }
+        }
+
+        // Cameras: an icon billboard plus the view frustum (clamped far so it stays readable).
+        for (auto [entity, transform, camera] : m_Ctx.Scene->View<Transform, Camera>())
+        {
+            const mat4 world = WorldMatrix(*m_Ctx.Scene, entity);
+            const vec3 position = vec3(world[3]);
+
+            if (m_CameraIcon.IsLoaded())
+            {
+                debug.DrawBillboard(position, IconSize, m_CameraIcon.Get()->GetHandle(),
+                                    CameraGizmoColor);
+            }
+
+            Camera gizmoCamera = camera;
+            gizmoCamera.Far = glm::min(camera.Far, camera.Near + 5.0f);
+            const CameraView view = MakeCameraView(gizmoCamera, 16.0f / 9.0f, world);
+            debug.DrawFrustum(glm::inverse(view.ViewProjection()), CameraGizmoColor);
+        }
     }
 
     void SceneViewportPanel::ApplyLevelRenderSettings(const LevelRenderSettings& render)
@@ -381,6 +506,14 @@ namespace VengEditor
             .Exposure = m_Exposure,
             .BloomIntensity = m_BloomIntensity,
         });
+
+        // Push the light/camera gizmos for the next render. The engine renders the viewport at the
+        // top of the next frame, so the accumulator filled here is consumed then (one frame of
+        // latency, the same as the pushed ViewState). Skipped while playing — gizmos are an edit aid.
+        if (!m_Ctx.IsPlaying())
+        {
+            PushGizmos();
+        }
 
         DrawToolbar();
         if (gameplayFocused)

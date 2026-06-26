@@ -436,6 +436,18 @@ namespace Veng::Renderer
         VE_ASSERT(false, "ToVk(PolygonMode): unmapped value {}", static_cast<u32>(mode));
     }
 
+    inline vk::PrimitiveTopology ToVk(PrimitiveTopology topology)
+    {
+        switch (topology)
+        {
+        case PrimitiveTopology::TriangleList:
+            return vk::PrimitiveTopology::eTriangleList;
+        case PrimitiveTopology::LineList:
+            return vk::PrimitiveTopology::eLineList;
+        }
+        VE_ASSERT(false, "ToVk(PrimitiveTopology): unmapped value {}", static_cast<u32>(topology));
+    }
+
     inline vk::Filter ToVk(Filter filter)
     {
         switch (filter)

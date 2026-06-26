@@ -697,6 +697,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/create_async.cpp
             tests/gpu/primitive_resolve.cpp
             tests/gpu/scene_renderer.cpp
+            tests/gpu/debug_draw.cpp
             tests/gpu/viewport.cpp
             tests/gpu/splitscreen.cpp
             tests/gpu/hi_z_pyramid.cpp

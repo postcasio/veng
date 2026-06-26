@@ -61,6 +61,8 @@ add_library(veng SHARED
         src/Scene/Visibility.cpp
         src/Renderer/SwapChainCompositePass.cpp
         src/Renderer/GatherPass.cpp
+        src/Renderer/DebugDraw.cpp
+        src/Renderer/DebugDrawScenePass.cpp
         src/Renderer/EnvironmentIbl.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/SceneRenderer.cpp
