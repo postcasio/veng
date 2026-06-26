@@ -72,13 +72,15 @@ namespace VengEditor
 
     void RegisterCompressionWidgets(EditorRegistry& editors)
     {
+        // The combo id is derived from the field name so sibling fields of the same enum type
+        // (the per-role CompressionFormat columns of a RoleToFormat table) get distinct ImGui ids.
         editors.RegisterFieldWidget(
-            TypeIdOf<CompressionRole>(), [](void* fieldPtr, const FieldDescriptor&)
-            { DrawNamedEnumCombo(fieldPtr, "##compressionrole", CompressionRoles); });
+            TypeIdOf<CompressionRole>(), [](void* fieldPtr, const FieldDescriptor& field)
+            { DrawNamedEnumCombo(fieldPtr, "##" + field.Name, CompressionRoles); });
 
         editors.RegisterFieldWidget(
-            TypeIdOf<CompressionFormat>(), [](void* fieldPtr, const FieldDescriptor&)
-            { DrawNamedEnumCombo(fieldPtr, "##compressionformat", CompressionFormats); });
+            TypeIdOf<CompressionFormat>(), [](void* fieldPtr, const FieldDescriptor& field)
+            { DrawNamedEnumCombo(fieldPtr, "##" + field.Name, CompressionFormats); });
     }
 
     InspectorPanel::InspectorPanel(AssetManager& assets, EditorRegistry& editors,
