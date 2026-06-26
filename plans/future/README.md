@@ -510,6 +510,20 @@ come free through `DrawFieldWidget`. **Gate met** by planset-32 (the formats, th
 queries, the cooker codec selection). **Design overview:**
 [build-configurations.md](build-configurations.md).
 
+### 16. Dynamic meshes — mutable runtime geometry
+
+**Motivated by planset-34's mesh-source unification**, which makes a procedural primitive a mesh
+whose *source* is a declarative recipe (the Godot `PrimitiveMesh : Mesh` model), resolved through the
+ordinary load path. That covers meshes that are a pure function of a few parameters; it deliberately
+does **not** cover meshes whose **vertex buffer is the source of truth** — geometry mutated in place
+at runtime (runtime/in-editor sculpting, voxel / marching-cubes terrain, CSG / destruction,
+gameplay-generated trails / soft bodies). The real new capability is a **mutable `Mesh`** (an in-place
+buffer-update path with retire-on-resize; `Mesh` is immutable after upload today) — orthogonal to the
+recipe question and the substrate a `DynamicMeshComponent` would own. **Deferred** until a concrete
+consumer exists to design it against; the single-mesh-slot model from planset-34 keeps the door open
+(a dynamic mesh produces a `Mesh` into the same `MeshRenderer.Mesh` slot). **Design overview:**
+[dynamic-meshes.md](dynamic-meshes.md).
+
 ## Ordering & dependencies
 
 The order to *take the remaining areas up* (each becomes its own planset), not a

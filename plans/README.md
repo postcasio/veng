@@ -602,6 +602,21 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   one seam: planset-33's compression changes the texture-VRAM budget planset-32's memory-driven
   initial-tier follow-on would read.
 
+- **[planset-34](planset-34/README.md)** — grab bag: render-allocation honesty, meshes-are-meshes,
+  residency, editor play, gizmos (proposed, 6 plans). Lifts the sample's hardcoded half-resolution
+  cap so the managed viewport renders at **native HiDPI** and the planset-32 allocation tier discovers
+  the operating point itself. Retires the special-cased two-pass `Primitive` resolve: a procedural
+  primitive becomes a mesh whose **source** is an inline recipe (`cooked AssetId | recipe`), resolved
+  through the ordinary async load path (the **Godot `PrimitiveMesh : Mesh` model**) — removing the
+  `SpawnResolve`/`VE_RESOLVE` pass and the scattered `ResolveComponents` hazard. Residency-on-spawn
+  then falls out as a scoped, engine-owned **`ResidencyBatch`** (`SpawnInto` → `SpawnResult`,
+  surfaced through `LevelInstance`), replacing the sample's whole-scene wait loop. Plus: the sample's
+  debug UI extracted into à-la-carte **`Veng::UI`** panels; **editor Play** seeds the `Session` through
+  the same path as `Level::LoadInto` so it drops into a playable state; and a general engine
+  **debug-draw** API (lines + billboards, a depth-aware `ScenePass`) that the editor drives to show
+  **light/camera gizmos**. A **mutable** mesh (sculpting, voxels, destruction) is split out to
+  **future area 16** to design against a real consumer.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
