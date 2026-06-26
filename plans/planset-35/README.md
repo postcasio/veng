@@ -7,8 +7,8 @@ add the **minimal game template** that new developers copy to start. Two threads
 1. **Build configurations** (future [area 15](../future/build-configurations.md)) — a
    **project-settings** concept owning a set of **build configurations** (one per ship target:
    macOS / Windows / Linux / mobile), each holding the texture codec policy as a **role → format**
-   table. A texture declares a compression **role/intent** (Color / Normal / Mask / HDR / UI), not a
-   raw codec; the build configuration resolves role → concrete format per platform. The cook reads the
+   table. A texture declares a compression **role** (its *intent* — Color / Normal / Mask / HDR / UI),
+   never a raw codec; the build configuration resolves role → concrete format per platform. The cook reads the
    active configuration, emits **one output pack per configuration**, and a bare `cmake --build` on a
    host picks the **host-matching configuration by default** (build on a Mac → cook the macOS/ASTC
    pack, with no ceremony). The editor surfaces the settings through the reflection inspector and
@@ -38,7 +38,7 @@ hardcode with the standard cross-engine factoring — **role on the asset, forma
        Build configuration (N)      Veng/Project/BuildConfiguration — reflected, JSON
          └─ role → concrete-format table, compression level, output pack name
             Per-asset *.tex.json     declares a role (Color/Normal/Mask/HDR/UI), not a codec
-              └─ a raw "codec" override is the escape hatch, not the norm
+              └─ the existing raw "compression" key is the escape hatch, not the norm
 ```
 
 The **gate is met by planset-33**: the `BC7`/`ASTC4x4` formats, the `FormatInfo::BytesForLevel`
@@ -71,10 +71,10 @@ host-matched configuration the natural one.
 
 | # | Plan | Summary | Status |
 |---|---|---|---|
-| 00 | Project-settings data model | `Veng/Project/`: reflected `ProjectSettings` (the config list + active/default) and `BuildConfiguration` (a `CompressionRole → Renderer::Format` table + target + output name), `VE_LEAF(FieldClass::Enum)` role/format fields, JSON (de)serialization, a device-free round-trip test. The closed `CompressionRole` taxonomy is settled here. No cook/editor wiring yet. | proposed |
-| 01 | Compression roles → cook resolution | `*.tex.json` gains a `role` key (intent, not codec) over the existing raw-`codec` escape hatch; `CookContext` gains `const BuildConfiguration* Config`; `TextureImporter` resolves `role → format` through it (raw override on top, planset-33's hardcoded ASTC the zero-config fallback). Records the config file as a central depfile input. Depends on 00. | proposed |
+| 00 | Project-settings data model | `Veng/Project/`: reflected `ProjectSettings` (the config list + active/default) and `BuildConfiguration` (a `CompressionRole → CompressionFormat` table + target + output suffix), the two closed `VE_LEAF(FieldClass::Enum)` enums + shared name tables, new **`FieldClass::Array`** reflection for the config list, and a device-free reflection round-trip test. JSON lives in the consumers (cooker hand-parse / editor nlohmann), not `libveng`. The closed `CompressionRole`/`CompressionFormat` taxonomies are settled here. No cook/editor wiring yet. | proposed |
+| 01 | Compression roles → cook resolution | `*.tex.json` gains a `role` key (intent) layered over the **existing** raw `compression` escape hatch (no new key, no fixture migration); `CookContext` gains `const BuildConfiguration* Config`; `TextureImporter` resolves `role → format` through it (raw override on top, planset-33's hardcoded ASTC the zero-config fallback) and applies the config's `CompressionLevel`. Records the config file as a central depfile input. Depends on 00. | proposed |
 | 02 | CMake config selection | `vengc cook … --config <file>`; `add_asset_pack` grows a `CONFIG` dimension (one output pack per config); a `VENG_BUILD_CONFIG` cache var **defaulting from the host triple**; a `cook-all-packs` aggregate target. hello-triangle ships a `configs/` pair (macOS/ASTC + Windows/BC7) and its cook threads the host-default config. Depends on 01. | proposed |
-| 03 | Editor — surface the settings | A host-level **Project Settings panel** (Window menu) listing/editing the configs + active one through `DrawFieldWidget`/`PropertyTable` (reflection-driven, free); the **texture editor** gains a **compression-role combo** over the unknown-key-preserving round-trip, showing the *resolved* format read-only. Depends on 00, 01. | proposed |
+| 03 | Editor — surface the settings | A host-level **Project Settings panel** (Window menu) listing/editing the configs + active one through `DrawFieldWidget`/`PropertyTable` — reflection draws the rows, this plan adds the two enum combos (registered like `LightType`), the config-array add/remove widget, and the nlohmann JSON save; the **texture editor** gains a **compression-role combo** over the unknown-key-preserving round-trip, showing the *resolved* format read-only. Depends on 00, 01. | proposed |
 | 04 | Editor — gate preview to host GPU | The editor's default live-cook target is **host-safe**, independent of the selected ship config; "preview as ship config" is opt-in and **disables host-incompatible configs with a reason** via `IsBlockCompressionSupported()`/`IsAstcSupported()`; a fallback banner when no config is host-previewable. Building any config stays unrestricted. Depends on 03. | proposed |
 | 05 | The minimal game template | A new `examples/template/` `veng_add_game` member: the smallest app that opens a window and renders a **rotating cube** (a cube primitive recipe + one trivial material + a camera, the cube rotated inline in `OnUpdate` — no custom component, no system, no debug UI). Relies on the **zero-config cook default** to stay minimal. A build-only launcher smoke (exit 0, correct-sized capture); **no pixel golden** to keep it low-maintenance. Independent. | proposed |
 | 06 | Docs + roadmap | Document build configurations across the `CLAUDE.md` set + the root, document the template + its co-migration rule, mark future area 15 delivered (footprint items stay future), run the full verification band. The closer. Depends on 00–05. | proposed |
@@ -87,9 +87,10 @@ host-matched configuration the natural one.
 - **00** is foundational (the reflected structs + JSON schema), pure and device-free.
 - **01** depends on 00 (it consumes `BuildConfiguration` in the cook); **02** depends on 01 (the
   CMake/CLI layer threads the config the cooker now reads). **00 → 01 → 02** is the cooker/CMake
-  chain — merge in number order; 01 and 02 both touch
-  [`cooker/src/Importers/TextureImporter.cpp`](../../cooker/src/Importers/TextureImporter.cpp) and the
-  cook entry, sequential by construction.
+  chain — merge in number order; 01 and 02 both touch the **cook entry** (`CookContext` threading in
+  [`cooker/src/Cooker.cpp`](../../cooker/src/Cooker.cpp) and the `--config` flag in
+  [`cooker/tool/main.cpp`](../../cooker/tool/main.cpp)), sequential by construction. Only 01 touches
+  [`cooker/src/Importers/TextureImporter.cpp`](../../cooker/src/Importers/TextureImporter.cpp).
 - **03** depends on 00 (structs to inspect) + 01 (the `role` key it writes); **04** depends on 03.
   **03 → 04** is the editor chain, merging cleanly beside the cooker chain.
 - **05** is **independent** of the build-config work — it relies on the zero-config cook default and
@@ -100,15 +101,16 @@ host-matched configuration the natural one.
 Dependent plans must build on the **prior plan's integration commit**, not `origin/main`. Per
 [[project_megaexec_worktree_base]], `isolation: "worktree"` branches from `origin/main` and will not
 see a locally-committed-but-unpushed base: dispatch **01** against a manual worktree cut from **00**'s
-integration commit, **02** against the 00→01 chain, and **04** against **03**'s. The independent plans
-(**00**, **03**, **05**) can use `isolation: "worktree"` directly.
+integration commit, **02** against the 00→01 chain, **03** against **01**'s (it depends on 00 + 01),
+and **04** against **03**'s. Only the genuinely independent plans — **00** (foundational) and **05**
+(zero-config template) — can use `isolation: "worktree"` directly.
 
 ## The decisions this planset settles
 
 - **Codec is a build-configuration property, not a project default or a per-asset knob.** Per-platform
   by nature; the project owns the *list* of configurations, the configuration owns the codec policy.
 - **A per-asset texture declares a role, not a raw codec.** The build configuration maps role → format
-  per platform; a raw `"codec"` override stays as the escape hatch for the rare case.
+  per platform; the existing raw `"compression"` key stays as the escape hatch for the rare case.
 - **The build-time config dependency is implicit and coarse.** A central depfile input over a
   whole-pack cook, one output pack per configuration. No fine-grained per-asset edges; a
   content-addressed per-asset cook cache stays a separate, orthogonal cooker optimization.

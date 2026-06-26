@@ -18,12 +18,14 @@ queries earn their second use (the warning *and* the gate are one query).
 ## What lands
 
 - **A host-safe default live-cook target.** The editor's cook-on-demand preview (the
-  `RequestCook` → `MountMemory` → sample path) targets a **host-safe profile** — uncompressed, or the
-  host's best-supported codec — chosen from `Context::IsBlockCompressionSupported()` /
-  `IsAstcSupported()`, **independent of which ship configuration is selected for editing**. So the
-  editor never hands the GPU an unsamplable blob by accident: authoring the macOS/ASTC configuration on
-  a BC-only Windows box previews host-safe, while the *build* of that configuration (CPU encode) stays
-  unrestricted.
+  `RequestCook` → `MountMemory` → sample path) **re-cooks the previewed textures against a host-safe
+  profile** — uncompressed, or the host's best-supported codec — chosen from
+  `Context::IsBlockCompressionSupported()` / `IsAstcSupported()`, **independent of which ship
+  configuration is selected for editing**. This is an active substitution at cook-on-demand time, not a
+  reuse of whatever the active config produced: the safe profile overrides the config's `RoleToFormat`
+  for the *editor's own* cook. So the editor never hands the GPU an unsamplable blob by accident —
+  authoring the macOS/ASTC configuration on a BC-only Windows box previews uncompressed, while the
+  *build* of that configuration (CPU encode) stays unrestricted.
 
 - **Capability intersection.** A small helper intersects a `BuildConfiguration`'s resolved formats
   with the host's enabled features (`IsBlockCompressionSupported()` for `BC*`, `IsAstcSupported()` for
@@ -69,8 +71,8 @@ queries earn their second use (the warning *and* the gate are one query).
 | File | Change |
 |---|---|
 | `editor/src/EditorHost.cpp` | Choose the host-safe live-cook default from the device queries; intersect a configuration's formats with host capability; the never-stuck fallback. |
-| `editor/src/Panels/ProjectSettingsPanel.cpp` | The "preview as ship config" selector disabling host-incompatible configurations with a reason; the active-config capability warning. |
-| `editor/src/Panels/TextureEditorPanel.cpp` | Preview through the host-clamped configuration; re-cook + remount on a preview-config change; the fallback banner. |
+| `editor/src/panels/ProjectSettingsPanel.cpp` | The "preview as ship config" selector disabling host-incompatible configurations with a reason; the active-config capability warning. |
+| `editor/src/panels/TextureEditorPanel.cpp` | Preview through the host-clamped configuration; re-cook + remount on a preview-config change; the fallback banner. |
 | `editor/src/…` (a capability helper) | `IsConfigPreviewable(const BuildConfiguration&, const Context&)` over the planset-33 queries. |
 
 ## Verification

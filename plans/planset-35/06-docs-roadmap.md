@@ -21,10 +21,10 @@ their seams.
   default; `cook-all-packs` for all). Record the **two co-migrated examples** rule in "Working norms":
   a breaking change migrates `examples/hello-triangle` *and* `examples/template` in the same pass.
 
-- **`cooker/CLAUDE.md`.** The `CookContext.Config` seam, the role → format resolution (raw `codec` >
-  role > zero-config ASTC), the config file as a central depfile input, and one output pack per
-  configuration. Note the zero-config default is preserved (a pack with no project settings cooks as
-  planset-33 left it).
+- **`cooker/CLAUDE.md`.** The `CookContext.Config` seam, the role → format resolution (raw
+  `compression` key > role > zero-config ASTC), the cooker's hand-parse of `project.veng`/`*.buildcfg`
+  JSON, the config file as a central depfile input, and one output pack per configuration. Note the
+  zero-config default is preserved (a pack with no project settings cooks as planset-33 left it).
 
 - **`editor/CLAUDE.md`.** The Project Settings panel (reflection-driven, Window menu), the texture
   editor's role combo + resolved-format read-out, and the **host-capability preview gate** (build any
@@ -32,8 +32,9 @@ their seams.
   impossible). Note the gate reuses planset-33's `IsBlockCompressionSupported()`/`IsAstcSupported()`.
 
 - **`engine/CLAUDE.md`.** The new `Veng/Project/` home (the reflected `ProjectSettings` /
-  `BuildConfiguration` / `CompressionRole`), and the minimal `examples/template` as the smallest app +
-  the copy-to-start starter.
+  `BuildConfiguration` and the closed `CompressionRole` / `CompressionFormat` enums, the latter lowered
+  to `Renderer::Format` at cook time), the new `FieldClass::Array` reflection support, and the minimal
+  `examples/template` as the smallest app + the copy-to-start starter.
 
 - **`future/README.md` + `future/build-configurations.md`.** Mark **area 15 delivered** by
   planset-35: the project-settings/build-configuration concept, the role → format table, the coarse
@@ -41,8 +42,11 @@ their seams.
   Keep only the **still-future remainder** — the footprint items (**BC5/BC4 channel specialization**,
   **wider ASTC footprints**, **HDR ASTC**, the **uncompressed fallback pack**), **editor active-config
   persistence**, and the **Windows cross-compile constraint** — each a new format/encoder or an
-  orthogonal concern, not settings-tier work. Update the area-15 line in `plans/README.md`'s future
-  recap accordingly.
+  orthogonal concern, not settings-tier work. Make explicit that the role *taxonomy* is settled but its
+  *per-codec specialization* is not: under the two current codecs every role maps full-channel
+  (`Color`→sRGB, the rest→unorm), and the channel-specialized mappings (`Normal`→BC5, `Mask`→BC4) plus
+  the ASTC normal-packing convention ride those footprint follow-ons. Update the area-15 line in
+  `plans/README.md`'s future recap accordingly.
 
 - **`plans/README.md`.** Add the planset-35 index entry (build configurations + the minimal template).
 
