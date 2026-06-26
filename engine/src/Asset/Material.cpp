@@ -5,6 +5,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetBuild.h>
+#include <Veng/Asset/Shader.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -71,6 +72,16 @@ namespace Veng
         {
             m_Context.GetBindlessRegistry().Release(m_Handle);
         }
+    }
+
+    const Ref<Renderer::ShaderModule>& Material::GetVertexModule() const
+    {
+        return m_VertexShader.Get()->Module;
+    }
+
+    const Ref<Renderer::ShaderModule>& Material::GetFragmentModule() const
+    {
+        return m_FragmentShader.Get()->Module;
     }
 
     void Material::Finalize(Ref<Renderer::PipelineLayout> layout,

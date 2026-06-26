@@ -7,7 +7,6 @@
 #include <Veng/Asset/AssetBuild.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetType.h>
-#include <Veng/Asset/Shader.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 
@@ -19,6 +18,7 @@ namespace Veng::Renderer
 
 namespace Veng
 {
+    struct Shader;
     class Texture;
 
     /// @brief Selects a material's output contract, pipeline shape, standard vertex shader, and invocation site.
@@ -170,16 +170,10 @@ namespace Veng
         }
 
         /// @brief Returns the vertex shader module.
-        [[nodiscard]] const Ref<Renderer::ShaderModule>& GetVertexModule() const
-        {
-            return m_VertexShader.Get()->Module;
-        }
+        [[nodiscard]] const Ref<Renderer::ShaderModule>& GetVertexModule() const;
 
         /// @brief Returns the fragment shader module.
-        [[nodiscard]] const Ref<Renderer::ShaderModule>& GetFragmentModule() const
-        {
-            return m_FragmentShader.Get()->Module;
-        }
+        [[nodiscard]] const Ref<Renderer::ShaderModule>& GetFragmentModule() const;
 
         /// @brief Returns the push-constant offset of the per-draw material selector.
         ///
