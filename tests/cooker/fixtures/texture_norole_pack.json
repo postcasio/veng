@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "assets": [
+    { "id": 6944376030813834453, "type": "texture", "source": "textures/texture_norole_srgb.tex.json" }
+  ]
+}

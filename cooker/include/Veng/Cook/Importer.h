@@ -3,6 +3,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Cook/Types.h>
+#include <Veng/Project/BuildConfiguration.h>
 #include <Veng/Reflection/TypeRegistry.h>
 
 namespace Veng
@@ -43,6 +44,12 @@ namespace Veng::Cook
         ///
         /// The level importer resolves a level's system ids against it; other importers ignore it.
         const SystemRegistry* Systems = nullptr;
+        /// @brief The active build configuration driving this cook, or null for a zero-config cook.
+        ///
+        /// The texture importer resolves a texture's compression role to a concrete format
+        /// through this configuration's role table. Null means no project settings: the
+        /// importer falls back to its hardcoded ASTC default, the zero-config behavior.
+        const BuildConfiguration* Config = nullptr;
         /// @brief Records a source file the cook read, for build dependency tracking.
         ///
         /// The cooker records the pack JSON and resolved cross-asset references centrally.

@@ -13,16 +13,19 @@
 #include <stb_image_resize2.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Project/BuildConfiguration.h>
+#include <Veng/Project/CompressionFormat.h>
+#include <Veng/Project/CompressionRole.h>
 
 namespace Veng::Cook
 {
     namespace
     {
-        // The texture cook's compression codec. ASTC is the default (the Metal-blessed codec on the
-        // primary MoltenVK platform); BC7 is selectable for the desktop/Windows target; None packs
-        // uncompressed RGBA8. This is the minimal internal seam where a per-texture/per-pack codec
-        // choice attaches — a texture selects one with "compression": "astc"/"bc7"/"none", and
-        // absent the key a texture cooks to the default (ASTC).
+        // The texture cook's compression codec, the encode-path selector. ASTC is the
+        // Metal-blessed codec on the primary MoltenVK platform; BC7 targets the desktop/Windows
+        // platform; None packs uncompressed RGBA8. The raw "compression": "astc"/"bc7"/"none"
+        // escape-hatch key pins one directly; otherwise the codec is derived from the resolved
+        // CompressionFormat (role table or the hardcoded ASTC zero-config default).
         enum class TextureCodec
         {
             None,
@@ -57,6 +60,115 @@ namespace Veng::Cook
         constexpr u32 BC7SrgbFormat = 22;
         constexpr u32 ASTC4x4UnormFormat = 23;
         constexpr u32 ASTC4x4SrgbFormat = 24;
+
+        // A texture's cook is one codec + one header Format ordinal. The codec drives the encode
+        // path (block-compress vs. raw copy); the ordinal is the hand-synced Renderer::Format value
+        // the engine's TextureLoader::BridgeFormat reads back.
+        struct ResolvedFormat
+        {
+            TextureCodec Codec{};
+            u32 FormatOrdinal{};
+        };
+
+        // Parses a "role" name to its CompressionRole. The names match the canonical authoring
+        // spellings in Veng::ToString(CompressionRole); the mapping is duplicated here rather than
+        // calling the libveng symbol, since the texture importer links into the veng-free cooker
+        // core (and the core-pack bootstrap) that cannot reference libveng's out-of-line tables.
+        optional<CompressionRole> ParseRole(const string& name)
+        {
+            if (name == "Color")
+            {
+                return CompressionRole::Color;
+            }
+            if (name == "Normal")
+            {
+                return CompressionRole::Normal;
+            }
+            if (name == "Mask")
+            {
+                return CompressionRole::Mask;
+            }
+            if (name == "HDR")
+            {
+                return CompressionRole::HDR;
+            }
+            if (name == "UI")
+            {
+                return CompressionRole::UI;
+            }
+            return std::nullopt;
+        }
+
+        // Reads the configuration's resolved format for a role from its fixed RoleToFormat record.
+        CompressionFormat RoleFormat(const RoleToFormat& table, CompressionRole role)
+        {
+            switch (role)
+            {
+            case CompressionRole::Color:
+                return table.Color;
+            case CompressionRole::Normal:
+                return table.Normal;
+            case CompressionRole::Mask:
+                return table.Mask;
+            case CompressionRole::HDR:
+                return table.HDR;
+            case CompressionRole::UI:
+                return table.UI;
+            }
+            return table.Color;
+        }
+
+        // Lowers a CompressionFormat (the closed codec-output set a role table holds) to the cook's
+        // codec + header Format ordinal. RGBA16Sfloat has no LDR encode path in this importer, so a
+        // role resolving to it is an error here — an HDR source is an environment asset.
+        Result<ResolvedFormat> ResolveCompressionFormat(CompressionFormat format)
+        {
+            switch (format)
+            {
+            case CompressionFormat::RGBA8Unorm:
+                return ResolvedFormat{.Codec = TextureCodec::None,
+                                      .FormatOrdinal = RGBA8UnormFormat};
+            case CompressionFormat::RGBA8Srgb:
+                return ResolvedFormat{.Codec = TextureCodec::None,
+                                      .FormatOrdinal = RGBA8SrgbFormat};
+            case CompressionFormat::BC7Unorm:
+                return ResolvedFormat{.Codec = TextureCodec::BC7, .FormatOrdinal = BC7UnormFormat};
+            case CompressionFormat::BC7Srgb:
+                return ResolvedFormat{.Codec = TextureCodec::BC7, .FormatOrdinal = BC7SrgbFormat};
+            case CompressionFormat::ASTC4x4Unorm:
+                return ResolvedFormat{.Codec = TextureCodec::ASTC,
+                                      .FormatOrdinal = ASTC4x4UnormFormat};
+            case CompressionFormat::ASTC4x4Srgb:
+                return ResolvedFormat{.Codec = TextureCodec::ASTC,
+                                      .FormatOrdinal = ASTC4x4SrgbFormat};
+            case CompressionFormat::RGBA16Sfloat:
+                return std::unexpected(
+                    string("the HDR role resolves to RGBA16Sfloat, which an LDR texture cannot "
+                           "encode; author an HDR source as an environment asset"));
+            }
+            return std::unexpected(string("unmapped CompressionFormat"));
+        }
+
+        // The codec + ordinal a raw "compression" codec name pins, keyed off the texture's sRGB
+        // flag for its sRGB-aware format pair. This is the escape-hatch path: it wins over the role.
+        ResolvedFormat RawCodecFormat(TextureCodec codec, bool srgb)
+        {
+            switch (codec)
+            {
+            case TextureCodec::ASTC:
+                return ResolvedFormat{.Codec = TextureCodec::ASTC,
+                                      .FormatOrdinal =
+                                          srgb ? ASTC4x4SrgbFormat : ASTC4x4UnormFormat};
+            case TextureCodec::BC7:
+                return ResolvedFormat{.Codec = TextureCodec::BC7,
+                                      .FormatOrdinal = srgb ? BC7SrgbFormat : BC7UnormFormat};
+            case TextureCodec::None:
+                return ResolvedFormat{.Codec = TextureCodec::None,
+                                      .FormatOrdinal = srgb ? RGBA8SrgbFormat : RGBA8UnormFormat};
+            }
+            return ResolvedFormat{.Codec = TextureCodec::ASTC,
+                                  .FormatOrdinal = srgb ? ASTC4x4SrgbFormat : ASTC4x4UnormFormat};
+        }
 
         // BC7 and ASTC 4x4 both encode a 4x4 texel tile into one 16-byte block; the full mip chain
         // (down to 1x1) pads partial edge tiles by replicating the level's edge texels into the 4x4
@@ -263,24 +375,76 @@ namespace Veng::Cook
         const bool srgb =
             texJson.contains("srgb") && texJson["srgb"].is_boolean() && texJson["srgb"].get<bool>();
 
-        // The codec-selection seam: "compression" picks the codec; absent the key a texture cooks to
-        // the default (ASTC), the Metal-blessed codec on the primary platform. "bc7" selects BC7 for
-        // the desktop/Windows target, "none" stays uncompressed RGBA8. sRGB-aware — the format pair
-        // is chosen from the texture's sRGB flag below.
-        TextureCodec codec = TextureCodec::ASTC;
-        if (texJson.contains("compression") && texJson["compression"].is_string())
+        // The format-resolution chain: the raw "compression" codec name (the escape hatch) wins,
+        // else the build configuration's role table, else the hardcoded ASTC zero-config default.
+        // A texture declares a "role" (its intent — Color/Normal/Mask/HDR/UI), parsed to a
+        // CompressionRole that the active configuration maps to a concrete codec output. Absent a
+        // role, the intent is guessed from the sRGB flag: an sRGB source is Color, a non-sRGB source
+        // is Mask (the safe unorm default); Normal/HDR/UI cannot be told apart by the flag and are
+        // authored explicitly.
+        const optional<TextureCodec> rawCodec = [&]() -> optional<TextureCodec>
         {
-            const string codecName = texJson["compression"].get<string>();
-            const optional<TextureCodec> parsed = ParseCodec(codecName);
+            if (texJson.contains("compression") && texJson["compression"].is_string())
+            {
+                return ParseCodec(texJson["compression"].get<string>());
+            }
+            return std::nullopt;
+        }();
+        if (texJson.contains("compression") && texJson["compression"].is_string() && !rawCodec)
+        {
+            return std::unexpected(
+                fmt::format("texture importer: '{}': invalid compression '{}' (expected "
+                            "'astc', 'bc7', or 'none')",
+                            sourcePath.string(), texJson["compression"].get<string>()));
+        }
+
+        CompressionRole role = srgb ? CompressionRole::Color : CompressionRole::Mask;
+        if (texJson.contains("role") && texJson["role"].is_string())
+        {
+            const string roleName = texJson["role"].get<string>();
+            const optional<CompressionRole> parsed = ParseRole(roleName);
             if (!parsed)
             {
                 return std::unexpected(
-                    fmt::format("texture importer: '{}': invalid compression '{}' (expected "
-                                "'astc', 'bc7', or 'none')",
-                                sourcePath.string(), codecName));
+                    fmt::format("texture importer: '{}': invalid role '{}' (expected "
+                                "'Color', 'Normal', 'Mask', 'HDR', or 'UI')",
+                                sourcePath.string(), roleName));
             }
-            codec = *parsed;
+            role = *parsed;
         }
+
+        ResolvedFormat resolved{};
+        if (rawCodec)
+        {
+            resolved = RawCodecFormat(*rawCodec, srgb);
+        }
+        else if (context.Config != nullptr)
+        {
+            const CompressionFormat roleFormat = RoleFormat(context.Config->Formats, role);
+            const Result<ResolvedFormat> lowered = ResolveCompressionFormat(roleFormat);
+            if (!lowered)
+            {
+                return std::unexpected(fmt::format("texture importer: '{}': {}",
+                                                   sourcePath.string(), lowered.error()));
+            }
+            resolved = *lowered;
+        }
+        else
+        {
+            // Zero-config default: the hardcoded ASTC codec, the Metal-blessed codec on the primary
+            // platform, preserved bit-for-bit for an un-migrated project.
+            resolved = RawCodecFormat(TextureCodec::ASTC, srgb);
+        }
+
+        const TextureCodec codec = resolved.Codec;
+
+        // The resolved format is authoritative for sRGB-ness: it carries the role's intent, so a
+        // config-driven Color → *Srgb encodes (and resizes) in gamma space regardless of the source
+        // "srgb" flag. The override and zero-config ordinals are keyed off "srgb", so this equals the
+        // flag on those paths — the encode stays byte-identical.
+        const bool srgbEncode = resolved.FormatOrdinal == RGBA8SrgbFormat ||
+                                resolved.FormatOrdinal == BC7SrgbFormat ||
+                                resolved.FormatOrdinal == ASTC4x4SrgbFormat;
 
         const path imagePath = sourcePath.parent_path() / texJson["image"].get<string>();
         context.RecordDependency(imagePath);
@@ -323,10 +487,10 @@ namespace Veng::Cook
         {
             const stbir_pixel_layout layout = STBIR_RGBA;
             const unsigned char* resized =
-                srgb ? stbir_resize_uint8_srgb(pixels, width, height, 0, pixelData.data(),
-                                               targetWidth, targetHeight, 0, layout)
-                     : stbir_resize_uint8_linear(pixels, width, height, 0, pixelData.data(),
-                                                 targetWidth, targetHeight, 0, layout);
+                srgbEncode ? stbir_resize_uint8_srgb(pixels, width, height, 0, pixelData.data(),
+                                                     targetWidth, targetHeight, 0, layout)
+                           : stbir_resize_uint8_linear(pixels, width, height, 0, pixelData.data(),
+                                                       targetWidth, targetHeight, 0, layout);
             if (resized == nullptr)
             {
                 stbi_image_free(pixels);
@@ -354,24 +518,8 @@ namespace Veng::Cook
             }
         }
 
-        // Format is the codec's sRGB-aware pair: ASTC4x4Srgb/Unorm, BC7Srgb/Unorm, or RGBA8Srgb/Unorm
-        // uncompressed, keyed off the texture's sRGB flag.
-        u32 format = 0;
-        switch (codec)
-        {
-        case TextureCodec::ASTC:
-            format = srgb ? ASTC4x4SrgbFormat : ASTC4x4UnormFormat;
-            break;
-        case TextureCodec::BC7:
-            format = srgb ? BC7SrgbFormat : BC7UnormFormat;
-            break;
-        case TextureCodec::None:
-            format = srgb ? RGBA8SrgbFormat : RGBA8UnormFormat;
-            break;
-        }
-
         CookedTextureHeader header{};
-        header.Format = format;
+        header.Format = resolved.FormatOrdinal;
         header.Width = baseWidth;
         header.Height = baseHeight;
         header.MipCount = mipCount;
@@ -487,7 +635,7 @@ namespace Veng::Cook
             bc7enc_compress_block_params_init(&params);
             params.m_uber_level = BC7UberLevel;
         }
-        const astcenc_profile astcProfile = srgb ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR;
+        const astcenc_profile astcProfile = srgbEncode ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR;
 
         const auto packLevel = [&](vector<u8>& blob, usize writeOffset, u8* rgba, u32 lw,
                                    u32 lh) -> VoidResult
@@ -548,12 +696,13 @@ namespace Veng::Cook
 
             const stbir_pixel_layout layout = STBIR_RGBA;
             const unsigned char* resized =
-                srgb ? stbir_resize_uint8_srgb(pixelData.data(), targetWidth, targetHeight, 0,
-                                               levelRgba.data(), static_cast<int>(levelWidth),
-                                               static_cast<int>(levelHeight), 0, layout)
-                     : stbir_resize_uint8_linear(pixelData.data(), targetWidth, targetHeight, 0,
-                                                 levelRgba.data(), static_cast<int>(levelWidth),
-                                                 static_cast<int>(levelHeight), 0, layout);
+                srgbEncode
+                    ? stbir_resize_uint8_srgb(pixelData.data(), targetWidth, targetHeight, 0,
+                                              levelRgba.data(), static_cast<int>(levelWidth),
+                                              static_cast<int>(levelHeight), 0, layout)
+                    : stbir_resize_uint8_linear(pixelData.data(), targetWidth, targetHeight, 0,
+                                                levelRgba.data(), static_cast<int>(levelWidth),
+                                                static_cast<int>(levelHeight), 0, layout);
             if (resized == nullptr)
             {
                 return std::unexpected(

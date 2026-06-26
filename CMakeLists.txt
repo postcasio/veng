@@ -820,6 +820,7 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
             tests/unit/main.cpp
             tests/cooker/cook_roundtrip.cpp
             tests/cooker/texture_cook.cpp
+            tests/cooker/compression_resolution.cpp
             tests/cooker/mesh_cook.cpp
             tests/cooker/shader_cook.cpp
             tests/cooker/material_cook.cpp

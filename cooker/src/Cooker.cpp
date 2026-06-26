@@ -9,6 +9,9 @@
 #include <xxhash.h>
 #include <zstd.h>
 
+#include <Veng/Project/CompressionFormat.h>
+#include <Veng/Project/CompressionRole.h>
+
 namespace Veng::Cook
 {
     namespace
@@ -35,21 +38,23 @@ namespace Veng::Cook
             return ContentHash{.Lo = h.low64, .Hi = h.high64};
         }
 
-        // zstd compression level. The default (3) is a balanced choice for a one-time
-        // build artifact; the inflate cost is unaffected by the level.
+        // Default zstd compression level. A balanced choice for a one-time build artifact; the
+        // inflate cost is unaffected by the level. A build configuration overrides it through its
+        // CompressionLevel; the zero-config cook uses this default.
         constexpr int ZstdLevel = ZSTD_CLEVEL_DEFAULT;
 
-        // Adds a blob to the archive, compressing it with zstd and storing whichever of the
-        // raw or compressed bytes is smaller. The content hash covers the stored bytes, so
+        // Adds a blob to the archive, compressing it with zstd at `level` and storing whichever of
+        // the raw or compressed bytes is smaller. The content hash covers the stored bytes, so
         // verify re-hashes exactly what is on disk. Routes both cooker Add sites through one
         // path so every blob is considered for compression by construction; an already
         // incompressible blob keeps the raw, zero-copy resolve path.
-        void EmitBlob(ArchiveWriter& writer, AssetId id, AssetType type, std::span<const u8> blob)
+        void EmitBlob(ArchiveWriter& writer, AssetId id, AssetType type, std::span<const u8> blob,
+                      int level)
         {
             const usize bound = ZSTD_compressBound(blob.size());
             vector<u8> compressed(bound);
             const usize produced = ZSTD_compress(compressed.data(), compressed.size(), blob.data(),
-                                                 blob.size(), ZstdLevel);
+                                                 blob.size(), level);
 
             if (ZSTD_isError(produced) == 0u && produced < blob.size())
             {
@@ -110,6 +115,88 @@ namespace Veng::Cook
             }
 
             return std::nullopt;
+        }
+
+        // The canonical authoring name of a CompressionFormat. The names match the spellings in
+        // Veng::ToString(CompressionFormat); duplicated here rather than calling that libveng symbol,
+        // since Cooker.cpp links into the veng-free core (and the core-pack bootstrap) that cannot
+        // reference libveng's out-of-line name tables.
+        string_view CompressionFormatName(CompressionFormat format)
+        {
+            switch (format)
+            {
+            case CompressionFormat::RGBA8Unorm:
+                return "RGBA8Unorm";
+            case CompressionFormat::RGBA8Srgb:
+                return "RGBA8Srgb";
+            case CompressionFormat::BC7Unorm:
+                return "BC7Unorm";
+            case CompressionFormat::BC7Srgb:
+                return "BC7Srgb";
+            case CompressionFormat::ASTC4x4Unorm:
+                return "ASTC4x4Unorm";
+            case CompressionFormat::ASTC4x4Srgb:
+                return "ASTC4x4Srgb";
+            case CompressionFormat::RGBA16Sfloat:
+                return "RGBA16Sfloat";
+            }
+            return {};
+        }
+
+        // The canonical authoring name of a CompressionRole, mirroring Veng::ToString(CompressionRole)
+        // for the same veng-free-link reason as CompressionFormatName.
+        string_view CompressionRoleName(CompressionRole role)
+        {
+            switch (role)
+            {
+            case CompressionRole::Color:
+                return "Color";
+            case CompressionRole::Normal:
+                return "Normal";
+            case CompressionRole::Mask:
+                return "Mask";
+            case CompressionRole::HDR:
+                return "HDR";
+            case CompressionRole::UI:
+                return "UI";
+            }
+            return {};
+        }
+
+        // Parses a CompressionFormat authoring name to its enumerator over the local name table.
+        optional<CompressionFormat> ParseCompressionFormatName(const string& name)
+        {
+            for (const CompressionFormat format : CompressionFormats)
+            {
+                if (CompressionFormatName(format) == name)
+                {
+                    return format;
+                }
+            }
+            return std::nullopt;
+        }
+
+        // Writes the format a role resolves to into the fixed RoleToFormat record.
+        void SetRoleFormat(RoleToFormat& table, CompressionRole role, CompressionFormat format)
+        {
+            switch (role)
+            {
+            case CompressionRole::Color:
+                table.Color = format;
+                return;
+            case CompressionRole::Normal:
+                table.Normal = format;
+                return;
+            case CompressionRole::Mask:
+                table.Mask = format;
+                return;
+            case CompressionRole::HDR:
+                table.HDR = format;
+                return;
+            case CompressionRole::UI:
+                table.UI = format;
+                return;
+            }
         }
 
         // Parses and validates the common pack JSON preamble. On error returns a located message.
@@ -222,6 +309,72 @@ namespace Veng::Cook
         return result;
     }
 
+    Result<BuildConfiguration> ParseBuildConfiguration(const path& configFile)
+    {
+        const std::ifstream file(configFile, std::ios::binary);
+        if (!file)
+        {
+            return std::unexpected(fmt::format("config '{}': failed to open", configFile.string()));
+        }
+
+        std::ostringstream contentStream;
+        contentStream << file.rdbuf();
+        const json cfg = json::parse(contentStream.str(), nullptr, false);
+        if (cfg.is_discarded() || !cfg.is_object())
+        {
+            return std::unexpected(fmt::format("config '{}': invalid JSON", configFile.string()));
+        }
+
+        BuildConfiguration config;
+        if (cfg.contains("name") && cfg["name"].is_string())
+        {
+            config.Name = cfg["name"].get<string>();
+        }
+        if (cfg.contains("target") && cfg["target"].is_string())
+        {
+            config.Target = cfg["target"].get<string>();
+        }
+        if (cfg.contains("outputSuffix") && cfg["outputSuffix"].is_string())
+        {
+            config.OutputSuffix = cfg["outputSuffix"].get<string>();
+        }
+        if (cfg.contains("compressionLevel") && cfg["compressionLevel"].is_number_integer())
+        {
+            config.CompressionLevel = cfg["compressionLevel"].get<i32>();
+        }
+
+        // The role → format table. Each role maps to a CompressionFormat by name; a role absent
+        // from "formats" keeps its RoleToFormat default. The enums serialize by name, never ordinal.
+        if (cfg.contains("formats") && cfg["formats"].is_object())
+        {
+            const json& formats = cfg["formats"];
+            for (const CompressionRole role : CompressionRoles)
+            {
+                const string roleName{CompressionRoleName(role)};
+                if (!formats.contains(roleName))
+                {
+                    continue;
+                }
+                if (!formats[roleName].is_string())
+                {
+                    return std::unexpected(fmt::format("config '{}': formats.{} is not a string",
+                                                       configFile.string(), roleName));
+                }
+                const string formatName = formats[roleName].get<string>();
+                const optional<CompressionFormat> format = ParseCompressionFormatName(formatName);
+                if (!format)
+                {
+                    return std::unexpected(
+                        fmt::format("config '{}': formats.{}: unknown format '{}'",
+                                    configFile.string(), roleName, formatName));
+                }
+                SetRoleFormat(config.Formats, role, *format);
+            }
+        }
+
+        return config;
+    }
+
     VoidResult WriteDepfile(const path& depfilePath, const path& target,
                             std::span<const path> dependencies)
     {
@@ -277,7 +430,8 @@ namespace Veng::Cook
 
     VoidResult Cooker::CookPack(const path& packJson, const path& outArchive,
                                 std::span<const path> referencePacks, const TypeRegistry* types,
-                                const SystemRegistry* systems, vector<path>* outDependencies) const
+                                const SystemRegistry* systems, vector<path>* outDependencies,
+                                const BuildConfiguration* config, const path& configFile) const
     {
         const Result<json> packResult = ReadAndValidatePack(packJson);
         if (!packResult)
@@ -338,6 +492,14 @@ namespace Veng::Cook
             record(refPath);
         }
 
+        // The configuration file is one central depfile input, recorded centrally like the pack
+        // JSON: a configuration edit re-cooks the whole pack — coarse by design, since the texture
+        // encode is the expensive part and the rest of a re-cook is fast.
+        if (config != nullptr && !configFile.empty())
+        {
+            record(configFile);
+        }
+
         // Resolve searches the main pack first, then reference packs in order.
         const AssetPack& mainPack = *mainPackResult;
         auto resolve = [&mainPack, &refPacks, &record](AssetId id) -> optional<ResolvedSource>
@@ -373,8 +535,13 @@ namespace Veng::Cook
             .Resolve = resolve,
             .Types = types,
             .Systems = systems,
+            .Config = config,
             .RecordDependency = record,
         };
+
+        // The configuration drives the archive compression level; the zero-config cook uses the
+        // default. This is the one place the level field is consumed.
+        const int level = config != nullptr ? config->CompressionLevel : ZstdLevel;
 
         ArchiveWriter writer;
         std::set<u64> seenIds;
@@ -382,7 +549,8 @@ namespace Veng::Cook
         const json& assets = pack["assets"];
         for (usize index = 0; index < assets.size(); ++index)
         {
-            const VoidResult entryResult = CookEntry(context, assets[index], seenIds, writer);
+            const VoidResult entryResult =
+                CookEntry(context, assets[index], seenIds, writer, level);
             if (!entryResult)
             {
                 return std::unexpected(fmt::format("pack '{}': asset[{}]: {}", packJson.string(),
@@ -451,7 +619,8 @@ namespace Veng::Cook
             return std::nullopt;
         };
 
-        // CookSource writes no files, so RecordDependency is a no-op.
+        // CookSource writes no files, so RecordDependency is a no-op. It carries no build
+        // configuration: the editor cook-on-demand path uses the zero-config defaults.
         const CookContext context{
             .PackDir = sourcePath.parent_path(),
             .Resolve = resolve,
@@ -470,7 +639,7 @@ namespace Veng::Cook
         }
 
         ArchiveWriter writer;
-        EmitBlob(writer, id, type, *blob);
+        EmitBlob(writer, id, type, *blob, ZstdLevel);
 
         const vector<u8> staged = writer.Build();
         const Result<ArchiveReader> reader = ArchiveReader::FromBytes(staged);
@@ -485,7 +654,7 @@ namespace Veng::Cook
     }
 
     VoidResult Cooker::CookEntry(const CookContext& context, const json& entry,
-                                 std::set<u64>& seenIds, ArchiveWriter& writer) const
+                                 std::set<u64>& seenIds, ArchiveWriter& writer, int level) const
     {
         if (!entry.is_object())
         {
@@ -538,7 +707,7 @@ namespace Veng::Cook
             return std::unexpected(blob.error());
         }
 
-        EmitBlob(writer, AssetId{.Value = id}, *type, *blob);
+        EmitBlob(writer, AssetId{.Value = id}, *type, *blob, level);
         return {};
     }
 }

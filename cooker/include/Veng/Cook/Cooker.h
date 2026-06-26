@@ -25,6 +25,18 @@ namespace Veng::Cook
     /// @param packJson  Path to the pack JSON file.
     [[nodiscard]] Result<AssetPack> ParseAssetPack(const path& packJson);
 
+    /// @brief Hand-parses a `*.buildcfg` JSON authoring file into a BuildConfiguration.
+    ///
+    /// The cooker's parser for the build-configuration authoring file, mirroring the per-asset
+    /// `*.tex.json` hand-parse: `libveng` ships no JSON serializer, so the consumer reads the JSON
+    /// into the struct. The role table's enums serialize by **name** (`"BC7Srgb"`, `"Color"`),
+    /// never by ordinal — a reordering of the enum never silently repoints a configuration. A role
+    /// absent from the `"formats"` object keeps its RoleToFormat default. Errors are located:
+    /// `"config '<path>': <reason>"`.
+    /// @param configFile  Path to the `*.buildcfg` JSON file.
+    /// @return The parsed configuration, or a located error.
+    [[nodiscard]] Result<BuildConfiguration> ParseBuildConfiguration(const path& configFile);
+
     /// @brief Writes a GCC-style depfile declaring `target` as depending on every path in `dependencies`.
     ///
     /// Intended for `add_custom_command(DEPFILE ...)` so the cook re-runs when any recorded
@@ -52,17 +64,24 @@ namespace Veng::Cook
         /// CookContext. When `outDependencies` is non-null it receives every source file read
         /// (manifest, reference packs, per-asset JSONs, binary payloads), sorted and de-duplicated.
         /// Errors are located: `"pack '<path>': asset[<n>]: <reason>"`.
+        /// When `config` is non-null it drives the cook: the texture importer resolves each
+        /// texture's compression role through its role table, the archive is written at its
+        /// `CompressionLevel`, and `configFile` (its source) is recorded as one central depfile
+        /// input — a configuration edit re-cooks the pack. A null `config` is the zero-config cook
+        /// (planset-33's hardcoded ASTC default, the archive's own default level).
         /// @param packJson        Path to the pack JSON to cook.
         /// @param outArchive      Destination .vengpack path.
         /// @param referencePacks  Additional packs available for cross-asset AssetId resolution.
         /// @param types           Reflected module type registry, or nullptr for non-module cooks.
         /// @param systems         Reflected module system catalog (level id validation), or nullptr.
         /// @param outDependencies If non-null, receives the sorted, de-duplicated dependency list.
-        [[nodiscard]] VoidResult CookPack(const path& packJson, const path& outArchive,
-                                          std::span<const path> referencePacks = {},
-                                          const TypeRegistry* types = nullptr,
-                                          const SystemRegistry* systems = nullptr,
-                                          vector<path>* outDependencies = nullptr) const;
+        /// @param config          Active build configuration driving the cook, or nullptr.
+        /// @param configFile      Source file of `config`, recorded as a central dependency; empty if none.
+        [[nodiscard]] VoidResult
+        CookPack(const path& packJson, const path& outArchive,
+                 std::span<const path> referencePacks = {}, const TypeRegistry* types = nullptr,
+                 const SystemRegistry* systems = nullptr, vector<path>* outDependencies = nullptr,
+                 const BuildConfiguration* config = nullptr, const path& configFile = {}) const;
 
         /// @brief Cooks one source asset and returns a complete single-entry .vengpack as in-memory bytes.
         ///
@@ -83,9 +102,10 @@ namespace Veng::Cook
                                                     const SystemRegistry* systems = nullptr) const;
 
     private:
-        /// @brief Cooks one pack entry JSON into the archive, enforcing id uniqueness.
+        /// @brief Cooks one pack entry JSON into the archive at `level`, enforcing id uniqueness.
         [[nodiscard]] VoidResult CookEntry(const CookContext& context, const json& entry,
-                                           std::set<u64>& seenIds, ArchiveWriter& writer) const;
+                                           std::set<u64>& seenIds, ArchiveWriter& writer,
+                                           int level) const;
 
         /// @brief Registered importers keyed by AssetType.
         std::unordered_map<AssetType, Unique<AssetImporter>> m_Importers;
