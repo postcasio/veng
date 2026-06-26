@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "assets": [
+    { "id": 11347999176829791418, "type": "shader",   "source": "shaders/flat.frag.shader.json" },
+    { "id": 4166528937578239323,  "type": "material", "source": "materials/cube.vmat.json" }
+  ]
+}

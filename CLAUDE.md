@@ -492,7 +492,10 @@ planset/future README carries the detail, decisions, and per-plan status column.
 appropriate (independent plans in parallel, dependent plans in sequence, derived from
 the plans' direction). Per plan:
 1. Implement it.
-2. Migrate `examples/hello-triangle` in the *same* pass as the breaking changes.
+2. Migrate **both** `examples/hello-triangle` (the maximal sample) and
+   `examples/template` (the minimal one a new developer copies) in the *same* pass as
+   the breaking changes — the template is the standing check that the smallest correct
+   app still compiles and runs.
 3. Verify (clean build, `ctest` green, smoke binary writes a correct-sized PPM).
 4. Update the planset README status column.
 5. Commit, one commit per plan: `Plan NN: <summary>` (or `planset-N:` / `future:`
