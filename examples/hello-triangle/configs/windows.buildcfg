@@ -1,13 +1,13 @@
 {
-  "name": "windows",
-  "target": "windows-x64",
-  "outputSuffix": "-windows",
-  "compressionLevel": 19,
-  "formats": {
-    "Color": "BC7Srgb",
-    "Normal": "BC7Unorm",
-    "Mask": "BC7Unorm",
-    "HDR": "RGBA16Sfloat",
-    "UI": "BC7Unorm"
-  }
+    "compressionLevel": 19,
+    "formats": {
+        "Color": "BC7Srgb",
+        "HDR": "RGBA16Sfloat",
+        "Mask": "BC7Unorm",
+        "Normal": "BC7Unorm",
+        "UI": "BC7Unorm"
+    },
+    "name": "windows",
+    "outputSuffix": "-windows",
+    "target": "windows-x64"
 }
