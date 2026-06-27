@@ -7,3 +7,6 @@ imgui.ini
 # Per-project editor sidecar: the build records its output dir here for the editor to discover.
 # Machine-local (absolute build paths), written beside each project's project.veng.
 .veng/
+
+# Editor scratch files written beside an asset while editing (e.g. *.editor-tmp.vmat.json).
+*.editor-tmp*
