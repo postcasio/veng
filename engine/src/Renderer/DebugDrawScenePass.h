@@ -101,4 +101,78 @@ namespace Veng::Renderer
         /// @brief Byte stride between billboard-buffer ring regions.
         u64 m_BillboardRegionStride = 0;
     };
+
+    /// @brief Writes each pickable billboard's entity pick id into the EntityId target, depth-discarded.
+    ///
+    /// The id-only sibling of DebugDrawScenePass's decorative billboard render: it runs in the
+    /// geometry-pass timeframe (while the SceneRenderer's EntityId target is still bound, before
+    /// lighting), not after tonemap, so the id is written into the picking target the async readback
+    /// copies from. For each accumulated billboard carrying a non-zero PickId it rasterizes a fixed
+    /// min-size proxy footprint (a centered disc clamped to a minimum pixel radius — not the icon's
+    /// art alpha) and writes that id. Occlusion is a hard hardware depth test against the picking
+    /// depth the mesh id pass wrote: an occluded fragment is discarded (not faded), so an icon behind
+    /// geometry is not picked and an icon in front wins. It depth-tests but never writes depth, so two
+    /// overlapping icons both reach the id target (the nearest wins by the readback's depth precedence).
+    ///
+    /// Allocated and wired only when SceneRendererSettings::Picking is set; a decorative-only viewport
+    /// (DebugDraw without Picking) never builds it, so the shipping path is unchanged.
+    class BillboardPickScenePass final : public ScenePass
+    {
+    public:
+        /// @brief Constructs the pass, building the proxy id-write pipeline.
+        /// @param context        The render context.
+        /// @param assets         Asset manager the picking billboard shaders load through.
+        /// @param accumulator    The renderer-owned accumulator this pass reads pickable billboards from.
+        /// @param depthFormat    Format of the picking depth buffer the pass depth-tests against.
+        /// @param framesInFlight Number of frame-in-flight ring regions to size the record buffer for.
+        /// @param extent         Initial render extent; updated via Resize.
+        /// @param entityIdId     The imported EntityId color target the pass writes pick ids into.
+        /// @param depthId        The imported picking depth target the pass depth-tests against.
+        BillboardPickScenePass(Context& context, AssetManager& assets, const DebugDraw* accumulator,
+                               Format depthFormat, u32 framesInFlight, uvec2 extent,
+                               ResourceId entityIdId, ResourceId depthId);
+
+        /// @brief Destroys the pass's owned GPU resources.
+        ~BillboardPickScenePass() override;
+
+        /// @brief Updates the cached render extent.
+        void Resize(uvec2 extent) override;
+
+        /// @brief Contributes the billboard id-write pass into the graph.
+        void Declare(RenderGraph& graph, const PassIO& io) override;
+
+    private:
+        /// @brief Uploads this frame's pickable billboard records into the current ring region.
+        ///
+        /// Filters the accumulator to records with a non-zero PickId, writes them into the current
+        /// frame-in-flight region, binds it as the SSBO range, and returns the count (0 when none).
+        u32 UploadPickableBillboards();
+
+        /// @brief The render context.
+        Context& m_Context;
+        /// @brief The renderer-owned accumulator the pickable billboards are read from (borrowed).
+        const DebugDraw* m_Accumulator;
+        /// @brief Number of frame-in-flight ring regions.
+        u32 m_FramesInFlight;
+        /// @brief Current render extent (the picking sub-rect the proxy footprint is sized against).
+        uvec2 m_Extent;
+        /// @brief The imported EntityId color target this pass writes into.
+        ResourceId m_EntityIdId;
+        /// @brief The imported picking depth target this pass depth-tests against.
+        ResourceId m_DepthId;
+
+        /// @brief Proxy id-write pipeline (depth-test on, no depth-write, no blend, R32Uint target).
+        Ref<GraphicsPipeline> m_Pipeline;
+        /// @brief Layout for the pipeline (set 1 record SSBO + push block).
+        Ref<PipelineLayout> m_Layout;
+        /// @brief Set-1 layout for the billboard pick records (binding 0 storage buffer).
+        Ref<DescriptorSetLayout> m_SetLayout;
+        /// @brief Descriptor set bound at set 1 for the draw (whole-range, ringed by offset).
+        Ref<DescriptorSet> m_Set;
+
+        /// @brief Host-mapped billboard pick-record SSBO, ring-buffered for frames-in-flight.
+        Ref<Buffer> m_Buffer;
+        /// @brief Byte stride between record-buffer ring regions.
+        u64 m_RegionStride = 0;
+    };
 }

@@ -11,6 +11,9 @@
 #include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/PipelineLayout.h>
+#include <Veng/Renderer/ScenePass.h>
+
+#include "Picking.h"
 
 #include <cstring>
 
@@ -23,6 +26,8 @@ namespace Veng::Renderer
         constexpr AssetId DebugLineFragId{0x6DC2A1A30445E9EAULL};
         constexpr AssetId DebugBillboardVertId{0x3819703AFD880100ULL};
         constexpr AssetId DebugBillboardFragId{0x3535322F615A85DAULL};
+        constexpr AssetId BillboardPickVertId{0x1BED72AFAAFBB89DULL};
+        constexpr AssetId BillboardPickFragId{0x25D95EE54D64B346ULL};
 
         // An occluded gizmo fades to this fraction of its color rather than vanishing.
         constexpr f32 OccludedFade = 0.25f;
@@ -294,6 +299,193 @@ namespace Veng::Renderer
                         // base-instance lowering needs the DrawParameters capability).
                         cmd.Draw(BillboardVertexCount * billboardCount, 1, 0, 0);
                     }
+                });
+    }
+
+    namespace
+    {
+        // Push block for the billboard pick pipeline (matches entity_id_billboard.vert).
+        struct BillboardPickPush
+        {
+            u32 ViewConstantsIndex;
+            f32 RenderWidth;
+            f32 RenderHeight;
+            u32 Pad0;
+        };
+
+        // One GPU billboard pick record (std430): the vec4 first, then the pick id + per-record min
+        // radius + padding. Matches entity_id_billboard.vert's GpuBillboardPick byte-for-byte (32 bytes).
+        struct GpuBillboardPick
+        {
+            vec4 PositionSize;
+            u32 PickId;
+            f32 MinPixelRadius;
+            u32 Pad0;
+            u32 Pad1;
+        };
+    }
+
+    BillboardPickScenePass::BillboardPickScenePass(Context& context, AssetManager& assets,
+                                                   const DebugDraw* accumulator,
+                                                   const Format depthFormat,
+                                                   const u32 framesInFlight, const uvec2 extent,
+                                                   const ResourceId entityIdId,
+                                                   const ResourceId depthId)
+        : m_Context(context), m_Accumulator(accumulator), m_FramesInFlight(framesInFlight),
+          m_Extent(extent), m_EntityIdId(entityIdId), m_DepthId(depthId)
+    {
+        const AssetHandle<Veng::Shader> vs =
+            LoadShader(assets, BillboardPickVertId, "billboard-pick vertex");
+        const AssetHandle<Veng::Shader> fs =
+            LoadShader(assets, BillboardPickFragId, "billboard-pick fragment");
+
+        const PushConstantRange pushRange =
+            PushConstantRange::Of<BillboardPickPush>(ShaderStage::Vertex | ShaderStage::Fragment);
+
+        m_SetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "BillboardPick Set Layout",
+                           .Bindings = {{.Binding = 0,
+                                         .Type = DescriptorType::StorageBuffer,
+                                         .Count = 1,
+                                         .Stages = ShaderStage::Vertex}},
+                       });
+        m_Layout = PipelineLayout::Create(m_Context, {
+                                                         .Name = "BillboardPick Layout",
+                                                         .DescriptorSetLayouts = {m_SetLayout},
+                                                         .PushConstantRanges = {pushRange},
+                                                     });
+
+        // The id target is a plain R32Uint write (no blend — a pick id is not a color); the proxy
+        // depth-tests against the mesh-id pass's depth but never writes it, so overlapping icons
+        // both reach the id target and the readback's depth precedence resolves overlap.
+        m_Pipeline = GraphicsPipeline::Create(
+            m_Context, {
+                           .Name = "BillboardPick Pipeline",
+                           .ColorAttachments = {{.Format = Picking::EntityIdFormat}},
+                           .DepthAttachmentFormat = depthFormat,
+                           .PipelineLayout = m_Layout,
+                           .ShaderStages =
+                               {
+                                   {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
+                                   {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
+                               },
+                           .DepthTestEnable = true,
+                           .DepthWriteEnable = false,
+                           .DepthCompareOp = CompareOp::LessOrEqual,
+                       });
+        m_Set = DescriptorSet::Create(m_Context, {
+                                                     .Name = "BillboardPick Set",
+                                                     .Layout = m_SetLayout,
+                                                 });
+
+        m_RegionStride = static_cast<u64>(MaxBillboards) * sizeof(GpuBillboardPick);
+        m_Buffer = Buffer::Create(m_Context, {
+                                                 .Name = "BillboardPick Buffer",
+                                                 .Size = m_RegionStride * m_FramesInFlight,
+                                                 .Usage = BufferUsage::Storage,
+                                                 .HostMapped = true,
+                                             });
+    }
+
+    BillboardPickScenePass::~BillboardPickScenePass() = default;
+
+    void BillboardPickScenePass::Resize(const uvec2 extent)
+    {
+        m_Extent = extent;
+    }
+
+    u32 BillboardPickScenePass::UploadPickableBillboards()
+    {
+        const vector<DebugBillboard>& billboards = m_Accumulator->GetBillboards();
+        const u32 region = m_Context.GetCurrentFrameInFlight();
+        const u64 regionOffset = static_cast<u64>(region) * m_RegionStride;
+        auto* base = static_cast<u8*>(m_Buffer->GetMappedData()) + regionOffset;
+
+        u32 count = 0;
+        for (const DebugBillboard& src : billboards)
+        {
+            // A zero PickId is decorative-only (drawn by DebugDrawScenePass, never written here).
+            if (src.PickId == 0 || count >= MaxBillboards)
+            {
+                continue;
+            }
+            const GpuBillboardPick record{
+                .PositionSize = vec4(src.WorldPosition, src.Size),
+                .PickId = src.PickId,
+                .MinPixelRadius = src.PickRadius,
+            };
+            std::memcpy(base + static_cast<usize>(count) * sizeof(GpuBillboardPick), &record,
+                        sizeof(GpuBillboardPick));
+            ++count;
+        }
+
+        if (count > 0)
+        {
+            m_Set->Write(0, m_Buffer, regionOffset, m_RegionStride);
+        }
+        return count;
+    }
+
+    void BillboardPickScenePass::Declare(RenderGraph& graph, const PassIO& io)
+    {
+        (void)io;
+        graph
+            .AddPass("Billboard Pick")
+            // Load the mesh ids the picking pass already wrote, then add the icon ids over them.
+            .Color({
+                .Resource = m_EntityIdId,
+                .Load = LoadOp::Load,
+                .Store = StoreOp::Store,
+            })
+            // Read-only depth test against the mesh-id pass's depth (the picking pass stores it),
+            // so an icon behind geometry is discarded; nothing is written back.
+            .Depth({
+                .Resource = m_DepthId,
+                .Load = LoadOp::Load,
+                .Store = StoreOp::DontCare,
+            })
+            .Execute(
+                [this](PassContext& inner)
+                {
+                    CommandBuffer& cmd = inner.Cmd();
+
+                    if (m_Accumulator == nullptr || m_Accumulator->GetBillboards().empty())
+                    {
+                        return;
+                    }
+
+                    const u32 count = UploadPickableBillboards();
+                    if (count == 0)
+                    {
+                        return;
+                    }
+
+                    const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+                    const uvec2 renderExtent = ScenePass::Wrap(inner).View().RenderExtent;
+
+                    const BillboardPickPush push{
+                        .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
+                        .RenderWidth = static_cast<f32>(renderExtent.x),
+                        .RenderHeight = static_cast<f32>(renderExtent.y),
+                    };
+
+                    cmd.SetViewport({0, 0}, renderExtent);
+                    cmd.SetScissor({0, 0}, renderExtent);
+
+                    cmd.BindPipeline(m_Pipeline);
+                    // The pipeline layout reserves set 0 for the bindless registry like every layout,
+                    // so bind it even though this shader reads only the set-1 record SSBO + the push.
+                    registry.Bind(cmd);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {m_Set},
+                        .FirstSet = 1,
+                        .PipelineBindPoint = PipelineBindPoint::Graphics,
+                    });
+                    cmd.PushConstants(push);
+                    // A single non-instanced draw of 6 vertices per pickable record (the vertex
+                    // stage derives the record/corner from the vertex index).
+                    cmd.Draw(BillboardVertexCount * count, 1, 0, 0);
                 });
     }
 }

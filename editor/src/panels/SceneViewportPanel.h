@@ -92,9 +92,23 @@ namespace VengEditor
         /// render): an icon billboard at each Light/Camera's world position, a light's range sphere
         /// (point) or spot cone (spot), and a camera's frustum. A no-op when the icon handles failed
         /// to resolve (no icon pack mounted). The DebugDraw battery toggle is forced on while gizmos
-        /// are pushed. Click-to-select is out of scope; Viewport::ScreenToWorldRay is the seam a
-        /// later billboard-picking follow-on extends.
+        /// are pushed. Each icon billboard carries its owning entity's pick id (index + 1), so a click
+        /// over the icon selects that entity through the renderer's id pass (the same readback meshes
+        /// resolve through) — the billboard-picking seam HandleClickToSelect drives.
         void PushGizmos();
+
+        /// @brief Issues a viewport pick for a left-click inside the content rect, routing into selection.
+        ///
+        /// On a left-click that the camera/play interaction did not consume, hit-tests the cursor
+        /// against the viewport and (on a hit) calls Viewport::Pick. The async result updates the
+        /// shared selection: a plain click SelectOnly, Ctrl/Cmd-click Toggle, and a background (no
+        /// entity) plain click Clears. A guard prevents issuing a second pick while one is in flight,
+        /// so a held button does not queue a burst. The callback is guarded by a panel-owned alive
+        /// flag (so a resolve landing after the panel is torn down is dropped) on top of the renderer's
+        /// scene-epoch + caller-liveness guard (a resolve after a Play/Stop scene swap is dropped).
+        /// @param hovered   Whether the viewport image is hovered this frame.
+        /// @param consumed  Whether the click was already consumed (camera drag, play capture).
+        void HandleClickToSelect(bool hovered, bool consumed);
 
         Veng::AssetManager& m_Assets;
         Veng::ImGuiLayer& m_ImGui;
@@ -136,5 +150,18 @@ namespace VengEditor
         Veng::AssetHandle<Veng::Texture> m_LightIcon;
         /// @brief Resident camera-icon texture (keeps its bindless TextureHandle alive); null if unmounted.
         Veng::AssetHandle<Veng::Texture> m_CameraIcon;
+
+        /// @brief True between issuing a pick and its callback firing — the one-pick-in-flight guard.
+        ///
+        /// A held mouse button re-enters HandleClickToSelect each frame; this prevents queuing a
+        /// burst of picks before the first resolves (a frame or two later through the readback).
+        bool m_PickInFlight = false;
+
+        /// @brief Panel-alive flag the pick callback captures by value to drop a post-teardown resolve.
+        ///
+        /// Set false in the destructor before the viewport is dropped. The renderer's pending pick
+        /// lives in the owned viewport (dropped here), so a resolve cannot fire after teardown — but
+        /// the flag makes the callback's own liveness explicit rather than relying on that ordering.
+        Veng::Ref<bool> m_Alive;
     };
 }

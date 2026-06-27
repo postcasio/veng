@@ -96,9 +96,10 @@ namespace Veng::Renderer
     }
 
     void DebugDraw::DrawBillboard(const vec3 worldPosition, const f32 size,
-                                  const TextureHandle texture, const vec4 color)
+                                  const TextureHandle texture, const vec4 color, const u32 pickId)
     {
-        m_Billboards.emplace_back(worldPosition, size, color, texture);
+        // Parenthesized aggregate init: the omitted PickRadius takes its default member initializer.
+        m_Billboards.emplace_back(worldPosition, size, color, texture, pickId);
     }
 
     void DebugDraw::Clear()

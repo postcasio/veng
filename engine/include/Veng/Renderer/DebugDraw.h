@@ -33,6 +33,19 @@ namespace Veng::Renderer
         vec4 Color;
         /// @brief Bindless slot of the icon texture this billboard samples.
         TextureHandle Texture;
+        /// @brief Owning entity's pick id (packed slot index + 1), or 0 for not pickable.
+        ///
+        /// A non-zero id makes the billboard selectable through the SceneRenderer's id pass:
+        /// the picking-active renderer writes this id into the EntityId target over a fixed
+        /// min-size proxy footprint (not the icon's art alpha), depth-discarded so an occluded
+        /// icon is not picked. 0 (the default) draws the icon decoratively but never writes it.
+        u32 PickId = 0;
+        /// @brief Minimum proxy footprint radius in pixels for the id write (per billboard kind).
+        ///
+        /// The id-write proxy is a centered disc whose screen-space radius is the icon's projected
+        /// half-size clamped up to this, so a small or distant icon stays a comfortable hit target.
+        /// Ignored when PickId is 0. Defaults to a forgiving handful of pixels.
+        f32 PickRadius = 12.0f;
     };
 
     /// @brief Immediate-mode accumulator for debug lines and billboards, flushed by a SceneRenderer pass.
@@ -81,12 +94,18 @@ namespace Veng::Renderer
         /// @param scale      Axis length in world units.
         void DrawTransform(const mat4& transform, f32 scale = 1.0f);
 
-        /// @brief Adds a camera-facing textured quad.
+        /// @brief Adds a camera-facing textured quad, optionally pickable through the id pass.
         /// @param worldPosition  World-space center the quad faces the camera around.
         /// @param size           Quad edge length in world units.
         /// @param texture        Bindless slot of the icon texture to sample.
         /// @param color          Linear RGBA tint; (1,1,1,1) for the unmodified texture.
-        void DrawBillboard(vec3 worldPosition, f32 size, TextureHandle texture, vec4 color);
+        /// @param pickId         Owning entity's pick id (packed slot index + 1); 0 (the default)
+        ///                       draws the icon decoratively but never writes it to the id target.
+        ///                       A non-zero id makes the icon selectable when the renderer's
+        ///                       picking pass is active (a fixed min-size proxy footprint, depth-
+        ///                       discarded so an occluded icon is not picked).
+        void DrawBillboard(vec3 worldPosition, f32 size, TextureHandle texture, vec4 color,
+                           u32 pickId = 0);
 
         /// @brief Discards every accumulated primitive; called by the renderer at the start of each Execute.
         void Clear();

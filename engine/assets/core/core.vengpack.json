@@ -39,6 +39,8 @@
     { "id": 13693390691917013114, "type": "shader", "source": "shaders/entity_id.frag.shader.json" },
     { "id": 16292773621404642277, "type": "shader", "source": "shaders/entity_id.vert.shader.json" },
     { "id": 9201752149324508687, "type": "shader", "source": "shaders/entity_id_skinned.vert.shader.json" },
+    { "id": 2012390707317946525, "type": "shader", "source": "shaders/entity_id_billboard.vert.shader.json" },
+    { "id": 2727315388288512838, "type": "shader", "source": "shaders/entity_id_billboard.frag.shader.json" },
     { "id": 13672220138851212916, "type": "shader", "source": "shaders/ssr_trace.frag.shader.json" },
     { "id": 17153908925538740214, "type": "shader", "source": "shaders/ssr_blur_down.comp.shader.json" },
     { "id": 5825948086578327969, "type": "shader", "source": "shaders/ssr_composite.frag.shader.json" },

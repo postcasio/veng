@@ -3705,4 +3705,95 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// A pickable billboard writes its pick id into the same EntityId target the mesh id pass does,
+// over a fixed min-size proxy footprint, hardware-depth-discarded against the scene depth. This
+// gate proves: the billboard id-write pass runs (a billboard in empty space resolves its id), the
+// proxy footprint is a comfortable target (a small icon resolves at its center), and the depth
+// discard is hard (a billboard behind the cube does not win over the cube — the mesh id stands).
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "scene renderer: pickable billboard writes its id, depth-discarded behind geometry")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_billboard_pick.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.0f, *material), "Pick Cube");
+
+    constexpr uvec2 extent{128, 128};
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    // A cube on the left; a billboard sits behind it (further from the camera) at the same screen
+    // position, so the depth discard must keep the cube's id under that texel.
+    const Entity cubeEntity = scene->CreateEntity();
+    scene->Add<Transform>(cubeEntity).Position = vec3(-1.5f, 0.0f, 0.0f);
+    scene->Add<MeshRenderer>(cubeEntity).Mesh = assets.Adopt(cube);
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 6.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Albedo, .DebugDraw = true, .Picking = true},
+    });
+
+    // Distinct synthetic pick ids for the two billboards (not real entity slots — the raw id is
+    // asserted directly, which is what the pass writes).
+    constexpr u32 FreeBillboardId = 4242u;
+    constexpr u32 OccludedBillboardId = 7777u;
+
+    auto Render = [&]()
+    {
+        // The accumulator clears each Execute, so re-push the billboards every frame.
+        DebugDraw& debug = renderer->GetDebugDraw();
+        debug.DrawBillboard(vec3(1.5f, 0.0f, 0.0f), 0.6f, TextureHandle{}, vec4(1.0f),
+                            FreeBillboardId);
+        debug.DrawBillboard(vec3(-1.5f, 0.0f, -3.0f), 0.6f, TextureHandle{}, vec4(1.0f),
+                            OccludedBillboardId);
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+    };
+
+    auto PickId = [&](uvec2 texel) -> u32
+    {
+        renderer->RequestPick(texel);
+        for (u32 i = 0; i < Context.GetMaxFramesInFlight() + 4; ++i)
+        {
+            Render();
+            const optional<u32> id = renderer->PollPickId();
+            if (id)
+            {
+                return *id;
+            }
+        }
+        FAIL("pick never resolved");
+        return 0u;
+    };
+
+    Render(); // Warm up so the geometry + picking + billboard pipelines exist.
+
+    // The free billboard, in empty space, resolves its own pick id at its projected center.
+    const uvec2 freeTexel = ProjectToTexel(camera, vec3(1.5f, 0.0f, 0.0f), extent);
+    CHECK(PickId(freeTexel) == FreeBillboardId);
+
+    // The texel over the cube resolves the cube's id, not the billboard behind it — the depth
+    // discard kept the occluded billboard out of the id target there.
+    const uvec2 cubeTexel = ProjectToTexel(camera, vec3(-1.5f, 0.0f, 0.0f), extent);
+    CHECK(PickId(cubeTexel) == cubeEntity.Index + 1u);
+
+    std::filesystem::remove(outArchive);
+}
+
 #endif // GPU_GBUFFER_FIXTURE_DIR

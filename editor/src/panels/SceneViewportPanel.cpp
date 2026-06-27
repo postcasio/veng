@@ -53,9 +53,14 @@ namespace VengEditor
         // A first-frame placeholder; the panel's content rect drives the real region each OnUI.
         const uvec2 extent = {1280, 720};
 
+        m_Alive = CreateRef<bool>(true);
+
         // The editor draws light/camera gizmos through the engine debug-draw pass; enable it
-        // from the start so the viewport's renderer wires the pass.
+        // from the start so the viewport's renderer wires the pass. Picking enables the id pass +
+        // the billboard id-write so a viewport click resolves the entity under the cursor (mesh or
+        // icon); enabled for the viewport's lifetime, not toggled per pick.
         m_Settings.DebugDraw = true;
+        m_Settings.Picking = true;
 
         m_Viewport = Renderer::Viewport::Create({
             .Context = context,
@@ -97,6 +102,9 @@ namespace VengEditor
 
     SceneViewportPanel::~SceneViewportPanel()
     {
+        // Mark dead before dropping the viewport: a pick callback captures m_Alive by value, so any
+        // resolve that would fire from a later Render is dropped rather than touching freed state.
+        *m_Alive = false;
         m_SceneTexture.reset();
         m_SceneSampler.reset();
         m_Viewport.reset();
@@ -157,8 +165,10 @@ namespace VengEditor
 
             if (m_LightIcon.IsLoaded())
             {
+                // The pick id is the entity's packed slot index + 1 (0 = not pickable), the same
+                // encoding the mesh id pass writes; clicking the icon selects this entity.
                 debug.DrawBillboard(position, IconSize, m_LightIcon.Get()->GetHandle(),
-                                    LightGizmoColor);
+                                    LightGizmoColor, entity.Index + 1u);
             }
 
             switch (light.Type)
@@ -223,7 +233,7 @@ namespace VengEditor
             if (m_CameraIcon.IsLoaded())
             {
                 debug.DrawBillboard(position, IconSize, m_CameraIcon.Get()->GetHandle(),
-                                    CameraGizmoColor);
+                                    CameraGizmoColor, entity.Index + 1u);
             }
 
             Camera gizmoCamera = camera;
@@ -231,6 +241,67 @@ namespace VengEditor
             const CameraView view = MakeCameraView(gizmoCamera, 16.0f / 9.0f, world);
             debug.DrawFrustum(glm::inverse(view.ViewProjection()), CameraGizmoColor);
         }
+    }
+
+    void SceneViewportPanel::HandleClickToSelect(const bool hovered, const bool consumed)
+    {
+        // A pick is in flight (issued, not yet resolved): hold off so a held button does not queue a
+        // burst. A camera drag / play-capture click is not a selection. Picking only resolves over an
+        // edited scene, so skip while playing.
+        if (m_PickInFlight || consumed || m_Ctx.Scene == nullptr || m_Ctx.IsPlaying())
+        {
+            return;
+        }
+        if (!hovered || !m_Input.WasMouseButtonPressed(MouseButton::Left))
+        {
+            return;
+        }
+
+        const bool additive =
+            m_Input.IsKeyDown(Key::LeftControl) || m_Input.IsKeyDown(Key::RightControl) ||
+            m_Input.IsKeyDown(Key::LeftSuper) || m_Input.IsKeyDown(Key::RightSuper);
+
+        const vec2 mouse = m_Input.GetMousePosition();
+        const ivec2 windowPoint{static_cast<i32>(mouse.x), static_cast<i32>(mouse.y)};
+
+        m_PickInFlight = true;
+
+        // The callback fires from a later Render (a frame or two on) on the render thread. It captures
+        // the panel-alive flag by value: a resolve landing after the panel is torn down is dropped.
+        // The renderer's own scene-epoch + caller-liveness guard drops a resolve after a Play/Stop
+        // scene swap, so by the time this runs m_Ctx.Scene is the same scene the click was issued on.
+        const Ref<bool> alive = m_Alive;
+        m_Viewport->Pick(windowPoint,
+                         [this, alive, additive](const optional<Entity> picked)
+                         {
+                             if (!*alive)
+                             {
+                                 return;
+                             }
+                             m_PickInFlight = false;
+
+                             if (m_Ctx.Scene == nullptr)
+                             {
+                                 return;
+                             }
+                             if (!picked.has_value())
+                             {
+                                 // A background click clears the selection unless it is additive.
+                                 if (!additive)
+                                 {
+                                     m_Ctx.Clear();
+                                 }
+                                 return;
+                             }
+                             if (additive)
+                             {
+                                 m_Ctx.Toggle(*picked);
+                             }
+                             else
+                             {
+                                 m_Ctx.SelectOnly(*picked);
+                             }
+                         });
     }
 
     void SceneViewportPanel::ApplyLevelRenderSettings(const LevelRenderSettings& render)
@@ -492,6 +563,9 @@ namespace VengEditor
         // While the game owns input the editor camera stands down (the router already holds
         // the cursor captured); otherwise the camera reads input and drives its own transient
         // navigation cursor lock for the RMB-fly drag.
+        // A click the camera (or play capture) consumed is navigation, not a selection: an RMB-fly,
+        // an MMB-pan, or an Alt-orbit drag. Tracked so HandleClickToSelect only picks on a bare click.
+        bool cameraConsumed = gameplayFocused;
         if (gameplayFocused)
         {
             m_View = m_Camera.GetView();
@@ -501,6 +575,7 @@ namespace VengEditor
             const bool navCursorLock = m_Camera.Update(in, Time::GetDeltaTime());
             m_Input.SetMouseCaptured(navCursorLock);
             m_View = m_Camera.GetView();
+            cameraConsumed = navCursorLock || in.MouseRight || in.MouseMiddle || in.Alt;
 
             if (in.FrameSelection)
             {
@@ -533,6 +608,10 @@ namespace VengEditor
             .EnvironmentIntensity = m_EnvironmentIntensity,
             .BloomIntensity = m_BloomIntensity,
         });
+
+        // A bare left-click inside the content rect issues an id-buffer pick → selection. After
+        // SetViewState so the renderer's pick guard captures the scene this frame renders.
+        HandleClickToSelect(hovered, cameraConsumed);
 
         // Push the light/camera gizmos for the next render. The engine renders the viewport at the
         // top of the next frame, so the accumulator filled here is consumed then (one frame of

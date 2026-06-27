@@ -698,7 +698,9 @@ namespace Veng::Renderer
                     .Depth({
                         .Resource = m_DepthId,
                         .Load = LoadOp::Clear,
-                        .Store = StoreOp::DontCare,
+                        // Stored so the billboard id pass can depth-test against the mesh depth
+                        // (discarding an icon behind geometry) before the target is discarded.
+                        .Store = StoreOp::Store,
                         .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
                     });
                 builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
@@ -3106,6 +3108,15 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<PickingScenePass>(
                 m_Context, m_Extent, &m_Internal->Plan, &m_PickingPipeline,
                 &m_PickingSkinnedPipeline, m_EntityIdId, m_PickingDepthId));
+
+            // The billboard id-write runs immediately after the mesh id pass — still in the
+            // geometry-pass timeframe, while the EntityId target is bound — writing each pickable
+            // billboard's owning entity id over a min-size proxy footprint, hardware-depth-discarded
+            // against the mesh depth the picking pass just stored. Decorative billboards (PickId 0)
+            // are untouched here; the DebugDrawScenePass still draws them after tonemap unchanged.
+            m_Passes.push_back(CreateUnique<BillboardPickScenePass>(
+                m_Context, m_Assets, &m_DebugDraw, GBuffer::DepthFormat,
+                m_Context.GetMaxFramesInFlight(), m_Extent, m_EntityIdId, m_PickingDepthId));
         }
 
         // Created before the tail switch so ssaoHandle is set when the Final arm reads it.
