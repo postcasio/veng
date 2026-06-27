@@ -643,6 +643,51 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   channel specialization, wider ASTC footprints, HDR ASTC, and an uncompressed fallback pack stay named
   area-15 follow-ons behind the delivered role → format table.
 
+- **[planset-36](planset-36/README.md)** — reflection display options for the editor (📝 proposed,
+  5 plans). Gives the reflection layer a structured way to say **how a reflected value appears and
+  behaves in the editor**, and teaches the inspector to honor it. The keystone is a **presentation axis
+  orthogonal to `FieldClass`** (which today decides both data shape *and* widget): a closed `WidgetKind`
+  enum + a shared **`FieldDisplay`** struct that lives on **both** `TypeInfo` (a type's default) and
+  `FieldDescriptor` (a field's override), resolved by a pure, device-free **`ResolveFieldDisplay`
+  cascade** (field → type-default → hard default) — so a `Color`/`Angle` type styles every field of it
+  for free while a bare field still overrides per-usage, and per-field `Min`/`Max` always wins. On that:
+  **enumerator-name reflection** (a `VE_ENUM` describe-block recording `{name, value}` on `TypeInfo`,
+  turning the raw integer-drag enum into an automatic named combo and retiring the hand-written
+  `LightType`/`CompressionRole`/`CompressionFormat` combos); **widget-kind dispatch** (`Slider`/`Color`/
+  `Multiline` + the matching `Veng::UI` widgets, `Auto` keeping today's path); **collapsible structs,
+  array elements, and categories** (one `CollapsingHeader`-in-`PropertyTable` mechanism — the headline
+  ergonomics fix, with foldable array elements the specific gap closed); and **conditional display**
+  (`VisibleIf`/`EnabledIf` as type-erased `function<bool(const void*)>` predicates over the owning struct
+  — the conditional twins of `Hidden`/`ReadOnly`, authored with a `VE_WHEN(self…)` sugar). Editor-and-
+  reflection only: **no cooked format, no cooker, and no render path change** (the serializer already
+  ignores editor metadata), so `smoke_golden` never moves; both inspector surfaces (entity + node-
+  property) inherit every win through the shared `DrawFieldWidget`. Named follow-ons: a data-authored/
+  introspectable condition, cooker enum-by-name (the `{name, value}` table makes it free), the semantic
+  value types (`Color`/`Angle`) the cascade now supports, and richer widgets (`FilePath`, curve/gradient,
+  range slider, enum-flags).
+
+- **[planset-37](planset-37/README.md)** — scene editor interaction: id-buffer picking, gizmos,
+  undo/redo, prefab save-back (📝 proposed, 5 plans). Closes the scene editor's authoring loop —
+  the remaining slice of [future area 6](future/README.md#6-editor-application) **sub-area D**
+  over the delivered prefab editing surface (`PrefabEditorPanel` + viewport/hierarchy/inspector).
+  Four pieces: **pick → manipulate → undo → save**, on the keystone decision that the editor has
+  **two** spatial-picking mechanisms split by what they answer. **Selection** ("which thing did I
+  click" — meshes *and* light/camera billboards) uses a GPU **id-buffer pass** + async readback
+  (the correct technique here since veng's `Mesh` is immutable/GPU-only, so CPU ray-triangle would
+  need retained geometry and ray-AABB is imprecise); **manipulation** ("which handle am I
+  dragging" — gizmo axes/rings) stays **analytic ray** for live, zero-latency hover. The id pass
+  is an **off-by-default** `SceneRenderer` battery (so the shipping path and `smoke_golden` are
+  untouched), resolved through a `Viewport::Pick(windowPoint, callback)` seam over planset-31's
+  `WindowToViewport`; billboards write their owning entity id with a **fixed min-size proxy
+  footprint** (not the icon's art alpha — a point gizmo wants a predictable, forgiving target).
+  On selection: **hand-rolled** translate/rotate/scale gizmos (no ImGuizmo, drawn through the
+  per-viewport `DebugDraw`, committed as one undo step per drag); a **per-`AssetEditorPanel`
+  undo/redo** command stack (each open document undoes independently; a generic byte-snapshot
+  `EditField` covers every `FieldClass`); and a reflection-driven **`Scene` → `.prefab.json`
+  save-back** round-tripping the preserve-unknown-keys way. **No cooked scene asset** — a `Scene`
+  is runtime-only and the authored document is the prefab; no cooked-format, cooker, or
+  module-ABI change. Gates met by planset-10/11/12/14 + the pointer-to-world seam (planset-31).
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the

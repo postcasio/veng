@@ -190,26 +190,26 @@ parameters?**
   full material-graph surface). Defer; design the node/field model so codegen can
   layer on without breaking v1 graphs.
 
-### 3. Scene editor + preview — blocked on a missing prerequisite
+### 3. Scene editor + preview
 
-The most dependency-heavy editor, and the one veng **cannot build yet**: there is
-**no scene/entity model**. planset-5 explicitly descoped a scene/level asset type
-("a scene/level asset type — meshes + materials + textures only"); area 4
-(events/input) is thin and stubbed; there is no transform hierarchy, no component
-system, no ECS. The scene editor needs, as a hard prerequisite, a **scene
-representation**:
+The most dependency-heavy editor, and now unblocked: the runtime scene/entity model
+(planset-10), the cooked **prefab** asset + module reflection (planset-11), and the
+`SceneRenderer` (planset-12) are all delivered.
 
-- an entity / transform hierarchy with components,
-- component types described via the [reflection layer](game-module.md) (so the
-  inspector and serialization work), and
-- a **scene asset type** that cooks and loads like the others.
+**A `Scene` is a runtime-only construct, never an asset.** The cooked, authored
+document is the **`Prefab`** (entities + components + values, spawned into a live
+`Scene` via `Prefab::SpawnInto`); a **`Level`** refers to a prefab plus its
+level-scoped wiring (game mode, system set, render settings). **There is no cooked
+`.scene` asset, and there will not be one** — the scene editor authors a *prefab*
+document, not a scene asset.
 
-That is its own area / planset — call it out, do not fold it into the editor
-framework. Once it exists, the scene editor is: a viewport panel rendering the scene
-to a preview RT, a hierarchy panel, a reflection-driven inspector, manipulation
-gizmos (ImGuizmo or hand-rolled), and a save path that cooks the scene asset.
-Everything *above* the scene model (the panels, the inspector, the preview RT) is
-ordinary editor-framework work; the model underneath is the gate.
+The editing surface is largely delivered: a `PrefabEditorPanel` spawns a prefab into
+a live `Scene` and hosts a viewport (the `SceneRenderer` to a preview RT) + a
+hierarchy panel + a reflection-driven inspector. The remaining scene-editor work is
+**manipulation gizmos** (ImGuizmo or hand-rolled, over planset-31's
+`ScreenToWorldRay` picking seam), an **undo/redo** command stack, and a **save-back**
+path that round-trips the edited `Scene` to its `.prefab.json` source (reusing
+planset-14's preserve-unknown-keys round-trip).
 
 ## Potential problems (the part the brief asks to think hard about)
 
@@ -258,7 +258,8 @@ ordinary editor-framework work; the model underneath is the gate.
   ([game-module.md](game-module.md)).
 - **New types:** `EditorPanel`, `EditorRegistry`, `AssetEditorFactory`, the
   inspector + `FieldWidget` layer, the material node-graph model, and — as a
-  prerequisite area — the scene/entity model + scene asset type.
+  prerequisite area (delivered) — the runtime scene/entity model and the cooked
+  **prefab** asset (a `Scene` is runtime-only; there is no scene asset type).
 - **Editor links `libveng_cook`** (cook-on-demand); the engine and `libgame` never
   do — the planset-5 boundary is preserved.
 - **ImGui integration:** the dockspace host; the multi-viewport decision (start
@@ -283,7 +284,8 @@ B. editor shell + framework      libveng_editor, dockspace (single-window),
 C. material node editor          imnodes graph → loaded .vmat (param-binding v1),
                                    live preview against the async/hot-reload path.
                                    ── DONE (planset-15).
-D. scene/entity model            transform hierarchy, components, scene asset type
+D. scene/entity model            transform hierarchy, components, the cooked PREFAB
+                                   asset (a Scene is runtime-only — no scene asset)
                                    (its own area) — THEN the scene editor on top.
 ```
 
@@ -313,8 +315,11 @@ private, class-restricted dock area per editor), a `PrefabEditorPanel` that spaw
 into a live `Scene` and hosts a viewport + a full scene-graph **hierarchy panel** (drag
 reparent/reorder, rename, create/duplicate/delete over the intrusive `Hierarchy`) + a
 **reflection inspector** (add/remove component, all `FieldClass` widgets). The remaining
-scene-editor work is a cooked **`.scene`** asset (vs. an in-memory prefab document), a
-save-back path, manipulation **gizmos**, and an undo/redo command stack.
+scene-editor work — **id-buffer picking** (meshes + billboards), **manipulation gizmos**,
+a per-document **undo/redo** command stack, and a **save-back** path round-tripping the
+edited `Scene` to its `.prefab.json` source — is drafted as
+[planset-37](../planset-37/README.md). (A `Scene` is runtime-only — there is no cooked
+`.scene` asset; the authored document is the prefab.)
 
 ## Open decisions
 
@@ -326,8 +331,8 @@ save-back path, manipulation **gizmos**, and an undo/redo command stack.
 - **Where cook-on-demand lives** — the editor links `libveng_cook` directly
   (recommended — it *is* a tool) vs. shelling out to the `vengc` binary. Direct
   link gives in-process, incremental, off-thread cooking.
-- **Scene model shape** — ECS vs. an object/component hierarchy. Decide in the
-  scene-model area, not here; it gates the scene editor.
+- **Scene model shape** — decided: a sparse-set ECS (`Scene`/`Entity`), runtime-only,
+  with the cooked **prefab** as the authored asset (planset-10/11). No scene asset type.
 - **Editor host: `Application` subclass or bespoke** — reuse `Application` (it
   already owns Context + AssetManager + TaskSystem + ImGui) vs. a purpose-built
   host. Leaning `Application` subclass for the shared lifecycle.
