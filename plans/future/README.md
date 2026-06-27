@@ -576,24 +576,25 @@ consumer exists to design it against; the single-mesh-slot model from planset-34
 (a dynamic mesh produces a `Mesh` into the same `MeshRenderer.Mesh` slot). **Design overview:**
 [dynamic-meshes.md](dynamic-meshes.md).
 
-### 17. Cook performance — parallel texture encode — PRIORITIZED (near-term quick win)
+### 17. Cook performance — parallel texture encode — ✅ DELIVERED
 
 **Motivated by the texture cook dominating build wall-clock.** The cook's cost is texture
-block-encoding, and two of the three levers are already pulled in the cooker build: the ASTC codec now
-builds the **SIMD ISA** (NEON on Apple Silicon, SSE4.1 on x86_64) instead of the scalar `none`
-reference, and the ASTC/BC7 encoders + the `TextureImporter` mip/block loops are compiled **`-O2`
-even in Debug** (they were inheriting `-O0`, the dominant cost in a CLion Debug build). What remains is
-**threading**: a single sample cook still pins one core for ~25 s because `EncodeAstcLevel` allocs the
-`astcenc_context` with `thread_count = 1` and calls `astcenc_compress_image(…, 0)` on one thread.
+block-encoding, and all three levers are pulled in the cooker build: the ASTC codec builds the **SIMD
+ISA** (NEON on Apple Silicon, SSE4.1 on x86_64) instead of the scalar `none` reference, the ASTC/BC7
+encoders + the `TextureImporter` mip/block loops are compiled **`-O2` even in Debug** (they were
+inheriting `-O0`, the dominant cost in a CLion Debug build), and **`EncodeAstcLevel` now threads the
+encode** across `std::thread::hardware_concurrency()` workers.
 
-**The work:** alloc the context with `thread_count = std::thread::hardware_concurrency()` and run that
-many worker threads, each calling `astcenc_compress_image` with its own thread index (the encoder's
-documented multithreading model). **Golden-safe by construction:** `ASTCENC_INVARIANCE` is on, which
-guarantees the encode is independent of thread count, so the smoke golden does not move. Expected ~4×
-on the 4-perf-core dev machine, taking the sample cook from ~25 s to single digits. A natural extension
-is cross-texture parallelism (a thread pool over the importer), but within-texture threading is the
-cleaner first step and is what astc-encoder is built for. Optionally pairs with a content-addressed
-per-asset cook cache (area 15, Decision 3) so an unchanged texture is not re-encoded at all.
+`EncodeAstcLevel` allocs the `astcenc_context` for N threads and runs N `astcenc_compress_image` calls,
+each from a distinct thread under its own `[0..N-1]` index (the encoder's documented multithreading
+model — blocks dynamically scheduled across the threads); the worker count is capped at the level's
+block count so a tiny mip does not spawn idle threads. **Golden-safe by construction:**
+`ASTCENC_INVARIANCE` is on, so the encode is independent of thread count and the smoke golden does not
+move (verified: `smoke_golden` passes with the blocks byte-identical). On the dev machine the sample
+cook saturates ~6 cores (623% CPU, ~17 s of work in ~2.8 s wall). A natural extension is cross-texture
+parallelism (a thread pool over the importer), but within-texture threading is the cleaner first step
+and is what astc-encoder is built for. Optionally pairs with a content-addressed per-asset cook cache
+(area 15, Decision 3) so an unchanged texture is not re-encoded at all.
 
 ## Ordering & dependencies
 

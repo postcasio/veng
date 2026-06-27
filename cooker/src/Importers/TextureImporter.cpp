@@ -5,6 +5,7 @@
 #include <cstring>
 #include <fstream>
 #include <sstream>
+#include <thread>
 
 #include <astcenc.h>
 #include <bc7enc.h>
@@ -191,6 +192,13 @@ namespace Veng::Cook
         // Encodes one RGBA8 mip level (tightly packed, row-major) to ASTC 4x4 LDR blocks through the
         // ARM astc-encoder. The encoder pads partial edge tiles internally, so the full chain down
         // to 1x1 encodes. @p profile selects the sRGB-aware LDR profile.
+        //
+        // The level's blocks are encoded across hardware_concurrency() threads — the encoder's
+        // documented model: one context allocated for N threads, then N calls to
+        // astcenc_compress_image, each from a distinct thread under its own [0..N-1] index, with the
+        // blocks dynamically scheduled across them. ASTCENC_INVARIANCE makes the encode independent
+        // of thread count, so the cooked blocks are byte-identical at any N and the smoke golden does
+        // not move.
         Result<vector<u8>> EncodeAstcLevel(u8* rgba, u32 width, u32 height, astcenc_profile profile)
         {
             astcenc_config config{};
@@ -203,8 +211,17 @@ namespace Veng::Cook
                                                    astcenc_get_error_string(configStatus)));
             }
 
+            const u32 blocksWide = (width + BlockSize - 1) / BlockSize;
+            const u32 blocksHigh = (height + BlockSize - 1) / BlockSize;
+            const u32 blockCount = blocksWide * blocksHigh;
+
+            // Cap the worker count at the level's block count so a tiny mip does not spawn idle
+            // threads (the encoder schedules whole blocks, never a fraction of one).
+            const u32 hardware = std::max(1u, std::thread::hardware_concurrency());
+            const u32 threadCount = std::min(hardware, std::max(1u, blockCount));
+
             astcenc_context* context = nullptr;
-            const astcenc_error allocStatus = astcenc_context_alloc(&config, 1, &context);
+            const astcenc_error allocStatus = astcenc_context_alloc(&config, threadCount, &context);
             if (allocStatus != ASTCENC_SUCCESS)
             {
                 return std::unexpected(
@@ -212,7 +229,7 @@ namespace Veng::Cook
                                 astcenc_get_error_string(allocStatus)));
             }
 
-            void* slice = rgba;
+            void* slice = rgba; // NOLINT(misc-const-correctness)
             astcenc_image image{
                 .dim_x = width,
                 .dim_y = height,
@@ -228,17 +245,38 @@ namespace Veng::Cook
                 .a = ASTCENC_SWZ_A,
             };
 
-            const u32 blocksWide = (width + BlockSize - 1) / BlockSize;
-            const u32 blocksHigh = (height + BlockSize - 1) / BlockSize;
             vector<u8> blocks(static_cast<usize>(blocksWide) * blocksHigh * BlockBytes);
 
-            const astcenc_error compressStatus =
-                astcenc_compress_image(context, &image, &swizzle, blocks.data(), blocks.size(), 0);
-            astcenc_context_free(context);
-            if (compressStatus != ASTCENC_SUCCESS)
+            // Each thread compresses its share of the blocks under a unique index; thread 0 runs on
+            // the calling thread while the rest run on spawned workers, all joined before the context
+            // is freed.
+            vector<astcenc_error> statuses(threadCount, ASTCENC_SUCCESS);
+            const auto compressShare = [&](u32 threadIndex)
             {
-                return std::unexpected(fmt::format("texture importer: ASTC compress failed: {}",
-                                                   astcenc_get_error_string(compressStatus)));
+                statuses[threadIndex] = astcenc_compress_image(
+                    context, &image, &swizzle, blocks.data(), blocks.size(), threadIndex);
+            };
+
+            vector<std::thread> workers;
+            workers.reserve(threadCount - 1);
+            for (u32 i = 1; i < threadCount; i++)
+            {
+                workers.emplace_back(compressShare, i);
+            }
+            compressShare(0);
+            for (std::thread& worker : workers)
+            {
+                worker.join();
+            }
+            astcenc_context_free(context);
+
+            for (const astcenc_error status : statuses)
+            {
+                if (status != ASTCENC_SUCCESS)
+                {
+                    return std::unexpected(fmt::format("texture importer: ASTC compress failed: {}",
+                                                       astcenc_get_error_string(status)));
+                }
             }
 
             return blocks;
