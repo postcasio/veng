@@ -126,7 +126,8 @@ namespace VengEditor
         struct Registries;
         /// @brief Private constructor; use Create().
         EditorHost(const EditorHostInfo& info, Veng::ProjectSettings settings, Veng::path buildDir,
-                   Veng::Unique<Registries> registries, Veng::Unique<Veng::LoadedModule> gameModule,
+                   Veng::path corePackManifest, Veng::Unique<Registries> registries,
+                   Veng::Unique<Veng::LoadedModule> gameModule,
                    Veng::optional<Veng::LoadedModule> editorModule);
 
         /// @brief Draws the main menu bar (File / Window menus).
@@ -172,6 +173,12 @@ namespace VengEditor
         /// The override, the .veng/build.json sidecar discovery, or ExecutableDirectory(), resolved
         /// once so every pack mount and the level-cook module path key off one value.
         Veng::path m_BuildDir;
+
+        /// @brief The engine core pack's source manifest, discovered from the .veng/build.json
+        /// sidecar; passed as a cook-on-demand reference so a recooked asset resolves core-pack ids.
+        ///
+        /// Empty in the relocatable ship layout (no sidecar), where the editor edits no source.
+        Veng::path m_CorePackManifest;
 
         /// @brief Ship configuration live preview is opted into, or nullopt for host-safe.
         ///

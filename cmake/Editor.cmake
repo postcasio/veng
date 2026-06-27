@@ -60,10 +60,14 @@ function(veng_add_editor NAME)
     # path alone — no CMake in the launch loop. The source dir is a configure-time value; the
     # launcher's output dir is a generator expression, so file(GENERATE) writes it at generate time.
     # Last configure wins when a project is built in more than one tree.
+    #
+    # corePackManifest records the engine core pack's source manifest so the editor's cook-on-demand
+    # resolves core-pack ids (the standard vertex shaders) — the same --reference the file-based
+    # add_project cook passes; without it a recooked material referencing a core-pack shader fails.
     get_target_property(PROJECT_SRC_ABS ${ARG_PROJECT} VENG_PROJECT_SOURCE)
     get_filename_component(PROJECT_SRC_DIR "${PROJECT_SRC_ABS}" DIRECTORY)
     file(GENERATE OUTPUT "${PROJECT_SRC_DIR}/.veng/build.json"
-            CONTENT "{\n  \"buildDir\": \"${BUILD_DIR}\"\n}\n")
+            CONTENT "{\n  \"buildDir\": \"${BUILD_DIR}\",\n  \"corePackManifest\": \"${VENG_CORE_PACK_JSON}\"\n}\n")
 
     # Building the run target launches the editor against the project; the editor self-discovers the
     # build dir from the sidecar above (the same path the launcher will use). The dependencies build

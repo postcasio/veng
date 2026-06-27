@@ -147,6 +147,26 @@ namespace VengEditor
             return path{(*doc)["buildDir"].get<string>()};
         }
 
+        // Reads the engine core pack's source manifest from the same .veng/build.json sidecar. The
+        // editor's cook-on-demand passes it as a reference so a recooked material resolves core-pack
+        // ids (the standard vertex shaders), matching the --reference the file-based cook passes.
+        // nullopt when no project, no sidecar, or no "corePackManifest" key.
+        optional<path> DiscoverCorePackManifest(const optional<path>& projectPath)
+        {
+            if (!projectPath)
+            {
+                return std::nullopt;
+            }
+            const path sidecar = projectPath->parent_path() / ".veng" / "build.json";
+            const optional<nlohmann::json> doc = ReadJsonObject(sidecar);
+            if (!doc || !doc->contains("corePackManifest") ||
+                !(*doc)["corePackManifest"].is_string())
+            {
+                return std::nullopt;
+            }
+            return path{(*doc)["corePackManifest"].get<string>()};
+        }
+
         // Composes a module's shared-library file name from its logical name, per platform — the
         // editor resolves the project-named module beside the build output (lib<name>.<ext>).
         path ModuleFileName(const string& name)
@@ -431,6 +451,10 @@ namespace VengEditor
             buildDir = ExecutableDirectory();
         }
 
+        // The engine core pack manifest the cook-on-demand references; empty in the relocatable ship
+        // layout (no sidecar), where the editor edits no source and never recooks.
+        const path corePackManifest = DiscoverCorePackManifest(info.ProjectPath).value_or(path{});
+
         VE_ASSERT(!settings.Module.empty(),
                   "editor: project names no module (its \"module\" key); nothing to load");
         const path gameModulePath = buildDir / ModuleFileName(settings.Module);
@@ -461,18 +485,19 @@ namespace VengEditor
         }
 
         auto gameModulePtr = CreateUnique<LoadedModule>(std::move(*gameModule));
-        return Unique<EditorHost>(new EditorHost(info, std::move(settings), std::move(buildDir),
-                                                 std::move(registries), std::move(gameModulePtr),
-                                                 std::move(editorModule)));
+        return Unique<EditorHost>(new EditorHost(
+            info, std::move(settings), std::move(buildDir), std::move(corePackManifest),
+            std::move(registries), std::move(gameModulePtr), std::move(editorModule)));
     }
 
     EditorHost::EditorHost(const EditorHostInfo& info, ProjectSettings settings, path buildDir,
-                           Unique<Registries> registries, Unique<LoadedModule> gameModule,
-                           optional<LoadedModule> editorModule)
+                           path corePackManifest, Unique<Registries> registries,
+                           Unique<LoadedModule> gameModule, optional<LoadedModule> editorModule)
         : Application(info.App, registries->Types, registries->Systems), m_Info(info),
           m_Registries(std::move(registries)), m_GameModule(std::move(gameModule)),
           m_EditorModule(std::move(editorModule)), m_ProjectSettings(std::move(settings)),
-          m_ProjectFile(info.ProjectPath.value_or(path{})), m_BuildDir(std::move(buildDir))
+          m_ProjectFile(info.ProjectPath.value_or(path{})), m_BuildDir(std::move(buildDir)),
+          m_CorePackManifest(std::move(corePackManifest))
     {
     }
 
@@ -647,10 +672,16 @@ namespace VengEditor
             return;
         }
 
-        // Inject every project pack manifest so the cook resolves cross-asset references by
-        // AssetId across the whole project (one namespace); panels build manifest-agnostic requests.
+        // Inject every project pack manifest plus the engine core pack so the cook resolves
+        // cross-asset references by AssetId across the whole project (one namespace) and against the
+        // core pack's built-in assets (the standard vertex shaders); panels build manifest-agnostic
+        // requests. This mirrors the --reference set the file-based add_project cook passes.
         CookRequest resolved = request;
         resolved.ReferenceManifests = m_ProjectSettings.Packs;
+        if (!m_CorePackManifest.empty())
+        {
+            resolved.ReferenceManifests.push_back(m_CorePackManifest);
+        }
 
         // A level cook validates its system ids and config against the module's reflected
         // catalogs, so inject the game module path (resolved beside the build output, as in

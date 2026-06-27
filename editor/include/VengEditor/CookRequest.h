@@ -34,8 +34,9 @@ namespace VengEditor
         ///
         /// The project's packs share one AssetId namespace, so the cook resolves an id against
         /// every pack the project owns — an asset edited in one pack may reference an asset in a
-        /// sibling. Empty for a source with no cross-asset references. The host fills it from the
-        /// project's packs; a panel leaves it empty.
+        /// sibling. The host also appends the engine core pack manifest, so an asset resolves the
+        /// built-in core ids (the standard vertex shaders). Empty for a source with no cross-asset
+        /// references. The host fills it; a panel leaves it empty.
         Veng::vector<Veng::path> ReferenceManifests;
 
         /// @brief Game module reflected for type/system validation during the cook.
