@@ -4,6 +4,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/FieldDescriptor.h>
+#include <Veng/Reflection/FieldDisplay.h>
 
 #include <new>
 #include <string_view>
@@ -47,6 +48,8 @@ namespace Veng
         FieldClass Class = FieldClass::Struct;
         /// @brief Field descriptors for Struct-class types; empty for leaves.
         vector<FieldDescriptor> Fields;
+        /// @brief The type's default presentation, authored via VE_DISPLAY; the type-default arm of the cascade.
+        FieldDisplay Display;
 
         /// @brief Variant-only: the alternative TypeIds, in declaration order.
         ///
@@ -190,6 +193,7 @@ namespace Veng
             info.Id = id;
             info.Class = cls;
             info.Fields = std::move(fields);
+            info.Display = VengDisplay<T>::Get();
 
             // A variant's active member is reached through type-erased thunks, never by
             // offset; record them off the VE_VARIANT specialisation for the generic walk.

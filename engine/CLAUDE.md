@@ -108,7 +108,7 @@ editor-extension module is a caller-built `add_library` linking `libveng_editor`
   binary-plugin platform — a module is recompiled with the engine from one tree. A
   one-integer `VengModuleAbiVersion` handshake (checked by `ModuleLoader` before the
   entry runs) **rejects a stale module loudly at load**, not later. The ABI is at
-  **version 3** (`VENG_MODULE_ABI_VERSION`); a module built against an older header
+  **version 4** (`VENG_MODULE_ABI_VERSION`); a module built against an older header
   fails the handshake at load. The host struct carries the `SystemRegistry` (`Systems`)
   beside `App`/`Types`/`Editor`. The gameplay layer adds **no** ABI surface: game modes
   are systems + components, the system catalog rides a per-system trait the way a

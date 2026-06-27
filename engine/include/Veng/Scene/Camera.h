@@ -168,8 +168,8 @@ namespace Veng
 }
 
 VE_REFLECT(::Veng::Camera, 0x6598EF5F5C0A7B10ULL)
-VE_FIELD(FovY, .DisplayName = "Field of View", .Min = 0.01)
-VE_FIELD(Near, .DisplayName = "Near", .Min = 0.001)
+VE_FIELD(FovY, .DisplayName = "Field of View", .Display = {.Min = 0.01})
+VE_FIELD(Near, .DisplayName = "Near", .Display = {.Min = 0.001})
 VE_FIELD(Far, .DisplayName = "Far")
 VE_REFLECT_END();
 

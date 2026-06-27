@@ -525,7 +525,7 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::Transform, 0x0AB8E30B2F638555ULL)
 VE_FIELD(Position, .DisplayName = "Position", .Tooltip = "Local position, parent space")
 VE_FIELD(Rotation, .DisplayName = "Rotation")
-VE_FIELD(Scale, .DisplayName = "Scale", .Min = 0.001)
+VE_FIELD(Scale, .DisplayName = "Scale", .Display = {.Min = 0.001})
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Hierarchy, 0x5C9855E287465C5EULL)
@@ -533,56 +533,56 @@ VE_FIELD(Parent, .DisplayName = "Parent", .ReadOnly = true)
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::CubeShape, 0x2B758A3FE238BAA5ULL)
-VE_FIELD(Extent, .DisplayName = "Extent", .Min = 0.001)
+VE_FIELD(Extent, .DisplayName = "Extent", .Display = {.Min = 0.001})
 VE_FIELD(Material, .DisplayName = "Material")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PlaneShape, 0xE53DEFF5662A295ULL)
-VE_FIELD(Size, .DisplayName = "Size", .Min = 0.001)
-VE_FIELD(Subdivisions, .DisplayName = "Subdivisions", .Min = 1)
+VE_FIELD(Size, .DisplayName = "Size", .Display = {.Min = 0.001})
+VE_FIELD(Subdivisions, .DisplayName = "Subdivisions", .Display = {.Min = 1})
 VE_FIELD(Material, .DisplayName = "Material")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::SphereShape, 0xCF4BE61837AB5179ULL)
-VE_FIELD(Radius, .DisplayName = "Radius", .Min = 0.001)
-VE_FIELD(Rings, .DisplayName = "Rings", .Min = 3)
-VE_FIELD(Segments, .DisplayName = "Segments", .Min = 3)
+VE_FIELD(Radius, .DisplayName = "Radius", .Display = {.Min = 0.001})
+VE_FIELD(Rings, .DisplayName = "Rings", .Display = {.Min = 3})
+VE_FIELD(Segments, .DisplayName = "Segments", .Display = {.Min = 3})
 VE_FIELD(Material, .DisplayName = "Material")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::IcosphereShape, 0x7D9FC0055D5978BBULL)
-VE_FIELD(Radius, .DisplayName = "Radius", .Min = 0.001)
-VE_FIELD(Subdivisions, .DisplayName = "Subdivisions", .Min = 1)
+VE_FIELD(Radius, .DisplayName = "Radius", .Display = {.Min = 0.001})
+VE_FIELD(Subdivisions, .DisplayName = "Subdivisions", .Display = {.Min = 1})
 VE_FIELD(Material, .DisplayName = "Material")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::CylinderShape, 0x3BB833585C0DAD4CULL)
-VE_FIELD(Radius, .DisplayName = "Radius", .Min = 0.001)
-VE_FIELD(Height, .DisplayName = "Height", .Min = 0.001)
-VE_FIELD(Segments, .DisplayName = "Segments", .Min = 3)
+VE_FIELD(Radius, .DisplayName = "Radius", .Display = {.Min = 0.001})
+VE_FIELD(Height, .DisplayName = "Height", .Display = {.Min = 0.001})
+VE_FIELD(Segments, .DisplayName = "Segments", .Display = {.Min = 3})
 VE_FIELD(Material, .DisplayName = "Material")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::ConeShape, 0x64D0B47E06329960ULL)
-VE_FIELD(Radius, .DisplayName = "Radius", .Min = 0.001)
-VE_FIELD(Height, .DisplayName = "Height", .Min = 0.001)
-VE_FIELD(Segments, .DisplayName = "Segments", .Min = 3)
+VE_FIELD(Radius, .DisplayName = "Radius", .Display = {.Min = 0.001})
+VE_FIELD(Height, .DisplayName = "Height", .Display = {.Min = 0.001})
+VE_FIELD(Segments, .DisplayName = "Segments", .Display = {.Min = 3})
 VE_FIELD(Material, .DisplayName = "Material")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::TorusShape, 0xFF864410096026A2ULL)
-VE_FIELD(MajorRadius, .DisplayName = "Major Radius", .Min = 0.001)
-VE_FIELD(MinorRadius, .DisplayName = "Minor Radius", .Min = 0.001)
-VE_FIELD(MajorSegments, .DisplayName = "Major Segments", .Min = 3)
-VE_FIELD(MinorSegments, .DisplayName = "Minor Segments", .Min = 3)
+VE_FIELD(MajorRadius, .DisplayName = "Major Radius", .Display = {.Min = 0.001})
+VE_FIELD(MinorRadius, .DisplayName = "Minor Radius", .Display = {.Min = 0.001})
+VE_FIELD(MajorSegments, .DisplayName = "Major Segments", .Display = {.Min = 3})
+VE_FIELD(MinorSegments, .DisplayName = "Minor Segments", .Display = {.Min = 3})
 VE_FIELD(Material, .DisplayName = "Material")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::CapsuleShape, 0xDECC3D44F06725DCULL)
-VE_FIELD(Radius, .DisplayName = "Radius", .Min = 0.001)
-VE_FIELD(Height, .DisplayName = "Height", .Min = 0.001)
-VE_FIELD(Segments, .DisplayName = "Segments", .Min = 3)
-VE_FIELD(Rings, .DisplayName = "Rings", .Min = 1)
+VE_FIELD(Radius, .DisplayName = "Radius", .Display = {.Min = 0.001})
+VE_FIELD(Height, .DisplayName = "Height", .Display = {.Min = 0.001})
+VE_FIELD(Segments, .DisplayName = "Segments", .Display = {.Min = 3})
+VE_FIELD(Rings, .DisplayName = "Rings", .Display = {.Min = 1})
 VE_FIELD(Material, .DisplayName = "Material")
 VE_REFLECT_END();
 
@@ -597,11 +597,11 @@ VE_LEAF(::Veng::RootMotionMode, 0x2F4A31CEE94569AFULL, FieldClass::Enum);
 
 VE_REFLECT(::Veng::Animator, 0x2B56DF7335B89F8DULL)
 VE_FIELD(Clip, .DisplayName = "Clip")
-VE_FIELD(Speed, .DisplayName = "Speed", .Min = 0.0)
+VE_FIELD(Speed, .DisplayName = "Speed", .Display = {.Min = 0.0})
 VE_FIELD(Loop, .DisplayName = "Loop")
 VE_FIELD(Playing, .DisplayName = "Playing")
 VE_FIELD(RootMotion, .DisplayName = "Root Motion")
-VE_FIELD(Time, .DisplayName = "Time", .Min = 0.0, .ReadOnly = true)
+VE_FIELD(Time, .DisplayName = "Time", .ReadOnly = true, .Display = {.Min = 0.0})
 VE_REFLECT_END();
 
 VE_TYPE(::Veng::SkinnedPose, 0x063C1245B8912FC3ULL);
@@ -612,10 +612,12 @@ VE_REFLECT(::Veng::Light, 0xECF6442708DF7C00ULL)
 VE_FIELD(Type, .DisplayName = "Type")
 VE_FIELD(Direction, .DisplayName = "Direction")
 VE_FIELD(Color, .DisplayName = "Color")
-VE_FIELD(Intensity, .DisplayName = "Intensity", .Min = 0.0)
-VE_FIELD(Range, .DisplayName = "Range", .Min = 0.01, .Step = 0.1)
-VE_FIELD(InnerCone, .DisplayName = "Inner Cone", .Min = 0.0, .Max = 3.14159265, .Step = 0.01)
-VE_FIELD(OuterCone, .DisplayName = "Outer Cone", .Min = 0.0, .Max = 3.14159265, .Step = 0.01)
+VE_FIELD(Intensity, .DisplayName = "Intensity", .Display = {.Min = 0.0})
+VE_FIELD(Range, .DisplayName = "Range", .Display = {.Min = 0.01, .Step = 0.1})
+VE_FIELD(InnerCone, .DisplayName = "Inner Cone",
+         .Display = {.Min = 0.0, .Max = 3.14159265, .Step = 0.01})
+VE_FIELD(OuterCone, .DisplayName = "Outer Cone",
+         .Display = {.Min = 0.0, .Max = 3.14159265, .Step = 0.01})
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PlayerInput, 0x5401D36B1EF55045ULL)
@@ -635,8 +637,8 @@ VE_FIELD(Pawn, .DisplayName = "Pawn")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Mover, 0x7774F1C2B00DE07EULL)
-VE_FIELD(MoveSpeed, .DisplayName = "Move Speed", .Min = 0.0)
-VE_FIELD(TurnSpeed, .DisplayName = "Turn Speed", .Min = 0.0)
+VE_FIELD(MoveSpeed, .DisplayName = "Move Speed", .Display = {.Min = 0.0})
+VE_FIELD(TurnSpeed, .DisplayName = "Turn Speed", .Display = {.Min = 0.0})
 VE_REFLECT_END();
 
 VE_LEAF(::Veng::MotionSpace, 0x46914AC0C743D776ULL, FieldClass::Enum);
@@ -658,29 +660,29 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::CameraFollow, 0xF8BD924F0A0F9DB0ULL)
 VE_FIELD(Target, .DisplayName = "Target")
 VE_FIELD(Offset, .DisplayName = "Offset")
-VE_FIELD(Damping, .DisplayName = "Damping", .Min = 0.0)
+VE_FIELD(Damping, .DisplayName = "Damping", .Display = {.Min = 0.0})
 VE_REFLECT_END();
 
 VE_LEAF(::Veng::SessionPhase, 0x6DF15084654B59E7ULL, FieldClass::Enum);
 
 VE_REFLECT(::Veng::Session, 0x5EC76128049D9629ULL)
 VE_FIELD(Phase, .DisplayName = "Phase")
-VE_FIELD(Elapsed, .DisplayName = "Elapsed", .Min = 0.0, .ReadOnly = true)
+VE_FIELD(Elapsed, .DisplayName = "Elapsed", .ReadOnly = true, .Display = {.Min = 0.0})
 VE_FIELD(Score, .DisplayName = "Score")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::GameModeConfig, 0xAE57419CF98B07F8ULL)
 VE_FIELD(PlayerPrefab, .DisplayName = "Player Prefab")
-VE_FIELD(ScoreToWin, .DisplayName = "Score to Win", .Min = 0)
+VE_FIELD(ScoreToWin, .DisplayName = "Score to Win", .Display = {.Min = 0})
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::LevelRenderSettings, 0x28E4618C66455E21ULL)
-VE_FIELD(Exposure, .DisplayName = "Exposure", .Min = 0.0)
+VE_FIELD(Exposure, .DisplayName = "Exposure", .Display = {.Min = 0.0})
 VE_FIELD(Bloom, .DisplayName = "Bloom")
-VE_FIELD(BloomIntensity, .DisplayName = "Bloom Intensity", .Min = 0.0)
+VE_FIELD(BloomIntensity, .DisplayName = "Bloom Intensity", .Display = {.Min = 0.0})
 VE_FIELD(Shadows, .DisplayName = "Shadows")
 VE_FIELD(AO, .DisplayName = "SSAO")
 VE_FIELD(Environment, .DisplayName = "Environment")
-VE_FIELD(EnvironmentIntensity, .DisplayName = "Environment Intensity", .Min = 0.0)
+VE_FIELD(EnvironmentIntensity, .DisplayName = "Environment Intensity", .Display = {.Min = 0.0})
 VE_FIELD(Skybox, .DisplayName = "Skybox")
 VE_REFLECT_END();

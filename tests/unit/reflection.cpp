@@ -137,7 +137,7 @@ VE_FIELD(Target)
 VE_REFLECT_END();
 
 VE_REFLECT(::PlainData, 0x7700110022003305ULL)
-VE_FIELD(X, .Min = -1.0, .Max = 1.0)
+VE_FIELD(X, .Display = {.Min = -1.0, .Max = 1.0})
 VE_FIELD(Label)
 VE_REFLECT_END();
 
@@ -162,7 +162,7 @@ TEST_CASE("VE_REFLECT records names, offsets, metadata, and the authored id")
 
     CHECK(fields[2].Name == "Scale");
     CHECK(fields[2].Offset == offsetof(Transform, Scale));
-    CHECK(fields[2].Min == doctest::Approx(0.001));
+    CHECK(fields[2].Display.Min == doctest::Approx(0.001));
 
     CHECK(VengReflect<Transform>::Id == 0x0AB8E30B2F638555ULL);
     CHECK(VengReflect<Transform>::Class == FieldClass::Struct);

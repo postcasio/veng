@@ -9,6 +9,7 @@
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Texture.h>
+#include <Veng/Reflection/FieldDisplay.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/UI/UI.h>
@@ -466,20 +467,22 @@ namespace VengEditor
 
         auto disabled = UI::Disabled(field.ReadOnly);
 
-        // Drag speed and clamp range come from the field's optional editor metadata;
-        // absent metadata leaves the DragOptions defaults (0.01f speed, unclamped).
+        // Drag speed and clamp range come from the field's resolved presentation
+        // (field override over type default); absent metadata leaves the DragOptions
+        // defaults (0.01f speed, unclamped).
+        const FieldDisplay display = ResolveFieldDisplay(field, ctx.Assets.GetTypeRegistry());
         UI::DragOptions drag;
-        if (field.Step)
+        if (display.Step)
         {
-            drag.Speed = static_cast<f32>(*field.Step);
+            drag.Speed = static_cast<f32>(*display.Step);
         }
-        if (field.Min)
+        if (display.Min)
         {
-            drag.Min = static_cast<f32>(*field.Min);
+            drag.Min = static_cast<f32>(*display.Min);
         }
-        if (field.Max)
+        if (display.Max)
         {
-            drag.Max = static_cast<f32>(*field.Max);
+            drag.Max = static_cast<f32>(*display.Max);
         }
 
         bool changed = false;

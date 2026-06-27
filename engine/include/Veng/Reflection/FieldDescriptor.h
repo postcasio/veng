@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Reflection/ReflectionTypes.h>
+#include <Veng/Reflection/FieldDisplay.h>
 
 namespace Veng
 {
@@ -30,12 +31,8 @@ namespace Veng
         string DisplayName;
         /// @brief Editor tooltip text.
         string Tooltip;
-        /// @brief Optional minimum value hint for editor widgets.
-        optional<f64> Min;
-        /// @brief Optional maximum value hint for editor widgets.
-        optional<f64> Max;
-        /// @brief Optional step size hint for editor drag widgets.
-        optional<f64> Step;
+        /// @brief Per-field presentation override, merged over the field type's default by ResolveFieldDisplay.
+        FieldDisplay Display;
         /// @brief When true, the editor inspector hides this field.
         bool Hidden = false;
         /// @brief When true, the editor inspector does not allow editing this field.

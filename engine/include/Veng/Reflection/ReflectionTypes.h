@@ -50,6 +50,27 @@ namespace Veng
         Array,
     };
 
+    /// @brief The closed presentation kind a resolved field maps onto in the editor.
+    ///
+    /// Orthogonal to FieldClass (which fixes the data shape): a Scalar can be a Drag
+    /// or a Slider, a Vector can be a Color. The set is closed, exhaustively switched
+    /// like FieldClass; anything outside it is a custom RegisterFieldWidget. It rides
+    /// FieldDisplay on both TypeInfo (a type default) and FieldDescriptor (a field
+    /// override), merged by ResolveFieldDisplay.
+    enum class WidgetKind : u8
+    {
+        /// @brief Unset/inherit; the editor infers the widget from the field's FieldClass.
+        Auto,
+        /// @brief A drag editor (the FieldClass default for scalars and vectors).
+        Drag,
+        /// @brief A bounded slider editor for a scalar or vector.
+        Slider,
+        /// @brief A color picker for a vec3/vec4.
+        Color,
+        /// @brief A multi-line text editor for a string.
+        Multiline,
+    };
+
     /// @brief A registered type's spelling split into its enclosing namespace and bare name.
     struct QualifiedTypeName
     {

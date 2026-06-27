@@ -19,7 +19,7 @@
 //   VE_REFLECT(::Game::Transform, 0x4DD9F2A1C03B5E76ULL)
 //       VE_FIELD(Position, .DisplayName = "Position")
 //       VE_FIELD(Rotation, .DisplayName = "Rotation")
-//       VE_FIELD(Scale,    .DisplayName = "Scale", .Min = 0.001)
+//       VE_FIELD(Scale,    .DisplayName = "Scale", .Display = {.Min = 0.001})
 //   VE_REFLECT_END();
 //
 // VE_FIELD(member, …) derives the field's Type and Class from decltype(T::member)
