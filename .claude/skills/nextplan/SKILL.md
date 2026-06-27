@@ -5,10 +5,19 @@ description: Evaluate the veng roadmap and recommend the best area to tackle for
 
 # nextplan
 
-Recommend the **next planset** to build for veng. The roadmap lives in `plans/`;
-this skill reads it, weighs every still-open option, and gives the user a clear,
+Recommend a **new planset** to draft next for veng. The roadmap lives in `plans/`;
+this skill reads it, weighs every still-open area, and gives the user a clear,
 opinionated recommendation — one strong pick in depth, a couple of alternates in
 brief.
+
+**NEVER recommend an existing planset.** The point of this skill is to identify the
+*next* planset worth **drafting** — so the pick always comes from the open **areas**
+in the roadmap (`plans/future/`), never from the list of `plans/planset-NN/`
+directories. Any planset that already exists is off the table whatever its status: a
+`done` one is shipped, and a `proposed`/`ready`/scaffolded-but-unbuilt one has
+already been drafted, so naming it adds nothing. Begin from the roadmap and look at a
+planset only to *vet* a roadmap pick (see step 2). The recommendation must name work
+for which a new `planset-NN/` would be created.
 
 This is an **advisory** skill. It produces a recommendation in chat. It does **not**
 create plan files, scaffold a planset, or write to `plans/`. Stop at the writeup.
@@ -30,10 +39,14 @@ create plan files, scaffold a planset, or write to `plans/`. Stop at the writeup
      `asset-system.md`, `bindless-descriptors.md`, `compiled-rendergraph.md`) — read
      the ones for your live candidates so the overview is grounded, not guessed.
 
-2. **Establish what's actually in flight.** Check `git log --oneline -15` and
-   `git status`. A half-landed planset (uncommitted work, a `planset-NN` dir newer
-   than the others, recent `Plan NN:` commits) usually *is* the answer — finishing
-   in-flight work beats opening a new front. Note it if so.
+2. **Work from the roadmap, not the planset list.** The candidates are the open
+   **areas** in `plans/future/README.md` — that is where a new planset comes from.
+   Do **not** enumerate `plans/planset-*/` looking for "what's next"; an existing
+   planset is never the pick. Consult a specific planset **only** to check that a
+   roadmap area you are considering is genuinely appropriate — e.g. to confirm a
+   prerequisite shipped, or that the area is not already covered by a drafted or
+   shipped planset (if it is, that area is done or in-hand — move to the next). The
+   plansets are evidence for vetting a roadmap pick, not the menu you pick from.
 
 3. **Evaluate every open option against these axes:**
    - **Unblocked** — are its prerequisites delivered? The roadmap is explicit about
@@ -49,8 +62,10 @@ create plan files, scaffold a planset, or write to `plans/`. Stop at the writeup
    - **User signal** — anything the user said this session about where they want to
      go outranks the roadmap's default ordering.
 
-4. **Pick one.** Don't hedge into a tie. If two are genuinely close, lead with the
-   one that's unblocked-and-prioritized and mention the other as the top alternate.
+4. **Pick one — a new planset.** Confirm your pick has no existing `plans/planset-NN/`
+   directory (step 2); if it does, it is disqualified, pick the next-best area. Don't
+   hedge into a tie. If two are genuinely close, lead with the one that's
+   unblocked-and-prioritized and mention the other as the top alternate.
 
 ## What to produce
 
