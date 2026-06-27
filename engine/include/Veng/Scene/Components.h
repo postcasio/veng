@@ -613,7 +613,7 @@ VE_FIELD(Type, .DisplayName = "Type")
 VE_FIELD(Direction, .DisplayName = "Direction")
 VE_FIELD(Color, .DisplayName = "Color")
 VE_FIELD(Intensity, .DisplayName = "Intensity", .Min = 0.0)
-VE_FIELD(Range, .DisplayName = "Range", .Min = 0.0, .Step = 0.1)
+VE_FIELD(Range, .DisplayName = "Range", .Min = 0.01, .Step = 0.1)
 VE_FIELD(InnerCone, .DisplayName = "Inner Cone", .Min = 0.0, .Max = 3.14159265, .Step = 0.01)
 VE_FIELD(OuterCone, .DisplayName = "Outer Cone", .Min = 0.0, .Max = 3.14159265, .Step = 0.01)
 VE_REFLECT_END();

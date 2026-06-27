@@ -27,7 +27,9 @@ namespace Veng::Renderer
 
         f32 ShadowNear(f32 range)
         {
-            return std::max(range * NearFraction, MinNear);
+            // Capped below far (= range) so a small-range light's frustum never
+            // inverts; floored at MinNear for depth precision on larger ranges.
+            return std::min(std::max(range * NearFraction, MinNear), range * 0.5f);
         }
     }
 
