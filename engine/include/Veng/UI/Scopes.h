@@ -77,6 +77,36 @@ namespace Veng::UI
         bool m_Live = true;
     };
 
+    /// @brief Scope guard for a `UI::Toolbar` bar.
+    ///
+    /// Pairs the toolbar's `BeginChild` with `EndChild` and unwinds the style var the
+    /// factory pushed, all unconditionally (mirroring `Begin`/`End`). The body
+    /// always draws — a toolbar has no collapsed state — so `operator bool` is always true;
+    /// the guard exists for the RAII close, not a visibility gate.
+    class [[nodiscard]] ScopedToolbar
+    {
+    public:
+        /// @brief Constructs the guard.
+        ScopedToolbar() = default;
+
+        /// @brief Ends the child region and pops the toolbar's pushed style state.
+        ~ScopedToolbar();
+
+        ScopedToolbar(const ScopedToolbar&) = delete;
+        ScopedToolbar& operator=(const ScopedToolbar&) = delete;
+
+        /// @brief Move constructor; invalidates the source so its destructor is a no-op.
+        ScopedToolbar(ScopedToolbar&& other) noexcept { other.m_Live = false; }
+        ScopedToolbar& operator=(ScopedToolbar&&) = delete;
+
+        /// @brief Always true; the toolbar body is unconditionally drawn.
+        explicit operator bool() const { return true; }
+
+    private:
+        /// @brief False after a move; suppresses the destructor call.
+        bool m_Live = true;
+    };
+
     /// @brief Scope guard for `ImGui::TreeNodeEx` and `CollapsingHeader`.
     ///
     /// A `TreeNodeEx` that is open owes a `TreePop`; `CollapsingHeader` has no pop
@@ -438,6 +468,19 @@ namespace Veng::UI
     /// @param flags Window display flags.
     [[nodiscard]] ScopedChild Child(string_view id, vec2 size = {},
                                     WindowFlags flags = WindowFlags::None);
+
+    /// @brief Opens a horizontal toolbar bar and returns a scope guard that closes it.
+    ///
+    /// A full-width, height-auto-sizing band with interior padding, for the row of
+    /// buttons/inputs at the top of a panel. Lay the controls out inside the returned scope
+    /// on one line (`UI::SameLine` between them), exactly as a bare row — the bar adds the
+    /// padding around them:
+    /// `if (auto bar = UI::Toolbar("##toolbar")) { UI::Button(...); UI::SameLine(); ... }`.
+    /// The guard's destructor ends the child, unwinds the pushed style, and leaves a small
+    /// gap below, so the panel content follows without a manual separator.
+    /// @param id  ImGui id string for the toolbar's child region.
+    /// @return A scope guard whose body is always drawn.
+    [[nodiscard]] ScopedToolbar Toolbar(string_view id);
 
     /// @brief Pins a translucent, auto-sized overlay panel inside the current window.
     ///

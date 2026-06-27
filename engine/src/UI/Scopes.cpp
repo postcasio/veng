@@ -212,6 +212,16 @@ namespace Veng::UI
         }
     }
 
+    ScopedToolbar::~ScopedToolbar()
+    {
+        if (m_Live)
+        {
+            ImGui::EndChild();
+            ImGui::PopStyleVar();
+            ImGui::Spacing();
+        }
+    }
+
     ScopedWindow Window(string_view title, bool* open, WindowFlags flags)
     {
         const string id = AsCStr(title);
@@ -223,6 +233,20 @@ namespace Veng::UI
         const string label = AsCStr(id);
         return ScopedChild(
             ImGui::BeginChild(label.c_str(), size, ImGuiChildFlags_None, ToImGui(flags)));
+    }
+
+    ScopedToolbar Toolbar(string_view id)
+    {
+        const string label = AsCStr(id);
+        const Theme& theme = GetTheme();
+
+        // Interior padding around the row of controls; the child auto-sizes its height to
+        // the one row. The push unwinds in ~ScopedToolbar, after the matching EndChild.
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                            ImVec2(theme.FramePadding.x * 2.0f, theme.FramePadding.y * 1.5f));
+
+        ImGui::BeginChild(label.c_str(), ImVec2(0.0f, 0.0f), ImGuiChildFlags_AutoResizeY);
+        return ScopedToolbar();
     }
 
     ScopedWindow ViewportOverlay(string_view id, OverlayAnchor anchor, vec2 padding)

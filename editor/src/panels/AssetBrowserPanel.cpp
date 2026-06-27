@@ -464,31 +464,32 @@ namespace VengEditor
         }
 
         // Toolbar: three exclusive view-mode toggles plus a fill-width search box.
-        bool details = m_ViewMode == ViewMode::DetailList;
-        if (UI::ToggleButton(fmt::format("{}##view_list", Icons::ViewList), details))
+        if (auto bar = UI::Toolbar("##asset-toolbar"))
         {
-            m_ViewMode = ViewMode::DetailList;
+            bool details = m_ViewMode == ViewMode::DetailList;
+            if (UI::ToggleButton(fmt::format("{}##view_list", Icons::ViewList), details))
+            {
+                m_ViewMode = ViewMode::DetailList;
+            }
+            UI::Tooltip("Detail list");
+            UI::SameLine();
+            bool columns = m_ViewMode == ViewMode::Columns;
+            if (UI::ToggleButton(fmt::format("{}##view_columns", Icons::ViewColumns), columns))
+            {
+                m_ViewMode = ViewMode::Columns;
+            }
+            UI::Tooltip("Columns");
+            UI::SameLine();
+            bool icons = m_ViewMode == ViewMode::Icons;
+            if (UI::ToggleButton(fmt::format("{}##view_icons", Icons::ViewGrid), icons))
+            {
+                m_ViewMode = ViewMode::Icons;
+            }
+            UI::Tooltip("Icon grid");
+            UI::SameLine();
+            UI::SetNextItemWidth(-1.0f);
+            (void)UI::InputTextWithHint("##search", "Search", m_Filter);
         }
-        UI::Tooltip("Detail list");
-        UI::SameLine();
-        bool columns = m_ViewMode == ViewMode::Columns;
-        if (UI::ToggleButton(fmt::format("{}##view_columns", Icons::ViewColumns), columns))
-        {
-            m_ViewMode = ViewMode::Columns;
-        }
-        UI::Tooltip("Columns");
-        UI::SameLine();
-        bool icons = m_ViewMode == ViewMode::Icons;
-        if (UI::ToggleButton(fmt::format("{}##view_icons", Icons::ViewGrid), icons))
-        {
-            m_ViewMode = ViewMode::Icons;
-        }
-        UI::Tooltip("Icon grid");
-        UI::SameLine();
-        UI::SetNextItemWidth(-1.0f);
-        (void)UI::InputTextWithHint("##search", "Search", m_Filter);
-
-        UI::Separator();
 
         constexpr f32 TreeWidth = 220.0f;
         if (auto tree = UI::Child("##tree", {TreeWidth, 0.0f}))

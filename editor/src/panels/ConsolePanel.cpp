@@ -30,13 +30,14 @@ namespace VengEditor
 
     void ConsolePanel::OnUI()
     {
-        if (UI::Button(Icons::Clear))
+        if (auto bar = UI::Toolbar("##console-toolbar"))
         {
-            m_Entries.clear();
+            if (UI::Button(Icons::Clear))
+            {
+                m_Entries.clear();
+            }
+            UI::Tooltip("Clear the console");
         }
-        UI::Tooltip("Clear the console");
-
-        UI::Separator();
 
         if (auto log = UI::Child("ConsoleScroll", {}, UI::WindowFlags::HorizontalScrollbar))
         {

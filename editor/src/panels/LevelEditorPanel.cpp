@@ -351,18 +351,21 @@ namespace VengEditor
             }
         }
 
-        DrawDocumentToolbar();
-        UI::SameLine();
-        UI::Separator();
-        UI::SameLine();
-
-        // The level runs its named set, distinct from a prefab document's "all registered"
-        // set; surface which is active so Play is not surprising.
-        UI::TextDisabled(fmt::format("Play runs {} level systems", m_Systems.size()));
-        if (m_Cooking)
+        if (auto bar = UI::Toolbar("##level-toolbar"))
         {
+            DrawDocumentToolbar();
             UI::SameLine();
-            UI::TextDisabled("(cooking…)");
+            UI::Separator();
+            UI::SameLine();
+
+            // The level runs its named set, distinct from a prefab document's "all registered"
+            // set; surface which is active so Play is not surprising.
+            UI::TextDisabled(fmt::format("Play runs {} level systems", m_Systems.size()));
+            if (m_Cooking)
+            {
+                UI::SameLine();
+                UI::TextDisabled("(cooking…)");
+            }
         }
         if (m_CookError)
         {

@@ -306,11 +306,14 @@ namespace VengEditor
             return;
         }
 
-        DrawDocumentToolbar();
-        UI::SameLine();
-        UI::Separator();
-        UI::SameLine();
-        UI::TextDisabled(fmt::format("{} entities", m_Context.Scene->EntityCount()));
+        if (auto bar = UI::Toolbar("##prefab-toolbar"))
+        {
+            DrawDocumentToolbar();
+            UI::SameLine();
+            UI::Separator();
+            UI::SameLine();
+            UI::TextDisabled(fmt::format("{} entities", m_Context.Scene->EntityCount()));
+        }
     }
 
     void PrefabEditorPanel::BuildScene()
