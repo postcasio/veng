@@ -2,6 +2,7 @@
 
 #include "CommandStack.h"
 #include "EditorCommand.h"
+#include "EditorIcons.h"
 #include "FieldWidget.h"
 
 #include <Veng/Asset/AssetManager.h>
@@ -189,7 +190,7 @@ namespace VengEditor
     {
         Scene* scene = m_Ctx.Scene;
 
-        if (UI::Button("Add Component"))
+        if (UI::Button(fmt::format("{} Add Component", Icons::Add)))
         {
             m_AddSearch.clear();
             UI::OpenPopup("##addcomp");

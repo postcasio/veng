@@ -2,6 +2,7 @@
 
 #include "AssetDragPayload.h"
 #include "AssetSourceIndex.h"
+#include "EditorIcons.h"
 #include "FieldGate.h"
 #include "FieldWidgetDispatch.h"
 #include "panels/PrefabEditContext.h"
@@ -182,11 +183,12 @@ namespace VengEditor
             if (!ref.IsNull())
             {
                 UI::SameLine();
-                if (UI::SmallButton(fmt::format("x##clear{}", label)))
+                if (UI::SmallButton(fmt::format("{}##clear{}", Icons::Remove, label)))
                 {
                     ref = Entity::Null;
                     changed = true;
                 }
+                UI::Tooltip("Clear the reference");
             }
             return changed;
         }
@@ -471,12 +473,13 @@ namespace VengEditor
             bool changed = false;
 
             // The value cell of the field's own row holds the Add button.
-            if (UI::SmallButton(fmt::format("Add##add{}", label)))
+            if (UI::SmallButton(fmt::format("{}##add{}", Icons::Add, label)))
             {
                 const usize count = field.ArraySize(fieldPtr);
                 field.ArrayResize(fieldPtr, count + 1);
                 changed = true;
             }
+            UI::Tooltip("Append an element");
 
             const usize count = field.ArraySize(fieldPtr);
             UI::Indent();
@@ -506,7 +509,7 @@ namespace VengEditor
                     elementField.Display = field.Display;
                     changed |= DrawValueWidget(element, elementField, "##elemval", ctx);
                     UI::SameLine();
-                    if (UI::SmallButton("x##remove"))
+                    if (UI::SmallButton(fmt::format("{}##remove", Icons::Remove)))
                     {
                         removeAt = i;
                     }
@@ -521,7 +524,7 @@ namespace VengEditor
                     const bool open =
                         UI::PropertyHeader(fmt::format("[{}]##elemhdr", i), defaultOpen);
                     UI::TableSetColumnIndex(1);
-                    if (UI::SmallButton("Remove##remove"))
+                    if (UI::SmallButton(fmt::format("{}##remove", Icons::Remove)))
                     {
                         removeAt = i;
                     }
@@ -533,7 +536,7 @@ namespace VengEditor
                 }
 
                 UI::PropertyLabel(fmt::format("[{}]", i));
-                if (UI::SmallButton("Remove##remove"))
+                if (UI::SmallButton(fmt::format("{}##remove", Icons::Remove)))
                 {
                     removeAt = i;
                 }

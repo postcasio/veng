@@ -1,5 +1,7 @@
 #include "panels/PrefabEditorPanel.h"
 
+#include "EditorIcons.h"
+
 #include <Veng/Application.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Prefab.h>
@@ -231,7 +233,7 @@ namespace VengEditor
             const UI::DisabledScope disabled = UI::Disabled(playing);
             const UI::StyleColorScope accent =
                 UI::StyleColor(UI::StyleColorId::Button, theme.Accent);
-            if (UI::Button("Play"))
+            if (UI::Button(Icons::Play))
             {
                 Play();
             }
@@ -241,7 +243,7 @@ namespace VengEditor
         UI::SameLine();
         {
             const UI::DisabledScope disabled = UI::Disabled(!playing);
-            if (UI::Button("Stop"))
+            if (UI::Button(Icons::Stop))
             {
                 Stop();
             }
@@ -249,7 +251,7 @@ namespace VengEditor
 
             UI::SameLine();
             const bool paused = m_Context.Play == PlayState::Paused;
-            if (UI::Button(paused ? "Resume" : "Pause"))
+            if (UI::Button(paused ? Icons::Play : Icons::Pause))
             {
                 if (paused)
                 {
@@ -288,11 +290,11 @@ namespace VengEditor
             UI::Tooltip(tooltip);
         };
 
-        modeButton("Move", GizmoMode::Translate, "Translate (W)");
+        modeButton(Icons::Translate, GizmoMode::Translate, "Translate (W)");
         UI::SameLine();
-        modeButton("Rotate", GizmoMode::Rotate, "Rotate (E)");
+        modeButton(Icons::Rotate, GizmoMode::Rotate, "Rotate (E)");
         UI::SameLine();
-        modeButton("Scale", GizmoMode::Scale, "Scale (R)");
+        modeButton(Icons::Scale, GizmoMode::Scale, "Scale (R)");
     }
 
     void PrefabEditorPanel::OnUI()

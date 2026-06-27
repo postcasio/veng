@@ -1,5 +1,7 @@
 #include "TextureEditorPanel.h"
 
+#include "EditorIcons.h"
+
 #include <Veng/Asset/Texture.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Renderer/Context.h>
@@ -392,16 +394,18 @@ namespace VengEditor
 
         UI::Separator();
 
-        if (UI::Button("Save"))
+        if (UI::Button(Icons::Save))
         {
             SaveSettings();
         }
+        UI::Tooltip("Save the texture settings to its .tex.json");
         UI::SameLine();
-        if (UI::Button("Revert"))
+        if (UI::Button(Icons::Revert))
         {
             LoadSettings();
             SaveSettings();
             TriggerCook();
         }
+        UI::Tooltip("Discard edits and reload the settings from disk");
     }
 }

@@ -1,5 +1,7 @@
 #include "ConsolePanel.h"
 
+#include "EditorIcons.h"
+
 #include <Veng/UI/UI.h>
 
 namespace VengEditor
@@ -28,10 +30,11 @@ namespace VengEditor
 
     void ConsolePanel::OnUI()
     {
-        if (UI::Button("Clear"))
+        if (UI::Button(Icons::Clear))
         {
             m_Entries.clear();
         }
+        UI::Tooltip("Clear the console");
 
         UI::Separator();
 

@@ -1,6 +1,7 @@
 #include "panels/ProjectSettingsPanel.h"
 
 #include "AssetSourceIndex.h"
+#include "EditorIcons.h"
 #include "FieldWidget.h"
 #include "PreviewCapability.h"
 
@@ -145,10 +146,11 @@ namespace VengEditor
         const bool canSave = !m_ProjectFile.empty();
         {
             auto disabled = UI::Disabled(!canSave);
-            if (UI::Button("Save"))
+            if (UI::Button(Icons::Save))
             {
                 Save();
             }
+            UI::Tooltip("Save project.veng and each configuration's .buildcfg");
         }
         if (!canSave)
         {

@@ -1,5 +1,7 @@
 #include "panels/PrefabExplorerPanel.h"
 
+#include "EditorIcons.h"
+
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Components.h>
@@ -124,10 +126,11 @@ namespace VengEditor
         m_Pending.clear();
 
         // Toolbar: add a root entity, then the name filter.
-        if (UI::Button("Add Entity"))
+        if (UI::Button(Icons::Add))
         {
             m_Pending.push_back(PendingOp{.Op = PendingOp::Kind::CreateRoot});
         }
+        UI::Tooltip("Add a root entity");
         UI::SameLine();
         UI::SetNextItemWidth(-1.0f);
         if (UI::InputTextWithHint("##search", "Search…", m_Filter))

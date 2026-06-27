@@ -2,6 +2,7 @@
 
 #include "../AssetDragPayload.h"
 #include "../AssetSourceIndex.h"
+#include "../EditorIcons.h"
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Log.h>
@@ -464,22 +465,25 @@ namespace VengEditor
 
         // Toolbar: three exclusive view-mode toggles plus a fill-width search box.
         bool details = m_ViewMode == ViewMode::DetailList;
-        if (UI::ToggleButton("List##view_list", details))
+        if (UI::ToggleButton(fmt::format("{}##view_list", Icons::ViewList), details))
         {
             m_ViewMode = ViewMode::DetailList;
         }
+        UI::Tooltip("Detail list");
         UI::SameLine();
         bool columns = m_ViewMode == ViewMode::Columns;
-        if (UI::ToggleButton("Columns##view_columns", columns))
+        if (UI::ToggleButton(fmt::format("{}##view_columns", Icons::ViewColumns), columns))
         {
             m_ViewMode = ViewMode::Columns;
         }
+        UI::Tooltip("Columns");
         UI::SameLine();
         bool icons = m_ViewMode == ViewMode::Icons;
-        if (UI::ToggleButton("Icons##view_icons", icons))
+        if (UI::ToggleButton(fmt::format("{}##view_icons", Icons::ViewGrid), icons))
         {
             m_ViewMode = ViewMode::Icons;
         }
+        UI::Tooltip("Icon grid");
         UI::SameLine();
         UI::SetNextItemWidth(-1.0f);
         (void)UI::InputTextWithHint("##search", "Search", m_Filter);

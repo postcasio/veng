@@ -1,6 +1,7 @@
 #include "MaterialEditorPanel.h"
 
 #include "AssetSourceIndex.h"
+#include "EditorIcons.h"
 #include "FieldWidget.h"
 
 #include "material/MaterialCompile.h"
@@ -605,19 +606,21 @@ namespace VengEditor
         // Toolbar.
         {
             auto disabled = UI::Disabled(m_ReadOnly);
-            if (UI::Button("Save"))
+            if (UI::Button(Icons::Save))
             {
                 WriteVmat(m_SourcePath);
             }
+            UI::Tooltip("Save the material graph to its .vmat.json");
         }
         UI::SameLine();
-        if (UI::Button("Revert"))
+        if (UI::Button(Icons::Revert))
         {
             m_Catalog = NodeCatalog{};
             m_ReadOnly = false;
             BuildGraph();
             TriggerCook();
         }
+        UI::Tooltip("Discard edits and reload the material from disk");
         if (m_ReadOnly)
         {
             UI::SameLine();

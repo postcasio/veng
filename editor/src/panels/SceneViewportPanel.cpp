@@ -1,5 +1,7 @@
 #include "panels/SceneViewportPanel.h"
 
+#include "EditorIcons.h"
+
 #include <Veng/Application.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Environment.h>
@@ -469,7 +471,7 @@ namespace VengEditor
             UI::Tooltip("Vertical field of view");
 
             UI::SameLine();
-            if (UI::Button("Frame"))
+            if (UI::Button(Icons::Frame))
             {
                 FrameSelection();
             }

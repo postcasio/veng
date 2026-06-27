@@ -149,22 +149,25 @@ namespace Veng
 
         // FontAwesome merged onto the default font, so the FontAwesome7.h ICON_FA_* glyphs
         // render inline with text. The dynamic font atlas loads glyphs on demand, so no glyph
-        // range is supplied.
+        // range is supplied. Sized just under the 16px body text so icons sit level with it
+        // rather than towering over a label; the advance keeps them roughly monospaced.
+        constexpr f32 iconSize = 14.0f;
         ImFontConfig iconConfig;
         iconConfig.MergeMode = true;
-        iconConfig.GlyphOffset = ImVec2(0, 5.0f);
-        iconConfig.GlyphMinAdvanceX = 20.0f;
+        iconConfig.GlyphOffset = ImVec2(0, 2.0f);
+        iconConfig.GlyphMinAdvanceX = 16.0f;
 
         if (info.IconFontPath && std::filesystem::exists(*info.IconFontPath))
         {
-            io.Fonts->AddFontFromFileTTF(info.IconFontPath->string().c_str(), 20.0f, &iconConfig);
+            io.Fonts->AddFontFromFileTTF(info.IconFontPath->string().c_str(), iconSize,
+                                         &iconConfig);
         }
 #ifdef VENG_HAS_ICON_FONT
         else
         {
             iconConfig.FontDataOwnedByAtlas = false; // static embed; the atlas must not free it
             io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(g_IconFont),
-                                           static_cast<int>(g_IconFontSize), 20.0f, &iconConfig);
+                                           static_cast<int>(g_IconFontSize), iconSize, &iconConfig);
         }
 #endif
 
