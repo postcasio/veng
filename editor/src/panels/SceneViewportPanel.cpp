@@ -23,8 +23,6 @@
 #include <Veng/UI/UI.h>
 #include <Veng/Vendor/ImGui.h>
 
-#include "panels/PrefabEditorPanel.h"
-
 #include "CommandStack.h"
 #include "EditorCommand.h"
 
@@ -49,10 +47,9 @@ namespace VengEditor
 
     SceneViewportPanel::SceneViewportPanel(Application& app, AssetManager& assets,
                                            ImGuiLayer& imgui, PrefabEditContext& ctx, Input& input,
-                                           InputRouter& router, PrefabEditorPanel& document,
-                                           CommandStack& commands)
+                                           InputRouter& router, CommandStack& commands)
         : m_Assets(assets), m_ImGui(imgui), m_Ctx(ctx), m_Input(input), m_Router(router),
-          m_Document(document), m_Commands(commands)
+          m_Commands(commands)
     {
         Renderer::Context& context = app.GetRenderContext();
         // A first-frame placeholder; the panel's content rect drives the real region each OnUI.
@@ -357,16 +354,37 @@ namespace VengEditor
         }
 
         const vec3 cameraPosition = m_View.GetPosition();
-        const bool overHandle = m_Gizmo.Hover(*m_Ctx.Scene, m_Ctx.Active, *ray, cameraPosition);
+        const bool overHandle =
+            m_Gizmo.Hover(*m_Ctx.Scene, m_Ctx.Active, *ray, cameraPosition, m_Ctx.Gizmo);
 
         if (hovered && overHandle && m_Input.WasMouseButtonPressed(MouseButton::Left))
         {
-            return m_Gizmo.BeginDrag(*m_Ctx.Scene, m_Ctx.Active, *ray, cameraPosition);
+            return m_Gizmo.BeginDrag(*m_Ctx.Scene, m_Ctx.Active, *ray, cameraPosition, m_Ctx.Gizmo);
         }
 
         // Hovering a handle (no press) still suppresses the click-select fall-through only on the
         // press frame; a bare hover does not consume, so report consumption only on a real grab.
         return false;
+    }
+
+    bool SceneViewportPanel::CursorOverGizmoHandle()
+    {
+        if (m_Ctx.IsPlaying() || m_Ctx.Scene == nullptr || m_Ctx.Active.IsNull() ||
+            !m_Ctx.Scene->IsAlive(m_Ctx.Active))
+        {
+            return false;
+        }
+
+        const vec2 mouse = m_Input.GetMousePosition();
+        const ivec2 windowPoint{static_cast<i32>(mouse.x), static_cast<i32>(mouse.y)};
+        const optional<Ray> ray = m_Viewport->ScreenToWorldRay(windowPoint);
+        if (!ray.has_value())
+        {
+            return false;
+        }
+        // m_View is last frame's here (the camera updates after this), exact enough for the press
+        // hit-test; HandleGizmo re-tests below with this frame's view for the actual grab.
+        return m_Gizmo.Hover(*m_Ctx.Scene, m_Ctx.Active, *ray, m_View.GetPosition(), m_Ctx.Gizmo);
     }
 
     void SceneViewportPanel::OnCommit(const Transform& start, const Transform& final)
@@ -429,52 +447,8 @@ namespace VengEditor
 
     void SceneViewportPanel::DrawToolbar()
     {
-        const UI::Theme& theme = UI::GetTheme();
-        const bool playing = m_Ctx.IsPlaying();
-
         if (auto bar = UI::ViewportOverlay("##viewport-toolbar", UI::OverlayAnchor::TopLeft))
         {
-            // Gameplay preview: Play while editing; Stop + Pause/Resume while playing.
-            {
-                const UI::DisabledScope disabled = UI::Disabled(playing);
-                const UI::StyleColorScope accent =
-                    UI::StyleColor(UI::StyleColorId::Button, theme.Accent);
-                if (UI::Button("Play"))
-                {
-                    m_Document.Play();
-                }
-            }
-            UI::Tooltip("Clone the scene and run its systems (play in viewport)");
-
-            UI::SameLine();
-            {
-                const UI::DisabledScope disabled = UI::Disabled(!playing);
-                if (UI::Button("Stop"))
-                {
-                    m_Document.Stop();
-                }
-                UI::Tooltip("Stop the play session and restore the edited scene");
-
-                UI::SameLine();
-                const bool paused = m_Ctx.Play == PlayState::Paused;
-                if (UI::Button(paused ? "Resume" : "Pause"))
-                {
-                    if (paused)
-                    {
-                        m_Document.Resume();
-                    }
-                    else
-                    {
-                        m_Document.Pause();
-                    }
-                }
-                UI::Tooltip(paused ? "Resume the paused play session"
-                                   : "Pause the play session (hold the current frame)");
-            }
-
-            UI::Separator();
-            UI::SameLine();
-
             // Camera: fly speed, FOV, and a frame-selection shortcut.
             f32 flySpeed = m_Camera.GetFlySpeed();
             UI::SetNextItemWidth(110.0f);
@@ -500,12 +474,6 @@ namespace VengEditor
                 FrameSelection();
             }
             UI::Tooltip("Frame the selection, or the whole scene (F)");
-
-            UI::Separator();
-            UI::SameLine();
-
-            // Manipulation gizmo mode (Move / Rotate / Scale), the W/E/R keys' toolbar twin.
-            DrawGizmoToolbar();
 
             UI::Separator();
             UI::SameLine();
@@ -561,36 +529,6 @@ namespace VengEditor
             }
             UI::Tooltip("Temporal anti-aliasing");
         }
-    }
-
-    void SceneViewportPanel::DrawGizmoToolbar()
-    {
-        // A radio segment over the gizmo mode; mirrors the W/E/R keys. Disabled while playing
-        // (gizmos are an edit aid) — the keys are gated the same way. The active mode's button is
-        // accent-tinted to read as selected.
-        const UI::Theme& theme = UI::GetTheme();
-        const UI::DisabledScope disabled = UI::Disabled(m_Ctx.IsPlaying());
-        const GizmoMode mode = m_Gizmo.GetMode();
-
-        auto modeButton =
-            [&](const string_view label, const GizmoMode target, const string_view tooltip)
-        {
-            const optional<UI::StyleColorScope> accent =
-                mode == target ? optional<UI::StyleColorScope>{UI::StyleColor(
-                                     UI::StyleColorId::Button, theme.Accent)}
-                               : std::nullopt;
-            if (UI::Button(label))
-            {
-                m_Gizmo.SetMode(target);
-            }
-            UI::Tooltip(tooltip);
-        };
-
-        modeButton("Move", GizmoMode::Translate, "Translate (W)");
-        UI::SameLine();
-        modeButton("Rotate", GizmoMode::Rotate, "Rotate (E)");
-        UI::SameLine();
-        modeButton("Scale", GizmoMode::Scale, "Scale (R)");
     }
 
     void SceneViewportPanel::DrawCaptureNotice()
@@ -694,6 +632,35 @@ namespace VengEditor
         }
         else
         {
+            // A camera mouse-drag (LMB dolly, Alt-orbit, MMB pan, RMB fly) may only begin with a
+            // press over the viewport image that is not grabbing a gizmo handle, and then owns the
+            // drag until every mouse button releases. This keeps a drag that wanders onto a dock tab
+            // or the toolbar — and a press on a gizmo handle (which HandleGizmo claims below) — from
+            // moving the camera. The gizmo only grabs on a left press, so a right/middle press always
+            // owns navigation.
+            const bool anyMouseDown = in.MouseLeft || in.MouseRight || in.MouseMiddle;
+            if (!anyMouseDown || m_Gizmo.IsDragging())
+            {
+                m_CameraDragOwned = false;
+            }
+            else if (!m_CameraDragOwned && hovered)
+            {
+                const bool navPress =
+                    m_Input.WasMouseButtonPressed(MouseButton::Right) ||
+                    m_Input.WasMouseButtonPressed(MouseButton::Middle) ||
+                    (m_Input.WasMouseButtonPressed(MouseButton::Left) && !CursorOverGizmoHandle());
+                if (navPress)
+                {
+                    m_CameraDragOwned = true;
+                }
+            }
+            if (!m_CameraDragOwned)
+            {
+                in.MouseLeft = false;
+                in.MouseRight = false;
+                in.MouseMiddle = false;
+            }
+
             const bool navCursorLock = m_Camera.Update(in, Time::GetDeltaTime());
             m_Input.SetMouseCaptured(navCursorLock);
             m_View = m_Camera.GetView();
@@ -738,15 +705,15 @@ namespace VengEditor
         {
             if (m_Input.WasKeyPressed(Key::W))
             {
-                m_Gizmo.SetMode(GizmoMode::Translate);
+                m_Ctx.Gizmo = GizmoMode::Translate;
             }
             else if (m_Input.WasKeyPressed(Key::E))
             {
-                m_Gizmo.SetMode(GizmoMode::Rotate);
+                m_Ctx.Gizmo = GizmoMode::Rotate;
             }
             else if (m_Input.WasKeyPressed(Key::R))
             {
-                m_Gizmo.SetMode(GizmoMode::Scale);
+                m_Ctx.Gizmo = GizmoMode::Scale;
             }
         }
 
@@ -771,7 +738,7 @@ namespace VengEditor
                 m_Ctx.Scene->IsAlive(m_Ctx.Active))
             {
                 m_Gizmo.Draw(m_Viewport->GetDebugDraw(), *m_Ctx.Scene, m_Ctx.Active,
-                             m_View.GetPosition());
+                             m_View.GetPosition(), m_Ctx.Gizmo);
             }
         }
 

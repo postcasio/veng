@@ -35,7 +35,6 @@ namespace Veng
 namespace VengEditor
 {
     class CommandStack;
-    class PrefabEditorPanel;
 
     /// @brief Scene viewport child of a prefab editor: shows the document's Scene from
     /// an Unreal-style editor camera in a UI::Image, with a translucent toolbar overlay.
@@ -45,7 +44,10 @@ namespace VengEditor
     /// wheel dolly, F to frame); reads the live Scene from the shared PrefabEditContext.
     /// The engine drive-list renders the viewport each frame from the region and view the
     /// panel pushes in OnUI; the panel records no scene render itself. The toolbar overlay
-    /// drives the document's play session and the camera/debug controls.
+    /// drives the viewport-local camera and debug-view controls; the play transport and the
+    /// gizmo-mode selector live on the document toolbar. The gizmo mode is shared document state
+    /// (PrefabEditContext::Gizmo) every viewport reads; this panel owns only the per-viewport
+    /// EditorGizmo hover/drag state.
     class SceneViewportPanel final : public EditorPanel
     {
     public:
@@ -56,12 +58,10 @@ namespace VengEditor
         /// @param ctx       Shared document context supplying the Scene and selection.
         /// @param input     Frame-coherent input service the editor camera reads.
         /// @param router    Input router whose gameplay focus captures the mouse during Play.
-        /// @param document  Owning document the toolbar drives play state through.
         /// @param commands  The document's undo/redo stack a gizmo drag is committed through.
         SceneViewportPanel(Veng::Application& app, Veng::AssetManager& assets,
                            Veng::ImGuiLayer& imgui, PrefabEditContext& ctx, Veng::Input& input,
-                           Veng::InputRouter& router, PrefabEditorPanel& document,
-                           CommandStack& commands);
+                           Veng::InputRouter& router, CommandStack& commands);
         ~SceneViewportPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return "Scene Viewport"; }
@@ -129,8 +129,14 @@ namespace VengEditor
         /// @return true when the gizmo consumed the press/drag (selection must not also fire).
         bool HandleGizmo(bool hovered, bool consumed);
 
-        /// @brief Draws the gizmo mode segment (Move / Rotate / Scale) in the viewport toolbar.
-        void DrawGizmoToolbar();
+        /// @brief Whether the cursor is over a gizmo handle of the active selection this frame.
+        ///
+        /// Hit-tests the cursor ray against the active entity's gizmo (Viewport::ScreenToWorldRay
+        /// + EditorGizmo::Hover) using the prior frame's view. Used to deny camera drag-ownership to
+        /// a press that is grabbing a handle, so manipulating a gizmo does not also move the camera.
+        /// False while playing, with no scene, or with no live active entity.
+        /// @return true when a handle is under the cursor.
+        bool CursorOverGizmoHandle();
 
         /// @brief Records a finished gizmo drag as the edit spanning @p start → @p final.
         ///
@@ -146,7 +152,6 @@ namespace VengEditor
         PrefabEditContext& m_Ctx;
         Veng::Input& m_Input;
         Veng::InputRouter& m_Router;
-        PrefabEditorPanel& m_Document;
         CommandStack& m_Commands;
 
         /// @brief The owned Offscreen viewport; registered into the app's drive-list on construction.
@@ -160,6 +165,14 @@ namespace VengEditor
 
         /// @brief The view the camera produced last OnUI, pushed as the viewport's ViewState.
         Veng::CameraView m_View;
+
+        /// @brief True while a camera mouse-drag owns the current button hold.
+        ///
+        /// Latched on a press over the viewport image that is not grabbing a gizmo handle, held
+        /// until every mouse button releases. Only while owned do the camera's mouse-drag modes
+        /// (LMB dolly, Alt-orbit, MMB pan, RMB fly) run — so a drag onto a dock tab/toolbar or a
+        /// press on a gizmo handle never moves the camera.
+        bool m_CameraDragOwned = false;
 
         Veng::Ref<Veng::Renderer::Sampler> m_SceneSampler;
         Veng::Ref<Veng::ImGuiTexture> m_SceneTexture;

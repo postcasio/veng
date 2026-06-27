@@ -63,23 +63,16 @@ namespace VengEditor
     /// by camera distance, so it stays a roughly constant on-screen size. Manipulation is world
     /// space and pivots on the active entity; a multi-entity selection moves only its Active.
     ///
-    /// The panel owns one and drives it: it sets the mode, calls Hover each frame to highlight,
+    /// The panel owns one and drives it: it passes the active mode (document-level state shared
+    /// across viewports, not owned here) into each call, calls Hover each frame to highlight,
     /// begins a drag on a press over a handle, updates the live Transform each drag frame, and on
     /// release fires the commit seam. The gizmo holds no Scene or entity ownership — every call
-    /// takes the Scene and the entity, and the gizmo only retains the in-progress drag state.
+    /// takes the Scene and the entity. It retains only the in-progress drag state, including the
+    /// mode captured at the drag start, so an in-flight drag stays coherent even if the shared
+    /// mode changes under it (a toolbar click in another viewport).
     class EditorGizmo
     {
     public:
-        /// @brief Returns the current manipulation mode.
-        [[nodiscard]] GizmoMode GetMode() const { return m_Mode; }
-
-        /// @brief Sets the manipulation mode (Translate / Rotate / Scale).
-        ///
-        /// Ignored while a drag is in progress, so a mode key pressed mid-drag does not
-        /// switch the handle being dragged out from under the solve.
-        /// @param mode  The mode to switch to.
-        void SetMode(GizmoMode mode);
-
         /// @brief Returns true while a handle drag is in progress.
         [[nodiscard]] bool IsDragging() const { return m_Dragging; }
 
@@ -91,8 +84,9 @@ namespace VengEditor
         /// @param scene          The scene the entity lives in.
         /// @param entity         The active entity the gizmo manipulates.
         /// @param cameraPosition The camera world position, for distance-based handle sizing.
+        /// @param mode           The active manipulation mode (the drag's captured mode wins while dragging).
         void Draw(Veng::Renderer::DebugDraw& debug, const Veng::Scene& scene, Veng::Entity entity,
-                  Veng::vec3 cameraPosition) const;
+                  Veng::vec3 cameraPosition, GizmoMode mode) const;
 
         /// @brief Hit-tests @p ray against the handles and records the hovered one.
         ///
@@ -104,22 +98,25 @@ namespace VengEditor
         /// @param entity         The active entity the gizmo manipulates.
         /// @param ray            The cursor world ray (Viewport::ScreenToWorldRay).
         /// @param cameraPosition The camera world position, for distance-based handle sizing.
+        /// @param mode           The active manipulation mode the hit-test uses.
         /// @return true when a handle is under the cursor.
         [[nodiscard]] bool Hover(const Veng::Scene& scene, Veng::Entity entity,
-                                 const Veng::Ray& ray, Veng::vec3 cameraPosition);
+                                 const Veng::Ray& ray, Veng::vec3 cameraPosition, GizmoMode mode);
 
         /// @brief Begins a drag if @p ray hits a handle; returns whether a drag started.
         ///
-        /// Records the grabbed handle, the entity's start Transform, and the grab anchor the
-        /// per-mode solve measures the drag delta from. The whole drag is one logical edit
-        /// committed on release.
+        /// Records the grabbed handle, the entity's start Transform, the grab anchor the per-mode
+        /// solve measures the drag delta from, and the mode itself — the drag runs in the mode
+        /// captured here regardless of later shared-mode changes. The whole drag is one logical
+        /// edit committed on release.
         /// @param scene          The scene the entity lives in.
         /// @param entity         The active entity the gizmo manipulates.
         /// @param ray            The cursor world ray at the press.
         /// @param cameraPosition The camera world position, for distance-based handle sizing.
+        /// @param mode           The manipulation mode the drag is captured in.
         /// @return true when a handle was grabbed and a drag began.
         bool BeginDrag(const Veng::Scene& scene, Veng::Entity entity, const Veng::Ray& ray,
-                       Veng::vec3 cameraPosition);
+                       Veng::vec3 cameraPosition, GizmoMode mode);
 
         /// @brief Solves the new Transform for the current drag ray and applies it live.
         ///
@@ -157,15 +154,17 @@ namespace VengEditor
         [[nodiscard]] static Placement
         ComputePlacement(const Veng::Scene& scene, Veng::Entity entity, Veng::vec3 cameraPosition);
 
-        /// @brief Hit-tests a ray against the handles for the current mode at @p placement.
+        /// @brief Hit-tests a ray against the handles for @p mode at @p placement.
         ///
         /// @param placement  The gizmo placement to test against.
         /// @param ray        The cursor world ray.
+        /// @param mode       The manipulation mode whose handles are tested.
         /// @return The hit handle, or GizmoHandle::None on a miss.
-        [[nodiscard]] GizmoHandle Pick(const Placement& placement, const Veng::Ray& ray) const;
+        [[nodiscard]] GizmoHandle Pick(const Placement& placement, const Veng::Ray& ray,
+                                       GizmoMode mode) const;
 
-        /// @brief The current manipulation mode.
-        GizmoMode m_Mode = GizmoMode::Translate;
+        /// @brief The mode captured at the drag start; the drag solves in it. Meaningful only while dragging.
+        GizmoMode m_DragMode = GizmoMode::Translate;
 
         /// @brief The handle highlighted this frame (hovered, or the dragged one while dragging).
         GizmoHandle m_Hovered = GizmoHandle::None;

@@ -135,14 +135,6 @@ namespace VengEditor
         }
     }
 
-    void EditorGizmo::SetMode(const GizmoMode mode)
-    {
-        if (!m_Dragging)
-        {
-            m_Mode = mode;
-        }
-    }
-
     EditorGizmo::Placement EditorGizmo::ComputePlacement(const Scene& scene, const Entity entity,
                                                          const vec3 cameraPosition)
     {
@@ -159,12 +151,13 @@ namespace VengEditor
         return placement;
     }
 
-    GizmoHandle EditorGizmo::Pick(const Placement& placement, const Ray& ray) const
+    GizmoHandle EditorGizmo::Pick(const Placement& placement, const Ray& ray,
+                                  const GizmoMode mode) const
     {
         const f32 length = placement.Scale;
         const f32 tolerance = AxisPickTolerance * length;
 
-        if (m_Mode == GizmoMode::Rotate)
+        if (mode == GizmoMode::Rotate)
         {
             // Ray vs. each axis ring: intersect the ring's plane, then test the hit's distance
             // from the pivot against the ring radius within a band.
@@ -210,7 +203,7 @@ namespace VengEditor
             }
         }
 
-        if (m_Mode == GizmoMode::Translate)
+        if (mode == GizmoMode::Translate)
         {
             // Plane handles: a small quad in each axis-pair plane, offset from the origin.
             const f32 lo = PlaneOffset * length;
@@ -240,7 +233,7 @@ namespace VengEditor
             }
         }
 
-        if (m_Mode == GizmoMode::Scale)
+        if (mode == GizmoMode::Scale)
         {
             // Uniform-scale center box: a small box at the pivot.
             const f32 half = AxisPickTolerance * length * 1.5f;
@@ -257,7 +250,7 @@ namespace VengEditor
     }
 
     void EditorGizmo::Draw(Renderer::DebugDraw& debug, const Scene& scene, const Entity entity,
-                           const vec3 cameraPosition) const
+                           const vec3 cameraPosition, const GizmoMode mode) const
     {
         if (entity.IsNull() || !scene.IsAlive(entity))
         {
@@ -267,11 +260,14 @@ namespace VengEditor
         const Placement placement = ComputePlacement(scene, entity, cameraPosition);
         const f32 length = placement.Scale;
         const GizmoHandle active = m_Dragging ? m_DragHandle : m_Hovered;
+        // A drag draws in the mode it was captured in, so a shared-mode change mid-drag does not
+        // redraw the handles out from under the dragged one.
+        const GizmoMode drawMode = m_Dragging ? m_DragMode : mode;
 
         auto axisColor = [&](const i32 axis, const GizmoHandle handle)
         { return active == handle ? HighlightColor : AxisColor[axis]; };
 
-        if (m_Mode == GizmoMode::Rotate)
+        if (drawMode == GizmoMode::Rotate)
         {
             constexpr u32 segments = 48;
             const f32 radius = RingRadius * length;
@@ -308,7 +304,7 @@ namespace VengEditor
             const vec4 color = axisColor(axis, handle);
             debug.DrawLine(placement.Origin, tip, color, GizmoLineWidth);
 
-            if (m_Mode == GizmoMode::Scale)
+            if (drawMode == GizmoMode::Scale)
             {
                 // A small box at the tip marks a scale grab.
                 const f32 half = AxisPickTolerance * length * 0.9f;
@@ -316,7 +312,7 @@ namespace VengEditor
             }
         }
 
-        if (m_Mode == GizmoMode::Translate)
+        if (drawMode == GizmoMode::Translate)
         {
             const f32 lo = PlaneOffset * length;
             const f32 hi = (PlaneOffset + PlaneSize) * length;
@@ -338,7 +334,7 @@ namespace VengEditor
             }
         }
 
-        if (m_Mode == GizmoMode::Scale)
+        if (drawMode == GizmoMode::Scale)
         {
             const f32 half = AxisPickTolerance * length * 1.5f;
             const vec4 color = active == GizmoHandle::Uniform ? HighlightColor : UniformColor;
@@ -348,7 +344,7 @@ namespace VengEditor
     }
 
     bool EditorGizmo::Hover(const Scene& scene, const Entity entity, const Ray& ray,
-                            const vec3 cameraPosition)
+                            const vec3 cameraPosition, const GizmoMode mode)
     {
         if (m_Dragging)
         {
@@ -360,12 +356,12 @@ namespace VengEditor
             return false;
         }
         const Placement placement = ComputePlacement(scene, entity, cameraPosition);
-        m_Hovered = Pick(placement, ray);
+        m_Hovered = Pick(placement, ray, mode);
         return m_Hovered != GizmoHandle::None;
     }
 
     bool EditorGizmo::BeginDrag(const Scene& scene, const Entity entity, const Ray& ray,
-                                const vec3 cameraPosition)
+                                const vec3 cameraPosition, const GizmoMode mode)
     {
         if (m_Dragging || entity.IsNull() || !scene.IsAlive(entity))
         {
@@ -378,13 +374,14 @@ namespace VengEditor
         }
 
         const Placement placement = ComputePlacement(scene, entity, cameraPosition);
-        const GizmoHandle handle = Pick(placement, ray);
+        const GizmoHandle handle = Pick(placement, ray, mode);
         if (handle == GizmoHandle::None)
         {
             return false;
         }
 
         m_Dragging = true;
+        m_DragMode = mode;
         m_DragHandle = handle;
         m_Hovered = handle;
         m_StartTransform = *transform;
@@ -392,7 +389,7 @@ namespace VengEditor
         m_StartWorldPosition = placement.Origin;
 
         const i32 axis = AxisIndex(handle);
-        if (m_Mode == GizmoMode::Translate)
+        if (mode == GizmoMode::Translate)
         {
             if (handle >= GizmoHandle::PlaneX && handle <= GizmoHandle::PlaneZ)
             {
@@ -416,7 +413,7 @@ namespace VengEditor
                                                                        placement.Axes[axis]);
             }
         }
-        else if (m_Mode == GizmoMode::Rotate)
+        else if (mode == GizmoMode::Rotate)
         {
             // The grab anchor's x stores the initial angle in the ring plane.
             vec3 hit = placement.Origin;
@@ -468,7 +465,7 @@ namespace VengEditor
 
         Transform next = m_StartTransform;
 
-        if (m_Mode == GizmoMode::Translate)
+        if (m_DragMode == GizmoMode::Translate)
         {
             vec3 worldDelta{0.0f};
             if (m_DragHandle >= GizmoHandle::PlaneX && m_DragHandle <= GizmoHandle::PlaneZ)
@@ -496,7 +493,7 @@ namespace VengEditor
             const vec3 parentDelta = vec3(worldToParent * vec4(worldDelta, 0.0f));
             next.Position = m_StartTransform.Position + parentDelta;
         }
-        else if (m_Mode == GizmoMode::Rotate)
+        else if (m_DragMode == GizmoMode::Rotate)
         {
             vec3 hit = placement.Origin;
             if (RayPlane(ray, placement.Origin, placement.Axes[axis], hit))

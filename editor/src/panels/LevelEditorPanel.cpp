@@ -351,6 +351,11 @@ namespace VengEditor
             }
         }
 
+        DrawDocumentToolbar();
+        UI::SameLine();
+        UI::Separator();
+        UI::SameLine();
+
         // The level runs its named set, distinct from a prefab document's "all registered"
         // set; surface which is active so Play is not surprising.
         UI::TextDisabled(fmt::format("Play runs {} level systems", m_Systems.size()));

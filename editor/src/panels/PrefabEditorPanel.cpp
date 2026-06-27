@@ -15,6 +15,7 @@
 #include <Veng/Vendor/ImGuiInternal.h>
 
 #include "AssetSourceIndex.h"
+#include "EditorGizmo.h"
 #include "panels/InspectorPanel.h"
 #include "panels/PrefabExplorerPanel.h"
 #include "panels/SceneViewportPanel.h"
@@ -96,7 +97,7 @@ namespace VengEditor
                                                     const AssetSourceIndex& sources)
     {
         auto viewport = CreateUnique<SceneViewportPanel>(app, m_Assets, imgui, m_Context, m_Input,
-                                                         m_Router, *this, m_Commands);
+                                                         m_Router, m_Commands);
         m_Viewport = viewport.get();
         auto explorer = CreateUnique<PrefabExplorerPanel>(m_Context, m_Commands);
         auto inspector =
@@ -220,6 +221,80 @@ namespace VengEditor
         }
     }
 
+    void PrefabEditorPanel::DrawDocumentToolbar()
+    {
+        const UI::Theme& theme = UI::GetTheme();
+        const bool playing = m_Context.IsPlaying();
+
+        // Play transport: Play while editing; Stop + Pause/Resume while playing.
+        {
+            const UI::DisabledScope disabled = UI::Disabled(playing);
+            const UI::StyleColorScope accent =
+                UI::StyleColor(UI::StyleColorId::Button, theme.Accent);
+            if (UI::Button("Play"))
+            {
+                Play();
+            }
+        }
+        UI::Tooltip("Clone the scene and run its systems (play in viewport)");
+
+        UI::SameLine();
+        {
+            const UI::DisabledScope disabled = UI::Disabled(!playing);
+            if (UI::Button("Stop"))
+            {
+                Stop();
+            }
+            UI::Tooltip("Stop the play session and restore the edited scene");
+
+            UI::SameLine();
+            const bool paused = m_Context.Play == PlayState::Paused;
+            if (UI::Button(paused ? "Resume" : "Pause"))
+            {
+                if (paused)
+                {
+                    Resume();
+                }
+                else
+                {
+                    Pause();
+                }
+            }
+            UI::Tooltip(paused ? "Resume the paused play session"
+                               : "Pause the play session (hold the current frame)");
+        }
+
+        UI::SameLine();
+        UI::Separator();
+        UI::SameLine();
+
+        // Gizmo-mode segment over the shared document mode (PrefabEditContext::Gizmo) every
+        // viewport reads; mirrors the W/E/R keys. Disabled while playing (gizmos are an edit aid)
+        // — the keys are gated the same way. The active mode's button is accent-tinted to read as
+        // selected.
+        const UI::DisabledScope gizmoDisabled = UI::Disabled(playing);
+        const GizmoMode mode = m_Context.Gizmo;
+        auto modeButton =
+            [&](const string_view label, const GizmoMode target, const string_view tooltip)
+        {
+            const optional<UI::StyleColorScope> accent =
+                mode == target ? optional<UI::StyleColorScope>{UI::StyleColor(
+                                     UI::StyleColorId::Button, theme.Accent)}
+                               : std::nullopt;
+            if (UI::Button(label))
+            {
+                m_Context.Gizmo = target;
+            }
+            UI::Tooltip(tooltip);
+        };
+
+        modeButton("Move", GizmoMode::Translate, "Translate (W)");
+        UI::SameLine();
+        modeButton("Rotate", GizmoMode::Rotate, "Rotate (E)");
+        UI::SameLine();
+        modeButton("Scale", GizmoMode::Scale, "Scale (R)");
+    }
+
     void PrefabEditorPanel::OnUI()
     {
         TickPlaySimulation();
@@ -228,6 +303,11 @@ namespace VengEditor
         {
             return;
         }
+
+        DrawDocumentToolbar();
+        UI::SameLine();
+        UI::Separator();
+        UI::SameLine();
         UI::TextDisabled(fmt::format("{} entities", m_Context.Scene->EntityCount()));
     }
 

@@ -6,6 +6,8 @@
 #include <Veng/Scene/Resolve.h>
 #include <Veng/Scene/Scene.h>
 
+#include "EditorGizmo.h"
+
 #include <algorithm>
 
 namespace Veng
@@ -61,6 +63,13 @@ namespace VengEditor
 
         /// @brief The entity the inspector edits — the last one clicked, or Null.
         Veng::Entity Active = Veng::Entity::Null;
+
+        /// @brief The active manipulation-gizmo mode (Translate / Rotate / Scale).
+        ///
+        /// Document-level tool state, not per-viewport: the document toolbar and the viewports'
+        /// W/E/R keys write it, and every viewport's EditorGizmo reads it, so the mode is shared
+        /// across all viewports of the document.
+        GizmoMode Gizmo = GizmoMode::Translate;
 
         /// @brief The document's current play phase.
         ///

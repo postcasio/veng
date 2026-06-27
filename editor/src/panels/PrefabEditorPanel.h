@@ -97,7 +97,7 @@ namespace VengEditor
         /// @brief Resumes a paused play session. No-op unless Paused.
         void Resume();
 
-        /// @brief Draws the document toolbar above the dockspace: a live entity-count readout.
+        /// @brief Draws the document toolbar above the dockspace: play transport, gizmo mode, entity count.
         ///
         /// Also ticks the play simulation (when playing) so the next engine viewport render
         /// shows the advanced clone — the same one-frame latency the editor camera carries.
@@ -107,6 +107,14 @@ namespace VengEditor
         [[nodiscard]] CommandStack* GetCommandStack() override { return &m_Commands; }
 
     protected:
+        /// @brief Draws the shared document toolbar: the play transport and the gizmo-mode segment.
+        ///
+        /// Drawn above the dockspace by OnUI (and by the level editor's OnUI override), so the
+        /// play/stop/pause transport and the Move/Rotate/Scale selector sit at document level
+        /// rather than on the viewport overlay. The gizmo segment drives the shared document mode
+        /// (PrefabEditContext::Gizmo) every viewport's gizmo reads.
+        void DrawDocumentToolbar();
+
         /// @brief Advances the play simulation one tick when a session is running; a no-op otherwise.
         ///
         /// The base OnUI calls this; a subclass overriding OnUI (the level editor) must call it

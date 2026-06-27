@@ -63,7 +63,7 @@ namespace VengEditor
                          Veng::SystemRegistry& systems, CookDriver cook);
         ~LevelEditorPanel() override;
 
-        /// @brief Draws the document toolbar: the active-system-set readout above the dockspace.
+        /// @brief Draws the document toolbar: the shared play/gizmo transport plus the active-system-set readout.
         void OnUI() override;
 
     protected:
