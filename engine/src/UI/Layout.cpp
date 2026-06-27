@@ -1,5 +1,7 @@
 #include <Veng/UI/Layout.h>
 
+#include <Veng/UI/Scopes.h>
+
 #include <imgui.h>
 
 #include <cfloat>
@@ -83,18 +85,17 @@ namespace Veng::UI
 
     bool PropertyHeader(string_view id, bool defaultOpen)
     {
-        const string label = AsCStr(id);
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
-        // SpanAllColumns stretches the header frame across both property columns; the label
-        // also spans, so it is not clipped to the auto-sized label column.
-        ImGuiTreeNodeFlags flags =
-            ImGuiTreeNodeFlags_SpanAllColumns | ImGuiTreeNodeFlags_LabelSpanAllColumns;
+        // Route through the shared CollapsingHeader so the row carries the component-section
+        // styling (neutral surface, tightened padding); SpanAllColumns stretches the frame and
+        // label across both property columns so neither clips to the auto-sized label column.
+        TreeFlags flags = TreeFlags::SpanAllColumns | TreeFlags::LabelSpanAllColumns;
         if (defaultOpen)
         {
-            flags |= ImGuiTreeNodeFlags_DefaultOpen;
+            flags = flags | TreeFlags::DefaultOpen;
         }
-        return ImGui::CollapsingHeader(label.c_str(), flags);
+        return static_cast<bool>(CollapsingHeader(id, flags));
     }
 
     f32 GetFrameHeight()

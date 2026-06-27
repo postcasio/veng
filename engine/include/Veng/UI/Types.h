@@ -127,6 +127,10 @@ namespace Veng::UI
         OpenOnArrow = 16,
         /// @brief Lets a later widget overlap the node's span (a button drawn over the row).
         AllowOverlap = 32,
+        /// @brief Stretches the header frame across every column of a table.
+        SpanAllColumns = 64,
+        /// @brief Stretches the label across every column too, so it is not clipped to one column.
+        LabelSpanAllColumns = 128,
     };
 
     /// @brief Bitwise OR of two `TreeFlags` values.

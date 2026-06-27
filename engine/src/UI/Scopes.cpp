@@ -60,6 +60,14 @@ namespace Veng::UI
             {
                 out |= ImGuiTreeNodeFlags_AllowOverlap;
             }
+            if ((flags & TreeFlags::SpanAllColumns) != TreeFlags::None)
+            {
+                out |= ImGuiTreeNodeFlags_SpanAllColumns;
+            }
+            if ((flags & TreeFlags::LabelSpanAllColumns) != TreeFlags::None)
+            {
+                out |= ImGuiTreeNodeFlags_LabelSpanAllColumns;
+            }
             return out;
         }
 
