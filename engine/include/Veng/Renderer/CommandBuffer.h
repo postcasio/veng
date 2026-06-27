@@ -249,6 +249,19 @@ namespace Veng::Renderer
         /// @brief Copies the contents of an image into a buffer.
         void CopyImageToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer);
 
+        /// @brief Copies a rectangular mip-0 region of an image into a buffer, one tightly-packed region.
+        ///
+        /// Records a single VkBufferImageCopy of the @p extent texels at @p offset into the buffer
+        /// at byte 0, tightly packed (bufferRowLength = extent.x). The image must be in TransferSrc
+        /// layout. Used by the entity-id picking readback to stage just the search window under the
+        /// cursor rather than the whole target.
+        /// @param image   Transfer source; only mip 0, array layer 0 is copied.
+        /// @param buffer  Transfer destination; receives extent.x*extent.y texels from byte 0.
+        /// @param offset  Top-left texel of the region in the image.
+        /// @param extent  Region size in texels.
+        void CopyImageRegionToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer,
+                                     uvec2 offset, uvec2 extent);
+
         /// @brief Blits one image region into another.
         void BlitImage(const BlitImageInfo& info);
 

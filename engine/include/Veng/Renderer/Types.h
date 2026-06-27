@@ -75,6 +75,10 @@ namespace Veng::Renderer
         ///        Appended at the fixed ordinal 24 for cooked-blob integer stability; the cooker
         ///        writes the literal and the texture loader reads it.
         ASTC4x4Srgb,
+        /// @brief 32-bit single-channel unsigned integer (read as uint in-shader).
+        ///        The entity-id picking target's color format. Appended (not inserted) so the
+        ///        underlying enum values cooked blobs persist by integer stay stable.
+        R32Uint,
     };
 
     /// @brief Requested display output mode for the presentable swapchain.

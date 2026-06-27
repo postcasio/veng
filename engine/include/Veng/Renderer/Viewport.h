@@ -10,6 +10,7 @@
 #include <Veng/Renderer/ViewportRegion.h>
 
 #include <Veng/Scene/Camera.h>
+#include <Veng/Scene/Entity.h>
 
 namespace Veng
 {
@@ -312,6 +313,29 @@ namespace Veng::Renderer
         ///         the region or no ViewState has been set yet.
         [[nodiscard]] optional<Ray> ScreenToWorldRay(ivec2 windowPoint) const;
 
+        /// @brief Resolves the entity under a window point through the id-buffer picking pass.
+        ///
+        /// Hit-tests @p windowPoint against the region (WindowToViewport); on a miss the callback
+        /// fires immediately with nullopt. On a hit it forwards the texel to the owned
+        /// SceneRenderer's picking pass; the GPU readback resolves a frame or two later (never a
+        /// stall), and @p onResolved fires from a later Render on the render thread with the picked
+        /// Entity — the front-most mesh under the cursor (depth-tested), with a small screen-space
+        /// search radius for "click-near" forgiveness — or nullopt over background.
+        ///
+        /// Because the resolve lands later, it carries a scene-epoch + scene-pointer guard: the
+        /// callback fires with nullopt (rather than a wrong entity) if the bound scene was swapped or
+        /// cleared between the click and the resolve. The picked slot index is mapped back to the
+        /// live Entity at resolve time (Scene::GetLiveEntityAtIndex), so a recycled slot resolves to
+        /// its live occupant or to none. A new Pick replaces any still-pending one.
+        ///
+        /// @pre The owned renderer was created with SceneRendererSettings::Picking set — otherwise
+        ///      the picking pass never runs and the callback never fires. A ViewState with a live
+        ///      World must be bound (the resolve maps the texel against it).
+        /// @param windowPoint  The window-framebuffer-pixel point to pick.
+        /// @param onResolved   Invoked once with the resolved Entity, or nullopt for background / a
+        ///                     miss / a scene swap.
+        void Pick(ivec2 windowPoint, function<void(optional<Entity>)> onResolved);
+
         /// @brief Returns the owned renderer for its stats and diagnostic surface.
         ///
         /// The escape hatch for GetLastDrawnCount() and the rest of the renderer's read
@@ -346,6 +370,14 @@ namespace Veng::Renderer
         /// Called at Create and after every internal Resize/Configure, so GetOutputHandle()
         /// always names the live output. The old slot retires through the per-frame window.
         void RefreshOutputHandle();
+
+        /// @brief Advances an in-flight pick each Render: forward → poll → resolve, with the guard.
+        ///
+        /// Called at the end of Render. Bails (fires nullopt) if the bound scene changed since the
+        /// pick was issued; otherwise forwards the texel to the renderer on the first frame, then
+        /// polls the readback and, once ready, maps the pick id to a live Entity and fires the
+        /// callback. A no-op when no pick is pending.
+        void ServicePendingPick();
 
         /// @brief The renderer's allocation extent for a given scale, capped and clamped to ≥ 1.
         ///
@@ -421,6 +453,30 @@ namespace Veng::Renderer
         /// Gates ScreenToWorldRay: before any ViewState the retained camera is the default,
         /// so picking returns nullopt rather than unprojecting through an unset view.
         bool m_HasViewState = false;
+
+        /// @brief Monotonic epoch bumped whenever the bound ViewState World pointer changes.
+        ///
+        /// A pick captures this at issue time; the resolve bails (fires nullopt) if it no longer
+        /// matches, so a late readback never lands an id against a scene that was swapped (a Play
+        /// Clone()) or cleared between the click and the resolve.
+        u64 m_SceneEpoch = 0;
+
+        /// @brief A pick request awaiting service + readback, with the guard captured at issue.
+        struct PendingPick
+        {
+            /// @brief The render-target texel (allocation pixels) to resolve.
+            uvec2 Texel;
+            /// @brief Whether the texel has been forwarded to the renderer's RequestPick yet.
+            bool Forwarded = false;
+            /// @brief The scene the pick was issued against (pointer-identity guard).
+            const Scene* World = nullptr;
+            /// @brief The scene epoch captured at issue (matches m_SceneEpoch only if unchanged).
+            u64 Epoch = 0;
+            /// @brief The callback fired once on resolve.
+            function<void(optional<Entity>)> OnResolved;
+        };
+        /// @brief The single in-flight pick, or unset when none is pending.
+        optional<PendingPick> m_PendingPick;
 
         /// @brief Pending extent applied at the next Render; zero when none is pending.
         uvec2 m_PendingExtent = {};

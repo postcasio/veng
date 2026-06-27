@@ -485,6 +485,20 @@ namespace Veng
         return slot.Alive && slot.Generation == entity.Generation;
     }
 
+    Entity Scene::GetLiveEntityAtIndex(const u32 index) const
+    {
+        if (index >= m_Slots.size())
+        {
+            return Entity::Null;
+        }
+        const EntitySlot& slot = m_Slots[index];
+        if (!slot.Alive)
+        {
+            return Entity::Null;
+        }
+        return Entity{.Index = index, .Generation = slot.Generation};
+    }
+
     void Scene::ForEachEntity(const function<void(Entity)>& fn) const
     {
         for (u32 index = 0; index < m_Slots.size(); ++index)

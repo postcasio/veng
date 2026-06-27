@@ -5,6 +5,7 @@
 #include "EnvironmentIbl.h"
 #include "ShadowScenePass.h"
 #include "PunctualShadowScenePass.h"
+#include "Picking.h"
 #include "SkyboxScenePass.h"
 #include "SsaoScenePass.h"
 
@@ -74,6 +75,12 @@ namespace Veng::Renderer
         constexpr AssetId AoBlitFragId{0x97974B40192934E4ULL};
         constexpr AssetId MotionBlitFragId{0xCCD40C76935382FDULL};
         constexpr AssetId ShadowBlitFragId{0x0B61D5D42DAEF190ULL};
+
+        // The entity-id picking shaders: a minimal vertex stage (static + skinned) that emits the
+        // per-draw entity index, and the fragment that writes index + 1 into the EntityId target.
+        constexpr AssetId EntityIdFragId{0xBE08B2489A5AA07AULL};
+        constexpr AssetId EntityIdVertId{0xE21B8F492DADABE5ULL};
+        constexpr AssetId EntityIdSkinnedVertId{0x7FB330D3ABACAE0FULL};
 
         // The TAA resolve and history-copy fragment shaders.
         constexpr AssetId TaaResolveFragId{0xF277BB65AEDAC33EULL};
@@ -256,7 +263,7 @@ namespace Veng::Renderer
             u32 MaterialIndex;
             u32 PaletteBase;
             u32 PrevPaletteBase;
-            u32 Pad2;
+            u32 EntityIndex; // packed Entity slot index; the picking fragment writes index + 1
             mat4 PrevWorld;
         };
 
@@ -650,6 +657,165 @@ namespace Veng::Renderer
             const GBufferDrawPlan* m_Plan = nullptr;
             SceneRendererSettings::CullMode m_Cull = SceneRendererSettings::CullMode::CPU;
             ResourceId m_IndirectId;
+        };
+
+        // The entity-id picking pass. A depth-tested geometry pass that re-draws the same
+        // static + skinned survivors as the g-buffer pass through the id-writing pipeline
+        // variants (surface[_skinned].vert + entity_id.frag), writing each entity's pick id
+        // (DrawData.EntityIndex + 1) into the R32Uint EntityId target. Its own RenderingInfo
+        // binds the EntityId color attachment and a dedicated depth buffer, so the shipping
+        // g-buffer RenderingInfo is untouched. The pipelines are built lazily, so the pass
+        // reads them through pointers to the renderer's member Refs at record time.
+        class PickingScenePass final : public ScenePass
+        {
+        public:
+            PickingScenePass(Context& context, uvec2 extent, const GBufferDrawPlan* plan,
+                             const Ref<GraphicsPipeline>* staticPipeline,
+                             const Ref<GraphicsPipeline>* skinnedPipeline, ResourceId entityIdId,
+                             ResourceId depthId)
+                : m_Context(context), m_Extent(extent), m_Plan(plan),
+                  m_StaticPipeline(staticPipeline), m_SkinnedPipeline(skinnedPipeline),
+                  m_EntityIdId(entityIdId), m_DepthId(depthId)
+            {
+            }
+
+            void Resize(const uvec2 extent) override { m_Extent = extent; }
+
+            void Declare(RenderGraph& graph, const PassIO& io) override
+            {
+                (void)io;
+                RenderGraph::PassBuilder builder = graph.AddPass("Scene Picking");
+                builder
+                    .Color({
+                        .Resource = m_EntityIdId,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        // Cleared to NoEntityId (0): any texel no surface covers reads back as
+                        // background. ClearColor's float channels carry the bit pattern; 0 maps
+                        // to the integer 0 the readback compares against.
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
+                    })
+                    .Depth({
+                        .Resource = m_DepthId,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::DontCare,
+                        .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
+                    });
+                builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
+            }
+
+        private:
+            void Record(const ScenePassContext& ctx) const
+            {
+                CommandBuffer& cmd = ctx.Cmd();
+                const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+                const GBufferDrawPlan& plan = *m_Plan;
+
+                const uvec2 renderExtent = ctx.View().RenderExtent;
+                cmd.SetViewport({0, 0}, renderExtent);
+                cmd.SetScissor({0, 0}, renderExtent);
+
+                // The id-writing pipelines are built lazily on the first Execute a surface material
+                // is available; until then (or with no drawable geometry) the pass clears the target
+                // and writes nothing — background everywhere.
+                const Ref<GraphicsPipeline>& staticPipeline = *m_StaticPipeline;
+                const Ref<GraphicsPipeline>& skinnedPipeline = *m_SkinnedPipeline;
+
+                if (plan.Slots.empty() && plan.SkinnedSlots.empty())
+                {
+                    return;
+                }
+                if (!plan.Slots.empty() || !plan.SkinnedSlots.empty())
+                {
+                    cmd.GetNative().CommandBuffer.bindVertexBuffers(
+                        1, GetVkBuffer(*plan.CandidateIdBuffer), {0});
+                }
+
+                // The static survivors through the static id pipeline (same plan/draw shape as the
+                // g-buffer pass; only the bound pipeline and attachments differ — id, not g-buffer).
+                if (!plan.Slots.empty() && staticPipeline)
+                {
+                    cmd.BindPipeline(staticPipeline);
+                    registry.Bind(cmd);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {plan.DrawDataSet},
+                        .FirstSet = 1,
+                        .PipelineBindPoint = PipelineBindPoint::Graphics,
+                    });
+                    cmd.PushConstants(plan.Push);
+
+                    const Mesh* lastBound = nullptr;
+                    for (const DrawGroup& group : plan.Groups)
+                    {
+                        if (lastBound != group.SourceMesh)
+                        {
+                            cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
+                            cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
+                            lastBound = group.SourceMesh;
+                        }
+                        if (plan.Cull == SceneRendererSettings::CullMode::GPU)
+                        {
+                            const u64 offset =
+                                plan.IndirectRegionOffset + static_cast<u64>(group.FirstSlot) *
+                                                                sizeof(DrawIndexedIndirectCommand);
+                            cmd.DrawIndexedIndirect(plan.IndirectBuffer, offset, group.SlotCount,
+                                                    sizeof(DrawIndexedIndirectCommand));
+                        }
+                        else
+                        {
+                            for (u32 s = 0; s < group.SlotCount; ++s)
+                            {
+                                const DrawSlot& slot = plan.Slots[group.FirstSlot + s];
+                                cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex,
+                                                slot.VertexOffset, slot.CandidateId);
+                            }
+                        }
+                    }
+                }
+
+                // The skinned survivors through the skinned id pipeline + the palette set (set 2).
+                if (!plan.SkinnedSlots.empty() && skinnedPipeline)
+                {
+                    cmd.BindPipeline(skinnedPipeline);
+                    registry.Bind(cmd);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {plan.DrawDataSet},
+                        .FirstSet = 1,
+                        .PipelineBindPoint = PipelineBindPoint::Graphics,
+                    });
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {plan.PaletteSet},
+                        .FirstSet = 2,
+                        .PipelineBindPoint = PipelineBindPoint::Graphics,
+                    });
+                    cmd.PushConstants(plan.Push);
+
+                    const Mesh* lastBound = nullptr;
+                    for (const DrawGroup& group : plan.SkinnedGroups)
+                    {
+                        if (lastBound != group.SourceMesh)
+                        {
+                            cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
+                            cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
+                            lastBound = group.SourceMesh;
+                        }
+                        for (u32 s = 0; s < group.SlotCount; ++s)
+                        {
+                            const DrawSlot& slot = plan.SkinnedSlots[group.FirstSlot + s];
+                            cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex, slot.VertexOffset,
+                                            slot.CandidateId);
+                        }
+                    }
+                }
+            }
+
+            Context& m_Context;
+            uvec2 m_Extent;
+            const GBufferDrawPlan* m_Plan = nullptr;
+            const Ref<GraphicsPipeline>* m_StaticPipeline = nullptr;
+            const Ref<GraphicsPipeline>* m_SkinnedPipeline = nullptr;
+            ResourceId m_EntityIdId;
+            ResourceId m_DepthId;
         };
 
         // Declaring .Sample on each g-buffer id drives the graph-derived attachment →
@@ -1274,6 +1440,7 @@ namespace Veng::Renderer
         CreateTaa();
         CreateBloom();
         CreateSsr();
+        CreatePicking();
         Rebuild();
     }
 
@@ -1958,6 +2125,136 @@ namespace Veng::Renderer
                                                         .Name = "SceneRenderer Output View",
                                                         .Image = m_OutputImage,
                                                     });
+    }
+
+    void SceneRenderer::CreatePicking()
+    {
+        if (!m_Settings.Picking)
+        {
+            // Release any previously-allocated picking resources (a Configure turning it off);
+            // the pipelines are rebuilt lazily, so they are dropped here too.
+            m_EntityIdImage.reset();
+            m_EntityIdView.reset();
+            m_PickingDepthImage.reset();
+            m_PickingDepthView.reset();
+            m_PickReadbackBuffer.reset();
+            m_PickingPipeline.reset();
+            m_PickingSkinnedPipeline.reset();
+            m_PickRequested = false;
+            m_PickStaged = false;
+            return;
+        }
+
+        VE_ASSERT(
+            m_Context.IsFormatColorAttachmentTransferSrcSupported(Picking::EntityIdFormat),
+            "SceneRenderer: the device does not support R32Uint as a color attachment + transfer "
+            "source, required for the entity-id picking target");
+
+        m_EntityIdImage = Image::Create(m_Context, {
+                                                       .Name = "SceneRenderer EntityId",
+                                                       .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                       .Format = Picking::EntityIdFormat,
+                                                       .Usage = Picking::EntityIdUsage,
+                                                   });
+        m_EntityIdView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer EntityId View", .Image = m_EntityIdImage});
+
+        m_PickingDepthImage = Image::Create(m_Context, {
+                                                           .Name = "SceneRenderer Picking Depth",
+                                                           .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                           .Format = GBuffer::DepthFormat,
+                                                           .Usage = ImageUsage::DepthAttachment,
+                                                       });
+        m_PickingDepthView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer Picking Depth View", .Image = m_PickingDepthImage});
+
+        // The readback staging buffer: one search-window's worth of u32s. Only one pick is in
+        // flight at a time (a new request is dropped until the prior resolves), so the staged copy
+        // is never overwritten before the host reads it — one region suffices.
+        const u32 window = static_cast<u32>(2 * Picking::SearchRadius + 1);
+        m_PickReadbackStride = window * window * static_cast<u32>(sizeof(u32));
+        m_PickReadbackBuffer = Buffer::Create(m_Context, {
+                                                             .Name = "SceneRenderer Pick Readback",
+                                                             .Size = m_PickReadbackStride,
+                                                             .Usage = BufferUsage::TransferDst,
+                                                             .HostMapped = true,
+                                                         });
+
+        // A resize/configure recreates the id target, so an in-flight staged copy is moot.
+        m_PickStaged = false;
+    }
+
+    void SceneRenderer::EnsurePickingPipelines(const Material* staticMaterial,
+                                               const Material* skinnedMaterial)
+    {
+        if (!m_Settings.Picking)
+        {
+            return;
+        }
+
+        // The id-writing variants reuse the surface material's pipeline layout (set 0 bindless +
+        // set 1 DrawData [+ set 2 palette for skinned] + the SurfacePush) so the picking pass binds
+        // the same per-draw DrawData and palette the geometry pass does. They pair the dedicated
+        // entity_id vertex stages (which emit only the entity index) with the entity_id fragment,
+        // and bind the EntityId target + dedicated depth instead of the g-buffer. The layout is
+        // identical across all surface materials, so the first available one builds the cached pipeline.
+        auto LoadShader = [this](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
+        {
+            const AssetResult<AssetHandle<Veng::Shader>> result =
+                m_Assets.LoadSync<Veng::Shader>(id);
+            VE_ASSERT(result.has_value(), "SceneRenderer: {} shader load failed: {}", what,
+                      result.has_value() ? "" : result.error().Detail);
+            return *result;
+        };
+
+        if (!m_PickingPipeline && staticMaterial != nullptr)
+        {
+            const AssetHandle<Veng::Shader> vs = LoadShader(EntityIdVertId, "entity-id vertex");
+            const AssetHandle<Veng::Shader> fs = LoadShader(EntityIdFragId, "entity-id fragment");
+            m_PickingPipeline = GraphicsPipeline::Create(
+                m_Context, {
+                               .Name = "SceneRenderer Picking Pipeline",
+                               .ColorAttachments = {{.Format = Picking::EntityIdFormat}},
+                               .DepthAttachmentFormat = GBuffer::DepthFormat,
+                               .VertexBufferLayout = Mesh::CanonicalLayout(),
+                               .InstanceCandidateId = true,
+                               .PipelineLayout = staticMaterial->GetPipelineLayout(),
+                               .ShaderStages =
+                                   {
+                                       {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
+                                       {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
+                                   },
+                               .CullMode = CullMode::Back,
+                               .DepthTestEnable = true,
+                               .DepthWriteEnable = true,
+                               .DepthCompareOp = CompareOp::LessOrEqual,
+                           });
+        }
+
+        if (!m_PickingSkinnedPipeline && skinnedMaterial != nullptr)
+        {
+            const AssetHandle<Veng::Shader> vs =
+                LoadShader(EntityIdSkinnedVertId, "entity-id skinned vertex");
+            const AssetHandle<Veng::Shader> fs = LoadShader(EntityIdFragId, "entity-id fragment");
+            m_PickingSkinnedPipeline = GraphicsPipeline::Create(
+                m_Context, {
+                               .Name = "SceneRenderer Picking Skinned Pipeline",
+                               .ColorAttachments = {{.Format = Picking::EntityIdFormat}},
+                               .DepthAttachmentFormat = GBuffer::DepthFormat,
+                               .VertexBufferLayout = Mesh::SkinnedLayout(),
+                               .InstanceCandidateId = true,
+                               .PipelineLayout = skinnedMaterial->GetPipelineLayout(),
+                               .ShaderStages =
+                                   {
+                                       {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
+                                       {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
+                                   },
+                               .CullMode = CullMode::Back,
+                               .DepthTestEnable = true,
+                               .DepthWriteEnable = true,
+                               .DepthCompareOp = CompareOp::LessOrEqual,
+                           });
+        }
     }
 
     void SceneRenderer::CreateGBuffer()
@@ -2795,6 +3092,21 @@ namespace Veng::Renderer
         auto gbufferPass = CreateUnique<GBufferScenePass>(m_Context, m_Extent, &m_Internal->Plan,
                                                           m_ActiveCull, m_IndirectId);
         m_Passes.push_back(std::move(gbufferPass));
+
+        // The entity-id picking pass: a depth-tested re-draw of the same survivors into the R32Uint
+        // EntityId target through its own RenderingInfo (the shipping g-buffer pass above untouched).
+        // Allocated and wired only when Settings.Picking is set, so the shipping path is unchanged.
+        m_PickingActive = m_Settings.Picking && m_EntityIdImage != nullptr;
+        m_EntityIdId = ResourceId{};
+        m_PickingDepthId = ResourceId{};
+        if (m_PickingActive)
+        {
+            m_EntityIdId = graph.Import("SceneRenderer EntityId");
+            m_PickingDepthId = graph.Import("SceneRenderer Picking Depth");
+            m_Passes.push_back(CreateUnique<PickingScenePass>(
+                m_Context, m_Extent, &m_Internal->Plan, &m_PickingPipeline,
+                &m_PickingSkinnedPipeline, m_EntityIdId, m_PickingDepthId));
+        }
 
         // Created before the tail switch so ssaoHandle is set when the Final arm reads it.
         if (ssaoActive)
@@ -3665,6 +3977,7 @@ namespace Veng::Renderer
                 .NormalColumn1 = vec4(normalMatrix[1], 0.0f),
                 .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
                 .MaterialIndex = material.GetMaterialSelector(),
+                .EntityIndex = item.Owner.Index,
                 .PrevWorld = prevWorld,
             };
 
@@ -3797,6 +4110,7 @@ namespace Veng::Renderer
                 .MaterialIndex = material.GetMaterialSelector(),
                 .PaletteBase = paletteBase,
                 .PrevPaletteBase = prevPaletteBase,
+                .EntityIndex = item.Owner.Index,
                 .PrevWorld = prevWorld,
             };
 
@@ -3861,6 +4175,7 @@ namespace Veng::Renderer
         CreateBloom();
         CreateSsr();
         CreatePunctualShadowAtlas();
+        CreatePicking();
         Rebuild();
     }
 
@@ -3897,6 +4212,7 @@ namespace Veng::Renderer
         CreateTaa();
         CreateSsr();
         CreatePunctualShadowAtlas();
+        CreatePicking();
         Rebuild();
     }
 
@@ -4077,6 +4393,15 @@ namespace Veng::Renderer
         // Fill the per-draw DrawData buffer + (GPU) the candidate buffer and submission plan.
         PrepareDraws(resolvedView, frameIndex);
 
+        // Build the id-writing pipeline variants on the first frame a surface material is available
+        // (their layout is shared across surface materials), so the picking pass can re-draw the
+        // same survivors. A no-op when picking is off or the pipelines are already built.
+        if (m_PickingActive)
+        {
+            EnsurePickingPipelines(m_Internal->Plan.PipelineMaterial,
+                                   m_Internal->Plan.SkinnedPipelineMaterial);
+        }
+
         // Expose the skinning palette + per-entity bases (filled by PrepareDraws) to the shadow
         // passes so a skinned caster casts its posed shadow.
         resolvedView.SkinningPalette = m_PaletteSet;
@@ -4094,6 +4419,11 @@ namespace Veng::Renderer
         }
         // Velocity is a g-buffer channel the surface pass writes every frame, so it is always bound.
         bindings.push_back({m_VelocityId, m_VelocityView});
+        if (m_PickingActive)
+        {
+            bindings.push_back({m_EntityIdId, m_EntityIdView});
+            bindings.push_back({m_PickingDepthId, m_PickingDepthView});
+        }
         if (m_ShadowActive && m_ShadowPass)
         {
             bindings.push_back({m_ShadowId, m_ShadowPass->GetShadowView()});
@@ -4157,6 +4487,41 @@ namespace Veng::Renderer
         m_LastEnvironment = environment;
 
         m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
+
+        // Service a pending pick: the picking pass left the EntityId target in ColorAttachment
+        // layout, so transition it to TransferSrc and copy the search window under the cursor into
+        // this frame's readback region. The result becomes readable once this frame's GPU work
+        // completes (PollPickId waits frames-in-flight); the copy rides the graphics queue, no stall.
+        if (m_PickRequested && !m_PickStaged && m_PickingActive && m_EntityIdImage)
+        {
+            const u32 window = static_cast<u32>(2 * Picking::SearchRadius + 1);
+            // Clamp the window into the target; the cursor's offset within it is recorded so the
+            // search-radius logic measures distance from the real cursor texel, not the clamped one.
+            const uvec2 maxOrigin = uvec2(m_Extent.x - 1, m_Extent.y - 1);
+            const uvec2 clampedTexel = glm::min(m_PickTexel, maxOrigin);
+            const uvec2 origin{
+                clampedTexel.x >= static_cast<u32>(Picking::SearchRadius)
+                    ? std::min(clampedTexel.x - static_cast<u32>(Picking::SearchRadius),
+                               m_Extent.x - window)
+                    : 0u,
+                clampedTexel.y >= static_cast<u32>(Picking::SearchRadius)
+                    ? std::min(clampedTexel.y - static_cast<u32>(Picking::SearchRadius),
+                               m_Extent.y - window)
+                    : 0u,
+            };
+            const uvec2 copyExtent{std::min(window, m_Extent.x), std::min(window, m_Extent.y)};
+
+            cmd.PrepareForAccess(m_EntityIdView, AccessKind::TransferSrc);
+            // The copy lands tightly packed at buffer byte 0 as a copyExtent.x-wide grid; the host
+            // reads it once this frame completes (PollPickId waits frames-in-flight).
+            cmd.CopyImageRegionToBuffer(m_EntityIdImage, m_PickReadbackBuffer, origin, copyExtent);
+
+            m_PickWindowOrigin = origin;
+            m_PickWindowExtent = copyExtent;
+            m_PickCursorInWindow = clampedTexel - origin;
+            m_PickStaged = true;
+            m_PickStagedFrame = m_FrameIndex;
+        }
 
         // Capture this frame's camera + matrix for next frame's history comparison and
         // occlusion test: the reduction declared in this graph wrote the pyramid from
@@ -4305,5 +4670,81 @@ namespace Veng::Renderer
     DebugDraw& SceneRenderer::GetDebugDraw() const
     {
         return m_DebugDraw;
+    }
+
+    void SceneRenderer::RequestPick(const uvec2 texel)
+    {
+        if (!m_Settings.Picking)
+        {
+            return;
+        }
+        // A new request replaces any in-flight one (the latest click wins).
+        m_PickTexel = texel;
+        m_PickRequested = true;
+        m_PickStaged = false;
+    }
+
+    bool SceneRenderer::IsPickInFlight() const
+    {
+        return m_PickRequested;
+    }
+
+    optional<u32> SceneRenderer::PollPickId()
+    {
+        if (!m_PickRequested || !m_PickStaged)
+        {
+            return std::nullopt;
+        }
+        // The staged copy is safe to read once its frame's GPU work has retired — at least
+        // GetMaxFramesInFlight() Executes after it was recorded (the same deferral the retire
+        // path uses). Until then the readback is still pending.
+        if (m_FrameIndex - m_PickStagedFrame < m_Context.GetMaxFramesInFlight())
+        {
+            return std::nullopt;
+        }
+
+        // Search the staged window: the exact cursor texel wins when non-zero; otherwise the
+        // nearest non-zero id to the cursor (front-most resolution rides the depth test the
+        // picking pass already applied, so a non-zero texel is already the nearest surface there).
+        const auto* ids = static_cast<const u32*>(m_PickReadbackBuffer->GetMappedData());
+        const u32 width = m_PickWindowExtent.x;
+        const u32 height = m_PickWindowExtent.y;
+
+        u32 resolved = Picking::NoEntityId;
+        const uvec2 cursor = m_PickCursorInWindow;
+        const u32 exact = (cursor.x < width && cursor.y < height) ? ids[cursor.y * width + cursor.x]
+                                                                  : Picking::NoEntityId;
+        if (exact != Picking::NoEntityId)
+        {
+            resolved = exact;
+        }
+        else
+        {
+            u64 bestDistanceSq = ~0ull;
+            for (u32 y = 0; y < height; ++y)
+            {
+                for (u32 x = 0; x < width; ++x)
+                {
+                    const u32 id = ids[y * width + x];
+                    if (id == Picking::NoEntityId)
+                    {
+                        continue;
+                    }
+                    const i64 dx = static_cast<i64>(x) - static_cast<i64>(cursor.x);
+                    const i64 dy = static_cast<i64>(y) - static_cast<i64>(cursor.y);
+                    const u64 distanceSq = static_cast<u64>(dx * dx + dy * dy);
+                    if (distanceSq < bestDistanceSq)
+                    {
+                        bestDistanceSq = distanceSq;
+                        resolved = id;
+                    }
+                }
+            }
+        }
+
+        // Consume the request: the caller takes the result.
+        m_PickRequested = false;
+        m_PickStaged = false;
+        return resolved;
     }
 }

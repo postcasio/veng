@@ -323,6 +323,16 @@ namespace Veng::Renderer
         /// scene color. The pass samples the g-buffer depth for a depth-aware occluded fade rather
         /// than hardware depth-testing. Off by default, so the default render is unchanged.
         bool DebugDraw = false;
+
+        /// @brief Whether the entity-id picking pass runs (off by default).
+        ///
+        /// A topology change: it allocates an R32Uint EntityId target plus a dedicated depth
+        /// buffer and inserts a depth-tested geometry pass writing each drawn entity's pick id
+        /// (packed slot index + 1) into the id target. Allocated only while set, so the shipping
+        /// deferred path is byte-identical and smoke_golden never moves. An authoring concern (the
+        /// editor enables it for a viewport's lifetime), never a runtime one. The pass early-outs
+        /// on a frame with no pending pick request, so its amortized cost is near zero.
+        bool Picking = false;
     };
 
     /// @brief Construction parameters for SceneRenderer.
@@ -707,8 +717,63 @@ namespace Veng::Renderer
         /// @return The renderer-owned DebugDraw accumulator.
         [[nodiscard]] DebugDraw& GetDebugDraw() const;
 
+        /// @brief Records a pending pick at a render-target texel, serviced by the next Execute(s).
+        ///
+        /// The next Execute that runs the picking pass copies the (2*Picking::SearchRadius+1)²
+        /// texel neighborhood around @p texel out of the id target into a host-visible staging
+        /// buffer, on the graphics queue; the result becomes readable through PollPickId() once that
+        /// frame's GPU work has completed (a frame or two later — never a WaitIdle). A request issued
+        /// while one is already in flight replaces it. A no-op when SceneRendererSettings::Picking is
+        /// not set.
+        /// @param texel  The render-target texel to pick, in allocation pixels (top-left origin).
+        /// @pre SceneRendererSettings::Picking is set on this renderer.
+        void RequestPick(uvec2 texel);
+
+        /// @brief Returns true when a pick request has been issued but not yet resolved or polled.
+        ///
+        /// Covers the window between RequestPick() and the PollPickId() that consumes the result.
+        [[nodiscard]] bool IsPickInFlight() const;
+
+        /// @brief Returns the resolved pick id once a requested pick's readback is ready, else nullopt.
+        ///
+        /// Applies the screen-space search radius to the staged neighborhood: the exact cursor texel
+        /// wins when non-zero; otherwise the nearest non-zero id to the cursor. Returns the raw pick
+        /// id (packed entity index + 1, or Picking::NoEntityId for background). Returns nullopt while
+        /// the readback is still in flight (the staged frame has not completed). Consuming the result
+        /// clears the in-flight state, so a caller polls each frame until it returns a value.
+        /// @return The resolved pick id when ready; nullopt while the readback is still pending.
+        [[nodiscard]] optional<u32> PollPickId();
+
     private:
         explicit SceneRenderer(const SceneRendererInfo& info);
+
+        /// @brief Recreates the entity-id picking target + depth buffer, or releases them when off.
+        ///
+        /// Allocates the R32Uint EntityId target and its dedicated depth buffer (both at the
+        /// allocation extent) when SceneRendererSettings::Picking is set; otherwise releases any
+        /// previously-created ones. Called from Create and every Resize/Configure. The id target's
+        /// format is confirmed as a color-attachment + transfer source on the device before alloc.
+        void CreatePicking();
+
+        /// @brief Records the picking geometry pass into the graph when picking is active.
+        ///
+        /// A depth-tested pass binding the EntityId target + a dedicated depth buffer in its own
+        /// RenderingInfo (the shipping g-buffer RenderingInfo untouched), re-drawing the same static
+        /// and skinned survivors through the id-writing pipeline variants. Cleared to NoEntityId each
+        /// frame so the nearest visible surface wins per texel.
+        /// @param graph  The renderer's internal graph being rebuilt.
+        void DeclarePicking(RenderGraph& graph);
+
+        /// @brief Builds the static + skinned id-writing pipeline variants from a representative material.
+        ///
+        /// Reuses the surface material's pipeline layout + vertex module with the core entity_id
+        /// fragment, binding the EntityId target as the single color attachment + the dedicated depth
+        /// format. Built lazily on the first Execute a surface material is available (the layout is
+        /// shared across surface materials), cached thereafter.
+        /// @param staticMaterial  A loaded static surface material whose layout/vertex stage to reuse; may be null.
+        /// @param skinnedMaterial A loaded skinned surface material whose layout/vertex stage to reuse; may be null.
+        void EnsurePickingPipelines(const Material* staticMaterial,
+                                    const Material* skinnedMaterial);
 
         /// @brief Recreates the owned output image and view at the current extent and format.
         void CreateOutput();
@@ -1512,6 +1577,56 @@ namespace Veng::Renderer
         /// renderer's constness is its own identity, not the per-frame accumulator. Cleared at
         /// the start of every Execute.
         mutable DebugDraw m_DebugDraw;
+
+        /// @brief Entity-id picking target (R32Uint), allocated only when Settings.Picking is set.
+        ///
+        /// Bound by the picking pass's own RenderingInfo as its single color attachment, never by
+        /// the shipping g-buffer pass. Cleared to Picking::NoEntityId each frame; the depth-tested
+        /// picking pass writes each drawn entity's pick id. Null when picking is off.
+        Ref<Image> m_EntityIdImage;
+        /// @brief View over m_EntityIdImage.
+        Ref<ImageView> m_EntityIdView;
+        /// @brief Dedicated depth buffer for the picking pass (so the nearest surface wins).
+        ///
+        /// Picking re-renders geometry into its own attachments; a separate depth buffer keeps it
+        /// independent of the shipping g-buffer depth's barrier domain. Null when picking is off.
+        Ref<Image> m_PickingDepthImage;
+        /// @brief View over m_PickingDepthImage.
+        Ref<ImageView> m_PickingDepthView;
+        /// @brief Imported id for the EntityId target in the internal graph.
+        ResourceId m_EntityIdId;
+        /// @brief Imported id for the picking depth buffer in the internal graph.
+        ResourceId m_PickingDepthId;
+        /// @brief True when the last Rebuild wired the picking pass (Settings.Picking).
+        bool m_PickingActive = false;
+
+        /// @brief Static + skinned id-writing pipelines; built lazily on first Execute with a material.
+        Ref<class GraphicsPipeline> m_PickingPipeline;
+        Ref<class GraphicsPipeline> m_PickingSkinnedPipeline;
+
+        /// @brief Host-visible staging buffer the picking readback copies the search window into.
+        ///
+        /// Ring-buffered for frames-in-flight: one (2*SearchRadius+1)² u32 region per frame. The
+        /// region copy lands in the current frame's region; the result is read once that frame
+        /// completes. Allocated with the picking target.
+        Ref<Buffer> m_PickReadbackBuffer;
+        /// @brief Stride in bytes between pick-readback ring regions ((2*SearchRadius+1)² u32s).
+        u32 m_PickReadbackStride = 0;
+
+        /// @brief Whether a pick request is awaiting service (RequestPick) or readback completion.
+        bool m_PickRequested = false;
+        /// @brief Whether a requested pick's region copy has been recorded and is awaiting GPU completion.
+        bool m_PickStaged = false;
+        /// @brief The requested texel (allocation pixels) the search window centers on.
+        uvec2 m_PickTexel{};
+        /// @brief Top-left texel of the staged search window (clamped into the target).
+        uvec2 m_PickWindowOrigin{};
+        /// @brief Cursor offset within the staged window (m_PickTexel - m_PickWindowOrigin).
+        uvec2 m_PickCursorInWindow{};
+        /// @brief Texel dimensions of the staged window (clamped to the target).
+        uvec2 m_PickWindowExtent{};
+        /// @brief Execute count at which the staged copy was recorded; the readback waits frames-in-flight.
+        u64 m_PickStagedFrame = 0;
 
         /// @brief Opaque compiled graph; replayed every Execute.
         ///

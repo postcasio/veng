@@ -654,6 +654,15 @@ namespace Veng::Renderer
                                  vk::FormatFeatureFlagBits::eSampledImageFilterLinear);
     }
 
+    bool Context::IsFormatColorAttachmentTransferSrcSupported(const Format format) const
+    {
+        const vk::FormatProperties props =
+            m_Native->PhysicalDevice.getFormatProperties(ToVk(format));
+        constexpr vk::FormatFeatureFlags required =
+            vk::FormatFeatureFlagBits::eColorAttachment | vk::FormatFeatureFlagBits::eTransferSrc;
+        return (props.optimalTilingFeatures & required) == required;
+    }
+
     SynchronizationFrame& Context::GetCurrentFrame()
     {
         return m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight];

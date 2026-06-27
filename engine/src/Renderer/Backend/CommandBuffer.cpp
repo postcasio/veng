@@ -376,6 +376,28 @@ namespace Veng::Renderer
                                                   buffer->GetNative().Buffer, 1, &region);
     }
 
+    void CommandBuffer::CopyImageRegionToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer,
+                                                const uvec2 offset, const uvec2 extent)
+    {
+        const vk::BufferImageCopy region = {
+            .bufferOffset = 0,
+            // Tightly packed: row length and image height equal the region extent.
+            .bufferRowLength = extent.x,
+            .bufferImageHeight = extent.y,
+            .imageSubresource = {.aspectMask = Utils::GetAspectFlags(ToVk(image->GetFormat())),
+                                 .mipLevel = 0,
+                                 .baseArrayLayer = 0,
+                                 .layerCount = 1},
+            .imageOffset = {.x = static_cast<i32>(offset.x),
+                            .y = static_cast<i32>(offset.y),
+                            .z = 0},
+            .imageExtent = {.width = extent.x, .height = extent.y, .depth = 1}};
+
+        m_Native->CommandBuffer.copyImageToBuffer(image->GetNative().Image,
+                                                  vk::ImageLayout::eTransferSrcOptimal,
+                                                  buffer->GetNative().Buffer, 1, &region);
+    }
+
     void CommandBuffer::BlitImage(const BlitImageInfo& info)
     {
         vk::Offset3D sourceOffset = {

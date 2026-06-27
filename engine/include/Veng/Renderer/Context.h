@@ -212,6 +212,14 @@ namespace Veng::Renderer
         /// @param format The image format to query.
         [[nodiscard]] bool IsFormatLinearFilterSupported(Format format) const;
 
+        /// @brief Returns true when @p format supports use as a color attachment and a transfer source.
+        ///
+        /// Queries the format's optimal-tiling feature flags for both ColorAttachment and
+        /// TransferSrc. The entity-id picking target asserts it before allocating, so an
+        /// unsupported R32Uint target is a loud failure rather than silent undefined readback.
+        /// @param format The image format to query.
+        [[nodiscard]] bool IsFormatColorAttachmentTransferSrcSupported(Format format) const;
+
         /// @brief Returns the borrowed window.
         [[nodiscard]] Window& GetWindow() const { return *m_Window; }
 

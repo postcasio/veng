@@ -45,6 +45,8 @@ namespace Veng::Renderer
             return vk::Format::eAstc4x4UnormBlock;
         case Format::ASTC4x4Srgb:
             return vk::Format::eAstc4x4SrgbBlock;
+        case Format::R32Uint:
+            return vk::Format::eR32Uint;
         case Format::R32Sfloat:
             return vk::Format::eR32Sfloat;
         case Format::RG32Sfloat:
@@ -103,6 +105,8 @@ namespace Veng::Renderer
             return Format::ASTC4x4Unorm;
         case vk::Format::eAstc4x4SrgbBlock:
             return Format::ASTC4x4Srgb;
+        case vk::Format::eR32Uint:
+            return Format::R32Uint;
         case vk::Format::eR32Sfloat:
             return Format::R32Sfloat;
         case vk::Format::eR32G32Sfloat:

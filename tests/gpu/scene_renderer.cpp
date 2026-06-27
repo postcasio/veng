@@ -31,6 +31,7 @@
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/ScenePass.h>
+#include <Veng/Renderer/Viewport.h>
 #include <Veng/Asset/Shader.h>
 #include <Veng/Renderer/Types.h>
 
@@ -3542,6 +3543,164 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Render();
 
     CHECK(renderer->GetOutput()->GetImage()->GetWidth() == extent.x);
+
+    std::filesystem::remove(outArchive);
+}
+
+namespace
+{
+    // Projects a world point to a render-target texel through a camera and extent. The picking
+    // test frames two cubes and picks the texel each projects to, so the resolved entity is the
+    // one the cursor sits over.
+    uvec2 ProjectToTexel(const CameraView& camera, vec3 world, uvec2 extent)
+    {
+        const vec4 clip = camera.ViewProjection() * vec4(world, 1.0f);
+        const vec2 ndc = vec2(clip) / clip.w; // [-1, 1]
+        const f32 u = (ndc.x * 0.5f + 0.5f) * static_cast<f32>(extent.x);
+        // Vulkan clip-space Y is flipped relative to the top-left texel origin.
+        const f32 v = (ndc.y * 0.5f + 0.5f) * static_cast<f32>(extent.y);
+        return uvec2(static_cast<u32>(glm::clamp(u, 0.0f, static_cast<f32>(extent.x - 1))),
+                     static_cast<u32>(glm::clamp(v, 0.0f, static_cast<f32>(extent.y - 1))));
+    }
+}
+
+// The entity-id picking gate. Two brick cubes, well separated on X, framed by a camera; with
+// SceneRendererSettings::Picking on, RequestPick at the texel each cube projects to resolves
+// that cube's slot index + 1, and a texel between/above them (background) reads NoEntityId.
+// The byte-identical golden cannot prove the id pass ran or that depth-test picks the front
+// surface; this is the dedicated correctness gate for the picking foundation. The same scene is
+// then picked through Viewport::Pick to cover the full seam (texel mapping → readback → liveness
+// resolution → callback).
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: entity-id picking resolves the entity under a texel, "
+                  "NoEntityId over background")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_picking.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.0f, *material), "Pick Cube");
+
+    constexpr uvec2 extent{128, 128};
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity left = scene->CreateEntity();
+    scene->Add<Transform>(left).Position = vec3(-1.0f, 0.0f, 0.0f);
+    scene->Add<MeshRenderer>(left).Mesh = assets.Adopt(cube);
+    const Entity right = scene->CreateEntity();
+    scene->Add<Transform>(right).Position = vec3(1.0f, 0.0f, 0.0f);
+    scene->Add<MeshRenderer>(right).Mesh = assets.Adopt(cube);
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 5.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Albedo, .Picking = true},
+    });
+
+    auto Render = [&]()
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+    };
+
+    // Runs Render until the renderer resolves a requested pick, returning the raw pick id. The
+    // readback is deferred frames-in-flight; ImmediateCommands waits each frame, so a handful of
+    // Executes always suffices.
+    auto PickId = [&](uvec2 texel) -> u32
+    {
+        renderer->RequestPick(texel);
+        for (u32 i = 0; i < Context.GetMaxFramesInFlight() + 4; ++i)
+        {
+            Render();
+            const optional<u32> id = renderer->PollPickId();
+            if (id)
+            {
+                return *id;
+            }
+        }
+        FAIL("pick never resolved");
+        return 0u; // Picking::NoEntityId
+    };
+
+    // Warm up: one render so the geometry and the picking pipelines exist.
+    Render();
+
+    const uvec2 leftTexel = ProjectToTexel(camera, vec3(-1.0f, 0.0f, 0.0f), extent);
+    const uvec2 rightTexel = ProjectToTexel(camera, vec3(1.0f, 0.0f, 0.0f), extent);
+
+    // The texel over each cube resolves to that cube's pick id (slot index + 1).
+    CHECK(PickId(leftTexel) == left.Index + 1u);
+    CHECK(PickId(rightTexel) == right.Index + 1u);
+
+    // A texel far above the cubes (cleared background) resolves to NoEntityId.
+    CHECK(PickId(uvec2(extent.x / 2, 4)) == 0u); // 0 == Picking::NoEntityId (background)
+
+    // The full Viewport::Pick seam: the same scene through a viewport, the callback receiving the
+    // resolved Entity (texel mapping → readback → liveness resolution).
+    SUBCASE("Viewport::Pick resolves the entity and fires the callback")
+    {
+        const Unique<Viewport> viewport = Viewport::Create({
+            .Context = Context,
+            .Assets = assets,
+            .Region = {.Offset = {0, 0}, .Extent = extent},
+            .ColorFormat = Context.GetOutputFormat(),
+            .Settings = {.Mode = DebugView::Albedo, .Picking = true},
+            .Role = ViewportRole::Offscreen,
+        });
+
+        viewport->SetViewState(Renderer::ViewState{.World = scene.get(), .Camera = camera});
+
+        optional<Entity> resolved;
+        bool fired = false;
+        // The window point is the region offset + the cube's projected texel.
+        viewport->Pick(ivec2(leftTexel),
+                       [&](optional<Entity> entity)
+                       {
+                           resolved = entity;
+                           fired = true;
+                       });
+
+        for (u32 i = 0; i < Context.GetMaxFramesInFlight() + 6 && !fired; ++i)
+        {
+            viewport->SetViewState(Renderer::ViewState{.World = scene.get(), .Camera = camera});
+            Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
+        }
+
+        CHECK(fired);
+        REQUIRE(resolved.has_value());
+        CHECK(*resolved == left);
+
+        // A click off any geometry (top of the region) fires with nullopt.
+        optional<Entity> background;
+        bool backgroundFired = false;
+        viewport->Pick(ivec2(extent.x / 2, 4),
+                       [&](optional<Entity> entity)
+                       {
+                           background = entity;
+                           backgroundFired = true;
+                       });
+        for (u32 i = 0; i < Context.GetMaxFramesInFlight() + 6 && !backgroundFired; ++i)
+        {
+            viewport->SetViewState(Renderer::ViewState{.World = scene.get(), .Camera = camera});
+            Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
+        }
+        CHECK(backgroundFired);
+        CHECK_FALSE(background.has_value());
+    }
 
     std::filesystem::remove(outArchive);
 }

@@ -7,6 +7,8 @@
 
 #include <Veng/Scene/Scene.h>
 
+#include "Picking.h"
+
 #include <algorithm>
 
 namespace Veng::Renderer
@@ -250,6 +252,12 @@ namespace Veng::Renderer
 
     void Viewport::SetViewState(const ViewState& state)
     {
+        // A change to the bound scene bumps the pick epoch, so an in-flight pick resolved against
+        // the old scene bails rather than landing an id in a swapped/cleared one.
+        if (state.World != m_ViewState.World)
+        {
+            ++m_SceneEpoch;
+        }
         m_ViewState = state;
         m_HasViewState = true;
     }
@@ -304,6 +312,67 @@ namespace Veng::Renderer
         // The output is sampled outside the renderer's graph (the compositor, an ImGui
         // panel, a material), so transition it to a sampleable layout here.
         cmd.PrepareForAccess(m_Renderer->GetOutput(), AccessKind::Sample);
+
+        ServicePendingPick();
+    }
+
+    void Viewport::ServicePendingPick()
+    {
+        if (!m_PendingPick)
+        {
+            return;
+        }
+
+        // The scene was swapped or cleared since the pick was issued: bail with nullopt rather than
+        // resolving an id against a different scene.
+        const bool sceneMatches =
+            m_PendingPick->World == m_ViewState.World && m_PendingPick->Epoch == m_SceneEpoch;
+        if (!sceneMatches)
+        {
+            const function<void(optional<Entity>)> callback = std::move(m_PendingPick->OnResolved);
+            m_PendingPick.reset();
+            if (callback)
+            {
+                callback(std::nullopt);
+            }
+            return;
+        }
+
+        // Forward the texel to the renderer's picking pass on the first serviced frame (this Execute
+        // just ran the picking pass and staged the readback only if a request was already pending,
+        // so the request is recorded here and serviced by the next Execute's staged copy).
+        if (!m_PendingPick->Forwarded)
+        {
+            m_Renderer->RequestPick(m_PendingPick->Texel);
+            m_PendingPick->Forwarded = true;
+            return;
+        }
+
+        // Poll the renderer for the resolved pick id; nullopt means the readback is still in flight.
+        const optional<u32> pickId = m_Renderer->PollPickId();
+        if (!pickId)
+        {
+            return;
+        }
+
+        // Map the pick id (packed slot index + 1) back to the live entity, validating liveness at
+        // resolve time. NoEntityId (0) is background; any other value's index is pickId - 1.
+        optional<Entity> resolved;
+        if (*pickId != Picking::NoEntityId && m_ViewState.World != nullptr)
+        {
+            const Entity entity = m_ViewState.World->GetLiveEntityAtIndex(*pickId - 1u);
+            if (!entity.IsNull())
+            {
+                resolved = entity;
+            }
+        }
+
+        const function<void(optional<Entity>)> callback = std::move(m_PendingPick->OnResolved);
+        m_PendingPick.reset();
+        if (callback)
+        {
+            callback(resolved);
+        }
     }
 
     Ref<ImageView> Viewport::GetOutput() const
@@ -346,6 +415,40 @@ namespace Veng::Renderer
 
         return vec2(static_cast<f32>(local.x) / static_cast<f32>(extent.x),
                     static_cast<f32>(local.y) / static_cast<f32>(extent.y));
+    }
+
+    void Viewport::Pick(ivec2 windowPoint, function<void(optional<Entity>)> onResolved)
+    {
+        // Off the region or with a zero-extent panel: an immediate background result.
+        const optional<vec2> normalized = WindowToViewport(windowPoint);
+        if (!normalized || m_ViewState.World == nullptr)
+        {
+            if (onResolved)
+            {
+                onResolved(std::nullopt);
+            }
+            return;
+        }
+
+        // The id target is allocation-sized but the picking pass renders into the valid sub-rect, so
+        // map the normalized point into the rendered region (GetValidExtent), clamped to its edge.
+        const uvec2 valid = m_Renderer->GetValidExtent();
+        const uvec2 texel{
+            std::min(static_cast<u32>(normalized->x * static_cast<f32>(valid.x)),
+                     valid.x > 0 ? valid.x - 1 : 0),
+            std::min(static_cast<u32>(normalized->y * static_cast<f32>(valid.y)),
+                     valid.y > 0 ? valid.y - 1 : 0),
+        };
+
+        // The latest click wins: replace any still-pending pick (firing its callback would imply a
+        // resolve it never got; dropping it is the "one pick in flight" posture).
+        m_PendingPick = PendingPick{
+            .Texel = texel,
+            .Forwarded = false,
+            .World = m_ViewState.World,
+            .Epoch = m_SceneEpoch,
+            .OnResolved = std::move(onResolved),
+        };
     }
 
     optional<Ray> Viewport::ScreenToWorldRay(ivec2 windowPoint) const

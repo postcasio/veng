@@ -124,6 +124,17 @@ namespace Veng
         /// @brief Returns true if the entity handle is live (not destroyed or stale).
         [[nodiscard]] bool IsAlive(Entity entity) const;
 
+        /// @brief Returns the live entity occupying slot @p index, or Entity::Null if none.
+        ///
+        /// Resolves a bare slot index (as carried by an id-buffer pick readback) back to a
+        /// generational handle: the live occupant with the slot's current generation, or
+        /// Entity::Null when the index is out of range or the slot is dead. The pick id is the
+        /// packed index + 1, so picking subtracts 1 and resolves through this, validating
+        /// liveness late — a recycled slot resolves to its live occupant or to none.
+        /// @param index  The slot index to resolve.
+        /// @return The live entity at the slot, or Entity::Null.
+        [[nodiscard]] Entity GetLiveEntityAtIndex(u32 index) const;
+
         /// @brief Visits every live entity, calling fn(entity) in slot-index order.
         ///
         /// Enumerates entities regardless of which components they hold — the
