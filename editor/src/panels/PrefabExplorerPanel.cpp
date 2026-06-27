@@ -445,7 +445,7 @@ namespace VengEditor
         scene->ForEachChild(source, [&](Entity child) { sourceChildren.push_back(child); });
         for (const Entity child : sourceChildren)
         {
-            DuplicateSubtree(child, copy);
+            (void)DuplicateSubtree(child, copy);
         }
 
         // Round-tripping the components copies a MeshRenderer's recipe source but builds no

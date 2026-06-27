@@ -207,6 +207,23 @@ if (VENG_ENABLE_CLANG_TIDY)
 endif ()
 
 # ---------------------------------------------------------------------------
+# Warnings-as-errors under the debug build
+# ---------------------------------------------------------------------------
+
+# The debug build (VE_DEBUG) promotes compiler warnings to errors. Added here —
+# after the FetchContent deps above and before veng's own subdirectories below —
+# so it is inherited only by veng's targets; third-party sources built above are
+# never affected (the same boundary the clang-tidy wiring relies on). The default
+# (non-VE_DEBUG) build still merely warns.
+if (VE_DEBUG)
+    if (MSVC)
+        add_compile_options(/WX)
+    else ()
+        add_compile_options(-Werror)
+    endif ()
+endif ()
+
+# ---------------------------------------------------------------------------
 # Libraries
 # ---------------------------------------------------------------------------
 

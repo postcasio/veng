@@ -380,6 +380,11 @@ namespace Veng::Cook
                 }
                 return {};
             }
+
+            case FieldClass::Array:
+            {
+                return err("array fields are not supported in prefab sources");
+            }
             }
 
             return err("unhandled field class");

@@ -89,7 +89,7 @@ TEST_CASE("CreateEntity alone does not bump — a bare entity is no candidate")
     Unique<Scene> scene = Scene::Create(types);
 
     const u64 before = scene->GetSpatialVersion();
-    scene->CreateEntity();
+    (void)scene->CreateEntity();
     CHECK(scene->GetSpatialVersion() == before);
 }
 

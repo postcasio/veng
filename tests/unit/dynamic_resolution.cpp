@@ -157,7 +157,7 @@ TEST_CASE("allocation tier: a scale parked just above a boundary never changes t
     {
         // Small zero-mean noise around 0.80 — comfortably inside tier 0, above the 0.78 down edge.
         jitter = (i % 2 == 0) ? 0.02f : -0.02f;
-        StepAllocationTier(state, 0.80f + jitter, 1.0f / 60.0f, s);
+        (void)StepAllocationTier(state, 0.80f + jitter, 1.0f / 60.0f, s);
     }
     CHECK(state.TierIndex == 0u);
 }
@@ -219,7 +219,7 @@ TEST_CASE("allocation tier: a single-frame spike inside a steady trace never mov
     for (int i = 0; i < 6000; ++i)
     {
         const f32 scale = (i % 600 == 0) ? 0.30f : 0.95f;
-        StepAllocationTier(state, scale, dt, s);
+        (void)StepAllocationTier(state, scale, dt, s);
     }
     CHECK(state.TierIndex == 0u);
 }
@@ -233,7 +233,7 @@ TEST_CASE("allocation tier: the result is clamped to the tier bounds")
     AllocationTierState low;
     for (int i = 0; i < 5000; ++i)
     {
-        StepAllocationTier(low, 0.10f, 1.0f / 60.0f, s);
+        (void)StepAllocationTier(low, 0.10f, 1.0f / 60.0f, s);
     }
     CHECK(low.TierIndex == static_cast<u32>(s.Tiers.size() - 1));
 
@@ -243,7 +243,7 @@ TEST_CASE("allocation tier: the result is clamped to the tier bounds")
     high.SustainedScale = s.Tiers.back();
     for (int i = 0; i < 5000; ++i)
     {
-        StepAllocationTier(high, 1.0f, 1.0f / 60.0f, s);
+        (void)StepAllocationTier(high, 1.0f, 1.0f / 60.0f, s);
     }
     CHECK(high.TierIndex == 0u);
 
@@ -289,7 +289,7 @@ TEST_CASE("allocation tier: a slow drift across the band produces a bounded tran
 TEST_CASE(
     "allocation tier: a down-step is withheld while the instantaneous scale exceeds the next tier")
 {
-    AllocationTierSettings s = TierSettings();
+    const AllocationTierSettings s = TierSettings();
     AllocationTierState state;
 
     constexpr f32 dt = 1.0f / 60.0f;
@@ -300,7 +300,7 @@ TEST_CASE(
     state.SustainedScale = 0.70f;
     for (int i = 0; i < 6000; ++i)
     {
-        StepAllocationTier(state, 0.80f, dt, s);
+        (void)StepAllocationTier(state, 0.80f, dt, s);
     }
     CHECK(state.TierIndex == 0u);
 
@@ -308,7 +308,7 @@ TEST_CASE(
     // after the dwell.
     for (int i = 0; i < 200; ++i)
     {
-        StepAllocationTier(state, 0.70f, dt, s);
+        (void)StepAllocationTier(state, 0.70f, dt, s);
     }
     CHECK(state.TierIndex == 1u);
 }

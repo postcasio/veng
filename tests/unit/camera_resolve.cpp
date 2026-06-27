@@ -88,7 +88,7 @@ TEST_CASE("ResolvePrimaryCameraView picks the first Viewer, else the first bare 
     {
         TypeRegistry registry = MakeRegistry();
         const Unique<Scene> scene = Scene::Create(registry);
-        scene->CreateEntity();
+        (void)scene->CreateEntity();
 
         CHECK_FALSE(ResolvePrimaryCameraView(*scene, 1.0f).has_value());
     }

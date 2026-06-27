@@ -609,7 +609,7 @@ VE_FIELD(Speed, .DisplayName = "Speed", .Display = {.Min = 0.0})
 VE_FIELD(Loop, .DisplayName = "Loop")
 VE_FIELD(Playing, .DisplayName = "Playing")
 VE_FIELD(RootMotion, .DisplayName = "Root Motion")
-VE_FIELD(Time, .DisplayName = "Time", .ReadOnly = true, .Display = {.Min = 0.0})
+VE_FIELD(Time, .DisplayName = "Time", .Display = {.Min = 0.0}, .ReadOnly = true)
 VE_REFLECT_END();
 
 VE_TYPE(::Veng::SkinnedPose, 0x063C1245B8912FC3ULL);
@@ -688,7 +688,7 @@ VE_ENUM_END();
 
 VE_REFLECT(::Veng::Session, 0x5EC76128049D9629ULL)
 VE_FIELD(Phase, .DisplayName = "Phase")
-VE_FIELD(Elapsed, .DisplayName = "Elapsed", .ReadOnly = true, .Display = {.Min = 0.0})
+VE_FIELD(Elapsed, .DisplayName = "Elapsed", .Display = {.Min = 0.0}, .ReadOnly = true)
 VE_FIELD(Score, .DisplayName = "Score")
 VE_REFLECT_END();
 

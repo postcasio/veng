@@ -46,6 +46,6 @@ namespace Veng
         /// @param context  Per-tick services (unused).
         void OnUpdate(Scene& scene, f32 delta, const SystemContext& context) override;
     };
-
-    VE_SYSTEM(CameraRigSystem, 0x4EBD17824A9652D8ULL, "Camera Rig");
 }
+
+VE_SYSTEM(::Veng::CameraRigSystem, 0x4EBD17824A9652D8ULL, "Camera Rig");

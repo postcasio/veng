@@ -23,6 +23,6 @@ namespace Veng
         /// @param context  Per-tick services (unused).
         void OnUpdate(Scene& scene, f32 delta, const SystemContext& context) override;
     };
-
-    VE_SYSTEM(RootMotionDriveSystem, 0x4FAA68CAB0EB4DB7ULL, "Root Motion Drive");
 }
+
+VE_SYSTEM(::Veng::RootMotionDriveSystem, 0x4FAA68CAB0EB4DB7ULL, "Root Motion Drive");

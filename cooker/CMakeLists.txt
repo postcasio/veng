@@ -14,6 +14,13 @@ if (NOT VENG_BUILD_TOOLS)
     return()
 endif ()
 
+# The cooker fetches its heavy third-party deps (bc7enc_rdo, astc-encoder, assimp)
+# inline below. Shield them from the debug build's -Werror, inherited here as a
+# directory COMPILE_OPTIONS from the top level: vendored code is not held to veng's
+# warning bar. The inherited options are restored before the cooker's own targets.
+get_directory_property(VENG_COOK_SAVED_COMPILE_OPTIONS COMPILE_OPTIONS)
+set_directory_properties(PROPERTIES COMPILE_OPTIONS "")
+
 # xxHash — fast non-crypto hash for archive content hashes (xxh3-128). Consumed
 # header-only (stb pattern): XXH_IMPLEMENTATION is defined in exactly one cooker
 # TU (src/Vendor/XxHash.cpp); every other site includes the header for
@@ -179,6 +186,10 @@ else ()
             IMPORTED_LOCATION ${Slang_LIBRARY}
             INTERFACE_INCLUDE_DIRECTORIES ${Slang_INCLUDE_DIR})
 endif ()
+
+# Restore the inherited warning options (the debug build's -Werror) for the
+# cooker's own targets below — the vendored fetches above are now configured.
+set_directory_properties(PROPERTIES COMPILE_OPTIONS "${VENG_COOK_SAVED_COMPILE_OPTIONS}")
 
 # The cooker's veng-free core. Everything except the module-reflection TU
 # (src/ModuleTypes.cpp) lives here: importers, the Cooker, pack parsing, verify.

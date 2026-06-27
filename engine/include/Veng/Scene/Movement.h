@@ -42,6 +42,6 @@ namespace Veng
         /// @param context  Per-tick services (unused).
         void OnUpdate(Scene& scene, f32 delta, const SystemContext& context) override;
     };
-
-    VE_SYSTEM(MovementSystem, 0x3C012FCD7D93E513ULL, "Movement");
 }
+
+VE_SYSTEM(::Veng::MovementSystem, 0x3C012FCD7D93E513ULL, "Movement");
