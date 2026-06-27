@@ -13,6 +13,13 @@ namespace Veng::UI
     /// @brief Advances the cursor to the same line as the previous widget.
     void SameLine();
 
+    /// @brief Vertically centers the next text item against a framed widget on the same line.
+    ///
+    /// Offsets the cursor down by the frame padding so a following `Text` aligns with an
+    /// inline framed widget (a button, input, or progress bar) rather than sitting at its top
+    /// edge. Call immediately before the text item.
+    void AlignTextToFramePadding();
+
     /// @brief Inserts a blank line of spacing.
     void Spacing();
 

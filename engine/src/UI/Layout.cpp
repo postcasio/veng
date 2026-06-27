@@ -27,6 +27,11 @@ namespace Veng::UI
         ImGui::SameLine();
     }
 
+    void AlignTextToFramePadding()
+    {
+        ImGui::AlignTextToFramePadding();
+    }
+
     void Spacing()
     {
         ImGui::Spacing();

@@ -278,4 +278,18 @@ namespace Veng::UI
     /// @param text   Glyph text drawn centered over the fill.
     /// @param size   Fixed badge size in pixels; `{}` auto-sizes to the text.
     void Badge(string_view text, vec4 color, vec2 size = {});
+
+    /// @brief Draws a horizontal progress bar filled with the theme accent.
+    ///
+    /// A non-negative `fraction` (clamped to `[0, 1]`) fills the bar left-to-right; a
+    /// negative `fraction` draws an animated indeterminate sweep — work in progress with no
+    /// measurable completion — so a caller with nothing to report passes any negative value.
+    /// `overlay` is drawn centered over the bar; empty draws the default percentage for a
+    /// determinate bar and nothing for an indeterminate one. Non-interactive, so it returns
+    /// void.
+    /// @param fraction  Completion in `[0, 1]`, or negative for an indeterminate animation.
+    /// @param size      Bar size in pixels; a negative width fills the content region, a zero
+    ///                  height takes the frame height.
+    /// @param overlay   Text drawn centered over the bar, or empty for the default.
+    void ProgressBar(f32 fraction, vec2 size = {-1.0f, 0.0f}, string_view overlay = {});
 }

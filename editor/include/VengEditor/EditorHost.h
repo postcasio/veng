@@ -16,6 +16,7 @@ namespace VengEditor
     class AssetEditorPanel;
     class AssetSourceIndex;
     class CommandStack;
+    class StatusTracker;
 
     /// @brief Construction parameters for EditorHost.
     struct EditorHostInfo
@@ -135,6 +136,15 @@ namespace VengEditor
         /// @brief Draws the main menu bar (File / Edit / Window menus).
         void DrawMenuBar();
 
+        /// @brief Draws the bottom status bar showing in-flight long-running tasks.
+        ///
+        /// Reserves a strip at the bottom of the main viewport (so the dockspace fits above
+        /// it) and, while any task tracked by m_Status is running, draws a description and a
+        /// progress bar — the task's own label with an indeterminate sweep for a single task,
+        /// or "N tasks running" with the wave's completed/total fill for several. Idle leaves
+        /// the strip empty.
+        void DrawStatusBar();
+
         /// @brief Returns the focused AssetEditorPanel, or null when none holds keyboard focus.
         ///
         /// Resolves the editor whose window or a docked child holds focus — the seam the Edit-menu
@@ -175,6 +185,9 @@ namespace VengEditor
         /// @brief AssetId to source-file index, parsed once from the manifest.
         /// nullptr when no manifest path is configured.
         Veng::Unique<AssetSourceIndex> m_Sources;
+
+        /// @brief Tracks in-flight long-running tasks (cooks) the status bar reports.
+        Veng::Unique<StatusTracker> m_Status;
 
         /// @brief The host-owned project settings: the build-configuration list and the active
         /// one. Loaded from project.veng beside the manifest at startup, or left empty.

@@ -18,6 +18,7 @@
 #include "AssetSourceIndex.h"
 #include "CommandStack.h"
 #include "PreviewCapability.h"
+#include "StatusTracker.h"
 #include "panels/AssetBrowserPanel.h"
 #include "panels/ConsolePanel.h"
 #include "panels/InspectorPanel.h"
@@ -593,6 +594,8 @@ namespace VengEditor
         m_Sources =
             CreateUnique<AssetSourceIndex>(AssetSourceIndex::ParsePacks(m_ProjectSettings.Packs));
 
+        m_Status = CreateUnique<StatusTracker>();
+
         // The project-settings panel inspects ProjectSettings through reflection; registering
         // it auto-registers its compression enums, whose VE_ENUM tables drive the named combos.
         GetTypeRegistry().Register<ProjectSettings>();
@@ -700,12 +703,20 @@ namespace VengEditor
         // configuration stays unrestricted, only this editor cook is clamped.
         resolved.ActiveConfig = GetPreviewConfiguration();
 
+        // Track the cook for the status bar; the continuation ends it (both success and
+        // failure run through Then). m_Status is non-null once OnInitialize has run, which
+        // precedes any cook.
+        const StatusTracker::TaskId statusTask =
+            m_Status->Begin(fmt::format("Cooking {}", request.SourcePath.filename().string()));
+
         Task<vector<u8>> task = m_Info.Cook(resolved, GetTaskSystem());
 
         task.Then(
-            [this, targetId = request.TargetId, source = request.SourcePath,
+            [this, statusTask, targetId = request.TargetId, source = request.SourcePath,
              onComplete = std::move(onComplete)](Result<vector<u8>> bytes) mutable
             {
+                m_Status->End(statusTask);
+
                 if (!bytes)
                 {
                     Log::Error("editor: cook of '{}' failed: {}", source.string(), bytes.error());
@@ -795,6 +806,94 @@ namespace VengEditor
         }
     }
 
+    void EditorHost::DrawStatusBar()
+    {
+        // BeginViewportSideBar reserves the strip from the viewport work area (the same
+        // next-frame inset mechanism the main menu bar uses), so the dockspace fits above it.
+        // The bar window is always submitted to keep that reservation stable frame to frame.
+        // Size the strip to fit a full-height progress bar inside the window padding (unlike
+        // the menu bar, this content window has WindowPadding).
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const f32 height = ImGui::GetFrameHeight() + (style.WindowPadding.y * 2.0f);
+        const ImGuiWindowFlags flags =
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
+        const bool open = ImGui::BeginViewportSideBar("##StatusBar", ImGui::GetMainViewport(),
+                                                      ImGuiDir_Down, height, flags);
+        if (open)
+        {
+            const StatusTracker::Snapshot status = m_Status->GetSnapshot();
+            const usize count = status.Tasks.size();
+
+            // The collapsed summary: idle shows an empty bar, a single task its own label with
+            // an indeterminate sweep (a cook reports no sub-step progress), and several the
+            // count with the wave's completed/total fill.
+            string label;
+            f32 fraction = 0.0f;
+            if (count == 0)
+            {
+                label = "No tasks running";
+            }
+            else if (count == 1)
+            {
+                label = status.Tasks.front();
+                fraction = -1.0f;
+            }
+            else
+            {
+                label = fmt::format("{} tasks running", count);
+                fraction = status.TotalInWave > 0 ? static_cast<f32>(status.CompletedInWave) /
+                                                        static_cast<f32>(status.TotalInWave)
+                                                  : 0.0f;
+            }
+
+            // Right-align a small label + bar, taking only as much width as they need.
+            const f32 barWidth = 140.0f;
+            const f32 labelWidth = ImGui::CalcTextSize(label.c_str()).x;
+            const f32 groupWidth = labelWidth + style.ItemInnerSpacing.x + barWidth;
+            const f32 avail = ImGui::GetContentRegionAvail().x;
+            if (avail > groupWidth)
+            {
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - groupWidth));
+            }
+
+            ImGui::BeginGroup();
+            UI::AlignTextToFramePadding();
+            UI::Text(label);
+            UI::SameLine();
+            UI::ProgressBar(fraction, vec2{barWidth, 0.0f});
+            ImGui::EndGroup();
+
+            // Clicking the summary expands a popup listing every running task with its own bar.
+            // Only meaningful while tasks run; idle has nothing to expand.
+            if (count > 0)
+            {
+                const bool hovered =
+                    ImGui::IsMouseHoveringRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+                if (hovered)
+                {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                    {
+                        UI::OpenPopup("##StatusTaskList");
+                    }
+                }
+            }
+
+            if (auto popup = UI::Popup("##StatusTaskList"))
+            {
+                UI::SeparatorText("Running tasks");
+                for (const string& task : status.Tasks)
+                {
+                    UI::AlignTextToFramePadding();
+                    UI::Text(task);
+                    UI::SameLine();
+                    UI::ProgressBar(-1.0f, vec2{160.0f, 0.0f});
+                }
+            }
+        }
+        ImGui::End();
+    }
+
     u32 EditorHost::BuildDefaultHostLayout(u32 dockspaceId)
     {
         ImGui::DockBuilderRemoveNode(dockspaceId);
@@ -877,6 +976,7 @@ namespace VengEditor
         m_PendingPanels.clear();
 
         DrawMenuBar();
+        DrawStatusBar();
 
         // Each panel submits its own top-level window(s); an asset editor submits its
         // private dockspace and the children docked into it. The engine has already rendered
@@ -933,5 +1033,6 @@ namespace VengEditor
         m_Panels.clear();
         m_PendingPanels.clear();
         m_Sources.reset();
+        m_Status.reset();
     }
 }

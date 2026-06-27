@@ -18,6 +18,7 @@ add_library(veng_editor SHARED
         src/EditorGizmo.cpp
         src/PreviewCapability.cpp
         src/PrefabSerialize.cpp
+        src/StatusTracker.cpp
         src/NodeGraph/NodeGraph.cpp
         src/NodeGraph/NodeType.cpp
         src/NodeGraph/NodeGraphSerialize.cpp

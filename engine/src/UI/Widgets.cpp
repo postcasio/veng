@@ -530,4 +530,22 @@ namespace Veng::UI
 
         ImGui::Dummy(badgeSize);
     }
+
+    void ProgressBar(f32 fraction, vec2 size, string_view overlay)
+    {
+        // The fill reads the histogram slot; theme it with the accent so the bar matches the
+        // rest of the UI rather than ImGui's default.
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, SrgbToLinear(GetTheme().Accent));
+
+        // A negative fraction is the indeterminate request; ImGui animates the sweep from the
+        // value's fractional motion, so feed it the running time to keep it moving.
+        const float value =
+            fraction < 0.0f ? -1.0f * static_cast<float>(ImGui::GetTime()) : fraction;
+
+        const string overlayStr = AsCStr(overlay);
+        ImGui::ProgressBar(value, ImVec2(size.x, size.y),
+                           overlay.empty() ? nullptr : overlayStr.c_str());
+
+        ImGui::PopStyleColor();
+    }
 }
