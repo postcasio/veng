@@ -10,6 +10,16 @@ that: every node becomes an **expression emitter**, the graph is topologically w
 **generated Slang fragment source**, and the cooked material references that generated shader.
 The hand-authored fragment shader goes away — the graph *is* the source.
 
+Generating the shader also draws the line every production engine draws between a **material** and a
+**material instance**. A `.vmat` graph that generates a fragment shader *and* its exposed-param
+schema is a **parent material** (Unreal's *Material*): it owns the expensive half — the
+permutation, the pipeline. The exposed params it generates are, by definition, the surface a caller
+may tweak *without* touching the shader — i.e. the override surface of a **material instance**
+(Unreal's *Material Instance*). So codegen and instances are two halves of one idea: codegen
+**defines what is tweakable**, an instance **tweaks it cheaply across many copies that share the
+generated shader and pipeline**. Plan 05 lands that split — the planset's one runtime/cook/asset
+plan, where the generated parameter schema earns a cheap consumer.
+
 This is [future area 13](../future/README.md#13-material-domains--shader-graph-codegen--prioritized)'s
 **prioritized follow-on** (node→Slang codegen), built on the material-domains slice
 (planset-18) and the node-graph surface (planset-15). It folds in
@@ -66,6 +76,7 @@ offset-patching relies on, so `WriteMaterialVmat`/`CompiledField` largely surviv
 | 02 | const/exposed `Param`, generated `MaterialParams`, the sub-asset pipeline | A `Param` gains a **const-vs-exposed** flag (const folds inline; exposed becomes a generated `MaterialParams` field + a `p.<Name>` read). The emitter generates the `MaterialParams` struct + the `.vmat` field list together. The editor writes the `<name>.gen.frag.{slang,shader.json}` sub-asset with the derived id, adds the manifest row, repoints `.vmat` `shaders.fragment`, and the cook-on-demand loop compiles it → hot-reload → `MaterialPreview`. The full graph→cook→reload→preview loop on generated source. Depends on 01. | proposed |
 | 03 | Expand the node catalog to real shading math | The catalog grows real emitter nodes — `Constant`, `Multiply`/`Add`/`Subtract`/`Divide`, `Lerp`, `Dot`/`Normalize`/`Saturate`, `Split`/`Combine`, `ScalarParam` — each a `NodeType` with reflected properties, an emit-fn, and JSON round-trip. The graph becomes genuinely expressive (these nodes are inert in the binding model — the tell the catalog was half-built for codegen). Depends on 02. | proposed |
 | 04 | Migrate the samples onto generated graphs | hello-triangle's `brick.vmat` becomes a generated graph (delete `brick.frag.slang`, author the equivalent graph, regenerate the sub-asset); `tonemap.vmat` becomes a generated PostProcess graph (the domain-sink proof); template co-migrated. The image is preserved by construction where possible; `smoke_golden` may move **once** → regenerate. Depends on 03. | proposed |
+| 05 | [Material instances — parent owns the shader, instance owns the slot](05-material-instances.md) | Split the fused `Material` into a **parent** (`Material`: generated shader → pipeline + the exposed-param **schema** + defaults) and a **`MaterialInstance`** (a cheap override over a parent: its own SSBO slot + texture set, no shader). The instance half — the per-material slot + stall-free ring-buffered `SetParam`/`SetTexture` + selector push — **moves** off `Material` (it already exists there). New `*.vmatinst.json` source + `AssetType::MaterialInstance` blob + loader; the cook validates overrides against the parent's reflected fields (instance-against-parent, the `.vmat`-against-shader check lifted one level). A bare parent doubles as a zero-override instance (migration safety); the mesh material list points at instances. Runtime-built instance + per-frame `SetParam` **is** the MID. Depends on 02; lands after 04. | proposed |
 
 > Status legend: `proposed` = drafted, awaiting review; `ready` = reviewed and approved;
 > `done` = implemented, migrated, verified, committed.
@@ -83,12 +94,18 @@ offset-patching relies on, so `WriteMaterialVmat`/`CompiledField` largely surviv
   establish; nothing new in the cook/preview loop.
 - **04** depends on 03 — the sample graphs use the expanded catalog, and the migration is the
   end-to-end proof of the whole chain.
+- **05** depends on 02 (the exposed-param schema it overrides) and lands after 04 (the migrated
+  parents it instances). It is the planset's **runtime/cook/asset** plan — `Material`,
+  `MaterialInstance`, the cooked instance blob, the mesh material list, the cooker — largely
+  **orthogonal** to the editor codegen files 01–04 touch, so it does not chain through their merge
+  order; it consumes the *concept* 02 establishes and the *parents* 04 ships.
 
-The plans **chain** (`00 → 01 → 02 → 03 → 04`): 01–04 all touch the editor's material codegen files
-(`MaterialCompile`, `MaterialCatalog`), so they merge in number order. Per
-[[project_megaexec_worktree_base]], `isolation: "worktree"` branches from `origin/main`: only
-**00** (on `origin/main`) can use it directly; **01 → 02 → 03 → 04** each dispatch against a manual
-worktree cut from the prior plan's integration commit.
+The editor-codegen plans **chain** (`00 → 01 → 02 → 03 → 04`): 01–04 all touch the editor's material
+codegen files (`MaterialCompile`, `MaterialCatalog`), so they merge in number order. **05** runs on a
+different file set and merges after 04. Per [[project_megaexec_worktree_base]], `isolation:
+"worktree"` branches from `origin/main`: only **00** (on `origin/main`) can use it directly; **01 →
+02 → 03 → 04** each dispatch against a manual worktree cut from the prior plan's integration commit,
+and **05** against a worktree cut from 04's integration commit.
 
 ## The decisions this planset settles
 
@@ -119,9 +136,19 @@ worktree cut from the prior plan's integration commit.
 - **Const-vs-exposed is a `Param` property, not two node types.** One `Param` node with a flag —
   const folds inline as a Slang literal, exposed contributes a `MaterialParams` field — so the
   generated uniform set is exactly the exposed params, and the field list/defaults follow.
-- **No module-ABI, on-disk-material-format, or runtime change.** The only on-disk additions are the
-  graph's existing `"_editor"` block growing the `Param` flag and the new generated shader source
-  files; the cooked material blob, the loader, and `VengModuleHost` are untouched.
+- **No module-ABI, on-disk-material-format, or runtime change** *for the codegen plans (00–04)*. Their
+  only on-disk additions are the graph's existing `"_editor"` block growing the `Param` flag and the new
+  generated shader source files; the cooked **material** blob, the loader, and `VengModuleHost` are
+  untouched. (Plan 05 adds a **new** `MaterialInstance` asset type + cooked blob — a strictly additive
+  asset, not a change to the material blob.)
+- **A material instance is a parameter override over a parent, not a flavor of `Material`.** Codegen
+  makes the parent's exposed params a generated schema; Plan 05 makes that schema an instance's override
+  surface. The split is parent (one pipeline, the expensive permutation) vs. instance (one cheap SSBO
+  slot, no shader) — and the instance half is **relocated**, not invented: the per-material slot and the
+  stall-free ring-buffered `SetParam`/`SetTexture` already live on `Material`. A bare parent doubles as a
+  zero-override instance so existing material-id references keep loading. The term "material instance"
+  thereby takes its standard cross-engine meaning, retiring the tree's old loose use of it for "a live
+  `Material` object."
 
 ## What remains future
 
@@ -137,4 +164,15 @@ worktree cut from the prior plan's integration commit.
   `surface.vert`/`fullscreen.vert`. Author-controlled vertex deformation (a vertex domain output)
   is a far-future domain extension.
 - **Static permutations / `#if` features.** Generated shaders are monolithic; a feature-toggle
-  permutation system (static branches compiled out) is a separate codegen concern.
+  permutation system (static branches compiled out) is a separate codegen concern. A **static-switch
+  parameter** (Unreal's, which forces a shader permutation) is the point where this meets material
+  instances: it cannot be a cheap instance override — it changes the *parent's* compiled shader, so it
+  is a parent-variant key the cooker would compile a permutation for. Deferred with the permutation
+  system.
+- **Draw-sort by parent pipeline.** Plan 05 ships correctness (bind the parent pipeline per instance,
+  redundantly when consecutive draws share a parent). Sorting the draw plan by parent → bind once →
+  iterate instance selectors is the performance payoff; the buffer-indexed indirect path (planset-25)
+  already drives by per-draw `materialIndex`, so it is a sort key, not new machinery.
+- **Instance-of-instance chains.** Plan 05 parents an instance to a `Material` only; nested instances
+  (Unreal's MIC-of-MIC) that fold an override stack at load are deferred until a real layering case
+  appears.
