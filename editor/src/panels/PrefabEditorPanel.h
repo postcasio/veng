@@ -86,6 +86,12 @@ namespace VengEditor
         void OnUI() override;
 
     protected:
+        /// @brief Advances the play simulation one tick when a session is running; a no-op otherwise.
+        ///
+        /// The base OnUI calls this; a subclass overriding OnUI (the level editor) must call it
+        /// too, or its play session spawns at Start but never advances — frozen poses, dead input.
+        void TickPlaySimulation();
+
         /// @brief Constructs the document over a world prefab id, deferring child wiring to a subclass.
         ///
         /// Builds the edit Scene from @p worldPrefab but adds no child panels — a subclass

@@ -161,17 +161,23 @@ namespace VengEditor
         }
     }
 
-    void PrefabEditorPanel::OnUI()
+    void PrefabEditorPanel::TickPlaySimulation()
     {
-        // Advance the play clone before the toolbar draws; the engine renders the viewport at
-        // the next frame's start from the ViewState the viewport child pushes this frame, so the
-        // tick and the camera carry the same one-frame latency.
+        // Advance the play clone before the document body draws; the engine renders the viewport
+        // at the next frame's start from the ViewState the viewport child pushes this frame, so
+        // the tick and the camera carry the same one-frame latency. A subclass that overrides
+        // OnUI (the level editor) must call this, or its play session spawns but never advances.
         if (m_Context.Play == PlayState::Playing && m_PlayScene != nullptr &&
             m_Simulation != nullptr)
         {
             m_Simulation->Update(*m_PlayScene, Time::GetDeltaTime(),
                                  SystemContext{.Assets = m_Assets, .Input = m_Input});
         }
+    }
+
+    void PrefabEditorPanel::OnUI()
+    {
+        TickPlaySimulation();
 
         if (m_Context.Scene == nullptr)
         {

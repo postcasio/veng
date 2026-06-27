@@ -329,6 +329,9 @@ namespace VengEditor
 
     void LevelEditorPanel::OnUI()
     {
+        // This overrides the base OnUI, so it owns driving the play tick the base would have run.
+        TickPlaySimulation();
+
         // Debounce so a slider drag or a reorder does not fire a cook per frame.
         if (m_CookPending)
         {
