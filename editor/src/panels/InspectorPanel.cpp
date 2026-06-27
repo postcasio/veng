@@ -240,5 +240,9 @@ namespace VengEditor
                 m_Commands.Push(CreateUnique<AddComponentCommand>(entity, id));
             }
         }
+
+        // Each row ends by restoring the cursor with SetCursorPos; ImGui aborts if a popup
+        // closes on a dangling SetCursorPos with no item submitted after it. Anchor it.
+        UI::Dummy(vec2{0.0f, 0.0f});
     }
 }
