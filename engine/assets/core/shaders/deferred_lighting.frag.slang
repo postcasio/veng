@@ -167,6 +167,16 @@ float4 fsMain(VSOutput input) : SV_Target
     float4 orm    = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Sample(samp, sampleUV);
     float depth   = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
 
+    // Background (cleared depth = 1.0): no geometry was drawn here, so these pixels belong to
+    // the skybox pass. Leave them black. The cleared g-buffer (occlusion 1, normal 0) otherwise
+    // drives the IBL specular term — reflect(-V, 0) = -V samples the prefiltered (low-resolution)
+    // environment along the view ray — which would paint a blurry skybox over the background even
+    // when the skybox pass is disabled.
+    if (depth >= 1.0)
+    {
+        return float4(0.0, 0.0, 0.0, 1.0);
+    }
+
     float occlusion = orm.r;
     float roughness = clamp(orm.g, 0.04, 1.0);
     float metallic  = orm.b;
@@ -189,9 +199,7 @@ float4 fsMain(VSOutput input) : SV_Target
 #if VE_DEBUG_CASCADES
     // The cascade debug arm: tint by the selected cascade, unlit, so cascade
     // selection (near → cascade 0, far → a higher cascade) is directly observable.
-    // The background (cleared depth = 1.0) reads black so the receiver stands out.
-    if (depth >= 1.0)
-        return float4(0.0, 0.0, 0.0, 1.0);
+    // Background pixels already returned black above.
     return float4(CascadeDebugTint(viewDepth), 1.0);
 #endif
 
