@@ -56,7 +56,6 @@ namespace VengEditor
             return;
         }
 
-        DrawHeader(entity);
         UI::SeparatorText("Components");
 
         TypeId removeId = InvalidTypeId;
@@ -105,33 +104,6 @@ namespace VengEditor
 
         UI::Dummy(vec2{0.0f, 4.0f});
         DrawAddComponent(entity);
-    }
-
-    void InspectorPanel::DrawHeader(Entity entity)
-    {
-        Scene* scene = m_Ctx.Scene;
-
-        // Reload the scratch from the live name whenever the active entity changes.
-        if (m_NameFor != entity)
-        {
-            const Name* name = scene->TryGet<Name>(entity);
-            m_NameScratch = name != nullptr ? name->Value : string{};
-            m_NameFor = entity;
-        }
-
-        if (UI::InputTextWithHint("##name", "Entity name", m_NameScratch))
-        {
-            if (Name* name = scene->TryGet<Name>(entity))
-            {
-                name->Value = m_NameScratch;
-            }
-            else
-            {
-                scene->Add<Name>(entity).Value = m_NameScratch;
-            }
-        }
-
-        UI::TextDisabled(fmt::format("Entity {}:{}", entity.Index, entity.Generation));
     }
 
     void InspectorPanel::DrawComponent(Entity entity, TypeId id, void* component,

@@ -78,6 +78,13 @@ namespace VengEditor
         /// @brief Draws the rename input over @p entity and commits or cancels it.
         void DrawRenameField(Veng::Entity entity);
 
+        /// @brief Records a rename of @p entity's Name as undoable command(s) from m_RenameScratch.
+        ///
+        /// Adds a Name component first (its own undo step) when the entity has none, so the field
+        /// edit always operates on an existing component.
+        /// @param entity  The entity whose Name is set.
+        void CommitRename(Veng::Entity entity);
+
         /// @brief Builds the command for one queued structural op and pushes it onto the stack.
         void ApplyOp(const PendingOp& op);
 

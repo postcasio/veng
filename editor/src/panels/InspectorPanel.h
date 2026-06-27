@@ -43,10 +43,6 @@ namespace VengEditor
         void OnUI() override;
 
     private:
-        /// @brief Draws the entity-name editor and id readout above the component list.
-        /// @param entity The active entity whose name is edited.
-        void DrawHeader(Veng::Entity entity);
-
         /// @brief Draws one component's header, context menu, and field rows.
         ///
         /// Queues a remove request rather than removing inline, so a structural change
@@ -89,12 +85,6 @@ namespace VengEditor
         };
         /// @brief The coalescing field edit in flight, or nullopt when none is being made.
         Veng::optional<PendingEdit> m_PendingEdit;
-
-        /// @brief Scratch buffer backing the entity-name input across frames.
-        Veng::string m_NameScratch;
-
-        /// @brief The entity m_NameScratch currently mirrors, so a selection change reloads it.
-        Veng::Entity m_NameFor = Veng::Entity::Null;
 
         /// @brief Scratch buffer backing the Add Component search box across frames.
         Veng::string m_AddSearch;

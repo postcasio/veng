@@ -357,16 +357,36 @@ namespace VengEditor
             // Empty input cancels the rename rather than clearing the name.
             if (!m_RenameScratch.empty())
             {
-                if (Name* name = scene->TryGet<Name>(entity))
-                {
-                    name->Value = m_RenameScratch;
-                }
-                else
-                {
-                    scene->Add<Name>(entity, Name{.Value = m_RenameScratch});
-                }
+                CommitRename(entity);
             }
             m_Renaming = Entity::Null;
+        }
+    }
+
+    void PrefabExplorerPanel::CommitRename(Entity entity)
+    {
+        Scene* scene = m_Ctx.Scene;
+        const TypeRegistry& registry = scene->GetTypeRegistry();
+        const TypeId nameId = TypeIdOf<Name>();
+        const TypeInfo& info = registry.Info(nameId);
+
+        // An entity with no Name yet needs the component added first (its own undo step), so the
+        // field edit below always operates on an existing component.
+        if (scene->TryGet<Name>(entity) == nullptr)
+        {
+            m_Commands.Push(CreateUnique<AddComponentCommand>(entity, nameId));
+        }
+
+        Name* name = scene->TryGet<Name>(entity);
+        vector<u8> before;
+        WriteFields(before, name, info, registry);
+        name->Value = m_RenameScratch;
+        vector<u8> after;
+        WriteFields(after, name, info, registry);
+        if (after != before)
+        {
+            m_Commands.Push(
+                CreateUnique<EditField>(entity, nameId, std::move(before), std::move(after)));
         }
     }
 
