@@ -1,5 +1,18 @@
 {
-  "world": 11611391513566245589,
+  "gameMode": {
+    "PlayerPrefab": 13493236524696338033,
+    "ScoreToWin": 0
+  },
+  "render": {
+    "AO": true,
+    "Bloom": true,
+    "BloomIntensity": 1.5,
+    "Environment": 10517717547470730851,
+    "EnvironmentIntensity": 1.0,
+    "Exposure": 2.5,
+    "Shadows": true,
+    "Skybox": true
+  },
   "systems": [
     8128120177403478945,
     2030943125819365810,
@@ -8,18 +21,5 @@
     5673716953921245912,
     12285296787688766646
   ],
-  "gameMode": {
-    "PlayerPrefab": 13493236524696338033,
-    "ScoreToWin": 0
-  },
-  "render": {
-    "Exposure": 2.5,
-    "Bloom": true,
-    "BloomIntensity": 1.5,
-    "Shadows": true,
-    "AO": true,
-    "Environment": 10517717547470730851,
-    "EnvironmentIntensity": 1.0,
-    "Skybox": true
-  }
+  "world": 11611391513566245589
 }
