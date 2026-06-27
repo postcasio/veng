@@ -40,6 +40,13 @@ namespace VengEditor
         const AssetSourceIndex& Sources;
         /// @brief Editor registry for RegisterFieldWidget overrides and struct recursion.
         const Veng::EditorRegistry& Editors;
+        /// @brief Base pointer of the struct whose fields the current `DrawFields` walk iterates.
+        ///
+        /// Re-seeded at each walk level (top-level component, nested struct, array element) so a
+        /// field's VisibleIf/EnabledIf predicate evaluates against its immediate owner. The four
+        /// panel walks seed it with the struct/component they iterate; null disables every
+        /// condition (a field with no predicate is unaffected either way).
+        const void* OwnerBase = nullptr;
     };
 
     /// @brief Draws one field as a property-table row: label in column 0, value in column 1.
@@ -68,7 +75,9 @@ namespace VengEditor
     /// derived as `base + FieldDescriptor::Offset`. Fields carrying a `Category` are grouped
     /// under a full-width `UI::PropertyHeader` named for the category; un-categorized fields
     /// render first. Grouping is stable: declared order within a category, categories in
-    /// first-seen order.
+    /// first-seen order. Each field is gated by its VisibleIf (a failing one skips the row) and
+    /// EnabledIf (a failing one disables the row, composing with ReadOnly), both evaluated
+    /// against `base` — which the helper sets as the walk's owner base.
     /// @param base    Pointer to the owning struct/component instance.
     /// @param fields  The owning type's field descriptors, in declared order.
     /// @param ctx     Dependencies: asset manager, source index, editor registry.

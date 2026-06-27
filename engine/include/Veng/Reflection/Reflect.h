@@ -201,6 +201,39 @@ namespace Veng::Detail
                                 .Offset = offsetof(Owner, Member),                                 \
                                 __VA_ARGS__});
 
+/// @brief Builds a FieldPredicate from an expression over the owning instance `self`.
+///
+/// Authored inside a VE_REFLECT block, where the `Owner` alias names the owning struct, on a
+/// field's `.VisibleIf` / `.EnabledIf`. The expression reads the owning instance through a
+/// `const Owner& self`, so a condition reads its siblings by name (e.g. `self.Type ==
+/// LightType::Spot`). It is single-argument and reproduces the expression verbatim, so a
+/// top-level comma in the expression (a comma operator or a paren-depth-zero multi-arg call)
+/// is misread as a macro-argument separator — use VE_WHEN_FN for that rare case.
+#define VE_WHEN(expr)                                                                              \
+    ::Veng::FieldPredicate                                                                         \
+    {                                                                                              \
+        [](const void* ownerBase)                                                                  \
+        {                                                                                          \
+            const auto pred = [](const Owner& self) { return (expr); };                            \
+            return pred(*static_cast<const Owner*>(ownerBase));                                    \
+        }                                                                                          \
+    }
+
+/// @brief Builds a FieldPredicate from a full `[](const Owner& self){ … }` lambda.
+///
+/// The companion to VE_WHEN for a condition whose body has a paren-depth-zero comma the
+/// single-argument VE_WHEN cannot carry: the lambda is forwarded as one brace-protected
+/// argument. The lambda takes a `const Owner& self` and returns a bool.
+#define VE_WHEN_FN(lambda)                                                                         \
+    ::Veng::FieldPredicate                                                                         \
+    {                                                                                              \
+        [](const void* ownerBase)                                                                  \
+        {                                                                                          \
+            const auto pred = lambda;                                                              \
+            return pred(*static_cast<const Owner*>(ownerBase));                                    \
+        }                                                                                          \
+    }
+
 /// @brief Closes a VE_REFLECT block and emits Fields() / RegisterDependencies().
 #define VE_REFLECT_END()                                                                           \
     }                                                                                              \

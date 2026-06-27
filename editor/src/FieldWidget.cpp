@@ -2,6 +2,7 @@
 
 #include "AssetDragPayload.h"
 #include "AssetSourceIndex.h"
+#include "FieldGate.h"
 #include "FieldWidgetDispatch.h"
 #include "panels/PrefabEditContext.h"
 
@@ -270,9 +271,34 @@ namespace VengEditor
         return changed;
     }
 
-    bool DrawFields(void* base, std::span<const FieldDescriptor> fields,
-                    const FieldWidgetContext& ctx)
+    namespace
     {
+        // Draws one field within a DrawFields walk, after the Hidden/Category filter has placed
+        // it. A failing VisibleIf skips the row; a failing EnabledIf disables the row, composing
+        // with ReadOnly so a field is editable only when both allow it. `ownerBase` is the base
+        // of the struct this walk iterates, against which both predicates evaluate.
+        bool DrawGatedField(void* base, const FieldDescriptor& field, const FieldWidgetContext& ctx)
+        {
+            const void* ownerBase = ctx.OwnerBase;
+            if (!IsFieldVisible(field, ownerBase))
+            {
+                return false;
+            }
+            void* fieldPtr = static_cast<u8*>(base) + field.Offset;
+            auto disabled = UI::Disabled(!IsFieldEnabled(field, ownerBase));
+            return DrawFieldWidget(fieldPtr, field, ctx);
+        }
+    }
+
+    bool DrawFields(void* base, std::span<const FieldDescriptor> fields,
+                    const FieldWidgetContext& outerCtx)
+    {
+        // Re-seed the owner base to the struct this walk iterates, so a field's predicate reads
+        // its immediate owner — a nested struct's recursion (through DrawStructFields →
+        // DrawFields) seeds the nested base, an array element seeds the element base.
+        FieldWidgetContext ctx = outerCtx;
+        ctx.OwnerBase = base;
+
         bool changed = false;
 
         // Draw the un-categorized fields first, in declared order; gather the categories in
@@ -286,8 +312,7 @@ namespace VengEditor
             }
             if (field.Category.empty())
             {
-                void* fieldPtr = static_cast<u8*>(base) + field.Offset;
-                changed |= DrawFieldWidget(fieldPtr, field, ctx);
+                changed |= DrawGatedField(base, field, ctx);
                 continue;
             }
             if (std::ranges::find(categories, field.Category) == categories.end())
@@ -310,8 +335,7 @@ namespace VengEditor
                 {
                     continue;
                 }
-                void* fieldPtr = static_cast<u8*>(base) + field.Offset;
-                changed |= DrawFieldWidget(fieldPtr, field, ctx);
+                changed |= DrawGatedField(base, field, ctx);
             }
         }
 

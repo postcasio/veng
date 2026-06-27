@@ -4,8 +4,23 @@
 #include <Veng/Reflection/ReflectionTypes.h>
 #include <Veng/Reflection/FieldDisplay.h>
 
+#include <functional>
+
 namespace Veng
 {
+    /// @brief A condition over the owning struct that the editor evaluates per frame.
+    ///
+    /// The argument is the base pointer of the *immediately-enclosing* reflected struct
+    /// instance — the same struct whose VE_REFLECT block declares the field. A predicate
+    /// authored with VE_WHEN casts that pointer to the owning type, so handing it any other
+    /// object's base is undefined behavior. An empty function is unconditional.
+    ///
+    /// The target is code in the registering game module's image. The host never unloads a
+    /// module while its descriptors remain in the TypeRegistry — it clears the registry first,
+    /// and veng has no game-code hot-reload — so the predicate outlives every call into it. It
+    /// is invoked only on the single render thread, so it needs no synchronization.
+    using FieldPredicate = function<bool(const void* ownerBase)>;
+
     /// @brief The reflected description of one field of a struct.
     ///
     /// The first four members are the serialization triple-plus-offset the generic
@@ -39,6 +54,19 @@ namespace Veng
         bool ReadOnly = false;
         /// @brief Optional inspector category group for this field.
         string Category;
+        /// @brief When set, the editor inspector shows this field only when the predicate
+        /// returns true; an empty predicate is always visible.
+        ///
+        /// Evaluated against the owning struct's base each frame — the data-driven twin of
+        /// Hidden. The serializer never touches it.
+        FieldPredicate VisibleIf;
+        /// @brief When set, the editor inspector allows editing this field only when the
+        /// predicate returns true; an empty predicate is always enabled.
+        ///
+        /// Evaluated against the owning struct's base each frame — the data-driven twin of
+        /// ReadOnly, composing with it (a field is editable only when both allow it). The
+        /// serializer never touches it.
+        FieldPredicate EnabledIf;
 
         /// @brief Array-only: the element type's TypeId; InvalidTypeId for a non-array field.
         ///

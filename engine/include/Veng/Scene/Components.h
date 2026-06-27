@@ -621,11 +621,14 @@ VE_FIELD(Type, .DisplayName = "Type")
 VE_FIELD(Direction, .DisplayName = "Direction")
 VE_FIELD(Color, .DisplayName = "Color")
 VE_FIELD(Intensity, .DisplayName = "Intensity", .Display = {.Min = 0.0})
-VE_FIELD(Range, .DisplayName = "Range", .Display = {.Min = 0.01, .Step = 0.1})
+VE_FIELD(Range, .DisplayName = "Range", .Display = {.Min = 0.01, .Step = 0.1},
+         .VisibleIf = VE_WHEN(self.Type != ::Veng::LightType::Directional))
 VE_FIELD(InnerCone, .DisplayName = "Inner Cone",
-         .Display = {.Min = 0.0, .Max = 3.14159265, .Step = 0.01})
+         .Display = {.Min = 0.0, .Max = 3.14159265, .Step = 0.01},
+         .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Spot))
 VE_FIELD(OuterCone, .DisplayName = "Outer Cone",
-         .Display = {.Min = 0.0, .Max = 3.14159265, .Step = 0.01})
+         .Display = {.Min = 0.0, .Max = 3.14159265, .Step = 0.01},
+         .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Spot))
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PlayerInput, 0x5401D36B1EF55045ULL)
