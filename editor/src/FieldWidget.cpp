@@ -344,6 +344,13 @@ namespace VengEditor
 
     namespace
     {
+        // Draws the editable value widget(s) for a leaf/reference field into the current
+        // property-table value column — the caller has already drawn the label and pushed the
+        // field id. Shared by DrawFieldWidget (every non-composite field) and DrawArray (a
+        // leaf element). Returns true when the value changed.
+        bool DrawValueWidget(void* fieldPtr, const FieldDescriptor& field, string_view valueLabel,
+                             const FieldWidgetContext& ctx);
+
         // Returns the alternative's AssetHandle<Material> field, or nullptr if it has none.
         // Every primitive shape carries one, so it is the field preserved across a type switch.
         const FieldDescriptor* MaterialField(const TypeInfo& info)
@@ -442,15 +449,17 @@ namespace VengEditor
             return changed;
         }
 
-        // An add/remove list over a FieldClass::Array field. The label row carries an Add
-        // button; each element draws its fields either flat (a per-element row bearing a Remove
-        // button) or, when `collapsible`, under a foldable header whose row carries the Remove
-        // button. Reorder is not offered — the configuration list is order-independent.
+        // An add/remove list over a FieldClass::Array field. The label row carries an Add button.
+        // A leaf element (scalar/vector/string/enum/asset-handle/reference) draws as a single
+        // value row with a trailing Remove button. A struct/variant element draws its fields
+        // either flat (a per-element row bearing a Remove button) or, when `collapsible`, under a
+        // foldable header whose row carries the Remove button. Reorder is not offered — the
+        // configuration list is order-independent.
         //
         // The element fold state is ImGui-owned, keyed on the positional per-element id
-        // ({label}elem{i}); the elements are bare structs with no stable identity to key on, so
-        // removing element [i] slides every later element's fold state down one. This is
-        // harmless precisely because the list is order-independent.
+        // ({label}elem{i}); the elements have no stable identity to key on, so removing element
+        // [i] slides every later element's fold state down one. This is harmless precisely
+        // because the list is order-independent.
         //
         // Returns true when an element was added, removed, or edited.
         bool DrawArray(void* fieldPtr, const FieldDescriptor& field, string_view label,
@@ -471,12 +480,38 @@ namespace VengEditor
 
             const usize count = field.ArraySize(fieldPtr);
             UI::Indent();
+            // A leaf element type has no nested fields to fold; collapsibility applies only to a
+            // struct/variant element, which recurses its fields. Loop-invariant in the element
+            // type, so it is resolved once.
+            const bool elementIsLeaf =
+                elementInfo.Class != FieldClass::Struct && elementInfo.Class != FieldClass::Variant;
             // A remove defers to after the element loop so the array is not resized mid-walk.
             optional<usize> removeAt;
             for (usize i = 0; i < count; ++i)
             {
                 void* element = field.ArrayElement(fieldPtr, i);
                 auto elementScope = UI::PushId(fmt::format("{}elem{}", label, i));
+
+                if (elementIsLeaf)
+                {
+                    // One row: the element's value widget fills the column, the Remove button
+                    // trails it. The synthetic descriptor carries the element type plus the array
+                    // field's read-only state and presentation hints (Min/Max/Step/Widget).
+                    UI::PropertyLabel(fmt::format("[{}]", i));
+                    UI::SetNextItemWidth(-(UI::GetFrameHeight() + 4.0f));
+                    FieldDescriptor elementField;
+                    elementField.Type = field.ElementType;
+                    elementField.Class = elementInfo.Class;
+                    elementField.ReadOnly = field.ReadOnly;
+                    elementField.Display = field.Display;
+                    changed |= DrawValueWidget(element, elementField, "##elemval", ctx);
+                    UI::SameLine();
+                    if (UI::SmallButton("x##remove"))
+                    {
+                        removeAt = i;
+                    }
+                    continue;
+                }
 
                 if (collapsible)
                 {
@@ -658,206 +693,214 @@ namespace VengEditor
         UI::PropertyLabel(displayName);
 
         auto id = UI::PushId(valueLabel);
+        return DrawValueWidget(fieldPtr, field, valueLabel, ctx);
+    }
 
-        // The Reference field carries its own read-only handling (drop target vs. label);
-        // every other class shares one Disabled scope keyed on ReadOnly.
-        if (field.Class == FieldClass::Reference)
+    namespace
+    {
+        bool DrawValueWidget(void* fieldPtr, const FieldDescriptor& field, string_view valueLabel,
+                             const FieldWidgetContext& ctx)
         {
-            const bool changed = DrawReference(fieldPtr, field, valueLabel);
+            // The Reference field carries its own read-only handling (drop target vs. label);
+            // every other class shares one Disabled scope keyed on ReadOnly.
+            if (field.Class == FieldClass::Reference)
+            {
+                const bool changed = DrawReference(fieldPtr, field, valueLabel);
+                if (!field.Tooltip.empty())
+                {
+                    UI::Tooltip(field.Tooltip);
+                }
+                return changed;
+            }
+
+            auto disabled = UI::Disabled(field.ReadOnly);
+
+            // Drag speed and clamp range come from the field's resolved presentation
+            // (field override over type default); absent metadata leaves the DragOptions
+            // defaults (0.01f speed, unclamped).
+            const TypeRegistry& registry = ctx.Assets.GetTypeRegistry();
+            const FieldDisplay display = ResolveFieldDisplay(field, registry);
+            UI::DragOptions drag;
+            if (display.Step)
+            {
+                drag.Speed = static_cast<f32>(*display.Step);
+            }
+            if (display.Min)
+            {
+                drag.Min = static_cast<f32>(*display.Min);
+            }
+            if (display.Max)
+            {
+                drag.Max = static_cast<f32>(*display.Max);
+            }
+
+            // The widget the field actually draws — its resolved hint, degraded if it is
+            // incompatible with the field's class/type (a slider needs a range, a color needs a
+            // vec3/vec4, multiline needs a string). A degrade warns once per descriptor.
+            const bool hasRange = display.Min.has_value() && display.Max.has_value();
+            const WidgetKind effective =
+                EffectiveWidget(display.Widget, field.Class, field.Type, hasRange);
+            if (effective != display.Widget && display.Widget != WidgetKind::Auto)
+            {
+                WarnDegradedHintOnce(registry, field, display.Widget, effective);
+            }
+
+            // A Slider reads the resolved Min/Max; SliderOptions bounds are f32, so the
+            // optional<f64> cascade values narrow at the call site.
+            UI::SliderOptions slider;
+            if (display.Min)
+            {
+                slider.Min = static_cast<f32>(*display.Min);
+            }
+            if (display.Max)
+            {
+                slider.Max = static_cast<f32>(*display.Max);
+            }
+
+            bool changed = false;
+            switch (field.Class)
+            {
+            case FieldClass::Scalar:
+            {
+                if (field.Type == TypeIdOf<f32>())
+                {
+                    if (effective == WidgetKind::Slider)
+                    {
+                        changed = UI::Slider(valueLabel, *static_cast<f32*>(fieldPtr), slider);
+                    }
+                    else
+                    {
+                        changed = UI::Drag(valueLabel, *static_cast<f32*>(fieldPtr), drag);
+                    }
+                }
+                else if (field.Type == TypeIdOf<i32>())
+                {
+                    changed = UI::Drag(valueLabel, *static_cast<i32*>(fieldPtr));
+                }
+                else if (field.Type == TypeIdOf<u32>())
+                {
+                    // u32 has no Drag overload; edit through a signed view clamped to 0+.
+                    i32 value = static_cast<i32>(*static_cast<u32*>(fieldPtr));
+                    if (UI::Drag(valueLabel, value, UI::DragOptions{.Min = 0.0f}))
+                    {
+                        *static_cast<u32*>(fieldPtr) = static_cast<u32>(value < 0 ? 0 : value);
+                        changed = true;
+                    }
+                }
+                else if (field.Type == TypeIdOf<bool>())
+                {
+                    changed = UI::Checkbox(valueLabel, *static_cast<bool*>(fieldPtr));
+                }
+                else
+                {
+                    UI::TextDisabled("(scalar)");
+                }
+                break;
+            }
+            case FieldClass::Vector:
+            {
+                if (field.Type == TypeIdOf<vec2>())
+                {
+                    if (effective == WidgetKind::Slider)
+                    {
+                        changed = UI::Slider(valueLabel, *static_cast<vec2*>(fieldPtr), slider);
+                    }
+                    else
+                    {
+                        changed = UI::Drag(valueLabel, *static_cast<vec2*>(fieldPtr), drag);
+                    }
+                }
+                else if (field.Type == TypeIdOf<vec3>())
+                {
+                    if (effective == WidgetKind::Color)
+                    {
+                        changed = UI::ColorEdit3(valueLabel, *static_cast<vec3*>(fieldPtr));
+                    }
+                    else if (effective == WidgetKind::Slider)
+                    {
+                        changed = UI::Slider(valueLabel, *static_cast<vec3*>(fieldPtr), slider);
+                    }
+                    else
+                    {
+                        changed = UI::Drag(valueLabel, *static_cast<vec3*>(fieldPtr), drag);
+                    }
+                }
+                else if (field.Type == TypeIdOf<vec4>())
+                {
+                    if (effective == WidgetKind::Color)
+                    {
+                        changed = UI::ColorEdit4(valueLabel, *static_cast<vec4*>(fieldPtr));
+                    }
+                    else if (effective == WidgetKind::Slider)
+                    {
+                        changed = UI::Slider(valueLabel, *static_cast<vec4*>(fieldPtr), slider);
+                    }
+                    else
+                    {
+                        changed = UI::Drag(valueLabel, *static_cast<vec4*>(fieldPtr), drag);
+                    }
+                }
+                break;
+            }
+            case FieldClass::Quaternion:
+            {
+                quat& q = *static_cast<quat*>(fieldPtr);
+                vec3 euler = glm::degrees(glm::eulerAngles(q));
+                if (UI::Drag(valueLabel, euler, UI::DragOptions{.Speed = 0.5f}))
+                {
+                    q = quat(glm::radians(euler));
+                    changed = true;
+                }
+                break;
+            }
+            case FieldClass::String:
+            {
+                string& value = *static_cast<string*>(fieldPtr);
+                if (effective == WidgetKind::Multiline)
+                {
+                    changed = UI::InputTextMultiline(valueLabel, value);
+                }
+                else
+                {
+                    changed = UI::InputText(valueLabel, value);
+                }
+                break;
+            }
+            case FieldClass::AssetHandle:
+            {
+                changed = DrawAssetPicker(fieldPtr, field, valueLabel, ctx);
+                break;
+            }
+            case FieldClass::Matrix:
+            {
+                const mat4& m = *static_cast<const mat4*>(fieldPtr);
+                for (int row = 0; row < 4; ++row)
+                {
+                    UI::Text(fmt::format("{: .3f}  {: .3f}  {: .3f}  {: .3f}", m[0][row], m[1][row],
+                                         m[2][row], m[3][row]));
+                }
+                break;
+            }
+            case FieldClass::Enum:
+            {
+                changed = DrawEnum(fieldPtr, field, valueLabel, ctx);
+                break;
+            }
+            case FieldClass::Reference:
+            case FieldClass::Struct:
+            case FieldClass::Variant:
+            case FieldClass::Array:
+            {
+                // Handled above the switch; unreachable here.
+                break;
+            }
+            }
+
             if (!field.Tooltip.empty())
             {
                 UI::Tooltip(field.Tooltip);
             }
             return changed;
         }
-
-        auto disabled = UI::Disabled(field.ReadOnly);
-
-        // Drag speed and clamp range come from the field's resolved presentation
-        // (field override over type default); absent metadata leaves the DragOptions
-        // defaults (0.01f speed, unclamped).
-        const TypeRegistry& registry = ctx.Assets.GetTypeRegistry();
-        const FieldDisplay display = ResolveFieldDisplay(field, registry);
-        UI::DragOptions drag;
-        if (display.Step)
-        {
-            drag.Speed = static_cast<f32>(*display.Step);
-        }
-        if (display.Min)
-        {
-            drag.Min = static_cast<f32>(*display.Min);
-        }
-        if (display.Max)
-        {
-            drag.Max = static_cast<f32>(*display.Max);
-        }
-
-        // The widget the field actually draws — its resolved hint, degraded if it is
-        // incompatible with the field's class/type (a slider needs a range, a color needs a
-        // vec3/vec4, multiline needs a string). A degrade warns once per descriptor.
-        const bool hasRange = display.Min.has_value() && display.Max.has_value();
-        const WidgetKind effective =
-            EffectiveWidget(display.Widget, field.Class, field.Type, hasRange);
-        if (effective != display.Widget && display.Widget != WidgetKind::Auto)
-        {
-            WarnDegradedHintOnce(registry, field, display.Widget, effective);
-        }
-
-        // A Slider reads the resolved Min/Max; SliderOptions bounds are f32, so the
-        // optional<f64> cascade values narrow at the call site.
-        UI::SliderOptions slider;
-        if (display.Min)
-        {
-            slider.Min = static_cast<f32>(*display.Min);
-        }
-        if (display.Max)
-        {
-            slider.Max = static_cast<f32>(*display.Max);
-        }
-
-        bool changed = false;
-        switch (field.Class)
-        {
-        case FieldClass::Scalar:
-        {
-            if (field.Type == TypeIdOf<f32>())
-            {
-                if (effective == WidgetKind::Slider)
-                {
-                    changed = UI::Slider(valueLabel, *static_cast<f32*>(fieldPtr), slider);
-                }
-                else
-                {
-                    changed = UI::Drag(valueLabel, *static_cast<f32*>(fieldPtr), drag);
-                }
-            }
-            else if (field.Type == TypeIdOf<i32>())
-            {
-                changed = UI::Drag(valueLabel, *static_cast<i32*>(fieldPtr));
-            }
-            else if (field.Type == TypeIdOf<u32>())
-            {
-                // u32 has no Drag overload; edit through a signed view clamped to 0+.
-                i32 value = static_cast<i32>(*static_cast<u32*>(fieldPtr));
-                if (UI::Drag(valueLabel, value, UI::DragOptions{.Min = 0.0f}))
-                {
-                    *static_cast<u32*>(fieldPtr) = static_cast<u32>(value < 0 ? 0 : value);
-                    changed = true;
-                }
-            }
-            else if (field.Type == TypeIdOf<bool>())
-            {
-                changed = UI::Checkbox(valueLabel, *static_cast<bool*>(fieldPtr));
-            }
-            else
-            {
-                UI::TextDisabled("(scalar)");
-            }
-            break;
-        }
-        case FieldClass::Vector:
-        {
-            if (field.Type == TypeIdOf<vec2>())
-            {
-                if (effective == WidgetKind::Slider)
-                {
-                    changed = UI::Slider(valueLabel, *static_cast<vec2*>(fieldPtr), slider);
-                }
-                else
-                {
-                    changed = UI::Drag(valueLabel, *static_cast<vec2*>(fieldPtr), drag);
-                }
-            }
-            else if (field.Type == TypeIdOf<vec3>())
-            {
-                if (effective == WidgetKind::Color)
-                {
-                    changed = UI::ColorEdit3(valueLabel, *static_cast<vec3*>(fieldPtr));
-                }
-                else if (effective == WidgetKind::Slider)
-                {
-                    changed = UI::Slider(valueLabel, *static_cast<vec3*>(fieldPtr), slider);
-                }
-                else
-                {
-                    changed = UI::Drag(valueLabel, *static_cast<vec3*>(fieldPtr), drag);
-                }
-            }
-            else if (field.Type == TypeIdOf<vec4>())
-            {
-                if (effective == WidgetKind::Color)
-                {
-                    changed = UI::ColorEdit4(valueLabel, *static_cast<vec4*>(fieldPtr));
-                }
-                else if (effective == WidgetKind::Slider)
-                {
-                    changed = UI::Slider(valueLabel, *static_cast<vec4*>(fieldPtr), slider);
-                }
-                else
-                {
-                    changed = UI::Drag(valueLabel, *static_cast<vec4*>(fieldPtr), drag);
-                }
-            }
-            break;
-        }
-        case FieldClass::Quaternion:
-        {
-            quat& q = *static_cast<quat*>(fieldPtr);
-            vec3 euler = glm::degrees(glm::eulerAngles(q));
-            if (UI::Drag(valueLabel, euler, UI::DragOptions{.Speed = 0.5f}))
-            {
-                q = quat(glm::radians(euler));
-                changed = true;
-            }
-            break;
-        }
-        case FieldClass::String:
-        {
-            string& value = *static_cast<string*>(fieldPtr);
-            if (effective == WidgetKind::Multiline)
-            {
-                changed = UI::InputTextMultiline(valueLabel, value);
-            }
-            else
-            {
-                changed = UI::InputText(valueLabel, value);
-            }
-            break;
-        }
-        case FieldClass::AssetHandle:
-        {
-            changed = DrawAssetPicker(fieldPtr, field, valueLabel, ctx);
-            break;
-        }
-        case FieldClass::Matrix:
-        {
-            const mat4& m = *static_cast<const mat4*>(fieldPtr);
-            for (int row = 0; row < 4; ++row)
-            {
-                UI::Text(fmt::format("{: .3f}  {: .3f}  {: .3f}  {: .3f}", m[0][row], m[1][row],
-                                     m[2][row], m[3][row]));
-            }
-            break;
-        }
-        case FieldClass::Enum:
-        {
-            changed = DrawEnum(fieldPtr, field, valueLabel, ctx);
-            break;
-        }
-        case FieldClass::Reference:
-        case FieldClass::Struct:
-        case FieldClass::Variant:
-        case FieldClass::Array:
-        {
-            // Handled above the switch; unreachable here.
-            break;
-        }
-        }
-
-        if (!field.Tooltip.empty())
-        {
-            UI::Tooltip(field.Tooltip);
-        }
-        return changed;
     }
 }
