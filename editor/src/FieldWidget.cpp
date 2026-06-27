@@ -638,15 +638,15 @@ namespace VengEditor
         }
 
         // An array draws an Add button on its own row, then each element's fields beneath it.
-        // When the field resolves Collapsible, each element is a foldable header; otherwise the
-        // elements flatten into indented rows under a per-element Remove row.
+        // Each element is a foldable header by default so a long list stays scannable; a field
+        // resolving Collapsible=false flattens the elements into indented rows instead.
         if (field.Class == FieldClass::Array)
         {
             UI::PropertyLabel(displayName);
             auto arrayScope = UI::PushId(valueLabel);
             const FieldDisplay display = ResolveFieldDisplay(field, ctx.Assets.GetTypeRegistry());
             const bool changed =
-                DrawArray(fieldPtr, field, valueLabel, ctx, display.Collapsible.value_or(false),
+                DrawArray(fieldPtr, field, valueLabel, ctx, display.Collapsible.value_or(true),
                           display.DefaultOpen.value_or(true));
             if (!field.Tooltip.empty())
             {
