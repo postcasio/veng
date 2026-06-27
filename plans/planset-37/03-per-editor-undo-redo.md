@@ -4,7 +4,7 @@
 document undoes independently. An `EditorCommand` (`Apply`/`Revert`) captures every document
 mutation — gizmo + inspector transform edits, hierarchy reparent/reorder, add/remove/reset
 component, field edits — and the explorer, inspector, and gizmo route their mutations through it
-instead of touching the `Scene` directly. Shift+Z / Shift+Y and an Edit menu drive it.
+instead of touching the `Scene` directly. Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z and an Edit menu drive it.
 **Depends on Plan 02** (the gizmo drag is one of the commands; its commit-on-release seam is
 where the transform command is pushed).
 
@@ -14,7 +14,11 @@ Undo/redo is the planset's one genuinely new subsystem and the one with a real d
 (per-document vs. global, what is a command, how a drag coalesces). It is also pervasive — it
 retrofits *every* existing mutation path in the scene-editing panels. Landing it after the
 mutation sources exist (selection in 01, gizmo in 02, the inspector/explorer already shipped)
-means each command type wraps a real, working edit rather than a hypothetical one.
+means each command type wraps a real, working edit rather than a hypothetical one. If the retrofit
+proves too large for one commit, it splits cleanly along **value-edit commands**
+(transform/field/component) vs. **structural commands** (reparent/reorder/create/destroy/duplicate,
+which carry the subtree-snapshot and exact-handle-respawn complexity); the chain is already serial,
+so a 03a/03b split costs no parallelism.
 
 ## What lands
 
@@ -24,10 +28,17 @@ means each command type wraps a real, working edit rather than a hypothetical on
   cap. The stack operates over the document's `PrefabEditContext` (the `Scene*` + `AssetManager*`),
   so a command re-runs against the live document.
 
-- **Owned per document.** `CommandStack` is a member of `AssetEditorPanel` (or the
-  `PrefabEditorPanel` document), **not** a host global — two open prefab editors undo
-  independently. The active document's stack is what the Edit menu and the keyboard shortcuts
-  drive (the host forwards to the focused document).
+- **Owned per document.** `CommandStack` is a member of `AssetEditorPanel` (the base every
+  document editor derives from, so every editor inherits per-instance undo), **not** a host global
+  — two open prefab editors undo independently. "Document" throughout means one `AssetEditorPanel`
+  instance.
+
+- **A focused-document routing seam in the host.** `EditorHost` today has no Edit menu, no
+  shortcut handling, and no active-document concept — only File→Exit and the Window panel toggles.
+  This plan adds the routing: the host tracks the **focused `AssetEditorPanel`** (resolved from
+  ImGui window focus / a host-held active-editor pointer) and dispatches the Edit-menu actions and
+  the undo/redo shortcuts to *that* document's `CommandStack`. It is net-new infrastructure, not a
+  one-line forward, and Plan 04's Save reuses the same seam.
 
 - **The command set.** One command type per mutation, each capturing enough to revert:
   - `EditTransform { Entity, Before, After }` — the gizmo's commit-on-release (Plan 02's hook
@@ -35,14 +46,24 @@ means each command type wraps a real, working edit rather than a hypothetical on
   - `EditField { Entity, TypeId, fieldPath, beforeBytes, afterBytes }` — a generic reflected-field
     edit, captured from the inspector's `DrawFieldWidget` changed-bool by snapshotting the
     component's serialized bytes before/after (reusing the name-keyed reflection record), so it
-    covers every `FieldClass` without a per-field command.
+    covers every `FieldClass` without a per-field command. Apply/Revert **deserialize** the bytes
+    back through the same loader path the prefab read uses — not a raw memcpy — so an `AssetHandle`
+    field re-resolves through the `AssetManager` (a stale cache handle is never reinstated) and a
+    `Reference` field is remapped to the live `Entity`; and where the changed component carries a
+    mesh source (`MeshRenderer`), Apply/Revert re-run `PrefabEditContext::ResolveEntity`, exactly
+    as the live inspector edit does, so the derived mesh re-streams on undo/redo too.
   - `AddComponent` / `RemoveComponent` / `ResetComponent { Entity, TypeId, bytes }`.
   - `Reparent { Entity, oldParent, oldNextSibling, newParent, newNextSibling }` and
     `Reorder` — over the intrusive `Hierarchy` ops (`SetParent`/`MoveBefore`), capturing the
     sibling neighbor so order is restored exactly.
   - `CreateEntity` / `DestroyEntity { subtree snapshot }` / `DuplicateEntity` — destroy captures
     the recursive subtree (it is `O(subtree)` recursive, per the `Scene` contract) so undo
-    re-spawns it; the same `ResolveEntity` rebuild a duplicate runs is re-run on undo-spawn.
+    re-spawns it; the same `ResolveEntity` rebuild a duplicate runs is re-run on undo-spawn. The
+    re-spawn **restores the exact entity handle** (slot index + generation), not a freshly-recycled
+    one, so that other stack entries that captured the entity (`EditTransform`/`Reparent`/`EditField`)
+    and any `Reference` field pointing at it stay valid after an undo→redo cycle. If `Scene` cannot
+    yet re-spawn at an exact handle, this plan adds that capability (a destroy/respawn that preserves
+    the slot+generation); a fresh-handle respawn would leave dangling captures and is not acceptable.
 
 - **The panels route through the stack.** `PrefabExplorerPanel`'s queued structural ops,
   `InspectorPanel`'s add/remove/reset + field edits, and the gizmo commit all build a command and
@@ -55,9 +76,10 @@ means each command type wraps a real, working edit rather than a hypothetical on
 - **Selection is not a command.** Selecting/deselecting is editor state, not a document mutation,
   so it never enters the stack. `Prune` still drops stale selection after a structural undo.
 
-- **Shortcuts + menu + dirty flag.** Shift+Z undo / Shift+Y (or Shift+Ctrl+Z) redo on the focused
-  document; an Edit menu shows the next undo/redo `Title()`. The stack exposes a **dirty** signal
-  (non-empty-since-save) that Plan 04's save consumes and clears.
+- **Shortcuts + menu + dirty flag.** Ctrl/Cmd+Z undo / Ctrl/Cmd+Shift+Z redo on the focused
+  document (matching the Ctrl+S of Plan 04's save); an Edit menu shows the next undo/redo
+  `Title()`. The stack exposes a **dirty** signal (non-empty-since-save) that Plan 04's save
+  consumes and clears.
 
 ## Decisions
 
@@ -67,13 +89,16 @@ means each command type wraps a real, working edit rather than a hypothetical on
 2. **A generic byte-snapshot `EditField` over per-field commands.** Capturing the component's
    serialized bytes before/after (the existing name-keyed reflection record) makes one command
    cover every `FieldClass` — scalars, vectors, variants, arrays, asset handles — without a
-   command type per widget, and stays correct as new field classes land.
+   command type per widget, and stays correct as new field classes land. The snapshot is applied
+   by **deserializing** through the loader path (re-resolving `AssetHandle`s and remapping
+   `Reference`s), never a raw memcpy, so the handle/reference classes round-trip safely; a
+   resolver-bearing component (`MeshRenderer`) re-runs `ResolveEntity` on Apply/Revert.
 3. **Reparent/reorder capture the sibling neighbor.** The intrusive `Hierarchy` is ordered, so
    reverting a move must restore both parent and sibling position; the command stores the old
    `NextSibling` (and parent) to `MoveBefore` back exactly.
 4. **A drag is one command.** The gizmo applies live but commits a single `EditTransform` on
-   release (Plan 02's seam), so undo reverts the whole drag. Cross-edit transaction grouping is a
-   named follow-on.
+   release (Plan 02's seam), so undo reverts the whole drag. Cross-edit transaction grouping is out
+   of scope (README *What remains future*).
 5. **Commands re-run `ResolveEntity` where a mesh source is touched.** A recipe edit's undo/redo
    must re-stream the derived mesh, so the relevant commands call the same
    `PrefabEditContext::ResolveEntity` the live edit path uses — no special undo handling of the
@@ -92,7 +117,7 @@ means each command type wraps a real, working edit rather than a hypothetical on
 | `editor/src/panels/PrefabExplorerPanel.{h,cpp}` | Build + push hierarchy/create/destroy/duplicate commands instead of inline mutation (keeping the post-walk deferral). |
 | `editor/src/panels/InspectorPanel.{h,cpp}` | Push add/remove/reset + `EditField` (byte-snapshot) commands from the changed-bool path. |
 | `editor/src/panels/SceneViewportPanel.{h,cpp}` | The gizmo commit hook pushes one `EditTransform` per drag. |
-| `editor/src/EditorHost.{h,cpp}` | Edit menu (undo/redo with `Title()`); forward shortcuts to the focused document's stack. |
+| `editor/src/EditorHost.{h,cpp}` | Net-new: track the focused `AssetEditorPanel`; add an Edit menu (undo/redo with `Title()`) and Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z handling, dispatched to that document's stack. |
 
 ## Verification
 

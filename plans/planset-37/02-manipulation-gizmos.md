@@ -19,11 +19,12 @@ then wraps. Keeping it separate from selection (Plan 01) keeps each plan's input
 ## What lands
 
 - **A gizmo model — `EditorGizmo` (editor-side).** Holds the current mode
-  (`Translate`/`Rotate`/`Scale`), the space (World v1; Local a named follow-on), and the active
-  drag state (which handle, the grab point, the start `Transform`). Operates on
-  `PrefabEditContext::Active` (with multi-select pivoting on the active entity's world position;
-  applying to the whole selection is a follow-on). Placed at the entity's **world** position from
-  `ComputeWorldMatrices`, writing back through the scene `Transform` accessor each frame (so the
+  (`Translate`/`Rotate`/`Scale`), the space (**World only**; local-space handles are out of scope,
+  see README *What remains future*), and the active drag state (which handle, the grab point, the
+  start `Transform`). Operates on `PrefabEditContext::Active` (pivoting on the active entity's world
+  position; manipulating the whole multi-entity selection is out of scope, README). Placed at the
+  entity's **world** position from `WorldMatrix(scene, entity)` (the single-entity accessor
+  `PushGizmos` already uses), writing back through the scene `Transform` accessor each frame (so the
   spatial-version bump fires, per the `Scene` contract).
 
 - **Drawn through `DebugDraw`.** The gizmo's axes (translate arrows), rings (rotate), and boxes
@@ -42,13 +43,18 @@ then wraps. Keeping it separate from selection (Plan 01) keeps each plan's input
   gizmo-first).
 
 - **The commit seam.** While dragging, the `Transform` is updated live (immediate visual
-  feedback). On release the panel calls a commit hook with the start and final `Transform` — in
-  this plan a direct no-op beyond the already-applied value; Plan 03 replaces the hook body with
-  pushing one `EditTransform` command spanning the whole drag (so a drag is one undo step, not
-  one per frame).
+  feedback). On release the panel calls `OnCommit(startTransform, finalTransform)`; in this plan
+  that hook is a no-op past the already-applied value, and Plan 03 fills it with one `EditTransform`
+  command spanning the whole drag (so a drag is one undo step, not one per frame). **At this plan's
+  commit boundary a gizmo edit is therefore not yet undoable or saveable** — a known intermediate
+  state closed by Plan 03 (the immediately-following plan); the seam exists so 03 is a body swap,
+  not a rewire.
 
-- **Mode keys + toolbar.** W/E/R (or a toolbar segment in the existing viewport overlay) select
-  translate/rotate/scale; the gizmo is hidden when nothing is selected.
+- **Mode keys + toolbar.** W/E/R select translate/rotate/scale **only while the RMB fly-camera drag
+  is not active** — the editor camera binds W/A/S/D/E/Q for fly navigation
+  (`SceneViewportPanel.cpp`), so gating the gizmo keys to "not flying" keeps them from fighting
+  camera movement; a toolbar segment in the viewport overlay is the always-available alternative.
+  The gizmo is hidden when nothing is selected.
 
 ## Decisions
 
@@ -61,21 +67,21 @@ then wraps. Keeping it separate from selection (Plan 01) keeps each plan's input
    waste a pick per frame. The handles are known shapes, so ray-vs-handle is exact and immediate.
 3. **Drawn through the existing per-viewport `DebugDraw` channel.** No new render pass — depth
    awareness, split-screen correctness, and the LDR composite are already handled by
-   `DebugDrawScenePass`. Screen-space-constant handle sizing is a named follow-on (v1 sizes the
-   gizmo in world units scaled by camera distance).
+   `DebugDrawScenePass`. Screen-space-constant handle sizing is out of scope (README); this plan
+   sizes the gizmo in world units scaled by camera distance.
 4. **Commit on release = one undo step.** The transform is applied live for feedback but recorded
    as a single command over the whole drag (Plan 03), so undo reverts the drag, not a frame of it.
    The seam is exposed here so 03 is a body swap, not a rewire.
-5. **World space, active-entity pivot, v1.** Local-space handles and a true multi-entity pivot are
-   named follow-ons; v1 manipulates the active entity in world space (the common case), keeping
-   the interaction math small.
+5. **World space, active-entity pivot.** Local-space handles and a true multi-entity pivot are out
+   of scope (README *What remains future*); this plan manipulates the active entity in world space
+   (the common case), keeping the interaction math small.
 
 ## Files
 
 | File | Change |
 |---|---|
 | `editor/src/EditorGizmo.{h,cpp}` (new) | The gizmo model + the analytic ray-vs-handle hit-test + the per-mode transform solve. |
-| `editor/src/panels/SceneViewportPanel.{h,cpp}` | Own an `EditorGizmo`; draw it via `DebugDraw`; route the content-rect mouse (hover/press/drag/release) gizmo-first, falling through to click-select; mode keys + toolbar; the commit hook (direct apply, the Plan 03 seam). |
+| `editor/src/panels/SceneViewportPanel.{h,cpp}` | Own an `EditorGizmo`; draw it via `DebugDraw`; route the content-rect mouse (hover/press/drag/release) gizmo-first, falling through to click-select; mode keys (gated to not-flying) + toolbar; the `OnCommit` hook (direct apply, the Plan 03 seam). |
 | `editor/src/panels/PrefabEditContext.h` | (If needed) a small accessor for the active entity's world transform used by the gizmo placement. |
 
 ## Verification

@@ -49,17 +49,18 @@ so a click resolves whatever is on top — mesh or icon. Crucially the billboard
 is a **fixed min-size proxy** (a centered disc / clamped quad), **not** the icon's art alpha:
 icons are point gizmos, so a predictable, art-independent hit target is the right UX — strict
 alpha-discard would make a thin/spindly icon a hard, unpredictable target, and the bare
-bounding quad would pick dead corners.
+bounding quad would pick dead corners. The default proxy is a centered disc of a fixed minimum
+screen-space radius; a clamped quad is the per-kind alternative.
 
 ## Plans
 
 | # | Plan | Summary | Status |
 |---|---|---|---|
-| 00 | Entity-id picking pass + `Viewport::Pick` seam | An optional, off-by-default engine **id pass** (`R32Uint`, entity-index write, depth-tested) in `SceneRenderer`, gated by a `SceneRendererSettings` flag so the shipping path is untouched; an async readback (transfer-timeline copy → continuation-pump resolve) behind a `Viewport::Pick(windowPoint, callback)` seam returning `optional<Entity>`. Meshes only; foundational. Engine-only. | proposed |
-| 01 | Pickable billboards + viewport click-to-select | The billboard pass writes the owning entity id with a **fixed min-size proxy footprint** (configurable per billboard kind), so `DebugDraw::DrawBillboard` carries an optional pick id; the editor tags its light/camera gizmo billboards with their entity ids and wires a viewport click → `Viewport::Pick` → `PrefabEditContext` selection (sync with the hierarchy/inspector). Closes selection end-to-end. Depends on 00. | proposed |
-| 02 | Hand-rolled manipulation gizmos | A hand-rolled translate/rotate/scale gizmo on the active selection, drawn through the per-viewport `DebugDraw` channel and interacted with by analytic ray-vs-handle hit-testing over `Viewport::ScreenToWorldRay` (no ImGuizmo dependency). A drag mutates the entity's `Transform`; the edit is committed as one undo command on release. Depends on 01. | proposed |
-| 03 | Per-editor undo/redo command stack | A command/transaction stack **owned per `AssetEditorPanel`** (each open document undoes independently). `EditorCommand` with `Apply`/`Revert`; commands for transform edits (gizmo + inspector), hierarchy reparent/reorder, add/remove/reset component, and field edits, wired into the explorer, inspector, and gizmo. Selection is editor state, not a command. Shift+Z / Shift+Y + Edit menu. Depends on 02. | proposed |
-| 04 | Prefab save-back (`Scene` → `.prefab.json`) | A reflection-driven `Scene` → `.prefab.json` writer (every entity + component + field through the name-keyed reflection walk, emitted as JSON via the editor's own nlohmann), round-tripping the **preserve-unknown-keys** way (planset-14 idiom) so hand-authored fields and formatting survive. Save (Ctrl+S) writes the active document's source; the dirty flag follows the undo stack. Depends on 03. | proposed |
+| 00 | Entity-id picking pass + `Viewport::Pick` seam | An optional, off-by-default engine **id pass** (a new `Format::R32Uint` target, **pick id** = packed entity index + 1 written, depth-tested) in `SceneRenderer`, gated by a `SceneRendererSettings` flag so the shipping path is untouched; an async readback (transfer-timeline copy → continuation-pump resolve) behind a `Viewport::Pick(windowPoint, callback)` seam returning `optional<Entity>`, with a scene-epoch + caller-liveness guard so a late resolve never lands in a swapped or torn-down scene. Meshes only; foundational, engine-only. | ready |
+| 01 | Pickable billboards + viewport click-to-select | The billboard pass writes the owning entity id with a **fixed min-size proxy footprint** (configurable per billboard kind), so `DebugDraw::DrawBillboard` carries an optional pick id; the editor tags its light/camera gizmo billboards with their entity ids and wires a viewport click → `Viewport::Pick` → `PrefabEditContext` selection (sync with the hierarchy/inspector). Closes selection end-to-end. Depends on 00. | ready |
+| 02 | Hand-rolled manipulation gizmos | A hand-rolled translate/rotate/scale gizmo on the active selection, drawn through the per-viewport `DebugDraw` channel and interacted with by analytic ray-vs-handle hit-testing over `Viewport::ScreenToWorldRay` (no ImGuizmo dependency). A drag mutates the entity's `Transform`; the edit is committed as one undo command on release. Depends on 01. | ready |
+| 03 | Per-editor undo/redo command stack | A command/transaction stack **owned per `AssetEditorPanel`** (each open document undoes independently). `EditorCommand` with `Apply`/`Revert`; commands for transform edits (gizmo + inspector), hierarchy reparent/reorder, add/remove/reset component, and field edits, wired into the explorer, inspector, and gizmo. Selection is editor state, not a command. Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z + Edit menu, routed to the focused document. Depends on 02. | ready |
+| 04 | Prefab save-back (`Scene` → `.prefab.json`) | A reflection-driven `Scene` → `.prefab.json` writer (every entity + component + field through the name-keyed reflection walk, emitted as JSON via the editor's own nlohmann), round-tripping the **preserve-unknown-keys** way (planset-14 idiom) so hand-authored fields and formatting survive — keyed to a **stable per-entity id** so adds/deletes/reorders re-align to source rather than clobbering it. Save (Ctrl+S) writes the active document's source atomically (temp + rename); the dirty flag follows the undo stack. The level editor (which inherits the same scene-editing surface) routes its entity edits back to the referenced world `.prefab.json`. Depends on 03. | ready |
 
 > Status legend: `proposed` = drafted, awaiting review; `ready` = reviewed and approved;
 > `done` = implemented, migrated, verified, committed.
@@ -103,13 +104,22 @@ each dispatch against a manual worktree cut from the prior plan's integration co
 - **Gizmos are hand-rolled, no ImGuizmo.** Keeps the editor's vendor discipline (like imnodes,
   no new public-header dependency) and reuses the per-viewport `DebugDraw` channel and
   `ScreenToWorldRay` already in hand.
-- **Save-back round-trips the prefab source, preserving unknown keys.** A live `Scene` writes
-  back to its `.prefab.json` through the reflection walk + the editor's nlohmann, patching known
-  keys and preserving the rest — the texture/material/level editor idiom, applied to entities.
-  No cooked scene asset exists or is introduced.
-- **No new on-disk format, no cooker change, no module-ABI bump.** The id pass is a render-time
-  editor concern; the save-back writer reuses the existing `.prefab.json` schema the cooker
-  already reads. `VengModuleHost` and `FieldDescriptor` layout are untouched.
+- **Save-back round-trips the prefab source, preserving unknown keys, keyed by entity id.** A
+  live `Scene` writes back to its `.prefab.json` through the reflection walk + the editor's
+  nlohmann, patching known keys and preserving the rest — the texture/material/level editor idiom,
+  applied to entities. Because `.prefab.json` entities are a *positional* array with no identity,
+  the writer matches a live entity to its source object by a stable per-entity id key (added to
+  the schema), so an add/delete/reorder re-aligns to the right source object instead of
+  misattributing or dropping hand-authored content. The write is atomic (temp file + rename) so a
+  failed save never corrupts the only copy of authored work. The level editor inherits the
+  scene-editing surface, so its entity edits save through the same writer into the level's
+  referenced world `.prefab.json` (its `*.level.json` config save is unchanged). No cooked scene
+  asset exists or is introduced.
+- **Additive format/enum changes only; no module-ABI bump.** The id pass appends one
+  `Format::R32Uint` enumerator — a header/API addition mapped in `TypeMapping.h`, not a cooked-blob
+  change. Save-back adds a stable, optional per-entity id key to the `.prefab.json` schema:
+  additive, the cooker reads and preserves it, and an absent id falls back to positional order so
+  existing sources still load. `VengModuleHost` and `FieldDescriptor` layout are untouched.
 
 ## What remains future
 
@@ -118,9 +128,10 @@ each dispatch against a manual worktree cut from the prior plan's integration co
 - **Marquee / multi-select via the id buffer** — reading a rectangle of the id target rather
   than one texel; the selection model already holds a multi-entity set.
 - **Gizmo refinements** — screen-space-constant handle sizing, snapping (grid/angle), local vs.
-  world space toggle, and a combined universal gizmo are extensions behind the hand-rolled base.
-- **A coalescing/transaction grouping for the undo stack** — merging a continuous drag into one
-  command is in scope (commit-on-release); merging across unrelated edits, and a transaction
-  scope spanning several mutations, are later additions.
+  world space toggle, whole-selection manipulation (the gizmo acts on the active entity only),
+  and a combined universal gizmo are extensions behind the hand-rolled base.
+- **Cross-edit transaction grouping for the undo stack** — merging unrelated edits, or a
+  transaction scope spanning several mutations. (Single-drag coalescing ships in Plan 03 via
+  commit-on-release.)
 - **Save-back to a cooked `.scene`** — explicitly **not** a thing: a `Scene` is runtime-only and
   the authored document is the prefab. (Recorded here so it does not resurface.)

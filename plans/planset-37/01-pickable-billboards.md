@@ -19,20 +19,29 @@ first plan to touch editor selection. The billboard half is a small engine chang
 
 ## What lands
 
-- **`DebugBillboard` / `DrawBillboard` carry an optional pick id.** `DebugBillboard` gains an
-  id field (the owning entity index + 1, 0 = not pickable), and
+- **`DebugBillboard` / `DrawBillboard` carry an optional pick id.** `DebugBillboard` gains a
+  pick-id field (the owning entity's **pick id** = packed index + 1, 0 = not pickable), and
   `DebugDraw::DrawBillboard(worldPosition, size, texture, color, pickId = 0)` takes it. A
   billboard pushed with `pickId == 0` is decorative (drawn, never written to the id target); a
   non-zero id makes it pickable. Lines are never pickable.
 
-- **The billboard pass writes the id as a fixed min-size proxy footprint.** When `Picking` is on
-  (Plan 00), `DebugDrawScenePass` additionally writes each pickable billboard's id into the id
-  target, **depth-tested against the same depth** so an icon behind geometry loses and an icon in
-  front wins. The written footprint is **not** the icon art's alpha — it is a centered proxy: the
-  billboard's quad clamped to a **minimum pixel radius** (a small fixed screen-space size, so a
-  spindly icon is still a comfortable target) — configurable per billboard kind via a field on
-  the record (e.g. a `PickRadius`/`PickShape`), defaulting to the min-size disc. The decorative
-  color/texture render is unchanged; only the id write uses the proxy.
+- **A dedicated billboard id-write, in the geometry-pass timeframe, with a hard depth discard.**
+  The id target is written by the geometry pass (Plan 00) and is consumed before lighting; the
+  decorative billboard render runs in `DebugDrawScenePass`, which composites into the LDR color
+  **after tonemap** and is **not** hardware depth-tested (it samples g-buffer depth and *fades* an
+  occluded fragment). That fade path is wrong for an id write and runs too late (the id target is
+  no longer bound). So the pickable id write is a **separate gated pass** that runs while the
+  `EntityId` target is still bound (alongside the geometry pass, before lighting): for each
+  pickable billboard it rasterizes the proxy footprint, samples the scene depth, and **discards**
+  (does not fade) an occluded fragment, writing the pick id only where the icon is in front — so an
+  icon behind geometry is not picked and an icon in front wins. The decorative `DebugDrawScenePass`
+  render is unchanged; this is an id-only sibling.
+
+- **The footprint is a fixed min-size proxy, not the art alpha.** The written footprint is **not**
+  the icon art's alpha — it is a centered proxy: the billboard's quad clamped to a **minimum pixel
+  radius** (a small fixed screen-space size, so a spindly icon is still a comfortable target),
+  configurable per billboard kind via a field on the record (e.g. a `PickRadius`/`PickShape`),
+  defaulting to a centered disc of that minimum radius (a clamped quad is the per-kind alternative).
 
 - **The editor tags its gizmo billboards.** `SceneViewportPanel::PushGizmos` already pushes a
   billboard per `Light`/`Camera`; it now passes each entity's `pickId` (index + 1) so the icons
@@ -48,7 +57,9 @@ first plan to touch editor selection. The billboard half is a small engine chang
   already read `PrefabEditContext::Selection`/`Active`, the click selects in the viewport and the
   hierarchy highlight + inspector follow with no extra wiring. The pick is async (resolves a frame
   or two later through the continuation pump); a transient "pick in flight" guard avoids
-  double-issuing on a held button.
+  double-issuing on a held button, and the selection is applied through Plan 00's scene-epoch +
+  caller-liveness guard so a resolve that lands after a Play/Stop scene swap or a document close is
+  dropped rather than applied to the wrong (or a destroyed) `PrefabEditContext`.
 
 ## Decisions
 
@@ -74,8 +85,8 @@ first plan to touch editor selection. The billboard half is a small engine chang
 |---|---|
 | `engine/include/Veng/Renderer/DebugDraw.h` | Add the pick-id (and proxy `PickRadius`/`PickShape`) field to `DebugBillboard`; add the `pickId` parameter to `DrawBillboard`. |
 | `engine/src/Renderer/DebugDraw.cpp` | Carry the id/proxy through the accumulator. |
-| `engine/src/Renderer/DebugDrawScenePass.{h,cpp}` | Under `Picking`, write each pickable billboard's id into the id target as the min-size proxy footprint, depth-tested. |
-| `engine/assets/core/shaders/debug_billboard.*` | The id-write variant (gated) emitting the proxy footprint. |
+| `engine/src/Renderer/DebugDrawScenePass.{h,cpp}` | The decorative billboard render is unchanged; under `Picking` a sibling id-only write runs in the geometry-pass timeframe (while the `EntityId` target is bound), rasterizing each pickable billboard's min-size proxy footprint and **discarding** (not fading) the occluded fragment by a scene-depth sample. |
+| `engine/assets/core/shaders/debug_billboard.*` | The id-write variant (gated) emitting the proxy footprint with a hard depth discard. |
 | `editor/src/panels/SceneViewportPanel.{h,cpp}` | Enable `Picking`; tag gizmo billboards with entity pick ids; route a content-rect click → `Viewport::Pick` → `PrefabEditContext` selection; update the `PushGizmos` doc comment. |
 
 ## Verification
