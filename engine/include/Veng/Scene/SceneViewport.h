@@ -38,8 +38,9 @@ namespace Veng
     /// Splits LevelRenderSettings across the two renderer surfaces it feeds: the topology toggles
     /// (Bloom / Shadows / AO / Skybox) onto a SceneRendererSettings the caller applies through
     /// Viewport::Configure, and the per-frame values (Exposure / BloomIntensity / Environment /
-    /// EnvironmentIntensity) onto a ViewState the caller pushes each frame. The single mapping both
-    /// example games and the managed world share, so the level→renderer wiring lives in one place.
+    /// EnvironmentIntensity) onto a ViewState the caller pushes each frame. The single mapping the
+    /// example games, the managed world, and the editor viewport share, so the level→renderer wiring
+    /// lives in one place.
     /// @param render    The level's render-settings subset.
     /// @param settings  The topology/sizing knobs to update (the toggles are written in place).
     /// @param view      The per-frame view to seed (the tone/bloom/environment values are written).

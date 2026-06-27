@@ -2,6 +2,7 @@
 
 #include <Veng/Application.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/ImGui/ImGuiLayer.h>
@@ -15,6 +16,7 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SceneViewport.h>
 #include <Veng/Scene/Transforms.h>
 #include <Veng/Time.h>
 #include <Veng/UI/UI.h>
@@ -233,16 +235,39 @@ namespace VengEditor
 
     void SceneViewportPanel::ApplyLevelRenderSettings(const LevelRenderSettings& render)
     {
-        if (m_Settings.Bloom != render.Bloom || m_Settings.Shadows != render.Shadows ||
-            m_Settings.AO != render.AO)
+        // Run the level subset through the shared runtime mapping so the level→renderer wiring
+        // lives in one place; the editor only adds its per-frame/dirty/resolve handling on top.
+        // Start the topology half from the live settings so the editor-only bits (DebugDraw, the
+        // debug-view Mode, the toolbar toggles) survive, and seed the per-frame half into a scratch
+        // view we pull the level-owned values out of.
+        Renderer::SceneRendererSettings next = m_Settings;
+        Renderer::ViewState scratch;
+        Veng::ApplyLevelRenderSettings(render, next, scratch);
+
+        // A topology change is the only thing that needs a Configure recompile, and this is called
+        // per settings-panel edit (an Exposure drag too), so flip dirty only when a toggle moved.
+        if (next.Bloom != m_Settings.Bloom || next.Shadows != m_Settings.Shadows ||
+            next.AO != m_Settings.AO || next.Skybox != m_Settings.Skybox)
         {
-            m_Settings.Bloom = render.Bloom;
-            m_Settings.Shadows = render.Shadows;
-            m_Settings.AO = render.AO;
+            m_Settings = next;
             m_SettingsDirty = true;
         }
-        m_Exposure = render.Exposure;
-        m_BloomIntensity = render.BloomIntensity;
+
+        m_Exposure = scratch.Exposure;
+        m_BloomIntensity = scratch.BloomIntensity;
+        m_EnvironmentIntensity = scratch.EnvironmentIntensity;
+
+        // The shared mapping leaves scratch.Environment id-only here: the level config is hand-parsed
+        // (not run through the Level loader that resolves it as a dependency), so resolve it into a
+        // resident handle — the IBL + skybox source the renderer reads off the pushed ViewState.
+        // Async, gated on the id, so the skybox appears a few frames after a repoint exactly as a
+        // cooked load would.
+        if (m_Environment.Id() != render.Environment.Id())
+        {
+            m_Environment = render.Environment.Id().IsValid()
+                                ? m_Assets.Load<Environment>(render.Environment.Id())
+                                : AssetHandle<Environment>{};
+        }
     }
 
     void SceneViewportPanel::DrawToolbar()
@@ -504,6 +529,8 @@ namespace VengEditor
             .Camera = camera,
             .Delta = Time::GetDeltaTime(),
             .Exposure = m_Exposure,
+            .Environment = m_Environment,
+            .EnvironmentIntensity = m_EnvironmentIntensity,
             .BloomIntensity = m_BloomIntensity,
         });
 
