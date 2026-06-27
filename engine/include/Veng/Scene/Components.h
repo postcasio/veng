@@ -516,7 +516,11 @@ namespace Veng
     };
 }
 
-VE_LEAF(::Veng::LightType, 0x6B1D62EF4B5A16ULL, FieldClass::Enum);
+VE_ENUM(::Veng::LightType, 0x6B1D62EF4B5A16ULL)
+VE_ENUMERATOR(Directional)
+VE_ENUMERATOR(Point)
+VE_ENUMERATOR(Spot)
+VE_ENUM_END();
 
 VE_REFLECT(::Veng::Name, 0xDA40E8FAC8A6DB84ULL)
 VE_FIELD(Value, .DisplayName = "Name")
@@ -593,7 +597,11 @@ VE_FIELD(Mesh, .DisplayName = "Mesh")
 VE_FIELD(Source, .DisplayName = "Source")
 VE_REFLECT_END();
 
-VE_LEAF(::Veng::RootMotionMode, 0x2F4A31CEE94569AFULL, FieldClass::Enum);
+VE_ENUM(::Veng::RootMotionMode, 0x2F4A31CEE94569AFULL)
+VE_ENUMERATOR(Discard)
+VE_ENUMERATOR(Presentation)
+VE_ENUMERATOR(Drive)
+VE_ENUM_END();
 
 VE_REFLECT(::Veng::Animator, 0x2B56DF7335B89F8DULL)
 VE_FIELD(Clip, .DisplayName = "Clip")
@@ -641,7 +649,10 @@ VE_FIELD(MoveSpeed, .DisplayName = "Move Speed", .Display = {.Min = 0.0})
 VE_FIELD(TurnSpeed, .DisplayName = "Turn Speed", .Display = {.Min = 0.0})
 VE_REFLECT_END();
 
-VE_LEAF(::Veng::MotionSpace, 0x46914AC0C743D776ULL, FieldClass::Enum);
+VE_ENUM(::Veng::MotionSpace, 0x46914AC0C743D776ULL)
+VE_ENUMERATOR(Local)
+VE_ENUMERATOR(World)
+VE_ENUM_END();
 
 VE_REFLECT(::Veng::ConstantMotion, 0xEBB74CB78D872F9FULL)
 VE_FIELD(LinearVelocity, .DisplayName = "Linear Velocity", .Tooltip = "Units per second")
@@ -650,7 +661,10 @@ VE_FIELD(AngularVelocity, .DisplayName = "Angular Velocity",
 VE_FIELD(Space, .DisplayName = "Space", .Tooltip = "Local (own frame) or World (parent frame)")
 VE_REFLECT_END();
 
-VE_LEAF(::Veng::Tier, 0x45470D3410320AB9ULL, FieldClass::Enum);
+VE_ENUM(::Veng::Tier, 0x45470D3410320AB9ULL)
+VE_ENUMERATOR(Server)
+VE_ENUMERATOR(Local)
+VE_ENUM_END();
 
 VE_REFLECT(::Veng::Authority, 0xA934C4B9009D7735ULL)
 VE_FIELD(Tier, .DisplayName = "Tier")
@@ -663,7 +677,11 @@ VE_FIELD(Offset, .DisplayName = "Offset")
 VE_FIELD(Damping, .DisplayName = "Damping", .Display = {.Min = 0.0})
 VE_REFLECT_END();
 
-VE_LEAF(::Veng::SessionPhase, 0x6DF15084654B59E7ULL, FieldClass::Enum);
+VE_ENUM(::Veng::SessionPhase, 0x6DF15084654B59E7ULL)
+VE_ENUMERATOR(NotStarted)
+VE_ENUMERATOR(Playing)
+VE_ENUMERATOR(Ended)
+VE_ENUM_END();
 
 VE_REFLECT(::Veng::Session, 0x5EC76128049D9629ULL)
 VE_FIELD(Phase, .DisplayName = "Phase")

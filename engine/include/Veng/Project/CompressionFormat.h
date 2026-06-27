@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Reflection/TypeId.h>
+#include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/Types.h>
 
 #include <array>
@@ -69,4 +70,12 @@ namespace Veng
     [[nodiscard]] VE_API Renderer::Format ToRendererFormat(CompressionFormat format);
 }
 
-VE_LEAF(::Veng::CompressionFormat, 0xE374AB3EBA8855F6ULL, ::Veng::FieldClass::Enum);
+VE_ENUM(::Veng::CompressionFormat, 0xE374AB3EBA8855F6ULL)
+VE_ENUMERATOR(RGBA8Unorm)
+VE_ENUMERATOR(RGBA8Srgb)
+VE_ENUMERATOR(BC7Unorm)
+VE_ENUMERATOR(BC7Srgb)
+VE_ENUMERATOR(ASTC4x4Unorm)
+VE_ENUMERATOR(ASTC4x4Srgb)
+VE_ENUMERATOR(RGBA16Sfloat)
+VE_ENUM_END();

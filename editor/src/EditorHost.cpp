@@ -566,10 +566,9 @@ namespace VengEditor
         m_Sources =
             CreateUnique<AssetSourceIndex>(AssetSourceIndex::ParsePacks(m_ProjectSettings.Packs));
 
-        // The project-settings panel inspects ProjectSettings through reflection and draws the
-        // two compression enums as named combos; register both before the panel is built.
+        // The project-settings panel inspects ProjectSettings through reflection; registering
+        // it auto-registers its compression enums, whose VE_ENUM tables drive the named combos.
         GetTypeRegistry().Register<ProjectSettings>();
-        RegisterCompressionWidgets(m_Registries->Editor);
 
         // A prefab is edited live in a spawned Scene, so its editor needs no manifest
         // source; register it unconditionally.

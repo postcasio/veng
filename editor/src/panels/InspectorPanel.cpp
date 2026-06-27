@@ -3,8 +3,6 @@
 #include "FieldWidget.h"
 
 #include <Veng/Asset/AssetManager.h>
-#include <Veng/Project/CompressionFormat.h>
-#include <Veng/Project/CompressionRole.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
@@ -13,10 +11,7 @@
 #include <VengEditor/EditorRegistry.h>
 
 #include <algorithm>
-#include <array>
 #include <cctype>
-#include <cstring>
-#include <span>
 
 namespace VengEditor
 {
@@ -36,73 +31,12 @@ namespace VengEditor
             const auto it = std::ranges::search(haystack, needle, {}, lower, lower).begin();
             return it != haystack.end();
         }
-
-        // Draws a name-table combo over a closed u8-backed enum: the field byte selects the
-        // entry, the combo lists each enumerator's canonical name. Shared by the CompressionRole
-        // and CompressionFormat widgets.
-        template <typename Enum, usize N>
-        void DrawNamedEnumCombo(void* fieldPtr, string_view comboLabel,
-                                const std::array<Enum, N>& values)
-        {
-            std::array<string_view, N> names;
-            for (usize i = 0; i < N; ++i)
-            {
-                names[i] = ToString(values[i]);
-            }
-
-            u8 raw = 0;
-            std::memcpy(&raw, fieldPtr, sizeof(raw));
-            i32 index = 0;
-            for (usize i = 0; i < N; ++i)
-            {
-                if (static_cast<u8>(values[i]) == raw)
-                {
-                    index = static_cast<i32>(i);
-                    break;
-                }
-            }
-
-            if (UI::Combo(comboLabel, index, std::span<const string_view>(names)))
-            {
-                raw = static_cast<u8>(values[static_cast<usize>(index)]);
-                std::memcpy(fieldPtr, &raw, sizeof(raw));
-            }
-        }
-    }
-
-    void RegisterCompressionWidgets(EditorRegistry& editors)
-    {
-        // The combo id is derived from the field name so sibling fields of the same enum type
-        // (the per-role CompressionFormat columns of a RoleToFormat table) get distinct ImGui ids.
-        editors.RegisterFieldWidget(
-            TypeIdOf<CompressionRole>(), [](void* fieldPtr, const FieldDescriptor& field)
-            { DrawNamedEnumCombo(fieldPtr, "##" + field.Name, CompressionRoles); });
-
-        editors.RegisterFieldWidget(
-            TypeIdOf<CompressionFormat>(), [](void* fieldPtr, const FieldDescriptor& field)
-            { DrawNamedEnumCombo(fieldPtr, "##" + field.Name, CompressionFormats); });
     }
 
     InspectorPanel::InspectorPanel(AssetManager& assets, EditorRegistry& editors,
                                    const AssetSourceIndex& sources, PrefabEditContext& ctx)
         : m_Assets(assets), m_Editors(editors), m_Sources(sources), m_Ctx(ctx)
     {
-        // A named combo for LightType reads better than the generic editable-integer enum
-        // path; registered once here rather than special-cased inside the enum widget.
-        m_Editors.RegisterFieldWidget(
-            TypeIdOf<LightType>(),
-            [](void* fieldPtr, const FieldDescriptor&)
-            {
-                static constexpr std::array<string_view, 3> Names{"Directional", "Point", "Spot"};
-                u32 raw = 0;
-                std::memcpy(&raw, fieldPtr, sizeof(raw));
-                i32 index = raw < Names.size() ? static_cast<i32>(raw) : 0;
-                if (UI::Combo("##lighttype", index, Names))
-                {
-                    raw = static_cast<u32>(index);
-                    std::memcpy(fieldPtr, &raw, sizeof(raw));
-                }
-            });
     }
 
     void InspectorPanel::OnUI()

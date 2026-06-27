@@ -124,6 +124,40 @@ namespace Veng::Detail
 // Fields() and RegisterDependencies() replay it with a different sink, so the
 // field names are written exactly once.
 
+/// @brief Opens a VE_ENUM block: declares an enum leaf and starts its enumerator list.
+///
+/// Mirrors VE_LEAF's identity emission (Id / Class = Enum / Name / empty Fields /
+/// no-op RegisterDependencies) and adds an Enumerators() accessor that the registry
+/// reads into TypeInfo::Enumerators. Each VE_ENUMERATOR records the enum constant's
+/// own value cast to i64, so explicit or gapped values reflect correctly. The type
+/// must be written fully qualified (a leading `::`).
+#define VE_ENUM(Type, TypeIdLiteral)                                                               \
+    template <>                                                                                    \
+    struct ::Veng::VengReflect<Type>                                                               \
+    {                                                                                              \
+        static_assert(::Veng::Detail::IsFullyQualifiedSpelling(#Type),                             \
+                      "VE_ENUM: the type must be written fully qualified, e.g. ::Veng::Foo");      \
+        using Owner = Type;                                                                        \
+        static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                                      \
+        static constexpr ::Veng::FieldClass Class = ::Veng::FieldClass::Enum;                      \
+        static ::Veng::string Name() { return #Type; }                                             \
+        static ::Veng::vector<::Veng::FieldDescriptor> Fields() { return {}; }                     \
+        static void RegisterDependencies(::Veng::TypeRegistry&) {}                                 \
+        static ::Veng::vector<::Veng::EnumEntry> Enumerators()                                     \
+        {                                                                                          \
+            ::Veng::vector<::Veng::EnumEntry> entries;
+
+/// @brief Records one enumerator within a VE_ENUM block: its name and the enum constant's value.
+#define VE_ENUMERATOR(Enumerator)                                                                  \
+    entries.push_back(::Veng::EnumEntry{.Name = #Enumerator,                                       \
+                                        .Value = static_cast<::Veng::i64>(Owner::Enumerator)});
+
+/// @brief Closes a VE_ENUM block and emits the assembled Enumerators().
+#define VE_ENUM_END()                                                                              \
+    return entries;                                                                                \
+    }                                                                                              \
+    }
+
 /// @brief Opens VengReflect\<T\>: names the owning type and starts the shared Describe body.
 ///
 /// Both public entry points (Fields / RegisterDependencies) call into it.

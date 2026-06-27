@@ -12,6 +12,16 @@
 
 namespace Veng
 {
+    namespace Detail
+    {
+        /// @brief Detects whether VengReflect\<T\> exposes the VE_ENUM Enumerators() accessor.
+        ///
+        /// True only for an enum authored with VE_ENUM (which adds the accessor); a bare
+        /// VE_LEAF(…, Enum) leaves it absent, so its TypeInfo::Enumerators stays empty.
+        template <class T>
+        concept HasEnumerators = requires { VengReflect<T>::Enumerators(); };
+    }
+
     /// @brief The recorded description of a registered type.
     ///
     /// Carries the name, layout, construct/destruct/move thunks a type-erased
@@ -50,6 +60,12 @@ namespace Veng
         vector<FieldDescriptor> Fields;
         /// @brief The type's default presentation, authored via VE_DISPLAY; the type-default arm of the cascade.
         FieldDisplay Display;
+        /// @brief Enum-only: the {name, value} table in declaration order; empty for non-enums.
+        ///
+        /// Filled from VengReflect<T>::Enumerators() for a Class == Enum type authored with
+        /// VE_ENUM; the editor draws a named combo from it and matches a backing value to its
+        /// enumerator. A bare VE_LEAF(…, Enum) leaves it empty (the editor's integer fallback).
+        vector<EnumEntry> Enumerators;
 
         /// @brief Variant-only: the alternative TypeIds, in declaration order.
         ///
@@ -194,6 +210,13 @@ namespace Veng
             info.Class = cls;
             info.Fields = std::move(fields);
             info.Display = VengDisplay<T>::Get();
+
+            // An enum authored with VE_ENUM carries its {name, value} table; record it for
+            // the editor's named combo. A bare VE_LEAF(…, Enum) has no accessor and stays empty.
+            if constexpr (Detail::HasEnumerators<T>)
+            {
+                info.Enumerators = VengReflect<T>::Enumerators();
+            }
 
             // A variant's active member is reached through type-erased thunks, never by
             // offset; record them off the VE_VARIANT specialisation for the generic walk.

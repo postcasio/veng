@@ -71,6 +71,20 @@ namespace Veng
         Multiline,
     };
 
+    /// @brief One enumerator of a reflected enum: its authored name and backing value.
+    ///
+    /// Recorded on a FieldClass::Enum type's TypeInfo (in declaration order) by the
+    /// VE_ENUM describe-block, so the editor draws a named combo and a backing value
+    /// is matched to its enumerator. Value is the enum constant cast to i64, so an
+    /// enum with explicit or gapped values is captured correctly.
+    struct EnumEntry
+    {
+        /// @brief The enumerator's authored name (e.g. "Directional").
+        string Name;
+        /// @brief The enum constant's value, widened to i64.
+        i64 Value = 0;
+    };
+
     /// @brief A registered type's spelling split into its enclosing namespace and bare name.
     struct QualifiedTypeName
     {

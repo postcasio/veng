@@ -419,6 +419,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/reflection.cpp
             tests/unit/reflection_variant.cpp
             tests/unit/field_display.cpp
+            tests/unit/enum_reflection.cpp
             tests/unit/project_settings.cpp
             tests/unit/primitive_resolve.cpp
             tests/unit/camera.cpp

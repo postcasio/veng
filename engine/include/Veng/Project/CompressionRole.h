@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Reflection/TypeId.h>
+#include <Veng/Reflection/Reflect.h>
 
 #include <array>
 #include <string_view>
@@ -53,4 +54,10 @@ namespace Veng
     [[nodiscard]] VE_API optional<CompressionRole> ParseCompressionRole(std::string_view name);
 }
 
-VE_LEAF(::Veng::CompressionRole, 0x5C9A85A5EDBF200FULL, ::Veng::FieldClass::Enum);
+VE_ENUM(::Veng::CompressionRole, 0x5C9A85A5EDBF200FULL)
+VE_ENUMERATOR(Color)
+VE_ENUMERATOR(Normal)
+VE_ENUMERATOR(Mask)
+VE_ENUMERATOR(HDR)
+VE_ENUMERATOR(UI)
+VE_ENUM_END();

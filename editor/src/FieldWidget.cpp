@@ -185,22 +185,69 @@ namespace VengEditor
             return changed;
         }
 
-        // Editable integer view over an enum's backing bytes (width from its TypeInfo).
-        // Returns true when the value changed.
+        // A named combo over the enum's {name, value} table when its TypeInfo carries one,
+        // or an editable integer view over the backing bytes (width from its TypeInfo) when it
+        // does not. A backing value matching no enumerator shows a synthesized "(unknown N)"
+        // label so it is never silently wrong; picking a named entry repairs it. Returns true
+        // when the value changed.
         bool DrawEnum(void* fieldPtr, const FieldDescriptor& field, string_view label,
                       const FieldWidgetContext& ctx)
         {
-            const usize width = ctx.Assets.GetTypeRegistry().Info(field.Type).Size;
+            const TypeInfo& info = ctx.Assets.GetTypeRegistry().Info(field.Type);
+            const usize width = info.Size;
 
+            // Widen the backing bytes into an i64 (low Size bytes, little-endian).
             i64 value = 0;
             std::memcpy(&value, fieldPtr, width < sizeof(value) ? width : sizeof(value));
 
-            i32 edited = static_cast<i32>(value);
-            if (UI::Drag(label, edited, UI::DragOptions{.Speed = 0.1f, .Min = 0.0f}))
+            if (info.Enumerators.empty())
             {
-                const i64 clamped = edited < 0 ? 0 : edited;
-                std::memcpy(fieldPtr, &clamped, width < sizeof(clamped) ? width : sizeof(clamped));
-                return true;
+                i32 edited = static_cast<i32>(value);
+                if (UI::Drag(label, edited, UI::DragOptions{.Speed = 0.1f, .Min = 0.0f}))
+                {
+                    const i64 clamped = edited < 0 ? 0 : edited;
+                    std::memcpy(fieldPtr, &clamped,
+                                width < sizeof(clamped) ? width : sizeof(clamped));
+                    return true;
+                }
+                return false;
+            }
+
+            // The combo lists each enumerator's name; a backing value matching none appends a
+            // synthesized "(unknown N)" entry, selected so the drift is visible and editable.
+            vector<string> labels;
+            labels.reserve(info.Enumerators.size() + 1);
+            for (const EnumEntry& entry : info.Enumerators)
+            {
+                labels.push_back(entry.Name);
+            }
+
+            i32 index = -1;
+            for (usize i = 0; i < info.Enumerators.size(); ++i)
+            {
+                if (info.Enumerators[i].Value == value)
+                {
+                    index = static_cast<i32>(i);
+                    break;
+                }
+            }
+            if (index < 0)
+            {
+                labels.push_back(fmt::format("(unknown {})", value));
+                index = static_cast<i32>(labels.size()) - 1;
+            }
+
+            const vector<string_view> items(labels.begin(), labels.end());
+            if (UI::Combo(label, index, items))
+            {
+                // The synthesized entry is not a real enumerator, so a pick lands only on a
+                // named one; writing back narrows the chosen value into the low Size bytes.
+                if (index >= 0 && static_cast<usize>(index) < info.Enumerators.size())
+                {
+                    const i64 chosen = info.Enumerators[static_cast<usize>(index)].Value;
+                    std::memcpy(fieldPtr, &chosen, width < sizeof(chosen) ? width : sizeof(chosen));
+                    return true;
+                }
             }
             return false;
         }
