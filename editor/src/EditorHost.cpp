@@ -38,9 +38,6 @@ namespace VengEditor
 
     namespace
     {
-        // The hello-triangle pack's sphere prefab, opened as the initial document.
-        constexpr AssetId SampleScenePrefabId{0xA123F30FD219F2D5ULL};
-
         // Writes the format a role resolves to into the fixed RoleToFormat record.
         void SetRoleFormat(RoleToFormat& table, CompressionRole role, CompressionFormat format)
         {
@@ -630,9 +627,13 @@ namespace VengEditor
             m_Panels.push_back({std::move(panel), true});
         }
 
-        // Open the sample prefab as the initial document so the editor starts on live
-        // content; double-clicking any prefab in the asset browser opens another.
-        OpenAssetEditor(AssetType::Prefab, SampleScenePrefabId);
+        // Open the project's startup level as the initial document so the editor starts on
+        // live content; double-clicking any asset in the asset browser opens another. A
+        // project with no startup level opens nothing.
+        if (m_ProjectSettings.StartupLevel.IsValid())
+        {
+            OpenAssetEditor(AssetType::Level, m_ProjectSettings.StartupLevel);
+        }
     }
 
     void EditorHost::RequestCook(const CookRequest& request,
