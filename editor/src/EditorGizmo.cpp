@@ -34,8 +34,11 @@ namespace VengEditor
 
         /// @brief Returns the squared distance between a ray and a finite segment, with the ray parameter on the ray.
         ///
-        /// The closest-point-of-two-lines solve, clamped to the segment; used to grab an axis
-        /// handle when the cursor ray passes near the axis line.
+        /// Closest points between the semi-infinite cursor ray (parameter s ≥ 0) and the
+        /// segment a→b (parameter t in [0,1]); used to grab an axis handle when the cursor ray
+        /// passes near the axis line. The ray parameter is not upper-bounded: ray.Direction is
+        /// normalized, so clamping s to a segment would treat the ray as one unit long and the
+        /// gizmo — many units ahead of the camera — would never be reached.
         f32 RaySegmentDistanceSq(const Ray& ray, vec3 a, vec3 b, f32& outRayT, vec3& outSegPoint)
         {
             const vec3 d1 = ray.Direction;
@@ -48,19 +51,25 @@ namespace VengEditor
             const f32 bdot = glm::dot(d1, d2);
             const f32 denom = aa * e - bdot * bdot;
 
-            f32 s = 0.0f;
-            f32 t = 0.0f;
-            if (denom > 1e-6f)
+            // Unconstrained ray parameter, then lower-bounded to the ray (s ≥ 0); parallel
+            // lines (denom ≈ 0) pin s to the ray origin.
+            f32 s = denom > 1e-6f ? glm::max((bdot * f - c * e) / denom, 0.0f) : 0.0f;
+            f32 t = (bdot * s + f) / glm::max(e, 1e-6f);
+            // Clamp t to the segment and re-solve s for that endpoint (still ray-bounded).
+            if (t < 0.0f)
             {
-                s = glm::clamp((bdot * f - c * e) / denom, 0.0f, 1.0f);
+                t = 0.0f;
+                s = glm::max(-c / glm::max(aa, 1e-6f), 0.0f);
             }
-            t = (bdot * s + f) / glm::max(e, 1e-6f);
-            t = glm::clamp(t, 0.0f, 1.0f);
-            s = (bdot * t + c) / glm::max(aa, 1e-6f);
+            else if (t > 1.0f)
+            {
+                t = 1.0f;
+                s = glm::max((bdot - c) / glm::max(aa, 1e-6f), 0.0f);
+            }
 
-            const vec3 rayPoint = ray.Origin + d1 * glm::max(s, 0.0f);
+            const vec3 rayPoint = ray.Origin + d1 * s;
             const vec3 segPoint = a + d2 * t;
-            outRayT = glm::max(s, 0.0f);
+            outRayT = s;
             outSegPoint = segPoint;
             return glm::dot(rayPoint - segPoint, rayPoint - segPoint);
         }
@@ -136,16 +145,38 @@ namespace VengEditor
     }
 
     EditorGizmo::Placement EditorGizmo::ComputePlacement(const Scene& scene, const Entity entity,
-                                                         const vec3 cameraPosition)
+                                                         const vec3 cameraPosition,
+                                                         const GizmoMode mode)
     {
         Placement placement;
         const mat4 world = WorldMatrix(scene, entity);
         placement.Origin = vec3(world[3]);
-        // World-space axes: the gizmo manipulates in world space, so the handles are the world
-        // basis regardless of the entity's parent frame.
-        placement.Axes[0] = vec3(1.0f, 0.0f, 0.0f);
-        placement.Axes[1] = vec3(0.0f, 1.0f, 0.0f);
-        placement.Axes[2] = vec3(0.0f, 0.0f, 1.0f);
+
+        if (mode == GizmoMode::Scale)
+        {
+            // Scale writes the entity's local Transform::Scale[axis], so the handles must follow
+            // the entity's own frame in world space (its world-matrix basis vectors) — a
+            // world-aligned handle would scale along the object's local diagonal once it is
+            // rotated. A degenerate (zero-scale) basis vector falls back to the world axis.
+            for (i32 axis = 0; axis < 3; ++axis)
+            {
+                const vec3 basis = vec3(world[axis]);
+                vec3 fallback{0.0f};
+                fallback[axis] = 1.0f;
+                placement.Axes[axis] =
+                    glm::length(basis) > 1e-6f ? glm::normalize(basis) : fallback;
+            }
+        }
+        else
+        {
+            // Translate and rotate manipulate in world space — their drag maps the world delta
+            // back into the parent frame — so the handles are the world basis regardless of the
+            // entity's parent frame.
+            placement.Axes[0] = vec3(1.0f, 0.0f, 0.0f);
+            placement.Axes[1] = vec3(0.0f, 1.0f, 0.0f);
+            placement.Axes[2] = vec3(0.0f, 0.0f, 1.0f);
+        }
+
         const f32 distance = glm::length(cameraPosition - placement.Origin);
         placement.Scale = glm::max(distance * ScaleFactor, 0.05f);
         return placement;
@@ -235,6 +266,22 @@ namespace VengEditor
 
         if (mode == GizmoMode::Scale)
         {
+            // The scale handles are boxes, so pick their volume (not only the axis line) — the
+            // tip box extends past the line's grab cylinder, so a click on the box itself would
+            // otherwise miss.
+            const f32 axisHalf = AxisPickTolerance * length * 0.9f;
+            for (i32 axis = 0; axis < 3; ++axis)
+            {
+                const vec3 tip = placement.Origin + placement.Axes[axis] * length;
+                f32 tMin = 0.0f;
+                if (RayBox(ray, tip - vec3(axisHalf), tip + vec3(axisHalf), tMin) &&
+                    tMin < bestRayT)
+                {
+                    bestRayT = tMin;
+                    best = static_cast<GizmoHandle>(static_cast<u8>(GizmoHandle::AxisX) + axis);
+                }
+            }
+
             // Uniform-scale center box: a small box at the pivot.
             const f32 half = AxisPickTolerance * length * 1.5f;
             f32 tMin = 0.0f;
@@ -257,12 +304,12 @@ namespace VengEditor
             return;
         }
 
-        const Placement placement = ComputePlacement(scene, entity, cameraPosition);
-        const f32 length = placement.Scale;
-        const GizmoHandle active = m_Dragging ? m_DragHandle : m_Hovered;
         // A drag draws in the mode it was captured in, so a shared-mode change mid-drag does not
         // redraw the handles out from under the dragged one.
         const GizmoMode drawMode = m_Dragging ? m_DragMode : mode;
+        const Placement placement = ComputePlacement(scene, entity, cameraPosition, drawMode);
+        const f32 length = placement.Scale;
+        const GizmoHandle active = m_Dragging ? m_DragHandle : m_Hovered;
 
         auto axisColor = [&](const i32 axis, const GizmoHandle handle)
         { return active == handle ? HighlightColor : AxisColor[axis]; };
@@ -355,7 +402,7 @@ namespace VengEditor
             m_Hovered = GizmoHandle::None;
             return false;
         }
-        const Placement placement = ComputePlacement(scene, entity, cameraPosition);
+        const Placement placement = ComputePlacement(scene, entity, cameraPosition, mode);
         m_Hovered = Pick(placement, ray, mode);
         return m_Hovered != GizmoHandle::None;
     }
@@ -373,7 +420,7 @@ namespace VengEditor
             return false;
         }
 
-        const Placement placement = ComputePlacement(scene, entity, cameraPosition);
+        const Placement placement = ComputePlacement(scene, entity, cameraPosition, mode);
         const GizmoHandle handle = Pick(placement, ray, mode);
         if (handle == GizmoHandle::None)
         {
@@ -427,8 +474,12 @@ namespace VengEditor
         {
             if (handle == GizmoHandle::Uniform)
             {
-                // Uniform scale measures the ray's distance from the pivot along the view.
-                m_GrabAnchor = vec3(glm::length(ray.Origin - placement.Origin), 0.0f, 0.0f);
+                // Uniform scale tracks the cursor on the camera-facing plane through the pivot;
+                // the ray origin is the fixed camera, so it cannot measure cursor motion.
+                m_DragViewNormal = glm::normalize(cameraPosition - placement.Origin);
+                vec3 hit = placement.Origin;
+                RayPlane(ray, placement.Origin, m_DragViewNormal, hit);
+                m_GrabAnchor = hit;
             }
             else
             {
@@ -514,9 +565,15 @@ namespace VengEditor
         {
             if (m_DragHandle == GizmoHandle::Uniform)
             {
-                const f32 current = glm::length(ray.Origin - placement.Origin);
+                // The cursor's signed radial motion on the camera-facing plane, scaled by the
+                // gizmo size: dragging out one gizmo-radius grows by 1.0x, dragging in shrinks.
+                vec3 hit = placement.Origin;
+                RayPlane(ray, placement.Origin, m_DragViewNormal, hit);
+                const f32 startDistance = glm::length(m_GrabAnchor - placement.Origin);
+                const f32 currentDistance = glm::length(hit - placement.Origin);
+                const f32 reference = glm::max(placement.Scale, 1e-4f);
                 const f32 ratio =
-                    m_GrabAnchor.x > 1e-4f ? glm::max(current / m_GrabAnchor.x, 0.01f) : 1.0f;
+                    glm::max(1.0f + (currentDistance - startDistance) / reference, 0.01f);
                 next.Scale = m_StartTransform.Scale * ratio;
             }
             else

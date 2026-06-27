@@ -60,8 +60,10 @@ namespace VengEditor
     /// translate, rings for rotate, axis boxes for scale) and interacted with by analytic
     /// ray-vs-handle hit-testing over Viewport::ScreenToWorldRay — no id buffer, no ImGuizmo.
     /// The gizmo is placed at the active entity's world position and sized in world units scaled
-    /// by camera distance, so it stays a roughly constant on-screen size. Manipulation is world
-    /// space and pivots on the active entity; a multi-entity selection moves only its Active.
+    /// by camera distance, so it stays a roughly constant on-screen size. Translate and rotate
+    /// manipulate in world space; scale follows the entity's own frame (it writes the local
+    /// per-axis Transform::Scale). It pivots on the active entity; a multi-entity selection moves
+    /// only its Active.
     ///
     /// The panel owns one and drives it: it passes the active mode (document-level state shared
     /// across viewports, not owned here) into each call, calls Hover each frame to highlight,
@@ -150,9 +152,19 @@ namespace VengEditor
             Veng::f32 Scale = 1.0f;
         };
 
-        /// @brief Computes the gizmo placement for an entity (origin from its world matrix, world axes, sized by camera distance).
-        [[nodiscard]] static Placement
-        ComputePlacement(const Veng::Scene& scene, Veng::Entity entity, Veng::vec3 cameraPosition);
+        /// @brief Computes the gizmo placement for an entity (origin from its world matrix, sized by camera distance).
+        ///
+        /// The handle axes are world-aligned for Translate/Rotate and aligned to the entity's
+        /// own frame (its world-matrix basis) for Scale, since scale writes the local
+        /// Transform::Scale per axis.
+        /// @param scene          The scene the entity lives in.
+        /// @param entity         The active entity the gizmo manipulates.
+        /// @param cameraPosition The camera world position, for distance-based handle sizing.
+        /// @param mode           The manipulation mode whose handle frame the placement uses.
+        /// @return The computed placement (origin, axes, handle scale).
+        [[nodiscard]] static Placement ComputePlacement(const Veng::Scene& scene,
+                                                        Veng::Entity entity,
+                                                        Veng::vec3 cameraPosition, GizmoMode mode);
 
         /// @brief Hit-tests a ray against the handles for @p mode at @p placement.
         ///
@@ -184,11 +196,19 @@ namespace VengEditor
         /// @brief The grab anchor the per-mode solve measures the drag delta from.
         ///
         /// For an axis/plane translate it is the world point the press ray hit on the
-        /// constraint; for a rotate it is the initial angle in the ring plane; for a scale it
-        /// is the initial signed axis projection. Interpreted per mode by Drag.
+        /// constraint; for a rotate it is the initial angle in the ring plane; for an axis
+        /// scale it is the initial signed axis projection; for a uniform scale it is the world
+        /// point the press ray hit on the camera-facing plane. Interpreted per mode by Drag.
         Veng::vec3 m_GrabAnchor{0.0f};
 
         /// @brief The active entity's start world position (the rotate/scale pivot).
         Veng::vec3 m_StartWorldPosition{0.0f};
+
+        /// @brief The camera-facing plane normal captured for a uniform-scale drag.
+        ///
+        /// The cursor ray origin is the fixed camera, so it cannot measure cursor motion; a
+        /// uniform scale instead tracks the cursor's hit on the plane through the pivot facing
+        /// this normal. Meaningful only while dragging the uniform handle.
+        Veng::vec3 m_DragViewNormal{0.0f};
     };
 }
