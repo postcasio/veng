@@ -31,6 +31,8 @@ namespace Veng::UI
         Backspace,
         /// @brief The Z key (the undo/redo shortcut).
         Z,
+        /// @brief The S key (the save shortcut).
+        S,
     };
 
     /// @brief Returns true if the last item is hovered.

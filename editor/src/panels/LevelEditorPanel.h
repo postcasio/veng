@@ -63,8 +63,6 @@ namespace VengEditor
                          Veng::SystemRegistry& systems, CookDriver cook);
         ~LevelEditorPanel() override;
 
-        [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
-
         /// @brief Draws the document toolbar: the active-system-set readout above the dockspace.
         void OnUI() override;
 
@@ -112,7 +110,6 @@ namespace VengEditor
         class LevelChildPanel;
 
         Veng::AssetId m_Id;
-        Veng::string m_Title;
         Veng::path m_SourcePath;
 
         Veng::AssetManager& m_AssetManager;

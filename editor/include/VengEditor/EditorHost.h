@@ -13,6 +13,7 @@
 
 namespace VengEditor
 {
+    class AssetEditorPanel;
     class AssetSourceIndex;
     class CommandStack;
 
@@ -133,6 +134,13 @@ namespace VengEditor
 
         /// @brief Draws the main menu bar (File / Edit / Window menus).
         void DrawMenuBar();
+
+        /// @brief Returns the focused AssetEditorPanel, or null when none holds keyboard focus.
+        ///
+        /// Resolves the editor whose window or a docked child holds focus — the seam the Edit-menu
+        /// / undo-redo shortcuts and the File→Save / Ctrl+S action dispatch to, so two open
+        /// documents are independent.
+        [[nodiscard]] AssetEditorPanel* FocusedAssetEditor();
 
         /// @brief Returns the focused document's undo/redo stack, or null when none is focused.
         ///

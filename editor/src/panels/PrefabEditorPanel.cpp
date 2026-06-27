@@ -14,9 +14,11 @@
 #include <Veng/UI/UI.h>
 #include <Veng/Vendor/ImGuiInternal.h>
 
+#include "AssetSourceIndex.h"
 #include "panels/InspectorPanel.h"
 #include "panels/PrefabExplorerPanel.h"
 #include "panels/SceneViewportPanel.h"
+#include "PrefabSerialize.h"
 
 namespace VengEditor
 {
@@ -29,6 +31,13 @@ namespace VengEditor
         : PrefabEditorPanel(id, fmt::format("Prefab 0x{:X}", id.Value), app, assets, imgui, types,
                             editors, sources, input, router, systems)
     {
+        // The prefab document saves its entities back to the .prefab.json the manifest points at;
+        // an unindexed id leaves the source empty, which disables Save.
+        if (const AssetSourceIndex::Entry* entry = sources.Find(id))
+        {
+            m_PrefabSource = entry->Source;
+        }
+
         AddSceneEditingChildren(app, imgui, editors, sources);
     }
 
@@ -37,14 +46,49 @@ namespace VengEditor
                                          TypeRegistry& types, EditorRegistry& /*editors*/,
                                          const AssetSourceIndex& /*sources*/, Input& input,
                                          InputRouter& router, SystemRegistry& systems)
-        : m_Id(worldPrefab), m_Title(std::move(title)), m_Assets(assets), m_Input(input),
-          m_Router(router), m_Systems(systems)
+        : m_Id(worldPrefab), m_BaseTitle(std::move(title)),
+          m_TitleId(fmt::format("##doc0x{:X}", worldPrefab.Value)), m_Assets(assets),
+          m_Input(input), m_Router(router), m_Systems(systems)
     {
         m_Scene = Scene::Create(types);
         m_Context.Scene = m_Scene.get();
         m_Context.Assets = &assets;
 
         BuildScene();
+    }
+
+    string_view PrefabEditorPanel::GetTitle() const
+    {
+        // Recompute each call so the host's dock-key lookup and the document window label agree.
+        // The "##" suffix is the stable ImGui dock identity; only the visible label before it
+        // carries the unsaved marker, so toggling the marker never re-docks the window.
+        const bool dirty = m_Commands.IsDirty();
+        m_DisplayTitle = fmt::format("{}{}{}", dirty ? "*" : "", m_BaseTitle, m_TitleId);
+        return m_DisplayTitle;
+    }
+
+    VoidResult PrefabEditorPanel::Save()
+    {
+        if (m_Scene == nullptr)
+        {
+            return std::unexpected(string{"prefab editor: no scene to save"});
+        }
+        if (m_PrefabSource.empty())
+        {
+            return std::unexpected(string{"prefab editor: document has no source path to save to"});
+        }
+
+        const VoidResult written =
+            PrefabSerialize::Save(*m_Scene, m_Scene->GetTypeRegistry(), m_PrefabSource);
+        if (!written)
+        {
+            Log::Error("Prefab editor: save failed: {}", written.error());
+            return written;
+        }
+
+        // The document's current state is now the saved state; the dirty marker clears.
+        m_Commands.MarkSaved();
+        return {};
     }
 
     void PrefabEditorPanel::AddSceneEditingChildren(Application& app, ImGuiLayer& imgui,

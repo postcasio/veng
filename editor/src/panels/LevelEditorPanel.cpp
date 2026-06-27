@@ -10,6 +10,7 @@
 #include <Veng/UI/UI.h>
 #include <Veng/Vendor/ImGuiInternal.h>
 
+#include "AssetSourceIndex.h"
 #include "FieldWidget.h"
 #include "panels/SceneViewportPanel.h"
 
@@ -64,11 +65,18 @@ namespace VengEditor
                                        CookDriver cook)
         : PrefabEditorPanel(worldPrefab, fmt::format("Level 0x{:X}", id.Value), app, assets, imgui,
                             types, editors, sources, input, router, systems),
-          m_Id(id), m_Title(fmt::format("Level 0x{:X}", id.Value)),
-          m_SourcePath(std::move(sourcePath)), m_AssetManager(assets), m_Catalog(systems),
+          m_Id(id), m_SourcePath(std::move(sourcePath)), m_AssetManager(assets), m_Catalog(systems),
           m_Editors(editors), m_Sources(sources), m_Cook(std::move(cook))
     {
         LoadConfig();
+
+        // The level's entity edits save back to its referenced world prefab's .prefab.json (its
+        // own .level.json holds only the system set + config). Resolve that prefab source so the
+        // inherited Save() persists layout edits there; an unindexed world prefab disables it.
+        if (const AssetSourceIndex::Entry* entry = sources.Find(worldPrefab))
+        {
+            m_PrefabSource = entry->Source;
+        }
 
         // The world prefab is the scene surface; add the same viewport/explorer/inspector a
         // standalone prefab editor uses, then the two level-scoped children.

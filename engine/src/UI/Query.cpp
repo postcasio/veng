@@ -32,6 +32,8 @@ namespace Veng::UI
                 return ImGuiKey_Backspace;
             case Key::Z:
                 return ImGuiKey_Z;
+            case Key::S:
+                return ImGuiKey_S;
             }
             VE_ASSERT(false, "Unmapped UI::Key");
         }

@@ -2,6 +2,7 @@
 
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetId.h>
+#include <Veng/Result.h>
 #include <Veng/Scene/SceneSystem.h>
 
 #include "AssetEditorPanel.h"
@@ -57,7 +58,23 @@ namespace VengEditor
                           Veng::SystemRegistry& systems);
         ~PrefabEditorPanel() override;
 
-        [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
+        /// @brief The document window title, carrying an unsaved-changes marker when dirty.
+        ///
+        /// Recomputed each Draw: a leading "*" when the command stack has unsaved edits. A stable
+        /// "##" id suffix keeps the ImGui dock identity constant, so the marker never re-docks the
+        /// window.
+        [[nodiscard]] Veng::string_view GetTitle() const override;
+
+        /// @brief Writes the document's edited Scene back to its .prefab.json source, atomically.
+        ///
+        /// Serializes the live scene through the reflection-driven writer (preserving unknown keys,
+        /// keyed by stable entity id) to a temp sibling then renames it over the source, and clears
+        /// the command stack's dirty flag on success. A no-op (returns an error) when the document
+        /// has no source path. Does not recook — the cook-on-demand loop re-reads the changed
+        /// source on its own debounce. The level editor inherits this, so its entity edits save to
+        /// the referenced world .prefab.json (its level-config save is separate).
+        /// @return Empty on success; an error string on a missing source or an I/O failure.
+        [[nodiscard]] Veng::VoidResult Save() override;
 
         /// @brief Clones the edit scene and starts a play session running its systems over the clone.
         ///
@@ -169,6 +186,19 @@ namespace VengEditor
         /// @brief The viewport child instance, for a subclass to drive renderer-facing state (e.g. level render settings).
         SceneViewportPanel* m_Viewport = nullptr;
 
+        /// @brief The human label part of the title (e.g. "Prefab 0x42"), before the marker/id.
+        ///
+        /// A subclass (the level editor) sets it to its own label; GetTitle() composes the unsaved
+        /// marker and stable id suffix around it.
+        Veng::string m_BaseTitle;
+
+        /// @brief The .prefab.json the document saves its entity edits back to, or empty when none.
+        ///
+        /// Resolved from the manifest source index for a standalone prefab document; the level
+        /// editor sets it to the referenced world prefab's source (distinct from its own
+        /// .level.json config source). Empty disables Save.
+        Veng::path m_PrefabSource;
+
     private:
         /// @brief Loads and spawns the prefab, adding a default light when none is present.
         void BuildScene();
@@ -179,7 +209,11 @@ namespace VengEditor
         void ReleaseFromPlay();
 
         Veng::AssetId m_Id;
-        Veng::string m_Title;
+
+        /// @brief Stable "##doc<id>" suffix keeping the ImGui dock identity constant across the marker.
+        Veng::string m_TitleId;
+        /// @brief GetTitle()'s recomputed buffer: the marker + label + stable id suffix.
+        mutable Veng::string m_DisplayTitle;
 
         Veng::AssetManager& m_Assets;
         Veng::Input& m_Input;

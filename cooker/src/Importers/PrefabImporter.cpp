@@ -464,6 +464,19 @@ namespace Veng::Cook
                     "prefab importer: '{}': entity[{}] is not an object", file, entityIndex));
             }
 
+            // The optional "id" key is the editor's stable per-entity round-trip identity: it
+            // aligns a live entity to its source object across add / delete / reorder when the
+            // editor saves back. It must be an unsigned integer when present; the cook validates
+            // it but does not encode it, since entity identity in the cooked blob is positional
+            // (a Reference field cooks to the entity's index in this array). Absent → the editor
+            // falls back to positional order, so a hand-authored source with no ids still cooks.
+            if (entityJson.contains("id") && !entityJson["id"].is_number_unsigned())
+            {
+                return std::unexpected(fmt::format(
+                    "prefab importer: '{}': entity[{}] 'id' must be an unsigned integer", file,
+                    entityIndex));
+            }
+
             // Best-effort display name for diagnostics: the entity's Name component value
             // if it carries one. The entity[index] locator is always present in the
             // message, so an unnamed entity is still unambiguously identified.

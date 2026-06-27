@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Result.h>
 #include <Veng/Veng.h>
 
 #include <VengEditor/EditorPanel.h>
@@ -33,6 +34,18 @@ namespace VengEditor
         /// editors do not derive from this base and so never offer one. The host dispatches the
         /// Edit menu and the undo/redo shortcuts to the focused document's stack through this.
         [[nodiscard]] virtual CommandStack* GetCommandStack() { return nullptr; }
+
+        /// @brief Writes this document's edits back to its source; the File-menu / Ctrl+S target.
+        ///
+        /// The host dispatches Save to the focused document through this. The base reports an
+        /// error (no source-backed save); a scene-editing document overrides it to round-trip its
+        /// .prefab.json. The texture/material editors save through their own debounced cook loop
+        /// and do not derive from this base.
+        /// @return Empty on success; an error string when the document cannot be saved this way.
+        [[nodiscard]] virtual Veng::VoidResult Save()
+        {
+            return std::unexpected(Veng::string{"this document has no save action"});
+        }
 
         /// @brief Returns true when this editor's document window or one of its children is focused.
         ///

@@ -719,17 +719,23 @@ namespace VengEditor
             });
     }
 
-    CommandStack* EditorHost::FocusedCommandStack()
+    AssetEditorPanel* EditorHost::FocusedAssetEditor()
     {
         for (PanelSlot& slot : m_Panels)
         {
             auto* editor = dynamic_cast<AssetEditorPanel*>(slot.Panel.get());
             if (editor != nullptr && editor->IsDocumentFocused())
             {
-                return editor->GetCommandStack();
+                return editor;
             }
         }
         return nullptr;
+    }
+
+    CommandStack* EditorHost::FocusedCommandStack()
+    {
+        AssetEditorPanel* editor = FocusedAssetEditor();
+        return editor != nullptr ? editor->GetCommandStack() : nullptr;
     }
 
     void EditorHost::DrawMenuBar()
@@ -738,6 +744,20 @@ namespace VengEditor
         {
             if (auto file = UI::Menu("File"))
             {
+                // Save targets the focused document; enabled only when one is focused and has a
+                // dirty stack, so the action reflects whether there is anything to write.
+                AssetEditorPanel* editor = FocusedAssetEditor();
+                CommandStack* stack = editor != nullptr ? editor->GetCommandStack() : nullptr;
+                const bool canSave = stack != nullptr && stack->IsDirty();
+                if (UI::MenuItem("Save", canSave))
+                {
+                    const VoidResult saved = editor->Save();
+                    if (!saved)
+                    {
+                        Log::Error("editor: save failed: {}", saved.error());
+                    }
+                }
+
                 if (UI::MenuItem("Exit"))
                 {
                     RequestExit();
@@ -886,6 +906,21 @@ namespace VengEditor
                 else
                 {
                     stack->Undo();
+                }
+            }
+        }
+
+        // Ctrl/Cmd+S writes the focused document's source. Same WantTextInput suppression and
+        // post-Draw focus resolution as undo/redo, dispatched to the focused document's Save.
+        if (!ImGui::GetIO().WantTextInput && (UI::IsCtrlDown() || UI::IsSuperDown()) &&
+            UI::IsKeyPressed(UI::Key::S))
+        {
+            if (AssetEditorPanel* editor = FocusedAssetEditor())
+            {
+                const VoidResult saved = editor->Save();
+                if (!saved)
+                {
+                    Log::Error("editor: save failed: {}", saved.error());
                 }
             }
         }

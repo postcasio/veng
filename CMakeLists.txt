@@ -864,6 +864,7 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
             tests/cooker/module_reflect.cpp
             tests/cooker/prefab_cook.cpp
             tests/cooker/prefab_variant_cook.cpp
+            tests/cooker/prefab_save_roundtrip.cpp
             tests/cooker/level_cook.cpp
             tests/cooker/cook_source.cpp
             tests/cooker/material_compile_cook.cpp
