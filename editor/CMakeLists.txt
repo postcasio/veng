@@ -82,12 +82,11 @@ target_compile_definitions(veng_editor PRIVATE JSON_NOEXCEPTION)
 # changes, without adding a second imnodes.cpp build.
 target_link_libraries(veng_editor PRIVATE imnodes)
 
-# The editor launcher source veng_add_editor compiles per game (mirrors
-# VENG_LAUNCHER_MAIN in Game.cmake), plus the cook-on-demand seam (CookSession).
-# CookSession links libveng_cook — compiled into the exe, never into
-# libveng_editor, so the importer dependency stays out of the framework library.
+# The editor shell's main and the cook-on-demand seam (CookSession). CookSession
+# links libveng_cook — compiled into the exe, never into libveng_editor, so the
+# importer dependency stays out of the framework library.
 set(VENG_EDITOR_MAIN "${CMAKE_CURRENT_SOURCE_DIR}/src/editor_main.cpp"
-    CACHE INTERNAL "veng editor launcher source")
+    CACHE INTERNAL "veng editor shell main source")
 set(VENG_EDITOR_COOK_SESSION "${CMAKE_CURRENT_SOURCE_DIR}/src/CookSession.cpp"
     CACHE INTERNAL "veng editor cook-on-demand source")
 set(VENG_EDITOR_EXE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/src"
@@ -99,12 +98,46 @@ set(VENG_EDITOR_EXE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 #
 # The engine ships no icon content; the editor cooks its own icon textures and
 # resolves them to bindless TextureHandles for the debug-draw billboards. Cooked
-# once here and copied beside every editor exe by veng_add_editor, mounted by
-# EditorHost from ExecutableDirectory().
+# once here and copied beside the editor exe (its own content, mounted by EditorHost
+# from ExecutableDirectory() — distinct from a project's build dir).
 if (VENG_BUILD_TOOLS)
     add_asset_pack(veng_editor_icons
             PACK   assets/icons/editor_icons.vengpack.json
             OUTPUT ${CMAKE_BINARY_DIR}/editor_icons.vengpack)
     set(VENG_EDITOR_ICON_PACK "${CMAKE_BINARY_DIR}/editor_icons.vengpack"
         CACHE INTERNAL "veng editor icon pack (cooked)")
+endif ()
+
+# ---------------------------------------------------------------------------
+# veng-editor — the single, project-agnostic editor shell
+# ---------------------------------------------------------------------------
+#
+# One editor exe for every project (no per-game editor binary). Launched with
+# `--project <project.veng> --build-dir <build output>`; it reads the module(s) the
+# project names and dlopens them from the build dir. veng_add_editor (cmake/Editor.cmake)
+# registers a per-project `<name>-editor` run target that launches this with the right
+# arguments. Links libveng_cook PRIVATE through CookSession (the importer never reaches
+# libveng_editor). In-build it resolves libveng/libveng_editor/slang via the auto build rpath.
+if (VENG_BUILD_TOOLS)
+    add_executable(veng-editor ${VENG_EDITOR_MAIN} ${VENG_EDITOR_COOK_SESSION})
+    target_link_libraries(veng-editor PRIVATE veng::veng veng_editor::veng_editor veng::cook)
+    target_include_directories(veng-editor PRIVATE ${VENG_EDITOR_EXE_INCLUDE})
+
+    # The editor's own icon pack sits beside the exe (its own content, ExecutableDirectory()-mounted).
+    if (TARGET veng_editor_icons)
+        add_dependencies(veng-editor veng_editor_icons)
+        add_custom_command(TARGET veng-editor POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${VENG_EDITOR_ICON_PACK} $<TARGET_FILE_DIR:veng-editor>
+                COMMENT "Copying editor icon pack beside veng-editor")
+    endif ()
+
+    # Windows has no rpath: copy the editor's dependent DLLs (libveng, libveng_editor, slang.dll
+    # via veng::cook) beside the exe so it runs standalone.
+    if (WIN32)
+        add_custom_command(TARGET veng-editor POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:veng-editor> $<TARGET_FILE_DIR:veng-editor>
+            COMMAND_EXPAND_LISTS)
+    endif ()
 endif ()

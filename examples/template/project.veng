@@ -2,6 +2,7 @@
   "packs": [
     "assets/template.vengpack.json"
   ],
+  "module": "template",
   "configurations": [
     "configs/macos.buildcfg",
     "configs/windows.buildcfg",

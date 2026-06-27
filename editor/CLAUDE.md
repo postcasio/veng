@@ -6,10 +6,22 @@ engine ([engine/CLAUDE.md](../engine/CLAUDE.md)) — `Veng::UI`, `SceneRenderer`
 ([cooker/CLAUDE.md](../cooker/CLAUDE.md)) for its cook-on-demand loop. Project-wide
 conventions live in the [root CLAUDE.md](../CLAUDE.md).
 
-`libveng_editor` is the editor **framework** library; the `<name>-editor` exe
-(produced by `veng_add_editor`) links `libveng`, `libveng_editor`, and `libveng_cook`,
-and `dlopen`s the game module the same way the launcher does — but passing a non-null
-`EditorRegistry*` in `VengModuleHost::Editor`.
+`libveng_editor` is the editor **framework** library; the editor is a **single,
+project-agnostic `veng-editor` exe** (built in `editor/`, links `libveng`, `libveng_editor`,
+and `libveng_cook`) — **not** a per-game binary. It is launched with `--project <project.veng>`;
+it reads the module(s) the project names (`ProjectSettings::Module` / `EditorModule`, from the
+`"module"` / `"editorModule"` keys) and `dlopen`s them from the project's **build-output dir** the
+same way the launcher does — but passing a non-null `EditorRegistry*` in `VengModuleHost::Editor`.
+A game ships only its library, referenced from the project file. The build-output dir (cooked packs
++ module libraries) is **discovered from the project**: the build records it in a gitignored
+`.veng/build.json` sidecar beside the source `project.veng`, so launching with only a project
+resolves it — no CMake in the launch loop (the seam a future project-picker launcher uses;
+`--build-dir` stays an override). `veng_add_editor` builds no exe: it writes that sidecar, places an
+optional editor-extension module beside the launcher, and registers a per-project `<name>-editor`
+**run target** that launches `veng-editor` with the project's source `project.veng`. **Same-tree
+only** — a module must be built from the editor's own source tree (`VengModuleAbiVersion` rejects a
+mismatch at load); hosting separately built modules is a future module-ABI/SDK freeze (see
+[plans/future/README.md](../plans/future/README.md), area 6).
 
 - **`EditorHost`** is an `Application` subclass living in `libveng_editor`. It builds a
   top-level single-window `DockSpace` (`ImGuiConfigFlags_DockingEnable`; multi-viewport
@@ -140,14 +152,20 @@ and `dlopen`s the game module the same way the launcher does — but passing a n
   over the same round-trip (writing/clearing the `"role"` key) and shows the **resolved
   format read-only** for the active configuration ("→ ASTC4x4Srgb for 'macos'"), so the
   artist picks intent and reads the platform's codec without choosing one.
-- **The editor opens the project, not a manifest.** `EditorHostInfo::ProjectPath` (the
-  `project.veng`, baked absolute by `veng_add_editor`) is the editor's entrypoint:
-  `EditorHost` reads it through `LoadProjectSettings` (the host-owned `ProjectSettings` — its
-  `Configurations`, `ActiveConfiguration`, `Packs`, `StartupLevel`), mounts each cooked pack the
-  project names (beside the exe, under the source manifest's stem), and builds its
+- **The editor opens the project, not a manifest.** `EditorHostInfo::ProjectPath` (the source
+  `project.veng`, passed by `--project`) is the editor's entrypoint: `EditorHost::Create` reads it
+  through `LoadProjectSettings` (the host-owned `ProjectSettings` — its `Configurations`,
+  `ActiveConfiguration`, `Packs`, `StartupLevel`, and the `Module` / `EditorModule` names it
+  `dlopen`s), then resolves each module as `lib<name>.<ext>` beside the build output. **The build
+  output dir is resolved once in `Create`** (`m_BuildDir`): an explicit `EditorHostInfo::BuildDir`
+  (`--build-dir`) override, else discovery from the `.veng/build.json` sidecar beside the project
+  (`DiscoverProjectBuildDir`), else `ExecutableDirectory()` (the relocatable ship layout). The
+  editor mounts each cooked pack from `m_BuildDir` (under the source manifest's stem) and builds its
   `AssetSourceIndex` from the **union** of the project's pack manifests
-  (`AssetSourceIndex::ParsePacks`). The runtime `.vengproj` is a game-launch artifact the editor
-  does not consume. Cook-on-demand passes **every** project pack as a reference
+  (`AssetSourceIndex::ParsePacks`). The editor's own icon pack stays beside the editor exe
+  (`ExecutableDirectory()`), distinct from the project's build dir. The runtime `.vengproj` is a
+  game-launch artifact the editor does not consume. Cook-on-demand passes **every** project pack as
+  a reference
   (`CookRequest::ReferenceManifests`), so an edited asset resolves cross-asset ids across the
   whole project's one AssetId namespace, not just its own pack.
 - **Project Settings is a host-level panel.** `ProjectSettingsPanel` (opened from the

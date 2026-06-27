@@ -18,21 +18,24 @@ namespace VengEditor
     /// @brief Construction parameters for EditorHost.
     struct EditorHostInfo
     {
-        /// @brief Game module the host dlopen's at startup (the libgame being edited).
+        /// @brief Authoring project file (project.veng) the editor opens — its entrypoint.
         ///
-        /// Registers types, the Application factory, and — when an editor module is
-        /// also present — editor panels and asset editors.
-        Veng::path GameModulePath;
-
-        /// @brief Optional game editor-extension module. nullopt skips it.
-        Veng::optional<Veng::path> EditorModulePath;
-
-        /// @brief Authoring project file (project.veng) the editor opens.
-        ///
-        /// The editor reads the packs the project owns to map an AssetId to its per-asset JSON
-        /// source (so asset editors know which file to edit and recook) and loads the build
-        /// configurations. nullopt disables source resolution; asset editors have no source to open.
+        /// The editor reads the module(s) it dlopens (ProjectSettings::Module / EditorModule), the
+        /// packs the project owns (mapping an AssetId to its per-asset JSON source so asset editors
+        /// know which file to edit and recook), the build configurations, and the startup level
+        /// from it. nullopt leaves the editor with no project: no module loads and asset editors
+        /// have no source to open.
         Veng::optional<Veng::path> ProjectPath;
+
+        /// @brief Explicit override for the project's build-output dir — the cooked packs and the
+        /// module shared libraries the project names.
+        ///
+        /// nullopt is the normal case: Create discovers the build dir from the .veng/build.json
+        /// sidecar the build wrote beside the project, so launching with only a project works. A
+        /// non-null value overrides that discovery (CI, an unusual layout). With neither, Create
+        /// falls back to ExecutableDirectory() — the relocatable ship layout, packs + module beside
+        /// the editor. The editor's own icon pack always sits beside the editor exe, not here.
+        Veng::optional<Veng::path> BuildDir;
 
         /// @brief Engine application parameters.
         Veng::ApplicationInfo App;
@@ -122,8 +125,8 @@ namespace VengEditor
         /// can borrow the TypeRegistry by reference.
         struct Registries;
         /// @brief Private constructor; use Create().
-        EditorHost(const EditorHostInfo& info, Veng::Unique<Registries> registries,
-                   Veng::Unique<Veng::LoadedModule> gameModule,
+        EditorHost(const EditorHostInfo& info, Veng::ProjectSettings settings, Veng::path buildDir,
+                   Veng::Unique<Registries> registries, Veng::Unique<Veng::LoadedModule> gameModule,
                    Veng::optional<Veng::LoadedModule> editorModule);
 
         /// @brief Draws the main menu bar (File / Window menus).
@@ -153,6 +156,12 @@ namespace VengEditor
         /// @brief Absolute path project.veng saves to (its directory holds the *.buildcfg files).
         /// Empty when no manifest path is configured, which disables saving project settings.
         Veng::path m_ProjectFile;
+
+        /// @brief The resolved build-output dir (cooked packs + module libraries), fixed in Create.
+        ///
+        /// The override, the .veng/build.json sidecar discovery, or ExecutableDirectory(), resolved
+        /// once so every pack mount and the level-cook module path key off one value.
+        Veng::path m_BuildDir;
 
         /// @brief Ship configuration live preview is opted into, or nullopt for host-safe.
         ///

@@ -24,3 +24,10 @@ add_project(template_assets
 veng_add_game(template
         SOURCES main.cpp
         PROJECT ${template_assets_HOST_TARGET})
+
+# The minimal app gets editor support for free: the shared veng-editor opens its project, loads
+# libtemplate (named in project.veng), and edits its live sources. `cmake --build build --target
+# template-editor` launches it. No editor-extension module — the template registers no custom panels.
+veng_add_editor(template
+        GAME_MODULE template
+        PROJECT     ${template_assets_HOST_TARGET})

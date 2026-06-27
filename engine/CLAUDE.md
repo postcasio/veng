@@ -95,10 +95,13 @@ and the `SystemRegistry` (`GetTypeRegistry()` / `GetSystemRegistry()`) and still
 `Context`/`AssetManager`/`TaskSystem` unchanged — the
 launcher reads the factory back, constructs the app, and calls `Run()`.
 `veng_add_game(<name> SOURCES … [ASSET_PACK …])` is the build entry: it emits
-`lib<name>` + `<name>-launcher` from one declaration. **`veng_add_editor(<name>
-SOURCES …)`** is its editor sibling — it emits `lib<name>_editor` (SHARED, links
-`libveng_editor`) + `<name>-editor` (the editor exe, links `libveng`,
-`libveng_editor`, and `libveng_cook`); see [editor/CLAUDE.md](../editor/CLAUDE.md).
+`lib<name>` + `<name>-launcher` from one declaration. The editor is the **single
+project-agnostic `veng-editor` exe** (built in `editor/`), launched against a project; it
+reads the module(s) the project names and `dlopen`s them. **`veng_add_editor(<name> GAME_MODULE
+<t> [EDITOR_MODULE <t>] PROJECT <p>)`** builds no exe — it registers a per-project `<name>-editor`
+**run target** that launches `veng-editor` with the project; the optional `lib<name>_editor`
+editor-extension module is a caller-built `add_library` linking `libveng_editor`. See
+[editor/CLAUDE.md](../editor/CLAUDE.md).
 
 - **Same toolchain, one STL, one flag set.** Only the *entry* is C ABI; the payload
   is rich C++ (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a

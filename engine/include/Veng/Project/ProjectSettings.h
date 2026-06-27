@@ -35,6 +35,22 @@ namespace Veng
         /// (a decimal AssetId), not reflection — kept off the reflected field list so the editor's
         /// build-policy property table stays focused on the configurations.
         AssetId StartupLevel;
+
+        /// @brief The logical name of the game module the editor loads (e.g. "template").
+        ///
+        /// Resolved to a shared library beside the project's build output — lib<Module>.so /
+        /// lib<Module>.dylib / <Module>.dll — and dlopen'd by the editor to register the game's
+        /// types, systems, and Application factory. Persisted by hand through project.veng's
+        /// "module" key, not reflection (kept off the build-policy property table). Empty when the
+        /// project names no module; the runtime launcher bakes its own module name and ignores this.
+        string Module;
+
+        /// @brief The logical name of the optional editor-extension module, or empty for none.
+        ///
+        /// Resolved like Module and dlopen'd by the editor host with a non-null EditorRegistry, so
+        /// the game registers editor-only panels and field widgets. Persisted by hand through
+        /// project.veng's "editorModule" key. Empty when the project ships no editor extension.
+        string EditorModule;
     };
 }
 

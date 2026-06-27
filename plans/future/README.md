@@ -114,6 +114,51 @@ reflection (area 10, planset-11), the inspector + cook-on-demand foundation
 reflection rather than re-introducing it; its viewport renders one `Scene` through
 N `SceneRenderer` instances with no API change. A planset of its own.
 
+**The editor is a single shell launched against a project — delivered.** `veng_add_editor`
+no longer builds a per-game editor binary: one project-agnostic `veng-editor` exe (in `editor/`)
+is launched with `--project <project.veng>`, reads the module(s) the project names
+(`ProjectSettings::Module` / `EditorModule`, the `"module"` / `"editorModule"` keys), and dlopens
+them from the project's build-output dir — the game ships only its library, referenced from the
+project file. The build-output dir is **discovered from the project**: the build writes it into a
+gitignored `.veng/build.json` sidecar beside the source `project.veng`, so launching with only a
+project resolves it with no CMake in the loop (`--build-dir` stays an override). In-tree the
+`<name>-editor` **run target** launches it with the project's source.
+
+**A project-picker launcher — STILL FUTURE.** A standalone front-end that lists projects and, on
+selection, spawns `veng-editor --project <path>` (the editor self-discovers the build dir via the
+sidecar above — the seam this builds on). The project list is a **launcher-owned recent-projects
+list** (browse to a `project.veng` once, remembered; Unity-Hub style, no build coupling) **combined
+with a scanned default projects directory** in the user's home. The launcher stores its own state
+(the recent list, settings) in the **per-OS user data directory** — `%APPDATA%` on Windows,
+`~/Library/Application Support` on macOS, and the XDG base dir on Linux (`$XDG_CONFIG_HOME`, default
+`~/.config`, with `$XDG_DATA_HOME` / `~/.local/share` for non-config state) — fronted by a small
+engine path helper resolving the per-platform location. A shared resolver (project path → build dir,
+reading the sidecar) is reused by both the editor and the launcher. Multi-build-dir (one project
+built in `build/` and `build-debug/`) is **last-configure-wins** today; the launcher could surface
+the choice.
+
+**Hosting third-party game modules (the module ABI / SDK freeze) — STILL FUTURE.** The single-shell
+editor above is **same-tree only**: a module must be built from the same source tree as the editor,
+the `VengModuleAbiVersion` integer handshake rejecting a mismatch loudly at load. Letting a
+separately built (third-party) module load into a *shipped* editor needs a **frozen module ABI +
+a shipped SDK**:
+
+- a versioned SDK — installed headers + import libs + the `veng-editor` binary + a bundled cooker —
+  consumed through `find_package(veng)` (the install wiring named in
+  [game-module.md](game-module.md), which the editor shell now shares the need for);
+- a **pinned, enforced toolchain contract** — same compiler/STL, and `-fno-exceptions`/no-RTTI
+  uniformity (a module built *with* exceptions against `-fno-exceptions` veng is UB at the
+  boundary), today only convention;
+- **frozen, additive-only boundary interfaces** — the `VengModuleHost` layout and the
+  `Application` / `EditorPanel` / `SceneSystem` vtables a plugin derives from — versioned by semver
+  or capability negotiation rather than the blunt single integer, so an older module keeps loading
+  against a newer editor.
+
+Type / asset / system identity already crosses the boundary as authored `u64` ids (not RTTI or name
+mangling), and type registration is GPU-free by contract, so a bundled cooker reflects a plugin's
+types with no device — the hard parts of plugin identity are in hand. The gap is **packaging +
+interface-freezing discipline**, deferred until the engine surface stops churning each planset.
+
 Also still future: **installing `veng_add_game` for downstream
 `find_package(veng)` consumers** (see [game-module.md](game-module.md)).
 

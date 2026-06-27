@@ -40,8 +40,12 @@ is thin (shared deps + `add_subdirectory` per lib).
   reuses `ModuleLoader` to `dlopen` a game module and reflect its types — the one
   place the Vulkan-free cooker relaxes its separation, scoped to that load path
   (the graphics stack is linked but never initialized).
-- `editor/` — `libveng_editor`, the editor framework (a separate exe, not the
-  runtime). Links `libveng`; the `<name>-editor` exe also links `libveng_cook`.
+- `editor/` — `libveng_editor`, the editor framework, plus the single
+  project-agnostic **`veng-editor`** exe (not the runtime). Links `libveng`; the
+  `veng-editor` exe also links `libveng_cook`. It is launched against a project
+  (`--project <project.veng>`) and `dlopen`s the module(s) the project names, resolved from
+  the project's build-output dir — **discovered** from a gitignored `.veng/build.json`
+  sidecar the build writes beside the project. There is no per-game editor binary.
 - `examples/hello-triangle/` — the canonical **maximal** sample app and the smoke
   test. It is a **game module + launcher**, not one binary: `veng_add_game` builds
   `libhello_triangle` (shared, the app) plus `hello_triangle-launcher` (the exe

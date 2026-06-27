@@ -8,5 +8,7 @@
     "packs": [
         "assets/sample.vengpack.json"
     ],
+    "module": "hello_triangle",
+    "editorModule": "hello_triangle_editor",
     "startupLevel": 10791442065337163528
 }

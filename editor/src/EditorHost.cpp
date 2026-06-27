@@ -130,6 +130,38 @@ namespace VengEditor
             return config;
         }
 
+        // Reads the build-output dir the build recorded beside the project, in its .veng/build.json
+        // sidecar (the dir holding the cooked packs + module libraries). A gitignored, machine-local
+        // file written by veng_add_editor at configure time. nullopt when no project, no sidecar, or
+        // no "buildDir" key — the caller then falls back to an override or the editor's own directory.
+        optional<path> DiscoverProjectBuildDir(const optional<path>& projectPath)
+        {
+            if (!projectPath)
+            {
+                return std::nullopt;
+            }
+            const path sidecar = projectPath->parent_path() / ".veng" / "build.json";
+            const optional<nlohmann::json> doc = ReadJsonObject(sidecar);
+            if (!doc || !doc->contains("buildDir") || !(*doc)["buildDir"].is_string())
+            {
+                return std::nullopt;
+            }
+            return path{(*doc)["buildDir"].get<string>()};
+        }
+
+        // Composes a module's shared-library file name from its logical name, per platform — the
+        // editor resolves the project-named module beside the build output (lib<name>.<ext>).
+        path ModuleFileName(const string& name)
+        {
+#if defined(_WIN32)
+            return path{name + ".dll"};
+#elif defined(__APPLE__)
+            return path{"lib" + name + ".dylib"};
+#else
+            return path{"lib" + name + ".so"};
+#endif
+        }
+
         // Loads project.veng (a list of *.buildcfg file names + the active configuration name)
         // into a ProjectSettings. A missing or malformed file yields the empty zero-config state.
         ProjectSettings LoadProjectSettings(const path& projectFile)
@@ -151,6 +183,17 @@ namespace VengEditor
                 (*project)["startupLevel"].is_number_unsigned())
             {
                 settings.StartupLevel = AssetId{.Value = (*project)["startupLevel"].get<u64>()};
+            }
+
+            // The module(s) the editor dlopens, named logically (the build writes lib<name>.<ext>
+            // beside the build output, where the editor resolves them).
+            if (project->contains("module") && (*project)["module"].is_string())
+            {
+                settings.Module = (*project)["module"].get<string>();
+            }
+            if (project->contains("editorModule") && (*project)["editorModule"].is_string())
+            {
+                settings.EditorModule = (*project)["editorModule"].get<string>();
             }
 
             const path dir = projectFile.parent_path();
@@ -364,16 +407,46 @@ namespace VengEditor
         RegisterBuiltinTypes(registries->Types);
         RegisterBuiltinSystems(registries->Systems);
 
-        Result<LoadedModule> gameModule = ModuleLoader::Load(info.GameModulePath);
+        // The project is the editor's entrypoint: it names the module(s) to load, resolved as
+        // shared libraries beside the project's build output.
+        ProjectSettings settings;
+        if (info.ProjectPath)
+        {
+            settings = LoadProjectSettings(*info.ProjectPath);
+        }
+
+        // Resolve the build-output dir (cooked packs + module libraries): an explicit --build-dir
+        // override wins; else the dir the build recorded beside the project (.veng/build.json), so
+        // launching with only a project self-discovers it; else the editor's own directory (the
+        // relocatable ship layout, where packs + module sit beside the editor).
+        path buildDir;
+        if (info.BuildDir)
+        {
+            buildDir = *info.BuildDir;
+        }
+        else if (const optional<path> discovered = DiscoverProjectBuildDir(info.ProjectPath))
+        {
+            buildDir = *discovered;
+        }
+        else
+        {
+            buildDir = ExecutableDirectory();
+        }
+
+        VE_ASSERT(!settings.Module.empty(),
+                  "editor: project names no module (its \"module\" key); nothing to load");
+        const path gameModulePath = buildDir / ModuleFileName(settings.Module);
+        Result<LoadedModule> gameModule = ModuleLoader::Load(gameModulePath);
         VE_ASSERT(gameModule.has_value(), "editor: failed to load game module {}: {}",
-                  info.GameModulePath.string(), gameModule.error());
+                  gameModulePath.string(), gameModule.error());
 
         optional<LoadedModule> editorModule;
-        if (info.EditorModulePath)
+        if (!settings.EditorModule.empty())
         {
-            Result<LoadedModule> loaded = ModuleLoader::Load(*info.EditorModulePath);
+            const path editorModulePath = buildDir / ModuleFileName(settings.EditorModule);
+            Result<LoadedModule> loaded = ModuleLoader::Load(editorModulePath);
             VE_ASSERT(loaded.has_value(), "editor: failed to load editor module {}: {}",
-                      info.EditorModulePath->string(), loaded.error());
+                      editorModulePath.string(), loaded.error());
             editorModule.emplace(std::move(*loaded));
         }
 
@@ -390,15 +463,18 @@ namespace VengEditor
         }
 
         auto gameModulePtr = CreateUnique<LoadedModule>(std::move(*gameModule));
-        return Unique<EditorHost>(new EditorHost(
-            info, std::move(registries), std::move(gameModulePtr), std::move(editorModule)));
+        return Unique<EditorHost>(new EditorHost(info, std::move(settings), std::move(buildDir),
+                                                 std::move(registries), std::move(gameModulePtr),
+                                                 std::move(editorModule)));
     }
 
-    EditorHost::EditorHost(const EditorHostInfo& info, Unique<Registries> registries,
-                           Unique<LoadedModule> gameModule, optional<LoadedModule> editorModule)
+    EditorHost::EditorHost(const EditorHostInfo& info, ProjectSettings settings, path buildDir,
+                           Unique<Registries> registries, Unique<LoadedModule> gameModule,
+                           optional<LoadedModule> editorModule)
         : Application(info.App, registries->Types, registries->Systems), m_Info(info),
           m_Registries(std::move(registries)), m_GameModule(std::move(gameModule)),
-          m_EditorModule(std::move(editorModule))
+          m_EditorModule(std::move(editorModule)), m_ProjectSettings(std::move(settings)),
+          m_ProjectFile(info.ProjectPath.value_or(path{})), m_BuildDir(std::move(buildDir))
     {
     }
 
@@ -462,21 +538,18 @@ namespace VengEditor
     {
         VE_ASSERT(GetImGuiLayer() != nullptr, "editor host requires the ImGui layer");
 
-        // The project is the editor's entrypoint: load it (or stay at the empty zero-config state)
-        // and remember its path so the panel saves there.
-        if (m_Info.ProjectPath)
-        {
-            m_ProjectFile = *m_Info.ProjectPath;
-            m_ProjectSettings = LoadProjectSettings(m_ProjectFile);
-        }
+        // The project settings (configurations, packs, module names, startup level) were loaded in
+        // Create, which also resolved the build-output dir (override / sidecar discovery / the
+        // editor's own directory). The cooked packs live there alongside the module libraries.
+        const path& buildDir = m_BuildDir;
 
-        // Mount each cooked pack the project names. The cooked pack sits beside the exe (copied by
+        // Mount each cooked pack the project names. The cooked pack sits in the build dir (copied by
         // veng_add_game) under the source manifest's stem: assets/sample.vengpack.json ->
         // sample.vengpack.
         for (const path& packSource : m_ProjectSettings.Packs)
         {
             const path mountName = packSource.stem();
-            const VoidResult mount = GetAssetManager().Mount(ExecutableDirectory() / mountName);
+            const VoidResult mount = GetAssetManager().Mount(buildDir / mountName);
             VE_ASSERT(mount, "{}", mount.error());
         }
 
@@ -537,12 +610,11 @@ namespace VengEditor
                                       GetInputRouter(), GetSystemRegistry(), cookFor()));
         }
 
-        // The asset browser reads the first mounted pack (cooked beside the exe under the source
+        // The asset browser reads the first mounted pack (cooked in the build dir under the source
         // manifest's stem); an unconfigured project leaves it with an empty path.
-        const path browserPack =
-            m_ProjectSettings.Packs.empty()
-                ? path{}
-                : ExecutableDirectory() / m_ProjectSettings.Packs.front().stem();
+        const path browserPack = m_ProjectSettings.Packs.empty()
+                                     ? path{}
+                                     : buildDir / m_ProjectSettings.Packs.front().stem();
         m_Panels.push_back({CreateUnique<AssetBrowserPanel>(browserPack, *m_Sources, *this), true});
         m_Panels.push_back({CreateUnique<ConsolePanel>(), true});
         m_Panels.push_back(
@@ -580,8 +652,12 @@ namespace VengEditor
         resolved.ReferenceManifests = m_ProjectSettings.Packs;
 
         // A level cook validates its system ids and config against the module's reflected
-        // catalogs, so inject the game module path; non-level cooks ignore an empty value.
-        resolved.ModulePath = m_Info.GameModulePath;
+        // catalogs, so inject the game module path (resolved beside the build output, as in
+        // Create); non-level cooks ignore an empty value.
+        if (!m_ProjectSettings.Module.empty())
+        {
+            resolved.ModulePath = m_BuildDir / ModuleFileName(m_ProjectSettings.Module);
+        }
 
         // Thread the *preview* configuration, not the selected ship configuration: it is
         // host-safe by default (an uncompressed profile every GPU can sample), so the editor's
