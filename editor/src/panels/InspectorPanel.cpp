@@ -143,15 +143,7 @@ namespace VengEditor
         bool changed = false;
         if (auto table = UI::PropertyTable("##fields"))
         {
-            for (const FieldDescriptor& field : info.Fields)
-            {
-                if (field.Hidden)
-                {
-                    continue;
-                }
-                void* fieldPtr = static_cast<u8*>(component) + field.Offset;
-                changed |= DrawFieldWidget(fieldPtr, field, ctx);
-            }
+            changed = DrawFields(component, info.Fields, ctx);
         }
 
         // An edit to a MeshRenderer's recipe source (its shape/parameters) regenerates no

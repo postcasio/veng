@@ -81,6 +81,22 @@ namespace Veng::UI
         ImGui::SetNextItemWidth(-FLT_MIN);
     }
 
+    bool PropertyHeader(string_view id, bool defaultOpen)
+    {
+        const string label = AsCStr(id);
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        // SpanAllColumns stretches the header frame across both property columns; the label
+        // also spans, so it is not clipped to the auto-sized label column.
+        ImGuiTreeNodeFlags flags =
+            ImGuiTreeNodeFlags_SpanAllColumns | ImGuiTreeNodeFlags_LabelSpanAllColumns;
+        if (defaultOpen)
+        {
+            flags |= ImGuiTreeNodeFlags_DefaultOpen;
+        }
+        return ImGui::CollapsingHeader(label.c_str(), flags);
+    }
+
     f32 GetFrameHeight()
     {
         return ImGui::GetFrameHeight();

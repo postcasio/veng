@@ -62,6 +62,19 @@ namespace Veng::UI
     /// @param label  Property name drawn in the label column.
     void PropertyLabel(string_view label);
 
+    /// @brief Draws a full-width collapsing-header row spanning every column of a property table.
+    ///
+    /// Advances to a new row and draws a `CollapsingHeader` whose frame spans the whole table
+    /// width (label starting in column 0), so a section header sits cleanly between the
+    /// two-column `label : widget` rows without opening a nested table inside a cell. Call
+    /// inside a `PropertyTable` scope; draw the section's rows only when it returns true. The
+    /// header's open/closed state is ImGui-owned, keyed by `id` — `defaultOpen` only seeds the
+    /// first frame.
+    /// @param id           Header label and ImGui id (prefix with `##` to hide the visible label).
+    /// @param defaultOpen  Whether the section starts expanded on its first frame.
+    /// @return True when the section is open and its rows should be drawn.
+    [[nodiscard]] bool PropertyHeader(string_view id, bool defaultOpen = true);
+
     /// @brief Returns the height of a framed widget (one text line plus frame padding), in pixels.
     ///
     /// The vertical extent of a button, header, or input — used to position content overlaid

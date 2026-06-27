@@ -471,15 +471,7 @@ namespace VengEditor
             const TypeInfo& info = types.Info(type);
             if (auto table = UI::PropertyTable(fmt::format("##{}", info.Name)))
             {
-                for (const FieldDescriptor& field : info.Fields)
-                {
-                    if (field.Hidden)
-                    {
-                        continue;
-                    }
-                    void* fieldPtr = static_cast<u8*>(obj) + field.Offset;
-                    changed |= DrawFieldWidget(fieldPtr, field, ctx);
-                }
+                changed |= DrawFields(obj, info.Fields, ctx);
             }
         };
 

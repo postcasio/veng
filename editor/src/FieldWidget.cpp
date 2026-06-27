@@ -18,6 +18,7 @@
 #include <Veng/UI/UI.h>
 #include <VengEditor/EditorRegistry.h>
 
+#include <algorithm>
 #include <cstring>
 #include <unordered_set>
 
@@ -258,22 +259,62 @@ namespace VengEditor
     }
 
     // Recurses each non-hidden field of a struct/active-alternative as an indented row;
-    // shared by the Struct, Variant, and Array-element cases. Returns true when any nested
-    // field changed.
+    // shared by the Struct, Variant, and Array-element cases. Routes through the shared
+    // DrawFields walk so nested fields get the same Category grouping the top-level walk does.
+    // Returns true when any nested field changed.
     static bool DrawStructFields(void* base, const TypeInfo& info, const FieldWidgetContext& ctx)
     {
-        bool changed = false;
         UI::Indent();
-        for (const FieldDescriptor& nestedField : info.Fields)
+        const bool changed = DrawFields(base, info.Fields, ctx);
+        UI::Unindent();
+        return changed;
+    }
+
+    bool DrawFields(void* base, std::span<const FieldDescriptor> fields,
+                    const FieldWidgetContext& ctx)
+    {
+        bool changed = false;
+
+        // Draw the un-categorized fields first, in declared order; gather the categories in
+        // first-seen order so the grouped sections below keep a predictable layout.
+        vector<string_view> categories;
+        for (const FieldDescriptor& field : fields)
         {
-            if (nestedField.Hidden)
+            if (field.Hidden)
             {
                 continue;
             }
-            void* nestedPtr = static_cast<u8*>(base) + nestedField.Offset;
-            changed |= DrawFieldWidget(nestedPtr, nestedField, ctx);
+            if (field.Category.empty())
+            {
+                void* fieldPtr = static_cast<u8*>(base) + field.Offset;
+                changed |= DrawFieldWidget(fieldPtr, field, ctx);
+                continue;
+            }
+            if (std::ranges::find(categories, field.Category) == categories.end())
+            {
+                categories.emplace_back(field.Category);
+            }
         }
-        UI::Unindent();
+
+        // Each category renders under a full-width collapsing header, its fields in declared
+        // order. The header is a no-op extra row when no field carries a Category.
+        for (const string_view category : categories)
+        {
+            if (!UI::PropertyHeader(category))
+            {
+                continue;
+            }
+            for (const FieldDescriptor& field : fields)
+            {
+                if (field.Hidden || field.Category != category)
+                {
+                    continue;
+                }
+                void* fieldPtr = static_cast<u8*>(base) + field.Offset;
+                changed |= DrawFieldWidget(fieldPtr, field, ctx);
+            }
+        }
+
         return changed;
     }
 
@@ -378,11 +419,18 @@ namespace VengEditor
         }
 
         // An add/remove list over a FieldClass::Array field. The label row carries an Add
-        // button; each element flattens its fields as indented rows beneath a per-element row
-        // bearing a Remove button. Reorder is not offered — the configuration list is order-
-        // independent. Returns true when an element was added, removed, or edited.
+        // button; each element draws its fields either flat (a per-element row bearing a Remove
+        // button) or, when `collapsible`, under a foldable header whose row carries the Remove
+        // button. Reorder is not offered — the configuration list is order-independent.
+        //
+        // The element fold state is ImGui-owned, keyed on the positional per-element id
+        // ({label}elem{i}); the elements are bare structs with no stable identity to key on, so
+        // removing element [i] slides every later element's fold state down one. This is
+        // harmless precisely because the list is order-independent.
+        //
+        // Returns true when an element was added, removed, or edited.
         bool DrawArray(void* fieldPtr, const FieldDescriptor& field, string_view label,
-                       const FieldWidgetContext& ctx)
+                       const FieldWidgetContext& ctx, bool collapsible, bool defaultOpen)
         {
             const TypeRegistry& registry = ctx.Assets.GetTypeRegistry();
             const TypeInfo& elementInfo = registry.Info(field.ElementType);
@@ -405,6 +453,25 @@ namespace VengEditor
             {
                 void* element = field.ArrayElement(fieldPtr, i);
                 auto elementScope = UI::PushId(fmt::format("{}elem{}", label, i));
+
+                if (collapsible)
+                {
+                    // The header (spanning both columns) carries the element's fold; the Remove
+                    // button sits in the value column of the same row, so a collapsed element's
+                    // removal stays reachable without expanding it.
+                    const bool open =
+                        UI::PropertyHeader(fmt::format("[{}]##elemhdr", i), defaultOpen);
+                    UI::TableSetColumnIndex(1);
+                    if (UI::SmallButton("Remove##remove"))
+                    {
+                        removeAt = i;
+                    }
+                    if (open)
+                    {
+                        changed |= DrawStructFields(element, elementInfo, ctx);
+                    }
+                    continue;
+                }
 
                 UI::PropertyLabel(fmt::format("[{}]", i));
                 if (UI::SmallButton("Remove##remove"))
@@ -510,14 +577,25 @@ namespace VengEditor
         }
 
         // A nested struct flattens into further indented rows in the same table — never a
-        // nested BeginTable inside a cell.
+        // nested BeginTable inside a cell. When the field resolves Collapsible, the struct
+        // instead folds under a full-width header whose body is the same recursion.
         if (field.Class == FieldClass::Struct)
         {
-            UI::PropertyLabel(displayName);
             // Scope nested rows under the field name so a nested member sharing a name with
             // an outer field keeps a distinct widget id.
             auto structScope = UI::PushId(valueLabel);
-            const TypeInfo& nested = ctx.Assets.GetTypeRegistry().Info(field.Type);
+            const TypeRegistry& registry = ctx.Assets.GetTypeRegistry();
+            const TypeInfo& nested = registry.Info(field.Type);
+            const FieldDisplay display = ResolveFieldDisplay(field, registry);
+            if (display.Collapsible.value_or(false))
+            {
+                if (!UI::PropertyHeader(displayName, display.DefaultOpen.value_or(true)))
+                {
+                    return false;
+                }
+                return DrawStructFields(fieldPtr, nested, ctx);
+            }
+            UI::PropertyLabel(displayName);
             return DrawStructFields(fieldPtr, nested, ctx);
         }
 
@@ -535,13 +613,17 @@ namespace VengEditor
             return changed;
         }
 
-        // An array draws an Add button on its own row, then flattens each element's fields into
-        // indented rows beneath a per-element row carrying a Remove button.
+        // An array draws an Add button on its own row, then each element's fields beneath it.
+        // When the field resolves Collapsible, each element is a foldable header; otherwise the
+        // elements flatten into indented rows under a per-element Remove row.
         if (field.Class == FieldClass::Array)
         {
             UI::PropertyLabel(displayName);
             auto arrayScope = UI::PushId(valueLabel);
-            const bool changed = DrawArray(fieldPtr, field, valueLabel, ctx);
+            const FieldDisplay display = ResolveFieldDisplay(field, ctx.Assets.GetTypeRegistry());
+            const bool changed =
+                DrawArray(fieldPtr, field, valueLabel, ctx, display.Collapsible.value_or(false),
+                          display.DefaultOpen.value_or(true));
             if (!field.Tooltip.empty())
             {
                 UI::Tooltip(field.Tooltip);

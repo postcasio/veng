@@ -540,14 +540,7 @@ namespace VengEditor
             auto disabled = UI::Disabled(m_ReadOnly);
             if (auto table = UI::PropertyTable("##nodeprops"))
             {
-                for (const FieldDescriptor& field : type->Properties)
-                {
-                    if (field.Hidden)
-                    {
-                        continue;
-                    }
-                    DrawFieldWidget(scratch.data() + field.Offset, field, ctx);
-                }
+                (void)DrawFields(scratch.data(), type->Properties, ctx);
             }
         }
 

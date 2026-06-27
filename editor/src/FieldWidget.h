@@ -4,6 +4,8 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 
+#include <span>
+
 namespace Veng
 {
     class AssetManager;
@@ -57,4 +59,21 @@ namespace VengEditor
     /// @pre Called inside an open `UI::PropertyTable` scope.
     bool DrawFieldWidget(void* fieldPtr, const Veng::FieldDescriptor& field,
                          const FieldWidgetContext& ctx);
+
+    /// @brief Walks a struct's (or component's) fields as property-table rows, grouping by Category.
+    ///
+    /// The single field-walk every inspector surface routes through: the entity inspector, the
+    /// node-property inspector, project settings, the level editor, and the nested-struct
+    /// recursion. Skips `Hidden` fields and calls `DrawFieldWidget` for each, with `fieldPtr`
+    /// derived as `base + FieldDescriptor::Offset`. Fields carrying a `Category` are grouped
+    /// under a full-width `UI::PropertyHeader` named for the category; un-categorized fields
+    /// render first. Grouping is stable: declared order within a category, categories in
+    /// first-seen order.
+    /// @param base    Pointer to the owning struct/component instance.
+    /// @param fields  The owning type's field descriptors, in declared order.
+    /// @param ctx     Dependencies: asset manager, source index, editor registry.
+    /// @return True when any field's edit changed it, so a caller can re-resolve the owner.
+    /// @pre Called inside an open `UI::PropertyTable` scope.
+    bool DrawFields(void* base, std::span<const Veng::FieldDescriptor> fields,
+                    const FieldWidgetContext& ctx);
 }

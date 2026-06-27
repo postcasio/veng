@@ -101,15 +101,7 @@ namespace VengEditor
             .Assets = m_Assets, .Sources = m_Sources, .Editors = m_Editors};
         if (auto table = UI::PropertyTable("##projectsettings"))
         {
-            for (const FieldDescriptor& field : info.Fields)
-            {
-                if (field.Hidden)
-                {
-                    continue;
-                }
-                void* fieldPtr = reinterpret_cast<u8*>(&m_Settings) + field.Offset;
-                (void)DrawFieldWidget(fieldPtr, field, ctx);
-            }
+            (void)DrawFields(&m_Settings, info.Fields, ctx);
         }
 
         UI::SeparatorText("Active configuration");
