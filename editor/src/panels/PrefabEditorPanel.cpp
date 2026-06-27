@@ -52,10 +52,11 @@ namespace VengEditor
                                                     const AssetSourceIndex& sources)
     {
         auto viewport = CreateUnique<SceneViewportPanel>(app, m_Assets, imgui, m_Context, m_Input,
-                                                         m_Router, *this);
+                                                         m_Router, *this, m_Commands);
         m_Viewport = viewport.get();
-        auto explorer = CreateUnique<PrefabExplorerPanel>(m_Context);
-        auto inspector = CreateUnique<InspectorPanel>(m_Assets, editors, sources, m_Context);
+        auto explorer = CreateUnique<PrefabExplorerPanel>(m_Context, m_Commands);
+        auto inspector =
+            CreateUnique<InspectorPanel>(m_Assets, editors, sources, m_Context, m_Commands);
 
         m_ViewportChild = AddChild(std::move(viewport));
         m_ExplorerChild = AddChild(std::move(explorer));

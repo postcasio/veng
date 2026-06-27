@@ -34,6 +34,7 @@ namespace Veng
 
 namespace VengEditor
 {
+    class CommandStack;
     class PrefabEditorPanel;
 
     /// @brief Scene viewport child of a prefab editor: shows the document's Scene from
@@ -56,9 +57,11 @@ namespace VengEditor
         /// @param input     Frame-coherent input service the editor camera reads.
         /// @param router    Input router whose gameplay focus captures the mouse during Play.
         /// @param document  Owning document the toolbar drives play state through.
+        /// @param commands  The document's undo/redo stack a gizmo drag is committed through.
         SceneViewportPanel(Veng::Application& app, Veng::AssetManager& assets,
                            Veng::ImGuiLayer& imgui, PrefabEditContext& ctx, Veng::Input& input,
-                           Veng::InputRouter& router, PrefabEditorPanel& document);
+                           Veng::InputRouter& router, PrefabEditorPanel& document,
+                           CommandStack& commands);
         ~SceneViewportPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return "Scene Viewport"; }
@@ -144,6 +147,7 @@ namespace VengEditor
         Veng::Input& m_Input;
         Veng::InputRouter& m_Router;
         PrefabEditorPanel& m_Document;
+        CommandStack& m_Commands;
 
         /// @brief The owned Offscreen viewport; registered into the app's drive-list on construction.
         Veng::Unique<Veng::Renderer::Viewport> m_Viewport;

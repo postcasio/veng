@@ -6,6 +6,9 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/UI/UI.h>
 
+#include "CommandStack.h"
+#include "EditorCommand.h"
+
 #include <cctype>
 #include <cstring>
 
@@ -53,9 +56,53 @@ namespace VengEditor
             std::memcpy(&entity, payload, sizeof(Entity));
             return entity;
         }
+
+        // The sibling @p entity sits before in its ordered list (its NextSibling), or Null when it is
+        // last/only. A reparent command captures this so an undo restores the exact ordered slot.
+        Entity NextSiblingOf(const Scene& scene, Entity entity)
+        {
+            const Entity parent = scene.GetParent(entity);
+            Entity found = Entity::Null;
+            bool seen = false;
+            const auto consider = [&](Entity candidate)
+            {
+                if (!found.IsNull())
+                {
+                    return;
+                }
+                if (seen)
+                {
+                    found = candidate;
+                }
+                if (candidate == entity)
+                {
+                    seen = true;
+                }
+            };
+            if (parent.IsNull())
+            {
+                // Roots have no parent child-list; their order is slot order (ForEachEntity).
+                scene.ForEachEntity(
+                    [&](Entity candidate)
+                    {
+                        if (scene.GetParent(candidate).IsNull() || candidate == entity)
+                        {
+                            consider(candidate);
+                        }
+                    });
+            }
+            else
+            {
+                scene.ForEachChild(parent, consider);
+            }
+            return found;
+        }
     }
 
-    PrefabExplorerPanel::PrefabExplorerPanel(PrefabEditContext& ctx) : m_Ctx(ctx) {}
+    PrefabExplorerPanel::PrefabExplorerPanel(PrefabEditContext& ctx, CommandStack& commands)
+        : m_Ctx(ctx), m_Commands(commands)
+    {
+    }
 
     void PrefabExplorerPanel::OnUI()
     {
@@ -331,10 +378,10 @@ namespace VengEditor
         {
         case PendingOp::Kind::CreateRoot:
         {
-            const Entity created = scene->CreateEntity();
-            scene->Add<Name>(created, Name{.Value = "Entity"});
-            scene->Add<Transform>(created);
-            m_Ctx.SelectOnly(created);
+            auto command = CreateUnique<CreateEntityCommand>(Entity::Null);
+            CreateEntityCommand* raw = command.get();
+            m_Commands.Push(std::move(command));
+            m_Ctx.SelectOnly(raw->GetCreated());
             break;
         }
         case PendingOp::Kind::CreateChild:
@@ -343,11 +390,10 @@ namespace VengEditor
             {
                 break;
             }
-            const Entity created = scene->CreateEntity();
-            scene->Add<Name>(created, Name{.Value = "Entity"});
-            scene->Add<Transform>(created);
-            scene->SetParent(created, op.Target);
-            m_Ctx.SelectOnly(created);
+            auto command = CreateUnique<CreateEntityCommand>(op.Target);
+            CreateEntityCommand* raw = command.get();
+            m_Commands.Push(std::move(command));
+            m_Ctx.SelectOnly(raw->GetCreated());
             break;
         }
         case PendingOp::Kind::Reparent:
@@ -355,7 +401,10 @@ namespace VengEditor
             if (scene->IsAlive(op.Source) && scene->IsAlive(op.Target) && op.Source != op.Target &&
                 !IsDescendant(*scene, op.Source, op.Target))
             {
-                scene->SetParent(op.Source, op.Target);
+                // SetParent appends as the last child of op.Target: the new neighbor is Null.
+                m_Commands.Push(CreateUnique<ReparentCommand>(
+                    op.Source, scene->GetParent(op.Source), NextSiblingOf(*scene, op.Source),
+                    op.Target, Entity::Null));
             }
             break;
         }
@@ -364,7 +413,10 @@ namespace VengEditor
             if (scene->IsAlive(op.Source) && scene->IsAlive(op.Target) && op.Source != op.Target &&
                 !IsDescendant(*scene, op.Source, op.Target))
             {
-                scene->MoveBefore(op.Source, op.Target);
+                // MoveBefore inserts op.Source ahead of op.Target under op.Target's parent.
+                m_Commands.Push(CreateUnique<ReparentCommand>(
+                    op.Source, scene->GetParent(op.Source), NextSiblingOf(*scene, op.Source),
+                    scene->GetParent(op.Target), op.Target));
             }
             break;
         }
@@ -372,7 +424,10 @@ namespace VengEditor
         {
             if (scene->IsAlive(op.Source))
             {
-                scene->Detach(op.Source);
+                // Detach reparents to the root and appends last: new parent and neighbor are Null.
+                m_Commands.Push(CreateUnique<ReparentCommand>(
+                    op.Source, scene->GetParent(op.Source), NextSiblingOf(*scene, op.Source),
+                    Entity::Null, Entity::Null));
             }
             break;
         }
@@ -380,81 +435,29 @@ namespace VengEditor
         {
             if (scene->IsAlive(op.Source))
             {
-                const Entity parent = scene->GetParent(op.Source);
-                const Entity copy = DuplicateSubtree(op.Source, parent);
-                m_Ctx.SelectOnly(copy);
+                auto command = CreateUnique<DuplicateEntityCommand>(op.Source);
+                DuplicateEntityCommand* raw = command.get();
+                m_Commands.Push(std::move(command));
+                m_Ctx.SelectOnly(raw->GetCopy());
             }
             break;
         }
         case PendingOp::Kind::DeleteSelection:
         {
-            // Copy out the selection: DestroyEntity is recursive and prunes the set.
+            // Copy out the selection: a destroy command captures and recursively removes a subtree,
+            // and Prune drops the now-stale handles from the set.
             const vector<Entity> targets = m_Ctx.Selection;
             for (const Entity entity : targets)
             {
                 if (scene->IsAlive(entity))
                 {
-                    scene->DestroyEntity(entity);
+                    m_Commands.Push(CreateUnique<DestroyEntityCommand>(entity));
                 }
             }
             m_Ctx.Prune();
             break;
         }
         }
-    }
-
-    Entity PrefabExplorerPanel::DuplicateSubtree(Entity source, Entity newParent)
-    {
-        Scene* scene = m_Ctx.Scene;
-        TypeRegistry& types = scene->GetTypeRegistry();
-        const TypeId hierarchyId = types.IdOf<Hierarchy>();
-
-        const Entity copy = scene->CreateEntity();
-
-        // Copy every component except Hierarchy by round-tripping its fields through the
-        // reflection serializer. Hierarchy is excluded — its links are rebuilt via
-        // SetParent below. Cross-entity Reference fields are NOT remapped here; only the
-        // parent/child hierarchy links are rebuilt for the copied subtree.
-        vector<u8> scratch;
-        scene->ForEachComponent(
-            source,
-            [&](TypeId id, void* component)
-            {
-                if (id == hierarchyId)
-                {
-                    return;
-                }
-                const TypeInfo& info = types.Info(id);
-                scratch.clear();
-                WriteFields(scratch, component, info, types);
-
-                void* slot = scene->AddComponent(copy, id);
-                const VoidResult read = ReadFields(scratch, slot, info, types);
-                VE_ASSERT(read.has_value(), "Duplicate: ReadFields failed for '{}': {}", info.Name,
-                          read.has_value() ? string{} : read.error());
-            });
-
-        if (!newParent.IsNull() && scene->IsAlive(newParent))
-        {
-            scene->SetParent(copy, newParent);
-        }
-
-        // Snapshot the source's children before recursing: DuplicateSubtree adds entities,
-        // so the live child walk cannot run concurrently with the structural edits.
-        vector<Entity> sourceChildren;
-        scene->ForEachChild(source, [&](Entity child) { sourceChildren.push_back(child); });
-        for (const Entity child : sourceChildren)
-        {
-            (void)DuplicateSubtree(child, copy);
-        }
-
-        // Round-tripping the components copies a MeshRenderer's recipe source but builds no
-        // mesh; rebuild the derived mesh from the copied source so the duplicate streams it
-        // in. There is no inspector edit or changed-bool on a byte copy to hook, so the
-        // duplicate path drives the rebuild explicitly.
-        m_Ctx.ResolveEntity(copy);
-
-        return copy;
     }
 
     bool PrefabExplorerPanel::MatchesFilter(string_view name) const

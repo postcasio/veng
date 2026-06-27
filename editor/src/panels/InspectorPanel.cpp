@@ -1,13 +1,17 @@
 #include "panels/InspectorPanel.h"
 
+#include "CommandStack.h"
+#include "EditorCommand.h"
 #include "FieldWidget.h"
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/UI/UI.h>
+#include <Veng/Vendor/ImGui.h>
 #include <VengEditor/EditorRegistry.h>
 
 #include <algorithm>
@@ -34,8 +38,9 @@ namespace VengEditor
     }
 
     InspectorPanel::InspectorPanel(AssetManager& assets, EditorRegistry& editors,
-                                   const AssetSourceIndex& sources, PrefabEditContext& ctx)
-        : m_Assets(assets), m_Editors(editors), m_Sources(sources), m_Ctx(ctx)
+                                   const AssetSourceIndex& sources, PrefabEditContext& ctx,
+                                   CommandStack& commands)
+        : m_Assets(assets), m_Editors(editors), m_Sources(sources), m_Ctx(ctx), m_Commands(commands)
     {
     }
 
@@ -45,6 +50,8 @@ namespace VengEditor
         const Entity entity = m_Ctx.Active;
         if (scene == nullptr || entity.IsNull() || !scene->IsAlive(entity))
         {
+            // A pending edit whose entity vanished can never resolve — drop it.
+            m_PendingEdit.reset();
             UI::TextDisabled("Nothing selected");
             return;
         }
@@ -57,10 +64,43 @@ namespace VengEditor
         scene->ForEachComponent(entity, [&](TypeId id, void* component)
                                 { DrawComponent(entity, id, component, removeId, remove); });
 
-        // A structural change is illegal mid-ForEachComponent; apply the queued remove now.
+        // A structural change is illegal mid-ForEachComponent; build the remove command now the
+        // walk has returned. Snapshot the component's bytes first so the command can restore it.
         if (remove)
         {
-            scene->RemoveComponent(entity, removeId);
+            void* component = scene->TryGetComponent(entity, removeId);
+            if (component != nullptr)
+            {
+                const TypeInfo& info = scene->GetTypeRegistry().Info(removeId);
+                vector<u8> snapshot;
+                WriteFields(snapshot, component, info, scene->GetTypeRegistry());
+                m_Commands.Push(
+                    CreateUnique<RemoveComponentCommand>(entity, removeId, std::move(snapshot)));
+            }
+        }
+
+        // Commit a coalesced field edit once no widget is being actively dragged any longer, so a
+        // whole drag is one command. The component still holds the live (post-edit) value, so the
+        // "after" bytes are read fresh here.
+        if (m_PendingEdit.has_value() && !ImGui::IsAnyItemActive())
+        {
+            const PendingEdit pending = std::move(*m_PendingEdit);
+            m_PendingEdit.reset();
+            if (scene->IsAlive(pending.Entity))
+            {
+                void* component = scene->TryGetComponent(pending.Entity, pending.Type);
+                if (component != nullptr)
+                {
+                    const TypeInfo& info = scene->GetTypeRegistry().Info(pending.Type);
+                    vector<u8> after;
+                    WriteFields(after, component, info, scene->GetTypeRegistry());
+                    if (after != pending.Before)
+                    {
+                        m_Commands.Push(CreateUnique<EditField>(pending.Entity, pending.Type,
+                                                                pending.Before, std::move(after)));
+                    }
+                }
+            }
         }
 
         UI::Dummy(vec2{0.0f, 4.0f});
@@ -128,8 +168,12 @@ namespace VengEditor
             }
             if (UI::MenuItem("Reset to Default"))
             {
-                info.Destruct(component);
-                info.DefaultConstruct(component);
+                // Snapshot the live bytes so the reset is undoable, then push the command (it
+                // re-runs the destruct + default-construct so Redo matches Apply exactly).
+                vector<u8> snapshot;
+                WriteFields(snapshot, component, info, types);
+                m_Commands.Push(
+                    CreateUnique<ResetComponentCommand>(entity, id, std::move(snapshot)));
             }
         }
 
@@ -137,6 +181,11 @@ namespace VengEditor
         {
             return;
         }
+
+        // Snapshot the component's pre-edit bytes before drawing the widgets, so a "changed" this
+        // frame can open a coalescing field edit whose "before" is this snapshot.
+        vector<u8> before;
+        WriteFields(before, component, info, types);
 
         const FieldWidgetContext ctx{
             .Assets = m_Assets, .Sources = m_Sources, .Editors = m_Editors};
@@ -146,11 +195,21 @@ namespace VengEditor
             changed = DrawFields(component, info.Fields, ctx);
         }
 
-        // An edit to a MeshRenderer's recipe source (its shape/parameters) regenerates no
-        // mesh on its own; re-resolve the touched entity so the derived mesh rebuilds.
         if (changed)
         {
+            // An edit to a MeshRenderer's recipe source regenerates no mesh on its own; re-resolve
+            // so the derived mesh rebuilds live while dragging (the command re-runs this too).
             m_Ctx.ResolveEntity(entity);
+
+            // Open the coalescing edit on the first changed frame for this component; a continuing
+            // drag keeps the original "before". A switch to a different entity/component commits
+            // nothing here — OnUI commits the prior pending edit once no item is active.
+            if (!m_PendingEdit.has_value() || m_PendingEdit->Entity != entity ||
+                m_PendingEdit->Type != id)
+            {
+                m_PendingEdit =
+                    PendingEdit{.Entity = entity, .Type = id, .Before = std::move(before)};
+            }
         }
     }
 
@@ -203,9 +262,10 @@ namespace VengEditor
             UI::SetCursorPos(afterRow);
             if (picked)
             {
-                scene->AddComponent(entity, id);
-                // A newly added MeshRenderer carrying a recipe source builds no mesh until resolved.
-                m_Ctx.ResolveEntity(entity);
+                // The command adds the component and resolves the entity (a newly added
+                // MeshRenderer carrying a recipe source builds no mesh until resolved); Revert
+                // removes it.
+                m_Commands.Push(CreateUnique<AddComponentCommand>(entity, id));
             }
         }
     }

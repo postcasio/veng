@@ -29,6 +29,8 @@ namespace Veng::UI
         Delete,
         /// @brief Backspace key.
         Backspace,
+        /// @brief The Z key (the undo/redo shortcut).
+        Z,
     };
 
     /// @brief Returns true if the last item is hovered.
@@ -84,6 +86,11 @@ namespace Veng::UI
     ///
     /// For range-select modifiers in list/tree panels.
     [[nodiscard]] bool IsShiftDown();
+
+    /// @brief Returns true while either Super key (Cmd on macOS, Win on Windows) is held.
+    ///
+    /// For platform-native shortcut modifiers (Cmd+Z undo on macOS) alongside the Ctrl variant.
+    [[nodiscard]] bool IsSuperDown();
 
     /// @brief Returns the mouse position captured when the current popup was opened.
     ///

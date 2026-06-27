@@ -66,6 +66,22 @@ namespace Veng
         /// @brief Creates a new entity and returns its handle.
         [[nodiscard]] Entity CreateEntity();
 
+        /// @brief Recreates a live entity occupying the exact slot index and generation of @p entity.
+        ///
+        /// The respawn counterpart of DestroyEntity for an undo stack: it restores the precise
+        /// handle a prior DestroyEntity recycled (the bumped generation included), so any captured
+        /// handle to that entity — held by another undo entry, or by a Reference field pointing at
+        /// it — stays valid across a destroy→undo→redo cycle. A fresh-handle CreateEntity would
+        /// leave those captures dangling. The slot must be free (dead or never allocated); its
+        /// generation is set to @p entity's, undoing the bump DestroyEntity applied — so a handle
+        /// this scene once handed out and then destroyed becomes live again exactly as captured.
+        /// Grows the slot table and skips intermediate slots onto the free list if the index runs
+        /// past the current table. Adds no components — the caller repopulates them — so it bumps
+        /// no spatial version on its own.
+        /// @param entity  The exact handle (slot index + generation) to recreate; its slot must be free.
+        /// @return @p entity, now alive.
+        Entity CreateEntityAt(Entity entity);
+
         /// @brief Destroys the entity and all components it holds, recycling its slot.
         ///
         /// Bumps the slot's generation so existing handles to it go stale.

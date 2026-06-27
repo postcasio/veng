@@ -6,6 +6,8 @@
 
 namespace VengEditor
 {
+    class CommandStack;
+
     /// @brief Base for an asset editor that hosts its own private dockspace.
     ///
     /// An asset editor is a top-level panel in the host dockspace whose window hosts a
@@ -24,6 +26,19 @@ namespace VengEditor
         ///
         /// Default is a no-op; a subclass overrides it for a document toolbar.
         void OnUI() override {}
+
+        /// @brief Returns this document's undo/redo stack, or null when the editor has none.
+        ///
+        /// A scene-editing document (the prefab/level editor) owns one; the texture/material
+        /// editors do not derive from this base and so never offer one. The host dispatches the
+        /// Edit menu and the undo/redo shortcuts to the focused document's stack through this.
+        [[nodiscard]] virtual CommandStack* GetCommandStack() { return nullptr; }
+
+        /// @brief Returns true when this editor's document window or one of its children is focused.
+        ///
+        /// Set each Draw from ImGui window focus, including the editor's docked children, so the
+        /// host can resolve which open document the keyboard shortcuts target.
+        [[nodiscard]] bool IsDocumentFocused() const { return m_Focused; }
 
     protected:
         /// @brief Constructs the base, assigning this instance its unique dock id and class.
@@ -65,5 +80,7 @@ namespace VengEditor
         Veng::string m_DockSpaceName;
         /// @brief The child panels, in add order.
         Veng::vector<Child> m_Children;
+        /// @brief Whether this document (its window or a docked child) holds keyboard focus this frame.
+        bool m_Focused = false;
     };
 }

@@ -226,6 +226,39 @@ namespace Veng
         return Entity{.Index = index, .Generation = slot.Generation};
     }
 
+    Entity Scene::CreateEntityAt(const Entity entity)
+    {
+        VE_ASSERT(!entity.IsNull(), "CreateEntityAt with a null handle");
+
+        // Grow the slot table to cover the index; every slot skipped over is unallocated,
+        // so push it onto the free list to keep CreateEntity's recycling correct.
+        if (entity.Index >= m_Slots.size())
+        {
+            for (u32 index = static_cast<u32>(m_Slots.size()); index < entity.Index; ++index)
+            {
+                m_Slots.push_back(EntitySlot{});
+                m_FreeIndices.push_back(index);
+            }
+            m_Slots.push_back(EntitySlot{.Generation = entity.Generation, .Alive = false});
+        }
+
+        EntitySlot& slot = m_Slots[entity.Index];
+        VE_ASSERT(!slot.Alive, "CreateEntityAt on a live slot {}", entity.Index);
+
+        // The slot may be sitting on the free list (a prior DestroyEntity pushed it). Drop it
+        // so a later CreateEntity does not hand the same index out a second time.
+        std::erase(m_FreeIndices, entity.Index);
+
+        // Restore the slot to the requested generation: DestroyEntity bumped it past the handle
+        // being respawned, so the captured handle (the one other stack entries and Reference
+        // fields hold) is generation-stale until set back here. This is the exact-handle respawn.
+        slot.Generation = entity.Generation;
+        slot.Alive = true;
+        ++m_LiveCount;
+
+        return entity;
+    }
+
     void Scene::DestroyEntity(Entity entity)
     {
         VE_ASSERT(IsAlive(entity), "DestroyEntity on a dead or stale entity");

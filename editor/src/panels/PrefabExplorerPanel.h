@@ -8,6 +8,8 @@
 
 namespace VengEditor
 {
+    class CommandStack;
+
     /// @brief Entity-hierarchy explorer for the prefab editor.
     ///
     /// Walks the document's Scene as a parent/child tree and drives the shared
@@ -20,9 +22,10 @@ namespace VengEditor
     class PrefabExplorerPanel final : public EditorPanel
     {
     public:
-        /// @brief Constructs the explorer over the document's edit context.
-        /// @param ctx  Shared document context supplying the Scene and selection.
-        explicit PrefabExplorerPanel(PrefabEditContext& ctx);
+        /// @brief Constructs the explorer over the document's edit context and command stack.
+        /// @param ctx       Shared document context supplying the Scene and selection.
+        /// @param commands  The document's undo/redo stack every structural edit is pushed through.
+        PrefabExplorerPanel(PrefabEditContext& ctx, CommandStack& commands);
 
         /// @brief Returns the panel title.
         [[nodiscard]] Veng::string_view GetTitle() const override { return "Hierarchy"; }
@@ -75,17 +78,8 @@ namespace VengEditor
         /// @brief Draws the rename input over @p entity and commits or cancels it.
         void DrawRenameField(Veng::Entity entity);
 
-        /// @brief Applies one queued structural op against the live scene.
+        /// @brief Builds the command for one queued structural op and pushes it onto the stack.
         void ApplyOp(const PendingOp& op);
-
-        /// @brief Deep-copies @p source and its subtree under @p newParent, returning the new root.
-        ///
-        /// Each non-Hierarchy component is round-tripped through the reflection
-        /// serializer; hierarchy links are rebuilt with SetParent rather than copied.
-        /// @param source     The entity to copy.
-        /// @param newParent  The parent for the copied root, or Entity::Null for a root.
-        /// @return The newly created copy of @p source.
-        [[nodiscard]] Veng::Entity DuplicateSubtree(Veng::Entity source, Veng::Entity newParent);
 
         /// @brief Returns true when @p name (case-insensitive) contains the active filter substring.
         [[nodiscard]] bool MatchesFilter(Veng::string_view name) const;
@@ -98,6 +92,9 @@ namespace VengEditor
 
         /// @brief The shared document edit context: the Scene and the selection.
         PrefabEditContext& m_Ctx;
+
+        /// @brief The document's undo/redo stack every structural edit is pushed through.
+        CommandStack& m_Commands;
 
         /// @brief Per-frame root entities (live, parent-less), rebuilt each OnUI.
         Veng::vector<Veng::Entity> m_Roots;

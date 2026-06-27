@@ -104,6 +104,48 @@ TEST_CASE("Index reuse bumps the generation so old handles go stale")
     CHECK_FALSE(scene->IsAlive(first));
 }
 
+TEST_CASE("CreateEntityAt restores the exact destroyed handle (slot + generation)")
+{
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    const Entity original = scene->CreateEntity();
+    scene->Add<Position>(original, Position{.X = 7.0f});
+    scene->DestroyEntity(original);
+    CHECK_FALSE(scene->IsAlive(original));
+
+    // Respawn at the exact handle: same index and the bumped generation, alive again.
+    const Entity respawned = scene->CreateEntityAt(original);
+    CHECK(respawned == original);
+    CHECK(scene->IsAlive(original));
+    CHECK(scene->EntityCount() == 1);
+    // It is repopulated by the caller; CreateEntityAt adds no components.
+    CHECK_FALSE(scene->Has<Position>(original));
+
+    // The slot is no longer on the free list, so a fresh CreateEntity does not collide with it.
+    const Entity other = scene->CreateEntity();
+    CHECK(other.Index != original.Index);
+    CHECK(scene->IsAlive(other));
+}
+
+TEST_CASE("CreateEntityAt grows the slot table, leaving skipped slots free")
+{
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    // A handle well past the current (empty) table grows it; the slots it skipped over
+    // are unallocated, so they feed the next CreateEntity calls.
+    const Entity target{.Index = 4, .Generation = 0};
+    const Entity created = scene->CreateEntityAt(target);
+    CHECK(created == target);
+    CHECK(scene->IsAlive(target));
+
+    // The four skipped slots are free, so the next CreateEntity lands inside [0, 4).
+    const Entity next = scene->CreateEntity();
+    CHECK(next.Index < target.Index);
+    CHECK(scene->IsAlive(next));
+}
+
 // --- Component add / get / has / tryget / remove ----------------------------
 
 TEST_CASE("Add/Get/Has/TryGet/Remove round-trip")

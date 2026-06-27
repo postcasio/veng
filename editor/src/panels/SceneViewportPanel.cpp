@@ -25,6 +25,9 @@
 
 #include "panels/PrefabEditorPanel.h"
 
+#include "CommandStack.h"
+#include "EditorCommand.h"
+
 #include <array>
 
 namespace VengEditor
@@ -46,9 +49,10 @@ namespace VengEditor
 
     SceneViewportPanel::SceneViewportPanel(Application& app, AssetManager& assets,
                                            ImGuiLayer& imgui, PrefabEditContext& ctx, Input& input,
-                                           InputRouter& router, PrefabEditorPanel& document)
+                                           InputRouter& router, PrefabEditorPanel& document,
+                                           CommandStack& commands)
         : m_Assets(assets), m_ImGui(imgui), m_Ctx(ctx), m_Input(input), m_Router(router),
-          m_Document(document)
+          m_Document(document), m_Commands(commands)
     {
         Renderer::Context& context = app.GetRenderContext();
         // A first-frame placeholder; the panel's content rect drives the real region each OnUI.
@@ -362,18 +366,25 @@ namespace VengEditor
         return false;
     }
 
-    void SceneViewportPanel::OnCommit(const Transform& /*start*/, const Transform& final)
+    void SceneViewportPanel::OnCommit(const Transform& start, const Transform& final)
     {
-        // The drag applied the Transform live each frame; re-apply the final through the scene
-        // accessor so the edit is durable at the commit boundary. The undo command spanning the
-        // whole drag (start → final) is wired here in the per-editor command stack.
+        // The drag applied the Transform live each frame; record it as one EditTransform spanning
+        // the whole drag (start → final), so undo reverts the drag rather than a frame of it. The
+        // command's Apply re-applies `final` (a no-op past the already-applied value), keeping the
+        // edit durable at the commit boundary.
         if (m_Ctx.Scene == nullptr || m_Ctx.Active.IsNull() ||
             !m_Ctx.Scene->IsAlive(m_Ctx.Active) ||
             m_Ctx.Scene->TryGet<Transform>(m_Ctx.Active) == nullptr)
         {
             return;
         }
-        m_Ctx.Scene->Get<Transform>(m_Ctx.Active) = final;
+        // A drag that ended exactly where it began is no edit at all.
+        if (start.Position == final.Position && start.Rotation == final.Rotation &&
+            start.Scale == final.Scale)
+        {
+            return;
+        }
+        m_Commands.Push(CreateUnique<EditTransform>(m_Ctx.Active, start, final));
     }
 
     void SceneViewportPanel::ApplyLevelRenderSettings(const LevelRenderSettings& render)

@@ -16,6 +16,7 @@ namespace Veng
 namespace VengEditor
 {
     class AssetSourceIndex;
+    class CommandStack;
 
     /// @brief Reflection-driven property inspector for the prefab editor's active entity.
     ///
@@ -33,8 +34,10 @@ namespace VengEditor
         /// @param editors  Editor registry for field-widget overrides.
         /// @param sources  Manifest source index for the asset pickers.
         /// @param ctx      Shared document context supplying the Scene and selection.
+        /// @param commands The document's undo/redo stack every edit is pushed through.
         InspectorPanel(Veng::AssetManager& assets, Veng::EditorRegistry& editors,
-                       const AssetSourceIndex& sources, PrefabEditContext& ctx);
+                       const AssetSourceIndex& sources, PrefabEditContext& ctx,
+                       CommandStack& commands);
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return "Inspector"; }
         void OnUI() override;
@@ -66,6 +69,26 @@ namespace VengEditor
         Veng::EditorRegistry& m_Editors;
         const AssetSourceIndex& m_Sources;
         PrefabEditContext& m_Ctx;
+        CommandStack& m_Commands;
+
+        /// @brief An in-progress field edit coalesced into one command across a continuous drag.
+        ///
+        /// A Drag/Slider widget reports "changed" every frame it is held, so a naive push would
+        /// record one command per frame. Instead the first changed frame captures the component's
+        /// pre-edit bytes here; while the edit continues the snapshot is held; when no widget is
+        /// active any longer the accumulated edit (pre-edit bytes → current bytes) is pushed as one
+        /// EditField. So a whole drag is one undo step.
+        struct PendingEdit
+        {
+            /// @brief The entity whose component is being edited.
+            Veng::Entity Entity = Veng::Entity::Null;
+            /// @brief The component's TypeId.
+            Veng::TypeId Type = Veng::InvalidTypeId;
+            /// @brief WriteFields bytes of the component captured the frame the edit began.
+            Veng::vector<Veng::u8> Before;
+        };
+        /// @brief The coalescing field edit in flight, or nullopt when none is being made.
+        Veng::optional<PendingEdit> m_PendingEdit;
 
         /// @brief Scratch buffer backing the entity-name input across frames.
         Veng::string m_NameScratch;

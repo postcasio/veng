@@ -30,6 +30,8 @@ namespace Veng::UI
                 return ImGuiKey_Delete;
             case Key::Backspace:
                 return ImGuiKey_Backspace;
+            case Key::Z:
+                return ImGuiKey_Z;
             }
             VE_ASSERT(false, "Unmapped UI::Key");
         }
@@ -96,6 +98,11 @@ namespace Veng::UI
     bool IsShiftDown()
     {
         return ImGui::GetIO().KeyShift;
+    }
+
+    bool IsSuperDown()
+    {
+        return ImGui::GetIO().KeySuper;
     }
 
     vec2 PopupMousePosition()

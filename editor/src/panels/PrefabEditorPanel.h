@@ -5,6 +5,7 @@
 #include <Veng/Scene/SceneSystem.h>
 
 #include "AssetEditorPanel.h"
+#include "CommandStack.h"
 #include "panels/PrefabEditContext.h"
 
 namespace Veng
@@ -85,6 +86,9 @@ namespace VengEditor
         /// shows the advanced clone — the same one-frame latency the editor camera carries.
         void OnUI() override;
 
+        /// @brief Returns this document's undo/redo stack — the seam the host dispatches shortcuts to.
+        [[nodiscard]] CommandStack* GetCommandStack() override { return &m_Commands; }
+
     protected:
         /// @brief Advances the play simulation one tick when a session is running; a no-op otherwise.
         ///
@@ -151,6 +155,12 @@ namespace VengEditor
 
         /// @brief The shared edit context the scene-editing children and a subclass operate over.
         PrefabEditContext m_Context;
+
+        /// @brief This document's undo/redo history; constructed over m_Context, after it.
+        ///
+        /// The explorer / inspector / gizmo route their mutations through it; the host dispatches
+        /// the Edit menu and the undo/redo shortcuts here when this document is focused.
+        CommandStack m_Commands{m_Context};
 
         Veng::usize m_ExplorerChild = 0;
         Veng::usize m_ViewportChild = 0;

@@ -14,7 +14,9 @@
 #include <Veng/Vendor/ImGui.h>
 #include <Veng/Vendor/ImGuiInternal.h>
 
+#include "AssetEditorPanel.h"
 #include "AssetSourceIndex.h"
+#include "CommandStack.h"
 #include "PreviewCapability.h"
 #include "panels/AssetBrowserPanel.h"
 #include "panels/ConsolePanel.h"
@@ -717,6 +719,19 @@ namespace VengEditor
             });
     }
 
+    CommandStack* EditorHost::FocusedCommandStack()
+    {
+        for (PanelSlot& slot : m_Panels)
+        {
+            auto* editor = dynamic_cast<AssetEditorPanel*>(slot.Panel.get());
+            if (editor != nullptr && editor->IsDocumentFocused())
+            {
+                return editor->GetCommandStack();
+            }
+        }
+        return nullptr;
+    }
+
     void EditorHost::DrawMenuBar()
     {
         if (auto bar = UI::MainMenuBar())
@@ -726,6 +741,27 @@ namespace VengEditor
                 if (UI::MenuItem("Exit"))
                 {
                     RequestExit();
+                }
+            }
+
+            if (auto edit = UI::Menu("Edit"))
+            {
+                // The Edit menu targets whichever document is focused; with none focused (or one
+                // without a stack) the items are disabled. The labels carry the next edit's title.
+                CommandStack* stack = FocusedCommandStack();
+                const bool canUndo = stack != nullptr && stack->CanUndo();
+                const bool canRedo = stack != nullptr && stack->CanRedo();
+                const string undoLabel =
+                    canUndo ? fmt::format("Undo {}", stack->UndoTitle()) : string{"Undo"};
+                const string redoLabel =
+                    canRedo ? fmt::format("Redo {}", stack->RedoTitle()) : string{"Redo"};
+                if (UI::MenuItem(undoLabel, canUndo))
+                {
+                    stack->Undo();
+                }
+                if (UI::MenuItem(redoLabel, canRedo))
+                {
+                    stack->Redo();
                 }
             }
 
@@ -831,6 +867,26 @@ namespace VengEditor
             if (slot.Open)
             {
                 slot.Panel->Draw(&slot.Open);
+            }
+        }
+
+        // Undo/redo on the focused document: Ctrl/Cmd+Z undo, Ctrl/Cmd+Shift+Z redo. The panels
+        // drew above, so the focus flags are current. Suppressed while a text widget is capturing
+        // keys, so typing a 'z' into a field never undoes; resolved after Draw so the shortcut
+        // targets the document focused this frame.
+        if (!ImGui::GetIO().WantTextInput && (UI::IsCtrlDown() || UI::IsSuperDown()) &&
+            UI::IsKeyPressed(UI::Key::Z))
+        {
+            if (CommandStack* stack = FocusedCommandStack())
+            {
+                if (UI::IsShiftDown())
+                {
+                    stack->Redo();
+                }
+                else
+                {
+                    stack->Undo();
+                }
             }
         }
     }

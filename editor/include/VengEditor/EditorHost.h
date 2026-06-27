@@ -14,6 +14,7 @@
 namespace VengEditor
 {
     class AssetSourceIndex;
+    class CommandStack;
 
     /// @brief Construction parameters for EditorHost.
     struct EditorHostInfo
@@ -130,8 +131,15 @@ namespace VengEditor
                    Veng::Unique<Veng::LoadedModule> gameModule,
                    Veng::optional<Veng::LoadedModule> editorModule);
 
-        /// @brief Draws the main menu bar (File / Window menus).
+        /// @brief Draws the main menu bar (File / Edit / Window menus).
         void DrawMenuBar();
+
+        /// @brief Returns the focused document's undo/redo stack, or null when none is focused.
+        ///
+        /// Resolves the focused AssetEditorPanel (an editor whose window or a docked child holds
+        /// keyboard focus) and returns its CommandStack — the seam the Edit menu and the undo/redo
+        /// shortcuts dispatch to, so two open documents undo independently.
+        [[nodiscard]] CommandStack* FocusedCommandStack();
 
         /// @brief Lays out the host dockspace the first frame no imgui.ini layout exists.
         ///

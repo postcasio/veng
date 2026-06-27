@@ -46,6 +46,9 @@ namespace VengEditor
 
         const ImGuiID dockspaceId = ImGui::GetID(m_DockSpaceName.c_str());
 
+        // Re-evaluate focus from this frame's windows: the document window or any docked child.
+        m_Focused = false;
+
         bool documentVisible = false;
         {
             const UI::StyleVarScope padding =
@@ -53,6 +56,10 @@ namespace VengEditor
             if (auto window = UI::Window(GetTitle(), open))
             {
                 documentVisible = true;
+                if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+                {
+                    m_Focused = true;
+                }
                 // Build the default split only when no layout exists yet: a fresh node
                 // (first run) or one DockSpace auto-created empty. A layout restored from
                 // imgui.ini is non-empty and is left untouched, so the user's docking
@@ -110,6 +117,10 @@ namespace VengEditor
 
             if (auto window = UI::Window(child.WindowName, &child.Open, flags))
             {
+                if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+                {
+                    m_Focused = true;
+                }
                 child.Panel->OnUI();
             }
         }
