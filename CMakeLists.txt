@@ -168,7 +168,7 @@ FetchContent_MakeAvailable(zstd)
 FetchContent_Declare(
         imgui
         GIT_REPOSITORY https://github.com/ocornut/imgui.git
-        GIT_TAG v1.92.4-docking
+        GIT_TAG v1.92.8-docking
         GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(imgui)
@@ -351,6 +351,14 @@ set(VENG_DEFAULT_FONT_TTF ${CMAKE_CURRENT_SOURCE_DIR}/engine/fonts/roboto/Roboto
 
 veng_embed_binary(${VENG_DEFAULT_FONT_TTF} g_DefaultFont)
 target_compile_definitions(veng PRIVATE VENG_HAS_DEFAULT_FONT=1)
+
+# Icon font — embed FontAwesome Solid into libveng, merged onto the default UI
+# font so the FontAwesome7.h ICON_FA_* glyphs are always available with no
+# consumer-supplied font path.
+set(VENG_ICON_FONT_OTF "${CMAKE_CURRENT_SOURCE_DIR}/engine/fonts/fontawesome-free-7.3.0/otfs/Font Awesome 7 Free-Solid-900.otf")
+
+veng_embed_binary(${VENG_ICON_FONT_OTF} g_IconFont)
+target_compile_definitions(veng PRIVATE VENG_HAS_ICON_FONT=1)
 
 # ---------------------------------------------------------------------------
 # Tests

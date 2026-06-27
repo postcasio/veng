@@ -19,7 +19,7 @@
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
 #include <Veng/Vendor/ImGui.h>
-#include <Veng/Vendor/IconsMaterialDesign.h>
+#include <Veng/Vendor/FontAwesome7.h>
 
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
@@ -31,6 +31,14 @@ namespace Veng
 {
     extern const unsigned char g_DefaultFont[];
     extern const unsigned long g_DefaultFontSize;
+}
+#endif
+
+#ifdef VENG_HAS_ICON_FONT
+namespace Veng
+{
+    extern const unsigned char g_IconFont[];
+    extern const unsigned long g_IconFontSize;
 }
 #endif
 
@@ -139,16 +147,26 @@ namespace Veng
         }
 #endif
 
+        // FontAwesome merged onto the default font, so the FontAwesome7.h ICON_FA_* glyphs
+        // render inline with text. The dynamic font atlas loads glyphs on demand, so no glyph
+        // range is supplied.
+        ImFontConfig iconConfig;
+        iconConfig.MergeMode = true;
+        iconConfig.GlyphOffset = ImVec2(0, 5.0f);
+        iconConfig.GlyphMinAdvanceX = 20.0f;
+
         if (info.IconFontPath && std::filesystem::exists(*info.IconFontPath))
         {
-            ImFontConfig config;
-            config.MergeMode = true;
-            config.GlyphOffset = ImVec2(0, 5.0f);
-            config.GlyphMinAdvanceX = 20.0f;
-            static constexpr ImWchar icon_ranges[] = {ICON_MIN_MD, ICON_MAX_16_MD, 0};
-            io.Fonts->AddFontFromFileTTF(info.IconFontPath->string().c_str(), 20.0f, &config,
-                                         icon_ranges);
+            io.Fonts->AddFontFromFileTTF(info.IconFontPath->string().c_str(), 20.0f, &iconConfig);
         }
+#ifdef VENG_HAS_ICON_FONT
+        else
+        {
+            iconConfig.FontDataOwnedByAtlas = false; // static embed; the atlas must not free it
+            io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(g_IconFont),
+                                           static_cast<int>(g_IconFontSize), 20.0f, &iconConfig);
+        }
+#endif
 
         // Swap-chain recreation changes the render extent; recreate the offscreen image to match.
         m_Context.AddSwapChainInvalidationCallback(
