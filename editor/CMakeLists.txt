@@ -13,6 +13,7 @@ add_library(veng_editor SHARED
         src/AssetEditorPanel.cpp
         src/AssetSourceIndex.cpp
         src/EditorCamera.cpp
+        src/EditorGizmo.cpp
         src/PreviewCapability.cpp
         src/NodeGraph/NodeGraph.cpp
         src/NodeGraph/NodeType.cpp

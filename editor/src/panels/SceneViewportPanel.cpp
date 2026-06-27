@@ -10,6 +10,7 @@
 #include <Veng/Input.h>
 #include <Veng/InputRouter.h>
 #include <Veng/Math/AABB.h>
+#include <Veng/Math/Ray.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DebugDraw.h>
 #include <Veng/Renderer/Sampler.h>
@@ -304,6 +305,77 @@ namespace VengEditor
                          });
     }
 
+    bool SceneViewportPanel::HandleGizmo(const bool hovered, const bool consumed)
+    {
+        // No selection, a closed/playing scene, or a camera/play-capture click: the gizmo stands
+        // down (a press falls through to click-to-select). An in-progress drag overrides hover/
+        // consumed — once grabbed the gizmo keeps the mouse until release.
+        if (m_Ctx.Scene == nullptr || m_Ctx.IsPlaying() || m_Ctx.Active.IsNull() ||
+            !m_Ctx.Scene->IsAlive(m_Ctx.Active))
+        {
+            // The selection vanished mid-drag (deleted, scene swapped) — drop the drag, no commit.
+            if (m_Gizmo.IsDragging() && m_Ctx.Scene != nullptr)
+            {
+                static_cast<void>(m_Gizmo.EndDrag(*m_Ctx.Scene, m_Ctx.Active));
+            }
+            return false;
+        }
+
+        const vec2 mouse = m_Input.GetMousePosition();
+        const ivec2 windowPoint{static_cast<i32>(mouse.x), static_cast<i32>(mouse.y)};
+        const optional<Ray> ray = m_Viewport->ScreenToWorldRay(windowPoint);
+
+        // A drag in progress is serviced first, regardless of hover (the cursor may leave the arm).
+        if (m_Gizmo.IsDragging())
+        {
+            if (m_Input.IsMouseButtonDown(MouseButton::Left) && ray.has_value())
+            {
+                m_Gizmo.Drag(*m_Ctx.Scene, m_Ctx.Active, *ray);
+            }
+            if (m_Input.WasMouseButtonReleased(MouseButton::Left) ||
+                !m_Input.IsMouseButtonDown(MouseButton::Left))
+            {
+                if (const optional<std::pair<Transform, Transform>> edit =
+                        m_Gizmo.EndDrag(*m_Ctx.Scene, m_Ctx.Active))
+                {
+                    OnCommit(edit->first, edit->second);
+                }
+            }
+            return true;
+        }
+
+        if (consumed || !ray.has_value())
+        {
+            return false;
+        }
+
+        const vec3 cameraPosition = m_View.GetPosition();
+        const bool overHandle = m_Gizmo.Hover(*m_Ctx.Scene, m_Ctx.Active, *ray, cameraPosition);
+
+        if (hovered && overHandle && m_Input.WasMouseButtonPressed(MouseButton::Left))
+        {
+            return m_Gizmo.BeginDrag(*m_Ctx.Scene, m_Ctx.Active, *ray, cameraPosition);
+        }
+
+        // Hovering a handle (no press) still suppresses the click-select fall-through only on the
+        // press frame; a bare hover does not consume, so report consumption only on a real grab.
+        return false;
+    }
+
+    void SceneViewportPanel::OnCommit(const Transform& /*start*/, const Transform& final)
+    {
+        // The drag applied the Transform live each frame; re-apply the final through the scene
+        // accessor so the edit is durable at the commit boundary. The undo command spanning the
+        // whole drag (start → final) is wired here in the per-editor command stack.
+        if (m_Ctx.Scene == nullptr || m_Ctx.Active.IsNull() ||
+            !m_Ctx.Scene->IsAlive(m_Ctx.Active) ||
+            m_Ctx.Scene->TryGet<Transform>(m_Ctx.Active) == nullptr)
+        {
+            return;
+        }
+        m_Ctx.Scene->Get<Transform>(m_Ctx.Active) = final;
+    }
+
     void SceneViewportPanel::ApplyLevelRenderSettings(const LevelRenderSettings& render)
     {
         // Run the level subset through the shared runtime mapping so the level→renderer wiring
@@ -418,6 +490,12 @@ namespace VengEditor
             UI::Separator();
             UI::SameLine();
 
+            // Manipulation gizmo mode (Move / Rotate / Scale), the W/E/R keys' toolbar twin.
+            DrawGizmoToolbar();
+
+            UI::Separator();
+            UI::SameLine();
+
             // Debug visualizations: the DebugView dropdown plus the battery toggles.
             // The change is deferred via m_SettingsDirty so Configure runs once in OnUI,
             // not per widget.
@@ -469,6 +547,36 @@ namespace VengEditor
             }
             UI::Tooltip("Temporal anti-aliasing");
         }
+    }
+
+    void SceneViewportPanel::DrawGizmoToolbar()
+    {
+        // A radio segment over the gizmo mode; mirrors the W/E/R keys. Disabled while playing
+        // (gizmos are an edit aid) — the keys are gated the same way. The active mode's button is
+        // accent-tinted to read as selected.
+        const UI::Theme& theme = UI::GetTheme();
+        const UI::DisabledScope disabled = UI::Disabled(m_Ctx.IsPlaying());
+        const GizmoMode mode = m_Gizmo.GetMode();
+
+        auto modeButton =
+            [&](const string_view label, const GizmoMode target, const string_view tooltip)
+        {
+            const optional<UI::StyleColorScope> accent =
+                mode == target ? optional<UI::StyleColorScope>{UI::StyleColor(
+                                     UI::StyleColorId::Button, theme.Accent)}
+                               : std::nullopt;
+            if (UI::Button(label))
+            {
+                m_Gizmo.SetMode(target);
+            }
+            UI::Tooltip(tooltip);
+        };
+
+        modeButton("Move", GizmoMode::Translate, "Translate (W)");
+        UI::SameLine();
+        modeButton("Rotate", GizmoMode::Rotate, "Rotate (E)");
+        UI::SameLine();
+        modeButton("Scale", GizmoMode::Scale, "Scale (R)");
     }
 
     void SceneViewportPanel::DrawCaptureNotice()
@@ -609,9 +717,33 @@ namespace VengEditor
             .BloomIntensity = m_BloomIntensity,
         });
 
+        // Mode keys select the gizmo mode, but only while not flying: the RMB fly-camera binds
+        // W/A/S/D/E/Q, so reading W/E/R as gizmo keys mid-fly would fight movement. ScreenToWorldRay
+        // needs the camera from the SetViewState above, so this runs after it.
+        if (!m_Ctx.IsPlaying() && !cameraConsumed && (hovered || focused))
+        {
+            if (m_Input.WasKeyPressed(Key::W))
+            {
+                m_Gizmo.SetMode(GizmoMode::Translate);
+            }
+            else if (m_Input.WasKeyPressed(Key::E))
+            {
+                m_Gizmo.SetMode(GizmoMode::Rotate);
+            }
+            else if (m_Input.WasKeyPressed(Key::R))
+            {
+                m_Gizmo.SetMode(GizmoMode::Scale);
+            }
+        }
+
+        // Gizmo-first on the shared content-rect mouse path: a press over a handle (or an in-flight
+        // drag) is a manipulation and suppresses the click-to-select fall-through; a press not over
+        // a handle leaves the gizmo idle and falls through to selection below.
+        const bool gizmoConsumed = HandleGizmo(hovered, cameraConsumed);
+
         // A bare left-click inside the content rect issues an id-buffer pick → selection. After
         // SetViewState so the renderer's pick guard captures the scene this frame renders.
-        HandleClickToSelect(hovered, cameraConsumed);
+        HandleClickToSelect(hovered, cameraConsumed || gizmoConsumed);
 
         // Push the light/camera gizmos for the next render. The engine renders the viewport at the
         // top of the next frame, so the accumulator filled here is consumed then (one frame of
@@ -619,6 +751,14 @@ namespace VengEditor
         if (!m_Ctx.IsPlaying())
         {
             PushGizmos();
+
+            // The manipulation gizmo on the active entity, into the same per-viewport channel.
+            if (m_Ctx.Scene != nullptr && !m_Ctx.Active.IsNull() &&
+                m_Ctx.Scene->IsAlive(m_Ctx.Active))
+            {
+                m_Gizmo.Draw(m_Viewport->GetDebugDraw(), *m_Ctx.Scene, m_Ctx.Active,
+                             m_View.GetPosition());
+            }
         }
 
         DrawToolbar();

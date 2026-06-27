@@ -8,7 +8,10 @@
 #include <VengEditor/EditorPanel.h>
 
 #include "EditorCamera.h"
+#include "EditorGizmo.h"
 #include "panels/PrefabEditContext.h"
+
+#include <Veng/Scene/Components.h>
 
 namespace Veng
 {
@@ -110,6 +113,31 @@ namespace VengEditor
         /// @param consumed  Whether the click was already consumed (camera drag, play capture).
         void HandleClickToSelect(bool hovered, bool consumed);
 
+        /// @brief Drives the gizmo over the active selection: hover / press / drag / release.
+        ///
+        /// Builds the cursor world ray (Viewport::ScreenToWorldRay) and routes the content-rect
+        /// mouse gizmo-first: on a press over a handle it begins a drag; while held it solves the
+        /// new Transform live; on release it fires OnCommit. A no-op when nothing is selected or
+        /// the click was consumed by the camera / play capture. Returns whether the gizmo owns the
+        /// mouse this frame (a press over a handle, or an in-progress drag) so the caller suppresses
+        /// the click-to-select fall-through.
+        /// @param hovered   Whether the viewport image is hovered this frame.
+        /// @param consumed  Whether the click was already consumed (camera drag, play capture).
+        /// @return true when the gizmo consumed the press/drag (selection must not also fire).
+        bool HandleGizmo(bool hovered, bool consumed);
+
+        /// @brief Draws the gizmo mode segment (Move / Rotate / Scale) in the viewport toolbar.
+        void DrawGizmoToolbar();
+
+        /// @brief Records a finished gizmo drag as the edit spanning @p start → @p final.
+        ///
+        /// The Transform is already applied live during the drag; this is the seam an undo
+        /// command spans the whole drag through. It applies the final Transform (a no-op past the
+        /// already-applied value) so the edit is durable at the commit boundary.
+        /// @param start  The active entity's Transform before the drag.
+        /// @param final  The active entity's Transform after the drag.
+        void OnCommit(const Veng::Transform& start, const Veng::Transform& final);
+
         Veng::AssetManager& m_Assets;
         Veng::ImGuiLayer& m_ImGui;
         PrefabEditContext& m_Ctx;
@@ -122,6 +150,9 @@ namespace VengEditor
 
         /// @brief The user-driven editor camera.
         EditorCamera m_Camera;
+
+        /// @brief The translate/rotate/scale gizmo on the active selection.
+        EditorGizmo m_Gizmo;
 
         /// @brief The view the camera produced last OnUI, pushed as the viewport's ViewState.
         Veng::CameraView m_View;
