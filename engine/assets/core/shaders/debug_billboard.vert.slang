@@ -66,9 +66,11 @@ VSOutput vsMain()
     };
     float2 corner = corners[cornerId];
 
-    // Camera right/up are the View matrix's first two rows (world axes of the view basis).
-    float3 right = float3(view.View[0][0], view.View[1][0], view.View[2][0]);
-    float3 up = float3(view.View[0][1], view.View[1][1], view.View[2][1]);
+    // Camera right/up are the View matrix's first two rows (world axes of the view basis):
+    // View transforms world → view (used as mul(View, worldPos) everywhere), so its rows are
+    // the camera basis in world space. View[0]/View[1] index those rows directly.
+    float3 right = float3(view.View[0][0], view.View[0][1], view.View[0][2]);
+    float3 up = float3(view.View[1][0], view.View[1][1], view.View[1][2]);
 
     float3 worldPos = bb.PositionSize.xyz + bb.PositionSize.w * (corner.x * right + corner.y * up);
     float4 clip = mul(view.CurViewProj, float4(worldPos, 1.0));
