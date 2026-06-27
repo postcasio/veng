@@ -3431,13 +3431,30 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     RegisterBuiltinTypes(Types);
 
     AssetManager assets(Context, Tasks, Types);
-    const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
-    REQUIRE(mountResult.has_value());
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_taa.vengpack");
+
+    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(material.has_value());
 
     constexpr uvec2 extent{96, 72};
 
+    // A lit brick cube filling the view: the cube must actually rasterize into the
+    // g-buffer for the TAA chain to have content to resolve. A material-less cube
+    // draws nothing, and the cleared background reads black (the lighting pass
+    // early-outs on cleared depth), so the resolved output would be uniformly black.
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "TAA Cube");
+
     const Unique<Scene> scene = Scene::Create(Types);
-    const Ref<Mesh> cube = PopulateCubeScene(Context, assets, *scene);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f),
+        .Intensity = 1.0f,
+    };
 
     CameraView camera;
     camera.SetPerspective(glm::radians(45.0f),
@@ -3525,6 +3542,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Render();
 
     CHECK(renderer->GetOutput()->GetImage()->GetWidth() == extent.x);
+
+    std::filesystem::remove(outArchive);
 }
 
 #endif // GPU_GBUFFER_FIXTURE_DIR
