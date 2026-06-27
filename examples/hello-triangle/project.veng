@@ -5,10 +5,10 @@
         "configs/windows.buildcfg",
         "configs/linux.buildcfg"
     ],
+    "editorModule": "hello_triangle_editor",
+    "module": "hello_triangle",
     "packs": [
         "assets/sample.vengpack.json"
     ],
-    "module": "hello_triangle",
-    "editorModule": "hello_triangle_editor",
     "startupLevel": 10791442065337163528
 }
