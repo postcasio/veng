@@ -708,7 +708,7 @@ namespace VengEditor
         }
     }
 
-    void EditorHost::BuildDefaultHostLayout(u32 dockspaceId)
+    u32 EditorHost::BuildDefaultHostLayout(u32 dockspaceId)
     {
         ImGui::DockBuilderRemoveNode(dockspaceId);
         ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
@@ -718,10 +718,18 @@ namespace VengEditor
         const ImGuiID bottom =
             ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, nullptr, &center);
 
-        // The asset browser, console and project settings share the bottom strip as tabs;
-        // every other open window (the level-editor document) fills the space above. Every
-        // panel's top-level window name is its GetTitle(), so the three bottom panels dock
-        // by name and the document falls through to the center.
+        // Flag the upper region as the central node so an asset editor docks into the main dock
+        // area by id. The flag is saved to imgui.ini, so it survives a restart and stays
+        // discoverable from a restored layout.
+        if (ImGuiDockNode* centerNode = ImGui::DockBuilderGetNode(center))
+        {
+            centerNode->SetLocalFlags(centerNode->LocalFlags | ImGuiDockNodeFlags_CentralNode);
+        }
+
+        // The asset browser, console and project settings share the bottom strip as tabs; any
+        // other host panel falls through to the central node. Each panel's top-level window name
+        // is its GetTitle(), so the three bottom panels dock by name. Asset editors are not in
+        // m_Panels yet — they dock into the central node through the pending-adoption path.
         for (const PanelSlot& slot : m_Panels)
         {
             const string title{slot.Panel->GetTitle()};
@@ -731,33 +739,55 @@ namespace VengEditor
         }
 
         ImGui::DockBuilderFinish(dockspaceId);
+        return center;
     }
 
     void EditorHost::OnRender()
     {
-        // Adopt any panels opened via OpenAssetEditor since last frame, before drawing the
-        // dockspace so a freshly opened editor draws this frame. A panel's Offscreen viewport
-        // is registered in its constructor, so it joins the drive-list for the next frame.
-        for (Unique<EditorPanel>& opened : m_PendingPanels)
-        {
-            m_Panels.push_back({std::move(opened), true});
-        }
-        m_PendingPanels.clear();
-
         const ImGuiID dockspaceId = ImGui::DockSpaceOverViewport();
 
-        // First frame with no restored imgui.ini layout: lay out the default docking.
-        // An empty node means no layout was loaded; a restored one is non-empty and left
-        // untouched so the user's docking survives a restart.
+        // First frame with no restored imgui.ini layout: lay out the default docking. An empty
+        // node means no layout was loaded; a restored one is non-empty and left untouched so the
+        // user's docking survives a restart. BuildDefaultHostLayout returns the central node id —
+        // its CentralNode pointer is not refreshed until the next dockspace update, so the query
+        // below is unreliable on the build frame and the returned id is used instead.
+        ImGuiID centerNode = 0;
         if (!m_HostLayoutBuilt)
         {
             m_HostLayoutBuilt = true;
             const ImGuiDockNode* node = ImGui::DockBuilderGetNode(dockspaceId);
             if (node == nullptr || node->IsEmpty())
             {
-                BuildDefaultHostLayout(dockspaceId);
+                centerNode = BuildDefaultHostLayout(dockspaceId);
             }
         }
+
+        // On any frame past the build, resolve the live central node. It is saved to imgui.ini,
+        // so a restored layout finds it too; a layout predating the central-node flag leaves the
+        // query null, in which case a new editor window falls back to floating.
+        if (centerNode == 0)
+        {
+            if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockspaceId))
+            {
+                centerNode = central->ID;
+            }
+        }
+
+        // Adopt any panels opened via OpenAssetEditor since last frame, before drawing them so a
+        // freshly opened editor draws this frame. A panel's Offscreen viewport is registered in
+        // its constructor, so it joins the drive-list for the next frame. Every asset editor —
+        // the startup document and any opened from the asset browser alike — docks into the
+        // central node, so it lands in the main dock area rather than floating.
+        for (Unique<EditorPanel>& opened : m_PendingPanels)
+        {
+            if (centerNode != 0)
+            {
+                const string title{opened->GetTitle()};
+                ImGui::DockBuilderDockWindow(title.c_str(), centerNode);
+            }
+            m_Panels.push_back({std::move(opened), true});
+        }
+        m_PendingPanels.clear();
 
         DrawMenuBar();
 

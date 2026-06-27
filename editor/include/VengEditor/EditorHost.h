@@ -134,12 +134,13 @@ namespace VengEditor
 
         /// @brief Lays out the host dockspace the first frame no imgui.ini layout exists.
         ///
-        /// Docks the asset browser, console and project settings as tabs in a bottom strip
-        /// and every open document (the level editor) into the remaining space above. A
-        /// layout restored from imgui.ini is left untouched, so user docking survives a
-        /// restart.
+        /// Docks the asset browser, console and project settings as tabs in a bottom strip and
+        /// flags the remaining upper region as the central node, into which asset editors dock
+        /// through the pending-adoption path. A layout restored from imgui.ini is left untouched,
+        /// so user docking survives a restart.
         /// @param dockspaceId  The host dockspace node to populate.
-        void BuildDefaultHostLayout(Veng::u32 dockspaceId);
+        /// @return The id of the central (main dock area) node, for docking documents into it.
+        Veng::u32 BuildDefaultHostLayout(Veng::u32 dockspaceId);
 
         EditorHostInfo m_Info;
 
