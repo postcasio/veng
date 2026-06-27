@@ -347,7 +347,7 @@ endif ()
 # A plain file embed (no cook), so it has no dependency on the bootstrap cooker
 # and is always available. ImGuiLayer loads it from memory as the default UI font
 # when the consumer supplies no explicit font path.
-set(VENG_DEFAULT_FONT_TTF ${CMAKE_CURRENT_SOURCE_DIR}/engine/fonts/Roboto.ttf)
+set(VENG_DEFAULT_FONT_TTF ${CMAKE_CURRENT_SOURCE_DIR}/engine/fonts/roboto/Roboto.ttf)
 
 veng_embed_binary(${VENG_DEFAULT_FONT_TTF} g_DefaultFont)
 target_compile_definitions(veng PRIVATE VENG_HAS_DEFAULT_FONT=1)
