@@ -971,7 +971,7 @@ namespace VengEditor
                 const string title{opened->GetTitle()};
                 ImGui::DockBuilderDockWindow(title.c_str(), centerNode);
             }
-            m_Panels.push_back({std::move(opened), true});
+            m_Panels.push_back({.Panel = std::move(opened), .Open = true, .Document = true});
         }
         m_PendingPanels.clear();
 
@@ -1024,6 +1024,14 @@ namespace VengEditor
                 }
             }
         }
+
+        // Destroy any document whose window was closed this frame. Closing the ✕ clears the slot's
+        // Open flag; erasing the slot runs the panel's destructor, which drops its Offscreen
+        // viewport(s) — self-unregistering from the engine drive-list so a closed editor stops
+        // rendering — and removes its dock windows. Tool panels (Document == false) only hide, so
+        // the Window menu can reopen them. Done after Draw so the panel that handled the close this
+        // frame is torn down between frames, not mid-iteration.
+        std::erase_if(m_Panels, [](const PanelSlot& slot) { return slot.Document && !slot.Open; });
     }
 
     void EditorHost::OnDispose()

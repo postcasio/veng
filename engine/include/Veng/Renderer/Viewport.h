@@ -100,6 +100,15 @@ namespace Veng::Renderer
         f32 MaxAllocationScale = 1.0f;
         /// @brief Whether the engine compositor places this viewport into its region.
         ViewportRole Role = ViewportRole::Offscreen;
+        /// @brief Renders only on a frame its owner pushed a fresh ViewState, instead of every frame.
+        ///
+        /// Off by default: the drive-list renders the viewport every frame regardless of input, the
+        /// plug-and-play game path. On — set by a consumer whose source appears and disappears, an
+        /// editor panel that hides when its dock tab is inactive — Render is a no-op on any frame no
+        /// SetViewState landed since the last, so a hidden panel (whose draw, and thus its
+        /// per-frame SetViewState, did not run) stops driving the renderer rather than re-rendering
+        /// stale content into the shared bindless targets behind the visible panels.
+        bool RenderOnDemand = false;
     };
 
     /// @brief A region of the window, a renderer, and a role: a renderable view into a world.
@@ -444,6 +453,15 @@ namespace Veng::Renderer
         AllocationTierState m_TierState;
         /// @brief Whether the engine compositor places this viewport.
         ViewportRole m_Role;
+
+        /// @brief Whether Render is gated on a fresh per-frame ViewState (see ViewportInfo).
+        bool m_RenderOnDemand = false;
+
+        /// @brief Set by SetViewState, cleared by Render: a ViewState landed since the last render.
+        ///
+        /// Only read when m_RenderOnDemand is set, where it skips a render for a frame whose owner
+        /// pushed no source (a hidden editor panel that did not draw).
+        bool m_ViewStateFresh = false;
 
         /// @brief The bound per-frame render source.
         ViewState m_ViewState;

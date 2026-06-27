@@ -74,6 +74,9 @@ namespace VengEditor
             .ColorFormat = context.GetOutputFormat(),
             .Settings = m_Settings,
             .Role = Renderer::ViewportRole::Offscreen,
+            // Render only while this panel draws; an inactive dock tab pushes no ViewState, so the
+            // engine skips it rather than rendering this scene behind the visible editor.
+            .RenderOnDemand = true,
         });
         app.RegisterViewport(*m_Viewport);
         m_TextureExtent = extent;

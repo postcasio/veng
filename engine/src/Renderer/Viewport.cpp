@@ -20,7 +20,8 @@ namespace Veng::Renderer
 
     Viewport::Viewport(const ViewportInfo& info)
         : m_Context(info.Context), m_Region(info.Region), m_RenderScale(info.RenderScale),
-          m_MaxAllocationScale(info.MaxAllocationScale), m_Role(info.Role)
+          m_MaxAllocationScale(info.MaxAllocationScale), m_Role(info.Role),
+          m_RenderOnDemand(info.RenderOnDemand)
     {
         VE_ASSERT(info.RenderScale > 0.0f, "Viewport RenderScale must be > 0 (got {})",
                   info.RenderScale);
@@ -260,6 +261,7 @@ namespace Veng::Renderer
         }
         m_ViewState = state;
         m_HasViewState = true;
+        m_ViewStateFresh = true;
     }
 
     void Viewport::Configure(const SceneRendererSettings& settings)
@@ -270,6 +272,17 @@ namespace Veng::Renderer
 
     void Viewport::Render(CommandBuffer& cmd)
     {
+        // An on-demand viewport renders only on a frame its owner pushed a fresh ViewState. A hidden
+        // editor panel does not draw, so it pushes none and this skips its render — the viewport
+        // keeps its prior output but stops re-rendering (and writing the shared bindless targets)
+        // behind the visible panels. The flag is consumed each frame regardless of the mode.
+        const bool wasFresh = m_ViewStateFresh;
+        m_ViewStateFresh = false;
+        if (m_RenderOnDemand && !wasFresh)
+        {
+            return;
+        }
+
         // Adaptive resolution: updates the render scale from the last frame's GPU time. A sub-rect
         // change (scale <= 1) only adjusts the per-frame fraction below — no resize; a supersample
         // boundary change leaves a pending allocation resize applied here.

@@ -223,6 +223,13 @@ namespace VengEditor
             Veng::Unique<EditorPanel> Panel;
             /// @brief Whether the panel's window is currently open.
             bool Open = true;
+            /// @brief A closeable document (an opened asset editor), destroyed when its window
+            /// closes; a false value is a persistent tool panel that only hides.
+            ///
+            /// A document owns Offscreen viewport(s) the engine drive-list renders every frame,
+            /// so closing it must release them (and its dock windows) rather than leave it hidden
+            /// but live — a hidden editor would keep rendering its viewport and litter the docking.
+            bool Document = false;
         };
         /// @brief Host-owned panel set: built-ins plus any game-contributed panels.
         Veng::vector<PanelSlot> m_Panels;

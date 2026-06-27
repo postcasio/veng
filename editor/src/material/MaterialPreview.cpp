@@ -38,6 +38,9 @@ namespace VengEditor
             .ColorFormat = context.GetOutputFormat(),
             .Settings = {},
             .Role = Renderer::ViewportRole::Offscreen,
+            // Render only while the material editor draws; a hidden tab pushes no ViewState, so the
+            // engine skips the preview rather than rendering it behind the visible editor.
+            .RenderOnDemand = true,
         });
 
         BuildScene();
