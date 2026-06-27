@@ -49,6 +49,18 @@ namespace VengEditor
             {
                 return AssetType::Level;
             }
+            if (name == "skeleton")
+            {
+                return AssetType::Skeleton;
+            }
+            if (name == "animation")
+            {
+                return AssetType::Animation;
+            }
+            if (name == "environment")
+            {
+                return AssetType::Environment;
+            }
             return std::nullopt;
         }
     }

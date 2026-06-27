@@ -132,6 +132,15 @@ namespace VengEditor
         /// @brief Draws the main menu bar (File / Window menus).
         void DrawMenuBar();
 
+        /// @brief Lays out the host dockspace the first frame no imgui.ini layout exists.
+        ///
+        /// Docks the asset browser, console and project settings as tabs in a bottom strip
+        /// and every open document (the level editor) into the remaining space above. A
+        /// layout restored from imgui.ini is left untouched, so user docking survives a
+        /// restart.
+        /// @param dockspaceId  The host dockspace node to populate.
+        void BuildDefaultHostLayout(Veng::u32 dockspaceId);
+
         EditorHostInfo m_Info;
 
         /// @brief Loaded modules; must outlive every registered closure and reflected
@@ -184,5 +193,8 @@ namespace VengEditor
         /// @brief Panels opened via OpenAssetEditor since the last frame; adopted into
         /// m_Panels outside panel-iteration so opening from OnUI is safe.
         Veng::vector<Veng::Unique<EditorPanel>> m_PendingPanels;
+
+        /// @brief Whether the one-time default host dock layout has been attempted.
+        bool m_HostLayoutBuilt = false;
     };
 }

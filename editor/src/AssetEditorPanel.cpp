@@ -54,13 +54,15 @@ namespace VengEditor
                 // Build the default split only when no layout exists yet: a fresh node
                 // (first run) or one DockSpace auto-created empty. A layout restored from
                 // imgui.ini is non-empty and is left untouched, so the user's docking
-                // survives a restart. The build needs the host window's real content
-                // size, which is degenerate the first frame an editor opened during
-                // OnInitialize draws; defer until it is valid rather than baking a
-                // zero-size split whose children fail to dock.
+                // survives a restart. The split sizes bake from the content region, which is
+                // not yet the docked size on this window's appearing frame (a document the host
+                // force-docks into its central node only inherits that node's size the following
+                // frame); building then bakes tiny child sizes the central node never gives back.
+                // Skip the appearing frame so the region is the real docked size.
                 const ImGuiDockNode* node = ImGui::DockBuilderGetNode(dockspaceId);
                 const vec2 avail = ImGui::GetContentRegionAvail();
-                if ((node == nullptr || node->IsEmpty()) && avail.x > 0.0f && avail.y > 0.0f)
+                if ((node == nullptr || node->IsEmpty()) && avail.x > 0.0f && avail.y > 0.0f &&
+                    !ImGui::IsWindowAppearing())
                 {
                     ImGui::DockBuilderRemoveNode(dockspaceId);
                     ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);

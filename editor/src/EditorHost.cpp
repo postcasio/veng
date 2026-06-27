@@ -12,6 +12,7 @@
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/UI/UI.h>
 #include <Veng/Vendor/ImGui.h>
+#include <Veng/Vendor/ImGuiInternal.h>
 
 #include "AssetSourceIndex.h"
 #include "PreviewCapability.h"
@@ -708,6 +709,31 @@ namespace VengEditor
         }
     }
 
+    void EditorHost::BuildDefaultHostLayout(u32 dockspaceId)
+    {
+        ImGui::DockBuilderRemoveNode(dockspaceId);
+        ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->WorkSize);
+
+        ImGuiID center = dockspaceId;
+        const ImGuiID bottom =
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, nullptr, &center);
+
+        // The asset browser, console and project settings share the bottom strip as tabs;
+        // every other open window (the level-editor document) fills the space above. Every
+        // panel's top-level window name is its GetTitle(), so the three bottom panels dock
+        // by name and the document falls through to the center.
+        for (const PanelSlot& slot : m_Panels)
+        {
+            const string title{slot.Panel->GetTitle()};
+            const bool docksBottom =
+                title == "Asset Browser" || title == "Console" || title == "Project Settings";
+            ImGui::DockBuilderDockWindow(title.c_str(), docksBottom ? bottom : center);
+        }
+
+        ImGui::DockBuilderFinish(dockspaceId);
+    }
+
     void EditorHost::OnRender()
     {
         // Adopt any panels opened via OpenAssetEditor since last frame, before drawing the
@@ -719,7 +745,21 @@ namespace VengEditor
         }
         m_PendingPanels.clear();
 
-        ImGui::DockSpaceOverViewport();
+        const ImGuiID dockspaceId = ImGui::DockSpaceOverViewport();
+
+        // First frame with no restored imgui.ini layout: lay out the default docking.
+        // An empty node means no layout was loaded; a restored one is non-empty and left
+        // untouched so the user's docking survives a restart.
+        if (!m_HostLayoutBuilt)
+        {
+            m_HostLayoutBuilt = true;
+            const ImGuiDockNode* node = ImGui::DockBuilderGetNode(dockspaceId);
+            if (node == nullptr || node->IsEmpty())
+            {
+                BuildDefaultHostLayout(dockspaceId);
+            }
+        }
+
         DrawMenuBar();
 
         // Each panel submits its own top-level window(s); an asset editor submits its

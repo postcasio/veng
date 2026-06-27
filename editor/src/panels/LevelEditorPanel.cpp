@@ -499,21 +499,15 @@ namespace VengEditor
         const ImGuiID left =
             ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.24f, nullptr, &center);
         const ImGuiID right =
-            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.30f, nullptr, &center);
+            ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.24f, nullptr, &center);
 
-        // Stack the systems panel under the explorer on the left, and the settings panel
-        // under the inspector on the right; the viewport fills the center.
-        ImGuiID leftBottom = left;
-        const ImGuiID leftTop =
-            ImGui::DockBuilderSplitNode(leftBottom, ImGuiDir_Up, 0.5f, nullptr, &leftBottom);
-        ImGuiID rightBottom = right;
-        const ImGuiID rightTop =
-            ImGui::DockBuilderSplitNode(rightBottom, ImGuiDir_Up, 0.55f, nullptr, &rightBottom);
-
-        DockChildWindow(m_ExplorerChild, leftTop);
-        DockChildWindow(m_SystemsChild, leftBottom);
+        // Level settings, systems and the hierarchy share the left node as tabs (the
+        // hierarchy docked last so it is the active tab); the inspector fills the right; the
+        // viewport fills the center.
+        DockChildWindow(m_SettingsChild, left);
+        DockChildWindow(m_SystemsChild, left);
+        DockChildWindow(m_ExplorerChild, left);
         DockChildWindow(m_ViewportChild, center);
-        DockChildWindow(m_InspectorChild, rightTop);
-        DockChildWindow(m_SettingsChild, rightBottom);
+        DockChildWindow(m_InspectorChild, right);
     }
 }

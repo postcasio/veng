@@ -37,6 +37,12 @@ namespace VengEditor
                 return "Prefab";
             case AssetType::Level:
                 return "Level";
+            case AssetType::Skeleton:
+                return "Skeleton";
+            case AssetType::Animation:
+                return "Animation";
+            case AssetType::Environment:
+                return "Environment";
             }
             return "Unknown";
         }
@@ -62,6 +68,12 @@ namespace VengEditor
                 return "PFB";
             case AssetType::Level:
                 return "LVL";
+            case AssetType::Skeleton:
+                return "SKL";
+            case AssetType::Animation:
+                return "ANM";
+            case AssetType::Environment:
+                return "ENV";
             }
             return "?";
         }
@@ -85,6 +97,12 @@ namespace VengEditor
                 return {0.75f, 0.45f, 0.55f, 1.0f};
             case AssetType::VertexLayout:
                 return {0.55f, 0.55f, 0.60f, 1.0f};
+            case AssetType::Skeleton:
+                return {0.80f, 0.40f, 0.40f, 1.0f};
+            case AssetType::Animation:
+                return {0.50f, 0.65f, 0.30f, 1.0f};
+            case AssetType::Environment:
+                return {0.35f, 0.50f, 0.75f, 1.0f};
             case AssetType::Raw:
                 return {0.50f, 0.50f, 0.50f, 1.0f};
             }
