@@ -1,0 +1,205 @@
+{
+    "_editor": {
+        "links": [
+            {
+                "from_node": 1,
+                "from_pin": "Color",
+                "to_node": 0,
+                "to_pin": "Albedo"
+            },
+            {
+                "from_node": 2,
+                "from_pin": "Color",
+                "to_node": 0,
+                "to_pin": "Normal"
+            }
+        ],
+        "nodes": [
+            {
+                "position": [
+                    600.0,
+                    0.0
+                ],
+                "type": "MaterialOutput"
+            },
+            {
+                "position": [
+                    0.0,
+                    0.0
+                ],
+                "properties": {
+                    "Texture": 1001
+                },
+                "type": "TextureSample"
+            },
+            {
+                "position": [
+                    0.0,
+                    160.0
+                ],
+                "properties": {
+                    "Texture": 1006
+                },
+                "type": "TextureSample"
+            },
+            {
+                "position": [
+                    0.0,
+                    320.0
+                ],
+                "properties": {
+                    "Texture": 1007
+                },
+                "type": "TextureSample"
+            },
+            {
+                "position": [
+                    0.0,
+                    480.0
+                ],
+                "properties": {
+                    "Value": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                },
+                "type": "Param"
+            },
+            {
+                "position": [
+                    0.0,
+                    640.0
+                ],
+                "properties": {
+                    "Value": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                },
+                "type": "Param"
+            },
+            {
+                "position": [
+                    0.0,
+                    800.0
+                ],
+                "properties": {
+                    "Value": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                },
+                "type": "Param"
+            },
+            {
+                "position": [
+                    0.0,
+                    960.0
+                ],
+                "properties": {
+                    "Value": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                },
+                "type": "Param"
+            },
+            {
+                "position": [
+                    0.0,
+                    1120.0
+                ],
+                "properties": {
+                    "Value": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                },
+                "type": "Param"
+            }
+        ],
+        "version": 1
+    },
+    "domain": "surface",
+    "fields": [
+        {
+            "id": 1001,
+            "name": "BaseColor",
+            "type": "texture"
+        },
+        {
+            "name": "BaseColorSampler",
+            "texture": "BaseColor",
+            "type": "sampler"
+        },
+        {
+            "id": 1006,
+            "name": "ORM",
+            "type": "texture"
+        },
+        {
+            "name": "ORMSampler",
+            "texture": "ORM",
+            "type": "sampler"
+        },
+        {
+            "id": 1007,
+            "name": "Normal",
+            "type": "texture"
+        },
+        {
+            "name": "NormalSampler",
+            "texture": "Normal",
+            "type": "sampler"
+        },
+        {
+            "name": "BaseColorFactor",
+            "type": "vec4",
+            "value": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+            ]
+        },
+        {
+            "name": "EmissiveFactor",
+            "type": "vec4",
+            "value": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+            ]
+        },
+        {
+            "name": "MetallicFactor",
+            "type": "float",
+            "value": 0.0
+        },
+        {
+            "name": "RoughnessFactor",
+            "type": "float",
+            "value": 0.0
+        },
+        {
+            "name": "OcclusionStrength",
+            "type": "float",
+            "value": 0.0
+        }
+    ],
+    "shaders": {
+        "fragment": 1005,
+        "vertex": 7619531439638779021
+    }
+}

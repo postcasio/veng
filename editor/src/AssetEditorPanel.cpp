@@ -46,11 +46,13 @@ namespace VengEditor
 
         const ImGuiID dockspaceId = ImGui::GetID(m_DockSpaceName.c_str());
 
+        bool documentVisible = false;
         {
             const UI::StyleVarScope padding =
                 UI::StyleVar(UI::StyleVarId::WindowPadding, vec2(0, 0));
             if (auto window = UI::Window(GetTitle(), open))
             {
+                documentVisible = true;
                 // Build the default split only when no layout exists yet: a fresh node
                 // (first run) or one DockSpace auto-created empty. A layout restored from
                 // imgui.ini is non-empty and is left untouched, so the user's docking
@@ -74,6 +76,17 @@ namespace VengEditor
                 OnUI();
                 ImGui::DockSpace(dockspaceId, ImVec2(0, 0), ImGuiDockNodeFlags_None, &dockClass);
             }
+        }
+
+        // When this editor is an unselected tab, the document body is skipped and the DockSpace
+        // above never runs. Keep the node alive (legal from any scope under KeepAliveOnly) so its
+        // docked children retain their layout, and submit no children — they hide with the document
+        // rather than floating free of their now-hidden host, and re-dock when the tab is reselected.
+        if (!documentVisible)
+        {
+            ImGui::DockSpace(dockspaceId, ImVec2(0, 0), ImGuiDockNodeFlags_KeepAliveOnly,
+                             &dockClass);
+            return;
         }
 
         // Child windows are submitted at the top level (the document window's scope has
