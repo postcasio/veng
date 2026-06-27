@@ -29,6 +29,8 @@ namespace VengEditor
         // The rotate ring radius as a fraction of the handle scale, and its pick band half-width.
         constexpr f32 RingRadius = 0.9f;
         constexpr f32 RingPickTolerance = 0.1f;
+        // Ribbon thickness of the gizmo's debug-draw lines/boxes, in screen pixels.
+        constexpr f32 GizmoLineWidth = 3.0f;
 
         /// @brief Returns the squared distance between a ray and a finite segment, with the ray parameter on the ray.
         ///
@@ -289,7 +291,7 @@ namespace VengEditor
                         placement.Origin + radius * (std::cos(a) * u + std::sin(a) * v);
                     if (i > 0)
                     {
-                        debug.DrawLine(prev, point, color);
+                        debug.DrawLine(prev, point, color, GizmoLineWidth);
                     }
                     prev = point;
                 }
@@ -304,13 +306,13 @@ namespace VengEditor
             const GizmoHandle handle =
                 static_cast<GizmoHandle>(static_cast<u8>(GizmoHandle::AxisX) + axis);
             const vec4 color = axisColor(axis, handle);
-            debug.DrawLine(placement.Origin, tip, color);
+            debug.DrawLine(placement.Origin, tip, color, GizmoLineWidth);
 
             if (m_Mode == GizmoMode::Scale)
             {
                 // A small box at the tip marks a scale grab.
                 const f32 half = AxisPickTolerance * length * 0.9f;
-                debug.DrawBox({tip - vec3(half), tip + vec3(half)}, color);
+                debug.DrawBox({tip - vec3(half), tip + vec3(half)}, color, GizmoLineWidth);
             }
         }
 
@@ -329,10 +331,10 @@ namespace VengEditor
                 const vec3 b = placement.Origin + u * hi + v * lo;
                 const vec3 c = placement.Origin + u * hi + v * hi;
                 const vec3 d = placement.Origin + u * lo + v * hi;
-                debug.DrawLine(a, b, color);
-                debug.DrawLine(b, c, color);
-                debug.DrawLine(c, d, color);
-                debug.DrawLine(d, a, color);
+                debug.DrawLine(a, b, color, GizmoLineWidth);
+                debug.DrawLine(b, c, color, GizmoLineWidth);
+                debug.DrawLine(c, d, color, GizmoLineWidth);
+                debug.DrawLine(d, a, color, GizmoLineWidth);
             }
         }
 
@@ -340,7 +342,8 @@ namespace VengEditor
         {
             const f32 half = AxisPickTolerance * length * 1.5f;
             const vec4 color = active == GizmoHandle::Uniform ? HighlightColor : UniformColor;
-            debug.DrawBox({placement.Origin - vec3(half), placement.Origin + vec3(half)}, color);
+            debug.DrawBox({placement.Origin - vec3(half), placement.Origin + vec3(half)}, color,
+                          GizmoLineWidth);
         }
     }
 

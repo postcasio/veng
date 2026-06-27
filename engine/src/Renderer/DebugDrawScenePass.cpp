@@ -2,7 +2,6 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Shader.h>
-#include <Veng/Asset/VertexLayout.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
@@ -30,9 +29,11 @@ namespace Veng::Renderer
         constexpr AssetId BillboardPickFragId{0x25D95EE54D64B346ULL};
 
         // An occluded gizmo fades to this fraction of its color rather than vanishing.
-        constexpr f32 OccludedFade = 0.25f;
+        constexpr f32 OccludedFade = 0.5f;
 
         // Shared push block for both debug pipelines (matches debug_line/debug_billboard .slang).
+        // ViewportWidth/Height drive the line stage's screen-space ribbon expansion; the billboard
+        // stage ignores them (its shaders read those two words as unused padding).
         struct DebugPushConstants
         {
             u32 DepthTexture;
@@ -40,9 +41,18 @@ namespace Veng::Renderer
             u32 ViewConstantsIndex;
             u32 Pad0;
             f32 OccludedFade;
-            u32 Pad1;
-            u32 Pad2;
+            f32 ViewportWidth;
+            f32 ViewportHeight;
             u32 Pad3;
+        };
+
+        // One GPU line segment-endpoint record (std430): the vec4 first, then position + the
+        // pixel ribbon width. Matches debug_line.vert's GpuLineVertex byte-for-byte (32 bytes).
+        struct GpuLineVertex
+        {
+            vec4 Color;
+            vec3 Position;
+            f32 Width;
         };
 
         // One GPU billboard record (std430): vec4 fields first, then the texture index + pad.
@@ -58,6 +68,8 @@ namespace Veng::Renderer
         };
 
         constexpr u32 BillboardVertexCount = 6;
+        // Six vertices (two triangles) per expanded primitive — a billboard quad or a line ribbon.
+        constexpr u32 SegmentVertexCount = 6;
         constexpr u32 MaxLineVertices = 1 << 16;
         constexpr u32 MaxBillboards = 4096;
 
@@ -94,36 +106,40 @@ namespace Veng::Renderer
         const PipelineAttachmentInfo blendTarget{.Format = m_OutputFormat,
                                                  .Blend = BlendState::AlphaBlend()};
 
-        // The line vertex shader names the debug-line vertex layout (position + color).
-        optional<VertexBufferLayout> lineLayout;
-        const ShaderInterface& lineVsInterface = lineVs.Get()->Interface;
-        if (lineVsInterface.VertexLayoutId.has_value())
-        {
-            const AssetResult<AssetHandle<Veng::VertexLayout>> layoutResult =
-                assets.LoadSync<Veng::VertexLayout>(*lineVsInterface.VertexLayoutId);
-            VE_ASSERT(layoutResult.has_value(),
-                      "DebugDrawScenePass: line vertex layout load failed: {}",
-                      layoutResult.error().Detail);
-            lineLayout = layoutResult->Get()->GetLayout();
-        }
-
-        m_LineLayout = PipelineLayout::Create(m_Context, {
-                                                             .Name = "DebugDraw Line Layout",
-                                                             .PushConstantRanges = {pushRange},
-                                                         });
+        // The line set: binding 0 the per-frame segment-record SSBO (set 1, off bindless — a
+        // closed per-frame producer→consumer buffer needs no global registration), mirroring the
+        // billboard set. The vertex stage pulls both endpoints of a segment from it by SV_VertexID
+        // and expands them into a screen-space triangle ribbon, so there is no vertex input.
+        m_LineSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "DebugDraw Line Set Layout",
+                           .Bindings = {{.Binding = 0,
+                                         .Type = DescriptorType::StorageBuffer,
+                                         .Count = 1,
+                                         .Stages = ShaderStage::Vertex}},
+                       });
+        m_LineLayout =
+            PipelineLayout::Create(m_Context, {
+                                                  .Name = "DebugDraw Line Layout",
+                                                  .DescriptorSetLayouts = {m_LineSetLayout},
+                                                  .PushConstantRanges = {pushRange},
+                                              });
         m_LinePipeline = GraphicsPipeline::Create(
             m_Context, {
                            .Name = "DebugDraw Line Pipeline",
                            .ColorAttachments = {blendTarget},
-                           .VertexBufferLayout = lineLayout,
                            .PipelineLayout = m_LineLayout,
                            .ShaderStages =
                                {
                                    {.Stage = ShaderStage::Vertex, .Module = lineVs.Get()->Module},
                                    {.Stage = ShaderStage::Fragment, .Module = lineFs.Get()->Module},
                                },
-                           .Topology = PrimitiveTopology::LineList,
+                           .Topology = PrimitiveTopology::TriangleList,
                        });
+        m_LineSet = DescriptorSet::Create(m_Context, {
+                                                         .Name = "DebugDraw Line Set",
+                                                         .Layout = m_LineSetLayout,
+                                                     });
 
         // The billboard set: binding 0 the per-frame record SSBO (set 1, off bindless — a closed
         // per-frame producer→consumer buffer needs no global registration).
@@ -158,13 +174,13 @@ namespace Veng::Renderer
                                                               .Layout = m_BillboardSetLayout,
                                                           });
 
-        // Host-mapped, ring-buffered line vertex + billboard buffers: one region per
+        // Host-mapped, ring-buffered line + billboard record buffers: one region per
         // frame-in-flight so the GPU never reads a region the host is rewriting.
-        m_LineRegionStride = static_cast<u64>(MaxLineVertices) * sizeof(DebugLineVertex);
+        m_LineRegionStride = static_cast<u64>(MaxLineVertices) * sizeof(GpuLineVertex);
         m_LineBuffer = Buffer::Create(m_Context, {
                                                      .Name = "DebugDraw Line Buffer",
                                                      .Size = m_LineRegionStride * m_FramesInFlight,
-                                                     .Usage = BufferUsage::Vertex,
+                                                     .Usage = BufferUsage::Storage,
                                                      .HostMapped = true,
                                                  });
 
@@ -193,11 +209,26 @@ namespace Veng::Renderer
             return 0;
         }
 
-        const u32 count = std::min(static_cast<u32>(vertices.size()), MaxLineVertices);
+        // Drop a trailing odd endpoint: the ribbon expansion reads endpoints two at a time.
+        const u32 count = std::min(static_cast<u32>(vertices.size()), MaxLineVertices) & ~1u;
         const u32 region = m_Context.GetCurrentFrameInFlight();
-        auto* base = static_cast<u8*>(m_LineBuffer->GetMappedData()) +
-                     static_cast<usize>(region) * m_LineRegionStride;
-        std::memcpy(base, vertices.data(), static_cast<usize>(count) * sizeof(DebugLineVertex));
+        const u64 regionOffset = static_cast<u64>(region) * m_LineRegionStride;
+        auto* base = static_cast<u8*>(m_LineBuffer->GetMappedData()) + regionOffset;
+
+        for (u32 i = 0; i < count; ++i)
+        {
+            const DebugLineVertex& src = vertices[i];
+            const GpuLineVertex record{
+                .Color = src.Color,
+                .Position = src.Position,
+                .Width = src.Width,
+            };
+            std::memcpy(base + static_cast<usize>(i) * sizeof(GpuLineVertex), &record,
+                        sizeof(GpuLineVertex));
+        }
+
+        // Bind this frame's region as the whole SSBO range for the draw.
+        m_LineSet->Write(0, m_LineBuffer, regionOffset, m_LineRegionStride);
         return count;
     }
 
@@ -266,6 +297,8 @@ namespace Veng::Renderer
                         .Sampler = samplerHandle.Index,
                         .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
                         .OccludedFade = OccludedFade,
+                        .ViewportWidth = static_cast<f32>(m_Extent.x),
+                        .ViewportHeight = static_cast<f32>(m_Extent.y),
                     };
 
                     // The debug pass runs at full output extent (overlay content stays crisp).
@@ -276,12 +309,15 @@ namespace Veng::Renderer
                     {
                         cmd.BindPipeline(m_LinePipeline);
                         registry.Bind(cmd);
+                        cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                            .Sets = {m_LineSet},
+                            .FirstSet = 1,
+                            .PipelineBindPoint = PipelineBindPoint::Graphics,
+                        });
                         cmd.PushConstants(push);
-
-                        const u32 region = m_Context.GetCurrentFrameInFlight();
-                        // Bind the whole buffer; the per-frame region base is the firstVertex.
-                        cmd.BindVertexBuffer(m_LineBuffer);
-                        cmd.Draw(lineCount, 1, region * MaxLineVertices, 0);
+                        // Six vertices per segment (two triangles of a ribbon quad); the vertex
+                        // stage derives the segment + corner from the vertex index.
+                        cmd.Draw(SegmentVertexCount * (lineCount / 2), 1, 0, 0);
                     }
 
                     if (billboardCount > 0)

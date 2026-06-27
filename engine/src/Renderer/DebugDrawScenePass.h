@@ -24,11 +24,13 @@ namespace Veng::Renderer
     /// tonemap pass's RenderScaleUV/MaxValidUV so the sample is correct under dynamic resolution —
     /// and fade an occluded fragment rather than hiding it (the single-pass occluded fallback).
     ///
-    /// Lines are uploaded into a per-frame-in-flight ring region of a host-mapped vertex buffer
-    /// and rasterized as a LineList; billboards are uploaded into a per-frame-in-flight ring region
-    /// of a host-mapped SSBO (set 1 binding 0) and drawn instanced (six vertices per record). The
-    /// pass reads the renderer-owned DebugDraw accumulator each frame through a stored pointer; the
-    /// accumulator clears at the start of each Execute, so a primitive is re-pushed each frame.
+    /// Lines and billboards both upload into a per-frame-in-flight ring region of a host-mapped
+    /// SSBO (set 1 binding 0) and draw six vertices per record with no vertex input: the line
+    /// vertex stage expands each two-endpoint segment into a screen-space-thickened triangle
+    /// ribbon (a constant pixel width regardless of distance — MoltenVK has no wide-line support),
+    /// the billboard stage into a camera-facing quad. The pass reads the renderer-owned DebugDraw
+    /// accumulator each frame through a stored pointer; the accumulator clears at the start of each
+    /// Execute, so a primitive is re-pushed each frame.
     class DebugDrawScenePass final : public ScenePass
     {
     public:
@@ -54,9 +56,9 @@ namespace Veng::Renderer
         void Declare(RenderGraph& graph, const PassIO& io) override;
 
     private:
-        /// @brief Uploads this frame's line vertices into the current ring region and binds them.
+        /// @brief Uploads this frame's line segment records into the current ring region and writes the set.
         ///
-        /// Returns the number of line vertices written (0 when there are none).
+        /// Returns the number of line endpoint vertices written, two per segment (0 when none).
         u32 UploadLines();
 
         /// @brief Uploads this frame's billboard records into the current ring region and writes the set.
@@ -77,10 +79,14 @@ namespace Veng::Renderer
         /// @brief Current output extent.
         uvec2 m_Extent;
 
-        /// @brief Line pipeline (LineList topology, alpha blend) and its layout.
+        /// @brief Line pipeline (triangle ribbon expansion, alpha blend) and its layout.
         Ref<GraphicsPipeline> m_LinePipeline;
-        /// @brief Layout for the line pipeline (set 0 bindless + push block).
+        /// @brief Layout for the line pipeline (set 0 bindless + set 1 record SSBO + push block).
         Ref<PipelineLayout> m_LineLayout;
+        /// @brief Set-1 layout for the line segment records (binding 0 storage buffer).
+        Ref<DescriptorSetLayout> m_LineSetLayout;
+        /// @brief Descriptor set bound at set 1 for the line draw (whole-range, ringed by offset).
+        Ref<DescriptorSet> m_LineSet;
 
         /// @brief Billboard pipeline (instanced quad, alpha blend) and its layout.
         Ref<GraphicsPipeline> m_BillboardPipeline;
@@ -91,7 +97,7 @@ namespace Veng::Renderer
         /// @brief Descriptor set bound at set 1 for the billboard draw (whole-range, ringed by offset).
         Ref<DescriptorSet> m_BillboardSet;
 
-        /// @brief Host-mapped line vertex buffer, ring-buffered for frames-in-flight.
+        /// @brief Host-mapped line segment-record SSBO, ring-buffered for frames-in-flight.
         Ref<Buffer> m_LineBuffer;
         /// @brief Byte stride between line-buffer ring regions.
         u64 m_LineRegionStride = 0;

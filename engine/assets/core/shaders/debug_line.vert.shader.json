@@ -1,5 +1,4 @@
 {
   "source": "debug_line.vert.slang",
-  "entry": "vsMain",
-  "vertex_layout": 15017974748652859786
+  "entry": "vsMain"
 }

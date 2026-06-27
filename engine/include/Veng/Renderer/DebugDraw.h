@@ -8,14 +8,19 @@ namespace Veng::Renderer
 {
     /// @brief One line-segment endpoint in the debug-draw accumulator.
     ///
-    /// glm-only so it lives in a public header; the world position and linear-RGBA color
-    /// pack byte-for-byte into the line vertex buffer the DebugDrawScenePass rasterizes.
+    /// glm-only so it lives in a public header. The DebugDrawScenePass reads two consecutive
+    /// entries as a segment and expands it on the GPU into a screen-space-thickened triangle
+    /// ribbon — a constant pixel width regardless of camera distance — so a debug line is solid
+    /// geometry, not a 1-pixel hardware line (MoltenVK clamps wide lines to 1px). Both endpoints
+    /// of a segment carry the same Width.
     struct DebugLineVertex
     {
         /// @brief World-space endpoint position.
         vec3 Position;
         /// @brief Linear RGBA color (alpha is the line's opacity before the occlusion fade).
         vec4 Color;
+        /// @brief Ribbon thickness in screen pixels, constant with camera distance.
+        f32 Width;
     };
 
     /// @brief One camera-facing textured billboard in the debug-draw accumulator.
@@ -63,23 +68,30 @@ namespace Veng::Renderer
     class DebugDraw
     {
     public:
+        /// @brief Default ribbon thickness in screen pixels for the debug-draw helpers.
+        static constexpr f32 DefaultLineWidth = 1.5f;
+
         /// @brief Adds a world-space line segment in one color.
         /// @param a      First endpoint, world space.
         /// @param b      Second endpoint, world space.
         /// @param color  Linear RGBA color.
-        void DrawLine(vec3 a, vec3 b, vec4 color);
+        /// @param width  Ribbon thickness in screen pixels (constant with camera distance).
+        void DrawLine(vec3 a, vec3 b, vec4 color, f32 width = DefaultLineWidth);
 
         /// @brief Adds the twelve edges of an axis-aligned bounding box.
         /// @param box    The box, in world space.
         /// @param color  Linear RGBA color.
-        void DrawBox(const AABB& box, vec4 color);
+        /// @param width  Ribbon thickness in screen pixels.
+        void DrawBox(const AABB& box, vec4 color, f32 width = DefaultLineWidth);
 
         /// @brief Adds a three-ring great-circle wireframe sphere.
         /// @param center   Sphere center, world space.
         /// @param radius   Sphere radius in world units.
         /// @param color    Linear RGBA color.
         /// @param segments Line segments per ring (clamped to at least 4).
-        void DrawSphere(vec3 center, f32 radius, vec4 color, u32 segments = 24);
+        /// @param width    Ribbon thickness in screen pixels.
+        void DrawSphere(vec3 center, f32 radius, vec4 color, u32 segments = 24,
+                        f32 width = DefaultLineWidth);
 
         /// @brief Adds the wireframe edges of a frustum from its inverse view-projection.
         ///
@@ -87,12 +99,14 @@ namespace Veng::Renderer
         /// near quad, the far quad, and the four connecting edges.
         /// @param invViewProjection  Inverse of the frustum's world → clip transform.
         /// @param color              Linear RGBA color.
-        void DrawFrustum(const mat4& invViewProjection, vec4 color);
+        /// @param width              Ribbon thickness in screen pixels.
+        void DrawFrustum(const mat4& invViewProjection, vec4 color, f32 width = DefaultLineWidth);
 
         /// @brief Adds three colored axes (X red, Y green, Z blue) from a world transform.
         /// @param transform  World transform whose basis and translation place the axes.
         /// @param scale      Axis length in world units.
-        void DrawTransform(const mat4& transform, f32 scale = 1.0f);
+        /// @param width      Ribbon thickness in screen pixels.
+        void DrawTransform(const mat4& transform, f32 scale = 1.0f, f32 width = DefaultLineWidth);
 
         /// @brief Adds a camera-facing textured quad, optionally pickable through the id pass.
         /// @param worldPosition  World-space center the quad faces the camera around.
