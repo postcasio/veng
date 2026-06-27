@@ -2,6 +2,7 @@
 
 #include "AssetDragPayload.h"
 #include "AssetSourceIndex.h"
+#include "FieldWidgetDispatch.h"
 #include "panels/PrefabEditContext.h"
 
 #include <Veng/Asset/AssetId.h>
@@ -9,13 +10,16 @@
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Texture.h>
+#include <Veng/Log.h>
 #include <Veng/Reflection/FieldDisplay.h>
+#include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/UI/UI.h>
 #include <VengEditor/EditorRegistry.h>
 
 #include <cstring>
+#include <unordered_set>
 
 namespace VengEditor
 {
@@ -432,6 +436,55 @@ namespace VengEditor
         }
     }
 
+    namespace
+    {
+        // The display name of a WidgetKind, for the one-time incompatible-hint warning.
+        const char* WidgetKindName(WidgetKind kind)
+        {
+            switch (kind)
+            {
+            case WidgetKind::Auto:
+                return "Auto";
+            case WidgetKind::Drag:
+                return "Drag";
+            case WidgetKind::Slider:
+                return "Slider";
+            case WidgetKind::Color:
+                return "Color";
+            case WidgetKind::Multiline:
+                return "Multiline";
+            }
+            return "?";
+        }
+
+        // Warns once per field descriptor when its resolved widget hint was degraded. The
+        // seen-set is keyed on the FieldDescriptor pointer — stable for the registry's
+        // lifetime — and read on the single render thread, so it needs no synchronization.
+        // It is cleared when the owning registry changes, so a freed descriptor's pointer
+        // cannot be reused as a stale key.
+        void WarnDegradedHintOnce(const TypeRegistry& registry, const FieldDescriptor& field,
+                                  WidgetKind requested, WidgetKind effective)
+        {
+            static const TypeRegistry* s_LastRegistry = nullptr;
+            static std::unordered_set<const FieldDescriptor*> s_Warned;
+
+            if (s_LastRegistry != &registry)
+            {
+                s_Warned.clear();
+                s_LastRegistry = &registry;
+            }
+
+            if (!s_Warned.insert(&field).second)
+            {
+                return;
+            }
+
+            Log::Warn("Field '{}' requests widget {} incompatible with its type; drawing {} "
+                      "instead.",
+                      field.Name, WidgetKindName(requested), WidgetKindName(effective));
+        }
+    }
+
     bool DrawFieldWidget(void* fieldPtr, const FieldDescriptor& field,
                          const FieldWidgetContext& ctx)
     {
@@ -517,7 +570,8 @@ namespace VengEditor
         // Drag speed and clamp range come from the field's resolved presentation
         // (field override over type default); absent metadata leaves the DragOptions
         // defaults (0.01f speed, unclamped).
-        const FieldDisplay display = ResolveFieldDisplay(field, ctx.Assets.GetTypeRegistry());
+        const TypeRegistry& registry = ctx.Assets.GetTypeRegistry();
+        const FieldDisplay display = ResolveFieldDisplay(field, registry);
         UI::DragOptions drag;
         if (display.Step)
         {
@@ -532,6 +586,29 @@ namespace VengEditor
             drag.Max = static_cast<f32>(*display.Max);
         }
 
+        // The widget the field actually draws — its resolved hint, degraded if it is
+        // incompatible with the field's class/type (a slider needs a range, a color needs a
+        // vec3/vec4, multiline needs a string). A degrade warns once per descriptor.
+        const bool hasRange = display.Min.has_value() && display.Max.has_value();
+        const WidgetKind effective =
+            EffectiveWidget(display.Widget, field.Class, field.Type, hasRange);
+        if (effective != display.Widget && display.Widget != WidgetKind::Auto)
+        {
+            WarnDegradedHintOnce(registry, field, display.Widget, effective);
+        }
+
+        // A Slider reads the resolved Min/Max; SliderOptions bounds are f32, so the
+        // optional<f64> cascade values narrow at the call site.
+        UI::SliderOptions slider;
+        if (display.Min)
+        {
+            slider.Min = static_cast<f32>(*display.Min);
+        }
+        if (display.Max)
+        {
+            slider.Max = static_cast<f32>(*display.Max);
+        }
+
         bool changed = false;
         switch (field.Class)
         {
@@ -539,7 +616,14 @@ namespace VengEditor
         {
             if (field.Type == TypeIdOf<f32>())
             {
-                changed = UI::Drag(valueLabel, *static_cast<f32*>(fieldPtr), drag);
+                if (effective == WidgetKind::Slider)
+                {
+                    changed = UI::Slider(valueLabel, *static_cast<f32*>(fieldPtr), slider);
+                }
+                else
+                {
+                    changed = UI::Drag(valueLabel, *static_cast<f32*>(fieldPtr), drag);
+                }
             }
             else if (field.Type == TypeIdOf<i32>())
             {
@@ -569,15 +653,44 @@ namespace VengEditor
         {
             if (field.Type == TypeIdOf<vec2>())
             {
-                changed = UI::Drag(valueLabel, *static_cast<vec2*>(fieldPtr), drag);
+                if (effective == WidgetKind::Slider)
+                {
+                    changed = UI::Slider(valueLabel, *static_cast<vec2*>(fieldPtr), slider);
+                }
+                else
+                {
+                    changed = UI::Drag(valueLabel, *static_cast<vec2*>(fieldPtr), drag);
+                }
             }
             else if (field.Type == TypeIdOf<vec3>())
             {
-                changed = UI::Drag(valueLabel, *static_cast<vec3*>(fieldPtr), drag);
+                if (effective == WidgetKind::Color)
+                {
+                    changed = UI::ColorEdit3(valueLabel, *static_cast<vec3*>(fieldPtr));
+                }
+                else if (effective == WidgetKind::Slider)
+                {
+                    changed = UI::Slider(valueLabel, *static_cast<vec3*>(fieldPtr), slider);
+                }
+                else
+                {
+                    changed = UI::Drag(valueLabel, *static_cast<vec3*>(fieldPtr), drag);
+                }
             }
             else if (field.Type == TypeIdOf<vec4>())
             {
-                changed = UI::Drag(valueLabel, *static_cast<vec4*>(fieldPtr), drag);
+                if (effective == WidgetKind::Color)
+                {
+                    changed = UI::ColorEdit4(valueLabel, *static_cast<vec4*>(fieldPtr));
+                }
+                else if (effective == WidgetKind::Slider)
+                {
+                    changed = UI::Slider(valueLabel, *static_cast<vec4*>(fieldPtr), slider);
+                }
+                else
+                {
+                    changed = UI::Drag(valueLabel, *static_cast<vec4*>(fieldPtr), drag);
+                }
             }
             break;
         }
@@ -595,7 +708,14 @@ namespace VengEditor
         case FieldClass::String:
         {
             string& value = *static_cast<string*>(fieldPtr);
-            changed = UI::InputText(valueLabel, value);
+            if (effective == WidgetKind::Multiline)
+            {
+                changed = UI::InputTextMultiline(valueLabel, value);
+            }
+            else
+            {
+                changed = UI::InputText(valueLabel, value);
+            }
             break;
         }
         case FieldClass::AssetHandle:

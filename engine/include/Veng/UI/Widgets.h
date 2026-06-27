@@ -56,6 +56,27 @@ namespace Veng::UI
     /// @return True the frame the value changed.
     [[nodiscard]] bool Slider(string_view label, f32& v, SliderOptions options);
 
+    /// @brief Slider-edits a `vec2` value within the declared range.
+    /// @param label    Widget label and ImGui id.
+    /// @param v        Value to edit in place.
+    /// @param options  Min, max, and format string (required — a slider without a range is meaningless).
+    /// @return True the frame the value changed.
+    [[nodiscard]] bool Slider(string_view label, vec2& v, SliderOptions options);
+
+    /// @brief Slider-edits a `vec3` value within the declared range.
+    /// @param label    Widget label and ImGui id.
+    /// @param v        Value to edit in place.
+    /// @param options  Min, max, and format string (required — a slider without a range is meaningless).
+    /// @return True the frame the value changed.
+    [[nodiscard]] bool Slider(string_view label, vec3& v, SliderOptions options);
+
+    /// @brief Slider-edits a `vec4` value within the declared range.
+    /// @param label    Widget label and ImGui id.
+    /// @param v        Value to edit in place.
+    /// @param options  Min, max, and format string (required — a slider without a range is meaningless).
+    /// @return True the frame the value changed.
+    [[nodiscard]] bool Slider(string_view label, vec4& v, SliderOptions options);
+
     /// @brief Slider-edits an integer value within the declared range.
     /// @param label  Widget label and ImGui id.
     /// @param v      Value to edit in place.
@@ -63,6 +84,18 @@ namespace Veng::UI
     /// @param max    Upper bound.
     /// @return True the frame the value changed.
     [[nodiscard]] bool Slider(string_view label, i32& v, i32 min, i32 max);
+
+    /// @brief Edits an RGB color through a swatch + picker popup.
+    /// @param label  Widget label and ImGui id.
+    /// @param v      RGB color edited in place; each channel in [0, 1].
+    /// @return True the frame the color changed.
+    [[nodiscard]] bool ColorEdit3(string_view label, vec3& v);
+
+    /// @brief Edits an RGBA color through a swatch + picker popup.
+    /// @param label  Widget label and ImGui id.
+    /// @param v      RGBA color edited in place; each channel in [0, 1].
+    /// @return True the frame the color changed.
+    [[nodiscard]] bool ColorEdit4(string_view label, vec4& v);
 
     /// @brief Toggles a bool value with a checkbox.
     /// @param label  Widget label and ImGui id.
@@ -91,6 +124,18 @@ namespace Veng::UI
     /// @param v      Value written back on commit.
     /// @return True the frame a new value was committed to `v`.
     [[nodiscard]] bool InputTextWithHint(string_view label, string_view hint, string& v);
+
+    /// @brief Edits a string value in a multi-line box, committing on deactivate-after-edit.
+    ///
+    /// The multi-line sibling of `InputText`: it owns the same internal scratch buffer and
+    /// writes `v` back only on deactivate-after-edit (Enter inserts a newline in a multi-line
+    /// field rather than committing). The returned bool means committed, not "edited this
+    /// frame".
+    /// @param label  Widget label and ImGui id.
+    /// @param v      Value written back on commit.
+    /// @param size   Box size in pixels; a zero component takes ImGui's default extent.
+    /// @return True the frame a new value was committed to `v`.
+    [[nodiscard]] bool InputTextMultiline(string_view label, string& v, vec2 size = {});
 
     /// @brief Dropdown that selects among a fixed list of string items.
     /// @param label  Widget label and ImGui id.

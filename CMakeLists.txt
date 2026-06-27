@@ -419,7 +419,9 @@ if (VENG_BUILD_TESTS)
             tests/unit/reflection.cpp
             tests/unit/reflection_variant.cpp
             tests/unit/field_display.cpp
+            tests/unit/field_widget_dispatch.cpp
             tests/unit/enum_reflection.cpp
+            editor/src/FieldWidgetDispatch.cpp
             tests/unit/project_settings.cpp
             tests/unit/primitive_resolve.cpp
             tests/unit/camera.cpp
@@ -438,6 +440,12 @@ if (VENG_BUILD_TESTS)
     # TypeMapping header below); that path is on the include search list so they
     # compile. The public reflection serializer is on the include/ tree.
     target_include_directories(veng_test_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/engine/src)
+
+    # The field-widget-dispatch case compiles the editor's pure, device-free
+    # EffectiveWidget decision directly (FieldWidgetDispatch.cpp above), so its header
+    # is on the include search list — no editor/ImGui link, the function names only
+    # reflection types.
+    target_include_directories(veng_test_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
 
 
     # The type-mapping (and barrier-decision, plan 04) cases include backend

@@ -93,10 +93,43 @@ namespace Veng::UI
         return ImGui::SliderFloat(id.c_str(), &v, options.Min, options.Max, options.Format);
     }
 
+    bool Slider(string_view label, vec2& v, SliderOptions options)
+    {
+        const string id = AsCStr(label);
+        return ImGui::SliderFloat2(id.c_str(), glm::value_ptr(v), options.Min, options.Max,
+                                   options.Format);
+    }
+
+    bool Slider(string_view label, vec3& v, SliderOptions options)
+    {
+        const string id = AsCStr(label);
+        return ImGui::SliderFloat3(id.c_str(), glm::value_ptr(v), options.Min, options.Max,
+                                   options.Format);
+    }
+
+    bool Slider(string_view label, vec4& v, SliderOptions options)
+    {
+        const string id = AsCStr(label);
+        return ImGui::SliderFloat4(id.c_str(), glm::value_ptr(v), options.Min, options.Max,
+                                   options.Format);
+    }
+
     bool Slider(string_view label, i32& v, i32 min, i32 max)
     {
         const string id = AsCStr(label);
         return ImGui::SliderInt(id.c_str(), &v, min, max);
+    }
+
+    bool ColorEdit3(string_view label, vec3& v)
+    {
+        const string id = AsCStr(label);
+        return ImGui::ColorEdit3(id.c_str(), glm::value_ptr(v));
+    }
+
+    bool ColorEdit4(string_view label, vec4& v)
+    {
+        const string id = AsCStr(label);
+        return ImGui::ColorEdit4(id.c_str(), glm::value_ptr(v));
     }
 
     bool Checkbox(string_view label, bool& v)
@@ -111,7 +144,10 @@ namespace Veng::UI
         // deactivate-after-edit. A single static scratch is safe: ImGui activates at most
         // one input item at a time, so the scratch is owned by whichever item's id matches
         // s_ActiveId. A null hint draws a plain field; a non-null hint draws the placeholder.
-        bool InputTextImpl(string_view label, const char* hint, string& v)
+        // A multi-line field commits only on deactivate (Enter inserts a newline), so it
+        // ignores the hint (ImGui has no multi-line hint variant).
+        bool InputTextImpl(string_view label, const char* hint, string& v, bool multiline,
+                           vec2 size)
         {
             const string id = AsCStr(label);
 
@@ -137,14 +173,28 @@ namespace Veng::UI
                 return 0;
             };
 
+            // A multi-line field reserves Enter for a newline, so it commits only on
+            // deactivate-after-edit; EnterReturnsTrue applies to the single-line forms.
             const ImGuiInputTextFlags flags =
-                ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackResize;
-            const bool entered =
-                hint != nullptr
-                    ? ImGui::InputTextWithHint(id.c_str(), hint, s_Scratch.data(), s_Scratch.size(),
-                                               flags, resizeCallback, &s_Scratch)
-                    : ImGui::InputText(id.c_str(), s_Scratch.data(), s_Scratch.size(), flags,
-                                       resizeCallback, &s_Scratch);
+                ImGuiInputTextFlags_CallbackResize |
+                (multiline ? ImGuiInputTextFlags_None : ImGuiInputTextFlags_EnterReturnsTrue);
+            bool entered = false;
+            if (multiline)
+            {
+                entered = ImGui::InputTextMultiline(id.c_str(), s_Scratch.data(), s_Scratch.size(),
+                                                    size, flags, resizeCallback, &s_Scratch);
+            }
+            else if (hint != nullptr)
+            {
+                entered =
+                    ImGui::InputTextWithHint(id.c_str(), hint, s_Scratch.data(), s_Scratch.size(),
+                                             flags, resizeCallback, &s_Scratch);
+            }
+            else
+            {
+                entered = ImGui::InputText(id.c_str(), s_Scratch.data(), s_Scratch.size(), flags,
+                                           resizeCallback, &s_Scratch);
+            }
 
             // ImGui::IsItemActive is valid only after the widget is submitted, so the
             // scratch's owning id is updated here, after InputText.
@@ -168,13 +218,18 @@ namespace Veng::UI
 
     bool InputText(string_view label, string& v)
     {
-        return InputTextImpl(label, nullptr, v);
+        return InputTextImpl(label, nullptr, v, false, {});
     }
 
     bool InputTextWithHint(string_view label, string_view hint, string& v)
     {
         const string hintStr = AsCStr(hint);
-        return InputTextImpl(label, hintStr.c_str(), v);
+        return InputTextImpl(label, hintStr.c_str(), v, false, {});
+    }
+
+    bool InputTextMultiline(string_view label, string& v, vec2 size)
+    {
+        return InputTextImpl(label, nullptr, v, true, size);
     }
 
     bool Combo(string_view label, i32& index, std::span<const string_view> items)
