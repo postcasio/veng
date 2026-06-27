@@ -688,6 +688,27 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   is runtime-only and the authored document is the prefab; no cooked-format, cooker, or
   module-ABI change. Gates met by planset-10/11/12/14 + the pointer-to-world seam (planset-31).
 
+- **[planset-38](planset-38/README.md)** — node→Slang material codegen (the graph generates
+  the shader) (📝 proposed, 5 plans). Takes up [future area 13](future/README.md#13-material-domains--shader-graph-codegen--prioritized)'s
+  **prioritized follow-on**: the node material editor stops *wiring* a hand-authored fragment
+  shader and starts *generating* it. Every node becomes an **expression emitter**, `CompileMaterialGraph`
+  becomes a **topological emit walk** threading a thin typed **`EmittedValue`** (the code-chunk model —
+  the graph **is** the AST, Slang is the compiler; no parsed-AST intermediate), and `MaterialOutput`
+  emits the domain entry point (`GBufferOutput` for Surface, `SV_Target0` for PostProcess). A `Param`
+  gains **const-vs-exposed** (fold inline vs. a generated `MaterialParams` uniform), and the emitter
+  produces the generated struct + the `.vmat` field list **together** so the cooker's offset-patching
+  agrees by construction. The generated fragment is a **checked-in sub-asset** (`<name>.gen.frag.{slang,
+  shader.json}` with a **derived** `AssetId`) cooked through the existing `ShaderImporter` path — so the
+  **cooker stays graph-agnostic**, an offline `vengc cook` needs no editor, and there is **no
+  cooked-material format change and no runtime change**. Folds in [future area 14](future/README.md#14-engine-owned-material-shader-header--cross-pack-slang-includes--prioritized)
+  as its **precursor** (Plan 00): a shared cooker Slang-session helper resolves a cross-pack `#include
+  "Veng/material.slang"`, `material.slang` splits into the engine contract (kept) + `MaterialParams`
+  (moved to the authoring shader), and both vendored `material_data.slang` copies are deleted. Builds on
+  **planset-15** (the node-graph surface + coercion-on-link) and **planset-18** (material domains + the
+  ring-buffered param block); the samples migrate onto generated graphs (`brick` for Surface, `tonemap`
+  for PostProcess) in the closer. **Wired asset pins**, **custom-expression nodes**, **subgraph/function
+  nodes**, and **vertex-stage codegen** stay future.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
