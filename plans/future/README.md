@@ -490,9 +490,23 @@ lands the foundational inversion it needs (a domain-correct output sink). What w
   topology core (typed pins over the `TypeId` space, coercion-on-link, reflected node
   properties, the JSON round-trip) is already codegen-ready; the reshaping is in the
   material catalog + compile target + the new domain concept.
+- **Materials vs. material instances (rides on codegen).** Once the graph generates a
+  parent shader **and** its exposed-param schema, that schema is the override surface of
+  a **material instance** — the standard cross-engine split (Unreal *Material* vs
+  *Material Instance*). A parent `Material` owns the expensive half (the generated shader →
+  pipeline + the schema); a new **`MaterialInstance`** owns the cheap half (one slot in the
+  already-ring-buffered per-material SSBO + a texture override set + a sparse override), so
+  30 tinted bricks are 1 generated shader + 30 instances, not 30 identical pipelines. veng's
+  fused `Material` already carries the instance half (the per-material slot + the stall-free
+  `SetParam`); the work is to **move** it onto `MaterialInstance` and leave the parent owning
+  the pipeline. A runtime instance + per-frame `SetParam` is the **MID**; a static-switch
+  param (one that changes the compiled shader) is a parent-variant permutation key, not an
+  instance override.
 
-**Supersedes planset-15 decision 9** — codegen is now committed direction, not a
-possibility the node model merely tolerates. **Design overview:**
+**Now taken up as [planset-38](../planset-38/README.md):** the node→Slang codegen follow-on
+(Plans 00–04) plus the material-instance split (Plan 05), the generated exposed-param schema
+being the instance's override surface. **Supersedes planset-15 decision 9** — codegen is now
+committed direction, not a possibility the node model merely tolerates. **Design overview:**
 [material-codegen.md](material-codegen.md).
 
 ### 14. Engine-owned material shader header + cross-pack Slang includes — PRIORITIZED

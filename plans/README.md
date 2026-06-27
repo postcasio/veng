@@ -689,7 +689,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   module-ABI change. Gates met by planset-10/11/12/14 + the pointer-to-world seam (planset-31).
 
 - **[planset-38](planset-38/README.md)** — node→Slang material codegen (the graph generates
-  the shader) (📝 proposed, 5 plans). Takes up [future area 13](future/README.md#13-material-domains--shader-graph-codegen--prioritized)'s
+  the shader) (📝 proposed, 6 plans). Takes up [future area 13](future/README.md#13-material-domains--shader-graph-codegen--prioritized)'s
   **prioritized follow-on**: the node material editor stops *wiring* a hand-authored fragment
   shader and starts *generating* it. Every node becomes an **expression emitter**, `CompileMaterialGraph`
   becomes a **topological emit walk** threading a thin typed **`EmittedValue`** (the code-chunk model —
@@ -706,8 +706,14 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   (moved to the authoring shader), and both vendored `material_data.slang` copies are deleted. Builds on
   **planset-15** (the node-graph surface + coercion-on-link) and **planset-18** (material domains + the
   ring-buffered param block); the samples migrate onto generated graphs (`brick` for Surface, `tonemap`
-  for PostProcess) in the closer. **Wired asset pins**, **custom-expression nodes**, **subgraph/function
-  nodes**, and **vertex-stage codegen** stay future.
+  for PostProcess) in the closer. The closer (Plan 05) then draws the **material vs. material-instance**
+  line codegen sets up: a generated parent shader + its exposed-param **schema** is a parent `Material`;
+  a new **`MaterialInstance`** is a cheap sparse override over that schema (its own SSBO slot + texture
+  set, the parent's pipeline) — 30 tinted bricks become 1 shader + 30 instances. The instance half (the
+  per-material slot + stall-free `SetParam`) **moves** off the fused `Material`; a bare parent doubles as
+  a zero-override instance; a runtime instance + per-frame `SetParam` is the **MID**. **Wired asset
+  pins**, **custom-expression nodes**, **subgraph/function nodes**, **vertex-stage codegen**, **static
+  switches**, **draw-sort by parent pipeline**, and **instance-of-instance chains** stay future.
 
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material

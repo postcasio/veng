@@ -8,11 +8,13 @@ plan — each piece below becomes its own planset when taken up.
 > `Surface`/`PostProcess` domain, the PostProcess fullscreen-material path, the standard
 > per-domain vertex shaders, tonemap-as-material, and the domain-aware output node.
 > Section 2 (**node→Slang codegen + the node reshape**) **remains the direction** and is
-> now the prioritized follow-on. The **output-node inversion has begun** —
-> `MaterialOutput` is domain-driven (its pins follow the domain's output contract, not a
-> loaded shader's `GetFields()`) — so the codegen follow-on inherits a domain-correct sink
-> and reshapes the **input** side: emitter nodes, const-vs-exposed params, and the
-> generated-Slang compile target.
+> now the prioritized follow-on, taken up as **planset-38**. The **output-node inversion has
+> begun** — `MaterialOutput` is domain-driven (its pins follow the domain's output contract,
+> not a loaded shader's `GetFields()`) — so the codegen follow-on inherits a domain-correct
+> sink and reshapes the **input** side: emitter nodes, const-vs-exposed params, and the
+> generated-Slang compile target. Section 3 (**materials vs. material instances**) is folded
+> into that same planset (planset-38, Plan 05), because the generated exposed-param schema is
+> the instance's override surface.
 
 ## Where this is going
 
@@ -30,12 +32,15 @@ a hand-written shader the graph merely feeds. planset-15's param-binding is the
 way-station that proved the graph → cook → hot-reload → preview loop end-to-end; it
 is not the destination.
 
-Two organizing ideas carry it there, independent enough to land in order:
+Three organizing ideas carry it there, independent enough to land in order:
 
 1. **Material domains** — at least **Surface** and **PostProcess**. *Prioritized*,
    and does not require codegen.
 2. **Node→Slang codegen** — the graph emits the shader. The larger follow-on; the
    node model is reshaped to receive it.
+3. **Materials vs. material instances** — once the graph generates a parent shader +
+   an exposed-param schema, an instance is a cheap override over that schema. Rides
+   on codegen (the schema is its override surface); landed in the codegen planset.
 
 ## 1. Material domains (prioritized)
 
@@ -119,6 +124,37 @@ emitter reads it directly), reflected node-property structs walked like ECS
 components, and the JSON graph round-trip embedded under `"_editor"`. The reshaping
 is concentrated in **Layer 3** (the material catalog + the compile target) plus the
 new **domain** concept that spans the runtime, the cooker, and the editor.
+
+## 3. Materials vs. material instances
+
+Once the graph **generates** a parent shader plus an **exposed-param schema** (section 2),
+the standard cross-engine split between a **material** and a **material instance** falls
+out — and codegen is what makes it clean.
+
+- A **parent material** (`Material`, Unreal's *Material*) owns the expensive half: the
+  generated fragment shader → pipeline, and the **schema** of exposed params (what is
+  tweakable). One pipeline per *(shader set + domain)*.
+- A **material instance** (`MaterialInstance`, Unreal's *Material Instance*) owns the cheap
+  half: a single slot in the already-`N`-buffered per-material SSBO, a resident texture
+  override set, and a **sparse override** over the parent's exposed params. No shader, no
+  pipeline. An editor-authored instance is Unreal's MIC; a runtime-built one whose
+  `SetParam` is called per frame is its MID — and veng's per-material block is **already**
+  stall-free per-frame writable, so the MID path needs no new GPU mechanism.
+
+The economic payoff is the one the split exists for everywhere: 30 tinted bricks are 1
+generated parent shader + 30 instances (30 SSBO rows sharing one pipeline), not 30
+identical pipelines. veng is already shaped for it — `Material` today *fuses* both halves
+(it owns the pipeline **and** a per-material slot + `SetParam`), so the work is to **move**
+the instance half onto a new `MaterialInstance` and leave the parent owning the
+pipeline/schema/defaults. The override validation reuses the same reflection the cooker
+runs to validate a `.vmat` against its shader — lifted one level, to instance-against-parent.
+
+Where it meets the rest: a **static-switch** param (one that changes the *compiled* shader)
+is not an instance override — it is a parent-variant key the cooker compiles a permutation
+for, so it belongs with the permutation system (section 2's monolithic-shader limit), not
+the instance. This section is taken up **inside the codegen planset** rather than as a
+separate area, because the generated exposed-param schema is precisely the instance's
+override surface — the two are one design.
 
 ## What it builds on
 
