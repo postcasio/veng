@@ -1,5 +1,6 @@
 #include "AssetBrowserPanel.h"
 
+#include "../AssetChip.h"
 #include "../AssetDragPayload.h"
 #include "../AssetSourceIndex.h"
 #include "../EditorIcons.h"
@@ -18,98 +19,6 @@ namespace VengEditor
 
     namespace
     {
-        const char* TypeName(AssetType type)
-        {
-            switch (type)
-            {
-            case AssetType::Raw:
-                return "Raw";
-            case AssetType::Texture:
-                return "Texture";
-            case AssetType::Mesh:
-                return "Mesh";
-            case AssetType::Shader:
-                return "Shader";
-            case AssetType::Material:
-                return "Material";
-            case AssetType::VertexLayout:
-                return "VertexLayout";
-            case AssetType::Prefab:
-                return "Prefab";
-            case AssetType::Level:
-                return "Level";
-            case AssetType::Skeleton:
-                return "Skeleton";
-            case AssetType::Animation:
-                return "Animation";
-            case AssetType::Environment:
-                return "Environment";
-            }
-            return "Unknown";
-        }
-
-        // Short glyph drawn on an asset's type badge.
-        const char* TypeGlyph(AssetType type)
-        {
-            switch (type)
-            {
-            case AssetType::Raw:
-                return "RAW";
-            case AssetType::Texture:
-                return "TEX";
-            case AssetType::Mesh:
-                return "MSH";
-            case AssetType::Shader:
-                return "SHD";
-            case AssetType::Material:
-                return "MAT";
-            case AssetType::VertexLayout:
-                return "VTX";
-            case AssetType::Prefab:
-                return "PFB";
-            case AssetType::Level:
-                return "LVL";
-            case AssetType::Skeleton:
-                return "SKL";
-            case AssetType::Animation:
-                return "ANM";
-            case AssetType::Environment:
-                return "ENV";
-            }
-            return "?";
-        }
-
-        // Per-type badge fill, authored sRGB.
-        vec4 TypeColor(AssetType type)
-        {
-            switch (type)
-            {
-            case AssetType::Texture:
-                return {0.85f, 0.55f, 0.25f, 1.0f};
-            case AssetType::Mesh:
-                return {0.30f, 0.55f, 0.85f, 1.0f};
-            case AssetType::Material:
-                return {0.40f, 0.70f, 0.40f, 1.0f};
-            case AssetType::Shader:
-                return {0.60f, 0.45f, 0.80f, 1.0f};
-            case AssetType::Prefab:
-                return {0.30f, 0.70f, 0.70f, 1.0f};
-            case AssetType::Level:
-                return {0.75f, 0.45f, 0.55f, 1.0f};
-            case AssetType::VertexLayout:
-                return {0.55f, 0.55f, 0.60f, 1.0f};
-            case AssetType::Skeleton:
-                return {0.80f, 0.40f, 0.40f, 1.0f};
-            case AssetType::Animation:
-                return {0.50f, 0.65f, 0.30f, 1.0f};
-            case AssetType::Environment:
-                return {0.35f, 0.50f, 0.75f, 1.0f};
-            case AssetType::Raw:
-                return {0.50f, 0.50f, 0.50f, 1.0f};
-            }
-            return {0.50f, 0.50f, 0.50f, 1.0f};
-        }
-
         const vec4 FolderColor{0.80f, 0.70f, 0.35f, 1.0f};
 
         // Source filename with the cooked extension(s) stripped (foo.tex.json -> foo).
@@ -288,16 +197,22 @@ namespace VengEditor
                 m_Host.OpenAssetEditor(asset.Type, asset.Id);
             }
         };
-        // Attaches the drag payload to the item just submitted.
+        // Attaches the drag payload to the item just submitted, standing the drag in with an
+        // asset chip.
         const auto dragAsset = [&](const AssetEntry& asset)
         {
             if (const auto source = UI::DragDropSource())
             {
                 const AssetDragPayload payload{.Id = asset.Id, .Type = asset.Type};
                 UI::SetDragDropPayload(AssetPayload, &payload, sizeof(payload));
-                UI::Badge(TypeGlyph(asset.Type), TypeColor(asset.Type));
-                UI::SameLine();
-                UI::Text(asset.Name);
+                const AssetChipInfo chip{
+                    .Id = asset.Id,
+                    .Type = asset.Type,
+                    .IdScope = "dragstandin",
+                    .Name = asset.Name,
+                    .Width = 220.0f,
+                };
+                (void)DrawAssetChip(chip, m_Sources);
             }
         };
         const auto activateFolder = [&](const string& name, bool clicked)
@@ -333,7 +248,7 @@ namespace VengEditor
                         continue;
                     }
                     const bool selected = m_Selected && m_Selected->Value == asset.Id.Value;
-                    UI::Badge(TypeGlyph(asset.Type), TypeColor(asset.Type));
+                    UI::Badge(AssetTypeGlyph(asset.Type), AssetTypeColor(asset.Type));
                     UI::SameLine();
                     const bool clicked =
                         UI::Selectable(fmt::format("{}##asset_{}", asset.Name, asset.Id.Value),
@@ -386,7 +301,7 @@ namespace VengEditor
                         activateAsset(asset, clicked);
                         dragAsset(asset);
                         UI::TableNextColumn();
-                        UI::Text(TypeName(asset.Type));
+                        UI::Text(AssetTypeName(asset.Type));
                         UI::TableNextColumn();
                         UI::Text(fmt::format("{}", asset.Size));
                         UI::TableNextColumn();
@@ -445,9 +360,10 @@ namespace VengEditor
                             continue;
                         }
                         const bool selected = m_Selected && m_Selected->Value == asset.Id.Value;
-                        activateAsset(asset, cell(fmt::format("asset_{}", asset.Id.Value),
-                                                  TypeGlyph(asset.Type), TypeColor(asset.Type),
-                                                  asset.Name, selected, &asset));
+                        activateAsset(asset,
+                                      cell(fmt::format("asset_{}", asset.Id.Value),
+                                           AssetTypeGlyph(asset.Type), AssetTypeColor(asset.Type),
+                                           asset.Name, selected, &asset));
                     }
                 }
                 break;

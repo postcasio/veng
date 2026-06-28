@@ -420,6 +420,16 @@ namespace Veng::UI
         ImGui::OpenPopup(label.c_str());
     }
 
+    void CloseCurrentPopup()
+    {
+        ImGui::CloseCurrentPopup();
+    }
+
+    void SetKeyboardFocusHere()
+    {
+        ImGui::SetKeyboardFocusHere();
+    }
+
     ScopedPopup PopupContextItem(string_view id)
     {
         const string label = AsCStr(id);

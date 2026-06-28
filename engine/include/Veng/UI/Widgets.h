@@ -154,6 +154,18 @@ namespace Veng::UI
     /// @return True the frame the button is clicked.
     [[nodiscard]] bool SmallButton(string_view label);
 
+    /// @brief Reserves an empty interactive rectangle of an exact size.
+    ///
+    /// Renders nothing, but registers an item with the given size — clickable, hoverable, and a
+    /// valid drag/drop source/target anchor — with no frame padding or item-spacing expansion of
+    /// its rectangle (unlike `Selectable`). The base for a custom-drawn widget whose content is
+    /// overlaid afterward, where the item rect must match the drawn box exactly (so `ItemBorder`
+    /// frames it tightly).
+    /// @param id    ImGui id for the item.
+    /// @param size  Exact rectangle size in pixels.
+    /// @return True the frame the rectangle is clicked.
+    [[nodiscard]] bool InvisibleButton(string_view id, vec2 size);
+
     /// @brief Draws a button that renders in the accent state while toggled on.
     ///
     /// When `active` is true the button fills with the theme `Accent` (hover/press use

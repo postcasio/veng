@@ -275,6 +275,12 @@ namespace Veng::UI
         return ImGui::SmallButton(id.c_str());
     }
 
+    bool InvisibleButton(string_view id, vec2 size)
+    {
+        const string label = AsCStr(id);
+        return ImGui::InvisibleButton(label.c_str(), size);
+    }
+
     bool ToggleButton(string_view label, bool& active)
     {
         const string id = AsCStr(label);

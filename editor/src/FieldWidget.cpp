@@ -1,16 +1,19 @@
 #include "FieldWidget.h"
 
-#include "AssetDragPayload.h"
+#include "AssetChip.h"
 #include "AssetSourceIndex.h"
 #include "EditorIcons.h"
 #include "FieldGate.h"
 #include "FieldWidgetDispatch.h"
 #include "panels/PrefabEditContext.h"
 
+#include <Veng/Asset/Animation.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/Prefab.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Log.h>
 #include <Veng/Reflection/FieldDisplay.h>
@@ -42,6 +45,18 @@ namespace VengEditor
         {
             return AssetType::Material;
         }
+        if (type == TypeIdOf<AssetHandle<Prefab>>())
+        {
+            return AssetType::Prefab;
+        }
+        if (type == TypeIdOf<AssetHandle<Animation>>())
+        {
+            return AssetType::Animation;
+        }
+        if (type == TypeIdOf<AssetHandle<Environment>>())
+        {
+            return AssetType::Environment;
+        }
         return std::nullopt;
     }
 
@@ -53,82 +68,33 @@ namespace VengEditor
 
     namespace
     {
-        // Combo over the manifest's ids of the field's asset type; "(none)" clears it.
-        // Returns true when the pick changed the handle.
+        // An asset chip standing in for the handle: a drop target that doubles as a
+        // click-to-search selector for the field's asset type. Returns true when the pick
+        // (a drop or a popup selection) changed the handle.
         bool DrawAssetPicker(void* fieldPtr, const FieldDescriptor& field, string_view label,
                              const FieldWidgetContext& ctx)
         {
             u64 currentId = 0;
             std::memcpy(&currentId, fieldPtr, sizeof(currentId));
 
+            // A handle type the picker can't enumerate (no AssetType mapping) draws as a static
+            // chip; an enumerable one is an interactive drop target / selector.
             const optional<AssetType> assetType = AssetTypeOfHandle(field.Type);
-            if (!assetType)
+
+            const AssetChipInfo chip{
+                .Id = AssetId{currentId},
+                .Type = assetType.value_or(AssetType::Raw),
+                .IdScope = label,
+                .DropTarget = assetType.has_value() && !field.ReadOnly,
+            };
+
+            const optional<AssetId> picked = DrawAssetChip(chip, ctx.Sources);
+            if (picked)
             {
-                // No enumeration for this handle type — show the raw id read-only.
-                if (currentId == 0)
-                {
-                    UI::TextDisabled("(none)");
-                }
-                else
-                {
-                    UI::TextDisabled(fmt::format("0x{:X}", currentId));
-                }
-                return false;
+                ApplyAssetPick(fieldPtr, *picked);
+                return true;
             }
-
-            // Index 0 is "(none)" (clears the handle); index N picks candidate N-1.
-            const vector<AssetId> candidates = ctx.Sources.EntriesOfType(*assetType);
-
-            vector<string> labels;
-            labels.reserve(candidates.size() + 1);
-            labels.emplace_back("(none)");
-            for (const AssetId candidate : candidates)
-            {
-                labels.push_back(fmt::format("0x{:X}", candidate.Value));
-            }
-
-            vector<string_view> items(labels.begin(), labels.end());
-
-            i32 index = 0;
-            for (usize i = 0; i < candidates.size(); ++i)
-            {
-                if (candidates[i].Value == currentId)
-                {
-                    index = static_cast<i32>(i) + 1;
-                    break;
-                }
-            }
-
-            bool changed = false;
-            if (UI::Combo(label, index, items))
-            {
-                if (index == 0)
-                {
-                    ApplyAssetPick(fieldPtr, AssetId{});
-                }
-                else
-                {
-                    ApplyAssetPick(fieldPtr, candidates[static_cast<usize>(index) - 1]);
-                }
-                changed = true;
-            }
-
-            // Accept an asset dragged from the browser when its type matches this field.
-            if (auto target = UI::DragDropTarget())
-            {
-                if (const void* payload = UI::AcceptDragDropPayload(AssetPayload))
-                {
-                    AssetDragPayload dropped{};
-                    std::memcpy(&dropped, payload, sizeof(dropped));
-                    if (dropped.Type == *assetType)
-                    {
-                        ApplyAssetPick(fieldPtr, dropped.Id);
-                        changed = true;
-                    }
-                }
-            }
-
-            return changed;
+            return false;
         }
 
         // Reads an Entity drop on the previous widget; returns the dropped entity or nullopt.

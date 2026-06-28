@@ -120,8 +120,16 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   rebuilds the derived mesh. A `RegisterFieldWidget`
   entry overrides the built-in for a given `TypeId`; the entity inspector and the node-property
   inspector both call `DrawFieldWidget`, so the two share identical widget behavior. The
-  `AssetHandle` widget is an asset **picker** (a combo over the `AssetSourceIndex` entries of the
-  field's `AssetType`), not a read-only label.
+  `AssetHandle` widget is an **asset chip** (`editor/src/AssetChip.{h,cpp}`) drop target, not a
+  read-only label: it shows the type icon plus the asset's name / type / id, accepts a same-type
+  asset dropped from the browser, and doubles as a selector — clicking it opens a searchable
+  popup over the `AssetSourceIndex` entries of the field's `AssetType` (with a "(none)" clear).
+- **The asset chip is the shared asset stand-in.** `DrawAssetChip(AssetChipInfo, AssetSourceIndex)`
+  renders a bordered icon-plus-text box for an `AssetId`, optionally a drag source (emitting an
+  `AssetDragPayload`) and/or a drop target (the click-to-search selector above). It is the asset
+  browser's drag stand-in and the inspector's `AssetHandle` widget; the `AssetTypeName` /
+  `AssetTypeGlyph` / `AssetTypeColor` type-metadata helpers live beside it, shared by the browser's
+  badges.
 - **`EditorRegistry`** is defined in `libveng_editor` and **forward-declared** in
   `engine/include/Veng/Module/Module.h` (so `libveng` stays clean). It holds the
   `AssetType`→editor-factory map (double-click an asset opens its editor),
@@ -136,8 +144,9 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   is the shared `DrawFieldWidget` helper (`editor/src/FieldWidget.{h,cpp}`, taking a
   `FieldWidgetContext { AssetManager&, const AssetSourceIndex&, const EditorRegistry& }`) —
   the entity inspector and the node-property inspector both call it, so the two share
-  identical widget behavior. The `AssetHandle` widget is an asset **picker** (a combo over
-  the `AssetSourceIndex` entries of the field's `AssetType`), not a read-only label.
+  identical widget behavior. The `AssetHandle` widget is an **asset chip** drop target (icon +
+  name/type/id, accepting a browser drop and click-opening a searchable picker over the
+  `AssetSourceIndex` entries of the field's `AssetType`), not a read-only label.
 - **Cook-on-demand keeps the importer boundary.** `libveng_cook` is linked **only into
   the editor exe** — never `libveng_editor`, never `libgame` — so the editor framework
   library stays importer-free. The exe injects a `CookBackend` implementation;

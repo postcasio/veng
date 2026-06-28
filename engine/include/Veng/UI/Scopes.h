@@ -573,6 +573,18 @@ namespace Veng::UI
     /// @param id  ImGui id string for the popup, matching a `Popup(id)` call.
     void OpenPopup(string_view id);
 
+    /// @brief Closes the popup currently being drawn.
+    ///
+    /// Call inside an open `Popup` scope to dismiss it after a selection (a `Selectable`
+    /// inside a popup does not close it on its own, unlike a `MenuItem`).
+    void CloseCurrentPopup();
+
+    /// @brief Directs keyboard focus to the next widget submitted.
+    ///
+    /// Call before an `InputText` to focus it — e.g. a search box the frame a picker
+    /// popup appears, so the user can type immediately.
+    void SetKeyboardFocusHere();
+
     /// @brief Opens a context-menu popup anchored to the previous item, on right-click.
     ///
     /// Wraps `BeginPopupContextItem`: right-clicking the previous widget opens it; the
