@@ -159,7 +159,8 @@ namespace VengEditor
         }
 
         // Wheel dolly-zoom when not flying: move toward/away from the pivot, clamping distance.
-        if ((in.Hovered || in.Focused) && !in.MouseRight && in.ScrollDelta.y != 0.0f)
+        // Gated on hover, not focus, so the wheel only zooms when the cursor is over the viewport.
+        if (in.Hovered && !in.MouseRight && in.ScrollDelta.y != 0.0f)
         {
             m_Distance *= (1.0f - in.ScrollDelta.y * ZoomSensitivity);
             m_Distance = glm::max(m_Distance, MinDistance);

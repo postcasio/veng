@@ -66,7 +66,8 @@ namespace VengEditor
         /// @brief Advances the camera one frame and returns the resulting view.
         ///
         /// Applies the active navigation mode selected by the input's button/modifier state
-        /// (only while focused, or hovered for the wheel), rebuilds the internal pose, and
+        /// (button drags only while focused; the wheel zoom requires the cursor over the
+        /// viewport), rebuilds the internal pose, and
         /// refreshes the CameraView. Fly-mode WASDQE movement scales by the elapsed time.
         /// @param in  This frame's gathered viewport input.
         /// @param dt  Elapsed time this frame, in seconds.
