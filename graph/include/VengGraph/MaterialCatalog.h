@@ -3,17 +3,15 @@
 #include <Veng/Veng.h>
 #include <Veng/Asset/Material.h>
 
-#include <VengEditor/NodeGraph/NodeGraph.h>
-#include <VengEditor/NodeGraph/NodeType.h>
+#include <VengGraph/NodeGraph.h>
+#include <VengGraph/NodeType.h>
+#include <VengGraph/EmittedValue.h>
 
-#include "material/MaterialShaderInterface.h"
+#include <unordered_map>
 
-namespace VengEditor
+namespace VengGraph
 {
     /// @brief Catalog ids of the three material node types, resolved by stable name.
-    ///
-    /// The MaterialOutput type's pins reflect the domain's output contract, so the
-    /// catalog is rebuilt per loaded material with its domain.
     struct MaterialNodeTypes
     {
         /// @brief Catalog id of the TextureSample node type.
@@ -22,6 +20,20 @@ namespace VengEditor
         NodeTypeId Param;
         /// @brief Catalog id of the MaterialOutput node type.
         NodeTypeId MaterialOutput;
+    };
+
+    /// @brief Emit-fn table keyed by node-type id.
+    ///
+    /// The topology core's NodeType is data, not a subclass, so the emit-fn lives on
+    /// the material-catalog side: RegisterMaterialNodeTypes fills this beside minting
+    /// the node types, and CompileMaterialGraph resolves a node's emit-fn through it.
+    struct MaterialEmitTable
+    {
+        /// @brief NodeTypeId value → its emit-fn.
+        std::unordered_map<Veng::u32, NodeEmitFn> Emitters;
+
+        /// @brief Finds a node type's emit-fn, or nullptr when none is registered.
+        [[nodiscard]] const NodeEmitFn* Find(NodeTypeId id) const;
     };
 
     /// @brief Stable serialized name of the TextureSample node type.
@@ -65,17 +77,19 @@ namespace VengEditor
     /// PostProcess yields a single Color (vec4).
     [[nodiscard]] Veng::vector<DomainOutputPin> DomainOutputContract(Veng::MaterialDomain domain);
 
-    /// @brief Registers the three material node types into @p catalog and returns their ids.
+    /// @brief Registers the fixed, schema-independent material node types into @p catalog.
     ///
-    /// TextureSample and Param are built from the shader interface (which fields exist,
-    /// Param pin sizing). MaterialOutput's pins come from the domain's output contract,
-    /// independent of the loaded shader's fields. The catalog must outlive any graph
-    /// built against it.
-    /// @param catalog  Target catalog; mutated by registration.
-    /// @param shader   Loaded material's field table and shader ids.
-    /// @param domain   Material domain; shapes the MaterialOutput sinks.
-    MaterialNodeTypes RegisterMaterialNodeTypes(NodeCatalog& catalog,
-                                                const MaterialShaderInterface& shader,
+    /// The node set is a fixed function of the domain only, shaped by pin leaf types —
+    /// not by any loaded shader's reflected fields: TextureSample always has a UV input
+    /// and a color output, Param is sized by its own property, MaterialOutput's sinks
+    /// come from the domain contract. Beside minting the types it fills @p emit with one
+    /// emit-fn per type. The catalog and emit table must outlive any graph built against
+    /// them.
+    /// @param catalog Target catalog; mutated by registration.
+    /// @param emit    Target emit table; one entry added per node type.
+    /// @param domain  Material domain; shapes the MaterialOutput sinks and entry point.
+    /// @return The minted node-type ids.
+    MaterialNodeTypes RegisterMaterialNodeTypes(NodeCatalog& catalog, MaterialEmitTable& emit,
                                                 Veng::MaterialDomain domain);
 
     /// @brief Connection predicate for material graphs: exact TypeId equality plus
@@ -83,4 +97,17 @@ namespace VengEditor
     ///
     /// Coercion lives here only; the topology core stays a pure DAG enforcer.
     [[nodiscard]] bool MaterialCanConnect(const PinType& from, const PinType& to);
+
+    /// @brief Wraps an upstream expression to coerce its value into a target pin type.
+    ///
+    /// Applies the same coercions MaterialCanConnect permits: f32→vecN splat (`v.xxx`),
+    /// vec4→vec3/vec2 truncation (`v.xyz` / `v.xy`). An exact-type or unrecognised pair
+    /// returns the expression unchanged. EmittedValue::Type makes this a typed
+    /// operation, not a guess at the text.
+    /// @param expr Source Slang expression.
+    /// @param from Source leaf type.
+    /// @param to   Destination leaf type.
+    /// @return The coerced expression.
+    [[nodiscard]] Veng::string CoerceExpr(const Veng::string& expr, const PinType& from,
+                                          const PinType& to);
 }

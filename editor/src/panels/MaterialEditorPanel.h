@@ -9,12 +9,13 @@
 #include <VengEditor/EditorPanel.h>
 #include <VengEditor/EditorRegistry.h>
 
-#include <VengEditor/NodeGraph/NodeGraph.h>
-#include <VengEditor/NodeGraph/NodeType.h>
+#include <VengGraph/NodeGraph.h>
+#include <VengGraph/NodeType.h>
+#include <VengGraph/MaterialCatalog.h>
+#include <VengGraph/MaterialCompile.h>
+#include <VengGraph/MaterialShaderInterface.h>
 
-#include "material/MaterialCatalog.h"
 #include "material/MaterialPreview.h"
-#include "material/MaterialShaderInterface.h"
 
 #include "panels/TextureEditorPanel.h" // CookDriver alias
 
@@ -36,13 +37,18 @@ namespace VengEditor
 {
     class AssetSourceIndex;
 
+    using VengGraph::MaterialEmitTable;
+    using VengGraph::MaterialNodeTypes;
+    using VengGraph::MaterialShaderInterface;
+    using VengGraph::NodeCatalog;
+    using VengGraph::NodeGraph;
+
     /// @brief Node-based material editor: imnodes canvas, node-property inspector,
     /// and a live MaterialPreview sphere.
     ///
-    /// On open, parses the source's "_editor" graph block or synthesizes a default
-    /// graph from the flat field table. Any edit recooks the material off the render
-    /// thread and refreshes the preview. The graph is the source of truth, compiled
-    /// into a .vmat field list on each cook.
+    /// On open, parses the source's "_editor" graph block or starts from a default
+    /// graph (a bare MaterialOutput). Any edit recooks the material off the render
+    /// thread and refreshes the preview. The graph is the source of truth.
     class MaterialEditorPanel final : public EditorPanel
     {
     public:
@@ -64,8 +70,11 @@ namespace VengEditor
         bool LoadInterface();
 
         /// @brief Builds the catalog + node types, then reads the "_editor" block or
-        /// synthesizes a default graph. A newer graph version opens read-only.
+        /// starts from a default graph. A newer graph version opens read-only.
         void BuildGraph();
+
+        /// @brief Constructs a default graph against the catalog: a bare MaterialOutput.
+        [[nodiscard]] NodeGraph MakeDefaultGraph() const;
 
         /// @brief Returns the shader interface view over the panel's owned field table.
         [[nodiscard]] MaterialShaderInterface Interface() const;
@@ -120,6 +129,8 @@ namespace VengEditor
 
         /// @brief Node type catalog; must outlive the graph.
         NodeCatalog m_Catalog;
+        /// @brief Per-node-type emit-fns, filled beside the catalog.
+        MaterialEmitTable m_Emit;
         MaterialNodeTypes m_Types;
         Veng::Unique<NodeGraph> m_Graph;
 

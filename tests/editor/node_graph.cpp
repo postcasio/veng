@@ -5,13 +5,13 @@
 
 #include <doctest/doctest.h>
 
-#include <VengEditor/NodeGraph/NodeGraph.h>
+#include <VengGraph/NodeGraph.h>
 
 #include <Veng/Reflection/TypeId.h>
 
 #include <algorithm>
 
-using namespace VengEditor;
+using namespace VengGraph;
 using Veng::TypeIdOf;
 
 namespace

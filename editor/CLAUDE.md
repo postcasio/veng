@@ -201,33 +201,54 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   host-incompatible configuration is greyed out with the stated reason, and an
   all-incompatible project previews host-safe behind a banner. The same query is both the
   "active config not supported on this GPU" warning and the preview-eligibility gate.
-- **`VengEditor/NodeGraph/` is a named, reusable node-graph surface.** A generic,
-  imnodes-free, device-free **topology core** (`NodeGraph` — generational `NodeId`, `PinType`,
-  the mutation vocabulary, direction/arity/acyclicity validation, a construction-time
-  `CanConnectFn`/`PinShapeFn`/`PropertySizeFn` hook set) + a data-driven `NodeType`/
-  `NodeCatalog` + graph (de)serialization to/from a JSON document string (the public surface
-  stays free of the JSON library type). It is reusable by any editor. The material editor
-  (and future editors — the scene editor) consume it from editor src. imnodes is used **only
-  by the editor** (linked PRIVATE into `libveng_editor`, src-only — its header never appears
-  in a `VengEditor/` public header; its symbols are vendored in `libveng`'s ImGui aggregation
-  TU and imported across the PUBLIC `veng::veng` link).
+- **The node-graph machinery lives in `veng::graph`, a shared library both the editor and
+  the cooker link.** `libveng_graph` (`graph/`, headers under `VengGraph/`, namespace
+  `VengGraph`) owns a generic, imnodes-free, device-free **topology core** (`NodeGraph` —
+  generational `NodeId`, `PinType`, the mutation vocabulary, direction/arity/acyclicity
+  validation, a construction-time `CanConnectFn`/`PinShapeFn`/`PropertySizeFn` hook set) + a
+  data-driven `NodeType`/`NodeCatalog` + graph (de)serialization to/from a JSON document
+  string (the public surface stays free of the JSON library type), **and** the material node
+  catalog + the emit walk (below). It links `veng::veng` PUBLIC and `nlohmann/json` PRIVATE;
+  `libveng_editor` and `libveng_cook` link it PUBLIC (`veng::graph → veng::veng`;
+  `editor → graph`; `cooker → graph` — no cycle), so the editor preview and the offline cook
+  run the identical walk. The editor's node-graph **UI** (imnodes canvas, panels) stays in
+  the editor; imnodes is used **only by the editor** (linked PRIVATE into `libveng_editor`,
+  src-only — its header never appears in a public header; its symbols are vendored in
+  `libveng`'s ImGui aggregation TU and imported across the PUBLIC `veng::veng` link).
 - **Node types are data, not subclasses.** A `NodeType` is pins (typed in/out) + a reflected
   property struct; a node instance stores property bytes the reflection serializer and
-  inspector widgets walk, exactly like an ECS component. `NodeTypeId` is editor-local
-  (defined in `NodeGraph.h`), distinct from the runtime `TypeId` space; pin data types reuse
-  builtin leaf `TypeId`s.
-- **The material editor authors a graph compiled to a `.vmat` field list** (v1 binds params
-  to an author-provided shader — no node→Slang codegen). The graph (nodes, positions,
-  property values, links) is embedded under an `"_editor"` key in the `.vmat.json`, and
-  `fields` is regenerated on compile (reusing the texture editor's preserve-unknown-keys JSON
-  round-trip). `MaterialEditorPanel` drives an imnodes canvas over the graph and a
-  node-property inspector reusing the per-`FieldClass` widgets. Textures are node properties
+  inspector widgets walk, exactly like an ECS component. `NodeTypeId` is graph-local
+  (defined in `VengGraph/NodeType.h`), distinct from the runtime `TypeId` space; pin data
+  types reuse builtin leaf `TypeId`s.
+- **The material editor authors a graph that generates Slang fragment source.** Every node is
+  an **expression emitter**: `CompileMaterialGraph` (in `veng::graph`) topologically walks the
+  graph from `MaterialOutput` into generated Slang text. The walk threads a thin typed
+  **`EmittedValue` `{ Expr; PinType Type; bool IsConst }`** (the code-chunk model — Unreal's
+  translator chunks, Unity's slot vars; not a parsed AST, since the graph already *is* the
+  typed acyclic DAG), assigns **one SSA temp per output pin**, and substitutes downstream
+  applying the link-recorded coercion (`f32→vecN` splat, `vec4→vec3/vec2` truncate, via
+  `CoerceExpr`). A value used more than once is a temp (a shared `TextureSample` samples once);
+  a single-use value inlines (so the output is a pure function of the graph), and an unreached
+  node never emits (free dead-code elimination). Temp/field names derive from a stable
+  creation-order node key, so the same graph emits byte-identical text across two walks and a
+  save/load round-trip. Each node type's emit-fn lives in a `MaterialEmitTable` keyed by
+  `NodeTypeId`, populated by `RegisterMaterialNodeTypes` beside minting the types; the topology
+  core stays generic and emit-free. The catalog is **fixed and schema-independent**
+  (`RegisterMaterialNodeTypes(catalog, emit, domain)` — keyed by domain only, shaped by pin
+  leaf types, never by a loaded shader's reflected fields): `TextureSample` has a UV input +
+  color output, `Param` is sized by its property, `MaterialOutput`'s sinks are the domain
+  contract. `MaterialOutput` emits the domain entry point (`GBufferOutput fsMain` for Surface,
+  `float4 fsMain … : SV_Target0` for PostProcess) with defined defaults for unconnected sinks
+  (Surface: Albedo `float4(0,0,0,1)`, Normal the geometric `input.v_WorldNormal`, ORM
+  `float3(1,1,0)`, Velocity always `ComputeMotionVector(...)`); the source is prefixed with
+  `#include "Veng/material.slang"`. Textures stay node properties
   (`FieldClass::AssetHandle`), not wired pins, so the topology core stays asset-agnostic. The
-  node catalog is **domain-aware** (`RegisterMaterialNodeTypes` takes the domain): the
-  `MaterialOutput` node's pins follow the domain's output contract (`Color` for PostProcess)
-  rather than only mirroring the loaded shader's `GetFields()`, and compile writes the
-  `"domain"` key. Node→Slang codegen — every node an expression emitter generating the
-  fragment source — remains the named follow-on.
+  graph (nodes, positions, property values, links) is embedded under an `"_editor"` key in the
+  `.vmat.json`; `MaterialEditorPanel` drives the imnodes canvas + a node-property inspector
+  reusing the per-`FieldClass` widgets. The cook routing that compiles the generated source
+  (and the `const`/exposed/engine-bound `Param` provenance + generated `MaterialParams` struct)
+  is the named follow-on; until it lands the panel cooks the on-disk field list unchanged and
+  only re-embeds the `"_editor"` graph block.
 - **`MaterialPreview` renders one material on a sphere through an `Offscreen` `Viewport`**
   into an ImGui texture. It is **not** an `EditorPanel`, so its owning `MaterialEditorPanel`
   registers the viewport on its behalf; each frame the preview advances the turntable and

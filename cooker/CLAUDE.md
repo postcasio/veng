@@ -8,6 +8,13 @@ result (the `AssetManager`, `AssetHandle`, async/sync `Load`) and the full
 shader/material model are in [engine/CLAUDE.md](../engine/CLAUDE.md). Project-wide
 conventions live in the [root CLAUDE.md](../CLAUDE.md).
 
+`libveng_cook` links **`veng::graph`** PUBLIC — the shared node-graph + material-codegen
+library (see [editor/CLAUDE.md](../editor/CLAUDE.md)). A material graph is walked into Slang
+fragment source by the **same** `CompileMaterialGraph` emit walk the editor runs, so the
+editor preview and the offline cook generate identical text by construction. The walk
+(`EmittedValue`, the per-node-type emit-fns, the schema-independent catalog) lives in
+`veng::graph`, not the cooker, so it carries no Slang/JSON dependency of its own.
+
 ## Toolchain isolation
 
 The cooker's heavy/toolchain deps — **stb, assimp, Slang** (shader compile +

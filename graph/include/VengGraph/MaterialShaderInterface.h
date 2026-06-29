@@ -6,7 +6,7 @@
 
 #include <span>
 
-namespace VengEditor
+namespace VengGraph
 {
     /// @brief Material parameter schema consumed by the catalog and compiler.
     ///

@@ -36,13 +36,20 @@ is thin (shared deps + `add_subdirectory` per lib).
   format (`Veng/Asset/`: `AssetId`, `AssetType`, `Archive`, `CookedBlobs`).
   Vulkan-free, importer-free; linked PUBLIC by `engine` and by `cooker`.
 - `cooker/` — `libveng_cook` + the `vengc` CLI (stb, assimp, Slang, JSON).
-  Never linked by the engine. Its **prefab-cooking path** links `veng::veng` and
+  Never linked by the engine. Links `veng::graph` (the shared material-codegen lib).
+  Its **prefab-cooking path** links `veng::veng` and
   reuses `ModuleLoader` to `dlopen` a game module and reflect its types — the one
   place the Vulkan-free cooker relaxes its separation, scoped to that load path
   (the graphics stack is linked but never initialized).
+- `graph/` — `libveng_graph` (`veng::graph`), the shared node-graph + material-codegen
+  library: the generic node-graph topology core (`NodeGraph`/`NodeType`/`NodeGraphSerialize`),
+  the material node catalog, and the topological emit walk that turns a material graph into
+  generated Slang fragment source. Links `veng::veng` PUBLIC + `nlohmann/json` PRIVATE; linked
+  PUBLIC by both `libveng_editor` and `libveng_cook` so editor preview and offline cook run the
+  identical walk. ImGui-free and Vulkan-free.
 - `editor/` — `libveng_editor`, the editor framework, plus the single
-  project-agnostic **`veng-editor`** exe (not the runtime). Links `libveng`; the
-  `veng-editor` exe also links `libveng_cook`. It is launched against a project
+  project-agnostic **`veng-editor`** exe (not the runtime). Links `libveng` and `veng::graph`;
+  the `veng-editor` exe also links `libveng_cook`. It is launched against a project
   (`--project <project.veng>`) and `dlopen`s the module(s) the project names, resolved from
   the project's build-output dir — **discovered** from a gitignored `.veng/build.json`
   sidecar the build writes beside the project. There is no per-game editor binary.

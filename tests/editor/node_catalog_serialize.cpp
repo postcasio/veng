@@ -6,9 +6,9 @@
 
 #include <doctest/doctest.h>
 
-#include <VengEditor/NodeGraph/NodeGraph.h>
-#include <VengEditor/NodeGraph/NodeType.h>
-#include <VengEditor/NodeGraph/NodeGraphSerialize.h>
+#include <VengGraph/NodeGraph.h>
+#include <VengGraph/NodeType.h>
+#include <VengGraph/NodeGraphSerialize.h>
 
 #include <Veng/Reflection/FieldDescriptor.h>
 #include <Veng/Reflection/TypeId.h>
@@ -19,7 +19,7 @@
 
 #include <cstring>
 
-using namespace VengEditor;
+using namespace VengGraph;
 using Veng::TypeIdOf;
 
 namespace

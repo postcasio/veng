@@ -4,7 +4,7 @@
 #include "EditorIcons.h"
 #include "FieldWidget.h"
 
-#include "material/MaterialCompile.h"
+#include <VengGraph/MaterialCompile.h>
 
 #include <Veng/Application.h>
 #include <Veng/Asset/Material.h>
@@ -18,7 +18,7 @@
 // glm<->ImVec2 conversion).
 #include <Veng/Vendor/ImGui.h>
 
-#include <VengEditor/NodeGraph/NodeGraphSerialize.h>
+#include <VengGraph/NodeGraphSerialize.h>
 
 #include <nlohmann/json.hpp>
 
@@ -29,6 +29,7 @@
 namespace VengEditor
 {
     using namespace Veng;
+    using namespace VengGraph;
     using Json = nlohmann::json;
 
     namespace
@@ -163,11 +164,10 @@ namespace VengEditor
 
     void MaterialEditorPanel::BuildGraph()
     {
-        const MaterialShaderInterface iface = Interface();
-        m_Types = RegisterMaterialNodeTypes(m_Catalog, iface, m_Domain);
+        m_Types = RegisterMaterialNodeTypes(m_Catalog, m_Emit, m_Domain);
 
         // Read the "_editor" block if present; a newer version → read-only, no graph
-        // regeneration. Absent → synthesize a default graph from the field table.
+        // regeneration. Absent → a default graph (a bare MaterialOutput).
         Json editorBlock;
         bool haveBlock = false;
         {
@@ -206,15 +206,28 @@ namespace VengEditor
             }
             else if (outcome == NodeGraphReadOutcome::Malformed)
             {
-                // A malformed block falls back to a synthesized graph.
-                m_Graph =
-                    CreateUnique<NodeGraph>(BuildGraphFromMaterial(iface, m_Catalog, m_Types));
+                // A malformed block falls back to the default graph.
+                m_Graph = CreateUnique<NodeGraph>(MakeDefaultGraph());
             }
         }
         else
         {
-            m_Graph = CreateUnique<NodeGraph>(BuildGraphFromMaterial(iface, m_Catalog, m_Types));
+            m_Graph = CreateUnique<NodeGraph>(MakeDefaultGraph());
         }
+    }
+
+    NodeGraph MaterialEditorPanel::MakeDefaultGraph() const
+    {
+        NodeGraph graph(
+            MaterialCanConnect, [this](NodeTypeId nid) { return m_Catalog.ShapeOf(nid); },
+            [this](NodeTypeId nid)
+            {
+                const NodeType* type = m_Catalog.Find(nid);
+                return type != nullptr ? type->PropertySize : usize{0};
+            });
+        const NodeId output = graph.AddNode(m_Types.MaterialOutput);
+        graph.MoveNode(output, vec2{600.0f, 0.0f});
+        return graph;
     }
 
     void MaterialEditorPanel::MarkDirty()
@@ -229,17 +242,9 @@ namespace VengEditor
 
     optional<string> MaterialEditorPanel::AssembleVmat() const
     {
-        const MaterialShaderInterface iface = Interface();
-
-        const Result<vector<CompiledField>> compiled =
-            CompileMaterialGraph(*m_Graph, m_Catalog, iface, m_Domain);
-        if (!compiled)
-        {
-            return std::nullopt;
-        }
-
-        // Read the existing source so unknown keys survive; patch "shaders",
-        // "fields", and "_editor".
+        // The cook stays on the on-disk field list; only the embedded "_editor" graph
+        // block is regenerated. Reading the source preserves "domain"/"shaders"/"fields"
+        // and every unknown key.
         Json doc = Json::object();
         {
             const std::ifstream file(m_SourcePath, std::ios::binary);
@@ -253,16 +258,6 @@ namespace VengEditor
                     doc = parsed;
                 }
             }
-        }
-
-        // Merge the regenerated keys over the preserved base so unknown keys survive.
-        const Json regenerated =
-            Json::parse(WriteMaterialVmat(*compiled, iface, m_Domain), nullptr, false);
-        if (!regenerated.is_discarded() && regenerated.is_object())
-        {
-            doc["domain"] = regenerated["domain"];
-            doc["shaders"] = regenerated["shaders"];
-            doc["fields"] = regenerated["fields"];
         }
 
         // Parse the serializer's string into a JSON object so "_editor" embeds as
@@ -616,6 +611,7 @@ namespace VengEditor
         if (UI::Button(Icons::Revert))
         {
             m_Catalog = NodeCatalog{};
+            m_Emit = MaterialEmitTable{};
             m_ReadOnly = false;
             BuildGraph();
             TriggerCook();

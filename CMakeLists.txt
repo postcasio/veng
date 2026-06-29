@@ -239,6 +239,25 @@ endif ()
 # before engine/CMakeLists.txt references it.
 add_subdirectory(assetpack)
 add_subdirectory(engine)
+
+# The shared node-graph + material-codegen library is consumed by both the cooker
+# (graph-sourced fragment cook) and the editor (graph UI + preview); build it
+# whenever either is in play (the same gate as the cooker/editor below). It needs
+# nlohmann/json (graph serialization), so make that available before the cooker's
+# own fetch declares it.
+option(VENG_BUILD_TOOLS "Build the asset-cooking tools (vengc)" ${PROJECT_IS_TOP_LEVEL})
+if (VENG_BUILD_TOOLS OR PROJECT_IS_TOP_LEVEL)
+    set(JSON_BuildTests OFF CACHE INTERNAL "")
+    FetchContent_Declare(
+            nlohmann_json
+            GIT_REPOSITORY https://github.com/nlohmann/json.git
+            GIT_TAG v3.11.3
+            GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(nlohmann_json)
+    add_subdirectory(graph)
+endif ()
+
 add_subdirectory(cooker)
 
 # The editor framework library is top-level-only (same gate as tests/examples):
@@ -614,7 +633,8 @@ if (VENG_BUILD_TESTS)
     # (glm/fmt/ImGui via veng) while keeping imnodes and nlohmann PRIVATE, so a
     # leaked backend include in an editor public header fails this build too.
     add_executable(veng_test_include_hygiene tests/include_hygiene.cpp)
-    target_link_libraries(veng_test_include_hygiene PRIVATE veng::veng veng_editor::veng_editor)
+    target_link_libraries(veng_test_include_hygiene PRIVATE veng::veng veng::graph
+            veng_editor::veng_editor)
 
     add_test(NAME include_hygiene COMMAND veng_test_include_hygiene)
 
@@ -881,12 +901,10 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
             tests/cooker/prefab_save_roundtrip.cpp
             tests/cooker/level_cook.cpp
             tests/cooker/cook_source.cpp
-            tests/cooker/material_compile_cook.cpp
     )
-    # The cook-through test calls CompileMaterialGraph (editor) and cooks its
-    # emitted .vmat through the real importer, so the suite links libveng_editor
-    # in addition to libveng_cook (no cycle: the cooker is never linked by the
-    # editor framework). editor/src is on the include path for the Layer-3 headers.
+    # prefab_save_roundtrip.cpp uses VengEditor::PrefabSerialize, so the suite links
+    # libveng_editor in addition to libveng_cook (no cycle: the cooker is never linked
+    # by the editor framework). editor/src is on the include path for its headers.
     target_link_libraries(veng_test_cooker PRIVATE veng::cook veng_editor::veng_editor doctest::doctest)
     target_include_directories(veng_test_cooker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
     add_dependencies(veng_test_cooker hello_triangle veng_test_bad_version_module)

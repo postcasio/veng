@@ -7,7 +7,7 @@
 #include <cstddef>
 #include <span>
 
-namespace VengEditor
+namespace VengGraph
 {
     /// @brief Editor-local id naming a node type in the catalog.
     ///

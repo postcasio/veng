@@ -1,68 +1,28 @@
-// Layer-3 device-free cases: the material node catalog, the coercion-aware
-// CanConnect predicate, CompileMaterialGraph (graph → typed .vmat field list),
-// and BuildGraphFromMaterial (flat .vmat field table → default graph). The
-// MaterialShaderInterface is built from a hand-authored vector<MaterialField>,
-// so no Context / Material / Vulkan symbol is touched.
+// Device-free cases for the shared material-codegen library: the schema-independent
+// node catalog, the coercion-aware CanConnect predicate + CoerceExpr, and the
+// topological emit walk (CompileMaterialGraph: graph → generated Slang source). No
+// Context / Material / Vulkan symbol is touched.
 
 #include <doctest/doctest.h>
 
-#include "material/MaterialCatalog.h"
-#include "material/MaterialCompile.h"
-#include "material/MaterialShaderInterface.h"
-
-#include <VengEditor/NodeGraph/NodeGraph.h>
-#include <VengEditor/NodeGraph/NodeType.h>
+#include <VengGraph/NodeGraph.h>
+#include <VengGraph/NodeType.h>
+#include <VengGraph/NodeGraphSerialize.h>
+#include <VengGraph/MaterialCatalog.h>
+#include <VengGraph/MaterialCompile.h>
 
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Asset/Material.h>
 
-#include <algorithm>
 #include <cstring>
+#include <string_view>
 
-using namespace VengEditor;
+using namespace VengGraph;
 using Veng::MaterialDomain;
 using Veng::TypeIdOf;
 
 namespace
 {
-    using Field = Veng::MaterialField;
-    using Kind = Veng::MaterialField::FieldKind;
-
-    // The brick material's reflected field table: a texture + its paired sampler
-    // + a vec4 param. Mirrors brick.vmat.json's three fields after cook.
-    Veng::vector<Field> BrickFields()
-    {
-        return {
-            Field{.Name = "Albedo",
-                  .Offset = 0,
-                  .Size = 4,
-                  .Kind = Kind::TextureHandle,
-                  .TextureId = 1001},
-            Field{.Name = "AlbedoSampler",
-                  .Offset = 4,
-                  .Size = 4,
-                  .Kind = Kind::SamplerHandle,
-                  .TextureId = 1001},
-            Field{.Name = "Factors", .Offset = 0, .Size = 16, .Kind = Kind::Param},
-        };
-    }
-
-    // A postprocess material's reflected field table: a runtime-bound input handle
-    // + its sampler + an exposed scalar param. Mirrors a tonemap.vmat after cook.
-    Veng::vector<Field> TonemapFields()
-    {
-        return {
-            Field{
-                .Name = "Hdr", .Offset = 0, .Size = 4, .Kind = Kind::TextureHandle, .TextureId = 0},
-            Field{.Name = "HdrSampler",
-                  .Offset = 4,
-                  .Size = 4,
-                  .Kind = Kind::SamplerHandle,
-                  .TextureId = 0},
-            Field{.Name = "Exposure", .Offset = 0, .Size = 4, .Kind = Kind::Param},
-        };
-    }
-
     NodeGraph MakeGraph(const NodeCatalog& catalog)
     {
         return NodeGraph(
@@ -74,34 +34,23 @@ namespace
             });
     }
 
-    const CompiledField* FindField(const Veng::vector<CompiledField>& fields,
-                                   Veng::string_view name)
+    bool Contains(const Veng::string& haystack, std::string_view needle)
     {
-        for (const CompiledField& f : fields)
-        {
-            if (f.Name == name)
-            {
-                return &f;
-            }
-        }
-        return nullptr;
+        return haystack.find(needle) != Veng::string::npos;
     }
 }
 
 TEST_CASE("MaterialCatalog: the Surface MaterialOutput is the g-buffer contract")
 {
-    const Veng::vector<Field> brick = BrickFields();
-    const MaterialShaderInterface iface{.Fields = brick};
-
     NodeCatalog catalog;
+    MaterialEmitTable emit;
     const MaterialNodeTypes types =
-        RegisterMaterialNodeTypes(catalog, iface, MaterialDomain::Surface);
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
 
     const NodeType* output = catalog.Find(types.MaterialOutput);
     REQUIRE(output != nullptr);
 
-    // The Surface sinks express GBufferOutput: Albedo (vec4) + Normal (vec3),
-    // independent of the loaded shader's reflected fields.
+    // The Surface sinks express GBufferOutput: Albedo (vec4) + Normal (vec3).
     REQUIRE(output->Inputs.size() == 2);
     CHECK(output->Inputs[0].Name == OutputAlbedoPin);
     CHECK(output->Inputs[1].Name == OutputNormalPin);
@@ -111,20 +60,43 @@ TEST_CASE("MaterialCatalog: the Surface MaterialOutput is the g-buffer contract"
 
 TEST_CASE("MaterialCatalog: the PostProcess MaterialOutput is a single Color sink")
 {
-    const Veng::vector<Field> tonemap = TonemapFields();
-    const MaterialShaderInterface iface{.Fields = tonemap};
-
     NodeCatalog catalog;
+    MaterialEmitTable emit;
     const MaterialNodeTypes types =
-        RegisterMaterialNodeTypes(catalog, iface, MaterialDomain::PostProcess);
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::PostProcess);
 
     const NodeType* output = catalog.Find(types.MaterialOutput);
     REQUIRE(output != nullptr);
 
-    // PostProcess authors one output: the final color.
     REQUIRE(output->Inputs.size() == 1);
     CHECK(output->Inputs[0].Name == OutputColorPin);
     CHECK(output->Inputs[0].Type.Type == TypeIdOf<Veng::vec4>());
+}
+
+TEST_CASE("MaterialCatalog: the node set is schema-independent")
+{
+    // Two registrations of the same domain yield the same fixed node shapes — the
+    // catalog is a fixed function of the domain, not of any loaded shader's fields.
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    const NodeType* sample = catalog.Find(types.TextureSample);
+    REQUIRE(sample != nullptr);
+    REQUIRE(sample->Inputs.size() == 1);
+    CHECK(sample->Inputs[0].Name == TextureSampleUVPin);
+    REQUIRE(sample->Outputs.size() == 1);
+    CHECK(sample->Outputs[0].Type.Type == TypeIdOf<Veng::vec4>());
+
+    const NodeType* param = catalog.Find(types.Param);
+    REQUIRE(param != nullptr);
+    REQUIRE(param->Outputs.size() == 1);
+    CHECK(param->Outputs[0].Type.Type == TypeIdOf<Veng::vec4>());
+
+    // The emit table carries an emit-fn for the two value-producing types.
+    CHECK(emit.Find(types.TextureSample) != nullptr);
+    CHECK(emit.Find(types.Param) != nullptr);
 }
 
 TEST_CASE("MaterialCatalog: DomainOutputContract is the per-domain sink table")
@@ -142,250 +114,252 @@ TEST_CASE("MaterialCatalog: DomainOutputContract is the per-domain sink table")
     CHECK(post[0].Type.Type == TypeIdOf<Veng::vec4>());
 }
 
-TEST_CASE("MaterialCatalog: CanConnect enforces exact-type + the v1 coercions")
+TEST_CASE("MaterialCatalog: CanConnect enforces exact-type + the coercions")
 {
     const PinType f32{.Kind = PinType::Kind::Value, .Type = TypeIdOf<Veng::f32>()};
     const PinType vec2{.Kind = PinType::Kind::Value, .Type = TypeIdOf<Veng::vec2>()};
     const PinType vec3{.Kind = PinType::Kind::Value, .Type = TypeIdOf<Veng::vec3>()};
     const PinType vec4{.Kind = PinType::Kind::Value, .Type = TypeIdOf<Veng::vec4>()};
 
-    // Exact identity.
     CHECK(MaterialCanConnect(vec4, vec4));
     CHECK(MaterialCanConnect(f32, f32));
 
-    // f32 → vecN splat.
     CHECK(MaterialCanConnect(f32, vec2));
     CHECK(MaterialCanConnect(f32, vec3));
     CHECK(MaterialCanConnect(f32, vec4));
 
-    // vec4 → vec3 / vec2 truncate.
     CHECK(MaterialCanConnect(vec4, vec3));
     CHECK(MaterialCanConnect(vec4, vec2));
 
-    // No widening: vec2 → vec4 is rejected.
     CHECK_FALSE(MaterialCanConnect(vec2, vec4));
-    // No truncation onto a scalar field via a texture color.
     CHECK_FALSE(MaterialCanConnect(vec4, f32));
 }
 
-TEST_CASE("MaterialCompile: a Surface BuildGraphFromMaterial → Compile is field-stable")
+TEST_CASE("MaterialCatalog: CoerceExpr wraps by type")
 {
-    const Veng::vector<Field> brick = BrickFields();
-    const MaterialShaderInterface iface{
-        .Fields = brick,
-        .VertexShader = Veng::AssetId{1004},
-        .FragmentShader = Veng::AssetId{1005},
-    };
+    const PinType f32{.Kind = PinType::Kind::Value, .Type = TypeIdOf<Veng::f32>()};
+    const PinType vec2{.Kind = PinType::Kind::Value, .Type = TypeIdOf<Veng::vec2>()};
+    const PinType vec3{.Kind = PinType::Kind::Value, .Type = TypeIdOf<Veng::vec3>()};
+    const PinType vec4{.Kind = PinType::Kind::Value, .Type = TypeIdOf<Veng::vec4>()};
 
-    NodeCatalog catalog;
-    const MaterialNodeTypes types =
-        RegisterMaterialNodeTypes(catalog, iface, MaterialDomain::Surface);
+    // Identity passes through unchanged.
+    CHECK(CoerceExpr("x", vec4, vec4) == "x");
 
-    const NodeGraph graph = BuildGraphFromMaterial(iface, catalog, types);
+    // f32 → vecN splats.
+    CHECK(CoerceExpr("x", f32, vec3) == "(x).xxx");
+    CHECK(CoerceExpr("x", f32, vec4) == "(x).xxxx");
 
-    // The synthesized graph: MaterialOutput + a TextureSample (Albedo) + a Param
-    // (Factors). The sampler field is consumed by its texture, never its own node.
-    CHECK(graph.Nodes().size() == 3);
-
-    const Veng::Result<Veng::vector<CompiledField>> compiled =
-        CompileMaterialGraph(graph, catalog, iface, MaterialDomain::Surface);
-    REQUIRE(compiled.has_value());
-
-    // The field list reproduces the source structure: texture + paired sampler +
-    // the param, with the texture's id carried through the TextureSample property.
-    const Veng::vector<CompiledField>& fields = *compiled;
-    REQUIRE(fields.size() == 3);
-
-    const CompiledField* albedo = FindField(fields, "Albedo");
-    REQUIRE(albedo != nullptr);
-    CHECK(albedo->Type == "texture");
-    CHECK(albedo->TextureId == 1001ULL);
-
-    const CompiledField* sampler = FindField(fields, "AlbedoSampler");
-    REQUIRE(sampler != nullptr);
-    CHECK(sampler->Type == "sampler");
-    CHECK(sampler->SamplerTexture == "Albedo");
-
-    const CompiledField* factors = FindField(fields, "Factors");
-    REQUIRE(factors != nullptr);
-    CHECK(factors->Type == "vec4");
-    CHECK(factors->Values.size() == 4);
+    // vec4 → lower-arity truncates.
+    CHECK(CoerceExpr("x", vec4, vec3) == "(x).xyz");
+    CHECK(CoerceExpr("x", vec4, vec2) == "(x).xy");
 }
 
-TEST_CASE("MaterialCompile: a PostProcess BuildGraphFromMaterial → Compile is field-stable")
+TEST_CASE("CompileMaterialGraph: error without a single MaterialOutput")
 {
-    const Veng::vector<Field> tonemap = TonemapFields();
-    const MaterialShaderInterface iface{
-        .Fields = tonemap,
-        .VertexShader = Veng::AssetId{2004},
-        .FragmentShader = Veng::AssetId{2005},
-    };
-
     NodeCatalog catalog;
+    MaterialEmitTable emit;
     const MaterialNodeTypes types =
-        RegisterMaterialNodeTypes(catalog, iface, MaterialDomain::PostProcess);
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
 
-    const NodeGraph graph = BuildGraphFromMaterial(iface, catalog, types);
-
-    // The synthesized graph: MaterialOutput + a TextureSample (Hdr) + a Param
-    // (Exposure). The single Color sink does not name the bound fields; they come
-    // from the upstream feeders.
-    CHECK(graph.Nodes().size() == 3);
-
-    const Veng::Result<Veng::vector<CompiledField>> compiled =
-        CompileMaterialGraph(graph, catalog, iface, MaterialDomain::PostProcess);
-    REQUIRE(compiled.has_value());
-
-    const Veng::vector<CompiledField>& fields = *compiled;
-    REQUIRE(fields.size() == 3);
-
-    const CompiledField* hdr = FindField(fields, "Hdr");
-    REQUIRE(hdr != nullptr);
-    CHECK(hdr->Type == "texture");
-
-    const CompiledField* sampler = FindField(fields, "HdrSampler");
-    REQUIRE(sampler != nullptr);
-    CHECK(sampler->Type == "sampler");
-    CHECK(sampler->SamplerTexture == "Hdr");
-
-    const CompiledField* exposure = FindField(fields, "Exposure");
-    REQUIRE(exposure != nullptr);
-    CHECK(exposure->Type == "float");
-    REQUIRE(exposure->Values.size() == 1);
-}
-
-TEST_CASE("MaterialCompile: a Param edit flows through compile")
-{
-    const Veng::vector<Field> brick = BrickFields();
-    const MaterialShaderInterface iface{.Fields = brick};
-
-    NodeCatalog catalog;
-    const MaterialNodeTypes types =
-        RegisterMaterialNodeTypes(catalog, iface, MaterialDomain::Surface);
-
-    // Build the default graph, then set the Param feeder's value. Compile sources
-    // the Factors field from the Param feeder, independent of the sink wiring.
-    NodeGraph graph = BuildGraphFromMaterial(iface, catalog, types);
-
-    NodeId paramNode{};
-    for (const NodeId node : graph.Nodes())
+    // No MaterialOutput → error.
     {
-        if (graph.GetTypeOf(node) == types.Param)
-        {
-            paramNode = node;
-        }
+        NodeGraph graph = MakeGraph(catalog);
+        graph.AddNode(types.Param);
+        const Veng::Result<GeneratedFragment> r =
+            CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+        CHECK_FALSE(r.has_value());
     }
-    REQUIRE(graph.IsValid(paramNode));
 
-    const NodeType* paramType = catalog.Find(types.Param);
-    REQUIRE(paramType != nullptr);
-    const Veng::vec4 value{0.25f, 0.5f, 0.75f, 1.0f};
-    const auto* valueBytes = reinterpret_cast<const std::byte*>(&value);
-    graph.SetProperty(paramNode, paramType->Properties[0],
-                      std::span<const std::byte>(valueBytes, sizeof(value)));
-
-    const Veng::Result<Veng::vector<CompiledField>> compiled =
-        CompileMaterialGraph(graph, catalog, iface, MaterialDomain::Surface);
-    REQUIRE(compiled.has_value());
-
-    const CompiledField* factors = FindField(*compiled, "Factors");
-    REQUIRE(factors != nullptr);
-    REQUIRE(factors->Values.size() == 4);
-    CHECK(factors->Values[0] == doctest::Approx(0.25f));
-    CHECK(factors->Values[3] == doctest::Approx(1.0f));
-}
-
-TEST_CASE("MaterialCompile: a param feeder's value coerces to its field arity")
-{
-    // A scalar-sized param field reads only the leading component of the feeding
-    // Param's vec4 value — the field's arity drives the emitted JSON arity.
-    const Veng::vector<Field> scalarOnly = {
-        Field{.Name = "Intensity", .Offset = 0, .Size = 4, .Kind = Kind::Param},
-    };
-    const MaterialShaderInterface iface{.Fields = scalarOnly};
-
-    NodeCatalog catalog;
-    const MaterialNodeTypes types =
-        RegisterMaterialNodeTypes(catalog, iface, MaterialDomain::PostProcess);
-
-    NodeGraph graph = BuildGraphFromMaterial(iface, catalog, types);
-
-    NodeId paramNode{};
-    for (const NodeId node : graph.Nodes())
+    // Two MaterialOutputs → error.
     {
-        if (graph.GetTypeOf(node) == types.Param)
-        {
-            paramNode = node;
-        }
+        NodeGraph graph = MakeGraph(catalog);
+        graph.AddNode(types.MaterialOutput);
+        graph.AddNode(types.MaterialOutput);
+        const Veng::Result<GeneratedFragment> r =
+            CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+        CHECK_FALSE(r.has_value());
     }
-    REQUIRE(graph.IsValid(paramNode));
-
-    const NodeType* paramType = catalog.Find(types.Param);
-    const Veng::vec4 value{0.7f, 0.1f, 0.2f, 0.3f};
-    const auto* valueBytes = reinterpret_cast<const std::byte*>(&value);
-    graph.SetProperty(paramNode, paramType->Properties[0],
-                      std::span<const std::byte>(valueBytes, sizeof(value)));
-
-    const Veng::Result<Veng::vector<CompiledField>> compiled =
-        CompileMaterialGraph(graph, catalog, iface, MaterialDomain::PostProcess);
-    REQUIRE(compiled.has_value());
-
-    const CompiledField* intensity = FindField(*compiled, "Intensity");
-    REQUIRE(intensity != nullptr);
-    CHECK(intensity->Type == "float");
-    REQUIRE(intensity->Values.size() == 1);
-    CHECK(intensity->Values[0] == doctest::Approx(0.7f));
 }
 
-TEST_CASE("MaterialCompile: a feederless graph emits default-valued fields")
+TEST_CASE("CompileMaterialGraph: a bare Surface output emits defined defaults")
 {
-    const Veng::vector<Field> brick = BrickFields();
-    const MaterialShaderInterface iface{.Fields = brick};
-
     NodeCatalog catalog;
+    MaterialEmitTable emit;
     const MaterialNodeTypes types =
-        RegisterMaterialNodeTypes(catalog, iface, MaterialDomain::Surface);
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
 
-    // Only the MaterialOutput node; no feeders. The bound field set still mirrors
-    // the loaded material's fields (zeroed values / ids), so the importer's schema
-    // tolerance keeps the cooked defaults.
     NodeGraph graph = MakeGraph(catalog);
     graph.AddNode(types.MaterialOutput);
 
-    const Veng::Result<Veng::vector<CompiledField>> compiled =
-        CompileMaterialGraph(graph, catalog, iface, MaterialDomain::Surface);
-    REQUIRE(compiled.has_value());
-    REQUIRE(compiled->size() == 3);
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    const Veng::string& src = r->Source;
 
-    const CompiledField* albedo = FindField(*compiled, "Albedo");
-    REQUIRE(albedo != nullptr);
-    CHECK(albedo->Type == "texture");
-    CHECK(albedo->TextureId == 0ULL);
+    CHECK(Contains(src, "#include \"Veng/material.slang\""));
+    CHECK(Contains(src, "GBufferOutput fsMain(SurfaceFragmentInput input)"));
+    // Unconnected sink defaults.
+    CHECK(Contains(src, "o.Albedo = float4(0,0,0,1)"));
+    CHECK(Contains(src, "input.v_WorldNormal"));
+    CHECK(Contains(src, "o.ORM = float4(1, 1, 0, 0)"));
+    // Velocity is always written, never authorable away.
+    CHECK(Contains(src, "o.Velocity = ComputeMotionVector(input.v_CurClip, input.v_PrevClip)"));
 }
 
-TEST_CASE("MaterialCompile: an incompatible connection is rejected by CanConnect")
+TEST_CASE("CompileMaterialGraph: a bare PostProcess output passes the screen sample")
 {
-    const Veng::vector<Field> brick = BrickFields();
-    const MaterialShaderInterface iface{.Fields = brick};
-
     NodeCatalog catalog;
+    MaterialEmitTable emit;
     const MaterialNodeTypes types =
-        RegisterMaterialNodeTypes(catalog, iface, MaterialDomain::Surface);
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::PostProcess);
 
-    // Pin 0 (Albedo) is vec4; a vec2-only source connecting vec2 → vec4 must be
-    // rejected (no widening).
+    NodeGraph graph = MakeGraph(catalog);
+    graph.AddNode(types.MaterialOutput);
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::PostProcess);
+    REQUIRE(r.has_value());
+    const Veng::string& src = r->Source;
+
+    CHECK(Contains(src, "float4 fsMain(PostProcessFragmentInput input) : SV_Target0"));
+    CHECK(Contains(src, "g_PC.MaterialIndex"));
+}
+
+TEST_CASE("CompileMaterialGraph: a connected Param feeds the Albedo sink")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
     NodeGraph graph = MakeGraph(catalog);
     const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId param = graph.AddNode(types.Param);
 
-    const NodeTypeId vec2Source = catalog.Register(NodeType{
-        .Name = "Vec2Source",
-        .Outputs = {PinDesc{
-            .Name = "Out",
-            .Type = PinType{.Kind = PinType::Kind::Value, .Type = TypeIdOf<Veng::vec2>()}}},
-    });
-    const NodeId source = graph.AddNode(vec2Source);
+    // Param (vec4) → Albedo (vec4): exact type, no coercion.
+    const Veng::VoidResult c =
+        graph.Connect(PinRef{.Node = param, .Pin = 0}, PinRef{.Node = output, .Pin = 0});
+    REQUIRE(c.has_value());
 
-    const Veng::VoidResult result =
-        graph.Connect(PinRef{.Node = source, .Pin = 0}, PinRef{.Node = output, .Pin = 0});
-    CHECK_FALSE(result.has_value());
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    const Veng::string& src = r->Source;
+
+    // The single-use Param value inlines into the Albedo write (no temp).
+    CHECK(Contains(src, "o.Albedo = p."));
+    CHECK_FALSE(Contains(src, "o.Albedo = float4(0,0,0,1)"));
+}
+
+TEST_CASE("CompileMaterialGraph: coercion is applied at a lower-arity sink")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId sample = graph.AddNode(types.TextureSample);
+
+    // TextureSample (vec4) → Normal (vec3): truncating coercion.
+    const Veng::VoidResult c =
+        graph.Connect(PinRef{.Node = sample, .Pin = 0}, PinRef{.Node = output, .Pin = 1});
+    REQUIRE(c.has_value());
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    // The vec4 sample expression is truncated to vec3 before the Normal write.
+    CHECK(Contains(r->Source, ".xyz, 0)"));
+}
+
+TEST_CASE("CompileMaterialGraph: a shared TextureSample emits one temp, sampled once")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId sample = graph.AddNode(types.TextureSample);
+
+    // The sample feeds both Albedo (vec4) and Normal (vec3): used twice → a temp.
+    REQUIRE(graph.Connect(PinRef{.Node = sample, .Pin = 0}, PinRef{.Node = output, .Pin = 0})
+                .has_value());
+    REQUIRE(graph.Connect(PinRef{.Node = sample, .Pin = 0}, PinRef{.Node = output, .Pin = 1})
+                .has_value());
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    const Veng::string& src = r->Source;
+
+    // The Sample(...) call appears exactly once (in the temp declaration).
+    Veng::usize count = 0;
+    Veng::usize pos = 0;
+    while ((pos = src.find(".Sample(", pos)) != Veng::string::npos)
+    {
+        ++count;
+        pos += 1;
+    }
+    CHECK(count == 1);
+    // The temp is declared with a float4 type and the node-keyed Color name.
+    CHECK(Contains(src, "float4 n"));
+}
+
+TEST_CASE("CompileMaterialGraph: an unreached node never emits (dead-code elimination)")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    NodeGraph graph = MakeGraph(catalog);
+    graph.AddNode(types.MaterialOutput);
+    graph.AddNode(types.TextureSample); // unconnected: never reached
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    // No sample emitted from the orphan node.
+    CHECK_FALSE(Contains(r->Source, ".Sample("));
+}
+
+TEST_CASE("CompileMaterialGraph: the output is deterministic across walks and round-trip")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId sample = graph.AddNode(types.TextureSample);
+    const NodeId param = graph.AddNode(types.Param);
+    REQUIRE(graph.Connect(PinRef{.Node = sample, .Pin = 0}, PinRef{.Node = output, .Pin = 0})
+                .has_value());
+    REQUIRE(graph.Connect(PinRef{.Node = param, .Pin = 0}, PinRef{.Node = output, .Pin = 1})
+                .has_value());
+
+    const Veng::Result<GeneratedFragment> a =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    const Veng::Result<GeneratedFragment> b =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(a.has_value());
+    REQUIRE(b.has_value());
+    // Two walks of the same graph emit byte-identical text.
+    CHECK(a->Source == b->Source);
+
+    // A save/load round-trip preserves creation order, so the keys (and the text) match.
+    const Veng::string doc = WriteNodeGraph(graph, catalog);
+    NodeGraph reloaded = MakeGraph(catalog);
+    const NodeGraphReadOutcome outcome = ReadNodeGraph(doc, reloaded, catalog);
+    REQUIRE(outcome == NodeGraphReadOutcome::Loaded);
+
+    const Veng::Result<GeneratedFragment> c =
+        CompileMaterialGraph(reloaded, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(c.has_value());
+    CHECK(c->Source == a->Source);
 }

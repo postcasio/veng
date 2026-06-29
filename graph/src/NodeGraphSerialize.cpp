@@ -1,4 +1,4 @@
-#include <VengEditor/NodeGraph/NodeGraphSerialize.h>
+#include <VengGraph/NodeGraphSerialize.h>
 
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
@@ -10,7 +10,7 @@
 #include <cstddef>
 #include <cstring>
 
-namespace VengEditor
+namespace VengGraph
 {
     using Json = nlohmann::json;
 

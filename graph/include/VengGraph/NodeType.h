@@ -3,11 +3,11 @@
 #include <Veng/Veng.h>
 #include <Veng/Reflection/FieldDescriptor.h>
 
-#include <VengEditor/NodeGraph/NodeGraph.h>
+#include <VengGraph/NodeGraph.h>
 
 #include <span>
 
-namespace VengEditor
+namespace VengGraph
 {
     /// @brief Descriptor for one pin on a node type.
     ///

@@ -1,8 +1,8 @@
-#include <VengEditor/NodeGraph/NodeType.h>
+#include <VengGraph/NodeType.h>
 
 #include <Veng/Assert.h>
 
-namespace VengEditor
+namespace VengGraph
 {
     NodeTypeId NodeCatalog::Register(NodeType type)
     {

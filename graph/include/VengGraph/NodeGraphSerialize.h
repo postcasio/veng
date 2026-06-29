@@ -3,10 +3,10 @@
 #include <Veng/Veng.h>
 #include <Veng/Result.h>
 
-#include <VengEditor/NodeGraph/NodeGraph.h>
-#include <VengEditor/NodeGraph/NodeType.h>
+#include <VengGraph/NodeGraph.h>
+#include <VengGraph/NodeType.h>
 
-namespace VengEditor
+namespace VengGraph
 {
     /// @brief Format version carried under "version" in the serialized graph document.
     ///

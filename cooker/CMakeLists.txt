@@ -305,7 +305,7 @@ add_library(libveng_cook STATIC
         src/Importers/PrefabImporter.cpp
         src/Importers/LevelImporter.cpp)
 add_library(veng::cook ALIAS libveng_cook)
-target_link_libraries(libveng_cook PUBLIC veng_cook_objs veng::veng veng::assetpack)
+target_link_libraries(libveng_cook PUBLIC veng_cook_objs veng::veng veng::assetpack veng::graph)
 target_link_libraries(libveng_cook PRIVATE
         fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB ${VENG_ASTCENC_TARGET})
 target_compile_options(libveng_cook PRIVATE -fno-exceptions)

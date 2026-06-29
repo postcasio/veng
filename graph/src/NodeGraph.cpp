@@ -1,4 +1,4 @@
-#include <VengEditor/NodeGraph/NodeGraph.h>
+#include <VengGraph/NodeGraph.h>
 
 #include <Veng/Assert.h>
 #include <Veng/Reflection/TypeId.h>
@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace VengEditor
+namespace VengGraph
 {
     NodeGraph::NodeGraph(CanConnectFn canConnect, PinShapeFn pinShape, PropertySizeFn propertySize)
         : m_CanConnect(std::move(canConnect)), m_PinShape(std::move(pinShape)),

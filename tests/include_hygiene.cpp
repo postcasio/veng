@@ -111,9 +111,13 @@
 #include <Veng/Renderer/VertexBufferLayout.h>
 #include <Veng/Renderer/Viewport.h>
 
-#include <VengEditor/NodeGraph/NodeGraph.h>
-#include <VengEditor/NodeGraph/NodeType.h>
-#include <VengEditor/NodeGraph/NodeGraphSerialize.h>
+#include <VengGraph/NodeGraph.h>
+#include <VengGraph/NodeType.h>
+#include <VengGraph/NodeGraphSerialize.h>
+#include <VengGraph/EmittedValue.h>
+#include <VengGraph/MaterialShaderInterface.h>
+#include <VengGraph/MaterialCatalog.h>
+#include <VengGraph/MaterialCompile.h>
 
 int main()
 {

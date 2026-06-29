@@ -20,9 +20,6 @@ add_library(veng_editor SHARED
         src/PreviewCapability.cpp
         src/PrefabSerialize.cpp
         src/StatusTracker.cpp
-        src/NodeGraph/NodeGraph.cpp
-        src/NodeGraph/NodeType.cpp
-        src/NodeGraph/NodeGraphSerialize.cpp
         src/panels/AssetBrowserPanel.cpp
         src/panels/ConsolePanel.cpp
         src/panels/InspectorPanel.cpp
@@ -37,8 +34,6 @@ add_library(veng_editor SHARED
         src/FieldWidgetDispatch.cpp
         src/FieldGate.cpp
         src/material/MaterialPreview.cpp
-        src/material/MaterialCatalog.cpp
-        src/material/MaterialCompile.cpp
 )
 add_library(veng_editor::veng_editor ALIAS veng_editor)
 
@@ -56,7 +51,10 @@ target_include_directories(veng_editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # surface) but never Vulkan/GLFW — same boundary as libveng. veng::veng already
 # propagates the ImGui include dirs and hosts the ImGui symbols; link it PUBLIC so
 # an editor module compiling against VengEditor headers resolves <imgui.h>.
-target_link_libraries(veng_editor PUBLIC veng::veng)
+# veng::graph is the shared node-graph + material-codegen library the editor's
+# node-graph UI and material editor build on; PUBLIC so an editor module reaches
+# its VengGraph/ headers.
+target_link_libraries(veng_editor PUBLIC veng::veng veng::graph)
 
 # Same -fno-exceptions enforcement as libveng: asserts are fatal, recoverable
 # operations return Veng::Result<T>.
