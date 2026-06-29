@@ -209,6 +209,7 @@ add_library(veng_cook_objs OBJECT
         src/Importers/MeshImporter.cpp
         src/Importers/ShaderImporter.cpp
         src/Importers/MaterialImporter.cpp
+        src/Importers/MaterialInstanceImporter.cpp
         src/Importers/SlangReflect.cpp
         src/Importers/SlangSession.cpp
         src/Importers/GraphShaderHook.cpp

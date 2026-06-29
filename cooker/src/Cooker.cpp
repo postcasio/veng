@@ -89,6 +89,10 @@ namespace Veng::Cook
             {
                 return AssetType::Material;
             }
+            if (name == "material_instance")
+            {
+                return AssetType::MaterialInstance;
+            }
             if (name == "vertex_layout")
             {
                 return AssetType::VertexLayout;

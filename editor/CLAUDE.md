@@ -154,6 +154,18 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   thread via `TaskSystem` (`CookSession` → `Task<vector<u8>>`), then mounts the resulting
   in-memory archive via `AssetManager::MountMemory` and hot-reloads behind the stable
   `AssetHandle`.
+- **The material-instance inspector is the cheap-override authoring surface.**
+  `MaterialInstanceEditorPanel` (registered for `AssetType::MaterialInstance`) edits a
+  `*.vmatinst.json`: a **parent picker** (an `AssetChip` drop target of type `Material`) plus a
+  **per-field override toggle** over the parent's exposed `GetFields()` — toggling a field on adds
+  it to the sparse override set, off reverts it to the parent default — so the authored surface and
+  the cook-validated surface are the same set by construction. Each param slot draws a `UI::Drag`
+  over its component count and each texture slot an `AssetChip`; an un-toggled slot shows the parent
+  default (read from the parent's `GetDefaultBlock()`) disabled. It previews through the **same**
+  `MaterialPreview` path the material editor uses (the instance over its parent on a turntable
+  sphere), recooks live (300ms-debounced) through the cook-on-demand loop, and hot-reloads behind
+  the stable handle. Changing the parent reloads the schema and drops the prior overrides. Save
+  writes the `*.vmatinst.json`.
 - **The texture editor is the template.** `TextureEditorPanel` previews via a render
   target (`CreateTexture` → `ImGui::Image`), edits `.tex.json` settings (sRGB + sampler
   filter/wrap), recooks live (300ms-debounced), and round-trips the JSON on save —

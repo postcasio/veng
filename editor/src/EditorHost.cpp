@@ -24,6 +24,7 @@
 #include "panels/InspectorPanel.h"
 #include "panels/LevelEditorPanel.h"
 #include "panels/MaterialEditorPanel.h"
+#include "panels/MaterialInstanceEditorPanel.h"
 #include "panels/PrefabEditorPanel.h"
 #include "panels/ProjectSettingsPanel.h"
 #include "panels/TextureEditorPanel.h"
@@ -322,6 +323,42 @@ namespace VengEditor
             AssetManager& m_Assets;
             ImGuiLayer& m_ImGui;
             EditorRegistry& m_Editors;
+            VengEditor::CookDriver m_Cook;
+        };
+
+        // Resolves a material-instance AssetId to its .vmatinst.json source through the manifest
+        // index, then opens a MaterialInstanceEditorPanel wired to the host's engine refs.
+        class MaterialInstanceEditorFactory final : public AssetEditorFactory
+        {
+        public:
+            MaterialInstanceEditorFactory(const AssetSourceIndex& index, Application& app,
+                                          AssetManager& assets, ImGuiLayer& imgui,
+                                          VengEditor::CookDriver cook)
+                : m_Index(index), m_App(app), m_Assets(assets), m_ImGui(imgui),
+                  m_Cook(std::move(cook))
+            {
+            }
+
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            {
+                const AssetSourceIndex::Entry* entry = m_Index.Find(id);
+                if (!entry)
+                {
+                    Log::Error(
+                        "Material-instance editor: no source manifest entry for asset 0x{:X}",
+                        id.Value);
+                    return nullptr;
+                }
+
+                return CreateUnique<MaterialInstanceEditorPanel>(id, entry->Source, m_Index, m_App,
+                                                                 m_Assets, m_ImGui, m_Cook);
+            }
+
+        private:
+            const AssetSourceIndex& m_Index;
+            Application& m_App;
+            AssetManager& m_Assets;
+            ImGuiLayer& m_ImGui;
             VengEditor::CookDriver m_Cook;
         };
 
@@ -629,6 +666,11 @@ namespace VengEditor
                 AssetType::Material, CreateUnique<MaterialEditorFactory>(
                                          *m_Sources, *this, GetAssetManager(), *GetImGuiLayer(),
                                          m_Registries->Editor, cookFor()));
+
+            m_Registries->Editor.RegisterAssetEditor(
+                AssetType::MaterialInstance,
+                CreateUnique<MaterialInstanceEditorFactory>(*m_Sources, *this, GetAssetManager(),
+                                                            *GetImGuiLayer(), cookFor()));
 
             m_Registries->Editor.RegisterAssetEditor(
                 AssetType::Level, CreateUnique<LevelEditorFactory>(

@@ -85,6 +85,19 @@ at cook time:
   parameters — the declared, explicitly-typed field list must match — and the
   fragment outputs are validated against the material domain's contract (Surface →
   g-buffer MRT `SV_Target0`..`SV_Target3`; PostProcess → a single `SV_Target0`).
+- **Material instances** (`*.vmatinst.json`) cook a sparse parameter override over a parent
+  `Material` through the `MaterialInstanceImporter`. The source declares `"parent"` (a parent
+  `Material` `AssetId`) and a sparse `"overrides"` object (parent-field name → value for a param,
+  or → an `AssetId` for a texture field). The importer resolves the parent, reflects its **exposed
+  field set** — the parent's own declared `"fields"` list, cross-checked against the parent fragment
+  shader's reflected `MaterialParams` for type and offset — and validates each override against it:
+  the `.vmat`-against-shader check lifted one level to **instance-against-parent**. An override
+  naming a field the parent does not expose (an engine-bound field never appears in the parent's
+  declared list, nor does a sampler), or a type mismatch, is a **located cook error**; an omitted
+  field inherits the parent default. It emits the `CookedMaterialInstance` blob (the override table
+  + a value region of the param overrides' raw bytes); the instance owns no shader or pipeline — the
+  parent supplies those. The importer is in the **core** set (it links only the Slang reflection +
+  the graph-shader resolver hook, never libveng), so a bare-parent cook stays graph-aware.
 - **Skinned meshes, skeletons, and animations** come from a rigged model (FBX, via the
   enabled assimp FBX importer). The `MeshImporter` emits the skinned vertex layout when the
   `*.mesh.json` names a `"skeleton"` id: it caps each vertex to four normalized influences

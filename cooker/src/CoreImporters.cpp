@@ -3,6 +3,7 @@
 #include "Importers/AnimationImporter.h"
 #include "Importers/EnvironmentImporter.h"
 #include "Importers/MaterialImporter.h"
+#include "Importers/MaterialInstanceImporter.h"
 #include "Importers/MeshImporter.h"
 #include "Importers/RawImporter.h"
 #include "Importers/ShaderImporter.h"
@@ -20,6 +21,7 @@ namespace Veng::Cook
         cooker.Register(CreateUnique<ShaderImporter>());
         cooker.Register(CreateUnique<VertexLayoutImporter>());
         cooker.Register(CreateUnique<MaterialImporter>());
+        cooker.Register(CreateUnique<MaterialInstanceImporter>());
         cooker.Register(CreateUnique<SkeletonImporter>());
         cooker.Register(CreateUnique<AnimationImporter>());
         cooker.Register(CreateUnique<EnvironmentImporter>());

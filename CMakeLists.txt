@@ -816,6 +816,9 @@ if (VENG_BUILD_TESTS)
                 # The parent/instance split: a hand-built cooked MaterialInstance blob over the
                 # brick parent, the pipeline-sharing invariant, and the runtime MID path.
                 tests/gpu/material_instance.cpp
+                # The authoring → cook → render proof: cooks a *.vmatinst.json over a parent
+                # and asserts the override renders a different albedo than the parent default.
+                tests/gpu/material_instance_override.cpp
                 # The RTT-into-material proof: a producer viewport's output, sampled
                 # through a consumer viewport's material, in registration order.
                 # Cooks the brick g-buffer fixture, so it is gated with the rest.
@@ -900,6 +903,7 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
             tests/cooker/mesh_cook.cpp
             tests/cooker/shader_cook.cpp
             tests/cooker/material_cook.cpp
+            tests/cooker/material_instance_cook.cpp
             tests/cooker/graph_shader_cook.cpp
             tests/cooker/vertex_layout_cook.cpp
             tests/cooker/verify.cpp

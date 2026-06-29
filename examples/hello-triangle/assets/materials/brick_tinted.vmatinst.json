@@ -1,0 +1,6 @@
+{
+  "parent": 1003,
+  "overrides": {
+    "BaseColorFactor": [0.95, 0.45, 0.2, 1.0]
+  }
+}
