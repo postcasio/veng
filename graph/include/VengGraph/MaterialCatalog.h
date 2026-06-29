@@ -27,7 +27,30 @@ namespace VengGraph
         EngineBound = 2,
     };
 
-    /// @brief Catalog ids of the three material node types, resolved by stable name.
+    /// @brief A node's authored leaf type: the Slang scalar/vector kind it emits.
+    ///
+    /// Recorded explicitly on a Constant node's property POD so the emitted struct field
+    /// type and any inline literal are unambiguous, rather than inferred from a value
+    /// blob's size.
+    enum class MaterialLeafType : Veng::i32
+    {
+        /// @brief A single-component float (`float`).
+        Float = 0,
+        /// @brief A two-component float vector (`float2`).
+        Vec2 = 1,
+        /// @brief A three-component float vector (`float3`).
+        Vec3 = 2,
+        /// @brief A four-component float vector (`float4`).
+        Vec4 = 3,
+        /// @brief A single-component unsigned integer (`uint`).
+        Uint = 4,
+    };
+
+    /// @brief Catalog ids of the base material node types, resolved by stable name.
+    ///
+    /// The math/swizzle/utility nodes RegisterMaterialNodeTypes adds beside these are
+    /// resolved by name from the catalog rather than carried here; only the three the
+    /// emit walk and the editor reference structurally are named.
     struct MaterialNodeTypes
     {
         /// @brief Catalog id of the TextureSample node type.
@@ -73,6 +96,49 @@ namespace VengGraph
     /// @brief Provenance property name on a Param node.
     inline constexpr const char* ParamProvenanceProperty = "Provenance";
 
+    /// @brief Stable serialized name of the Constant node type.
+    inline constexpr const char* ConstantTypeName = "Constant";
+    /// @brief Stable serialized name of the ScalarParam node type.
+    inline constexpr const char* ScalarParamTypeName = "ScalarParam";
+    /// @brief Stable serialized name of the Multiply node type.
+    inline constexpr const char* MultiplyTypeName = "Multiply";
+    /// @brief Stable serialized name of the Add node type.
+    inline constexpr const char* AddTypeName = "Add";
+    /// @brief Stable serialized name of the Subtract node type.
+    inline constexpr const char* SubtractTypeName = "Subtract";
+    /// @brief Stable serialized name of the Divide node type.
+    inline constexpr const char* DivideTypeName = "Divide";
+    /// @brief Stable serialized name of the Lerp node type.
+    inline constexpr const char* LerpTypeName = "Lerp";
+    /// @brief Stable serialized name of the Saturate node type.
+    inline constexpr const char* SaturateTypeName = "Saturate";
+    /// @brief Stable serialized name of the Clamp node type.
+    inline constexpr const char* ClampTypeName = "Clamp";
+    /// @brief Stable serialized name of the OneMinus node type.
+    inline constexpr const char* OneMinusTypeName = "OneMinus";
+    /// @brief Stable serialized name of the Dot node type.
+    inline constexpr const char* DotTypeName = "Dot";
+    /// @brief Stable serialized name of the Cross node type.
+    inline constexpr const char* CrossTypeName = "Cross";
+    /// @brief Stable serialized name of the Normalize node type.
+    inline constexpr const char* NormalizeTypeName = "Normalize";
+    /// @brief Stable serialized name of the Length node type.
+    inline constexpr const char* LengthTypeName = "Length";
+    /// @brief Stable serialized name of the Split node type.
+    inline constexpr const char* SplitTypeName = "Split";
+    /// @brief Stable serialized name of the Combine node type.
+    inline constexpr const char* CombineTypeName = "Combine";
+
+    /// @brief Authored value property name on a Constant node.
+    inline constexpr const char* ConstantValueProperty = "Value";
+    /// @brief Leaf-type property name on a Constant node.
+    inline constexpr const char* ConstantLeafTypeProperty = "LeafType";
+
+    /// @brief Default value property name on a ScalarParam node.
+    inline constexpr const char* ScalarParamValueProperty = "Value";
+    /// @brief Provenance property name on a ScalarParam node.
+    inline constexpr const char* ScalarParamProvenanceProperty = "Provenance";
+
     /// @brief MaterialOutput sink pin name for the Surface domain albedo channel.
     inline constexpr const char* OutputAlbedoPin = "Albedo";
     /// @brief MaterialOutput sink pin name for the Surface domain normal channel.
@@ -110,6 +176,17 @@ namespace VengGraph
     MaterialNodeTypes RegisterMaterialNodeTypes(NodeCatalog& catalog, MaterialEmitTable& emit,
                                                 Veng::MaterialDomain domain);
 
+    /// @brief Registers the shading-math, swizzle, and utility node types into @p catalog.
+    ///
+    /// The expression-emitter set: Constant and ScalarParam (sources), Multiply / Add /
+    /// Subtract / Divide (arithmetic), Lerp / Saturate / Clamp / OneMinus (shaping), Dot /
+    /// Cross / Normalize / Length (vector algebra), and Split / Combine (channel plumbing).
+    /// Each is domain-independent (math is math), so this is called for every domain.
+    /// Beside minting the types it fills @p emit with one emit-fn per type.
+    /// @param catalog Target catalog; mutated by registration.
+    /// @param emit    Target emit table; one entry added per node type.
+    void RegisterMathNodeTypes(NodeCatalog& catalog, MaterialEmitTable& emit);
+
     /// @brief Connection predicate for material graphs: exact TypeId equality plus
     /// f32→vecN splat and vec4→vec3/vec2 truncation.
     ///
@@ -134,4 +211,12 @@ VE_ENUM(::VengGraph::ParamProvenance, 0x9F3C71A4D8E2065BULL)
 VE_ENUMERATOR(Const)
 VE_ENUMERATOR(Exposed)
 VE_ENUMERATOR(EngineBound)
+VE_ENUM_END();
+
+VE_ENUM(::VengGraph::MaterialLeafType, 0x5AC3779D52EF1380ULL)
+VE_ENUMERATOR(Float)
+VE_ENUMERATOR(Vec2)
+VE_ENUMERATOR(Vec3)
+VE_ENUMERATOR(Vec4)
+VE_ENUMERATOR(Uint)
 VE_ENUM_END();

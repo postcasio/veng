@@ -235,8 +235,18 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   `NodeTypeId`, populated by `RegisterMaterialNodeTypes` beside minting the types; the topology
   core stays generic and emit-free. The catalog is **fixed and schema-independent**
   (`RegisterMaterialNodeTypes(catalog, emit, domain)` — keyed by domain only, shaped by pin
-  leaf types, never by a loaded shader's reflected fields): `TextureSample` has a UV input +
-  color output, `Param` is sized by its property, `MaterialOutput`'s sinks are the domain
+  leaf types, never by a loaded shader's reflected fields). It is a **shading-expression set**,
+  not three binding nodes: the binding nodes `TextureSample` (UV input + color output) and `Param`
+  (sized by its property); the sources `Constant` (an authored literal of a chosen leaf type,
+  always inlined — its `MaterialLeafType` property names the Slang type) and `ScalarParam` (a
+  `Param` specialized to `float`, carrying the same provenance); the arithmetic `Multiply` / `Add`
+  / `Subtract` / `Divide` (binary, component-wise, the scalar splatting against a vector by the
+  link coercion); the shaping `Lerp` / `Saturate` / `Clamp` / `OneMinus`; the vector algebra `Dot`
+  / `Cross` / `Normalize` / `Length` (the output pin type follows the operation — `Dot`/`Length`
+  reduce to `float`, `Cross` is vec3-only by its pin types); and the channel plumbing `Split` (a
+  vec4 fanned to four named scalar pins via swizzles) / `Combine` (four scalar inputs packed into a
+  vec4, an unconnected slot defaulting to 0). The math/swizzle/utility set is domain-independent
+  (`RegisterMathNodeTypes`, called for every domain). `MaterialOutput`'s sinks are the domain
   contract. `MaterialOutput` emits the domain entry point (`GBufferOutput fsMain` for Surface,
   `float4 fsMain … : SV_Target0` for PostProcess) with defined defaults for unconnected sinks
   (Surface: Albedo `float4(0,0,0,1)`, Normal the geometric `input.v_WorldNormal`, ORM

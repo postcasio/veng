@@ -118,6 +118,86 @@ VSOutput vsMain()
         return WriteNodeGraph(graph, catalog);
     }
 
+    // Builds a PostProcess graph mixing the math/swizzle/utility nodes: a Constant tint
+    // (vec4) and a Constant scalar are combined and multiplied through a Combine → Multiply
+    // chain whose components are split and re-packed, then fed to the Color sink. Everything
+    // is const-folded, so the generated MaterialParams is empty and the cook only proves the
+    // generated Slang compiles.
+    string MakeMathGraph()
+    {
+        NodeCatalog catalog;
+        MaterialEmitTable emit;
+        const MaterialNodeTypes types =
+            RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::PostProcess);
+
+        NodeGraph graph(
+            MaterialCanConnect, [&catalog](NodeTypeId id) { return catalog.ShapeOf(id); },
+            [&catalog](NodeTypeId id)
+            {
+                const NodeType* type = catalog.Find(id);
+                return type != nullptr ? type->PropertySize : usize{0};
+            });
+
+        const auto find = [&](const char* name)
+        {
+            const NodeType* type = catalog.Find(name);
+            REQUIRE(type != nullptr);
+            return type;
+        };
+        const auto setVec4 = [&](NodeId node, const NodeType* type, const vec4& v)
+        {
+            const FieldDescriptor& field = type->Properties[0];
+            graph.SetProperty(
+                node, field,
+                std::span<const std::byte>(reinterpret_cast<const std::byte*>(&v), sizeof(v)));
+            // Author the leaf type as Vec4.
+            const MaterialLeafType leaf = MaterialLeafType::Vec4;
+            graph.SetProperty(node, type->Properties[1],
+                              std::span<const std::byte>(reinterpret_cast<const std::byte*>(&leaf),
+                                                         sizeof(leaf)));
+        };
+
+        const NodeType* constType = find(ConstantTypeName);
+        const NodeType* split = find(SplitTypeName);
+        const NodeType* combine = find(CombineTypeName);
+        const NodeType* multiply = find(MultiplyTypeName);
+        const NodeType* saturate = find(SaturateTypeName);
+
+        const NodeId output = graph.AddNode(types.MaterialOutput);
+        const NodeId tint = graph.AddNode(constType->Id);
+        const NodeId scale = graph.AddNode(constType->Id);
+        const NodeId splitNode = graph.AddNode(split->Id);
+        const NodeId combineNode = graph.AddNode(combine->Id);
+        const NodeId mulNode = graph.AddNode(multiply->Id);
+        const NodeId satNode = graph.AddNode(saturate->Id);
+
+        setVec4(tint, constType, vec4(0.8f, 0.4f, 0.2f, 1.0f));
+        setVec4(scale, constType, vec4(0.5f, 0.5f, 0.5f, 1.0f));
+
+        // tint → split; split.x/y/z/w → combine.x/y/z/w (round-trip the channels);
+        // combine → mul.A, scale → mul.B; mul → saturate → Color.
+        REQUIRE(graph.Connect(PinRef{.Node = tint, .Pin = 0}, PinRef{.Node = splitNode, .Pin = 0})
+                    .has_value());
+        for (u16 i = 0; i < 4; ++i)
+        {
+            REQUIRE(graph
+                        .Connect(PinRef{.Node = splitNode, .Pin = i},
+                                 PinRef{.Node = combineNode, .Pin = i})
+                        .has_value());
+        }
+        REQUIRE(
+            graph.Connect(PinRef{.Node = combineNode, .Pin = 0}, PinRef{.Node = mulNode, .Pin = 0})
+                .has_value());
+        REQUIRE(graph.Connect(PinRef{.Node = scale, .Pin = 0}, PinRef{.Node = mulNode, .Pin = 1})
+                    .has_value());
+        REQUIRE(graph.Connect(PinRef{.Node = mulNode, .Pin = 0}, PinRef{.Node = satNode, .Pin = 0})
+                    .has_value());
+        REQUIRE(graph.Connect(PinRef{.Node = satNode, .Pin = 0}, PinRef{.Node = output, .Pin = 0})
+                    .has_value());
+
+        return WriteNodeGraph(graph, catalog);
+    }
+
     // Writes the pack files (vertex .slang/.shader.json, graph .graph.json/.shader.json,
     // material .vmat.json, manifest) into a fresh temp dir.
     GraphFixture WritePack(const string& name, const string& graphDoc)
@@ -224,6 +304,31 @@ TEST_CASE("Cooker: an exposed Param graph cooks a generated fragment + a field w
     CHECK(packed[1] == doctest::Approx(0.6f));
     CHECK(packed[2] == doctest::Approx(0.9f));
     CHECK(packed[3] == doctest::Approx(1.0f));
+
+    std::filesystem::remove_all(fx.Dir);
+}
+
+TEST_CASE("Cooker: a graph mixing math/swizzle nodes cooks a fragment that compiles")
+{
+    // The whole chain is const-folded, so the generated MaterialParams is empty; the cook
+    // succeeding is the proof that the emitted operators, swizzles, and constructors form
+    // valid Slang that compiles through the ShaderImporter.
+    const string graphDoc = MakeMathGraph();
+    const GraphFixture fx = WritePack("math", graphDoc);
+
+    const Result<ArchiveReader> reader = CookFixture(fx);
+    REQUIRE_MESSAGE(reader.has_value(), reader.error());
+
+    const optional<ArchiveEntry> shader = reader->Find(AssetId{8802});
+    REQUIRE(shader.has_value());
+    CHECK(shader->Type == AssetType::Shader);
+
+    const optional<ArchiveEntry> mat = reader->Find(AssetId{8803});
+    REQUIRE(mat.has_value());
+    CookedMaterialHeader header{};
+    std::memcpy(&header, mat->Blob.data(), sizeof(header));
+    CHECK(header.FragmentShaderId == 8802ULL);
+    CHECK(header.FieldCount == 0);
 
     std::filesystem::remove_all(fx.Dir);
 }

@@ -204,9 +204,9 @@ namespace VengGraph
         // handle slots, with the UV input defaulting to the surface UV when unconnected.
         // Its texture handle slot carries the node's authored texture AssetId; the
         // paired sampler slot references it by name.
-        emit.Emitters[types.TextureSample.Value] = [vec4Type](std::span<const EmittedValue> inputs,
-                                                              std::span<const std::byte> props,
-                                                              EmitContext& ctx) -> EmittedValue
+        emit.Emitters[types.TextureSample.Value] =
+            [vec4Type](std::span<const EmittedValue> inputs, std::span<const std::byte> props,
+                       EmitContext& ctx) -> Veng::vector<EmittedValue>
         {
             const Veng::string textureField = fmt::format("{}_Texture", ctx.NodeKey);
             const Veng::string samplerField = fmt::format("{}_Sampler", ctx.NodeKey);
@@ -239,16 +239,16 @@ namespace VengGraph
                 fmt::format("g_Textures[NonUniformResourceIndex(p.{})].Sample("
                             "g_Samplers[NonUniformResourceIndex(p.{})], {})",
                             textureField, samplerField, uv);
-            return EmittedValue{.Expr = expr, .Type = ValuePin(vec4Type), .IsConst = false};
+            return {EmittedValue{.Expr = expr, .Type = ValuePin(vec4Type), .IsConst = false}};
         };
 
         // A Param's provenance decides how its value reaches the shader: a const Param
         // folds its authored value inline (no field); an exposed Param emits a p.<Name>
         // read backed by a generated field carrying the authored default; an engine-bound
         // Param emits the same read but contributes no default (the engine writes it).
-        emit.Emitters[types.Param.Value] = [vec4Type](std::span<const EmittedValue>,
-                                                      std::span<const std::byte> props,
-                                                      EmitContext& ctx) -> EmittedValue
+        emit.Emitters[types.Param.Value] =
+            [vec4Type](std::span<const EmittedValue>, std::span<const std::byte> props,
+                       EmitContext& ctx) -> Veng::vector<EmittedValue>
         {
             ParamProps p;
             if (props.size() >= sizeof(ParamProps))
@@ -260,7 +260,7 @@ namespace VengGraph
             {
                 const Veng::string literal = fmt::format("float4({}, {}, {}, {})", p.Value.x,
                                                          p.Value.y, p.Value.z, p.Value.w);
-                return EmittedValue{.Expr = literal, .Type = ValuePin(vec4Type), .IsConst = true};
+                return {EmittedValue{.Expr = literal, .Type = ValuePin(vec4Type), .IsConst = true}};
             }
 
             const Veng::string field = ctx.NodeKey;
@@ -275,10 +275,11 @@ namespace VengGraph
                 emitted.Default = {p.Value.x, p.Value.y, p.Value.z, p.Value.w};
             }
             ctx.ParamFields.push_back(std::move(emitted));
-            return EmittedValue{
-                .Expr = fmt::format("p.{}", field), .Type = ValuePin(vec4Type), .IsConst = false};
+            return {EmittedValue{
+                .Expr = fmt::format("p.{}", field), .Type = ValuePin(vec4Type), .IsConst = false}};
         };
 
+        RegisterMathNodeTypes(catalog, emit);
         return types;
     }
 

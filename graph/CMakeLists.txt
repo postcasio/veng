@@ -15,6 +15,7 @@ add_library(veng_graph SHARED
         src/NodeType.cpp
         src/NodeGraphSerialize.cpp
         src/MaterialCatalog.cpp
+        src/MaterialMathNodes.cpp
         src/MaterialCompile.cpp
 )
 add_library(veng::graph ALIAS veng_graph)

@@ -39,6 +39,14 @@ namespace
     {
         return haystack.find(needle) != Veng::string::npos;
     }
+
+    // Adds a node of a catalog type resolved by its stable name.
+    NodeId AddByName(NodeGraph& graph, const NodeCatalog& catalog, const char* name)
+    {
+        const NodeType* type = catalog.Find(name);
+        REQUIRE(type != nullptr);
+        return graph.AddNode(type->Id);
+    }
 }
 
 TEST_CASE("MaterialCatalog: the Surface MaterialOutput is the g-buffer contract")
@@ -375,4 +383,217 @@ TEST_CASE("CompileMaterialGraph: the output is deterministic across walks and ro
         CompileMaterialGraph(reloaded, catalog, emit, MaterialDomain::Surface);
     REQUIRE(c.has_value());
     CHECK(c->Source == a->Source);
+}
+
+TEST_CASE("MaterialCatalog: the math/swizzle/utility node set is registered")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    for (const char* name : {ConstantTypeName, ScalarParamTypeName, MultiplyTypeName, AddTypeName,
+                             SubtractTypeName, DivideTypeName, LerpTypeName, SaturateTypeName,
+                             ClampTypeName, OneMinusTypeName, DotTypeName, CrossTypeName,
+                             NormalizeTypeName, LengthTypeName, SplitTypeName, CombineTypeName})
+    {
+        const NodeType* type = catalog.Find(name);
+        REQUIRE(type != nullptr);
+        // Each value-producing node carries an emit-fn.
+        CHECK(emit.Find(type->Id) != nullptr);
+    }
+}
+
+TEST_CASE("CompileMaterialGraph: a Multiply emits a component-wise product into Albedo")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId sample = graph.AddNode(types.TextureSample);
+    const NodeId param = graph.AddNode(types.Param);
+    const NodeId mul = AddByName(graph, catalog, MultiplyTypeName);
+
+    // sample.Color (vec4) → mul.A, param.Value (vec4) → mul.B, mul.Out → Albedo.
+    REQUIRE(
+        graph.Connect(PinRef{.Node = sample, .Pin = 0}, PinRef{.Node = mul, .Pin = 0}).has_value());
+    REQUIRE(
+        graph.Connect(PinRef{.Node = param, .Pin = 0}, PinRef{.Node = mul, .Pin = 1}).has_value());
+    REQUIRE(
+        graph.Connect(PinRef{.Node = mul, .Pin = 0}, PinRef{.Node = output, .Pin = 0}).has_value());
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    // The product is written to Albedo, with the sample temp and the param literal as operands.
+    CHECK(Contains(r->Source, ") * ("));
+    CHECK(Contains(r->Source, "o.Albedo = ("));
+}
+
+TEST_CASE("CompileMaterialGraph: a Lerp emits the lerp intrinsic, splatting its scalar T")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId a = graph.AddNode(types.Param);
+    const NodeId b = graph.AddNode(types.Param);
+    const NodeId t = AddByName(graph, catalog, ScalarParamTypeName);
+    const NodeId lerp = AddByName(graph, catalog, LerpTypeName);
+
+    REQUIRE(graph.Connect(PinRef{.Node = a, .Pin = 0}, PinRef{.Node = lerp, .Pin = 0}).has_value());
+    REQUIRE(graph.Connect(PinRef{.Node = b, .Pin = 0}, PinRef{.Node = lerp, .Pin = 1}).has_value());
+    // A scalar ScalarParam feeding the vec4 T pin: splats by the link coercion.
+    REQUIRE(graph.Connect(PinRef{.Node = t, .Pin = 0}, PinRef{.Node = lerp, .Pin = 2}).has_value());
+    REQUIRE(graph.Connect(PinRef{.Node = lerp, .Pin = 0}, PinRef{.Node = output, .Pin = 0})
+                .has_value());
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    CHECK(Contains(r->Source, "lerp("));
+    // The scalar default (0) splats to vec4 at the T pin.
+    CHECK(Contains(r->Source, ".xxxx"));
+}
+
+TEST_CASE("CompileMaterialGraph: Split fans a vec4 to scalar pins, Combine packs them back")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId sample = graph.AddNode(types.TextureSample);
+    const NodeId split = AddByName(graph, catalog, SplitTypeName);
+    const NodeId combine = AddByName(graph, catalog, CombineTypeName);
+
+    // sample → split; split.x → combine.W (swap), split.z → combine.X; combine → Albedo.
+    REQUIRE(graph.Connect(PinRef{.Node = sample, .Pin = 0}, PinRef{.Node = split, .Pin = 0})
+                .has_value());
+    REQUIRE(graph.Connect(PinRef{.Node = split, .Pin = 0}, PinRef{.Node = combine, .Pin = 3})
+                .has_value());
+    REQUIRE(graph.Connect(PinRef{.Node = split, .Pin = 2}, PinRef{.Node = combine, .Pin = 0})
+                .has_value());
+    REQUIRE(graph.Connect(PinRef{.Node = combine, .Pin = 0}, PinRef{.Node = output, .Pin = 0})
+                .has_value());
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    const Veng::string& src = r->Source;
+
+    // Split swizzles the source vec4; Combine packs a float4 with the routed channels and
+    // 0 in the unconnected slots.
+    CHECK(Contains(src, ").z"));
+    CHECK(Contains(src, ").x"));
+    CHECK(Contains(src, "float4("));
+    CHECK(Contains(src, "o.Albedo = float4("));
+}
+
+TEST_CASE("CompileMaterialGraph: a Constant inlines its leaf-typed literal")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId constant = AddByName(graph, catalog, ConstantTypeName);
+
+    const NodeType* constType = catalog.Find(ConstantTypeName);
+    REQUIRE(constType != nullptr);
+    const Veng::vec4 value{0.5f, 0.25f, 0.125f, 1.0f};
+    graph.SetProperty(
+        constant, constType->Properties[0],
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(&value), sizeof(value)));
+    // Author the leaf type as Vec4, so the literal is a float4(...).
+    const VengGraph::MaterialLeafType leaf = VengGraph::MaterialLeafType::Vec4;
+    graph.SetProperty(
+        constant, constType->Properties[1],
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(&leaf), sizeof(leaf)));
+
+    REQUIRE(graph.Connect(PinRef{.Node = constant, .Pin = 0}, PinRef{.Node = output, .Pin = 0})
+                .has_value());
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    // The literal folds inline into the single-use Albedo write — no MaterialParams field.
+    CHECK(Contains(r->Source, "o.Albedo = float4(0.5"));
+    CHECK_FALSE(Contains(r->Source, "struct MaterialParams\n{\n    float"));
+}
+
+TEST_CASE("CompileMaterialGraph: an exposed ScalarParam emits a float field and a p.read")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId scalar = AddByName(graph, catalog, ScalarParamTypeName);
+
+    const NodeType* scalarType = catalog.Find(ScalarParamTypeName);
+    REQUIRE(scalarType != nullptr);
+    const Veng::f32 def = 0.75f;
+    graph.SetProperty(
+        scalar, scalarType->Properties[0],
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(&def), sizeof(def)));
+    const VengGraph::ParamProvenance prov = VengGraph::ParamProvenance::Exposed;
+    graph.SetProperty(
+        scalar, scalarType->Properties[1],
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(&prov), sizeof(prov)));
+
+    // The scalar (f32) splats into the vec4 Albedo sink.
+    REQUIRE(graph.Connect(PinRef{.Node = scalar, .Pin = 0}, PinRef{.Node = output, .Pin = 0})
+                .has_value());
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    const Veng::string& src = r->Source;
+
+    // A float member in the generated struct, read as p.<key>, and a float .vmat row default.
+    CHECK(Contains(src, "    float n"));
+    CHECK(Contains(src, "p.n"));
+    REQUIRE(r->Fields.size() == 1);
+    CHECK(r->Fields[0].Type == "float");
+    REQUIRE(r->Fields[0].Values.size() == 1);
+    CHECK(r->Fields[0].Values[0] == doctest::Approx(0.75f));
+}
+
+TEST_CASE("CompileMaterialGraph: a Dot reduces two vectors to a float written into Albedo")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId a = graph.AddNode(types.Param);
+    const NodeId b = graph.AddNode(types.Param);
+    const NodeId dot = AddByName(graph, catalog, DotTypeName);
+
+    REQUIRE(graph.Connect(PinRef{.Node = a, .Pin = 0}, PinRef{.Node = dot, .Pin = 0}).has_value());
+    REQUIRE(graph.Connect(PinRef{.Node = b, .Pin = 0}, PinRef{.Node = dot, .Pin = 1}).has_value());
+    // Dot's float output splats into the vec4 Albedo sink.
+    REQUIRE(
+        graph.Connect(PinRef{.Node = dot, .Pin = 0}, PinRef{.Node = output, .Pin = 0}).has_value());
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    // The dot intrinsic, its float result splatted to vec4 for Albedo.
+    CHECK(Contains(r->Source, "dot("));
+    CHECK(Contains(r->Source, ".xxxx"));
 }

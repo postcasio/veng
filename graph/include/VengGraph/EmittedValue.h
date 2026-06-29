@@ -90,14 +90,15 @@ namespace VengGraph
         Veng::vector<EmittedParamField> ParamFields;
     };
 
-    /// @brief A node type's emit-fn: input values + property bytes → an output value.
+    /// @brief A node type's emit-fn: input values + property bytes → one value per output pin.
     ///
     /// Registered per node type by the material catalog. @p inputs is one EmittedValue
     /// per input pin (the pin's default when the input is unconnected); @p propertyBytes
     /// is the node instance's reflected property buffer; @p ctx threads the temp counter
-    /// and the growing body. A multi-output node type is not yet expressed — each known
-    /// type has at most one output, so the fn returns a single value.
-    using NodeEmitFn =
-        Veng::function<EmittedValue(std::span<const EmittedValue> inputs,
-                                    std::span<const std::byte> propertyBytes, EmitContext& ctx)>;
+    /// and the growing body. The returned vector carries one EmittedValue per output pin,
+    /// in pin order — one element for a single-output node (Multiply, Param), N for a
+    /// fan-out node (Split's per-channel scalars).
+    using NodeEmitFn = Veng::function<Veng::vector<EmittedValue>(
+        std::span<const EmittedValue> inputs, std::span<const std::byte> propertyBytes,
+        EmitContext& ctx)>;
 }

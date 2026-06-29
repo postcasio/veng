@@ -23,6 +23,10 @@ namespace VengGraph
             {
                 return "float";
             }
+            if (type.Type == TypeIdOf<Veng::u32>())
+            {
+                return "uint";
+            }
             if (type.Type == TypeIdOf<Veng::vec2>())
             {
                 return "float2";
@@ -200,22 +204,27 @@ namespace VengGraph
             }
 
             ctx.NodeKey = keyOf(node);
-            const EmittedValue produced = (*emitFn)(inputs, graph.PropertyBytes(node), ctx);
+            const Veng::vector<EmittedValue> produced =
+                (*emitFn)(inputs, graph.PropertyBytes(node), ctx);
 
-            // One output pin per known node type. A value used more than once becomes a
-            // temp (single evaluation of a shared node); a single-use value inlines.
-            VE_ASSERT(type->Outputs.size() == 1,
-                      "CompileMaterialGraph: node type '{}' must have exactly one output",
-                      type->Name);
-            const Veng::u32 uses = outputUseCount[pinBits(node, 0)];
-            EmittedValue stored = produced;
-            if (uses > 1)
+            // One emitted value per output pin, in pin order. A value used more than once
+            // becomes a temp (single evaluation of a shared output); a single-use value inlines.
+            VE_ASSERT(produced.size() == type->Outputs.size(),
+                      "CompileMaterialGraph: node type '{}' emitted {} values for {} output pins",
+                      type->Name, produced.size(), type->Outputs.size());
+            for (Veng::usize i = 0; i < produced.size(); ++i)
             {
-                const Veng::string tempName =
-                    fmt::format("{}_{}", keyOf(node), type->Outputs[0].Name);
-                stored = AppendTemp(ctx, tempName, produced.Type, produced.Expr);
+                const Veng::u16 pin = static_cast<Veng::u16>(i);
+                const Veng::u32 uses = outputUseCount[pinBits(node, pin)];
+                EmittedValue stored = produced[i];
+                if (uses > 1)
+                {
+                    const Veng::string tempName =
+                        fmt::format("{}_{}", keyOf(node), type->Outputs[i].Name);
+                    stored = AppendTemp(ctx, tempName, produced[i].Type, produced[i].Expr);
+                }
+                pinValues[pinBits(node, pin)] = std::move(stored);
             }
-            pinValues[pinBits(node, 0)] = std::move(stored);
         }
 
         // The MaterialOutput sink values, in domain-contract order.

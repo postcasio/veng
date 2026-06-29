@@ -9,10 +9,12 @@
 #include <VengGraph/NodeGraph.h>
 #include <VengGraph/NodeType.h>
 #include <VengGraph/NodeGraphSerialize.h>
+#include <VengGraph/MaterialCatalog.h>
 
 #include <Veng/Reflection/FieldDescriptor.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Asset/Material.h>
 #include <Veng/Asset/Texture.h>
 
 #include <nlohmann/json.hpp>
@@ -284,6 +286,111 @@ TEST_CASE("NodeGraphSerialize: an unknown node type is dropped, the rest loads")
     // between Source and Output survives.
     CHECK(loaded.Nodes().size() == 2);
     CHECK(loaded.Links().size() == 1);
+}
+
+TEST_CASE("NodeGraphSerialize: a Constant's value + leaf type round-trip through the catalog")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    RegisterMaterialNodeTypes(catalog, emit, Veng::MaterialDomain::Surface);
+
+    const NodeType* constant = catalog.Find(ConstantTypeName);
+    REQUIRE(constant != nullptr);
+    REQUIRE(constant->Properties.size() == 2);
+
+    NodeGraph graph(
+        MaterialCanConnect, [&catalog](NodeTypeId id) { return catalog.ShapeOf(id); },
+        [&catalog](NodeTypeId id)
+        {
+            const NodeType* type = catalog.Find(id);
+            return type ? type->PropertySize : Veng::usize{0};
+        });
+
+    const NodeId node = graph.AddNode(constant->Id);
+
+    // Write the value (a vec4) and the leaf type (an enum, serialized as its integer).
+    const Veng::vec4 value{0.1f, 0.2f, 0.3f, 0.4f};
+    graph.SetProperty(
+        node, constant->Properties[0],
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(&value), sizeof(value)));
+    const VengGraph::MaterialLeafType leaf = VengGraph::MaterialLeafType::Vec3;
+    graph.SetProperty(
+        node, constant->Properties[1],
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(&leaf), sizeof(leaf)));
+
+    const Veng::string doc = WriteNodeGraph(graph, catalog);
+
+    NodeGraph loaded(
+        MaterialCanConnect, [&catalog](NodeTypeId id) { return catalog.ShapeOf(id); },
+        [&catalog](NodeTypeId id)
+        {
+            const NodeType* type = catalog.Find(id);
+            return type ? type->PropertySize : Veng::usize{0};
+        });
+    REQUIRE(ReadNodeGraph(doc, loaded, catalog) == NodeGraphReadOutcome::Loaded);
+    REQUIRE(loaded.Nodes().size() == 1);
+    const NodeId loadedNode = loaded.Nodes()[0];
+
+    const std::span<const std::byte> bytes = loaded.PropertyBytes(loadedNode);
+    Veng::vec4 readValue{};
+    std::memcpy(&readValue, bytes.data() + constant->Properties[0].Offset, sizeof(readValue));
+    CHECK(readValue == value);
+
+    VengGraph::MaterialLeafType readLeaf{};
+    std::memcpy(&readLeaf, bytes.data() + constant->Properties[1].Offset, sizeof(readLeaf));
+    CHECK(readLeaf == VengGraph::MaterialLeafType::Vec3);
+}
+
+TEST_CASE("NodeGraphSerialize: a ScalarParam's default + provenance round-trip through the catalog")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    RegisterMaterialNodeTypes(catalog, emit, Veng::MaterialDomain::Surface);
+
+    const NodeType* scalar = catalog.Find(ScalarParamTypeName);
+    REQUIRE(scalar != nullptr);
+    REQUIRE(scalar->Properties.size() == 2);
+
+    NodeGraph graph(
+        MaterialCanConnect, [&catalog](NodeTypeId id) { return catalog.ShapeOf(id); },
+        [&catalog](NodeTypeId id)
+        {
+            const NodeType* type = catalog.Find(id);
+            return type ? type->PropertySize : Veng::usize{0};
+        });
+
+    const NodeId node = graph.AddNode(scalar->Id);
+
+    const Veng::f32 value = 0.625f;
+    graph.SetProperty(
+        node, scalar->Properties[0],
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(&value), sizeof(value)));
+    const VengGraph::ParamProvenance prov = VengGraph::ParamProvenance::Exposed;
+    graph.SetProperty(
+        node, scalar->Properties[1],
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(&prov), sizeof(prov)));
+
+    const Veng::string doc = WriteNodeGraph(graph, catalog);
+
+    NodeGraph loaded(
+        MaterialCanConnect, [&catalog](NodeTypeId id) { return catalog.ShapeOf(id); },
+        [&catalog](NodeTypeId id)
+        {
+            const NodeType* type = catalog.Find(id);
+            return type ? type->PropertySize : Veng::usize{0};
+        });
+    REQUIRE(ReadNodeGraph(doc, loaded, catalog) == NodeGraphReadOutcome::Loaded);
+    REQUIRE(loaded.Nodes().size() == 1);
+    const NodeId loadedNode = loaded.Nodes()[0];
+
+    const std::span<const std::byte> bytes = loaded.PropertyBytes(loadedNode);
+    Veng::f32 readValue = 0.0f;
+    std::memcpy(&readValue, bytes.data() + scalar->Properties[0].Offset, sizeof(readValue));
+    CHECK(readValue == doctest::Approx(value));
+
+    VengGraph::ParamProvenance readProv{};
+    std::memcpy(&readProv, bytes.data() + scalar->Properties[1].Offset, sizeof(readProv));
+    CHECK(readProv == VengGraph::ParamProvenance::Exposed);
 }
 
 TEST_CASE("NodeGraphSerialize: a version newer than the format is read-only, no partial graph")
