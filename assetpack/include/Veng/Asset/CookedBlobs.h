@@ -287,6 +287,60 @@ namespace Veng
         u64 TextureId = 0;
     };
 
+    /// @brief The current material-instance-format version.
+    ///
+    /// Bumped on any layout change; the loader rejects a blob whose Version != this.
+    inline constexpr u32 CookedMaterialInstanceVersion = 1u;
+
+    /// @brief Cooked header for a material-instance asset.
+    ///
+    /// A material instance is a sparse parameter override over a parent Material: it owns no
+    /// shader or pipeline, only its own per-material SSBO slot seeded from the parent's default
+    /// block and patched by its overrides. The parent supplies the pipeline, the reflected field
+    /// schema, and the default param bytes; the instance overrides exactly the exposed fields the
+    /// parent reports, by name.
+    ///
+    /// The blob is, in order:
+    ///   CookedMaterialInstanceHeader
+    ///   CookedMaterialInstanceOverride[OverrideCount]
+    ///   override value region (ValueRegionBytes) — the param overrides' raw bytes, concatenated
+    ///
+    /// A param override (Kind 0) references ValueOffset/ValueSize bytes in the value region, which
+    /// the loader copies into the seeded block at the parent field's reflected offset. A texture
+    /// override (Kind 1) carries a TextureId the loader resolves to a bindless index and patches at
+    /// the parent field's offset; its ValueSize is 0.
+    struct CookedMaterialInstanceHeader
+    {
+        /// @brief AssetId of the parent Material; resolved as a load-time dependency.
+        u64 ParentId = 0;
+        /// @brief Must equal CookedMaterialInstanceVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief Number of CookedMaterialInstanceOverride entries following this header.
+        u32 OverrideCount = 0;
+        /// @brief Byte size of the trailing override value region.
+        u32 ValueRegionBytes = 0;
+    };
+
+    /// @brief One field override in a cooked material instance, matched against a parent field by name.
+    ///
+    /// Kind 0 (param) carries its replacement bytes at [ValueOffset, ValueOffset + ValueSize) in
+    /// the value region. Kind 1 (texture) carries the override texture's AssetId in TextureId; the
+    /// loader resolves it to a bindless index and writes it at the parent field's offset, with
+    /// ValueSize 0.
+    struct CookedMaterialInstanceOverride
+    {
+        /// @brief Nul-terminated parent-field name, at most ShaderNameCapacity - 1 bytes.
+        char Name[ShaderNameCapacity] = {};
+        /// @brief Override kind: 0 = param value, 1 = texture handle.
+        u32 Kind = 0;
+        /// @brief Byte offset of this override's value within the value region (param overrides only).
+        u32 ValueOffset = 0;
+        /// @brief Byte size of this override's value in the value region; 0 for a texture override.
+        u32 ValueSize = 0;
+        /// @brief Override texture's AssetId (texture overrides only); 0 for a param override.
+        u64 TextureId = 0;
+    };
+
     /// @brief The current prefab-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.

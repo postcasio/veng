@@ -55,6 +55,17 @@ serialization — neither importer nor loader.
   be a block-compressed codec (BC7 / ASTC 4×4) as well as an uncompressed format; `assetpack`
   treats the level bytes as opaque and computes nothing from the format. A single-mip texture is
   the degenerate one-level case.
+- **`AssetType::MaterialInstance` is a parameter override over a parent `Material`.** Its blob is a
+  **`CookedMaterialInstanceHeader`** (`CookedMaterialInstanceVersion`, currently `1`) — `ParentId`
+  (the parent `Material`'s `AssetId`, resolved as a load-time dependency), `OverrideCount`, and the
+  override value-region size — followed by `CookedMaterialInstanceOverride[OverrideCount]`, then the
+  override value region. Each override matches a parent field **by name**: a param override (Kind 0)
+  carries replacement bytes in the value region (copied at the parent field's reflected offset); a
+  texture override (Kind 1) carries a `TextureId` the loader resolves to a bindless index. The
+  instance owns no shader/pipeline — the parent supplies those; the instance seeds its own SSBO slot
+  from the parent's default block and patches it by override. A bare parent `Material` id used where a
+  `MaterialInstance` is expected resolves at load to the parent's zero-override **default instance** (no
+  separate blob), so an explicit `*.vmatinst.json` is opt-in. The loader rejects a `Version` mismatch.
 - **`AssetType::Level` is a world prefab by reference plus level-scoped wiring.** Its
   blob is a **`CookedLevelHeader`** (`CookedLevelVersion`, currently `1`) — `WorldPrefabId`
   (the world prefab's `AssetId`, resolved as a load-time dependency), `SystemCount`, and the

@@ -1,7 +1,7 @@
 #include "MaterialPreview.h"
 
 #include <Veng/Asset/AssetManager.h>
-#include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Primitives.h>
 #include <Veng/Assert.h>
@@ -93,7 +93,7 @@ namespace VengEditor
         m_Camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
     }
 
-    void MaterialPreview::SetMaterial(AssetHandle<Material> material)
+    void MaterialPreview::SetMaterial(AssetHandle<MaterialInstance> material)
     {
         m_Material = std::move(material);
 

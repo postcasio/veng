@@ -6,7 +6,7 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
-#include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Skeleton.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/TypedBuffers.h>
@@ -143,7 +143,7 @@ namespace Veng
         // Resolve cooked submesh material ids into resident material instances
         // eagerly: a distinct non-zero id becomes one entry in the material list;
         // each submesh stores an index into it (or NoMaterial for id 0).
-        vector<AssetHandle<Veng::Material>> materials;
+        vector<AssetHandle<Veng::MaterialInstance>> materials;
         vector<u64> materialIds;
 
         auto resolveMaterial = [&](u64 materialId) -> AssetResult<u32>
@@ -156,8 +156,10 @@ namespace Veng
                 }
             }
 
-            const AssetResult<AssetHandle<Veng::Material>> result =
-                manager.LoadSync<Veng::Material>(AssetId{materialId});
+            // A cooked submesh id is a Material id; the default-instance rule resolves a bare
+            // parent material to its zero-override default instance.
+            const AssetResult<AssetHandle<Veng::MaterialInstance>> result =
+                manager.LoadSync<Veng::MaterialInstance>(AssetId{materialId});
             if (!result)
             {
                 return std::unexpected(result.error());

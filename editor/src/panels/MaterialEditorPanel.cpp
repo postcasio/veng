@@ -8,6 +8,7 @@
 
 #include <Veng/Application.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Log.h>
 #include <Veng/Renderer/Context.h>
@@ -115,7 +116,10 @@ namespace VengEditor
 
     bool MaterialEditorPanel::LoadInterface()
     {
-        const AssetResult<AssetHandle<Material>> loaded = m_Assets.LoadSync<Material>(m_Id);
+        // Load through the default-instance rule so the previewed material is an instance over the
+        // edited parent; GetFields()/GetDomain() delegate to the parent's schema.
+        const AssetResult<AssetHandle<MaterialInstance>> loaded =
+            m_Assets.LoadSync<MaterialInstance>(m_Id);
         if (!loaded)
         {
             m_CookError = loaded.error().Detail;
@@ -124,7 +128,7 @@ namespace VengEditor
             return false;
         }
 
-        const Material& material = *loaded->Get();
+        const MaterialInstance& material = *loaded->Get();
         m_Fields.assign(material.GetFields().begin(), material.GetFields().end());
         m_Domain = material.GetDomain();
 
@@ -443,7 +447,7 @@ namespace VengEditor
                    // Replace the mount and re-fetch; OnUI swaps the handle into the
                    // preview once the async load lands resident.
                    m_Mount = std::move(*mount);
-                   m_Handle = m_Assets.Load<Material>(m_Id);
+                   m_Handle = m_Assets.Load<MaterialInstance>(m_Id);
                    m_MaterialDirty = true;
                });
     }

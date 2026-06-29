@@ -19,6 +19,7 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Primitives.h>
 #include <Veng/Cook/BuiltinImporters.h>
@@ -125,7 +126,8 @@ int main()
         const VoidResult mountResult = assets.Mount(outArchive);
         Check(mountResult.has_value(), "mount brick fixture pack");
 
-        const AssetResult<AssetHandle<Material>> brick = assets.LoadSync<Material>(BrickMaterialId);
+        const AssetResult<AssetHandle<MaterialInstance>> brick =
+            assets.LoadSync<MaterialInstance>(BrickMaterialId);
         Check(brick.has_value(), "load brick material");
 
         constexpr uvec2 previewExtent{256, 256};
@@ -142,7 +144,8 @@ int main()
         constexpr uvec2 viewportExtent{320, 240};
         const Ref<Mesh> viewportSphere = Mesh::BuildSync(
             context,
-            Primitives::Icosphere(0.85f, 4, brick.has_value() ? *brick : AssetHandle<Material>{}),
+            Primitives::Icosphere(0.85f, 4,
+                                  brick.has_value() ? *brick : AssetHandle<MaterialInstance>{}),
             "Viewport Sphere");
 
         const Unique<Scene> viewportScene = Scene::Create(types);

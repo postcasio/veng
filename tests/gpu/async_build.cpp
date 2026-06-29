@@ -16,6 +16,7 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Shader.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Renderer/BindlessRegistry.h>
@@ -203,6 +204,17 @@ TEST_CASE_FIXTURE(
     REQUIRE(material != nullptr);
     CHECK(material->GetDomain() == MaterialDomain::PostProcess);
 
+    // A bare parent binds through a zero-override instance.
+    const AssetHandle<MaterialInstance> instanceHandle =
+        assets.Build<MaterialInstance>(MaterialInstanceInfo{.Name = "Async Build Instance",
+                                                            .Context = &Context,
+                                                            .Parent = handle,
+                                                            .Overrides = {}});
+    PumpToResidency(Tasks);
+    REQUIRE(instanceHandle.IsLoaded());
+    const MaterialInstance* instance = instanceHandle.Get();
+    REQUIRE(instance != nullptr);
+
     auto outputImage =
         Image::Create(Context, {
                                    .Name = "Async Material Output",
@@ -235,7 +247,7 @@ TEST_CASE_FIXTURE(
                 // Bind() binds the material's own pipeline and pushes the frame-folded
                 // selector at offset 0 — exactly what the material_param shader reads.
                 // It must precede bindless.Bind, which binds set 0 against the bound layout.
-                material->Bind(passCmd);
+                instance->Bind(passCmd);
                 bindless.Bind(passCmd);
                 passCmd.DrawFullscreenTriangle();
             });

@@ -48,6 +48,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Shader.h>
 #include <Veng/Asset/Skeleton.h>
@@ -457,7 +458,7 @@ namespace Veng::Renderer
             // One loaded surface material whose pipeline is bound for the whole pass — every
             // surface material shares the surface pipeline shape, so binding any one suffices.
             // Borrowed: the mesh's resident AssetHandle keeps it alive for this frame.
-            const Material* PipelineMaterial = nullptr;
+            const MaterialInstance* PipelineMaterial = nullptr;
             vector<DrawSlot> Slots;
             vector<DrawGroup> Groups;
 
@@ -465,7 +466,7 @@ namespace Veng::Renderer
             // surface pipeline (built from surface_skinned.vert) bound from a representative
             // skinned material, with the per-instance palette bound at set 2. They share the same
             // DrawData buffer (each slot's DrawData.PaletteBase points into the palette).
-            const Material* SkinnedPipelineMaterial = nullptr;
+            const MaterialInstance* SkinnedPipelineMaterial = nullptr;
             Ref<DescriptorSet> PaletteSet;
             vector<DrawSlot> SkinnedSlots;
             vector<DrawGroup> SkinnedGroups;
@@ -1317,7 +1318,8 @@ namespace Veng::Renderer
         };
     }
 
-    PostProcessScenePass::PostProcessScenePass(Context& context, AssetHandle<Material> material,
+    PostProcessScenePass::PostProcessScenePass(Context& context,
+                                               AssetHandle<MaterialInstance> material,
                                                PostProcessInput input, ResourceId output,
                                                Format outputFormat, uvec2 extent)
         : m_Context(context), m_Material(std::move(material)), m_Input(std::move(input)),
@@ -1330,7 +1332,7 @@ namespace Veng::Renderer
         VE_ASSERT(m_Material.IsLoaded(),
                   "PostProcessScenePass: the PostProcess material is not resident");
 
-        const Material& material = *m_Material.Get();
+        const MaterialInstance& material = *m_Material.Get();
         VE_ASSERT(material.GetDomain() == MaterialDomain::PostProcess,
                   "PostProcessScenePass: material '{}' is not a PostProcess material",
                   material.GetName());
@@ -1383,7 +1385,7 @@ namespace Veng::Renderer
             {
                 CommandBuffer& cmd = inner.Cmd();
                 // AssetHandle::Get is const; cast away to write the per-frame handle fields.
-                auto& material = const_cast<Material&>(*m_Material.Get());
+                auto& material = const_cast<MaterialInstance&>(*m_Material.Get());
 
                 // Write the live upstream bindless slots; must precede Material::Bind
                 // so the pushed selector reads this frame's region.
@@ -1600,8 +1602,10 @@ namespace Veng::Renderer
                                          taaCopyFs, HdrFormat);
 
         // Loaded resident so the PostProcessScenePass builds its pipeline against the output format.
-        const AssetResult<AssetHandle<Material>> tonemap =
-            m_Assets.LoadSync<Material>(TonemapMaterialId);
+        // The tonemap material is a bare parent; the default-instance rule resolves it to its
+        // zero-override default instance.
+        const AssetResult<AssetHandle<MaterialInstance>> tonemap =
+            m_Assets.LoadSync<MaterialInstance>(TonemapMaterialId);
         VE_ASSERT(tonemap.has_value(), "SceneRenderer: tonemap material load failed: {}",
                   tonemap.error().Detail);
         m_TonemapMaterial = *tonemap;
@@ -2186,8 +2190,8 @@ namespace Veng::Renderer
         m_PickStaged = false;
     }
 
-    void SceneRenderer::EnsurePickingPipelines(const Material* staticMaterial,
-                                               const Material* skinnedMaterial)
+    void SceneRenderer::EnsurePickingPipelines(const MaterialInstance* staticMaterial,
+                                               const MaterialInstance* skinnedMaterial)
     {
         if (!m_Settings.Picking)
         {
@@ -3938,7 +3942,7 @@ namespace Veng::Renderer
             const SubMeshCandidate& candidate = candidates[id];
             const VisibleMesh& item = view.Visible[candidate.MeshCandidate];
             const Mesh& mesh = *item.Mesh;
-            const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
+            const std::span<const AssetHandle<MaterialInstance>> materials = mesh.GetMaterials();
             const SubMesh& subMesh = mesh.GetSubMeshes()[candidate.SubMeshIndex];
 
             if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
@@ -3962,7 +3966,7 @@ namespace Veng::Renderer
                 break;
             }
 
-            const Material& material = *materials[subMesh.MaterialIndex].Get();
+            const MaterialInstance& material = *materials[subMesh.MaterialIndex].Get();
             if (!plan.PipelineMaterial)
             {
                 plan.PipelineMaterial = materials[subMesh.MaterialIndex].Get();
@@ -4037,7 +4041,7 @@ namespace Veng::Renderer
             const VisibleMesh& item = view.Visible[candidate.MeshCandidate];
             const Mesh& mesh = *item.Mesh;
             const SubMesh& subMesh = mesh.GetSubMeshes()[candidate.SubMeshIndex];
-            const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
+            const std::span<const AssetHandle<MaterialInstance>> materials = mesh.GetMaterials();
             const AssetHandle<Skeleton>& skeletonHandle = mesh.GetSkeleton();
             if (!skeletonHandle.IsLoaded())
             {
@@ -4088,7 +4092,7 @@ namespace Veng::Renderer
                 break;
             }
 
-            const Material& material = *materials[subMesh.MaterialIndex].Get();
+            const MaterialInstance& material = *materials[subMesh.MaterialIndex].Get();
             if (plan.SkinnedPipelineMaterial == nullptr)
             {
                 plan.SkinnedPipelineMaterial = materials[subMesh.MaterialIndex].Get();
@@ -4256,7 +4260,7 @@ namespace Veng::Renderer
         // Per-frame param writes land in the ring-buffered block's current region (no stall).
         if (m_TonemapMaterial.IsLoaded())
         {
-            auto& tonemap = const_cast<Material&>(*m_TonemapMaterial.Get());
+            auto& tonemap = const_cast<MaterialInstance&>(*m_TonemapMaterial.Get());
             tonemap.SetParam("Exposure", view.Exposure);
             // The terminal tonemap reads the sub-rect HDR and upscales it to the full output.
             tonemap.SetParam("RenderScale", vec4(renderScaleUV, maxValidUV));

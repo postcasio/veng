@@ -35,6 +35,7 @@ namespace Veng
     class Scene;
     class AssetManager;
     class Material;
+    class MaterialInstance;
     class Environment;
 }
 
@@ -772,8 +773,8 @@ namespace Veng::Renderer
         /// shared across surface materials), cached thereafter.
         /// @param staticMaterial  A loaded static surface material whose layout/vertex stage to reuse; may be null.
         /// @param skinnedMaterial A loaded skinned surface material whose layout/vertex stage to reuse; may be null.
-        void EnsurePickingPipelines(const Material* staticMaterial,
-                                    const Material* skinnedMaterial);
+        void EnsurePickingPipelines(const MaterialInstance* staticMaterial,
+                                    const MaterialInstance* skinnedMaterial);
 
         /// @brief Recreates the owned output image and view at the current extent and format.
         void CreateOutput();
@@ -1315,7 +1316,7 @@ namespace Veng::Renderer
         ///
         /// The Final chain's terminal PostProcessScenePass drives it (HDR target as the
         /// runtime-bound input; Exposure written per Execute into its param block).
-        AssetHandle<Material> m_TonemapMaterial;
+        AssetHandle<MaterialInstance> m_TonemapMaterial;
 
         /// @brief Renderer-owned pass units; rebuilt per Settings.Mode on every Rebuild.
         ///

@@ -43,8 +43,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const Material& material = *handle->Get();
 
-    // The registry must have allocated a valid (non-sentinel) slot.
-    CHECK(material.GetIndex() != MaterialHandle::Invalid);
+    // A parent material owns no per-draw slot; its default block is the seed an instance copies.
+    CHECK_FALSE(material.GetDefaultBlock().empty());
 
     // The material must have built a pipeline.
     CHECK(material.GetPipeline() != nullptr);
@@ -95,7 +95,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(handle->IsLoaded());
 
     const Material& material = *handle->Get();
-    CHECK(material.GetIndex() != MaterialHandle::Invalid);
+    CHECK_FALSE(material.GetDefaultBlock().empty());
     CHECK(material.GetPipeline() != nullptr);
     CHECK(material.GetFields().size() == 2); // only handle fields
 

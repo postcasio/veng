@@ -20,7 +20,7 @@ namespace Veng::Renderer
 
 namespace Veng
 {
-    class Material;
+    class MaterialInstance;
     struct Skeleton;
 
     /// @brief One draw range within a mesh's index buffer.
@@ -78,8 +78,8 @@ namespace Veng
         vector<CanonicalVertex> Vertices;
         /// @brief Triangle index list.
         vector<u32> Indices;
-        /// @brief Resident materials the produced Mesh will own; submeshes index this list.
-        vector<AssetHandle<Material>> Materials;
+        /// @brief Resident material instances the produced Mesh will own; submeshes index this list.
+        vector<AssetHandle<MaterialInstance>> Materials;
         /// @brief Draw ranges; empty → the factory synthesizes one unassigned submesh over [0, Indices.size()).
         vector<SubMesh> SubMeshes;
     };
@@ -98,7 +98,7 @@ namespace Veng
         /// @brief Draw ranges and material indices.
         vector<SubMesh> SubMeshes;
         /// @brief Material instances owned by the mesh.
-        vector<AssetHandle<Material>> Materials;
+        vector<AssetHandle<MaterialInstance>> Materials;
         /// @brief Local/object-space bound of the mesh's vertices, folded from canonical positions by Mesh::ComputeBounds.
         AABB Bounds = AABB::Empty();
         /// @brief The mesh's Skeleton when skinned; invalid for a static mesh.
@@ -241,7 +241,7 @@ namespace Veng
         [[nodiscard]] std::span<const SubMesh> GetSubMeshes() const { return m_SubMeshes; }
 
         /// @brief Returns the mesh's resident material instances.
-        [[nodiscard]] std::span<const AssetHandle<Material>> GetMaterials() const
+        [[nodiscard]] std::span<const AssetHandle<MaterialInstance>> GetMaterials() const
         {
             return m_Materials;
         }
@@ -270,7 +270,7 @@ namespace Veng
         Renderer::IndexBuffer m_IndexBuffer;
         Renderer::VertexBufferLayout m_Layout;
         vector<SubMesh> m_SubMeshes;
-        vector<AssetHandle<Material>> m_Materials;
+        vector<AssetHandle<MaterialInstance>> m_Materials;
         AABB m_Bounds = AABB::Empty();
         AssetHandle<Skeleton> m_Skeleton;
     };

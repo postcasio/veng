@@ -8,6 +8,7 @@ add_library(veng SHARED
         src/Asset/AssetManager.cpp
         src/Asset/Level.cpp
         src/Asset/Material.cpp
+        src/Asset/MaterialInstance.cpp
         src/Asset/Mesh.cpp
         src/Asset/Environment.cpp
         src/Asset/Prefab.cpp
@@ -19,6 +20,7 @@ add_library(veng SHARED
         src/Asset/Loaders/EnvironmentLoader.cpp
         src/Asset/Loaders/LevelLoader.cpp
         src/Asset/Loaders/MaterialLoader.cpp
+        src/Asset/Loaders/MaterialInstanceLoader.cpp
         src/Asset/Loaders/MeshLoader.cpp
         src/Asset/Loaders/PrefabLoader.cpp
         src/Asset/Loaders/RawAssetLoader.cpp

@@ -12,7 +12,7 @@ namespace Veng::Primitives
     {
         // Appends a single submesh over the full index range. A valid material handle is
         // recorded as the mesh's resident material; an empty handle leaves the submesh unassigned.
-        void FinishSubMesh(MeshData& data, AssetHandle<Material> material)
+        void FinishSubMesh(MeshData& data, AssetHandle<MaterialInstance> material)
         {
             const u32 indexCount = static_cast<u32>(data.Indices.size());
 
@@ -31,7 +31,7 @@ namespace Veng::Primitives
         }
     }
 
-    MeshData Cube(f32 extent, AssetHandle<Material> material)
+    MeshData Cube(f32 extent, AssetHandle<MaterialInstance> material)
     {
         const f32 h = extent * 0.5f;
 
@@ -110,7 +110,7 @@ namespace Veng::Primitives
         return data;
     }
 
-    MeshData Plane(vec2 size, uvec2 subdivisions, AssetHandle<Material> material)
+    MeshData Plane(vec2 size, uvec2 subdivisions, AssetHandle<MaterialInstance> material)
     {
         const u32 sx = std::max(1u, subdivisions.x);
         const u32 sz = std::max(1u, subdivisions.y);
@@ -164,7 +164,7 @@ namespace Veng::Primitives
         return data;
     }
 
-    MeshData Sphere(f32 radius, u32 rings, u32 segments, AssetHandle<Material> material)
+    MeshData Sphere(f32 radius, u32 rings, u32 segments, AssetHandle<MaterialInstance> material)
     {
         rings = std::max(3u, rings);
         segments = std::max(3u, segments);
@@ -242,7 +242,7 @@ namespace Veng::Primitives
         return data;
     }
 
-    MeshData Icosphere(f32 radius, u32 subdivisions, AssetHandle<Material> material)
+    MeshData Icosphere(f32 radius, u32 subdivisions, AssetHandle<MaterialInstance> material)
     {
         constexpr f32 Pi = 3.14159265358979323846f;
 
@@ -381,7 +381,7 @@ namespace Veng::Primitives
         return data;
     }
 
-    MeshData Cylinder(f32 radius, f32 height, u32 segments, AssetHandle<Material> material)
+    MeshData Cylinder(f32 radius, f32 height, u32 segments, AssetHandle<MaterialInstance> material)
     {
         segments = std::max(3u, segments);
 
@@ -488,7 +488,7 @@ namespace Veng::Primitives
         return data;
     }
 
-    MeshData Cone(f32 radius, f32 height, u32 segments, AssetHandle<Material> material)
+    MeshData Cone(f32 radius, f32 height, u32 segments, AssetHandle<MaterialInstance> material)
     {
         segments = std::max(3u, segments);
 
@@ -582,7 +582,7 @@ namespace Veng::Primitives
     }
 
     MeshData Torus(f32 majorRadius, f32 minorRadius, u32 majorSegments, u32 minorSegments,
-                   AssetHandle<Material> material)
+                   AssetHandle<MaterialInstance> material)
     {
         majorSegments = std::max(3u, majorSegments);
         minorSegments = std::max(3u, minorSegments);
@@ -651,7 +651,7 @@ namespace Veng::Primitives
     }
 
     MeshData Capsule(f32 radius, f32 height, u32 segments, u32 rings,
-                     AssetHandle<Material> material)
+                     AssetHandle<MaterialInstance> material)
     {
         segments = std::max(3u, segments);
         rings = std::max(1u, rings);

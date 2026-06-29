@@ -23,6 +23,7 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Primitives.h>
 #include <Veng/Cook/BuiltinImporters.h>
@@ -91,8 +92,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const VoidResult mountResult = assets.Mount(outArchive);
     REQUIRE(mountResult.has_value());
 
-    const AssetResult<AssetHandle<Material>> material =
-        assets.LoadSync<Material>(AssetId{0x232B}); // 9003, the brick material
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x232B}); // 9003, the brick material
     REQUIRE(material.has_value());
 
     constexpr uvec2 extent{160, 160};

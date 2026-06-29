@@ -18,6 +18,7 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Primitives.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
@@ -205,7 +206,8 @@ SurfaceFragmentInput vsMain(VSInput input)
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
 
-    const AssetResult<AssetHandle<Material>> material = assets.LoadSync<Material>(AssetId{9704});
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{9704});
     REQUIRE(material.has_value());
     REQUIRE(material->IsLoaded());
 

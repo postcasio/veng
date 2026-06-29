@@ -13,6 +13,7 @@ namespace Veng
     class Texture;
     class Mesh;
     class Material;
+    class MaterialInstance;
     class Prefab;
     struct Animation;
     class Environment;
@@ -104,6 +105,8 @@ VE_LEAF(::Veng::AssetHandle<::Veng::Texture>, 0x612EE7E69BE7B848ULL,
         ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::Mesh>, 0x1CD2C85C50AFC9E0ULL, ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::Material>, 0x3992D11EB4362B4CULL,
+        ::Veng::FieldClass::AssetHandle);
+VE_LEAF(::Veng::AssetHandle<::Veng::MaterialInstance>, 0xB47397CC23B08FDEULL,
         ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::Prefab>, 0xF71230AEA9060D83ULL,
         ::Veng::FieldClass::AssetHandle);

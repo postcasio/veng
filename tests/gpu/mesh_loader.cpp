@@ -13,6 +13,7 @@
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
 
 #include <gpu/fixture.h>
@@ -66,7 +67,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(subMeshes[0].IndexCount == 36);
     REQUIRE(subMeshes[0].MaterialIndex != SubMesh::NoMaterial);
 
-    const std::span<const AssetHandle<Material>> materials = mesh.GetMaterials();
+    const std::span<const AssetHandle<MaterialInstance>> materials = mesh.GetMaterials();
     REQUIRE(materials.size() == 1);
     REQUIRE(subMeshes[0].MaterialIndex < materials.size());
     CHECK(materials[subMeshes[0].MaterialIndex].IsLoaded());

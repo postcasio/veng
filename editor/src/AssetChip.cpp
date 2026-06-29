@@ -29,6 +29,8 @@ namespace VengEditor
             return "Shader";
         case AssetType::Material:
             return "Material";
+        case AssetType::MaterialInstance:
+            return "MaterialInstance";
         case AssetType::VertexLayout:
             return "VertexLayout";
         case AssetType::Prefab:
@@ -59,6 +61,8 @@ namespace VengEditor
             return "SHD";
         case AssetType::Material:
             return "MAT";
+        case AssetType::MaterialInstance:
+            return "MTI";
         case AssetType::VertexLayout:
             return "VTX";
         case AssetType::Prefab:
@@ -85,6 +89,8 @@ namespace VengEditor
             return {0.30f, 0.55f, 0.85f, 1.0f};
         case AssetType::Material:
             return {0.40f, 0.70f, 0.40f, 1.0f};
+        case AssetType::MaterialInstance:
+            return {0.45f, 0.80f, 0.50f, 1.0f};
         case AssetType::Shader:
             return {0.60f, 0.45f, 0.80f, 1.0f};
         case AssetType::Prefab:

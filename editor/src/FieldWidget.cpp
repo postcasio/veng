@@ -12,6 +12,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Asset/Texture.h>
@@ -44,6 +45,10 @@ namespace VengEditor
         if (type == TypeIdOf<AssetHandle<Material>>())
         {
             return AssetType::Material;
+        }
+        if (type == TypeIdOf<AssetHandle<MaterialInstance>>())
+        {
+            return AssetType::MaterialInstance;
         }
         if (type == TypeIdOf<AssetHandle<Prefab>>())
         {
@@ -319,13 +324,13 @@ namespace VengEditor
         bool DrawValueWidget(void* fieldPtr, const FieldDescriptor& field, string_view valueLabel,
                              const FieldWidgetContext& ctx);
 
-        // Returns the alternative's AssetHandle<Material> field, or nullptr if it has none.
+        // Returns the alternative's AssetHandle<MaterialInstance> field, or nullptr if it has none.
         // Every primitive shape carries one, so it is the field preserved across a type switch.
         const FieldDescriptor* MaterialField(const TypeInfo& info)
         {
             for (const FieldDescriptor& field : info.Fields)
             {
-                if (field.Type == TypeIdOf<AssetHandle<Material>>())
+                if (field.Type == TypeIdOf<AssetHandle<MaterialInstance>>())
                 {
                     return &field;
                 }
@@ -376,13 +381,13 @@ namespace VengEditor
                 // a type change would rebuild a mesh that renders nothing. The handle is copied
                 // out before SetActive destructs the outgoing alternative; shared scalar
                 // parameters intentionally reset to the new shape's defaults.
-                AssetHandle<Material> carried;
+                AssetHandle<MaterialInstance> carried;
                 if (const void* oldActive = info.VariantActivePtrConst(fieldPtr))
                 {
                     const TypeInfo& oldInfo = registry.Info(info.VariantActiveType(fieldPtr));
                     if (const FieldDescriptor* matField = MaterialField(oldInfo))
                     {
-                        carried = *reinterpret_cast<const AssetHandle<Material>*>(
+                        carried = *reinterpret_cast<const AssetHandle<MaterialInstance>*>(
                             static_cast<const u8*>(oldActive) + matField->Offset);
                     }
                 }
@@ -402,7 +407,7 @@ namespace VengEditor
                     const TypeInfo& newInfo = registry.Info(info.VariantActiveType(fieldPtr));
                     if (const FieldDescriptor* matField = MaterialField(newInfo))
                     {
-                        *reinterpret_cast<AssetHandle<Material>*>(
+                        *reinterpret_cast<AssetHandle<MaterialInstance>*>(
                             static_cast<u8*>(newActive) + matField->Offset) = std::move(carried);
                     }
                 }

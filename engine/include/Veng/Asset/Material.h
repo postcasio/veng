@@ -79,7 +79,7 @@ namespace Veng
         /// @brief Texture dependencies kept resident for the material's lifetime.
         vector<AssetHandle<Texture>> Textures;
 
-        /// @brief The parameter block: bindless handle slots (patched at Finalize) and authored scalar/vector params.
+        /// @brief The default parameter block: bindless handle slots (patched at Finalize) and authored scalar/vector params.
         vector<std::byte> Block;
         /// @brief Reflected field table describing the parameter block layout.
         vector<MaterialField> Fields;
@@ -87,17 +87,19 @@ namespace Veng
         ///
         /// A PostProcess material pushes its selector at offset 0. A Surface material reads its
         /// material index from the per-draw DrawData SSBO (indexed by the candidate id), not a
-        /// push, so it carries NoSelectorPush and Bind() pushes nothing.
+        /// push, so it carries NoSelectorPush.
         u32 SelectorOffset = 0;
     };
 
-    /// @brief Thin, bindless end-state material.
+    /// @brief A parent material: shader → pipeline, the exposed-param schema, and the default param block.
     ///
-    /// A loaded material owns its graphics pipeline (built from reflected shader layouts — set 0
-    /// is the BindlessRegistry, sets >= 1 from reflection), one parameter-block entry in the
-    /// registry's per-material buffer, and keeps its shader and texture dependencies resident.
-    /// Bind() binds the pipeline and pushes the material's index as the per-draw selector;
-    /// set 0 is bound once per frame by the registry, not per draw.
+    /// A parent owns the expensive half — the graphics pipeline (built from reflected shader layouts,
+    /// set 0 is the BindlessRegistry, sets >= 1 from reflection), the pipeline layout, the resident
+    /// shader/texture dependencies, the reflected MaterialField schema, and the cooked default
+    /// parameter block (held as bytes, with bindless handle slots patched at Finalize). It owns **no**
+    /// per-draw SSBO slot and **no** per-instance mutators — those live on MaterialInstance, the cheap
+    /// override that owns a slot seeded from this parent's default block. Many instances share one
+    /// parent's pipeline and differ only by a per-material slot.
     class Material
     {
     public:
@@ -108,46 +110,6 @@ namespace Veng
 
         Material(const Material&) = delete;
         Material& operator=(const Material&) = delete;
-
-        /// @brief Binds the material's pipeline and pushes its index as the per-draw selector.
-        ///
-        /// Set 0 (the bindless registry) must already be bound for the frame. Issue mesh draws
-        /// after this call. A PostProcess material has no owned pipeline; only the selector is pushed.
-        /// A Surface material pushes nothing — it reads its index from the per-draw DrawData SSBO.
-        void Bind(Renderer::CommandBuffer& cmd) const;
-
-        /// @brief Returns the frame-folded material selector (GetCurrentFrameBase() + slot index).
-        ///
-        /// The value the shader uses to index the ring-buffered per-material parameter block. A
-        /// Surface material's geometry pass writes this into each per-draw DrawData record instead
-        /// of pushing it; it changes per frame-in-flight, so read it at record time.
-        [[nodiscard]] u32 GetMaterialSelector() const;
-
-        /// @brief Sets the texture for a named handle field and rewrites the SSBO entry in place.
-        void SetTexture(std::string_view name, AssetHandle<Texture> texture);
-
-        /// @brief Sets a vec4 parameter by field name, rewriting the SSBO entry in place.
-        void SetParam(std::string_view name, const vec4& value);
-
-        /// @brief Sets a scalar float parameter by field name.
-        ///
-        /// Writes only the field's reflected Size bytes, never smearing a vec4 over adjacent fields.
-        void SetParam(std::string_view name, f32 value);
-
-        /// @brief Writes a raw bindless texture index into a TextureHandle field by name.
-        ///
-        /// For runtime-bound inputs (a renderer-owned ImageView the material does not own as a
-        /// cooked Texture asset). Does not keep any asset resident. The write lands in the
-        /// ring-buffered block's current frame region — cheap and frame-safe.
-        void SetTextureHandle(std::string_view name, Renderer::TextureHandle handle);
-
-        /// @brief Writes a raw bindless sampler index into a SamplerHandle field by name.
-        ///
-        /// Same semantics as SetTextureHandle but targets a SamplerHandle field.
-        void SetSamplerHandle(std::string_view name, Renderer::SamplerHandle handle);
-
-        /// @brief Returns the material's slot index in the registry's per-material SSBO array.
-        [[nodiscard]] u32 GetIndex() const { return m_Handle.Index; }
 
         /// @brief Returns the material's debug name.
         [[nodiscard]] const string& GetName() const { return m_Name; }
@@ -177,8 +139,8 @@ namespace Veng
 
         /// @brief Returns the push-constant offset of the per-draw material selector.
         ///
-        /// Surface → 64 (after the MVP block); PostProcess → 0 (no geometry block).
-        /// A pass building its own pipeline reads this to size its push range.
+        /// Surface → NoSelectorPush; PostProcess → 0 (no geometry block). A pass building its own
+        /// pipeline reads this to size its push range.
         [[nodiscard]] u32 GetSelectorOffset() const { return m_SelectorOffset; }
 
         /// @brief Returns the material's resolved texture dependencies.
@@ -194,11 +156,19 @@ namespace Veng
         /// @brief Returns the reflected field table describing the material's parameter schema.
         ///
         /// A field's Kind indicates whether it is a bindless handle slot or an authored param.
-        /// An editor reads this rather than re-reflecting the shader.
+        /// An instance validates its overrides against this; an editor reads it rather than
+        /// re-reflecting the shader.
         [[nodiscard]] std::span<const MaterialField> GetFields() const { return m_Fields; }
+
+        /// @brief Returns the cooked default parameter block (handle slots patched at Finalize).
+        ///
+        /// A MaterialInstance copies this as the seed for its own SSBO slot, then applies its
+        /// overrides. Valid only after Finalize().
+        [[nodiscard]] std::span<const std::byte> GetDefaultBlock() const { return m_Block; }
 
     private:
         friend class MaterialLoader;
+        friend class MaterialInstance;
         friend Task<Detail::BuiltAsset<Material>>
         Detail::SubmitAssetBuild(Renderer::Context& context, TaskSystem& tasks, MaterialInfo data,
                                  Ref<Renderer::PipelineLayout> layout);
@@ -209,7 +179,7 @@ namespace Veng
         /// @brief Constructs an unfinalized Material from the given info.
         ///
         /// The worker-legal construction step; the result must be Finalize()d on the render thread
-        /// (bindless registration + parameter-block write) before use.
+        /// (the pipeline build + the default-block handle patch) before use.
         /// @param info Material description (shaders, textures, parameter block, fields).
         /// @return The unfinalized material.
         static Ref<Material> Prepare(const MaterialInfo& info)
@@ -217,21 +187,18 @@ namespace Veng
             return Ref<Material>(new Material(info));
         }
 
-        /// @brief Patches bindless indices, allocates the per-material SSBO slot, and uploads.
+        /// @brief Patches bindless indices into the default block and stores the pipeline + layout.
         ///
         /// Runs on the render thread. The layout and pipeline are supplied here because their GPU
         /// build is also deferred render-thread work. A PostProcess material is finalized with a
-        /// null pipeline — its GraphicsPipeline is built later by the PostProcessScenePass
-        /// against the renderer's color format; Bind() then only pushes the selector.
+        /// null pipeline — its GraphicsPipeline is built later by the PostProcessScenePass against
+        /// the renderer's color format. No SSBO slot is allocated: a parent owns no per-draw slot.
         /// @param layout   The reflected pipeline layout (set 0 reserved for bindless).
         /// @param pipeline The built graphics pipeline, or null for PostProcess materials.
         void Finalize(Ref<Renderer::PipelineLayout> layout,
                       Ref<Renderer::GraphicsPipeline> pipeline);
 
         explicit Material(const MaterialInfo& info);
-
-        [[nodiscard]] const MaterialField* FindField(std::string_view name) const;
-        void UploadParams() const;
 
         Renderer::Context& m_Context;
         string m_Name;
@@ -246,8 +213,7 @@ namespace Veng
         vector<std::byte> m_Block;
         vector<MaterialField> m_Fields;
         u32 m_SelectorOffset = 0;
-        Renderer::MaterialHandle m_Handle;
-        bool m_Registered = false;
+        bool m_Finalized = false;
     };
 
     /// @brief AssetTypeTrait specialization mapping Material to AssetType::Material.

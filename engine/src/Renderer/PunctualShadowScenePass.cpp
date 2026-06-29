@@ -220,7 +220,7 @@ namespace Veng::Renderer
                         {
                             return;
                         }
-                        const std::span<const AssetHandle<Material>> materials =
+                        const std::span<const AssetHandle<MaterialInstance>> materials =
                             mesh.GetMaterials();
                         const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
                         if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
@@ -249,7 +249,7 @@ namespace Veng::Renderer
                         {
                             return;
                         }
-                        const std::span<const AssetHandle<Material>> materials =
+                        const std::span<const AssetHandle<MaterialInstance>> materials =
                             mesh.GetMaterials();
                         const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
                         if (subMesh.MaterialIndex == SubMesh::NoMaterial ||

@@ -16,6 +16,8 @@ namespace Veng
     struct TextureData;
     class Material;
     struct MaterialInfo;
+    class MaterialInstance;
+    struct MaterialInstanceInfo;
     class Mesh;
     struct MeshData;
 }
@@ -76,6 +78,18 @@ namespace Veng::Detail
                                                               TaskSystem& tasks, MaterialInfo info,
                                                               Ref<Renderer::PipelineLayout> layout);
 
+    /// @brief Submits the worker-legal build of a MaterialInstance, returning its streaming result.
+    ///
+    /// The worker copies the parent's default block; the returned BuiltAsset's Finalize applies the
+    /// overrides, allocates the per-material SSBO slot, and uploads on the main thread. This is the
+    /// MID build path.
+    /// @param context Unused; the instance's context rides MaterialInstanceInfo::Context.
+    /// @param tasks   Task system the worker job runs on.
+    /// @param info    Instance description; its parent and override textures must already be resident.
+    /// @return A Task yielding the unfinalized instance and its finalize step.
+    [[nodiscard]] Task<BuiltAsset<MaterialInstance>>
+    SubmitAssetBuild(Renderer::Context& context, TaskSystem& tasks, MaterialInstanceInfo info);
+
     /// @brief Builds and finalizes a Texture inline on the calling thread.
     ///
     /// The synchronous sibling of SubmitAssetBuild: prepares the texture with a blocking upload
@@ -108,4 +122,14 @@ namespace Veng::Detail
     /// @return A ready, finalized material.
     [[nodiscard]] Ref<Material> BuildAssetSync(Renderer::Context& context, const MaterialInfo& data,
                                                Ref<Renderer::PipelineLayout> layout);
+
+    /// @brief Builds and finalizes a MaterialInstance inline on the calling thread.
+    ///
+    /// The synchronous sibling of SubmitAssetBuild: copies the parent block, applies the overrides,
+    /// and allocates the SSBO slot on the calling thread, so call it on the render thread.
+    /// @param context Unused; the instance's context rides MaterialInstanceInfo::Context.
+    /// @param data    Instance description; its parent and override textures must already be resident.
+    /// @return A ready, finalized instance.
+    [[nodiscard]] Ref<MaterialInstance> BuildAssetSync(Renderer::Context& context,
+                                                       const MaterialInstanceInfo& data);
 }

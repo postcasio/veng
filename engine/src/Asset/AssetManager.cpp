@@ -7,6 +7,7 @@
 #include "Loaders/AnimationLoader.h"
 #include "Loaders/EnvironmentLoader.h"
 #include "Loaders/LevelLoader.h"
+#include "Loaders/MaterialInstanceLoader.h"
 #include "Loaders/MaterialLoader.h"
 #include "Loaders/MeshLoader.h"
 #include "Loaders/PrefabLoader.h"
@@ -54,6 +55,8 @@ namespace Veng
                 return "Animation";
             case AssetType::Environment:
                 return "Environment";
+            case AssetType::MaterialInstance:
+                return "MaterialInstance";
             }
 
             VE_ASSERT(false, "AssetManager: unhandled AssetType {}", static_cast<u32>(type));
@@ -70,6 +73,7 @@ namespace Veng
         RegisterLoader(CreateUnique<ShaderLoader>());
         RegisterLoader(CreateUnique<VertexLayoutLoader>());
         RegisterLoader(CreateUnique<MaterialLoader>());
+        RegisterLoader(CreateUnique<MaterialInstanceLoader>());
         RegisterLoader(CreateUnique<PrefabLoader>());
         RegisterLoader(CreateUnique<LevelLoader>());
         RegisterLoader(CreateUnique<SkeletonLoader>());
@@ -262,32 +266,52 @@ namespace Veng
         return std::pair{loaderIt->second.get(), *found};
     }
 
-    Ref<Detail::AssetCacheEntry> AssetManager::LoadUntyped(AssetType type, AssetId id)
+    AssetResult<Detail::LoadJob> AssetManager::RunLoader(AssetType type, AssetId id, bool async)
     {
-        // A cache hit (resident or pending) returns the existing entry. A type
-        // mismatch in the cache is a hard misuse (the async path has no error
-        // channel), so it asserts.
-        if (const auto it = m_Cache.find(id); it != m_Cache.end())
+        const optional<ArchiveEntry> found = Find(id);
+        if (!found)
         {
-            VE_ASSERT(it->second->Type == type,
-                      "AssetManager::Load: asset {} is cached as {}, not {}", id.Value,
-                      ToString(it->second->Type), ToString(type));
-            return it->second;
+            return std::unexpected(AssetLoadError{
+                .Kind = AssetError::NotFound,
+                .Id = id,
+                .Detail = fmt::format("asset {} not found in any mounted archive", id.Value),
+            });
+        }
+
+        // The default-instance rule: a MaterialInstance request over a bare Material archive entry
+        // resolves to the parent's implicit zero-override default instance.
+        if (type == AssetType::MaterialInstance && found->Type == AssetType::Material)
+        {
+            const auto loaderIt = m_Loaders.find(AssetType::MaterialInstance);
+            VE_ASSERT(loaderIt != m_Loaders.end(),
+                      "AssetManager: no MaterialInstance loader registered");
+            auto* instanceLoader = static_cast<MaterialInstanceLoader*>(loaderIt->second.get());
+            return instanceLoader->LoadDefaultInstance(*this, m_Context, m_Tasks, m_Types, id,
+                                                       found->Blob, async);
         }
 
         const AssetResult<std::pair<AssetLoader*, ArchiveEntry>> resolved = Resolve(type, id);
         if (!resolved)
         {
-            Log::Error("AssetManager::Load: {}", resolved.error().Detail);
-            return nullptr;
+            return std::unexpected(resolved.error());
         }
 
-        const AssetLoader* loader = resolved->first;
-        const ArchiveEntry& archiveEntry = resolved->second;
+        return resolved->first->Load(*this, m_Context, m_Tasks, m_Types, id, resolved->second.Blob,
+                                     async);
+    }
+
+    Ref<Detail::AssetCacheEntry> AssetManager::LoadUntyped(AssetType type, AssetId id)
+    {
+        // A cache hit (resident or pending) returns the existing entry. A type
+        // mismatch in the cache is a hard misuse (the async path has no error
+        // channel), so it asserts.
+        if (const auto it = m_Cache.find(CacheKey{type, id}); it != m_Cache.end())
+        {
+            return it->second;
+        }
 
         // The blob lives in the mounted archive reader's storage, so the span outlives the call.
-        AssetResult<Detail::LoadJob> job =
-            loader->Load(*this, m_Context, m_Tasks, m_Types, id, archiveEntry.Blob, true);
+        AssetResult<Detail::LoadJob> job = RunLoader(type, id, true);
         if (!job)
         {
             Log::Error("AssetManager::Load: {}", job.error().Detail);
@@ -301,7 +325,7 @@ namespace Veng
                 .Type = type,
                 .Resource = nullptr,
             });
-        m_Cache[id] = entry;
+        m_Cache[CacheKey{type, id}] = entry;
 
         if (job->Finalize)
         {
@@ -410,18 +434,8 @@ namespace Veng
     AssetResult<Ref<Detail::AssetCacheEntry>> AssetManager::LoadSyncUntyped(AssetType type,
                                                                             AssetId id)
     {
-        if (const auto it = m_Cache.find(id); it != m_Cache.end())
+        if (const auto it = m_Cache.find(CacheKey{type, id}); it != m_Cache.end())
         {
-            if (it->second->Type != type)
-            {
-                return std::unexpected(AssetLoadError{
-                    .Kind = AssetError::WrongType,
-                    .Id = id,
-                    .Detail = fmt::format("asset {} is cached as {}, not {}", id.Value,
-                                          ToString(it->second->Type), ToString(type)),
-                });
-            }
-
             // The id was already Load()ed async and is still pending. A sync
             // handle must be resident, so drain the finalize queue now (it
             // finalizes dependencies before dependents) to land it inline.
@@ -441,17 +455,7 @@ namespace Veng
             return it->second;
         }
 
-        const AssetResult<std::pair<AssetLoader*, ArchiveEntry>> resolved = Resolve(type, id);
-        if (!resolved)
-        {
-            return std::unexpected(resolved.error());
-        }
-
-        const AssetLoader* loader = resolved->first;
-        const ArchiveEntry& archiveEntry = resolved->second;
-
-        AssetResult<Detail::LoadJob> job =
-            loader->Load(*this, m_Context, m_Tasks, m_Types, id, archiveEntry.Blob, false);
+        AssetResult<Detail::LoadJob> job = RunLoader(type, id, false);
         if (!job)
         {
             return std::unexpected(job.error());
@@ -481,7 +485,7 @@ namespace Veng
                 .Resource = std::move(job->Resource),
             });
 
-        m_Cache[id] = entry;
+        m_Cache[CacheKey{type, id}] = entry;
         return entry;
     }
 }

@@ -4,6 +4,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 
 #include <VengEditor/CookRequest.h>
 #include <VengEditor/EditorPanel.h>
@@ -177,7 +178,7 @@ namespace VengEditor
         /// @brief Fragment shader entry point name, read from its *.shader.json.
         Veng::string m_FragmentEntry;
 
-        Veng::AssetHandle<Veng::Material> m_Handle;
+        Veng::AssetHandle<Veng::MaterialInstance> m_Handle;
         Veng::MountHandle m_Mount;
         /// @brief Held shader mount for a graph-sourced cook; empty otherwise.
         Veng::MountHandle m_ShaderMount;

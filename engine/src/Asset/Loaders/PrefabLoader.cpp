@@ -8,6 +8,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Reflection/Serialize.h>
@@ -39,6 +40,10 @@ namespace Veng
             if (fieldType == TypeIdOf<AssetHandle<Material>>())
             {
                 return AssetType::Material;
+            }
+            if (fieldType == TypeIdOf<AssetHandle<MaterialInstance>>())
+            {
+                return AssetType::MaterialInstance;
             }
             if (fieldType == TypeIdOf<AssetHandle<Prefab>>())
             {
@@ -88,6 +93,8 @@ namespace Veng
                 return load.operator()<Mesh>();
             case AssetType::Material:
                 return load.operator()<Material>();
+            case AssetType::MaterialInstance:
+                return load.operator()<MaterialInstance>();
             case AssetType::Prefab:
                 return load.operator()<Prefab>();
             case AssetType::Animation:

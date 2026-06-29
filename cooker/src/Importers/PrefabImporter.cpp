@@ -38,11 +38,27 @@ namespace Veng::Cook
             {
                 return AssetType::Material;
             }
+            if (fieldType == TypeIdOf<AssetHandle<MaterialInstance>>())
+            {
+                return AssetType::MaterialInstance;
+            }
             if (fieldType == TypeIdOf<AssetHandle<Prefab>>())
             {
                 return AssetType::Prefab;
             }
             return std::nullopt;
+        }
+
+        // Whether `actual` is an acceptable source type for an AssetHandle field expecting
+        // `expected`. The default-instance rule lets a MaterialInstance field accept a bare
+        // Material id (resolved to the parent's zero-override default instance at load).
+        bool AssetTypeAccepted(AssetType expected, AssetType actual)
+        {
+            if (actual == expected)
+            {
+                return true;
+            }
+            return expected == AssetType::MaterialInstance && actual == AssetType::Material;
         }
 
         // Finds a field of `info` by name, or nullptr if none matches.
@@ -224,7 +240,7 @@ namespace Veng::Cook
                     // Resolve only validates ids present in this pack (or a
                     // --reference pack); a non-resident id is accepted as-is
                     // (residency is the runtime's job).
-                    if (resolved && expected && resolved->Type != *expected)
+                    if (resolved && expected && !AssetTypeAccepted(*expected, resolved->Type))
                     {
                         return err(fmt::format(
                             "asset {} resolves to type {} but the field expects type {}", id,

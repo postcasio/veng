@@ -18,6 +18,7 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Primitives.h>
 #include <Veng/Cook/BuiltinImporters.h>
@@ -126,11 +127,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     constexpr uvec2 extent{96, 96};
 
     // ── Producer scene A: a brick cube tinted green ───────────────────────────────
-    const AssetResult<AssetHandle<Material>> producerMaterial =
-        assets.LoadSync<Material>(AssetId{0x232B}); // brick (9003)
+    const AssetResult<AssetHandle<MaterialInstance>> producerMaterial =
+        assets.LoadSync<MaterialInstance>(AssetId{0x232B}); // brick (9003)
     REQUIRE(producerMaterial.has_value());
     REQUIRE(producerMaterial->IsLoaded());
-    const_cast<Material&>(*producerMaterial->Get())
+    const_cast<MaterialInstance&>(*producerMaterial->Get())
         .SetParam("BaseColorFactor", vec4(0.0f, 1.0f, 0.0f, 1.0f));
 
     const Ref<Mesh> producerCube =
@@ -154,14 +155,14 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     producer->SetViewState({.World = sceneA.get(), .Camera = FrontCamera(extent), .Delta = 0.0f});
 
     // ── Consumer scene B: a brick cube whose BaseColor is the producer's output ───
-    const AssetResult<AssetHandle<Material>> consumerMaterial =
-        assets.LoadSync<Material>(AssetId{9013}); // second brick instance
+    const AssetResult<AssetHandle<MaterialInstance>> consumerMaterial =
+        assets.LoadSync<MaterialInstance>(AssetId{9013}); // second brick instance
     REQUIRE(consumerMaterial.has_value());
     REQUIRE(consumerMaterial->IsLoaded());
 
     // The loaded handle hands out a const Material; SetTextureHandle mutates the
     // ring-buffered block in place — the const_cast the runtime-bind path uses.
-    const_cast<Material&>(*consumerMaterial->Get())
+    const_cast<MaterialInstance&>(*consumerMaterial->Get())
         .SetTextureHandle("BaseColor", producer->GetOutputHandle());
 
     const Ref<Mesh> consumerCube =

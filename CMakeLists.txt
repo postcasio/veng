@@ -813,6 +813,9 @@ if (VENG_BUILD_TESTS)
                 # MaterialParams mixes a vec4 param with uint handle slots and renders it,
                 # pinning the large-alignment-first ordering (std140/scalar offset agreement).
                 tests/gpu/graph_material_layout.cpp
+                # The parent/instance split: a hand-built cooked MaterialInstance blob over the
+                # brick parent, the pipeline-sharing invariant, and the runtime MID path.
+                tests/gpu/material_instance.cpp
                 # The RTT-into-material proof: a producer viewport's output, sampled
                 # through a consumer viewport's material, in registration order.
                 # Cooks the brick g-buffer fixture, so it is gated with the rest.

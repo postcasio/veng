@@ -11,6 +11,7 @@ namespace Veng
 {
     class Mesh;
     class Material;
+    class MaterialInstance;
     class Prefab;
     class Environment;
     struct Animation;
@@ -64,8 +65,8 @@ namespace Veng
     {
         /// @brief Full width across each axis, in units.
         f32 Extent = 1.0f;
-        /// @brief Material recorded on the generated submesh.
-        AssetHandle<Material> Material;
+        /// @brief Material instance recorded on the generated submesh.
+        AssetHandle<MaterialInstance> Material;
     };
 
     /// @brief Plane shape recipe: the parameters of Primitives::Plane plus its material.
@@ -75,8 +76,8 @@ namespace Veng
         vec2 Size = vec2(1.0f);
         /// @brief Quad count per axis.
         uvec2 Subdivisions = uvec2(1);
-        /// @brief Material recorded on the generated submesh.
-        AssetHandle<Material> Material;
+        /// @brief Material instance recorded on the generated submesh.
+        AssetHandle<MaterialInstance> Material;
     };
 
     /// @brief UV-sphere shape recipe: the parameters of Primitives::Sphere plus its material.
@@ -88,8 +89,8 @@ namespace Veng
         u32 Rings = 16;
         /// @brief Longitude band count.
         u32 Segments = 32;
-        /// @brief Material recorded on the generated submesh.
-        AssetHandle<Material> Material;
+        /// @brief Material instance recorded on the generated submesh.
+        AssetHandle<MaterialInstance> Material;
     };
 
     /// @brief Icosphere shape recipe: the parameters of Primitives::Icosphere plus its material.
@@ -99,8 +100,8 @@ namespace Veng
         f32 Radius = 0.5f;
         /// @brief Icosahedron subdivision count.
         u32 Subdivisions = 3;
-        /// @brief Material recorded on the generated submesh.
-        AssetHandle<Material> Material;
+        /// @brief Material instance recorded on the generated submesh.
+        AssetHandle<MaterialInstance> Material;
     };
 
     /// @brief Cylinder shape recipe: the parameters of Primitives::Cylinder plus its material.
@@ -112,8 +113,8 @@ namespace Veng
         f32 Height = 1.0f;
         /// @brief Longitude band count around the side.
         u32 Segments = 32;
-        /// @brief Material recorded on the generated submesh.
-        AssetHandle<Material> Material;
+        /// @brief Material instance recorded on the generated submesh.
+        AssetHandle<MaterialInstance> Material;
     };
 
     /// @brief Cone shape recipe: the parameters of Primitives::Cone plus its material.
@@ -125,8 +126,8 @@ namespace Veng
         f32 Height = 1.0f;
         /// @brief Longitude band count around the base.
         u32 Segments = 32;
-        /// @brief Material recorded on the generated submesh.
-        AssetHandle<Material> Material;
+        /// @brief Material instance recorded on the generated submesh.
+        AssetHandle<MaterialInstance> Material;
     };
 
     /// @brief Torus shape recipe: the parameters of Primitives::Torus plus its material.
@@ -140,8 +141,8 @@ namespace Veng
         u32 MajorSegments = 32;
         /// @brief Band count around the tube.
         u32 MinorSegments = 16;
-        /// @brief Material recorded on the generated submesh.
-        AssetHandle<Material> Material;
+        /// @brief Material instance recorded on the generated submesh.
+        AssetHandle<MaterialInstance> Material;
     };
 
     /// @brief Capsule shape recipe: the parameters of Primitives::Capsule plus its material.
@@ -155,8 +156,8 @@ namespace Veng
         u32 Segments = 32;
         /// @brief Latitude band count per hemisphere cap.
         u32 Rings = 8;
-        /// @brief Material recorded on the generated submesh.
-        AssetHandle<Material> Material;
+        /// @brief Material instance recorded on the generated submesh.
+        AssetHandle<MaterialInstance> Material;
     };
 
     /// @brief The inline procedural source of a MeshRenderer's mesh: one shape recipe or empty.

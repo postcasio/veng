@@ -901,32 +901,59 @@ loads plain **SPIR-V** and gains no Slang dependency. (There is no `glslc` /
 
 A material (`*.vmat.json`) references its vertex/fragment shaders by `AssetId` and
 declares an **ordered, explicitly-typed** field list; the cook validates those
-fields against the fragment shader's reflected parameters. At runtime a `Material` is
-thin — shader handle + texture **handles** + one parameter-block entry, bound through
-set 0 — and `Material::Bind` pushes its per-draw material selector.
+fields against the fragment shader's reflected parameters.
 
-A material's GPU parameters are **one reflection-sized block** per material (set 0
+**A material is split into a parent and an instance — the standard cross-engine division.** A
+**`Material`** (`AssetType::Material`) is the **parent**: it owns the expensive half — the
+graphics pipeline, the pipeline layout, the resident shader/texture dependencies, the reflected
+`MaterialField` **schema** (`GetFields()`), and a cooked **default parameter block** (held as bytes,
+its bindless handle slots patched at `Finalize`). A parent owns **no** per-draw SSBO slot and **no**
+per-instance mutators. A **`MaterialInstance`** (`AssetType::MaterialInstance`) is a cheap
+**override** over a parent: an `AssetHandle<Material> Parent` kept resident, **one** per-material SSBO
+slot seeded from the parent's default block and patched by its overrides, its resident texture
+overrides, and the ring-buffered `SetParam`/`SetTexture`/`SetTextureHandle`/`SetSamplerHandle` writes.
+`MaterialInstance::Bind` binds the **parent's** pipeline and pushes *this* instance's selector; its
+domain/layout/schema/modules delegate to the parent. So many instances share one parent's pipeline
+and differ only by a per-material slot — 30 tinted bricks are 1 generated shader + 30 cheap slots, not
+30 pipelines. The mesh material list, the `MeshSource` shape fields, `Primitives`, `MeshRenderer`, and
+the prefab/level reflected `AssetHandle` fields all hold `AssetHandle<MaterialInstance>`; the draw path
+binds `GetMaterials()[MaterialIndex]` (an instance) exactly as before.
+
+**A bare parent doubles as a zero-override instance.** `Load<MaterialInstance>(id)` over a
+`Material`-typed archive entry resolves to the parent's **implicit default instance** (the
+`MaterialInstanceLoader::LoadDefaultInstance` path: the parent is built inline and owned by the
+instance, never separately id-cached, so two default-instance references to one parent id dedup to one
+cached instance). So a cooked mesh **and** a reflected prefab field referencing a bare `Material` id
+both keep loading, and assigning a `Material` id where an instance is expected is opt-in to authoring an
+explicit `*.vmatinst.json` (Plan 06). The cooked-mesh `MaterialId` and the reflected-field
+`AssetSourceIndex` resolution both accept a `Material`-typed source id for a `MaterialInstance` field.
+The asset cache is keyed by **(type, id)**, so a parent `Material@id` and its default
+`MaterialInstance@id` coexist. A **MID** (Material Instance Dynamic) is just a runtime-built instance:
+`AssetManager::Build<MaterialInstance>(MaterialInstanceInfo{ .Parent = …, .Overrides = … })` (or
+`Adopt`) plus per-frame `SetParam` — no separate dynamic type.
+
+A material instance's GPU parameters are **one reflection-sized block** per instance (set 0
 binding 4, byte-addressed at `index * MaterialParamStride`): its bindless handle slots
-(`uint` members the loader patches with the resolved index) and its authored
+(`uint` members seeded from the parent and overridden by a texture override) and its authored
 scalar/vector params share that single block, laid out by reflection at each field's
 offset. There is no fixed engine struct and no second SSBO — a material declares an
 arbitrary, shader-defined handle set (zero, one, or several), and `CookedMaterialField::Kind`
 (handle vs. param) is the seam the loader patches by offset. `CookedMaterialHeader` carries
-`Version` (`CookedMaterialVersion`, currently `2`), `Domain`, and `BlockBytes`; a stale blob
-rejects loudly. `Material::GetFields()` exposes the reflected `MaterialField` table — the
-editor's parameter-schema source, so the node editor reads a material's authorable parameters
-with no Slang in `libveng_editor`.
+`Version` (`CookedMaterialVersion`), `Domain`, and `BlockBytes`; a stale blob
+rejects loudly. `Material::GetFields()` (delegated by `MaterialInstance::GetFields()`) exposes the
+reflected `MaterialField` table — the editor's parameter-schema source and an instance's override
+surface, so the node editor reads a material's authorable parameters with no Slang in `libveng_editor`.
 
 The block buffer is **N-buffered for frames-in-flight, host-visible + persistently
 mapped**: it holds `framesInFlight` copies of the `MaxMaterials * MaterialParamStride`
-table, and each frame-in-flight owns one region. `Register/UpdateMaterial` mark a
-material dirty for `framesInFlight` frames and write only the *current* frame's region
+table, and each frame-in-flight owns one region. `Register/UpdateMaterial` mark an
+instance dirty for `framesInFlight` frames and write only the *current* frame's region
 (safe because that frame is not yet submitted); `OnFrameAcquired` flushes each
-still-dirty material into the region it just made current. A per-frame `SetParam` /
+still-dirty instance into the region it just made current. A per-frame `SetParam` /
 `SetTexture` is therefore a direct, stall-free write — no staging, no `WaitIdle`, no
 hazard. **The current frame's region is selected by folding the frame base
 (`currentFrame * MaxMaterials`, via `BindlessRegistry::GetCurrentFrameBase()`) into the
-pushed material selector index in `Material::Bind`** — not by a dynamic descriptor
+pushed material selector index in `MaterialInstance::Bind`** — not by a dynamic descriptor
 offset: a `STORAGE_BUFFER_DYNAMIC` descriptor mistranslates inside set 0's bindless Metal
 argument buffer on MoltenVK. The buffer stays a plain storage buffer bound at full range,
 and the shader's `index * MaterialParamStride` load is unchanged.

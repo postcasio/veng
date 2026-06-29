@@ -12,7 +12,7 @@
 
 namespace Veng
 {
-    class Material;
+    class MaterialInstance;
 }
 
 /// @brief Reusable pipeline-stage layer that SceneRenderer composes its pipeline from.
@@ -258,7 +258,7 @@ namespace Veng::Renderer
         /// @param output        The output ResourceId this pass writes.
         /// @param outputFormat  Color format of the output target.
         /// @param extent        Initial render extent; updated via Resize.
-        PostProcessScenePass(Context& context, AssetHandle<Material> material,
+        PostProcessScenePass(Context& context, AssetHandle<MaterialInstance> material,
                              PostProcessInput input, ResourceId output, Format outputFormat,
                              uvec2 extent);
 
@@ -279,8 +279,8 @@ namespace Veng::Renderer
 
         /// @brief Context for pipeline creation.
         Context& m_Context;
-        /// @brief The PostProcess material driving this pass.
-        AssetHandle<Material> m_Material;
+        /// @brief The PostProcess material instance driving this pass.
+        AssetHandle<MaterialInstance> m_Material;
         /// @brief Primary input descriptor.
         PostProcessInput m_Input;
         /// @brief Optional second input (inactive when Texture is invalid).

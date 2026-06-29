@@ -32,5 +32,7 @@ namespace Veng
         Animation,
         /// @brief An equirectangular HDR environment map for image-based lighting (see CookedEnvironmentHeader).
         Environment,
+        /// @brief A parameter override over a parent Material (see CookedMaterialInstanceHeader).
+        MaterialInstance,
     };
 }

@@ -11,7 +11,7 @@ namespace Veng
     class AssetManager;
     class ImGuiLayer;
     class ImGuiTexture;
-    class Material;
+    class MaterialInstance;
     class Mesh;
     class Scene;
     class TypeRegistry;
@@ -56,7 +56,7 @@ namespace VengEditor
 
         /// @brief Swaps the previewed material.
         /// @param material  Fresh handle returned by a recook.
-        void SetMaterial(Veng::AssetHandle<Veng::Material> material);
+        void SetMaterial(Veng::AssetHandle<Veng::MaterialInstance> material);
 
         /// @brief Advances the turntable and pushes this frame's view onto the viewport.
         ///
@@ -95,7 +95,7 @@ namespace VengEditor
         Veng::Entity m_SphereEntity;
 
         /// @brief The currently previewed material handle.
-        Veng::AssetHandle<Veng::Material> m_Material;
+        Veng::AssetHandle<Veng::MaterialInstance> m_Material;
 
         /// @brief Sampler for the preview output (edge clamp).
         Veng::Ref<Veng::Renderer::Sampler> m_SceneSampler;
