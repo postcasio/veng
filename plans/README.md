@@ -689,31 +689,38 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   module-ABI change. Gates met by planset-10/11/12/14 + the pointer-to-world seam (planset-31).
 
 - **[planset-38](planset-38/README.md)** — node→Slang material codegen (the graph generates
-  the shader) (📝 proposed, 6 plans). Takes up [future area 13](future/README.md#13-material-domains--shader-graph-codegen--prioritized)'s
+  the shader) (📝 proposed, 7 plans). Takes up [future area 13](future/README.md#13-material-domains--shader-graph-codegen--prioritized)'s
   **prioritized follow-on**: the node material editor stops *wiring* a hand-authored fragment
   shader and starts *generating* it. Every node becomes an **expression emitter**, `CompileMaterialGraph`
   becomes a **topological emit walk** threading a thin typed **`EmittedValue`** (the code-chunk model —
   the graph **is** the AST, Slang is the compiler; no parsed-AST intermediate), and `MaterialOutput`
   emits the domain entry point (`GBufferOutput` for Surface, `SV_Target0` for PostProcess). A `Param`
-  gains **const-vs-exposed** (fold inline vs. a generated `MaterialParams` uniform), and the emitter
-  produces the generated struct + the `.vmat` field list **together** so the cooker's offset-patching
-  agrees by construction. The generated fragment is a **checked-in sub-asset** (`<name>.gen.frag.{slang,
-  shader.json}` with a **derived** `AssetId`) cooked through the existing `ShaderImporter` path — so the
-  **cooker stays graph-agnostic**, an offline `vengc cook` needs no editor, and there is **no
-  cooked-material format change and no runtime change**. Folds in [future area 14](future/README.md#14-engine-owned-material-shader-header--cross-pack-slang-includes--prioritized)
+  gains a **provenance** (const folds inline / exposed becomes an author-tweakable `MaterialParams`
+  uniform / engine-bound is a field the engine writes by name), and the emitter produces the generated
+  struct (ordered **large-alignment-first** so std140 reflection and scalar `Load<T>` agree) + the
+  `.vmat` field list **together** so the cooker's offset-patching agrees by construction. The key
+  inversion: the fragment shader a material references is an asset that **already exists** — codegen
+  changes its *uncooked source* from a `.slang` file to a **graph**, and the **cooker generates the
+  SPIR-V from the graph** (the emit walk moves into a shared `veng::graph` lib both editor and cooker
+  link). So there is **no new asset, no minted/derived id, and no checked-in generated file** — the
+  authored graph is the single source of truth, generated Slang/SPIR-V are cook output, and editor
+  preview == offline cook by construction (and **no cooked-material format change and no runtime
+  change**). Folds in [future area 14](future/README.md#14-engine-owned-material-shader-header--cross-pack-slang-includes--prioritized)
   as its **precursor** (Plan 00): a shared cooker Slang-session helper resolves a cross-pack `#include
-  "Veng/material.slang"`, `material.slang` splits into the engine contract (kept) + `MaterialParams`
-  (moved to the authoring shader), and both vendored `material_data.slang` copies are deleted. Builds on
-  **planset-15** (the node-graph surface + coercion-on-link) and **planset-18** (material domains + the
-  ring-buffered param block); the samples migrate onto generated graphs (`brick` for Surface, `tonemap`
-  for PostProcess) in the closer. The closer (Plan 05) then draws the **material vs. material-instance**
+  "Veng/material.slang"`, `material.slang` splits into the engine contract (kept, with domain-keyed push
+  blocks) + `MaterialParams` (moved to the authoring shader), and all four vendored `material_data.slang`
+  copies (+ the C++ mirror and its drift-guard test) are deleted. Builds on **planset-15** (the
+  node-graph surface + coercion-on-link) and **planset-18** (material domains + the ring-buffered param
+  block); the samples migrate onto graph-sourced shaders (`brick` for Surface, `tonemap` for PostProcess
+  via engine-bound provenance) in Plan 04. Plans **05–06** then draw the **material vs. material-instance**
   line codegen sets up: a generated parent shader + its exposed-param **schema** is a parent `Material`;
   a new **`MaterialInstance`** is a cheap sparse override over that schema (its own SSBO slot + texture
   set, the parent's pipeline) — 30 tinted bricks become 1 shader + 30 instances. The instance half (the
   per-material slot + stall-free `SetParam`) **moves** off the fused `Material`; a bare parent doubles as
-  a zero-override instance; a runtime instance + per-frame `SetParam` is the **MID**. **Wired asset
-  pins**, **custom-expression nodes**, **subgraph/function nodes**, **vertex-stage codegen**, **static
-  switches**, **draw-sort by parent pipeline**, and **instance-of-instance chains** stay future.
+  a zero-override instance; a runtime instance + per-frame `SetParam` is the **MID**. **Pure-shader graph
+  editing**, **wired asset pins**, **custom-expression nodes**, **subgraph/function nodes**,
+  **vertex-stage codegen**, **static switches**, **draw-sort by parent pipeline**, and
+  **instance-of-instance chains** stay future.
 
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
