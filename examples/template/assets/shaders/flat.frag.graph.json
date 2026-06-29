@@ -1,0 +1,26 @@
+{
+    "version": 1,
+    "nodes": [
+        {
+            "type": "MaterialOutput",
+            "position": [400.0, 0.0]
+        },
+        {
+            "type": "Param",
+            "position": [0.0, 0.0],
+            "properties": {
+                "Value": [0.6, 0.7, 0.9, 1.0],
+                "Provenance": 1,
+                "Name": "BaseColorFactor"
+            }
+        }
+    ],
+    "links": [
+        {
+            "from_node": 1,
+            "from_pin": "Value",
+            "to_node": 0,
+            "to_pin": "Albedo"
+        }
+    ]
+}

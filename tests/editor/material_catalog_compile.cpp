@@ -391,16 +391,141 @@ TEST_CASE("MaterialCatalog: the math/swizzle/utility node set is registered")
     MaterialEmitTable emit;
     RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
 
-    for (const char* name : {ConstantTypeName, ScalarParamTypeName, MultiplyTypeName, AddTypeName,
-                             SubtractTypeName, DivideTypeName, LerpTypeName, SaturateTypeName,
-                             ClampTypeName, OneMinusTypeName, DotTypeName, CrossTypeName,
-                             NormalizeTypeName, LengthTypeName, SplitTypeName, CombineTypeName})
+    for (const char* name :
+         {ConstantTypeName, ScalarParamTypeName, MultiplyTypeName, AddTypeName, SubtractTypeName,
+          DivideTypeName, LerpTypeName, SaturateTypeName, ClampTypeName, OneMinusTypeName,
+          DotTypeName, CrossTypeName, NormalizeTypeName, LengthTypeName, SplitTypeName,
+          CombineTypeName, MinTypeName, MaxTypeName, ScreenUVTypeName})
     {
         const NodeType* type = catalog.Find(name);
         REQUIRE(type != nullptr);
         // Each value-producing node carries an emit-fn.
         CHECK(emit.Find(type->Id) != nullptr);
     }
+}
+
+TEST_CASE("CompileMaterialGraph: an authored Name overrides the generated param field name")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId param = graph.AddNode(types.Param);
+
+    const NodeType* paramType = catalog.Find(types.Param);
+    REQUIRE(paramType != nullptr);
+
+    // An exposed Param so it contributes a field, with an authored field name.
+    const VengGraph::ParamProvenance prov = VengGraph::ParamProvenance::Exposed;
+    bool wroteName = false;
+    for (const Veng::FieldDescriptor& field : paramType->Properties)
+    {
+        if (field.Name == ParamProvenanceProperty)
+        {
+            graph.SetProperty(param, field,
+                              std::span<const std::byte>(reinterpret_cast<const std::byte*>(&prov),
+                                                         sizeof(prov)));
+        }
+        else if (field.Name == NodeNameProperty)
+        {
+            // FieldClass::String node property is a fixed NodeNameCapacity char buffer.
+            char buffer[NodeNameCapacity] = "BaseColorFactor";
+            graph.SetProperty(param, field,
+                              std::span<const std::byte>(reinterpret_cast<const std::byte*>(buffer),
+                                                         sizeof(buffer)));
+            wroteName = true;
+        }
+    }
+    REQUIRE(wroteName);
+
+    REQUIRE(graph.Connect(PinRef{.Node = param, .Pin = 0}, PinRef{.Node = output, .Pin = 0})
+                .has_value());
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+
+    // The generated struct member and the .vmat field both take the authored name, not
+    // the node key.
+    CHECK(Contains(r->Source, "float4 BaseColorFactor;"));
+    CHECK(Contains(r->Source, "p.BaseColorFactor"));
+    REQUIRE(r->Fields.size() == 1);
+    CHECK(r->Fields[0].Name == "BaseColorFactor");
+}
+
+TEST_CASE("CompileMaterialGraph: an authored Name lets a TextureSample name its handle fields")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::PostProcess);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId sample = graph.AddNode(types.TextureSample);
+
+    const NodeType* sampleType = catalog.Find(types.TextureSample);
+    REQUIRE(sampleType != nullptr);
+    for (const Veng::FieldDescriptor& field : sampleType->Properties)
+    {
+        if (field.Name == NodeNameProperty)
+        {
+            char buffer[NodeNameCapacity] = "Hdr";
+            graph.SetProperty(sample, field,
+                              std::span<const std::byte>(reinterpret_cast<const std::byte*>(buffer),
+                                                         sizeof(buffer)));
+        }
+    }
+
+    REQUIRE(graph.Connect(PinRef{.Node = sample, .Pin = 0}, PinRef{.Node = output, .Pin = 0})
+                .has_value());
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::PostProcess);
+    REQUIRE(r.has_value());
+
+    // The handle field is named "Hdr" and its paired sampler "HdrSampler" — the names the
+    // engine binds the runtime HDR target by.
+    CHECK(Contains(r->Source, "uint Hdr;"));
+    CHECK(Contains(r->Source, "uint HdrSampler;"));
+    CHECK(Contains(r->Source, "p.Hdr"));
+    CHECK(Contains(r->Source, "p.HdrSampler"));
+}
+
+TEST_CASE("CompileMaterialGraph: ScreenUV and Min emit their intrinsics")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId a = graph.AddNode(types.Param);
+    const NodeId b = graph.AddNode(types.Param);
+    const NodeId minNode = AddByName(graph, catalog, MinTypeName);
+
+    REQUIRE(
+        graph.Connect(PinRef{.Node = a, .Pin = 0}, PinRef{.Node = minNode, .Pin = 0}).has_value());
+    REQUIRE(
+        graph.Connect(PinRef{.Node = b, .Pin = 0}, PinRef{.Node = minNode, .Pin = 1}).has_value());
+    REQUIRE(graph.Connect(PinRef{.Node = minNode, .Pin = 0}, PinRef{.Node = output, .Pin = 0})
+                .has_value());
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    CHECK(Contains(r->Source, "min("));
+
+    // ScreenUV emits the fullscreen interpolant.
+    const NodeType* screenUv = catalog.Find(ScreenUVTypeName);
+    REQUIRE(screenUv != nullptr);
+    REQUIRE(screenUv->Inputs.empty());
+    REQUIRE(screenUv->Outputs.size() == 1);
+    CHECK(screenUv->Outputs[0].Type.Type == TypeIdOf<Veng::vec2>());
 }
 
 TEST_CASE("CompileMaterialGraph: a Multiply emits a component-wise product into Albedo")

@@ -2,16 +2,8 @@
   "domain": "surface",
   "shaders": { "vertex": 7619531439638779021, "fragment": 1005 },
   "fields": [
-    { "name": "BaseColor",         "type": "texture", "id": 14864592943833126790 },
-    { "name": "BaseColorSampler",  "type": "sampler", "texture": "BaseColor" },
-    { "name": "ORM",               "type": "texture", "id": 8259845233708650356 },
-    { "name": "ORMSampler",        "type": "sampler", "texture": "ORM" },
-    { "name": "Normal",            "type": "texture", "id": 3191587071494521605 },
-    { "name": "NormalSampler",     "type": "sampler", "texture": "Normal" },
-    { "name": "BaseColorFactor",   "type": "vec4",    "value": [1.0, 1.0, 1.0, 1.0] },
-    { "name": "EmissiveFactor",    "type": "vec4",    "value": [0.0, 0.0, 0.0, 0.0] },
-    { "name": "MetallicFactor",    "type": "float",   "value": 1.0 },
-    { "name": "RoughnessFactor",   "type": "float",   "value": 1.0 },
-    { "name": "OcclusionStrength", "type": "float",   "value": 1.0 }
+    { "name": "BaseColorFactor",  "type": "vec4",    "value": [1.0, 1.0, 1.0, 1.0] },
+    { "name": "BaseColor",        "type": "texture", "id": 14864592943833126790 },
+    { "name": "BaseColorSampler", "type": "sampler", "texture": "BaseColor" }
   ]
 }

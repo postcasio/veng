@@ -9,6 +9,24 @@
 
 namespace VengGraph
 {
+    /// @brief Fixed byte capacity of a node-property string (a `FieldClass::String` field).
+    ///
+    /// A node property struct stays a trivially-copyable POD, so a string property is an
+    /// inline NUL-terminated, NUL-padded char buffer of exactly this size — never a
+    /// `Veng::string` member. The serializer reads/writes it bounded by this capacity.
+    inline constexpr Veng::usize NodeNameCapacity = 64;
+
+    /// @brief A fixed-capacity inline name buffer usable as a `FieldClass::String` node property.
+    ///
+    /// Trivially copyable so it lives in a node's opaque property POD; the emit walk reads
+    /// the authored field name from it (an authorable name for a generated MaterialParams
+    /// field). An all-zero buffer is the empty name.
+    struct NodeName
+    {
+        /// @brief NUL-terminated, NUL-padded characters; empty when the first byte is NUL.
+        char Chars[NodeNameCapacity] = {};
+    };
+
     /// @brief Descriptor for one pin on a node type.
     ///
     /// The name is the stable identity links serialize against (by name, not index)

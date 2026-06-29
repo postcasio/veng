@@ -177,6 +177,18 @@ namespace VengGraph
                 }
                 return id;
             }
+            case Veng::FieldClass::String:
+            {
+                // A node-property string is a fixed NodeNameCapacity char buffer (a
+                // null-terminated, NUL-padded name); the empty string serializes as null.
+                const char* chars = reinterpret_cast<const char*>(fieldPtr);
+                const Veng::usize length = ::strnlen(chars, NodeNameCapacity);
+                if (length == 0)
+                {
+                    return nullptr;
+                }
+                return Veng::string(chars, length);
+            }
             default:
                 VE_ASSERT(false, "node property '{}': FieldClass not permitted on a node",
                           field.Name);
@@ -230,6 +242,20 @@ namespace VengGraph
                 std::memcpy(fieldPtr, &id, sizeof(id));
                 break;
             }
+            case Veng::FieldClass::String:
+            {
+                // Copy into the fixed NodeNameCapacity buffer, truncating and always
+                // leaving the trailing byte NUL; a non-string value leaves the zero buffer.
+                if (value.is_string())
+                {
+                    const Veng::string text = value.get<Veng::string>();
+                    const Veng::usize count =
+                        std::min<Veng::usize>(text.size(), NodeNameCapacity - 1);
+                    std::memcpy(fieldPtr, text.data(), count);
+                    fieldPtr[count] = std::byte{0};
+                }
+                break;
+            }
             default:
                 break;
             }
@@ -251,6 +277,8 @@ namespace VengGraph
                 return sizeof(Veng::i32);
             case Veng::FieldClass::AssetHandle:
                 return sizeof(Veng::u64);
+            case Veng::FieldClass::String:
+                return NodeNameCapacity;
             default:
                 return 0;
             }

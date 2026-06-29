@@ -1279,6 +1279,15 @@ The cook resolution and CMake host-default selection are in
 The engine ships **two** sample game modules, co-migrated on every breaking change (the
 **Working norms** rule in the [root CLAUDE.md](../CLAUDE.md)):
 
+Both samples' fragment shaders are **graph-sourced**: hello-triangle's `brick` and the
+template's `flat` fragment each name a `*.frag.graph.json` node graph as their `*.shader.json`
+source (the authored graph, no hand-authored `.slang`), cooked into SPIR-V by the shared
+`veng::graph` emit walk. The core engine shaders (`tonemap`, `surface.vert`, the lighting and
+post passes) stay hand-authored `.slang`: the embedded core pack is cooked by the veng-free
+`veng_cook_bootstrap` that breaks the `veng → core-pack cook → cooker → veng` cycle, and that
+bootstrap cannot link the `veng::graph` walk (which links `veng::veng`), so a core shader cannot
+be graph-sourced without a separate cycle-breaking refactor.
+
 - **`examples/hello-triangle`** — the **maximal** sample: every renderer battery, the full
   debug UI, a cooked prefab/level world, and a macOS / Windows / Linux build-configuration set.
 - **`examples/template`** — the **minimal** one a new developer copies. The smallest correct

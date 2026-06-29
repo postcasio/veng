@@ -23,13 +23,22 @@ namespace VengGraph
             MaterialLeafType LeafType = MaterialLeafType::Vec4;
         };
 
-        // ScalarParam property POD: a single authored default plus the provenance selecting
-        // how the value reaches the shader (const-fold / exposed / engine-bound).
+        // ScalarParam property POD: a single authored default, the provenance selecting how
+        // the value reaches the shader (const-fold / exposed / engine-bound), and an optional
+        // authored Name the generated field takes (empty → the node key).
         struct ScalarParamProps
         {
             Veng::f32 Value = 0.0f;
             ParamProvenance Provenance = ParamProvenance::Const;
+            NodeName Name;
         };
+
+        // The authored field name in a NodeName buffer, or an empty string when unset.
+        Veng::string NameOf(const NodeName& name)
+        {
+            const Veng::usize length = ::strnlen(name.Chars, NodeNameCapacity);
+            return Veng::string(name.Chars, length);
+        }
 
         PinType ValuePin(Veng::TypeId id)
         {
@@ -215,6 +224,15 @@ namespace VengGraph
                     .Class = Veng::FieldClass::Enum,
                     .Offset = offsetof(ScalarParamProps, Provenance),
                 },
+                Veng::FieldDescriptor{
+                    .Name = NodeNameProperty,
+                    .Type = TypeIdOf<Veng::string>(),
+                    .Class = Veng::FieldClass::String,
+                    .Offset = offsetof(ScalarParamProps, Name),
+                    // The fixed inline name buffer is authored in the graph JSON, not the
+                    // inspector — the String widget reinterprets the field as a Veng::string.
+                    .Hidden = true,
+                },
             };
             type.PropertySize = sizeof(ScalarParamProps);
             const NodeTypeId id = catalog.Register(std::move(type));
@@ -235,7 +253,8 @@ namespace VengGraph
                                          .IsConst = true}};
                 }
 
-                const Veng::string field = ctx.NodeKey;
+                const Veng::string authored = NameOf(p.Name);
+                const Veng::string field = authored.empty() ? ctx.NodeKey : authored;
                 EmittedParamField emitted{.Name = field,
                                           .SlangType = "float",
                                           .Kind = EmittedFieldKind::Param,
@@ -271,6 +290,29 @@ namespace VengGraph
             catalog, emit, DivideTypeName,
             {PinDesc{.Name = "A", .Type = vec4Pin}, PinDesc{.Name = "B", .Type = vec4Pin}},
             {PinDesc{.Name = "Out", .Type = vec4Pin}}, BinaryOperator("/", vec4Pin));
+
+        // --- Component-wise min/max: the everyday clamps that ride a vec4 form, scalars
+        // splatting by coercion. ---
+        RegisterEmitter(
+            catalog, emit, MinTypeName,
+            {PinDesc{.Name = "A", .Type = vec4Pin}, PinDesc{.Name = "B", .Type = vec4Pin}},
+            {PinDesc{.Name = "Out", .Type = vec4Pin}}, BinaryIntrinsic("min", vec4Pin));
+        RegisterEmitter(
+            catalog, emit, MaxTypeName,
+            {PinDesc{.Name = "A", .Type = vec4Pin}, PinDesc{.Name = "B", .Type = vec4Pin}},
+            {PinDesc{.Name = "Out", .Type = vec4Pin}}, BinaryIntrinsic("max", vec4Pin));
+
+        // --- ScreenUV: the fullscreen fragment's interpolated UV (a vec2 source); the
+        // PostProcess input the UV-space effects sample by. ---
+        RegisterEmitter(catalog, emit, ScreenUVTypeName, {},
+                        {PinDesc{.Name = "UV", .Type = ValuePin(TypeIdOf<Veng::vec2>())}},
+                        [](std::span<const EmittedValue>, std::span<const std::byte>,
+                           EmitContext&) -> Veng::vector<EmittedValue>
+                        {
+                            return {EmittedValue{.Expr = "input.v_UV",
+                                                 .Type = ValuePin(TypeIdOf<Veng::vec2>()),
+                                                 .IsConst = false}};
+                        });
 
         // --- Interpolation / clamping: the everyday shaping operators ---
         RegisterEmitter(

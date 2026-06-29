@@ -349,7 +349,8 @@ TEST_CASE("NodeGraphSerialize: a ScalarParam's default + provenance round-trip t
 
     const NodeType* scalar = catalog.Find(ScalarParamTypeName);
     REQUIRE(scalar != nullptr);
-    REQUIRE(scalar->Properties.size() == 2);
+    // Value, Provenance, and the optional authored field Name.
+    REQUIRE(scalar->Properties.size() == 3);
 
     NodeGraph graph(
         MaterialCanConnect, [&catalog](NodeTypeId id) { return catalog.ShapeOf(id); },

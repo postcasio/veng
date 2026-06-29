@@ -8,6 +8,7 @@
 #include <fmt/format.h>
 
 #include <cstddef>
+#include <cstring>
 
 namespace VengGraph
 {
@@ -16,19 +17,32 @@ namespace VengGraph
         using Veng::TypeIdOf;
 
         // Param property POD: a vec4 value covering f32/vec2/vec3/vec4 arities (the
-        // emit-fn reads the pin type to pick the emitted arity) plus the provenance
-        // selecting how the value reaches the shader (const-fold / exposed / engine-bound).
+        // emit-fn reads the pin type to pick the emitted arity), the provenance selecting
+        // how the value reaches the shader (const-fold / exposed / engine-bound), and an
+        // optional authored Name the generated MaterialParams field takes (empty → the
+        // node key). An engine-bound param the engine writes by name needs the exact name.
         struct ParamProps
         {
             Veng::vec4 Value{0.0f, 0.0f, 0.0f, 0.0f};
             ParamProvenance Provenance = ParamProvenance::Const;
+            NodeName Name;
         };
 
-        // TextureSample property POD: the sampled texture handle.
+        // TextureSample property POD: the sampled texture handle plus an optional authored
+        // Name the generated handle field takes (empty → the node key). An engine-bound
+        // texture (id 0) the engine writes by name needs the exact name (e.g. "Hdr").
         struct TextureSampleProps
         {
             Veng::AssetHandle<Veng::Texture> Texture;
+            NodeName Name;
         };
+
+        // The authored field name in a NodeName buffer, or an empty string when unset.
+        Veng::string NameOf(const NodeName& name)
+        {
+            const Veng::usize length = ::strnlen(name.Chars, NodeNameCapacity);
+            return Veng::string(name.Chars, length);
+        }
 
         PinType ValuePin(Veng::TypeId id)
         {
@@ -147,6 +161,16 @@ namespace VengGraph
                     .Class = Veng::FieldClass::AssetHandle,
                     .Offset = offsetof(TextureSampleProps, Texture),
                 },
+                Veng::FieldDescriptor{
+                    .Name = NodeNameProperty,
+                    .Type = TypeIdOf<Veng::string>(),
+                    .Class = Veng::FieldClass::String,
+                    .Offset = offsetof(TextureSampleProps, Name),
+                    // A node-property string is a fixed inline char buffer, not a Veng::string
+                    // object; the inspector's String widget reinterprets the field as a real
+                    // string, so the name is authored in the graph JSON and hidden from the UI.
+                    .Hidden = true,
+                },
             };
             type.PropertySize = sizeof(TextureSampleProps);
             types.TextureSample = catalog.Register(std::move(type));
@@ -171,6 +195,15 @@ namespace VengGraph
                     .Type = TypeIdOf<ParamProvenance>(),
                     .Class = Veng::FieldClass::Enum,
                     .Offset = offsetof(ParamProps, Provenance),
+                },
+                Veng::FieldDescriptor{
+                    .Name = NodeNameProperty,
+                    .Type = TypeIdOf<Veng::string>(),
+                    .Class = Veng::FieldClass::String,
+                    .Offset = offsetof(ParamProps, Name),
+                    // The fixed inline name buffer is authored in the graph JSON, not the
+                    // inspector — the String widget reinterprets the field as a Veng::string.
+                    .Hidden = true,
                 },
             };
             type.PropertySize = sizeof(ParamProps);
@@ -208,16 +241,30 @@ namespace VengGraph
             [vec4Type](std::span<const EmittedValue> inputs, std::span<const std::byte> props,
                        EmitContext& ctx) -> Veng::vector<EmittedValue>
         {
-            const Veng::string textureField = fmt::format("{}_Texture", ctx.NodeKey);
-            const Veng::string samplerField = fmt::format("{}_Sampler", ctx.NodeKey);
-
-            // The leading u64 of the AssetHandle<Texture> property is the texture id;
-            // 0 (none) is a runtime/engine-bound handle the cook resolves no asset for.
+            // TextureSampleProps holds an AssetHandle (non-trivial), so read the two fields
+            // out of the raw bytes by offset rather than memcpy'ing the whole struct.
             Veng::u64 textureId = 0;
-            if (props.size() >= sizeof(Veng::u64))
+            if (props.size() >= offsetof(TextureSampleProps, Texture) + sizeof(Veng::u64))
             {
-                std::memcpy(&textureId, props.data(), sizeof(textureId));
+                std::memcpy(&textureId, props.data() + offsetof(TextureSampleProps, Texture),
+                            sizeof(textureId));
             }
+            NodeName nameBuffer;
+            if (props.size() >= offsetof(TextureSampleProps, Name) + sizeof(NodeName))
+            {
+                std::memcpy(&nameBuffer, props.data() + offsetof(TextureSampleProps, Name),
+                            sizeof(nameBuffer));
+            }
+
+            // An authored name lets an engine-bound texture take the exact field name the
+            // engine writes by (e.g. "Hdr" → "HdrSampler"); an unnamed node keys off the
+            // walk's node key so two textures never collide.
+            const Veng::string authored = NameOf(nameBuffer);
+            const Veng::string textureField =
+                authored.empty() ? fmt::format("{}_Texture", ctx.NodeKey) : authored;
+            const Veng::string samplerField = authored.empty()
+                                                  ? fmt::format("{}_Sampler", ctx.NodeKey)
+                                                  : fmt::format("{}Sampler", authored);
 
             ctx.ParamFields.push_back(EmittedParamField{.Name = textureField,
                                                         .SlangType = "uint",
@@ -263,7 +310,10 @@ namespace VengGraph
                 return {EmittedValue{.Expr = literal, .Type = ValuePin(vec4Type), .IsConst = true}};
             }
 
-            const Veng::string field = ctx.NodeKey;
+            // An exposed/engine-bound param takes its authored name (so the engine can write
+            // it by name), falling back to the walk's node key when unnamed.
+            const Veng::string authored = NameOf(p.Name);
+            const Veng::string field = authored.empty() ? ctx.NodeKey : authored;
             EmittedParamField emitted{.Name = field,
                                       .SlangType = "float4",
                                       .Kind = EmittedFieldKind::Param,

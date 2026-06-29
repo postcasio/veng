@@ -1,4 +1,5 @@
 {
-  "source": "brick.frag.slang",
+  "source": "brick.frag.graph.json",
+  "domain": "surface",
   "entry": "fsMain"
 }

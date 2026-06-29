@@ -1,4 +1,5 @@
 {
-  "source": "flat.frag.slang",
+  "source": "flat.frag.graph.json",
+  "domain": "surface",
   "entry": "fsMain"
 }

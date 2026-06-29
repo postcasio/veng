@@ -2,9 +2,6 @@
   "domain": "surface",
   "shaders": { "vertex": 7619531439638779021, "fragment": 11347999176829791418 },
   "fields": [
-    { "name": "BaseColorFactor", "type": "vec4",  "value": [0.6, 0.7, 0.9, 1.0] },
-    { "name": "EmissiveFactor",  "type": "vec4",  "value": [0.0, 0.0, 0.0, 0.0] },
-    { "name": "MetallicFactor",  "type": "float", "value": 0.0 },
-    { "name": "RoughnessFactor", "type": "float", "value": 0.6 }
+    { "name": "BaseColorFactor", "type": "vec4", "value": [0.6, 0.7, 0.9, 1.0] }
   ]
 }

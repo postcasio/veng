@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <span>
 #include <sstream>
 #include <string_view>
+#include <system_error>
 
 #include <fmt/format.h>
 
@@ -280,10 +282,19 @@ namespace Veng::Cook
             // Slang reports every file the module pulled in — the .slang source
             // plus each file it imports/includes (e.g. material.slang). Recording
             // them re-cooks the shader when any included source changes, which a
-            // manifest naming only the entry .slang cannot capture.
+            // manifest naming only the entry .slang cannot capture. A graph-generated
+            // module is loaded from a string under a synthetic virtual path that has no
+            // file on disk; recording it would name a missing dependency and re-cook every
+            // build, so only existing files are recorded (the authored .graph.json is
+            // recorded separately by the caller).
             for (SlangInt32 i = 0; i < module->getDependencyFileCount(); ++i)
             {
-                context.RecordDependency(path(module->getDependencyFilePath(i)));
+                const path dependency(module->getDependencyFilePath(i));
+                std::error_code ec;
+                if (std::filesystem::exists(dependency, ec))
+                {
+                    context.RecordDependency(dependency);
+                }
             }
 
             ComPtr<slang::IEntryPoint> entryPoint;

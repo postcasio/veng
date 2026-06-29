@@ -95,6 +95,12 @@ namespace VengGraph
     inline constexpr const char* ParamValueProperty = "Value";
     /// @brief Provenance property name on a Param node.
     inline constexpr const char* ParamProvenanceProperty = "Provenance";
+    /// @brief Authored field-name property name on a Param, ScalarParam, or TextureSample node.
+    ///
+    /// When non-empty, the generated MaterialParams field takes this exact name (so an
+    /// engine-bound field the engine writes by name resolves); empty falls back to the
+    /// walk's node key.
+    inline constexpr const char* NodeNameProperty = "Name";
 
     /// @brief Stable serialized name of the Constant node type.
     inline constexpr const char* ConstantTypeName = "Constant";
@@ -124,6 +130,12 @@ namespace VengGraph
     inline constexpr const char* NormalizeTypeName = "Normalize";
     /// @brief Stable serialized name of the Length node type.
     inline constexpr const char* LengthTypeName = "Length";
+    /// @brief Stable serialized name of the Min node type.
+    inline constexpr const char* MinTypeName = "Min";
+    /// @brief Stable serialized name of the Max node type.
+    inline constexpr const char* MaxTypeName = "Max";
+    /// @brief Stable serialized name of the ScreenUV node type.
+    inline constexpr const char* ScreenUVTypeName = "ScreenUV";
     /// @brief Stable serialized name of the Split node type.
     inline constexpr const char* SplitTypeName = "Split";
     /// @brief Stable serialized name of the Combine node type.
