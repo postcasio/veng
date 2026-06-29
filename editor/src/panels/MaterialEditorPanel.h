@@ -93,8 +93,25 @@ namespace VengEditor
 
         /// @brief Writes the temp .vmat and drives the cook driver.
         ///
-        /// A compile or I/O error is recorded in m_CookError and logged.
+        /// For a graph-sourced fragment shader, first persists the graph to its .graph.json
+        /// and cooks the shader, then cooks the material referencing it; both mounts are held.
+        /// A non-graph material cooks the material alone. A compile or I/O error is recorded
+        /// in m_CookError and logged.
         void TriggerCook();
+
+        /// @brief Cooks the material from the temp .vmat and mounts the result.
+        ///
+        /// The second half of a graph-sourced cook (after the shader mounts) and the whole of
+        /// a non-graph cook. Re-fetches the material handle behind the new mount.
+        void CookMaterial();
+
+        /// @brief Resolves whether the fragment shader's source is a node graph.
+        ///
+        /// Reads the fragment shader's *.shader.json (via the source index) and, when its
+        /// source is a *.graph.json, records the shader-json and graph paths so the cook
+        /// routes through the graph-sourced shader importer. A *.slang source leaves
+        /// m_GraphSourced false and the panel cooks the material alone.
+        void ResolveShaderSource();
 
         /// @brief Assembles the patched .vmat JSON from the current graph.
         ///
@@ -147,8 +164,23 @@ namespace VengEditor
         /// Save is disabled and the graph is never regenerated.
         bool m_ReadOnly = false;
 
+        /// @brief True when the fragment shader's source is a node graph (the codegen path).
+        ///
+        /// When set, the panel edits the shader's own graph (loaded from / saved to
+        /// m_GraphPath) and the cook routes shader → material; when clear, it edits the
+        /// .vmat's embedded "_editor" graph block and cooks the material alone.
+        bool m_GraphSourced = false;
+        /// @brief Absolute path to the fragment shader's *.shader.json; set when graph-sourced.
+        Veng::path m_ShaderJsonPath;
+        /// @brief Absolute path to the fragment shader's *.graph.json; set when graph-sourced.
+        Veng::path m_GraphPath;
+        /// @brief Fragment shader entry point name, read from its *.shader.json.
+        Veng::string m_FragmentEntry;
+
         Veng::AssetHandle<Veng::Material> m_Handle;
         Veng::MountHandle m_Mount;
+        /// @brief Held shader mount for a graph-sourced cook; empty otherwise.
+        Veng::MountHandle m_ShaderMount;
         bool m_Cooking = false;
         bool m_CookPending = false;
         Veng::f32 m_DebounceRemaining = 0.0f;

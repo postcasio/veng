@@ -15,6 +15,7 @@
 #include <Veng/Asset/Material.h>
 
 #include <cstring>
+#include <span>
 #include <string_view>
 
 using namespace VengGraph;
@@ -222,7 +223,9 @@ TEST_CASE("CompileMaterialGraph: a bare PostProcess output passes the screen sam
     const Veng::string& src = r->Source;
 
     CHECK(Contains(src, "float4 fsMain(PostProcessFragmentInput input) : SV_Target0"));
-    CHECK(Contains(src, "g_PC.MaterialIndex"));
+    // The PostProcess selector arrives at push offset 0, which the engine header's g_PC
+    // reads as FrameBase.
+    CHECK(Contains(src, "g_PC.FrameBase"));
 }
 
 TEST_CASE("CompileMaterialGraph: a connected Param feeds the Albedo sink")
@@ -236,6 +239,15 @@ TEST_CASE("CompileMaterialGraph: a connected Param feeds the Albedo sink")
     const NodeId output = graph.AddNode(types.MaterialOutput);
     const NodeId param = graph.AddNode(types.Param);
 
+    // Give the (default-Const) Param a distinctive value so its inlined literal is
+    // unmistakable in the Albedo write.
+    const NodeType* paramType = catalog.Find(types.Param);
+    REQUIRE(paramType != nullptr);
+    const Veng::vec4 color{0.25f, 0.5f, 0.75f, 1.0f};
+    graph.SetProperty(
+        param, paramType->Properties[0],
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(&color), sizeof(color)));
+
     // Param (vec4) → Albedo (vec4): exact type, no coercion.
     const Veng::VoidResult c =
         graph.Connect(PinRef{.Node = param, .Pin = 0}, PinRef{.Node = output, .Pin = 0});
@@ -246,8 +258,9 @@ TEST_CASE("CompileMaterialGraph: a connected Param feeds the Albedo sink")
     REQUIRE(r.has_value());
     const Veng::string& src = r->Source;
 
-    // The single-use Param value inlines into the Albedo write (no temp).
-    CHECK(Contains(src, "o.Albedo = p."));
+    // A const Param folds its value inline into the single-use Albedo write (no temp,
+    // no MaterialParams field).
+    CHECK(Contains(src, "o.Albedo = float4(0.25"));
     CHECK_FALSE(Contains(src, "o.Albedo = float4(0,0,0,1)"));
 }
 

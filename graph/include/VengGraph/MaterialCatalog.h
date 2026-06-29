@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Reflection/Reflect.h>
 
 #include <VengGraph/NodeGraph.h>
 #include <VengGraph/NodeType.h>
@@ -11,6 +12,21 @@
 
 namespace VengGraph
 {
+    /// @brief How a Param node's value reaches the generated shader.
+    ///
+    /// One Param node with a provenance flag, not three node types. The provenance
+    /// decides whether the value folds inline, becomes an author-tweakable uniform, or
+    /// becomes a uniform the engine writes by name at runtime.
+    enum class ParamProvenance : Veng::i32
+    {
+        /// @brief Folds the authored value inline as a Slang literal; contributes no field.
+        Const = 0,
+        /// @brief A generated MaterialParams field with the authored default; the instance override surface.
+        Exposed = 1,
+        /// @brief A generated MaterialParams field the engine writes by name at runtime; no authored default, not instance-overridable.
+        EngineBound = 2,
+    };
+
     /// @brief Catalog ids of the three material node types, resolved by stable name.
     struct MaterialNodeTypes
     {
@@ -54,6 +70,8 @@ namespace VengGraph
     inline constexpr const char* ParamValuePin = "Value";
     /// @brief Value property name on a Param node.
     inline constexpr const char* ParamValueProperty = "Value";
+    /// @brief Provenance property name on a Param node.
+    inline constexpr const char* ParamProvenanceProperty = "Provenance";
 
     /// @brief MaterialOutput sink pin name for the Surface domain albedo channel.
     inline constexpr const char* OutputAlbedoPin = "Albedo";
@@ -111,3 +129,9 @@ namespace VengGraph
     [[nodiscard]] Veng::string CoerceExpr(const Veng::string& expr, const PinType& from,
                                           const PinType& to);
 }
+
+VE_ENUM(::VengGraph::ParamProvenance, 0x9F3C71A4D8E2065BULL)
+VE_ENUMERATOR(Const)
+VE_ENUMERATOR(Exposed)
+VE_ENUMERATOR(EngineBound)
+VE_ENUM_END();

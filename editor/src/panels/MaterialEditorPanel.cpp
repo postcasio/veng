@@ -99,6 +99,7 @@ namespace VengEditor
             return;
         }
 
+        ResolveShaderSource();
         BuildGraph();
         TriggerCook();
     }
@@ -153,6 +154,48 @@ namespace VengEditor
         return true;
     }
 
+    void MaterialEditorPanel::ResolveShaderSource()
+    {
+        // A graph-sourced fragment shader names a *.graph.json in its *.shader.json; the panel
+        // then edits that graph (the shader's source of truth) and the cook generates Slang
+        // from it. A *.slang source leaves m_GraphSourced false.
+        const AssetSourceIndex::Entry* entry = m_Sources.Find(m_FragmentShader);
+        if (entry == nullptr)
+        {
+            return;
+        }
+
+        const std::ifstream file(entry->Source, std::ios::binary);
+        if (!file)
+        {
+            return;
+        }
+        std::ostringstream contents;
+        contents << file.rdbuf();
+        const Json doc = Json::parse(contents.str(), nullptr, false);
+        if (doc.is_discarded() || !doc.is_object() || !doc.contains("source") ||
+            !doc["source"].is_string())
+        {
+            return;
+        }
+
+        const string source = doc["source"].get<string>();
+        constexpr std::string_view GraphSuffix = ".graph.json";
+        if (source.size() < GraphSuffix.size() ||
+            source.compare(source.size() - GraphSuffix.size(), GraphSuffix.size(), GraphSuffix) !=
+                0)
+        {
+            return;
+        }
+
+        m_GraphSourced = true;
+        m_ShaderJsonPath = entry->Source;
+        m_GraphPath = entry->Source.parent_path() / source;
+        m_FragmentEntry = (doc.contains("entry") && doc["entry"].is_string())
+                              ? doc["entry"].get<string>()
+                              : string("fsMain");
+    }
+
     MaterialShaderInterface MaterialEditorPanel::Interface() const
     {
         return MaterialShaderInterface{
@@ -166,10 +209,28 @@ namespace VengEditor
     {
         m_Types = RegisterMaterialNodeTypes(m_Catalog, m_Emit, m_Domain);
 
-        // Read the "_editor" block if present; a newer version → read-only, no graph
-        // regeneration. Absent → a default graph (a bare MaterialOutput).
+        // The authored graph lives in the shader's own *.graph.json when the fragment shader
+        // is graph-sourced (the codegen path); otherwise it is embedded under "_editor" in the
+        // .vmat. Read whichever is the source of truth; a newer version → read-only, absent →
+        // a default graph (a bare MaterialOutput).
         Json editorBlock;
         bool haveBlock = false;
+        if (m_GraphSourced)
+        {
+            const std::ifstream file(m_GraphPath, std::ios::binary);
+            if (file)
+            {
+                std::ostringstream contents;
+                contents << file.rdbuf();
+                const Json doc = Json::parse(contents.str(), nullptr, false);
+                if (!doc.is_discarded() && doc.is_object())
+                {
+                    editorBlock = doc;
+                    haveBlock = true;
+                }
+            }
+        }
+        else
         {
             const std::ifstream file(m_SourcePath, std::ios::binary);
             if (file)
@@ -242,8 +303,24 @@ namespace VengEditor
 
     optional<string> MaterialEditorPanel::AssembleVmat() const
     {
-        // The cook stays on the on-disk field list; only the embedded "_editor" graph
-        // block is regenerated. Reading the source preserves "domain"/"shaders"/"fields"
+        // A graph-sourced material's field list is generated from the same walk that
+        // generates the shader: the texture nodes' AssetIds + the exposed params' defaults,
+        // so the .vmat's packed values agree with the shader's reflected offsets by
+        // construction. The graph itself lives in the shader's .graph.json, not the .vmat, so
+        // no "_editor" block is embedded.
+        if (m_GraphSourced)
+        {
+            const Result<GeneratedFragment> generated =
+                CompileMaterialGraph(*m_Graph, m_Catalog, m_Emit, m_Domain);
+            if (!generated)
+            {
+                return std::nullopt;
+            }
+            return WriteMaterialVmat(generated->Fields, Interface(), m_Domain);
+        }
+
+        // The non-graph material stays on its on-disk field list; only the embedded "_editor"
+        // graph block is regenerated. Reading the source preserves "domain"/"shaders"/"fields"
         // and every unknown key.
         Json doc = Json::object();
         {
@@ -309,6 +386,49 @@ namespace VengEditor
         m_Cooking = true;
         m_CookError.reset();
 
+        // A graph-sourced shader is cooked first (the generated SPIR-V the material binds),
+        // then the material; both mounts are held. The graph is the shader's source of truth,
+        // so the edit is persisted to its .graph.json and the material cook reflects the
+        // regenerated MaterialParams from it by id-resolution. A non-graph material cooks alone.
+        if (!m_GraphSourced)
+        {
+            CookMaterial();
+            return;
+        }
+
+        // Persist the edited graph to the shader's .graph.json, then cook the shader.
+        {
+            std::ofstream out(m_GraphPath, std::ios::binary | std::ios::trunc);
+            if (!out)
+            {
+                m_Cooking = false;
+                m_CookError = fmt::format("failed to write {}", m_GraphPath.string());
+                Log::Error("Material editor: {}", *m_CookError);
+                return;
+            }
+            out << WriteNodeGraph(*m_Graph, m_Catalog) << '\n';
+        }
+
+        m_Cook({.SourcePath = m_ShaderJsonPath,
+                .TargetId = m_FragmentShader,
+                .Type = AssetType::Shader},
+               [this](Result<MountHandle> mount)
+               {
+                   if (!mount)
+                   {
+                       m_Cooking = false;
+                       m_CookError = mount.error();
+                       Log::Error("Material editor: shader cook failed: {}", mount.error());
+                       return;
+                   }
+                   m_ShaderMount = std::move(*mount);
+                   CookMaterial();
+               });
+    }
+
+    void MaterialEditorPanel::CookMaterial()
+    {
+        m_Cooking = true;
         m_Cook({.SourcePath = m_TempPath, .TargetId = m_Id, .Type = AssetType::Material},
                [this](Result<MountHandle> mount)
                {
@@ -603,6 +723,16 @@ namespace VengEditor
             auto disabled = UI::Disabled(m_ReadOnly);
             if (UI::Button(Icons::Save))
             {
+                // A graph-sourced material's authored graph is the shader's .graph.json;
+                // persist it beside the regenerated .vmat field list.
+                if (m_GraphSourced)
+                {
+                    std::ofstream out(m_GraphPath, std::ios::binary | std::ios::trunc);
+                    if (out)
+                    {
+                        out << WriteNodeGraph(*m_Graph, m_Catalog) << '\n';
+                    }
+                }
                 WriteVmat(m_SourcePath);
             }
             UI::Tooltip("Save the material graph to its .vmat.json");

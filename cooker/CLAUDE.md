@@ -51,6 +51,21 @@ at cook time:
   (there is no precompiled-inline path) and **reflects the shader offline** into a
   serializable `ShaderInterface`; the engine then loads plain SPIR-V. (There is no
   `glslc` / `add_shaders` path — GLSL was removed project-wide.)
+- **A fragment shader's source can be a graph, not a `.slang` file.** A `*.shader.json` whose
+  `"source"` ends in `.graph.json` (plus a `"domain"`: `surface` | `postprocess`) is cooked by
+  walking the graph into Slang fragment text via the shared `veng::graph` emit walk, then
+  compiling and reflecting that text through the **same** `ShaderImporter` / `SlangReflect`
+  SPIR-V path a hand-authored `.slang` takes — Slang loads it from a source string, since the
+  generated text has no file on disk. The walk runs behind a resolver hook
+  (`ResolveGraphShaderSource` in `Importers/GraphShaderSource.{h,cpp}`, installed via
+  `SetGraphShaderResolver`) so the shader/material importers call it through a function pointer
+  rather than statically linking the walk; the bootstrap path with no resolver installed treats
+  every source as a plain `.slang`. The emit walk generates the per-shader `MaterialParams`
+  struct **and** the matching `.vmat` field list together, so the reflected offsets and the
+  material's packed values agree. The **generated Slang and SPIR-V are cook output, never
+  checked in** — the authored graph is the single source of truth (the cooker can dump the
+  generated `.slang` to the build dir for debugging), and the cooker runs the identical walk the
+  editor preview runs, so the two cannot diverge.
 - **The engine material header is imported, not vendored.** Every Slang session (the
   `ShaderImporter` compile and the `SlangReflect` struct/fragment-output reflections) builds
   its search paths through one helper (`BuildSlangSearchPaths`, in `Importers/SlangSession.{h,cpp}`):

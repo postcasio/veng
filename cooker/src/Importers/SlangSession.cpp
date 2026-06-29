@@ -26,4 +26,21 @@ namespace Veng::Cook
         desc.searchPaths = pointers.data();
         desc.searchPathCount = static_cast<SlangInt>(pointers.size());
     }
+
+    slang::IModule* LoadSlangModule(slang::ISession& session, const SlangModuleSource& source,
+                                    slang::IBlob** outDiagnostics)
+    {
+        if (source.GeneratedSource)
+        {
+            // The module name is fixed (the stem carries dots Slang would read as an import
+            // path); the virtual path keeps the graph file's directory so a relative
+            // `#include` resolves through the session search paths (which lead with it).
+            const std::string virtualPath =
+                (source.Path.parent_path() / "generated.slang").string();
+            return session.loadModuleFromSourceString(
+                "generated", virtualPath.c_str(), source.GeneratedSource->c_str(), outDiagnostics);
+        }
+        const std::string moduleName = source.Path.stem().string();
+        return session.loadModule(moduleName.c_str(), outDiagnostics);
+    }
 }

@@ -28,18 +28,48 @@ namespace VengGraph
         bool IsConst = false;
     };
 
-    /// @brief One provisional MaterialParams field an emit-fn contributes.
+    /// @brief Kind of a generated MaterialParams field, distinguishing the .vmat row it produces.
+    enum class EmittedFieldKind : Veng::u8
+    {
+        /// @brief A bindless sampled-image handle slot (`uint`); its .vmat row is a texture.
+        TextureHandle,
+        /// @brief A bindless sampler handle slot (`uint`); its .vmat row is a sampler.
+        SamplerHandle,
+        /// @brief An exposed or engine-bound scalar/vector param; its .vmat row is a float/vecN.
+        Param,
+    };
+
+    /// @brief One generated MaterialParams field an emit-fn contributes.
     ///
-    /// The generated parameter block is implied by the texture + param nodes: a
-    /// TextureSample contributes its texture and sampler handle slots, a Param its
-    /// value field. The emit walk collects these and emits a provisional struct so the
-    /// generated source is compilable; a later plan materializes the final struct.
+    /// The generated parameter block is exactly the texture + exposed/engine-bound param
+    /// nodes: a TextureSample contributes its texture and sampler handle slots, an exposed
+    /// or engine-bound Param its value field (a const Param folds its value inline and
+    /// contributes nothing). The emit walk collects these, orders them large-alignment-first
+    /// (so the cooker's std140 reflection and the shader's scalar-layout Load resolve identical
+    /// offsets), and emits the final struct + the matching .vmat field list from the one set.
     struct EmittedParamField
     {
         /// @brief The Slang member name (a node-unique identifier).
         Veng::string Name;
-        /// @brief The Slang member type ("uint", "float", "float4", …).
+        /// @brief The Slang member type ("uint", "float", "float2".."float4").
         Veng::string SlangType;
+        /// @brief Which .vmat row kind this field produces.
+        EmittedFieldKind Kind = EmittedFieldKind::Param;
+        /// @brief std140/scalar alignment of the member in bytes (16 vec3/vec4, 8 vec2, 4 scalar/uint).
+        ///
+        /// The walk orders fields by descending alignment so std140 reflection and scalar
+        /// Load\<MaterialParams\> resolve identical offsets.
+        Veng::u32 Alignment = 4;
+        /// @brief Component count: 1 scalar/uint, 2/3/4 for a vecN param.
+        Veng::u32 ComponentCount = 1;
+        /// @brief True for a uint handle slot; false for a float param.
+        bool IsUint = false;
+        /// @brief Authored default components (exposed param); empty for a handle or engine-bound field.
+        Veng::vector<Veng::f32> Default;
+        /// @brief Texture AssetId for a TextureHandle field; 0 for a runtime/engine-bound handle.
+        Veng::u64 TextureId = 0;
+        /// @brief For a SamplerHandle field, the name of the paired TextureHandle field.
+        Veng::string SamplerTexture;
     };
 
     /// @brief Mutable state threaded through the emit walk.
@@ -47,7 +77,7 @@ namespace VengGraph
     /// Owns the SSA-temp counter, the growing function body the walk appends each
     /// node's temp declarations to, the stable key of the node currently emitting
     /// (so an emit-fn names node-unique param fields deterministically), and the
-    /// collected provisional MaterialParams fields.
+    /// collected MaterialParams fields.
     struct EmitContext
     {
         /// @brief The generated function-body lines, one SSA temp declaration each.
@@ -56,7 +86,7 @@ namespace VengGraph
         Veng::u32 TempCounter = 0;
         /// @brief Stable identifier of the node currently emitting (set by the walk).
         Veng::string NodeKey;
-        /// @brief Provisional MaterialParams fields the emit-fns contributed.
+        /// @brief MaterialParams fields the emit-fns contributed, in walk order.
         Veng::vector<EmittedParamField> ParamFields;
     };
 

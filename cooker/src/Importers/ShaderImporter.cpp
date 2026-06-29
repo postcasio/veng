@@ -14,6 +14,7 @@
 
 #include <Veng/Asset/CookedBlobs.h>
 
+#include "GraphShaderSource.h"
 #include "SlangSession.h"
 #include "VertexLayoutSource.h"
 
@@ -229,14 +230,16 @@ namespace Veng::Cook
             return blob;
         }
 
-        // Compiles `entryName` from the .slang file at `sourcePath` to SPIR-V and
-        // reflects its interface via Slang's own reflection API. If vertex_layout is
-        // present (non-zero), reflects the vertex stage's inputs and validates them
-        // element-for-element against the referenced layout. If absent, any reflected
-        // vertex inputs are discarded (vertex-pulling / no-input semantics).
-        Result<vector<u8>> CookFromSource(const CookContext& context, const path& sourcePath,
+        // Compiles `entryName` from `moduleSource` (a .slang file or graph-generated text)
+        // to SPIR-V and reflects its interface via Slang's own reflection API. If
+        // vertex_layout is present (non-zero), reflects the vertex stage's inputs and
+        // validates them element-for-element against the referenced layout. If absent, any
+        // reflected vertex inputs are discarded (vertex-pulling / no-input semantics).
+        Result<vector<u8>> CookFromSource(const CookContext& context,
+                                          const SlangModuleSource& moduleSource,
                                           const string& entryName, u64 vertexLayoutAssetId)
         {
+            const path& sourcePath = moduleSource.Path;
             ComPtr<slang::IGlobalSession> globalSession;
             if (SLANG_FAILED(slang::createGlobalSession(globalSession.writeRef())))
             {
@@ -264,11 +267,9 @@ namespace Veng::Cook
                 return std::unexpected("shader importer: failed to create Slang session");
             }
 
-            const string moduleName = sourcePath.stem().string();
-
             ComPtr<slang::IBlob> diagnostics;
             slang::IModule* module =
-                session->loadModule(moduleName.c_str(), diagnostics.writeRef());
+                LoadSlangModule(*session, moduleSource, diagnostics.writeRef());
             if (!module)
             {
                 return std::unexpected(fmt::format("shader importer: '{}': failed to compile: {}",
@@ -587,9 +588,6 @@ namespace Veng::Cook
                                                shaderJsonPath.string()));
         }
 
-        // The .slang path is relative to the .shader.json's own directory.
-        const path slangPath = shaderJsonPath.parent_path() / shaderJson["source"].get<string>();
-
         u64 vertexLayoutAssetId = 0;
         if (shaderJson.contains("vertex_layout") &&
             shaderJson["vertex_layout"].is_number_unsigned())
@@ -597,7 +595,29 @@ namespace Veng::Cook
             vertexLayoutAssetId = shaderJson["vertex_layout"].get<u64>();
         }
 
-        return CookFromSource(context, slangPath, shaderJson["entry"].get<string>(),
-                              vertexLayoutAssetId);
+        // A graph-sourced shader names a *.graph.json: resolve it, run the shared emit
+        // walk into Slang text, and compile that text. The graph is the single checked-in
+        // artifact, so record it as a dependency directly (Slang reports only the files the
+        // generated module #includes, never the graph).
+        const Result<GraphShaderSource> graphSource =
+            ResolveGraphShaderSourceHook(shaderJson, shaderJsonPath.parent_path());
+        if (!graphSource)
+        {
+            return std::unexpected(graphSource.error());
+        }
+
+        if (graphSource->IsGraph)
+        {
+            context.RecordDependency(graphSource->GraphPath);
+            const SlangModuleSource moduleSource{.Path = graphSource->GraphPath,
+                                                 .GeneratedSource = graphSource->Source};
+            return CookFromSource(context, moduleSource, shaderJson["entry"].get<string>(),
+                                  vertexLayoutAssetId);
+        }
+
+        // The .slang path is relative to the .shader.json's own directory.
+        const path slangPath = shaderJsonPath.parent_path() / shaderJson["source"].get<string>();
+        return CookFromSource(context, SlangModuleSource{.Path = slangPath},
+                              shaderJson["entry"].get<string>(), vertexLayoutAssetId);
     }
 }

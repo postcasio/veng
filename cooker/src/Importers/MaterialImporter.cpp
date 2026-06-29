@@ -10,7 +10,9 @@
 
 #include <Veng/Asset/CookedBlobs.h>
 
+#include "GraphShaderSource.h"
 #include "SlangReflect.h"
+#include "SlangSession.h"
 
 namespace Veng::Cook
 {
@@ -207,9 +209,6 @@ namespace Veng::Cook
                 "material importer: '{}': missing or invalid 'source'", shaderJsonPath.string()));
         }
 
-        const path fragSlangPath =
-            shaderJsonPath.parent_path() / shaderJson["source"].get<string>();
-
         if (!shaderJson.contains("entry") || !shaderJson["entry"].is_string())
         {
             return std::unexpected(fmt::format(
@@ -217,13 +216,36 @@ namespace Veng::Cook
         }
         const string fragEntry = shaderJson["entry"].get<string>();
 
+        // The fragment shader's source is either a .slang file or a node graph. A graph
+        // source has no .slang on disk, so reflect the generated text — the same walk the
+        // ShaderImporter compiled, so the reflected MaterialParams matches the cooked
+        // shader's exactly.
+        const Result<GraphShaderSource> graphSource =
+            ResolveGraphShaderSourceHook(shaderJson, shaderJsonPath.parent_path());
+        if (!graphSource)
+        {
+            return std::unexpected(graphSource.error());
+        }
+
+        SlangModuleSource fragSource;
+        if (graphSource->IsGraph)
+        {
+            fragSource = SlangModuleSource{.Path = graphSource->GraphPath,
+                                           .GeneratedSource = graphSource->Source};
+        }
+        else
+        {
+            fragSource = SlangModuleSource{.Path = shaderJsonPath.parent_path() /
+                                                   shaderJson["source"].get<string>()};
+        }
+
         // --- 3b. Validate the fragment outputs against the domain's contract ---
 
         // Surface: float4 SV_Target0 (albedo) + SV_Target1 (normal) + SV_Target2 (ORM) +
         // float2 SV_Target3 (screen-space motion vector). PostProcess: single float4 SV_Target0.
         // Mismatch is a located cook error.
         const Result<vector<ReflectedFragmentOutput>> outputs =
-            ReflectFragmentOutputs(fragSlangPath, fragEntry, context.ShaderIncludeDir);
+            ReflectFragmentOutputs(fragSource, fragEntry, context.ShaderIncludeDir);
         if (!outputs)
         {
             return std::unexpected(outputs.error());
@@ -263,7 +285,7 @@ namespace Veng::Cook
         // MaterialParams is optional — a fieldless material declares no struct,
         // which reflects as an empty (Size 0) layout.
         const Result<ReflectedStruct> blockReflected = ReflectStructLayout(
-            fragSlangPath, "MaterialParams", context.ShaderIncludeDir, /*optional=*/true);
+            fragSource, "MaterialParams", context.ShaderIncludeDir, /*optional=*/true);
         if (!blockReflected)
         {
             return std::unexpected(blockReflected.error());

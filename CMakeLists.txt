@@ -809,6 +809,10 @@ if (VENG_BUILD_TESTS)
                 tests/gpu/shader_loader.cpp
                 tests/gpu/material_loader.cpp
                 tests/gpu/vertex_layout_loader.cpp
+                # The graph-sourced material layout guard: cooks a graph whose generated
+                # MaterialParams mixes a vec4 param with uint handle slots and renders it,
+                # pinning the large-alignment-first ordering (std140/scalar offset agreement).
+                tests/gpu/graph_material_layout.cpp
                 # The RTT-into-material proof: a producer viewport's output, sampled
                 # through a consumer viewport's material, in registration order.
                 # Cooks the brick g-buffer fixture, so it is gated with the rest.
@@ -893,6 +897,7 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
             tests/cooker/mesh_cook.cpp
             tests/cooker/shader_cook.cpp
             tests/cooker/material_cook.cpp
+            tests/cooker/graph_shader_cook.cpp
             tests/cooker/vertex_layout_cook.cpp
             tests/cooker/verify.cpp
             tests/cooker/module_reflect.cpp

@@ -211,6 +211,7 @@ add_library(veng_cook_objs OBJECT
         src/Importers/MaterialImporter.cpp
         src/Importers/SlangReflect.cpp
         src/Importers/SlangSession.cpp
+        src/Importers/GraphShaderHook.cpp
         src/Importers/VertexLayoutImporter.cpp
         src/Importers/VertexLayoutSource.cpp
         src/Importers/SkeletonImporter.cpp
@@ -303,7 +304,13 @@ add_library(libveng_cook STATIC
         src/BuiltinImporters.cpp
         src/ModuleTypes.cpp
         src/Importers/PrefabImporter.cpp
-        src/Importers/LevelImporter.cpp)
+        src/Importers/LevelImporter.cpp
+        # The graph-sourced shader resolver runs the veng::graph emit walk, so it lives
+        # here (links graph + veng) rather than in veng_cook_objs (kept veng-free for the
+        # core-pack bootstrap). RegisterBuiltinImporters installs it as the resolver hook
+        # the shader/material importers call; the bootstrap never installs it and cooks no
+        # graph sources.
+        src/Importers/GraphShaderSource.cpp)
 add_library(veng::cook ALIAS libveng_cook)
 target_link_libraries(libveng_cook PUBLIC veng_cook_objs veng::veng veng::assetpack veng::graph)
 target_link_libraries(libveng_cook PRIVATE

@@ -6,6 +6,7 @@
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <unordered_map>
 
 namespace VengGraph
@@ -238,10 +239,18 @@ namespace VengGraph
 
         Veng::string source = "#include \"Veng/material.slang\"\n\n";
 
-        // The provisional MaterialParams struct, implied by the texture + param nodes.
-        // A later plan materializes the final struct ordering + field names.
+        // The generated MaterialParams struct, exactly the texture + exposed/engine-bound
+        // param fields the walk collected. Order them large-alignment-first (descending
+        // alignment, stable within a rank) so the cooker's std140 reflection and the
+        // shader's scalar-layout Load<MaterialParams> resolve identical offsets — a scalar
+        // before a vec4 would land the vec at a different offset under each layout and read
+        // as 0.
+        Veng::vector<EmittedParamField> ordered = ctx.ParamFields;
+        std::ranges::stable_sort(ordered, [](const EmittedParamField& a, const EmittedParamField& b)
+                                 { return a.Alignment > b.Alignment; });
+
         source += "struct MaterialParams\n{\n";
-        for (const EmittedParamField& field : ctx.ParamFields)
+        for (const EmittedParamField& field : ordered)
         {
             source += fmt::format("    {} {};\n", field.SlangType, field.Name);
         }
@@ -261,6 +270,7 @@ namespace VengGraph
 
         if (domain == Veng::MaterialDomain::Surface)
         {
+            source += "[shader(\"fragment\")]\n";
             source += "GBufferOutput fsMain(SurfaceFragmentInput input)\n{\n";
             source += "    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);\n";
             source += ctx.Body;
@@ -275,14 +285,57 @@ namespace VengGraph
         }
         else
         {
+            source += "[shader(\"fragment\")]\n";
             source += "float4 fsMain(PostProcessFragmentInput input) : SV_Target0\n{\n";
-            source += "    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);\n";
+            // A PostProcess material pushes its frame-folded selector at push-constant
+            // offset 0 (Material::Bind, SelectorOffset 0). The engine header's g_PC reads
+            // offset 0 as FrameBase, so that field carries the selector here — a Surface
+            // shader instead reads its selector from the v_MaterialIndex interpolant.
+            source += "    MaterialParams p = LoadMaterialParams(g_PC.FrameBase);\n";
             source += ctx.Body;
             source += fmt::format("    return {};\n}}\n",
                                   sinkOr(0, "g_Textures[0].Sample(g_Samplers[0], input.v_UV)"));
         }
 
-        return GeneratedFragment{.Source = std::move(source), .Domain = domain};
+        // --- The matching .vmat field list, from the same ordered set ---
+        //
+        // A handle slot emits a texture/sampler row; an exposed param a float/vecN row
+        // carrying its authored default; an engine-bound param no row (the engine writes
+        // it by name). The order matches the struct so the row order reads naturally,
+        // though the cook matches each row to the reflected struct by name.
+        Veng::vector<CompiledField> generatedFields;
+        for (const EmittedParamField& field : ordered)
+        {
+            switch (field.Kind)
+            {
+            case EmittedFieldKind::TextureHandle:
+                generatedFields.push_back(CompiledField{
+                    .Name = field.Name, .Type = "texture", .TextureId = field.TextureId});
+                break;
+            case EmittedFieldKind::SamplerHandle:
+                generatedFields.push_back(CompiledField{
+                    .Name = field.Name, .Type = "sampler", .SamplerTexture = field.SamplerTexture});
+                break;
+            case EmittedFieldKind::Param:
+            {
+                // Engine-bound: a struct field with no authored value, not a field-list row.
+                if (field.Default.empty())
+                {
+                    break;
+                }
+                const char* type = field.ComponentCount == 1   ? "float"
+                                   : field.ComponentCount == 2 ? "vec2"
+                                   : field.ComponentCount == 3 ? "vec3"
+                                                               : "vec4";
+                generatedFields.push_back(
+                    CompiledField{.Name = field.Name, .Type = type, .Values = field.Default});
+                break;
+            }
+            }
+        }
+
+        return GeneratedFragment{
+            .Source = std::move(source), .Domain = domain, .Fields = std::move(generatedFields)};
     }
 
     Veng::string WriteMaterialVmat(const Veng::vector<CompiledField>& fields,

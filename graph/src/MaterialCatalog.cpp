@@ -15,11 +15,13 @@ namespace VengGraph
     {
         using Veng::TypeIdOf;
 
-        // Param property POD: one vec4 value covering f32/vec2/vec3/vec4 arities; the
-        // emit-fn reads the pin type to pick the emitted arity.
+        // Param property POD: a vec4 value covering f32/vec2/vec3/vec4 arities (the
+        // emit-fn reads the pin type to pick the emitted arity) plus the provenance
+        // selecting how the value reaches the shader (const-fold / exposed / engine-bound).
         struct ParamProps
         {
             Veng::vec4 Value{0.0f, 0.0f, 0.0f, 0.0f};
+            ParamProvenance Provenance = ParamProvenance::Const;
         };
 
         // TextureSample property POD: the sampled texture handle.
@@ -164,6 +166,12 @@ namespace VengGraph
                     .Class = Veng::FieldClass::Vector,
                     .Offset = offsetof(ParamProps, Value),
                 },
+                Veng::FieldDescriptor{
+                    .Name = ParamProvenanceProperty,
+                    .Type = TypeIdOf<ParamProvenance>(),
+                    .Class = Veng::FieldClass::Enum,
+                    .Offset = offsetof(ParamProps, Provenance),
+                },
             };
             type.PropertySize = sizeof(ParamProps);
             types.Param = catalog.Register(std::move(type));
@@ -186,22 +194,45 @@ namespace VengGraph
 
         // --- Emit-fns. MaterialOutput produces no value of its own (the walk
         // special-cases it into the entry point), so only the value-producing types
-        // carry one. Each names node-unique provisional MaterialParams fields from the
-        // walk's NodeKey and contributes them to ctx.ParamFields so the generated
-        // source is compilable; Plan 02 materializes the final struct + field names. ---
+        // carry one. Each names node-unique MaterialParams fields from the walk's
+        // NodeKey and contributes them (with provenance) to ctx.ParamFields, from which
+        // the walk emits the final struct + matching .vmat field list. ---
 
         const Veng::TypeId vec4Type = TypeIdOf<Veng::vec4>();
 
         // A TextureSample samples the bindless texture and sampler named by its two
         // handle slots, with the UV input defaulting to the surface UV when unconnected.
+        // Its texture handle slot carries the node's authored texture AssetId; the
+        // paired sampler slot references it by name.
         emit.Emitters[types.TextureSample.Value] = [vec4Type](std::span<const EmittedValue> inputs,
-                                                              std::span<const std::byte>,
+                                                              std::span<const std::byte> props,
                                                               EmitContext& ctx) -> EmittedValue
         {
             const Veng::string textureField = fmt::format("{}_Texture", ctx.NodeKey);
             const Veng::string samplerField = fmt::format("{}_Sampler", ctx.NodeKey);
-            ctx.ParamFields.push_back(EmittedParamField{.Name = textureField, .SlangType = "uint"});
-            ctx.ParamFields.push_back(EmittedParamField{.Name = samplerField, .SlangType = "uint"});
+
+            // The leading u64 of the AssetHandle<Texture> property is the texture id;
+            // 0 (none) is a runtime/engine-bound handle the cook resolves no asset for.
+            Veng::u64 textureId = 0;
+            if (props.size() >= sizeof(Veng::u64))
+            {
+                std::memcpy(&textureId, props.data(), sizeof(textureId));
+            }
+
+            ctx.ParamFields.push_back(EmittedParamField{.Name = textureField,
+                                                        .SlangType = "uint",
+                                                        .Kind = EmittedFieldKind::TextureHandle,
+                                                        .Alignment = 4,
+                                                        .ComponentCount = 1,
+                                                        .IsUint = true,
+                                                        .TextureId = textureId});
+            ctx.ParamFields.push_back(EmittedParamField{.Name = samplerField,
+                                                        .SlangType = "uint",
+                                                        .Kind = EmittedFieldKind::SamplerHandle,
+                                                        .Alignment = 4,
+                                                        .ComponentCount = 1,
+                                                        .IsUint = true,
+                                                        .SamplerTexture = textureField});
 
             const Veng::string uv = inputs.empty() ? Veng::string("input.v_UV") : inputs[0].Expr;
             const Veng::string expr =
@@ -211,14 +242,39 @@ namespace VengGraph
             return EmittedValue{.Expr = expr, .Type = ValuePin(vec4Type), .IsConst = false};
         };
 
-        // A Param emits a uniform read of its param-block field; the
-        // const/exposed/engine-bound provenance arrives in Plan 02.
+        // A Param's provenance decides how its value reaches the shader: a const Param
+        // folds its authored value inline (no field); an exposed Param emits a p.<Name>
+        // read backed by a generated field carrying the authored default; an engine-bound
+        // Param emits the same read but contributes no default (the engine writes it).
         emit.Emitters[types.Param.Value] = [vec4Type](std::span<const EmittedValue>,
-                                                      std::span<const std::byte>,
+                                                      std::span<const std::byte> props,
                                                       EmitContext& ctx) -> EmittedValue
         {
+            ParamProps p;
+            if (props.size() >= sizeof(ParamProps))
+            {
+                std::memcpy(&p, props.data(), sizeof(p));
+            }
+
+            if (p.Provenance == ParamProvenance::Const)
+            {
+                const Veng::string literal = fmt::format("float4({}, {}, {}, {})", p.Value.x,
+                                                         p.Value.y, p.Value.z, p.Value.w);
+                return EmittedValue{.Expr = literal, .Type = ValuePin(vec4Type), .IsConst = true};
+            }
+
             const Veng::string field = ctx.NodeKey;
-            ctx.ParamFields.push_back(EmittedParamField{.Name = field, .SlangType = "float4"});
+            EmittedParamField emitted{.Name = field,
+                                      .SlangType = "float4",
+                                      .Kind = EmittedFieldKind::Param,
+                                      .Alignment = 16,
+                                      .ComponentCount = 4,
+                                      .IsUint = false};
+            if (p.Provenance == ParamProvenance::Exposed)
+            {
+                emitted.Default = {p.Value.x, p.Value.y, p.Value.z, p.Value.w};
+            }
+            ctx.ParamFields.push_back(std::move(emitted));
             return EmittedValue{
                 .Expr = fmt::format("p.{}", field), .Type = ValuePin(vec4Type), .IsConst = false};
         };

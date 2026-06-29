@@ -195,7 +195,7 @@ namespace Veng::Cook
         }
     }
 
-    Result<ReflectedStruct> ReflectStructLayout(const path& slangSource,
+    Result<ReflectedStruct> ReflectStructLayout(const SlangModuleSource& slangSource,
                                                 std::string_view structName,
                                                 const path& shaderIncludeDir, bool optional)
     {
@@ -213,7 +213,7 @@ namespace Veng::Cook
         sessionDesc.targets = &targetDesc;
         sessionDesc.targetCount = 1;
         const std::vector<std::string> searchPaths =
-            BuildSlangSearchPaths(slangSource.parent_path(), shaderIncludeDir);
+            BuildSlangSearchPaths(slangSource.Path.parent_path(), shaderIncludeDir);
         std::vector<const char*> searchPathPtrs;
         ApplySlangSearchPaths(sessionDesc, searchPaths, searchPathPtrs);
         // Match the compile session so reflected matrix-member offsets agree with
@@ -226,14 +226,13 @@ namespace Veng::Cook
             return std::unexpected("material importer: failed to create Slang session");
         }
 
-        const string moduleName = slangSource.stem().string();
-
         ComPtr<slang::IBlob> diagnostics;
-        slang::IModule* module = session->loadModule(moduleName.c_str(), diagnostics.writeRef());
+        slang::IModule* module = LoadSlangModule(*session, slangSource, diagnostics.writeRef());
         if (!module)
         {
             return std::unexpected(fmt::format("material importer: '{}': failed to compile: {}",
-                                               slangSource.string(), DiagnosticsText(diagnostics)));
+                                               slangSource.Path.string(),
+                                               DiagnosticsText(diagnostics)));
         }
 
         slang::IComponentType* const components[] = {module};
@@ -243,7 +242,8 @@ namespace Veng::Cook
                                                                diagnostics.writeRef())))
         {
             return std::unexpected(fmt::format("material importer: '{}': failed to compose: {}",
-                                               slangSource.string(), DiagnosticsText(diagnostics)));
+                                               slangSource.Path.string(),
+                                               DiagnosticsText(diagnostics)));
         }
 
         ComPtr<slang::IComponentType> linkedProgram;
@@ -251,14 +251,15 @@ namespace Veng::Cook
         if (SLANG_FAILED(program->link(linkedProgram.writeRef(), diagnostics.writeRef())))
         {
             return std::unexpected(fmt::format("material importer: '{}': failed to link: {}",
-                                               slangSource.string(), DiagnosticsText(diagnostics)));
+                                               slangSource.Path.string(),
+                                               DiagnosticsText(diagnostics)));
         }
 
         slang::ProgramLayout* layout = linkedProgram->getLayout();
         if (!layout)
         {
-            return std::unexpected(
-                fmt::format("material importer: '{}': no reflection layout", slangSource.string()));
+            return std::unexpected(fmt::format("material importer: '{}': no reflection layout",
+                                               slangSource.Path.string()));
         }
 
         const string structNameStr(structName);
@@ -271,14 +272,14 @@ namespace Veng::Cook
             }
             return std::unexpected(fmt::format("material importer: '{}': struct '{}' not found (is "
                                                "it declared and used in the shader?)",
-                                               slangSource.string(), structName));
+                                               slangSource.Path.string(), structName));
         }
 
         slang::TypeLayoutReflection* typeLayout = layout->getTypeLayout(type);
         if (!typeLayout || typeLayout->getKind() != slang::TypeReflection::Kind::Struct)
         {
             return std::unexpected(fmt::format("material importer: '{}': '{}' is not a struct",
-                                               slangSource.string(), structName));
+                                               slangSource.Path.string(), structName));
         }
 
         ReflectedStruct result;
@@ -298,9 +299,9 @@ namespace Veng::Cook
         return result;
     }
 
-    Result<vector<ReflectedFragmentOutput>> ReflectFragmentOutputs(const path& slangSource,
-                                                                   std::string_view entry,
-                                                                   const path& shaderIncludeDir)
+    Result<vector<ReflectedFragmentOutput>>
+    ReflectFragmentOutputs(const SlangModuleSource& slangSource, std::string_view entry,
+                           const path& shaderIncludeDir)
     {
         ComPtr<slang::IGlobalSession> globalSession;
         if (SLANG_FAILED(slang::createGlobalSession(globalSession.writeRef())))
@@ -316,7 +317,7 @@ namespace Veng::Cook
         sessionDesc.targets = &targetDesc;
         sessionDesc.targetCount = 1;
         const std::vector<std::string> searchPaths =
-            BuildSlangSearchPaths(slangSource.parent_path(), shaderIncludeDir);
+            BuildSlangSearchPaths(slangSource.Path.parent_path(), shaderIncludeDir);
         std::vector<const char*> searchPathPtrs;
         ApplySlangSearchPaths(sessionDesc, searchPaths, searchPathPtrs);
         sessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
@@ -327,15 +328,15 @@ namespace Veng::Cook
             return std::unexpected("material importer: failed to create Slang session");
         }
 
-        const string moduleName = slangSource.stem().string();
         const string entryStr(entry);
 
         ComPtr<slang::IBlob> diagnostics;
-        slang::IModule* module = session->loadModule(moduleName.c_str(), diagnostics.writeRef());
+        slang::IModule* module = LoadSlangModule(*session, slangSource, diagnostics.writeRef());
         if (!module)
         {
             return std::unexpected(fmt::format("material importer: '{}': failed to compile: {}",
-                                               slangSource.string(), DiagnosticsText(diagnostics)));
+                                               slangSource.Path.string(),
+                                               DiagnosticsText(diagnostics)));
         }
 
         // Composing with the entry point is what exposes its result var layout —
@@ -345,7 +346,7 @@ namespace Veng::Cook
         {
             return std::unexpected(
                 fmt::format("material importer: '{}': entry point '{}' not found",
-                            slangSource.string(), entry));
+                            slangSource.Path.string(), entry));
         }
 
         slang::IComponentType* const components[] = {module, entryPoint};
@@ -355,7 +356,8 @@ namespace Veng::Cook
                                                                diagnostics.writeRef())))
         {
             return std::unexpected(fmt::format("material importer: '{}': failed to compose: {}",
-                                               slangSource.string(), DiagnosticsText(diagnostics)));
+                                               slangSource.Path.string(),
+                                               DiagnosticsText(diagnostics)));
         }
 
         ComPtr<slang::IComponentType> linkedProgram;
@@ -363,7 +365,8 @@ namespace Veng::Cook
         if (SLANG_FAILED(program->link(linkedProgram.writeRef(), diagnostics.writeRef())))
         {
             return std::unexpected(fmt::format("material importer: '{}': failed to link: {}",
-                                               slangSource.string(), DiagnosticsText(diagnostics)));
+                                               slangSource.Path.string(),
+                                               DiagnosticsText(diagnostics)));
         }
 
         slang::ProgramLayout* layout = linkedProgram->getLayout();
@@ -371,7 +374,7 @@ namespace Veng::Cook
         {
             return std::unexpected(fmt::format(
                 "material importer: '{}': entry point '{}': unexpected reflection layout",
-                slangSource.string(), entry));
+                slangSource.Path.string(), entry));
         }
 
         slang::EntryPointReflection* entryLayout = layout->getEntryPointByIndex(0);
@@ -379,7 +382,7 @@ namespace Veng::Cook
         {
             return std::unexpected(
                 fmt::format("material importer: '{}': entry point '{}' is not a fragment stage",
-                            slangSource.string(), entry));
+                            slangSource.Path.string(), entry));
         }
 
         return CollectOutputs(entryLayout->getResultVarLayout(), entry);

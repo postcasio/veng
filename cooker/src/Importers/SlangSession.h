@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -10,10 +11,43 @@
 // Cooker-internal Slang session search-path policy. The three session setups
 // (ShaderImporter's compile, SlangReflect's struct and fragment-output
 // reflection) all build their search paths through this one helper, so the
-// policy lives in a single place.
+// policy lives in a single place. A shader whose source is a node graph has no
+// .slang file on disk; SlangModuleSource carries either an on-disk path or the
+// generated text so one session helper loads both.
 
 namespace Veng::Cook
 {
+    /// @brief Source of a Slang module: an on-disk .slang file or generated text in memory.
+    ///
+    /// A graph-sourced fragment shader has no .slang file — the cooker generates its text
+    /// from the node graph (see GraphShaderSource) — so the three Slang sessions take this
+    /// rather than a bare path. @ref GeneratedSource, when set, is loaded from a string with
+    /// @ref Path as its virtual path (so a relative `#include` still resolves through the
+    /// session search paths); when unset, @ref Path names the .slang file to load.
+    struct SlangModuleSource
+    {
+        /// @brief Path to the .slang file (file source), or the graph's path (generated source).
+        ///
+        /// For a file source this is the .slang to load; its directory seeds the search path.
+        /// For a generated source this is the *.graph.json path: its directory seeds the search
+        /// path and its stem names the in-memory module.
+        path Path;
+        /// @brief Generated Slang text; when set, the module is loaded from this string.
+        std::optional<std::string> GeneratedSource;
+    };
+
+    /// @brief Loads a Slang module from a SlangModuleSource into a session.
+    ///
+    /// Dispatches to `loadModule` for a file source or `loadModuleFromSourceString` for a
+    /// generated one, returning the module or nullptr (with diagnostics written through
+    /// @p outDiagnostics) on failure — the caller formats the located error.
+    /// @param session       The Slang session to load into.
+    /// @param source        The module source (file path or generated text).
+    /// @param outDiagnostics Receives compile diagnostics on failure.
+    /// @return The loaded module, or nullptr on failure.
+    [[nodiscard]] slang::IModule* LoadSlangModule(slang::ISession& session,
+                                                  const SlangModuleSource& source,
+                                                  slang::IBlob** outDiagnostics);
     /// @brief Builds a Slang session's search paths from the source dir and the engine include dir.
     ///
     /// The source file's own directory is first so a local file always shadows a same-named

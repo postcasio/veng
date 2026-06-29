@@ -12,17 +12,42 @@
 
 namespace VengGraph
 {
-    /// @brief A generated material fragment: the Slang source and its domain.
+    /// @brief One entry of a compiled .vmat "fields" array.
     ///
-    /// CompileMaterialGraph's product. The param-schema and field-list halves of a
-    /// full cook are filled in by a later plan; this carries the compilable source and
-    /// the domain it was generated for.
+    /// @p Type selects which payload member is meaningful. nlohmann::json stays
+    /// out of this header; serialization lives in the .cpp.
+    struct CompiledField
+    {
+        /// @brief Field name matching the shader's reflected field table.
+        Veng::string Name;
+        /// @brief Field type tag: "texture" | "sampler" | "float" | "vec2".."vec4" | "uint".
+        Veng::string Type;
+        /// @brief Texture AssetId (meaningful when Type == "texture").
+        Veng::u64 TextureId = 0;
+        /// @brief Paired texture field name (meaningful when Type == "sampler").
+        Veng::string SamplerTexture;
+        /// @brief Component values (meaningful when Type is "float" or "vecN").
+        Veng::vector<Veng::f32> Values;
+        /// @brief Integer value (meaningful when Type == "uint").
+        Veng::u32 UintValue = 0;
+    };
+
+    /// @brief A generated material fragment: the Slang source, its domain, and the
+    /// matching .vmat field list.
+    ///
+    /// CompileMaterialGraph's product. The generated MaterialParams struct (emitted into
+    /// Source, ordered large-alignment-first) and the field list are produced from one walk,
+    /// so the cooker's reflected offsets and the material's packed values agree by
+    /// construction. An engine-bound param contributes a struct field but no field-list
+    /// entry (the engine writes it by name); a const param contributes neither.
     struct GeneratedFragment
     {
         /// @brief The generated Slang fragment-shader source.
         Veng::string Source;
         /// @brief The material domain the entry point was generated for.
         Veng::MaterialDomain Domain = Veng::MaterialDomain::Surface;
+        /// @brief The .vmat "fields" rows generated from the same walk as the struct.
+        Veng::vector<CompiledField> Fields;
     };
 
     /// @brief Walks a material node graph into generated Slang fragment source.
@@ -47,26 +72,6 @@ namespace VengGraph
     [[nodiscard]] Veng::Result<GeneratedFragment>
     CompileMaterialGraph(const NodeGraph& graph, const NodeCatalog& catalog,
                          const MaterialEmitTable& emit, Veng::MaterialDomain domain);
-
-    /// @brief One entry of a compiled .vmat "fields" array.
-    ///
-    /// @p Type selects which payload member is meaningful. nlohmann::json stays
-    /// out of this header; serialization lives in the .cpp.
-    struct CompiledField
-    {
-        /// @brief Field name matching the shader's reflected field table.
-        Veng::string Name;
-        /// @brief Field type tag: "texture" | "sampler" | "float" | "vec2".."vec4" | "uint".
-        Veng::string Type;
-        /// @brief Texture AssetId (meaningful when Type == "texture").
-        Veng::u64 TextureId = 0;
-        /// @brief Paired texture field name (meaningful when Type == "sampler").
-        Veng::string SamplerTexture;
-        /// @brief Component values (meaningful when Type is "float" or "vecN").
-        Veng::vector<Veng::f32> Values;
-        /// @brief Integer value (meaningful when Type == "uint").
-        Veng::u32 UintValue = 0;
-    };
 
     /// @brief Serializes a compiled field list into a .vmat JSON document string.
     ///

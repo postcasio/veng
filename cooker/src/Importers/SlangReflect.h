@@ -5,11 +5,14 @@
 #include <Veng/Asset/Types.h>
 #include <Veng/Cook/Types.h>
 
+#include "SlangSession.h"
+
 // Cooker-internal Slang reflection helpers. MaterialImporter cooks shaders
 // independently as their own Shader pack entries, but must know the layout of
 // the shared MaterialParams struct to validate a material's textures/params and
-// pack their values at the right offsets. These functions compile a .slang source
-// and reflect either a named struct's field layout or a fragment entry's render-target
+// pack their values at the right offsets. These functions compile a Slang source
+// (a .slang file or graph-generated text, via SlangModuleSource) and reflect
+// either a named struct's field layout or a fragment entry's render-target
 // outputs, keeping Slang out of MaterialImporter.cpp.
 
 namespace Veng::Cook
@@ -46,12 +49,12 @@ namespace Veng::Cook
     /// When `optional` is true and the struct is absent, returns an empty
     /// ReflectedStruct (Size 0, no fields) — an author may omit a struct when a
     /// material has no MaterialParams (e.g. a handles-only material).
-    /// @param slangSource Path to the .slang source file.
+    /// @param slangSource The Slang module source (a .slang file or graph-generated text).
     /// @param structName  Name of the struct to reflect.
     /// @param shaderIncludeDir Engine core shader dir added to the Slang search path so the
     ///                         source resolves `#include "Veng/material.slang"`; empty to skip it.
     /// @param optional    If true, a missing struct is not an error.
-    [[nodiscard]] Result<ReflectedStruct> ReflectStructLayout(const path& slangSource,
+    [[nodiscard]] Result<ReflectedStruct> ReflectStructLayout(const SlangModuleSource& slangSource,
                                                               std::string_view structName,
                                                               const path& shaderIncludeDir = {},
                                                               bool optional = false);
@@ -78,11 +81,11 @@ namespace Veng::Cook
     /// type. Returns a located error ("material importer: ...") on compile failure,
     /// a missing or non-fragment entry point, or an output carrying no SV_Target
     /// semantic. Targets are returned sorted by TargetIndex.
-    /// @param slangSource Path to the .slang source file.
+    /// @param slangSource The Slang module source (a .slang file or graph-generated text).
     /// @param entry       Name of the fragment entry point to reflect.
     /// @param shaderIncludeDir Engine core shader dir added to the Slang search path so the
     ///                         source resolves `#include "Veng/material.slang"`; empty to skip it.
     [[nodiscard]] Result<vector<ReflectedFragmentOutput>>
-    ReflectFragmentOutputs(const path& slangSource, std::string_view entry,
+    ReflectFragmentOutputs(const SlangModuleSource& slangSource, std::string_view entry,
                            const path& shaderIncludeDir = {});
 }

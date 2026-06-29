@@ -245,10 +245,16 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   (`FieldClass::AssetHandle`), not wired pins, so the topology core stays asset-agnostic. The
   graph (nodes, positions, property values, links) is embedded under an `"_editor"` key in the
   `.vmat.json`; `MaterialEditorPanel` drives the imnodes canvas + a node-property inspector
-  reusing the per-`FieldClass` widgets. The cook routing that compiles the generated source
-  (and the `const`/exposed/engine-bound `Param` provenance + generated `MaterialParams` struct)
-  is the named follow-on; until it lands the panel cooks the on-disk field list unchanged and
-  only re-embeds the `"_editor"` graph block.
+  reusing the per-`FieldClass` widgets. `MaterialEditorPanel`'s cook-on-demand routes the graph
+  source through the cooker's graph-shader resolver (`SetGraphShaderResolver`, installed at the
+  editor's `veng::graph` link), so editing the graph regenerates the fragment Slang, recompiles
+  it, and hot-reloads the result into `MaterialPreview` — the same walk the offline cook runs. A
+  `Param` carries one of three provenances: *const* folds its value inline, *exposed* contributes
+  an author-tweakable `MaterialParams` field with a default, *engine-bound* contributes a field
+  the engine writes by name at runtime (no default, not an instance-override surface). The walk
+  generates the `MaterialParams` struct — ordered large-alignment-first so the cooker's std140
+  reflection and the shader's scalar-layout `Load<T>` resolve identical offsets — and the matching
+  `.vmat` field list from the same pass, so reflected offsets and packed values agree.
 - **`MaterialPreview` renders one material on a sphere through an `Offscreen` `Viewport`**
   into an ImGui texture. It is **not** an `EditorPanel`, so its owning `MaterialEditorPanel`
   registers the viewport on its behalf; each frame the preview advances the turntable and
