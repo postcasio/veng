@@ -84,9 +84,6 @@ namespace Veng
 
         auto& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-#ifdef VE_VIEWPORTS
-        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-#endif
 #ifdef VE_DEBUG
         io.ConfigDebugIsDebuggerPresent = true;
 #endif
@@ -177,10 +174,6 @@ namespace Veng
             {
                 DisposeResources();
                 CreateResources();
-#ifdef VE_VIEWPORTS
-                const uvec2 extent = m_Context.GetRenderExtent();
-                ImGui::GetMainViewport()->Size = vec2(extent);
-#endif
             });
     }
 
@@ -386,7 +379,6 @@ namespace Veng
         if (!m_RenderedThisFrame)
         {
             ImGui::EndFrame();
-            ImGui::UpdatePlatformWindows();
         }
 
         m_RenderedThisFrame = false;
@@ -497,9 +489,6 @@ namespace Veng
         });
 
         ImGui::Render();
-
-        ImGui::UpdatePlatformWindows();
-        ImGui::RenderPlatformWindowsDefault();
 
         ImDrawData* drawData = ImGui::GetDrawData();
         ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer.GetNative().CommandBuffer);

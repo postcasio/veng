@@ -56,6 +56,10 @@ namespace Veng::Renderer
         /// Seeds each image's tracked pipeline stage to AcquireWaitStage so the
         /// first layout transition forms a correct execution dependency against
         /// the image-available semaphore wait (prevents a WRITE_AFTER_READ hazard).
+        ///
+        /// Recreates in place: the existing handle (if any) is passed to the driver as
+        /// VkSwapchainCreateInfoKHR::oldSwapchain for the drawable-association handoff, then
+        /// destroyed once the replacement exists.
         void Initialize();
         SwapChain(Context& context, const SwapChainInfo& info);
         ~SwapChain();
@@ -147,7 +151,7 @@ namespace Veng::Renderer
         vk::ColorSpaceKHR m_ColorSpace;
         DisplayMode m_DisplayMode;
         DisplayColorSpace m_DisplayColorSpace;
-        vk::SwapchainKHR m_VkSwapChain;
+        vk::SwapchainKHR m_VkSwapChain{};
         vector<Ref<Image>> m_Images;
         vector<Ref<ImageView>> m_ImageViews;
         /// @brief One present-wait semaphore per swapchain image, indexed by image index.

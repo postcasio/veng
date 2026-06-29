@@ -59,6 +59,11 @@ namespace Veng
             [](GLFWwindow* glfwWindow, int width, int height)
             {
                 auto window = static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
+                // Keep the live extent current so GetWidth/GetHeight track the framebuffer, and
+                // flag the change so the context recreates the swapchain before the next submit
+                // (a swapchain that lags the CAMetalLayer deadlocks MoltenVK's drawable acquire).
+                window->m_Extent = {static_cast<u32>(width), static_cast<u32>(height)};
+                window->m_FramebufferResized = true;
                 window->m_Events.push_back(CreateUnique<WindowResizeEvent>(
                     static_cast<u32>(width), static_cast<u32>(height)));
             });
@@ -265,6 +270,13 @@ namespace Veng
     bool Window::IsMinimized() const
     {
         return glfwGetWindowAttrib(m_Handle, GLFW_ICONIFIED) == GLFW_TRUE;
+    }
+
+    bool Window::ConsumeFramebufferResized()
+    {
+        const bool resized = m_FramebufferResized;
+        m_FramebufferResized = false;
+        return resized;
     }
 
     bool Window::ShouldClose() const

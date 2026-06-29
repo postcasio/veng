@@ -138,6 +138,16 @@ namespace Veng::Renderer
 
     void SwapChain::Initialize()
     {
+        // Recreate in place: the current handle (VK_NULL_HANDLE on first init) becomes the new
+        // swapchain's oldSwapchain for the drawable-association handoff, then is destroyed once
+        // the replacement exists. Clear the per-image resources the old handle owned first; on
+        // the first init the vectors are already empty and the clears are no-ops.
+        const vk::SwapchainKHR oldSwapChain = m_VkSwapChain;
+
+        m_RenderFinishedSemaphores.clear();
+        m_Images.clear();
+        m_ImageViews.clear();
+
         auto& contextNative = m_Context.GetNative();
         auto swapChainSupport = contextNative.QuerySwapChainSupport(contextNative.PhysicalDevice);
 
@@ -187,7 +197,11 @@ namespace Veng::Renderer
         swapChainCreateInfo.presentMode = GetPresentMode(swapChainSupport.PresentModes);
         swapChainCreateInfo.clipped = VK_TRUE;
 
-        swapChainCreateInfo.oldSwapchain = VK_NULL_HANDLE;
+        // Hand the old swapchain to the driver on recreate. MoltenVK uses it to transfer
+        // the CAMetalLayer's drawable association to the new swapchain; without it, presents
+        // to the new swapchain return success but never reach the display, freezing the
+        // window on the last pre-resize frame.
+        swapChainCreateInfo.oldSwapchain = oldSwapChain;
 
         m_VkSwapChain = contextNative.Device.createSwapchainKHR(swapChainCreateInfo).value;
         auto images = contextNative.Device.getSwapchainImagesKHR(m_VkSwapChain).value;
@@ -236,6 +250,12 @@ namespace Veng::Renderer
         {
             m_RenderFinishedSemaphores.emplace_back(
                 Semaphore::Create(m_Context, fmt::format("SwapChain RenderFinished [{}]", i)));
+        }
+
+        // The replacement now owns the CAMetalLayer; retire the handle it was created from.
+        if (oldSwapChain)
+        {
+            GetVkDevice(m_Context).destroySwapchainKHR(oldSwapChain);
         }
     }
 
@@ -302,7 +322,9 @@ namespace Veng::Renderer
 
         ResolveSurfaceFormat();
 
-        Dispose();
+        // Recreates in place, handing the old swapchain to the driver for the drawable
+        // handoff and retiring it. Destroying the old one first instead leaves MoltenVK
+        // presenting to a swapchain the CAMetalLayer no longer displays.
         Initialize();
 
         if (m_Format != previousFormat || m_DisplayColorSpace != previousColorSpace)

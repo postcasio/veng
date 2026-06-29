@@ -200,6 +200,25 @@ namespace Veng::Renderer
         m_Impl->SceneHandle = bindless.Register(sceneSource);
     }
 
+    void SwapChainCompositePass::RefreshImGuiSource()
+    {
+        // The ImGui layer recreated its offscreen image (swapchain resize); re-view the live
+        // image and re-register so the composite stops sampling the retired one. ImGuiHandle.Index
+        // is read live per frame, so this takes effect on the next replay without a recompile.
+        m_Impl->ImGuiView =
+            ImageView::Create(m_Impl->Context, {
+                                                   .Name = "SwapChain Composite Layer View",
+                                                   .Image = m_Impl->ImGui.GetOutputImage(),
+                                               });
+
+        BindlessRegistry& bindless = m_Impl->Context.GetBindlessRegistry();
+        if (m_Impl->ImGuiHandle.IsValid())
+        {
+            bindless.Release(m_Impl->ImGuiHandle);
+        }
+        m_Impl->ImGuiHandle = bindless.Register(m_Impl->ImGuiView);
+    }
+
     Unique<CompiledGraph> SwapChainCompositePass::Compile(RenderGraph& graph,
                                                           ResourceId swapChainTarget)
     {

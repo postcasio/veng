@@ -86,6 +86,13 @@ namespace Veng
         /// @brief Returns true if the window is currently minimized.
         [[nodiscard]] bool IsMinimized() const;
 
+        /// @brief Returns whether the framebuffer was resized since the last call, then clears the flag.
+        ///
+        /// Set by the framebuffer-size callback during Update(); the render context consults it
+        /// each frame to recreate the swapchain proactively, before a submit whose deferred
+        /// drawable acquire would otherwise deadlock against a stale-sized swapchain.
+        [[nodiscard]] bool ConsumeFramebufferResized();
+
         /// @brief Captures the mouse cursor, hiding it and locking it to this window.
         void CaptureMouse();
         /// @brief Releases a previously captured mouse cursor.
@@ -158,6 +165,8 @@ namespace Veng
     private:
         bool m_Open = true;
         uvec2 m_Extent{};
+        /// @brief Set by the framebuffer-size callback, cleared by ConsumeFramebufferResized().
+        bool m_FramebufferResized = false;
         bool m_Resizable;
         string m_Title;
         bool m_MouseCaptured;

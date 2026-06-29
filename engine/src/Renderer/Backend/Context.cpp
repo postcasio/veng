@@ -680,6 +680,24 @@ namespace Veng::Renderer
         // Headless has no swapchain image to acquire.
         if (!IsHeadless())
         {
+            // Reconcile the swapchain to the live framebuffer before acquiring. A window resize
+            // must land here, ahead of submit: MoltenVK acquires the CAMetalDrawable lazily
+            // inside vkQueueSubmit, and a swapchain lagging the resized layer wedges nextDrawable
+            // there — the blocked render thread can then no longer drain presented drawables,
+            // deadlocking. SpinUntilValidSize also parks the loop while the window is minimized
+            // (zero extent) until it is restored.
+            if (m_Window->ConsumeFramebufferResized())
+            {
+                m_RenderExtentChanged = true;
+            }
+
+            if (m_RenderExtentChanged)
+            {
+                m_Window->SpinUntilValidSize();
+                WaitIdle();
+                UpdateRenderExtent();
+            }
+
             AcquireNextImage(frame.GetImageAvailableSemaphore());
         }
 

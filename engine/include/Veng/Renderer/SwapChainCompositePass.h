@@ -89,6 +89,15 @@ namespace Veng::Renderer
         /// @param sceneSource  The new scene output view from SceneRenderer::GetOutput().
         void SetSceneSource(const Ref<ImageView>& sceneSource);
 
+        /// @brief Re-views and re-registers the ImGui overlay after the ImGui layer recreates it.
+        ///
+        /// The ImGui layer recreates its offscreen image on swapchain resize, retiring the one the
+        /// composite viewed at construction; without this the composite keeps sampling the stale
+        /// image (old size → squished, old content → frozen). Like SetSceneSource, the bindless
+        /// index is read live per frame, so no recompile is needed. Call from the
+        /// swapchain-invalidation callback, after the ImGui layer's own callback has recreated it.
+        void RefreshImGuiSource();
+
         /// @brief Re-targets the composite at a re-negotiated swapchain format and color space.
         ///
         /// Updates the display-transfer encoding and, when the format changed, rebuilds the

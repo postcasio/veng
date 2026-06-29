@@ -2,6 +2,8 @@
 
 #include <Veng/Time.h>
 
+#include <cstdio>
+
 namespace Veng::Log
 {
     static const char* ToString(Level lvl)
@@ -29,6 +31,10 @@ namespace Veng::Log
             {
                 fmt::print("\n");
             }
+
+            // Flush each record so logs are not lost to block buffering when stdout is a
+            // pipe/file (a crash or live tail otherwise sees nothing).
+            std::fflush(stdout);
         }
 
         Sink s_Sink = DefaultSink;

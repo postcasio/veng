@@ -212,6 +212,10 @@ namespace Veng
             {
                 m_Gather->Resize(m_RenderContext.GetSwapChainExtent());
                 m_Composite->SetSceneSource(m_Gather->GetOutput());
+                // The ImGui layer's invalidation callback (registered earlier, so it ran first)
+                // recreated its offscreen image; re-point the composite at it or it samples the
+                // retired one (old size → squished, stale content → frozen overlay).
+                m_Composite->RefreshImGuiSource();
                 m_Composite->SetSwapChainTarget(m_RenderContext.GetSwapChainFormat(),
                                                 m_RenderContext.GetActiveDisplayColorSpace());
                 m_GatherGraph = compileGather();

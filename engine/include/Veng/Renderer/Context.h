@@ -412,7 +412,9 @@ namespace Veng::Renderer
         /// @brief Depth buffer format.
         Format m_DepthFormat = Format::D32Sfloat;
 
-        /// @brief Set when a resize is pending; triggers swapchain recreation at the next PresentFrame.
+        /// @brief Set when a resize is pending; consumed at the next BeginFrame to recreate the
+        ///        swapchain before acquire/submit (PresentFrame also recreates reactively on a
+        ///        suboptimal/out-of-date result).
         bool m_RenderExtentChanged = false;
 
         /// @brief True when the graphics queue supports timestamp queries (set in Initialize).
