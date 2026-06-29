@@ -26,6 +26,14 @@ endif ()
 include(FetchContent)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
+
+# The engine core shader directory, threaded to every cook as `--shader-include` so a
+# consumer (or generated) `.slang` resolves `#include "Veng/material.slang"` against the
+# engine header. add_asset_pack / add_project pass it; the test cooks pass it too. The
+# core pack itself cooks without it — its shaders reach the header through their own dir.
+set(VENG_CORE_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders"
+        CACHE PATH "Engine core shader directory added to every cook's Slang search path")
+
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AssetPack.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildConfig.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Project.cmake)
@@ -457,7 +465,6 @@ if (VENG_BUILD_TESTS)
             tests/unit/constant_motion.cpp
             tests/unit/camera_rig.cpp
             tests/unit/game_mode.cpp
-            tests/unit/material_params.cpp
             tests/unit/viewport_mapping.cpp
             tests/unit/dynamic_resolution.cpp
     )
@@ -799,6 +806,9 @@ if (VENG_BUILD_TESTS)
                 # PostProcessScenePass to assert it samples an upstream target and
                 # writes it through unchanged.
                 GPU_POSTPROCESS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
+                # The gbuffer fixture's brick shaders `#include "Veng/material.slang"`,
+                # so the in-process cook adds the engine core shader dir to its search path.
+                VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}"
         )
     endif ()
 
@@ -821,7 +831,10 @@ if (VENG_BUILD_TESTS)
         target_include_directories(veng_test_material_preview PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
         target_compile_definitions(veng_test_material_preview PRIVATE
-                GPU_GBUFFER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets")
+                GPU_GBUFFER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
+                # The brick shaders `#include "Veng/material.slang"`; the in-process cook
+                # adds the engine core shader dir to its Slang search path.
+                VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}")
 
         add_test(NAME veng_test_material_preview COMMAND veng_test_material_preview)
         set_tests_properties(veng_test_material_preview PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
@@ -883,6 +896,9 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
             VENG_BAD_VERSION_MODULE_PATH="$<TARGET_FILE:veng_test_bad_version_module>"
             VENG_HT_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/hello-triangle/assets"
             VENG_CORE_PACK_JSON="${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/core.vengpack.json"
+            # A material cook reflects a fragment that `#include`s the engine header; the
+            # cook adds the engine core shader dir to its Slang search path.
+            VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}"
     )
 
     doctest_discover_tests(veng_test_cooker PROPERTIES LABELS cooker)

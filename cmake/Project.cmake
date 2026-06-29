@@ -121,12 +121,15 @@ function(add_project TARGET_NAME)
         set(PROJ_OUT ${ARG_OUTPUT_DIR}/${PROJECT_STEM}${CFG_SUFFIX}.vengproj)
         list(APPEND CFG_OUTPUTS ${PROJ_OUT})
 
+        # The engine core shader dir is on every cook's Slang search path so a consumer
+        # shader resolves `#include "Veng/material.slang"`. A source-dir include still wins.
         add_custom_command(
                 OUTPUT ${CFG_OUTPUTS}
                 COMMAND ${CMAKE_COMMAND} -E make_directory ${ARG_OUTPUT_DIR}
                 COMMAND $<TARGET_FILE:vengc> cook-project ${PROJECT_ABS}
                         --config ${CFG_NAME} --out-dir ${ARG_OUTPUT_DIR}
-                        ${MODULE_ARGS} ${REFERENCE_ARGS} --depfile ${PROJ_OUT}.d
+                        ${MODULE_ARGS} ${REFERENCE_ARGS}
+                        --shader-include ${VENG_CORE_SHADER_DIR} --depfile ${PROJ_OUT}.d
                 DEPENDS vengc ${PROJECT_ABS} ${CFG_ABS} ${PACK_MANIFESTS} ${MODULE_DEP}
                 DEPFILE ${PROJ_OUT}.d
                 COMMENT "Cooking project ${TARGET_NAME} (${CFG_NAME})")

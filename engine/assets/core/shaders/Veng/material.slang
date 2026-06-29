@@ -1,49 +1,26 @@
-// Byte-identical to examples/hello-triangle/assets/shaders/material_data.slang;
-// the two must stay in sync until the example's fragment include resolves this
-// core header directly (a cross-pack Slang include path). The engine-side
-// MaterialParams layout (Veng/Renderer/MaterialParams.h) is static_assert-guarded,
-// so a divergence in the struct sizes/offsets is a build error, not a silent
-// offset-patch misread.
+// The engine's material contract: the bindless declarations, per-frame view block,
+// per-draw data, g-buffer output, motion-vector helper, the domain-keyed push blocks,
+// and the per-domain fragment-input struct a Surface or PostProcess fragment reads.
+// A consumer (or generated) shader `#include`s this and declares its own MaterialParams
+// beside it — the parameter block is per-shader by definition (the cooker reflects each
+// shader's own struct to pack its fields at the reflected offsets), so it is not part of
+// the engine contract.
 //
-// Shared bindless material declarations for the deferred opaque material shader.
-// MaterialParams is the material's whole metallic-roughness parameter block — the
-// bindless handle slots (uint members the loader patches with a resolved index)
-// beside the authored scalar/vector uniforms, laid out by reflection. The set-0
-// bindings mirror the BindlessRegistry layout (sampled images = 0, samplers = 1,
-// per-material block = 4, view constants = 5). The cooker reflects this struct to
-// validate a material's fields and pack their values at the reflected offsets.
+// The set-0 bindings mirror the BindlessRegistry layout (sampled images = 0, samplers = 1,
+// per-material block = 4, view constants = 5).
 
-struct MaterialParams
-{
-    uint   BaseColor;        uint BaseColorSampler;   // base-color texture handle + sampler
-    uint   ORM;              uint ORMSampler;         // occlusion-roughness-metallic texture handle + sampler
-    uint   Normal;           uint NormalSampler;      // tangent-space normal-map handle + sampler (0 = unbound)
-    uint   Pad0;             uint Pad1;
-    float4 BaseColorFactor;  // tint applied to the sampled base color
-    float4 EmissiveFactor;   // rgb reserved (colored emissive is a follow-on); a = strength
-    float  MetallicFactor;   float RoughnessFactor;
-    float  OcclusionStrength; float Pad2;
-};
-
-// The per-material block byte stride. Mirrors
-// BindlessRegistry::MaterialParamStride; one stride is shared across every
-// material so a single ByteAddressBuffer holds a different MaterialParams layout
-// per shader, read at index * MaterialParamStride.
+// The per-material block byte stride. Mirrors BindlessRegistry::MaterialParamStride; one
+// stride is shared across every material so a single ByteAddressBuffer holds a different
+// per-shader parameter layout, read at index * MaterialParamStride.
 static const uint MaterialParamStride = 256;
 
 // The canonical per-frame view-constants block (set 0, binding 5) is declared in
-// view_constants.slang — the single source for the lighting, SSAO, and material
-// shaders, reconciled to one lean block at one stride.
-#include "view_constants.slang"
+// view_constants.slang — the single source for the lighting, SSAO, and material shaders.
+#include "../view_constants.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
-
-MaterialParams LoadMaterialParams(uint index)
-{
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
-}
 
 // Per-draw record indexed by the candidate id, std430-identical to the engine's
 // DrawData (Veng/Renderer/SceneRenderer's GpuDrawData). The geometry pass uploads
@@ -107,13 +84,13 @@ float2 ComputeMotionVector(float4 curClip, float4 prevClip)
     return curUv - prevUv;
 }
 
-// The shared surface push block, used by the vertex stage only. FrameBase folds the
-// ring-buffered draw-data region into the candidate id (the current frame's region
-// base); ViewConstantsIndex selects the per-frame set-0 view-constants region the
-// vertex stage multiplies by. Both replace the former per-draw MVP / NormalMatrix /
-// MaterialIndex pushes — the per-draw values now live in g_DrawData, indexed by the
-// candidate id. Matrices are column-major (the cooker compiles Slang column-major),
-// matching the glm matrices veng uploads verbatim.
+// The surface push block, used by the vertex stage and read by a Surface fragment's
+// LoadDrawData. FrameBase folds the ring-buffered draw-data region into the candidate id
+// (the current frame's region base); ViewConstantsIndex selects the per-frame set-0
+// view-constants region the vertex stage multiplies by. A Surface fragment reads its
+// material selector from the v_MaterialIndex interpolant, not from this block. Matrices
+// are column-major (the cooker compiles Slang column-major), matching the glm matrices
+// veng uploads verbatim.
 struct PushConstants
 {
     uint FrameBase;          // current frame's g_DrawData region base
@@ -121,3 +98,34 @@ struct PushConstants
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+
+// The interpolants a Surface fragment reads, written by the standard surface vertex
+// stage (surface.vert). A surface fragment's fsMain signature takes this struct.
+struct SurfaceFragmentInput
+{
+    float4 sv_position : SV_Position;
+    float2 v_UV : TEXCOORD0;
+    float3 v_WorldNormal : NORMAL;
+    float4 v_WorldTangent : TANGENT;  // xyz world tangent; w handedness sign for the bitangent
+    nointerpolation uint v_MaterialIndex : TEXCOORD1;  // per-draw material selector from the vertex stage
+    float4 v_CurClip : TEXCOORD2;   // unjittered current clip position (g-buffer motion vector)
+    float4 v_PrevClip : TEXCOORD3;  // unjittered previous clip position (g-buffer motion vector)
+};
+
+// The screen-UV interpolant a PostProcess fragment reads, written by the fullscreen
+// vertex stage (fullscreen.vert). A PostProcess fragment's fsMain signature takes this
+// struct and reads its material selector from the PostProcessPushConstants block, since
+// it has no per-draw v_MaterialIndex interpolant.
+struct PostProcessFragmentInput
+{
+    float4 sv_position : SV_Position;
+    float2 v_UV : TEXCOORD0;
+};
+
+// A PostProcess fragment's per-draw selector sits at push-constant offset 0 (no geometry
+// block precedes it, unlike a Surface shader's MVP). A PostProcess fragment reads its
+// material index here rather than from a vertex interpolant.
+struct PostProcessPushConstants
+{
+    uint MaterialIndex;
+};

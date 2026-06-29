@@ -14,6 +14,7 @@
 
 #include <Veng/Asset/CookedBlobs.h>
 
+#include "SlangSession.h"
 #include "VertexLayoutSource.h"
 
 namespace Veng::Cook
@@ -246,14 +247,13 @@ namespace Veng::Cook
             targetDesc.format = SLANG_SPIRV;
             targetDesc.profile = globalSession->findProfile("spirv_1_5");
 
-            const string searchPath = sourcePath.parent_path().string();
-            const char* const searchPaths[] = {searchPath.c_str()};
-
             slang::SessionDesc sessionDesc{};
             sessionDesc.targets = &targetDesc;
             sessionDesc.targetCount = 1;
-            sessionDesc.searchPaths = searchPaths;
-            sessionDesc.searchPathCount = 1;
+            const std::vector<std::string> searchPaths =
+                BuildSlangSearchPaths(sourcePath.parent_path(), context.ShaderIncludeDir);
+            std::vector<const char*> searchPathPtrs;
+            ApplySlangSearchPaths(sessionDesc, searchPaths, searchPathPtrs);
             // veng uploads glm column-major matrices verbatim; Slang's default is
             // row-major, which reads them transposed. Match glm so mul(M, v) is M*v.
             sessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;

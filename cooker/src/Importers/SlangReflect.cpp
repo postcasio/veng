@@ -8,6 +8,8 @@
 #include <slang/slang.h>
 #include <slang/slang-com-ptr.h>
 
+#include "SlangSession.h"
+
 namespace Veng::Cook
 {
     namespace
@@ -194,7 +196,8 @@ namespace Veng::Cook
     }
 
     Result<ReflectedStruct> ReflectStructLayout(const path& slangSource,
-                                                std::string_view structName, bool optional)
+                                                std::string_view structName,
+                                                const path& shaderIncludeDir, bool optional)
     {
         ComPtr<slang::IGlobalSession> globalSession;
         if (SLANG_FAILED(slang::createGlobalSession(globalSession.writeRef())))
@@ -206,14 +209,13 @@ namespace Veng::Cook
         targetDesc.format = SLANG_SPIRV;
         targetDesc.profile = globalSession->findProfile("spirv_1_5");
 
-        const string searchPath = slangSource.parent_path().string();
-        const char* const searchPaths[] = {searchPath.c_str()};
-
         slang::SessionDesc sessionDesc{};
         sessionDesc.targets = &targetDesc;
         sessionDesc.targetCount = 1;
-        sessionDesc.searchPaths = searchPaths;
-        sessionDesc.searchPathCount = 1;
+        const std::vector<std::string> searchPaths =
+            BuildSlangSearchPaths(slangSource.parent_path(), shaderIncludeDir);
+        std::vector<const char*> searchPathPtrs;
+        ApplySlangSearchPaths(sessionDesc, searchPaths, searchPathPtrs);
         // Match the compile session so reflected matrix-member offsets agree with
         // the column-major layout the SPIR-V is generated for.
         sessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
@@ -297,7 +299,8 @@ namespace Veng::Cook
     }
 
     Result<vector<ReflectedFragmentOutput>> ReflectFragmentOutputs(const path& slangSource,
-                                                                   std::string_view entry)
+                                                                   std::string_view entry,
+                                                                   const path& shaderIncludeDir)
     {
         ComPtr<slang::IGlobalSession> globalSession;
         if (SLANG_FAILED(slang::createGlobalSession(globalSession.writeRef())))
@@ -309,14 +312,13 @@ namespace Veng::Cook
         targetDesc.format = SLANG_SPIRV;
         targetDesc.profile = globalSession->findProfile("spirv_1_5");
 
-        const string searchPath = slangSource.parent_path().string();
-        const char* const searchPaths[] = {searchPath.c_str()};
-
         slang::SessionDesc sessionDesc{};
         sessionDesc.targets = &targetDesc;
         sessionDesc.targetCount = 1;
-        sessionDesc.searchPaths = searchPaths;
-        sessionDesc.searchPathCount = 1;
+        const std::vector<std::string> searchPaths =
+            BuildSlangSearchPaths(slangSource.parent_path(), shaderIncludeDir);
+        std::vector<const char*> searchPathPtrs;
+        ApplySlangSearchPaths(sessionDesc, searchPaths, searchPathPtrs);
         sessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
 
         ComPtr<slang::ISession> session;

@@ -502,7 +502,8 @@ namespace Veng::Cook
     VoidResult Cooker::CookPack(const path& packJson, const path& outArchive,
                                 std::span<const path> referencePacks, const TypeRegistry* types,
                                 const SystemRegistry* systems, vector<path>* outDependencies,
-                                const BuildConfiguration* config, const path& configFile) const
+                                const BuildConfiguration* config, const path& configFile,
+                                const path& shaderIncludeDir) const
     {
         const Result<json> packResult = ReadAndValidatePack(packJson);
         if (!packResult)
@@ -607,6 +608,7 @@ namespace Veng::Cook
             .Types = types,
             .Systems = systems,
             .Config = config,
+            .ShaderIncludeDir = shaderIncludeDir,
             .RecordDependency = record,
         };
 
@@ -652,7 +654,8 @@ namespace Veng::Cook
     Result<vector<u8>> Cooker::CookSource(const path& sourcePath, AssetId id, AssetType type,
                                           std::span<const path> referencePacks,
                                           const TypeRegistry* types, const SystemRegistry* systems,
-                                          const BuildConfiguration* config) const
+                                          const BuildConfiguration* config,
+                                          const path& shaderIncludeDir) const
     {
         const auto importerIt = m_Importers.find(type);
         if (importerIt == m_Importers.end())
@@ -699,6 +702,7 @@ namespace Veng::Cook
             .Types = types,
             .Systems = systems,
             .Config = config,
+            .ShaderIncludeDir = shaderIncludeDir,
             .RecordDependency = [](const path&) {},
         };
 

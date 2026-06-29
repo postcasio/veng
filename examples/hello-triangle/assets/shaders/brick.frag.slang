@@ -1,4 +1,4 @@
-#include "material_data.slang"
+#include "Veng/material.slang"
 
 // Deferred opaque metallic-roughness material fragment stage: loads the per-draw
 // MaterialParams block, samples base color (tinted by BaseColorFactor) and the
@@ -7,19 +7,31 @@
 // color into G0 (sRGB target), the perturbed world-space normal into G1, and packed
 // occlusion/roughness/metallic/emissive into G2. The handle slots and the authored
 // factors share one block; the bindless/texture path is unchanged.
-struct VSOutput
+
+// This material's parameter block: the bindless handle slots (uint members the loader
+// patches with a resolved index) beside the authored scalar/vector uniforms, laid out
+// by reflection. The cooker reflects this struct to validate the .vmat fields and pack
+// their values at the reflected offsets, read through the engine's set-0 g_MaterialParams
+// at index * MaterialParamStride.
+struct MaterialParams
 {
-    float4 sv_position : SV_Position;
-    float2 v_UV : TEXCOORD0;
-    float3 v_WorldNormal : NORMAL;
-    float4 v_WorldTangent : TANGENT;  // xyz world tangent; w handedness sign for the bitangent
-    nointerpolation uint v_MaterialIndex : TEXCOORD1;  // per-draw material selector from the vertex stage
-    float4 v_CurClip : TEXCOORD2;   // unjittered current clip position (g-buffer motion vector)
-    float4 v_PrevClip : TEXCOORD3;  // unjittered previous clip position (g-buffer motion vector)
+    uint   BaseColor;        uint BaseColorSampler;   // base-color texture handle + sampler
+    uint   ORM;              uint ORMSampler;         // occlusion-roughness-metallic texture handle + sampler
+    uint   Normal;           uint NormalSampler;      // tangent-space normal-map handle + sampler (0 = unbound)
+    uint   Pad0;             uint Pad1;
+    float4 BaseColorFactor;  // tint applied to the sampled base color
+    float4 EmissiveFactor;   // rgb reserved (colored emissive is a follow-on); a = strength
+    float  MetallicFactor;   float RoughnessFactor;
+    float  OcclusionStrength; float Pad2;
 };
 
+MaterialParams LoadMaterialParams(uint index)
+{
+    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+}
+
 [shader("fragment")]
-GBufferOutput fsMain(VSOutput input)
+GBufferOutput fsMain(SurfaceFragmentInput input)
 {
     MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);
 

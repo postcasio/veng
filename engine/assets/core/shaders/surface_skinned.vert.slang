@@ -1,4 +1,4 @@
-#include "material.slang"
+#include "Veng/material.slang"
 
 // Deferred skinned-surface vertex stage. Identical to surface.vert but for linear-blend
 // skinning: VSInput carries the skinned vertex layout (canonical attributes plus four bone

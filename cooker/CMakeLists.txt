@@ -210,6 +210,7 @@ add_library(veng_cook_objs OBJECT
         src/Importers/ShaderImporter.cpp
         src/Importers/MaterialImporter.cpp
         src/Importers/SlangReflect.cpp
+        src/Importers/SlangSession.cpp
         src/Importers/VertexLayoutImporter.cpp
         src/Importers/VertexLayoutSource.cpp
         src/Importers/SkeletonImporter.cpp

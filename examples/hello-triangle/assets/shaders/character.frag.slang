@@ -1,4 +1,4 @@
-#include "material_data.slang"
+#include "Veng/material.slang"
 
 // Deferred opaque character material fragment stage for the RenderPeople scan: a
 // diffuse + normal + glossiness set rather than a packed ORM map. It samples base color
@@ -6,19 +6,29 @@
 // surface as a dielectric (metallic from the factor, occlusion from the factor), perturbs
 // the world normal by the tangent-space normal map, and writes the g-buffer. The ORM
 // material slot carries the glossiness texture; the Normal slot the tangent-space normal.
-struct VSOutput
+
+// This material's parameter block: the bindless handle slots beside the authored
+// scalar/vector uniforms, laid out by reflection. The ORM slot carries the glossiness
+// map. Read through the engine's set-0 g_MaterialParams at index * MaterialParamStride.
+struct MaterialParams
 {
-    float4 sv_position : SV_Position;
-    float2 v_UV : TEXCOORD0;
-    float3 v_WorldNormal : NORMAL;
-    float4 v_WorldTangent : TANGENT;  // xyz world tangent; w handedness sign for the bitangent
-    nointerpolation uint v_MaterialIndex : TEXCOORD1;  // per-draw material selector from the vertex stage
-    float4 v_CurClip : TEXCOORD2;   // unjittered current clip position (g-buffer motion vector)
-    float4 v_PrevClip : TEXCOORD3;  // unjittered previous clip position (g-buffer motion vector)
+    uint   BaseColor;        uint BaseColorSampler;   // base-color texture handle + sampler
+    uint   ORM;              uint ORMSampler;         // glossiness texture handle + sampler
+    uint   Normal;           uint NormalSampler;      // tangent-space normal-map handle + sampler (0 = unbound)
+    uint   Pad0;             uint Pad1;
+    float4 BaseColorFactor;  // tint applied to the sampled base color
+    float4 EmissiveFactor;   // rgb reserved (colored emissive is a follow-on); a = strength
+    float  MetallicFactor;   float RoughnessFactor;
+    float  OcclusionStrength; float Pad2;
 };
 
+MaterialParams LoadMaterialParams(uint index)
+{
+    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+}
+
 [shader("fragment")]
-GBufferOutput fsMain(VSOutput input)
+GBufferOutput fsMain(SurfaceFragmentInput input)
 {
     MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);
 

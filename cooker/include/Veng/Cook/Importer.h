@@ -50,6 +50,13 @@ namespace Veng::Cook
         /// through this configuration's role table. Null means no project settings: the
         /// importer falls back to its hardcoded ASTC default, the zero-config behavior.
         const BuildConfiguration* Config = nullptr;
+        /// @brief Engine core shader directory added to every Slang session's search path.
+        ///
+        /// Lets a consumer `.slang` resolve `#include "Veng/material.slang"` against the engine
+        /// core shader dir. Added after the source file's own directory, so a local file shadows
+        /// a same-named engine file. Empty for a cook that ships no engine shader header (the core
+        /// pack itself, whose shaders reach the engine header through their own source dir).
+        path ShaderIncludeDir;
         /// @brief Records a source file the cook read, for build dependency tracking.
         ///
         /// The cooker records the pack JSON and resolved cross-asset references centrally.

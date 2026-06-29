@@ -944,9 +944,16 @@ single `SV_Target0`). The per-draw selector push offset is domain-keyed — Surf
 the MVP block), PostProcess 0.
 
 The engine ships the **standard vertex shader per domain in the core pack**: `surface.vert`
-(canonical layout) and `fullscreen.vert` (screenspace); `material.slang` holds the shared
-bindless/material/push-block declarations. A game references the core `surface.vert` rather
-than shipping its own surface vertex stage.
+(canonical layout) and `fullscreen.vert` (screenspace). The shared material contract is the
+importable engine header `Veng/material.slang` (`engine/assets/core/shaders/Veng/material.slang`):
+the set-0 bindless declarations, `g_ViewConstants`, `DrawData`, `GBufferOutput`,
+`ComputeMotionVector`, the domain-keyed push blocks, and the per-domain fragment-input struct. A
+consumer (or generated) shader `#include "Veng/material.slang"` and **declares its own
+`MaterialParams`** beside it — the parameter block is per-shader by definition (the cooker reflects
+each shader's own struct to pack its fields at the reflected offsets), so it is not part of the
+engine header. The cross-pack include resolves because the cook threads the engine core shader dir
+onto every Slang session's search path (see [cooker/CLAUDE.md](../cooker/CLAUDE.md)). A game
+references the core `surface.vert` rather than shipping its own surface vertex stage.
 
 ## Scene & ECS
 

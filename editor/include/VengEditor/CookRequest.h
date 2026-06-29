@@ -54,6 +54,14 @@ namespace VengEditor
         /// back to its hardcoded ASTC default, the zero-config behavior. The host fills it from
         /// its ProjectSettings; a panel leaves it unset.
         Veng::optional<Veng::BuildConfiguration> ActiveConfig;
+
+        /// @brief Engine core shader directory added to the cook's Slang search path.
+        ///
+        /// A material cook reflects a fragment shader that may `#include "Veng/material.slang"`;
+        /// this dir lets that cross-pack include resolve, mirroring the file-based build's
+        /// `--shader-include`. Empty for a source needing no engine shader header. The host
+        /// fills it from the core pack's directory; a panel leaves it empty.
+        Veng::path ShaderIncludeDir;
     };
 
     /// @brief Cook backend the editor exe injects into the host.

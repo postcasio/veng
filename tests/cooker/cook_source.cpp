@@ -111,8 +111,11 @@ TEST_CASE("Cooker: CookSource resolves a material's shaders and textures against
     SUBCASE("with the manifest the cross-asset references resolve")
     {
         const path refs[] = {manifest, corePack};
+        // The brick fragment shader `#include`s the engine header; the cook needs the engine
+        // core shader dir on its Slang search path to resolve the cross-pack include.
         const Result<vector<u8>> bytes =
-            cooker.CookSource(source, targetId, AssetType::Material, refs);
+            cooker.CookSource(source, targetId, AssetType::Material, refs, nullptr, nullptr,
+                              nullptr, path(VENG_CORE_SHADER_DIR));
         REQUIRE(bytes.has_value());
 
         const Result<ArchiveReader> reader = ArchiveReader::FromBytes(*bytes);

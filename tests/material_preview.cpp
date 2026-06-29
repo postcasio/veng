@@ -115,7 +115,11 @@ int main()
 
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);
-        const VoidResult cookResult = cooker.CookPack(fixtureDir / "gbuffer_pack.json", outArchive);
+        // The brick shaders `#include "Veng/material.slang"`; the engine core shader dir is on
+        // the cook's Slang search path so the cross-pack include resolves.
+        const VoidResult cookResult =
+            cooker.CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr,
+                            nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
         Check(cookResult.has_value(), "cook brick fixture pack");
 
         const VoidResult mountResult = assets.Mount(outArchive);

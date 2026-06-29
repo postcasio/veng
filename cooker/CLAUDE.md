@@ -44,6 +44,21 @@ at cook time:
   (there is no precompiled-inline path) and **reflects the shader offline** into a
   serializable `ShaderInterface`; the engine then loads plain SPIR-V. (There is no
   `glslc` / `add_shaders` path — GLSL was removed project-wide.)
+- **The engine material header is imported, not vendored.** Every Slang session (the
+  `ShaderImporter` compile and the `SlangReflect` struct/fragment-output reflections) builds
+  its search paths through one helper (`BuildSlangSearchPaths`, in `Importers/SlangSession.{h,cpp}`):
+  `{ sourceFileDir, engineShaderIncludeDir }`, **source dir first** so a local file always wins
+  over a same-named engine file. The engine core shader dir is threaded as `--shader-include <dir>`
+  (`CookContext::ShaderIncludeDir`, set by the `add_asset_pack` / `add_project` CMake from
+  `${VENG_CORE_SHADER_DIR}`; the editor's cook-on-demand fills it from the core pack's own
+  directory). A consumer (or generated) `.slang` therefore `#include`s the engine's material
+  contract directly as `#include "Veng/material.slang"` — the engine header at
+  `engine/assets/core/shaders/Veng/material.slang` holding the bindless declarations,
+  `g_ViewConstants`, `DrawData`, `GBufferOutput`, `ComputeMotionVector`, the domain-keyed push
+  blocks, and the per-domain fragment-input struct. The per-shader `MaterialParams` struct lives
+  in the authoring shader (the cooker reflects each shader's own struct to pack its fields), not
+  the engine header. The core pack itself cooks without `--shader-include` — its shaders reach the
+  header through their own source dir.
 - **Materials** (`*.vmat.json`) are validated against the fragment shader's reflected
   parameters — the declared, explicitly-typed field list must match — and the
   fragment outputs are validated against the material domain's contract (Surface →
@@ -149,9 +164,12 @@ loader share one encoder.
 - **`cook`** — build a `.vengpack` from a single manifest (`--module <lib>` to reflect a
   game module's types **and systems** for prefab and level validation; `--config <file>`
   to select the build configuration whose role → format table the texture cook resolves
-  through). Engine-internal packs (the core pack, the editor icons) cook this way.
+  through; `--shader-include <dir>` to add the engine core shader dir to every Slang session's
+  search path so a consumer shader resolves `#include "Veng/material.slang"`). Engine-internal
+  packs (the core pack, the editor icons) cook this way.
 - **`cook-project`** — cook a whole **project** for one configuration: `vengc cook-project
-  <project.veng> --config <name> --out-dir <dir> [--module <lib>] [--reference <pack>]...`.
+  <project.veng> --config <name> --out-dir <dir> [--module <lib>] [--reference <pack>]...
+  [--shader-include <dir>]`.
   `ParseProject` hand-parses the project's `packs`, `configurations`, and `startupLevel`;
   the named configuration is matched by `BuildConfiguration.Name`; each pack cooks into
   `<stem><suffix>.vengpack` and a `<projstem><suffix>.vengproj` (`WriteCookedProject`) names

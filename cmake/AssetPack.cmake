@@ -112,10 +112,12 @@ function(add_asset_pack TARGET_NAME)
     # models, shader sources and their includes). DEPFILE feeds it to the build
     # so a re-cook triggers when any of them changes, with no hand-maintained
     # DEPENDS list to drift. (ARG_DEPENDS remains an optional manual supplement.)
+    # The engine core shader dir is on every cook's Slang search path so a consumer
+    # shader resolves `#include "Veng/material.slang"`. A source-dir include still wins.
     add_custom_command(
             OUTPUT ${PACK_OUTPUT}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTPUT_DIR}
-            COMMAND $<TARGET_FILE:vengc> cook ${PACK_ABS} -o ${PACK_OUTPUT} ${REFERENCE_ARGS} ${MODULE_ARGS} ${CONFIG_ARGS} --depfile ${PACK_OUTPUT}.d
+            COMMAND $<TARGET_FILE:vengc> cook ${PACK_ABS} -o ${PACK_OUTPUT} ${REFERENCE_ARGS} ${MODULE_ARGS} ${CONFIG_ARGS} --shader-include ${VENG_CORE_SHADER_DIR} --depfile ${PACK_OUTPUT}.d
             DEPENDS vengc ${PACK_ABS} ${ARG_DEPENDS} ${MODULE_DEP} ${CONFIG_DEP}
             DEPFILE ${PACK_OUTPUT}.d
             COMMENT "Cooking asset pack ${PACK_TARGET}")

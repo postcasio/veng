@@ -223,7 +223,7 @@ namespace Veng::Cook
         // float2 SV_Target3 (screen-space motion vector). PostProcess: single float4 SV_Target0.
         // Mismatch is a located cook error.
         const Result<vector<ReflectedFragmentOutput>> outputs =
-            ReflectFragmentOutputs(fragSlangPath, fragEntry);
+            ReflectFragmentOutputs(fragSlangPath, fragEntry, context.ShaderIncludeDir);
         if (!outputs)
         {
             return std::unexpected(outputs.error());
@@ -262,8 +262,8 @@ namespace Veng::Cook
 
         // MaterialParams is optional — a fieldless material declares no struct,
         // which reflects as an empty (Size 0) layout.
-        const Result<ReflectedStruct> blockReflected =
-            ReflectStructLayout(fragSlangPath, "MaterialParams", /*optional=*/true);
+        const Result<ReflectedStruct> blockReflected = ReflectStructLayout(
+            fragSlangPath, "MaterialParams", context.ShaderIncludeDir, /*optional=*/true);
         if (!blockReflected)
         {
             return std::unexpected(blockReflected.error());

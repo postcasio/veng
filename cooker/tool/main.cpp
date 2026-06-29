@@ -21,9 +21,10 @@ namespace
         fmt::print(stderr, "usage:\n"
                            "  vengc cook <pack.json> [-o <out.vengpack>] [--reference "
                            "<pack.json>]... [--module <lib>] [--config <file.buildcfg>] "
-                           "[--depfile <out.d>]\n"
+                           "[--shader-include <dir>] [--depfile <out.d>]\n"
                            "  vengc cook-project <project.veng> --config <name> --out-dir <dir> "
-                           "[--reference <pack.json>]... [--module <lib>] [--depfile <out.d>]\n"
+                           "[--reference <pack.json>]... [--module <lib>] [--shader-include <dir>] "
+                           "[--depfile <out.d>]\n"
                            "  vengc generate-id [--reference <pack.json>]...\n"
                            "  vengc generate-type-id [--module <lib>]\n"
                            "  vengc verify <archive.vengpack>\n");
@@ -73,6 +74,7 @@ int main(int argc, char** argv)
         vector<path> referencePacks;
         optional<path> modulePath;
         optional<path> configPath;
+        optional<path> shaderIncludePath;
         optional<path> depfilePath;
 
         for (usize i = 1; i < args.size(); ++i)
@@ -121,6 +123,15 @@ int main(int argc, char** argv)
                     return 1;
                 }
                 configPath = path(args[++i]);
+            }
+            else if (args[i] == "--shader-include")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --shader-include requires an argument\n");
+                    return 1;
+                }
+                shaderIncludePath = path(args[++i]);
             }
             else if (!packPath)
             {
@@ -181,10 +192,10 @@ int main(int argc, char** argv)
         RegisterBuiltinImporters(cooker);
 
         vector<path> dependencies;
-        const VoidResult result =
-            cooker.CookPack(*packPath, *outPath, referencePacks, types, systems,
-                            depfilePath ? &dependencies : nullptr, config ? &*config : nullptr,
-                            configPath ? *configPath : path{});
+        const VoidResult result = cooker.CookPack(
+            *packPath, *outPath, referencePacks, types, systems,
+            depfilePath ? &dependencies : nullptr, config ? &*config : nullptr,
+            configPath ? *configPath : path{}, shaderIncludePath ? *shaderIncludePath : path{});
         if (!result)
         {
             fmt::print(stderr, "vengc: {}\n", result.error());
@@ -213,6 +224,7 @@ int main(int argc, char** argv)
         optional<string> configName;
         optional<path> outDir;
         optional<path> modulePath;
+        optional<path> shaderIncludePath;
         optional<path> depfilePath;
         vector<path> referencePacks;
 
@@ -226,6 +238,15 @@ int main(int argc, char** argv)
                     return 1;
                 }
                 configName = args[++i];
+            }
+            else if (args[i] == "--shader-include")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --shader-include requires an argument\n");
+                    return 1;
+                }
+                shaderIncludePath = path(args[++i]);
             }
             else if (args[i] == "--out-dir")
             {
@@ -360,9 +381,9 @@ int main(int argc, char** argv)
             }
 
             vector<path> packDeps;
-            const VoidResult result =
-                cooker.CookPack(packManifest, outPack, packRefs, types, systems,
-                                depfilePath ? &packDeps : nullptr, &*config, configFile);
+            const VoidResult result = cooker.CookPack(
+                packManifest, outPack, packRefs, types, systems, depfilePath ? &packDeps : nullptr,
+                &*config, configFile, shaderIncludePath ? *shaderIncludePath : path{});
             if (!result)
             {
                 fmt::print(stderr, "vengc: {}\n", result.error());

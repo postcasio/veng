@@ -1,4 +1,4 @@
-#include "material.slang"
+#include "Veng/material.slang"
 
 // Entity-id picking vertex stage (skinned meshes). The skinned sibling of entity_id.vert: it
 // linear-blend skins the position through the per-instance palette (set 2) before the world and

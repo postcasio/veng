@@ -48,9 +48,12 @@ namespace Veng::Cook
     /// material has no MaterialParams (e.g. a handles-only material).
     /// @param slangSource Path to the .slang source file.
     /// @param structName  Name of the struct to reflect.
+    /// @param shaderIncludeDir Engine core shader dir added to the Slang search path so the
+    ///                         source resolves `#include "Veng/material.slang"`; empty to skip it.
     /// @param optional    If true, a missing struct is not an error.
     [[nodiscard]] Result<ReflectedStruct> ReflectStructLayout(const path& slangSource,
                                                               std::string_view structName,
+                                                              const path& shaderIncludeDir = {},
                                                               bool optional = false);
 
     /// @brief One fragment render target reflected from an entry point's result:
@@ -77,6 +80,9 @@ namespace Veng::Cook
     /// semantic. Targets are returned sorted by TargetIndex.
     /// @param slangSource Path to the .slang source file.
     /// @param entry       Name of the fragment entry point to reflect.
+    /// @param shaderIncludeDir Engine core shader dir added to the Slang search path so the
+    ///                         source resolves `#include "Veng/material.slang"`; empty to skip it.
     [[nodiscard]] Result<vector<ReflectedFragmentOutput>>
-    ReflectFragmentOutputs(const path& slangSource, std::string_view entry);
+    ReflectFragmentOutputs(const path& slangSource, std::string_view entry,
+                           const path& shaderIncludeDir = {});
 }

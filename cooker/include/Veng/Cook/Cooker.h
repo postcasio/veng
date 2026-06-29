@@ -106,11 +106,15 @@ namespace Veng::Cook
         /// @param outDependencies If non-null, receives the sorted, de-duplicated dependency list.
         /// @param config          Active build configuration driving the cook, or nullptr.
         /// @param configFile      Source file of `config`, recorded as a central dependency; empty if none.
+        /// @param shaderIncludeDir Engine core shader dir threaded onto each Slang session's search
+        ///                         path so a consumer shader resolves `#include "Veng/material.slang"`;
+        ///                         empty for a cook that ships no engine shader header (the core pack).
         [[nodiscard]] VoidResult
         CookPack(const path& packJson, const path& outArchive,
                  std::span<const path> referencePacks = {}, const TypeRegistry* types = nullptr,
                  const SystemRegistry* systems = nullptr, vector<path>* outDependencies = nullptr,
-                 const BuildConfiguration* config = nullptr, const path& configFile = {}) const;
+                 const BuildConfiguration* config = nullptr, const path& configFile = {},
+                 const path& shaderIncludeDir = {}) const;
 
         /// @brief Cooks one source asset and returns a complete single-entry .vengpack as in-memory bytes.
         ///
@@ -126,11 +130,16 @@ namespace Veng::Cook
         /// @param systems        Reflected module system catalog (level id validation), or nullptr.
         /// @param config         Active build configuration driving role→format resolution, or
         ///                       nullptr for the zero-config defaults.
-        [[nodiscard]] Result<vector<u8>>
-        CookSource(const path& sourcePath, AssetId id, AssetType type,
-                   std::span<const path> referencePacks = {}, const TypeRegistry* types = nullptr,
-                   const SystemRegistry* systems = nullptr,
-                   const BuildConfiguration* config = nullptr) const;
+        /// @param shaderIncludeDir Engine core shader dir threaded onto each Slang session's search
+        ///                         path so a consumer shader resolves `#include "Veng/material.slang"`;
+        ///                         empty for a cook that ships no engine shader header.
+        [[nodiscard]] Result<vector<u8>> CookSource(const path& sourcePath, AssetId id,
+                                                    AssetType type,
+                                                    std::span<const path> referencePacks = {},
+                                                    const TypeRegistry* types = nullptr,
+                                                    const SystemRegistry* systems = nullptr,
+                                                    const BuildConfiguration* config = nullptr,
+                                                    const path& shaderIncludeDir = {}) const;
 
     private:
         /// @brief Cooks one pack entry JSON into the archive at `level`, enforcing id uniqueness.

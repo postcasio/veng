@@ -1,4 +1,4 @@
-#include "material_data.slang"
+#include "Veng/material.slang"
 
 // Deferred opaque metallic-roughness material fragment stage (gpu fixture): loads
 // the per-draw MaterialParams block, samples base color tinted by BaseColorFactor,
@@ -6,6 +6,26 @@
 // and the authored occlusion/roughness/metallic/emissive factors into G2. The
 // deferred-lighting oracle reads back known roughness/metallic values, so this
 // fixture writes the factors directly rather than sampling a packed ORM texture.
+
+// This fixture material's parameter block, reflected by the cooker and read through the
+// engine's set-0 g_MaterialParams at index * MaterialParamStride.
+struct MaterialParams
+{
+    uint   BaseColor;        uint BaseColorSampler;
+    uint   ORM;              uint ORMSampler;
+    uint   Normal;           uint NormalSampler;
+    uint   Pad0;             uint Pad1;
+    float4 BaseColorFactor;
+    float4 EmissiveFactor;
+    float  MetallicFactor;   float RoughnessFactor;
+    float  OcclusionStrength; float Pad2;
+};
+
+MaterialParams LoadMaterialParams(uint index)
+{
+    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+}
+
 struct VSOutput
 {
     float4 sv_position : SV_Position;

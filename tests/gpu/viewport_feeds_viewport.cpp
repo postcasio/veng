@@ -113,7 +113,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    // The brick shaders `#include "Veng/material.slang"`; the engine core shader dir is on
+    // the cook's Slang search path so the cross-pack include resolves.
+    REQUIRE(cooker
+                .CookPack(packJson, outArchive, {}, nullptr, nullptr, nullptr, nullptr, {},
+                          path(VENG_CORE_SHADER_DIR))
+                .has_value());
 
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());

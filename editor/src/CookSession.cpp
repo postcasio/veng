@@ -48,7 +48,8 @@ namespace VengEditor
                     request.ActiveConfig ? &*request.ActiveConfig : nullptr;
 
                 return cooker.CookSource(request.SourcePath, request.TargetId, request.Type,
-                                         referencePacks, types, systems, config);
+                                         referencePacks, types, systems, config,
+                                         request.ShaderIncludeDir);
             });
     }
 }

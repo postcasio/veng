@@ -1,4 +1,4 @@
-#include "material_data.slang"
+#include "Veng/material.slang"
 
 // Deferred material vertex stage (gpu fixture). VSInput matches veng's canonical
 // vertex layout (position/normal/tangent[float4]/uv on binding 0) plus the
