@@ -722,6 +722,17 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   **vertex-stage codegen**, **static switches**, **draw-sort by parent pipeline**, and
   **instance-of-instance chains** stay future.
 
+- **[planset-39](planset-39/README.md)** — explicit material-instance ids (📝 proposed, 1 plan).
+  Retires planset-38 Plan 05's parent-id **overload**, where one `AssetId` names both a `Material`
+  parent and its implicit zero-override `MaterialInstance`, kept apart only by a composite
+  `(type, id)` cache key and a resolve-time bridge (`LoadDefaultInstance`). Takes the explicit-id path
+  Plan 05 chose against: a parent `*.vmat.json` declares a minted **`defaultInstance`** id, the cook
+  emits a real zero-override instance at it, and **every material reference in every pack (and every
+  C++ literal) is rewritten** to name that id. The composite cache key reverts to id-only and the
+  resolve bridge is **deleted**, restoring the "one id ⇒ one asset of one type" invariant; `smoke_golden`
+  holds because a cooked zero-override instance packs the same bytes the synthesized default did.
+  Depends on planset-38 (Plans 05 + 06).
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
