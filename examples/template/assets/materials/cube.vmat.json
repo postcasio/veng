@@ -1,7 +1,20 @@
 {
+  "defaultInstance": 7724578570308231164,
   "domain": "surface",
-  "shaders": { "vertex": 7619531439638779021, "fragment": 11347999176829791418 },
+  "shaders": {
+    "vertex": 7619531439638779021,
+    "fragment": 11347999176829791418
+  },
   "fields": [
-    { "name": "BaseColorFactor", "type": "vec4", "value": [0.6, 0.7, 0.9, 1.0] }
+    {
+      "name": "BaseColorFactor",
+      "type": "vec4",
+      "value": [
+        0.6,
+        0.7,
+        0.9,
+        1.0
+      ]
+    }
   ]
 }

@@ -59,7 +59,8 @@ namespace VengEditor
         MaterialEditorPanel(Veng::AssetId id, Veng::path sourcePath,
                             const AssetSourceIndex& sources, Veng::Application& app,
                             Veng::AssetManager& assets, Veng::ImGuiLayer& imgui,
-                            Veng::EditorRegistry& editors, CookDriver cook);
+                            Veng::EditorRegistry& editors, CookDriver cook,
+                            Veng::function<Veng::AssetId()> mintId);
         ~MaterialEditorPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
@@ -144,6 +145,15 @@ namespace VengEditor
         Veng::ImGuiLayer& m_ImGui;
         Veng::EditorRegistry& m_Editors;
         CookDriver m_Cook;
+
+        /// @brief Mints a collision-free `defaultInstance` id against the project packs.
+        Veng::function<Veng::AssetId()> m_MintId;
+
+        /// @brief The parent's companion default-instance id, read from the `.vmat` on open.
+        ///
+        /// Invalid (Value 0) until the source declares one or a save backfills it; written back
+        /// into the `.vmat` so every reference resolves a real `MaterialInstance` archive entry.
+        Veng::AssetId m_DefaultInstanceId;
 
         /// @brief Reflected field table owned by the panel so the shader interface span stays valid.
         Veng::vector<Veng::MaterialField> m_Fields;

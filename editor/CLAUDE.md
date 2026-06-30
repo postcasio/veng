@@ -281,6 +281,14 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   generates the `MaterialParams` struct — ordered large-alignment-first so the cooker's std140
   reflection and the shader's scalar-layout `Load<T>` resolve identical offsets — and the matching
   `.vmat` field list from the same pass, so reflected offsets and packed values agree.
+- **The material editor mints the `defaultInstance` id.** A parent material's companion
+  default-instance id (the cook emits a zero-override `MaterialInstance` at it; every reference names
+  it) lives in the `.vmat.json`. On save, `MaterialEditorPanel` backfills a missing id — minting a
+  collision-free one against the project's packs through `EditorHost::MintAssetId` (an injected
+  `AssetIdMinter` over the cooker's in-process `GenerateAssetId`, since `libveng_editor` never links
+  the cooker) and writing it through the same preserve-unknown-keys `.vmat` round-trip. The id shows
+  read-only in the panel beside the material id. A material never opened in the editor stays on the
+  hand-mint floor (`vengc generate-id`, paste).
 - **`MaterialPreview` renders one material on a sphere through an `Offscreen` `Viewport`**
   into an ImGui texture. It is **not** an `EditorPanel`, so its owning `MaterialEditorPanel`
   registers the viewport on its behalf; each frame the preview advances the turntable and

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <span>
+
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetManager.h>
@@ -71,4 +73,12 @@ namespace VengEditor
     /// error string. The continuation receives Result<vector<u8>>.
     using CookBackend =
         Veng::function<Veng::Task<Veng::vector<Veng::u8>>(const CookRequest&, Veng::TaskSystem&)>;
+
+    /// @brief AssetId minter the editor exe injects (it links libveng_cook).
+    ///
+    /// Mints a collision-free id checked against the given reference pack manifests — the
+    /// in-process form of `vengc generate-id --reference`, so an editor-authored id is the
+    /// same kind of mint the CLI produces. Null leaves authored materials on the hand-mint floor.
+    /// @param referencePacks  Pack manifests whose ids the minted id must avoid.
+    using AssetIdMinter = Veng::function<Veng::AssetId(std::span<const Veng::path>)>;
 }

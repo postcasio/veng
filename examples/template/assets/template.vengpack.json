@@ -2,7 +2,7 @@
   "version": 1,
   "assets": [
     { "id": 11347999176829791418, "type": "shader",   "source": "shaders/flat.frag.shader.json" },
-    { "id": 4166528937578239323,  "type": "material", "source": "materials/cube.vmat.json", "defaultInstance": 7724578570308231164 },
+    { "id": 4166528937578239323,  "type": "material", "source": "materials/cube.vmat.json" },
     { "id": 16552220004907887153, "type": "prefab",   "source": "prefabs/scene.prefab.json" },
     { "id": 9915789321268550643,  "type": "level",    "source": "levels/scene.level.json" }
   ]
