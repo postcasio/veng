@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/DebugDraw.h>
 #include <Veng/Renderer/Types.h>
@@ -52,6 +53,7 @@ namespace Veng::Renderer
     class DescriptorSet;
     class DescriptorSetLayout;
     class EnvironmentIbl;
+    class AtmospherePrecompute;
 
     /// @brief Maximum number of simultaneously shadowed point/spot lights.
     ///
@@ -298,6 +300,17 @@ namespace Veng::Renderer
         /// presence of an environment regardless of this toggle.
         bool Skybox = true;
 
+        /// @brief Whether the procedural atmosphere renders as the background sky.
+        ///
+        /// A topology change: it inserts/removes the fullscreen SkyScenePass in the same slot
+        /// as the cubemap skybox (after lighting, before the bloom/tonemap tail), sampling the
+        /// precomputed atmosphere LUTs along each view ray. The sun direction and Atmosphere
+        /// parameters ride the per-frame SceneView; the renderer regenerates the LUTs only when
+        /// the Atmosphere changes. Off by default, so the shipping path and smoke_golden are
+        /// untouched. An alternative sky source to the environment skybox, not a replacement for
+        /// image-based lighting (the Environment IBL path is independent).
+        bool Atmosphere = false;
+
         /// @brief Whether the additive forward emissive pass runs.
         ///
         /// A topology change: it inserts/removes the EmissiveScenePass between deferred lighting
@@ -423,7 +436,28 @@ namespace Veng::Renderer
         /// @brief Scales the IBL ambient + skybox radiance; pushed to the lighting + skybox passes each Execute.
         ///
         /// Rides the per-frame push (no recompile). Ignored when no environment is bound.
+        /// Also scales the procedural atmosphere sky + sun disk when the atmosphere is enabled.
         f32 EnvironmentIntensity = 1.0f;
+
+        /// @brief Whether the procedural atmosphere sky renders this frame.
+        ///
+        /// Rides the per-frame push: the SkyScenePass (present when SceneRendererSettings::Atmosphere
+        /// is on) discards every pixel when this is false, so the sky is a per-frame opt-in over
+        /// the topology toggle. A caller leaves it false to keep the cubemap skybox / flat fallback.
+        bool AtmosphereEnabled = false;
+
+        /// @brief Normalized direction toward the sun for the procedural atmosphere (world up +Y).
+        ///
+        /// Drives the sky color and the sun-disk placement. A day/night cycle animates this with
+        /// no precompute — the sun direction is a runtime parameter into the LUT sample, never a
+        /// precompute input. Ignored when the atmosphere sky is off.
+        vec3 SunDirection{0.0f, 1.0f, 0.0f};
+
+        /// @brief Procedural-atmosphere parameters; the LUTs regenerate when these change.
+        ///
+        /// Compared field-for-field against the last-generated set each Execute; a change records
+        /// the (one-time) LUT regeneration before the graph. Ignored when the atmosphere sky is off.
+        Atmosphere Atmosphere;
 
         /// @brief Bloom bright-pass luminance knee; pushed to the downsample compute each Execute.
         ///
@@ -639,6 +673,12 @@ namespace Veng::Renderer
         /// False on a fully static frame (the scene's spatial version was unchanged).
         /// Diagnostic only; the rendered image is identical regardless.
         [[nodiscard]] bool DidBroadphaseRebuildLastFrame() const;
+
+        /// @brief Returns true if the atmosphere LUTs regenerated during the most recent Execute.
+        ///
+        /// True only on a frame the Atmosphere parameters changed (or the first frame the
+        /// atmosphere sky was active) — the once-per-change contract. Diagnostic only.
+        [[nodiscard]] bool DidRegenerateAtmosphereLastFrame() const;
 
         /// @brief Returns the number of nodes in the broadphase BVH (internal + leaf).
         ///
@@ -1180,6 +1220,11 @@ namespace Veng::Renderer
         /// @brief Layout for m_SkyboxPipeline: the IBL set (set 1) + the skybox push block.
         Ref<class PipelineLayout> m_SkyboxLayout;
 
+        /// @brief Fullscreen procedural-atmosphere sky pipeline (LUTs over the lit HDR), writing HdrFormat.
+        Ref<class GraphicsPipeline> m_SkyPipeline;
+        /// @brief Layout for m_SkyPipeline: the atmosphere set (set 1) + the sky push block.
+        Ref<class PipelineLayout> m_SkyLayout;
+
         /// @brief TAA resolve pipeline (reproject + neighborhood-clip + blend), writing HdrFormat.
         Ref<class GraphicsPipeline> m_TaaResolvePipeline;
         /// @brief Layout for m_TaaResolvePipeline: the resolve push block (no extra sets).
@@ -1592,6 +1637,24 @@ namespace Veng::Renderer
         /// Generation re-runs only when the bound environment differs from this. Non-owning —
         /// the AssetHandle keeps the Environment alive.
         const Environment* m_LastEnvironment = nullptr;
+
+        /// @brief Procedural-atmosphere LUTs (transmittance/scattering/irradiance); created at Create.
+        ///
+        /// Owns the precompute pipelines + the consumer set (set 1) the sky pass binds. Created
+        /// before the sky pipeline so the sky layout can reserve its set layout.
+        Unique<AtmospherePrecompute> m_Atmosphere;
+
+        /// @brief The atmosphere the LUTs were last generated from; gates regeneration.
+        ///
+        /// Generation re-runs only when this frame's Atmosphere differs from this (a field-wise
+        /// compare), and only while the atmosphere sky is active — the once-per-change contract.
+        Atmosphere m_LastAtmosphere;
+
+        /// @brief Whether m_LastAtmosphere holds a generated set (false until the first Generate).
+        bool m_AtmosphereGenerated = false;
+
+        /// @brief Whether the atmosphere LUTs regenerated during the most recent Execute (diagnostic).
+        bool m_AtmosphereRegeneratedLastFrame = false;
 
         /// @brief Immediate-mode debug-draw accumulator flushed by the DebugDrawScenePass.
         ///

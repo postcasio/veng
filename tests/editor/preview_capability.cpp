@@ -24,6 +24,8 @@ namespace
         {
         case CompressionFormat::BC7Unorm:
         case CompressionFormat::BC7Srgb:
+        case CompressionFormat::BC5Unorm:
+        case CompressionFormat::BC4Unorm:
         case CompressionFormat::ASTC4x4Unorm:
         case CompressionFormat::ASTC4x4Srgb:
             return true;

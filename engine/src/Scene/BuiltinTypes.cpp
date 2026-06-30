@@ -1,6 +1,7 @@
 #include <Veng/Scene/BuiltinTypes.h>
 
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Camera.h>
 
@@ -46,5 +47,8 @@ namespace Veng
 
         // Level-scoped render settings a Level carries and the app maps onto the renderer.
         registry.Register<LevelRenderSettings>();
+
+        // Procedural-atmosphere parameters the editor inspects and the sky pass consumes.
+        registry.Register<Renderer::Atmosphere>();
     }
 }

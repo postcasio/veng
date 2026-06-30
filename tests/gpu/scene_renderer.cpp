@@ -47,6 +47,11 @@
 
 #include <gpu/fixture.h>
 
+// After the Veng headers, so Veng.h's GLM_FORCE_DEPTH_ZERO_TO_ONE is set before glm is
+// first included — including a glm header ahead of Veng.h would compile glm::ortho with the
+// GL depth convention in this TU and break the orthographic-camera cases.
+#include <glm/gtc/packing.hpp>
+
 using namespace Veng;
 using namespace Veng::Renderer;
 
@@ -777,6 +782,94 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         CHECK(renderer->GetLastVisibleCount() == 2);
         CHECK(renderer->GetLastDrawnCount() == 2); // both submeshes in view
     }
+}
+
+// The procedural atmosphere render path under the validation gate: the SkyScenePass plus
+// the AtmospherePrecompute (transmittance 2D + scattering Type3D + irradiance 2D, the
+// multiple-scattering ping-pong over write-only 3D storage). It enables the atmosphere
+// topology toggle, pushes AtmosphereEnabled with a high sun, and renders an empty scene
+// (so the whole frame is background sky). It asserts the sky composites a non-black frame
+// and — crucially — that re-rendering an unchanged atmosphere records no second precompute
+// (the once-per-change contract), while changing it triggers regeneration. A 3D-storage
+// barrier slip or a multi-pass precompute hazard surfaces here under VE_DEBUG.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: procedural atmosphere sky composites and regenerates on change")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
+    REQUIRE(mountResult.has_value());
+
+    constexpr uvec2 extent{96, 96};
+
+    // An empty scene: no geometry, so every pixel is cleared-depth background the sky fills.
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    // Look up at the sky so the view rays sample the upper hemisphere.
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final,
+                     .Bloom = false,
+                     .Shadows = false,
+                     .AO = false,
+                     .Atmosphere = true},
+    });
+
+    Renderer::Atmosphere atmosphere;
+    auto Render = [&](const Renderer::Atmosphere& atm, vec3 sunDir)
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{
+                                           .World = *scene,
+                                           .Camera = camera,
+                                           .Delta = 0.0f,
+                                           .EnvironmentIntensity = 1.0f,
+                                           .AtmosphereEnabled = true,
+                                           .SunDirection = sunDir,
+                                           .Atmosphere = atm,
+                                       });
+            });
+    };
+
+    // Frame 1 generates the LUTs and composites the sky. The frame completes cleanly (a 3D
+    // storage barrier slip would fault here / under the validation gate).
+    Render(atmosphere, glm::normalize(vec3(0.2f, 1.0f, 0.0f)));
+    CHECK(renderer->DidRegenerateAtmosphereLastFrame());
+
+    // Frame 2 with the SAME atmosphere must NOT regenerate — the once-per-change gate. The
+    // sun direction is a runtime push, not a precompute input, so moving it changes nothing.
+    Render(atmosphere, glm::normalize(vec3(0.5f, 0.8f, 0.0f)));
+    CHECK_FALSE(renderer->DidRegenerateAtmosphereLastFrame());
+
+    // Frame 3 with a CHANGED atmosphere regenerates.
+    atmosphere.MieAnisotropy = 0.6f;
+    Render(atmosphere, glm::normalize(vec3(0.5f, 0.8f, 0.0f)));
+    CHECK(renderer->DidRegenerateAtmosphereLastFrame());
+
+    // The sky composited a non-black frame: at least one pixel carries real radiance.
+    const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+    REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+    const auto* halves = reinterpret_cast<const u16*>(pixels.data());
+    f64 maxLuminance = 0.0;
+    for (usize i = 0; i < static_cast<usize>(extent.x) * extent.y; ++i)
+    {
+        const f32 r = glm::unpackHalf1x16(halves[i * 4 + 0]);
+        const f32 g = glm::unpackHalf1x16(halves[i * 4 + 1]);
+        const f32 b = glm::unpackHalf1x16(halves[i * 4 + 2]);
+        maxLuminance =
+            std::max(maxLuminance, static_cast<f64>(0.2126 * r + 0.7152 * g + 0.0722 * b));
+    }
+    CHECK(maxLuminance > 0.0);
 }
 
 #ifdef GPU_GBUFFER_FIXTURE_DIR
@@ -3438,6 +3531,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         // Headlight onto the forward face: the outward normal is fully lit (N·L = 1).
         light.Direction = test.Headlight;
         const f64 litMean = MeanLuminance(RenderOutput(Context, *renderer, *scene, test.Camera));
+        MESSAGE("drawn=" << renderer->GetLastDrawnCount() << " visible="
+                         << renderer->GetLastVisibleCount() << " litMean=" << litMean);
 
         // Reversed: the light passes behind the forward face, so it falls to ambient.
         scene->Get<Light>(lightEntity).Direction = -test.Headlight;

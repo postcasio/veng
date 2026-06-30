@@ -189,6 +189,10 @@ namespace Veng::Cook
             case TextureCodec::BC7:
                 return ResolvedFormat{.Codec = TextureCodec::BC7,
                                       .FormatOrdinal = srgb ? BC7SrgbFormat : BC7UnormFormat};
+            case TextureCodec::BC5:
+                return ResolvedFormat{.Codec = TextureCodec::BC5, .FormatOrdinal = BC5UnormFormat};
+            case TextureCodec::BC4:
+                return ResolvedFormat{.Codec = TextureCodec::BC4, .FormatOrdinal = BC4UnormFormat};
             case TextureCodec::None:
                 return ResolvedFormat{.Codec = TextureCodec::None,
                                       .FormatOrdinal = srgb ? RGBA8SrgbFormat : RGBA8UnormFormat};

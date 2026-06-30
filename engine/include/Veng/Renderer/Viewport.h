@@ -54,8 +54,14 @@ namespace Veng::Renderer
         f32 Exposure = 1.0f;
         /// @brief Environment map driving image-based lighting and the skybox; empty for none.
         AssetHandle<Environment> Environment;
-        /// @brief Scales the IBL ambient + skybox radiance.
+        /// @brief Scales the IBL ambient + skybox radiance (and the procedural atmosphere sky).
         f32 EnvironmentIntensity = 1.0f;
+        /// @brief Whether the procedural atmosphere sky renders this frame.
+        bool AtmosphereEnabled = false;
+        /// @brief Normalized direction toward the sun for the procedural atmosphere (world up +Y).
+        vec3 SunDirection{0.0f, 1.0f, 0.0f};
+        /// @brief Procedural-atmosphere parameters; the renderer regenerates the LUTs on change.
+        Atmosphere Atmosphere;
         /// @brief Bloom bright-pass luminance knee.
         f32 BloomThreshold = 1.0f;
         /// @brief Bloom composite mix intensity.

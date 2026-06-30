@@ -275,6 +275,21 @@ namespace Veng::UI
         (void)UI::Drag("Env Intensity", view.EnvironmentIntensity,
                        {.Speed = 0.01f, .Min = 0.0f, .Max = 8.0f});
 
+        // The procedural atmosphere is a topology toggle (its own sky pass); the per-frame enable
+        // and the sun direction ride the ViewState. The sun elevation/azimuth drag drives the
+        // day/night look with no precompute — only the LUT-affecting Atmosphere fields regenerate.
+        changed |= UI::Checkbox("Atmosphere", settings.Atmosphere);
+        {
+            auto atmosphereDisabled = UI::Disabled(!settings.Atmosphere);
+            (void)UI::Checkbox("Atmosphere sky", view.AtmosphereEnabled);
+            if (UI::Drag("Sun direction", view.SunDirection, {.Speed = 0.01f}))
+            {
+                const f32 length = glm::length(view.SunDirection);
+                view.SunDirection =
+                    length > 1e-4f ? view.SunDirection / length : vec3(0.0f, 1.0f, 0.0f);
+            }
+        }
+
         // Bloom on/off and the kernel are topology; threshold/intensity/radius are per-frame
         // ViewState values. The per-bloom knobs grey out when bloom is off.
         changed |= UI::Checkbox("Bloom", settings.Bloom);
