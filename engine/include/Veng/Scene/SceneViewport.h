@@ -33,18 +33,35 @@ namespace Veng
     void PushSceneView(Renderer::Viewport& viewport, const Scene& scene,
                        const Renderer::ViewState& knobs, f32 delta = 0.0f);
 
-    /// @brief Maps a level's render settings onto a renderer's topology knobs and per-frame view.
+    /// @brief Maps a level's post/pipeline render knobs onto a renderer's topology and per-frame view.
     ///
     /// Splits LevelRenderSettings across the two renderer surfaces it feeds: the topology toggles
-    /// (Bloom / Shadows / AO / Skybox) onto a SceneRendererSettings the caller applies through
-    /// Viewport::Configure, and the per-frame values (Exposure / BloomIntensity / Environment /
-    /// EnvironmentIntensity) onto a ViewState the caller pushes each frame. The single mapping the
-    /// example games, the managed world, and the editor viewport share, so the level→renderer wiring
-    /// lives in one place.
-    /// @param render    The level's render-settings subset.
+    /// (Bloom / Shadows / AO) onto a SceneRendererSettings the caller applies through
+    /// Viewport::Configure, and the per-frame values (Exposure / BloomIntensity) onto a ViewState the
+    /// caller pushes each frame. The sky/environment knobs are not here — they are scene components
+    /// resolved by ApplySceneSky. The single mapping the example games, the managed world, and the
+    /// editor viewport share, so the level→renderer wiring lives in one place.
+    /// @param render    The level's post/pipeline render-settings subset.
     /// @param settings  The topology/sizing knobs to update (the toggles are written in place).
-    /// @param view      The per-frame view to seed (the tone/bloom/environment values are written).
+    /// @param view      The per-frame view to seed (the tone/bloom values are written).
     void ApplyLevelRenderSettings(const LevelRenderSettings& render,
                                   Renderer::SceneRendererSettings& settings,
                                   Renderer::ViewState& view);
+
+    /// @brief Resolves a scene's sky/lighting components onto a renderer's topology and per-frame view.
+    ///
+    /// Reads the author-opt-in components (Environment / Atmosphere / Skylight) and the first
+    /// directional Light, writing the IBL/skybox/atmosphere topology toggles onto a
+    /// SceneRendererSettings (applied through Viewport::Configure) and the environment handle,
+    /// intensities, atmosphere params, and the toward-sun direction onto a ViewState (pushed each
+    /// frame). A component's presence drives its feature; its absence reverts to the fallback (no
+    /// environment, no sky). The sun direction is the inverse of the directional light's travel
+    /// direction, so the sky and lighting share one sun. The single mapping the managed world and
+    /// the editor viewport share, so adding a component in the editor lights the scene the same way
+    /// the runtime does.
+    /// @param scene     The scene whose sky/lighting components and directional light are read.
+    /// @param settings  The topology/sizing knobs to update (the sky toggles are written in place).
+    /// @param view      The per-frame view to seed (environment / intensities / sun / atmosphere).
+    void ApplySceneSky(const Scene& scene, Renderer::SceneRendererSettings& settings,
+                       Renderer::ViewState& view);
 }

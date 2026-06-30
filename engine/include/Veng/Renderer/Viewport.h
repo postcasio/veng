@@ -53,9 +53,11 @@ namespace Veng::Renderer
         /// @brief Exposure scale applied before the tone curve.
         f32 Exposure = 1.0f;
         /// @brief Environment map driving image-based lighting and the skybox; empty for none.
-        AssetHandle<Environment> Environment;
-        /// @brief Scales the IBL ambient + skybox radiance (and the procedural atmosphere sky).
+        AssetHandle<EnvironmentMap> Environment;
+        /// @brief Scales the IBL ambient + skybox radiance.
         f32 EnvironmentIntensity = 1.0f;
+        /// @brief Scales the procedural atmosphere sky + sun disk.
+        f32 AtmosphereIntensity = 1.0f;
         /// @brief Scales the dynamic SH skylight ambient (SceneRendererSettings::Skylight).
         f32 SkylightIntensity = 1.0f;
         /// @brief Whether the procedural atmosphere sky renders this frame.

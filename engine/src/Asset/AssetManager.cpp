@@ -54,7 +54,7 @@ namespace Veng
             case AssetType::Animation:
                 return "Animation";
             case AssetType::Environment:
-                return "Environment";
+                return "EnvironmentMap";
             case AssetType::MaterialInstance:
                 return "MaterialInstance";
             }

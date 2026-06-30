@@ -6,7 +6,6 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
-#include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
@@ -43,27 +42,6 @@ namespace Veng
             }
 
             return manager.LoadSync<Prefab>(prefabId);
-        }
-
-        // Loads an Environment dependency by id on the active path, returning its handle.
-        AssetResult<AssetHandle<Environment>>
-        LoadEnvironmentDependency(AssetManager& manager, AssetId levelId, AssetId envId, bool async)
-        {
-            if (async)
-            {
-                AssetHandle<Environment> handle = manager.Load<Environment>(envId);
-                if (!AssetManager::EntryOf(handle))
-                {
-                    return std::unexpected(AssetLoadError{
-                        .Kind = AssetError::MissingDependency,
-                        .Id = envId,
-                        .Detail = fmt::format("level {}: environment {} did not resolve",
-                                              levelId.Value, envId.Value)});
-                }
-                return handle;
-            }
-
-            return manager.LoadSync<Environment>(envId);
         }
     }
 
@@ -149,30 +127,14 @@ namespace Veng
             gameMode.PlayerPrefab = *player;
         }
 
-        // The render settings carry an environment map (id-only after ReadFields); rebind it to a
-        // resident handle so the app reads a loaded environment off the level.
-        const AssetId envId = render.Environment.Id();
-        if (envId.IsValid())
-        {
-            const AssetResult<AssetHandle<Environment>> environment =
-                LoadEnvironmentDependency(manager, id, envId, async);
-            if (!environment)
-            {
-                return std::unexpected(environment.error());
-            }
-            render.Environment = *environment;
-        }
-
         // ── 5. Collect dependency cache entries (kept resident for the level) ─
+        // The environment map is no longer a level field: it rides an Environment component on the
+        // world prefab and resolves through the prefab's own dependency walk like any embedded handle.
         vector<Ref<Detail::AssetCacheEntry>> dependencies;
         dependencies.push_back(AssetManager::EntryOf(*world));
         if (playerId.IsValid())
         {
             dependencies.push_back(AssetManager::EntryOf(gameMode.PlayerPrefab));
-        }
-        if (envId.IsValid())
-        {
-            dependencies.push_back(AssetManager::EntryOf(render.Environment));
         }
 
         // ── 6. Construct the Level ───────────────────────────────────────────

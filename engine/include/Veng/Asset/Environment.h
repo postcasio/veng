@@ -26,8 +26,8 @@ namespace Veng::Renderer
 
 namespace Veng
 {
-    /// @brief Construction parameters for an Environment.
-    struct EnvironmentData
+    /// @brief Construction parameters for an EnvironmentMap.
+    struct EnvironmentMapData
     {
         /// @brief Debug name for the environment.
         string Name;
@@ -46,13 +46,13 @@ namespace Veng
     /// irradiance, and prefiltered-specular maps. Like Texture, creation/upload are
     /// worker-legal and bindless registration is deferred to the main-thread Finalize().
     /// GetHandle()/GetSamplerHandle() are valid only after Finalize().
-    class Environment
+    class EnvironmentMap
     {
     public:
-        ~Environment();
+        ~EnvironmentMap();
 
-        Environment(const Environment&) = delete;
-        Environment& operator=(const Environment&) = delete;
+        EnvironmentMap(const EnvironmentMap&) = delete;
+        EnvironmentMap& operator=(const EnvironmentMap&) = delete;
 
         /// @brief Returns the environment's debug name.
         [[nodiscard]] const string& GetName() const { return m_Name; }
@@ -78,29 +78,29 @@ namespace Veng
     private:
         friend class EnvironmentLoader;
 
-        /// @brief Prepares an Environment with a blocking upload, leaving it unregistered.
+        /// @brief Prepares an EnvironmentMap with a blocking upload, leaving it unregistered.
         /// @param context Render context the panorama image/view/sampler are created on.
-        /// @param data    Environment description (extent, format, pixels).
+        /// @param data    EnvironmentMap description (extent, format, pixels).
         /// @return The unregistered environment.
-        static Ref<Environment> PrepareSync(Renderer::Context& context,
-                                            const EnvironmentData& data);
+        static Ref<EnvironmentMap> PrepareSync(Renderer::Context& context,
+                                               const EnvironmentMapData& data);
 
-        /// @brief Prepares an Environment with an async transfer-queue upload, leaving it unregistered.
+        /// @brief Prepares an EnvironmentMap with an async transfer-queue upload, leaving it unregistered.
         /// @param context    Render context the panorama image/view/sampler are created on.
-        /// @param data       Environment description (extent, format, pixels).
+        /// @param data       EnvironmentMap description (extent, format, pixels).
         /// @param tasks      Task system the async upload is recorded through.
         /// @param outUpload  Receives the upload task to wait on before Finalize().
         /// @return The unregistered environment.
-        static Ref<Environment> PrepareAsync(Renderer::Context& context,
-                                             const EnvironmentData& data, TaskSystem& tasks,
-                                             Task<void>& outUpload);
+        static Ref<EnvironmentMap> PrepareAsync(Renderer::Context& context,
+                                                const EnvironmentMapData& data, TaskSystem& tasks,
+                                                Task<void>& outUpload);
 
         /// @brief Registers the panorama view and sampler into the bindless registry (set 0).
         ///
         /// Runs on the render thread. Asserts against double-registration.
         void Finalize();
 
-        Environment(Renderer::Context& context, const EnvironmentData& data);
+        EnvironmentMap(Renderer::Context& context, const EnvironmentMapData& data);
 
         /// @brief Back-reference for deferred destruction; resource must not outlive its context.
         Renderer::Context& m_Context;
@@ -117,11 +117,11 @@ namespace Veng
         bool m_Registered = false;
     };
 
-    /// @brief AssetTypeTrait specialization mapping Environment to AssetType::Environment.
+    /// @brief AssetTypeTrait specialization mapping EnvironmentMap to AssetType::Environment.
     template <>
-    struct AssetTypeTrait<Environment>
+    struct AssetTypeTrait<EnvironmentMap>
     {
-        /// @brief The asset type tag for Environment.
+        /// @brief The asset type tag for EnvironmentMap.
         static constexpr AssetType Type = AssetType::Environment;
     };
 }

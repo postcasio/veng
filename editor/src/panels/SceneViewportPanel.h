@@ -17,7 +17,6 @@ namespace Veng
 {
     class Application;
     class AssetManager;
-    class Environment;
     class ImGuiLayer;
     class ImGuiTexture;
     class Input;
@@ -72,14 +71,15 @@ namespace VengEditor
 
         void OnUI() override;
 
-        /// @brief Applies a level's render subset to the viewport, mirroring the runtime mapping.
+        /// @brief Applies a level's post/pipeline render subset to the viewport, mirroring the runtime mapping.
         ///
-        /// Folds the topology toggles (Bloom/Shadows/AO/Skybox) into the SceneRendererSettings,
-        /// flagged for a Configure only when one actually changed, so a per-edit call never
-        /// forces a needless recompile, and stores the per-frame Exposure / BloomIntensity /
-        /// Environment the pushed ViewState carries each frame. The level editor pushes its live
-        /// settings here so an edit shows in the viewport immediately, ahead of the recook.
-        /// @param render  The level's render settings.
+        /// Folds the topology toggles (Bloom/Shadows/AO) into the SceneRendererSettings, flagged for
+        /// a Configure only when one actually changed, so a per-edit call never forces a needless
+        /// recompile, and stores the per-frame Exposure / BloomIntensity the pushed ViewState carries
+        /// each frame. The sky/environment is not here — it is resolved from the scene's components
+        /// each frame in OnUI (ApplySceneSky). The level editor pushes its live settings here so an
+        /// edit shows in the viewport immediately, ahead of the recook.
+        /// @param render  The level's post/pipeline render settings.
         void ApplyLevelRenderSettings(const Veng::LevelRenderSettings& render);
 
     private:
@@ -185,20 +185,6 @@ namespace VengEditor
         Veng::f32 m_Exposure = 1.0f;
         /// @brief Per-frame bloom composite intensity written into the pushed ViewState each frame.
         Veng::f32 m_BloomIntensity = 1.0f;
-
-        /// @brief Environment map (IBL + skybox source) written into the pushed ViewState each frame.
-        Veng::AssetHandle<Veng::Environment> m_Environment;
-        /// @brief Per-frame environment intensity written into the pushed ViewState each frame.
-        Veng::f32 m_EnvironmentIntensity = 1.0f;
-
-        /// @brief Whether the procedural atmosphere sky renders, written into the pushed ViewState.
-        bool m_AtmosphereEnabled = false;
-        /// @brief Per-frame SH skylight intensity written into the pushed ViewState each frame.
-        Veng::f32 m_SkylightIntensity = 1.0f;
-        /// @brief Normalized sun direction written into the pushed ViewState each frame.
-        Veng::vec3 m_SunDirection{0.0f, 1.0f, 0.0f};
-        /// @brief Procedural-atmosphere parameters written into the pushed ViewState each frame.
-        Veng::Renderer::Atmosphere m_Atmosphere;
 
         /// @brief Last extent the ImGui texture was fetched at; re-fetch when the viewport resizes.
         Veng::uvec2 m_TextureExtent{};

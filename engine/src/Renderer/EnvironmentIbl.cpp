@@ -392,7 +392,7 @@ namespace Veng::Renderer
         cmd.PrepareForAccess(m_PrefilterCubeView, AccessKind::Sample);
     }
 
-    void EnvironmentIbl::Generate(CommandBuffer& cmd, const Veng::Environment& environment)
+    void EnvironmentIbl::Generate(CommandBuffer& cmd, const Veng::EnvironmentMap& environment)
     {
         // Equirect panorama -> radiance cube. The panorama is sampled through set-0 bindless.
         m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);

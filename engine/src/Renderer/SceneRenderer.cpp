@@ -4920,7 +4920,7 @@ namespace Veng::Renderer
         // samples them through. Recorded into cmd before the graph so the cubes are resident
         // and in their sampled layout when the lighting pass runs.
         m_Ibl->EnsureInitialized(cmd);
-        const Environment* environment =
+        const EnvironmentMap* environment =
             view.Environment.IsLoaded() ? view.Environment.Get() : nullptr;
         if (environment != nullptr && environment != m_LastEnvironment)
         {

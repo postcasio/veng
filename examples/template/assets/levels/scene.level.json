@@ -5,7 +5,6 @@
     "Exposure": 1.0,
     "Bloom": false,
     "Shadows": false,
-    "AO": false,
-    "Skybox": false
+    "AO": false
   }
 }

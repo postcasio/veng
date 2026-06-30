@@ -10,6 +10,7 @@
 #include <fmt/format.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Texture.h>
@@ -45,6 +46,10 @@ namespace Veng::Cook
             if (fieldType == TypeIdOf<AssetHandle<Prefab>>())
             {
                 return AssetType::Prefab;
+            }
+            if (fieldType == TypeIdOf<AssetHandle<EnvironmentMap>>())
+            {
+                return AssetType::Environment;
             }
             return std::nullopt;
         }

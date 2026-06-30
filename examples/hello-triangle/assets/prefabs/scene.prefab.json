@@ -4609,6 +4609,18 @@
           }
         }
       }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Environment"
+        },
+        "::Veng::Environment": {
+          "Map": 10517717547470730851,
+          "Intensity": 1.0,
+          "Skybox": true
+        }
+      }
     }
   ]
 }

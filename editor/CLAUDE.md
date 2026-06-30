@@ -68,11 +68,14 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   level-scoped children over the same dockspace: a **systems panel** listing the
   `SystemRegistry` catalog ([engine/CLAUDE.md](../engine/CLAUDE.md)) with a per-system enable
   toggle, phase labels, and drag-reorder over the active set — writing the level's ordered
-  `SystemId` list — and a **settings panel** drawing the `GameModeConfig` and
-  `LevelRenderSettings` through the shared reflection inspector (`DrawFieldWidget`). System
-  *params* stay components, edited through the world surface like any other; the level editor
-  adds **no new inspector machinery** — the catalog drives the systems panel and reflection
-  draws the config. Editing recooks the `*.level.json` off the render thread and hot-reloads
+  `SystemId` list — and a **settings panel** drawing the `GameModeConfig` and the post/pipeline
+  `LevelRenderSettings` through the shared reflection inspector (`DrawFieldWidget`). The
+  sky/environment is **not** in that panel: it is author-opt-in `Environment` / `Atmosphere` /
+  `Skylight` components added to world entities through the ordinary inspector Add-Component
+  surface, which the viewport resolves each frame (`ApplySceneSky`) so the sky appears the moment a
+  component is added. System *params* stay components, edited through the world surface like any
+  other; the level editor adds **no new inspector machinery** — the catalog drives the systems panel
+  and reflection draws the config. Editing recooks the `*.level.json` off the render thread and hot-reloads
   behind the stable handle (the round-trip preserves unknown keys, like the texture editor).
   Play runs **exactly the level's ordered system set** through the base's play machinery
   (`GetPlaySystems`), distinct from a bare prefab document's "all registered" set.

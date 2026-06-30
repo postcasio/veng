@@ -4,7 +4,6 @@
 
 #include <Veng/Application.h>
 #include <Veng/Asset/AssetManager.h>
-#include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/ImGui/ImGuiLayer.h>
@@ -412,11 +411,11 @@ namespace VengEditor
 
     void SceneViewportPanel::ApplyLevelRenderSettings(const LevelRenderSettings& render)
     {
-        // Run the level subset through the shared runtime mapping so the level→renderer wiring
-        // lives in one place; the editor only adds its per-frame/dirty/resolve handling on top.
-        // Start the topology half from the live settings so the editor-only bits (DebugDraw, the
-        // debug-view Mode, the toolbar toggles) survive, and seed the per-frame half into a scratch
-        // view we pull the level-owned values out of.
+        // Run the level's post/pipeline subset through the shared runtime mapping so the
+        // level→renderer wiring lives in one place; the sky/environment is resolved from the scene's
+        // components each frame (ApplySceneSky in OnUI). Start the topology half from the live
+        // settings so the editor-only bits (DebugDraw, the debug-view Mode, the toolbar toggles)
+        // survive, and seed the per-frame half into a scratch view we pull the level-owned values from.
         Renderer::SceneRendererSettings next = m_Settings;
         Renderer::ViewState scratch;
         Veng::ApplyLevelRenderSettings(render, next, scratch);
@@ -424,8 +423,7 @@ namespace VengEditor
         // A topology change is the only thing that needs a Configure recompile, and this is called
         // per settings-panel edit (an Exposure drag too), so flip dirty only when a toggle moved.
         if (next.Bloom != m_Settings.Bloom || next.Shadows != m_Settings.Shadows ||
-            next.AO != m_Settings.AO || next.Skybox != m_Settings.Skybox ||
-            next.Atmosphere != m_Settings.Atmosphere || next.Skylight != m_Settings.Skylight)
+            next.AO != m_Settings.AO)
         {
             m_Settings = next;
             m_SettingsDirty = true;
@@ -433,23 +431,6 @@ namespace VengEditor
 
         m_Exposure = scratch.Exposure;
         m_BloomIntensity = scratch.BloomIntensity;
-        m_EnvironmentIntensity = scratch.EnvironmentIntensity;
-        m_AtmosphereEnabled = scratch.AtmosphereEnabled;
-        m_SkylightIntensity = scratch.SkylightIntensity;
-        m_SunDirection = scratch.SunDirection;
-        m_Atmosphere = scratch.Atmosphere;
-
-        // The shared mapping leaves scratch.Environment id-only here: the level config is hand-parsed
-        // (not run through the Level loader that resolves it as a dependency), so resolve it into a
-        // resident handle — the IBL + skybox source the renderer reads off the pushed ViewState.
-        // Async, gated on the id, so the skybox appears a few frames after a repoint exactly as a
-        // cooked load would.
-        if (m_Environment.Id() != render.Environment.Id())
-        {
-            m_Environment = render.Environment.Id().IsValid()
-                                ? m_Assets.Load<Environment>(render.Environment.Id())
-                                : AssetHandle<Environment>{};
-        }
     }
 
     void SceneViewportPanel::DrawToolbar()
@@ -695,19 +676,32 @@ namespace VengEditor
             }
         }
 
-        m_Viewport->SetViewState({
+        Renderer::ViewState view{
             .World = m_Ctx.Scene,
             .Camera = camera,
             .Delta = Time::GetDeltaTime(),
             .Exposure = m_Exposure,
-            .Environment = m_Environment,
-            .EnvironmentIntensity = m_EnvironmentIntensity,
-            .SkylightIntensity = m_SkylightIntensity,
-            .AtmosphereEnabled = m_AtmosphereEnabled,
-            .SunDirection = m_SunDirection,
-            .Atmosphere = m_Atmosphere,
             .BloomIntensity = m_BloomIntensity,
-        });
+        };
+
+        // Resolve the scene's sky/lighting components (Environment / Atmosphere / Skylight) and its
+        // directional sun onto this frame's view and the sky topology — the same mapping the runtime
+        // uses, so adding a component in the editor lights the scene immediately. A sky topology
+        // change flags a Configure, applied next frame at the top of OnUI (one frame of latency, like
+        // the rest of the editor's settings edits).
+        if (m_Ctx.Scene != nullptr)
+        {
+            Renderer::SceneRendererSettings next = m_Settings;
+            Veng::ApplySceneSky(*m_Ctx.Scene, next, view);
+            if (next.Skybox != m_Settings.Skybox || next.Atmosphere != m_Settings.Atmosphere ||
+                next.Skylight != m_Settings.Skylight)
+            {
+                m_Settings = next;
+                m_SettingsDirty = true;
+            }
+        }
+
+        m_Viewport->SetViewState(view);
 
         // Mode keys select the gizmo mode, but only while not flying: the RMB fly-camera binds
         // W/A/S/D/E/Q, so reading W/E/R as gizmo keys mid-fly would fight movement. ScreenToWorldRay

@@ -16,7 +16,7 @@ namespace Veng
     class MaterialInstance;
     class Prefab;
     struct Animation;
-    class Environment;
+    class EnvironmentMap;
     class TypeRegistry;
 
     /// @brief Identity trait for every reflected type.
@@ -112,7 +112,7 @@ VE_LEAF(::Veng::AssetHandle<::Veng::Prefab>, 0xF71230AEA9060D83ULL,
         ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::Animation>, 0xED6B03478BD050CEULL,
         ::Veng::FieldClass::AssetHandle);
-VE_LEAF(::Veng::AssetHandle<::Veng::Environment>, 0x4E2499935571083DULL,
+VE_LEAF(::Veng::AssetHandle<::Veng::EnvironmentMap>, 0x4E2499935571083DULL,
         ::Veng::FieldClass::AssetHandle);
 
 // Entity is an intra-scene reference, not a value leaf — the prefab loader

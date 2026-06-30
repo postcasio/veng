@@ -39,7 +39,7 @@ namespace Veng
     class AssetManager;
     class Material;
     class MaterialInstance;
-    class Environment;
+    class EnvironmentMap;
 }
 
 namespace Veng::Renderer
@@ -297,7 +297,7 @@ namespace Veng::Renderer
         ///
         /// A topology change: it inserts/removes the fullscreen SkyboxScenePass between
         /// lighting and the bloom/tonemap tail. The pass is a per-frame no-op unless an
-        /// environment is bound (SceneView::Environment); EnvironmentIntensity rides the
+        /// environment is bound (SceneView::EnvironmentMap); EnvironmentIntensity rides the
         /// per-frame SceneView. Independent of image-based lighting, which is driven by the
         /// presence of an environment regardless of this toggle.
         bool Skybox = true;
@@ -310,7 +310,7 @@ namespace Veng::Renderer
         /// parameters ride the per-frame SceneView; the renderer regenerates the LUTs only when
         /// the Atmosphere changes. Off by default, so the shipping path and smoke_golden are
         /// untouched. An alternative sky source to the environment skybox, not a replacement for
-        /// image-based lighting (the Environment IBL path is independent).
+        /// image-based lighting (the EnvironmentMap IBL path is independent).
         bool Atmosphere = false;
 
         /// @brief Whether the dynamic sky-projected SH ambient lights the scene's diffuse term.
@@ -445,13 +445,17 @@ namespace Veng::Renderer
         /// When resident, the renderer (re)generates its IBL maps on change and the lighting
         /// pass replaces the flat ambient term with split-sum IBL. An unset/not-yet-loaded
         /// handle falls back to the flat ambient (a scene without an environment is unchanged).
-        AssetHandle<Environment> Environment;
+        AssetHandle<EnvironmentMap> Environment;
 
         /// @brief Scales the IBL ambient + skybox radiance; pushed to the lighting + skybox passes each Execute.
         ///
         /// Rides the per-frame push (no recompile). Ignored when no environment is bound.
-        /// Also scales the procedural atmosphere sky + sun disk when the atmosphere is enabled.
         f32 EnvironmentIntensity = 1.0f;
+
+        /// @brief Scales the procedural atmosphere sky + sun disk; pushed to the SkyScenePass each Execute.
+        ///
+        /// Rides the per-frame push (no recompile). Ignored when the atmosphere sky is off.
+        f32 AtmosphereIntensity = 1.0f;
 
         /// @brief Scales the dynamic SH skylight ambient; pushed to the lighting pass each Execute.
         ///
@@ -1655,8 +1659,8 @@ namespace Veng::Renderer
         /// @brief The environment the IBL maps were last generated from; gates regeneration.
         ///
         /// Generation re-runs only when the bound environment differs from this. Non-owning —
-        /// the AssetHandle keeps the Environment alive.
-        const Environment* m_LastEnvironment = nullptr;
+        /// the AssetHandle keeps the EnvironmentMap alive.
+        const EnvironmentMap* m_LastEnvironment = nullptr;
 
         /// @brief Procedural-atmosphere LUTs (transmittance/scattering/irradiance); created at Create.
         ///

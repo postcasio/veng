@@ -167,49 +167,6 @@ TEST_CASE("level cook: happy path — header, system ids, config record round-tr
     CHECK(static_cast<usize>((cursor - blob.data()) + header.RenderRecordBytes) == blob.size());
 }
 
-TEST_CASE("level cook: atmosphere vector + nested-struct render fields round-trip")
-{
-    const LoadedModuleTypes module = LoadRegistry();
-
-    // Exercise the render block's vector (SunDirection) and nested-struct (AtmosphereParams,
-    // itself carrying vectors and scalars) field classes the LevelImporter binds.
-    json level = SampleLevel();
-    level["render"] = {{"Atmosphere", true},
-                       {"SunDirection", json::array({0.3, 0.8, -0.5})},
-                       {"Skylight", true},
-                       {"SkylightIntensity", 2.0},
-                       {"AtmosphereParams", {{"RayleighHeight", 9.5}, {"MieAnisotropy", 0.6}}}};
-    const path packJson = WriteLevelPack("level_atmosphere", level);
-    const path refs[] = {path(VENG_HT_ASSETS_DIR) / "sample.vengpack.json"};
-
-    const Result<vector<u8>> blobResult = CookLevel(packJson, module, refs, AssetId{7777});
-    REQUIRE_MESSAGE(blobResult.has_value(),
-                    "cook failed: ", blobResult ? string{} : blobResult.error());
-
-    const vector<u8>& blob = *blobResult;
-    CookedLevelHeader header{};
-    std::memcpy(&header, blob.data(), sizeof(header));
-
-    const u8* cursor = blob.data() + sizeof(CookedLevelHeader) + header.SystemCount * sizeof(u64) +
-                       header.GameModeRecordBytes;
-    const std::span<const u8> renderRecord(cursor, header.RenderRecordBytes);
-    LevelRenderSettings render;
-    REQUIRE(ReadFields(renderRecord, &render, module.Types.Info(TypeIdOf<LevelRenderSettings>()),
-                       module.Types)
-                .has_value());
-
-    CHECK(render.Atmosphere == true);
-    CHECK(render.SunDirection.x == doctest::Approx(0.3f));
-    CHECK(render.SunDirection.y == doctest::Approx(0.8f));
-    CHECK(render.SunDirection.z == doctest::Approx(-0.5f));
-    CHECK(render.Skylight == true);
-    CHECK(render.SkylightIntensity == doctest::Approx(2.0f));
-    CHECK(render.AtmosphereParams.RayleighHeight == doctest::Approx(9.5f));
-    CHECK(render.AtmosphereParams.MieAnisotropy == doctest::Approx(0.6f));
-    // An omitted nested field keeps the Atmosphere struct's default.
-    CHECK(render.AtmosphereParams.MieHeight == doctest::Approx(1.2f));
-}
-
 TEST_CASE("level cook: an unknown system id is a located error")
 {
     const LoadedModuleTypes module = LoadRegistry();

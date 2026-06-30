@@ -7,11 +7,8 @@
     "AO": true,
     "Bloom": true,
     "BloomIntensity": 1.5,
-    "Environment": 10517717547470730851,
-    "EnvironmentIntensity": 1.0,
     "Exposure": 2.5,
-    "Shadows": true,
-    "Skybox": true
+    "Shadows": true
   },
   "systems": [
     8128120177403478945,

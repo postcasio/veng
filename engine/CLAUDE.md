@@ -44,9 +44,11 @@ viewports.
 `ApplicationInfo::World` (`GameWorldInfo { path Project; }`, alongside `ManagedViewport`)
 and `Application` runs the game: at the end of `Initialize` (after `OnInitialize`) it reads
 the **cooked project** (`<name>.vengproj`) beside the executable (`ReadCookedProject`), mounts
-each pack it names, loads its **startup level** (declared by the cooked project), seeds the managed viewport's
-topology + per-frame view from the level's `LevelRenderSettings` (`ApplyLevelRenderSettings`),
-spawns the world (`Level::LoadInto`, the `Scene` owning its `SceneSimulation`), fires the
+each pack it names, loads its **startup level** (declared by the cooked project), spawns the world
+(`Level::LoadInto`, the `Scene` owning its `SceneSimulation`), seeds the managed viewport's topology
++ per-frame view from the spawned scene — the level's `LevelRenderSettings` post knobs
+(`ApplyLevelRenderSettings`) plus the author-opt-in sky/lighting components (`ApplySceneSky`:
+`Environment` / `Atmosphere` / `Skylight` + the directional sun) — fires the
 `OnWorldLoaded(Scene&, ResidencyBatch&)` hook, then starts the simulation. Each `Frame` it
 ticks the world (`Scene::TickSimulation`, unless `SetWorldPaused`), calls `OnUpdate`, then
 **resolves the primary camera and pushes the `ViewState`** into the managed viewport
@@ -289,7 +291,7 @@ the compute push, so tuning them never recompiles. `DebugView::Bloom` blits pyra
 after the up-sweep — the accumulated bloom contribution before composite.
 
 **Image-based lighting is a split-sum IBL battery driven by a per-scene environment map.** A
-resident `AssetHandle<Environment>` rides the per-frame `SceneView` (set by the app through the
+resident `AssetHandle<EnvironmentMap>` rides the per-frame `SceneView` (set by the app through the
 `Viewport`'s `ViewState`, like `Exposure`); a renderer-owned **`EnvironmentIbl`** helper
 (`engine/src/Renderer/EnvironmentIbl.{h,cpp}`) generates the maps it derives — a **radiance
 cubemap** (the skybox source), a **diffuse irradiance cubemap**, a **GGX-prefiltered specular
@@ -315,8 +317,12 @@ reflects, and tonemaps with the scene. Keeping it a separate pass leaves a clean
 procedural sky model. Both passes run fullscreen and mask sky vs. geometry in-shader; a depth/stencil
 mask that skips lighting on sky pixels (and runs the sky only on background) is the named next
 refinement. `SceneView::EnvironmentIntensity` is a per-frame push value (no recompile); the
-environment itself rides `SceneView::Environment`, sourced from `LevelRenderSettings` (a reflected
-`AssetHandle<Environment>` field the level loader resolves as a dependency).
+environment itself rides `SceneView::Environment`, sourced from an **`Environment` scene component**
+(`AssetHandle<EnvironmentMap> Map` + `Intensity` + a `Skybox` toggle) the author adds to an entity —
+resolved onto the view by `ApplySceneSky` and loaded as an ordinary prefab dependency. The `Skybox`
+pass and IBL are driven by that component's presence, not by a level field. (The cooked
+`EnvironmentMap` asset — the radiance/irradiance/prefiltered/BRDF maps — is `AssetType::Environment`;
+the component is the scene-authoring front-end that references it.)
 
 Per-view data rides a **ring-buffered view-constants buffer**, not push constants: the
 `InvViewProj`/`CameraPosition` (for world-position reconstruction), the view/projection,
@@ -1228,8 +1234,10 @@ logic; there is no reflected-system-config mechanism.
 asset (`AssetType::Level`, `Veng/Asset/Level.h`) does not embed world entities: it
 *references* a **world prefab** by `AssetId` and adds the data that is not reusable-recipe
 data — the ordered active `SystemId` set, the `GameModeConfig`, and a tolerant
-**`LevelRenderSettings`** subset (exposure, bloom, shadow toggles the app maps onto its
-`SceneRendererSettings`/`SceneView`). This resolves the prefab dual-purpose tension by
+**`LevelRenderSettings`** subset (the view-wide post/pipeline knobs — exposure, bloom, shadow/AO
+toggles the app maps onto its `SceneRendererSettings`/`SceneView`). The sky/environment is **not** a
+level field: it is author-opt-in scene components (`Environment` / `Atmosphere` / `Skylight`) on the
+world prefab, resolved by `ApplySceneSky`. This resolves the prefab dual-purpose tension by
 *reusing* prefab serialization, not embedding a second copy: a prefab is a reusable recipe
 again, the `Level` is the once-loaded playable unit (named `Level`, not `Scene`, to avoid
 colliding with the runtime `Scene`). It is CPU data with no GPU resource, loaded through the

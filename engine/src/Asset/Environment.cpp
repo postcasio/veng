@@ -12,7 +12,7 @@ namespace Veng
 {
     using namespace Renderer;
 
-    Environment::Environment(Context& context, const EnvironmentData& info)
+    EnvironmentMap::EnvironmentMap(Context& context, const EnvironmentMapData& info)
         : m_Context(context), m_Name(info.Name), m_Extent(info.Extent), m_Format(info.Format)
     {
         m_Image = Image::Create(context, {
@@ -40,22 +40,24 @@ namespace Veng
                                              });
     }
 
-    Ref<Environment> Environment::PrepareSync(Context& context, const EnvironmentData& data)
+    Ref<EnvironmentMap> EnvironmentMap::PrepareSync(Context& context,
+                                                    const EnvironmentMapData& data)
     {
-        Ref<Environment> environment(new Environment(context, data));
+        Ref<EnvironmentMap> environment(new EnvironmentMap(context, data));
         environment->m_Image->UploadSync(data.Pixels);
         return environment;
     }
 
-    Ref<Environment> Environment::PrepareAsync(Context& context, const EnvironmentData& data,
-                                               TaskSystem& tasks, Task<void>& outUpload)
+    Ref<EnvironmentMap> EnvironmentMap::PrepareAsync(Context& context,
+                                                     const EnvironmentMapData& data,
+                                                     TaskSystem& tasks, Task<void>& outUpload)
     {
-        Ref<Environment> environment(new Environment(context, data));
+        Ref<EnvironmentMap> environment(new EnvironmentMap(context, data));
         outUpload = environment->m_Image->Upload(tasks, data.Pixels);
         return environment;
     }
 
-    Environment::~Environment()
+    EnvironmentMap::~EnvironmentMap()
     {
         if (!m_Registered)
         {
@@ -67,9 +69,9 @@ namespace Veng
         bindless.Release(m_SamplerHandle);
     }
 
-    void Environment::Finalize()
+    void EnvironmentMap::Finalize()
     {
-        VE_ASSERT(!m_Registered, "Environment::Finalize: '{}' already registered", m_Name);
+        VE_ASSERT(!m_Registered, "EnvironmentMap::Finalize: '{}' already registered", m_Name);
 
         auto& bindless = m_Context.GetBindlessRegistry();
         m_TextureHandle = bindless.Register(m_View);

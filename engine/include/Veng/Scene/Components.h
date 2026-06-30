@@ -14,7 +14,7 @@ namespace Veng
     class Material;
     class MaterialInstance;
     class Prefab;
-    class Environment;
+    class EnvironmentMap;
     struct Animation;
 
     /// @brief Human-readable label for an entity.
@@ -487,13 +487,62 @@ namespace Veng
         i32 ScoreToWin = 0;
     };
 
-    /// @brief Level-scoped render settings: a first-cut subset of the app's render knobs.
+    /// @brief Image-based environment lighting and optional skybox: the author's opt-in for IBL.
+    ///
+    /// An author adds this component to a scene entity to bind an environment map: its presence
+    /// drives split-sum image-based lighting (the ambient/specular arms), and Skybox additionally
+    /// renders the environment as the background. An empty Map is a no-op (the flat-ambient
+    /// fallback). The engine resolves the first such component onto the renderer's per-frame view
+    /// and the Skybox topology toggle; no transform is read (the environment is scene-global).
+    struct Environment
+    {
+        /// @brief The environment map (radiance/irradiance/prefiltered/BRDF) for IBL and skybox.
+        AssetHandle<EnvironmentMap> Map;
+        /// @brief Scales the IBL ambient + skybox radiance.
+        f32 Intensity = 1.0f;
+        /// @brief Whether the environment renders as the background skybox.
+        bool Skybox = true;
+    };
+
+    /// @brief Procedural Bruneton atmosphere: the author's opt-in for a dynamic sky.
+    ///
+    /// An author adds this component to a scene entity to render the procedural sky behind the
+    /// scene; its presence drives the SkyScenePass topology and the per-frame sky enable. The sun
+    /// direction is not stored here — it is the inverse of the scene's first directional Light's
+    /// travel direction, so the sky and the lighting share one sun. An alternative sky source to
+    /// the environment skybox, independent of image-based lighting.
+    struct Atmosphere
+    {
+        /// @brief Scales the sky + sun-disk radiance.
+        f32 Intensity = 1.0f;
+        /// @brief Physically-based atmosphere parameters; the renderer regenerates its LUTs on change.
+        ///
+        /// The defaults describe Earth at sea level.
+        Renderer::Atmosphere Params;
+    };
+
+    /// @brief Dynamic sky-projected SH ambient, authored on the directional light entity.
+    ///
+    /// An author adds this component to the scene's directional Light to light the diffuse term
+    /// from the sky the same sun drives: its presence projects the atmosphere (the scene's
+    /// Atmosphere component, or the default sky) along the light's sun direction to order-2 SH
+    /// each time the sun or atmosphere changes. Effective only with no environment bound (the SH
+    /// skylight is the second ambient arm, below IBL); the diffuse half of a dynamic sky's lighting.
+    struct Skylight
+    {
+        /// @brief Scales the dynamic SH skylight ambient.
+        f32 Intensity = 1.0f;
+    };
+
+    /// @brief Level-scoped post/pipeline render knobs.
     ///
     /// Carried on a Level and seeded into the renderer the app drives — a reflected,
     /// tolerantly-serialized struct, not a renderer type, so the renderer stays untouched
-    /// and a new field does not invalidate existing level blobs. The app maps these onto
-    /// its SceneRendererSettings (the topology toggles) and its per-frame SceneView
-    /// (Exposure, the bloom knobs) at load.
+    /// and a new field does not invalidate existing level blobs. The sky/environment knobs
+    /// are not here: they are author-opt-in scene components (Environment / Atmosphere /
+    /// Skylight). This struct carries the view-wide post and pipeline toggles the app maps
+    /// onto its SceneRendererSettings (Bloom / Shadows / AO) and its per-frame SceneView
+    /// (Exposure, BloomIntensity).
     struct LevelRenderSettings
     {
         /// @brief Tonemap exposure fed into the per-frame SceneView.
@@ -506,38 +555,6 @@ namespace Veng
         bool Shadows = true;
         /// @brief Whether the SSAO battery is enabled.
         bool AO = true;
-        /// @brief The environment map for image-based lighting + skybox; empty for none.
-        ///
-        /// Resolved as a load-time dependency and pushed into the per-frame SceneView. Its
-        /// presence drives image-based lighting; the Skybox toggle drives the skybox pass.
-        AssetHandle<Environment> Environment;
-        /// @brief Scales the IBL ambient + skybox radiance, fed into the per-frame SceneView.
-        f32 EnvironmentIntensity = 1.0f;
-        /// @brief Whether the environment renders as the background skybox (a topology toggle).
-        bool Skybox = true;
-        /// @brief Whether the procedural Bruneton atmosphere renders as the background sky.
-        ///
-        /// Drives both the SkyScenePass topology toggle and the per-frame SceneView enable, so a
-        /// level turns the procedural sky on with one flag. An alternative sky source to the
-        /// environment skybox, not a replacement for image-based lighting.
-        bool Atmosphere = false;
-        /// @brief Direction toward the sun for the procedural atmosphere (world up +Y).
-        ///
-        /// Drives the sky color and sun-disk placement (and the SH skylight when on); normalized
-        /// when applied. Ignored when Atmosphere is off.
-        vec3 SunDirection{0.0f, 1.0f, 0.0f};
-        /// @brief Whether the dynamic sky-projected SH ambient lights the scene's diffuse term.
-        ///
-        /// A topology toggle; effective only with no environment bound (the SH skylight is the
-        /// second ambient arm, below IBL). Projects the same atmosphere the sun direction drives.
-        bool Skylight = false;
-        /// @brief Scales the dynamic SH skylight ambient, fed into the per-frame SceneView.
-        f32 SkylightIntensity = 1.0f;
-        /// @brief Physically-based parameters of the procedural atmosphere.
-        ///
-        /// Fed into the per-frame SceneView; the renderer regenerates its LUTs only when these
-        /// change. The defaults describe Earth at sea level. Ignored when Atmosphere is off.
-        Renderer::Atmosphere AtmosphereParams;
     };
 }
 
@@ -722,20 +739,25 @@ VE_FIELD(PlayerPrefab, .DisplayName = "Player Prefab")
 VE_FIELD(ScoreToWin, .DisplayName = "Score to Win", .Display = {.Min = 0})
 VE_REFLECT_END();
 
+VE_REFLECT(::Veng::Environment, 0xE5B8FB7C5423820FULL)
+VE_FIELD(Map, .DisplayName = "Map")
+VE_FIELD(Intensity, .DisplayName = "Intensity", .Display = {.Min = 0.0})
+VE_FIELD(Skybox, .DisplayName = "Skybox")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::Atmosphere, 0xC8B8A484BDA1D535ULL)
+VE_FIELD(Intensity, .DisplayName = "Intensity", .Display = {.Min = 0.0})
+VE_FIELD(Params, .DisplayName = "Parameters")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::Skylight, 0x6430ED5BA1EE715BULL)
+VE_FIELD(Intensity, .DisplayName = "Intensity", .Display = {.Min = 0.0})
+VE_REFLECT_END();
+
 VE_REFLECT(::Veng::LevelRenderSettings, 0x28E4618C66455E21ULL)
 VE_FIELD(Exposure, .DisplayName = "Exposure", .Display = {.Min = 0.0})
 VE_FIELD(Bloom, .DisplayName = "Bloom")
 VE_FIELD(BloomIntensity, .DisplayName = "Bloom Intensity", .Display = {.Min = 0.0})
 VE_FIELD(Shadows, .DisplayName = "Shadows")
 VE_FIELD(AO, .DisplayName = "SSAO")
-VE_FIELD(Environment, .DisplayName = "Environment")
-VE_FIELD(EnvironmentIntensity, .DisplayName = "Environment Intensity", .Display = {.Min = 0.0})
-VE_FIELD(Skybox, .DisplayName = "Skybox")
-VE_FIELD(Atmosphere, .DisplayName = "Atmosphere")
-VE_FIELD(SunDirection, .DisplayName = "Sun Direction", .VisibleIf = VE_WHEN(self.Atmosphere))
-VE_FIELD(Skylight, .DisplayName = "Skylight")
-VE_FIELD(SkylightIntensity, .DisplayName = "Skylight Intensity", .Display = {.Min = 0.0},
-         .VisibleIf = VE_WHEN(self.Skylight))
-VE_FIELD(AtmosphereParams, .DisplayName = "Atmosphere Parameters",
-         .VisibleIf = VE_WHEN(self.Atmosphere))
 VE_REFLECT_END();

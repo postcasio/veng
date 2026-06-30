@@ -42,7 +42,7 @@ namespace VengEditor
         case AssetType::Animation:
             return "Animation";
         case AssetType::Environment:
-            return "Environment";
+            return "EnvironmentMap";
         }
         return "Unknown";
     }

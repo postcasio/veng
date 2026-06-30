@@ -4,7 +4,6 @@
 #include <Veng/Module/Module.h>
 
 #include <Veng/Asset/AssetManager.h>
-#include <Veng/Asset/Environment.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
@@ -305,14 +304,16 @@ protected:
     // copy here, adds its extras, and (smoke) waits on residency before the deterministic capture.
     void OnWorldLoaded(Scene& world, ResidencyBatch& pending) override
     {
-        // Seed the editable topology copy from the level's render settings — now a scene component
-        // the engine seeded, read by the same TryGetFirst query the engine used — so the debug
-        // RenderSettingsEditor starts in sync. The HDRI environment, exposure, and bloom intensity
-        // already rode the engine's view push. Absent (no settings authored) leaves the defaults.
+        // Seed the editable topology copy from the scene — the level's post knobs (a seeded
+        // LevelRenderSettings component) plus the author-opt-in sky/lighting components (the HDRI
+        // Environment, any Atmosphere/Skylight) and the directional sun — read by the same queries
+        // the engine used, so the debug RenderSettingsEditor starts in sync. The exposure, bloom,
+        // and environment already rode the engine's view push. Absent settings leave the defaults.
         if (const LevelRenderSettings* render = world.TryGetFirst<LevelRenderSettings>())
         {
             ApplyLevelRenderSettings(*render, m_SceneSettings, GetWorldViewState());
         }
+        ApplySceneSky(world, m_SceneSettings, GetWorldViewState());
 
         // SSR is off by default in the engine; the sample opts in to show reflections off the
         // gradient-roughness ground plane (at the engine-default half SSR resolution).

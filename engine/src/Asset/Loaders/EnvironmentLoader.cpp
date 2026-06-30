@@ -61,22 +61,22 @@ namespace Veng
             });
         }
 
-        const EnvironmentData info{
-            .Name = fmt::format("Environment {}", id.Value),
+        const EnvironmentMapData info{
+            .Name = fmt::format("EnvironmentMap {}", id.Value),
             .Extent = {header.Width, header.Height},
             .Format = Renderer::Format::RGBA16Sfloat,
             .Pixels = cooked.subspan(sizeof(header), pixelBytes),
         };
 
-        Ref<Veng::Environment> environment;
+        Ref<Veng::EnvironmentMap> environment;
         if (async)
         {
             Task<void> upload;
-            environment = Veng::Environment::PrepareAsync(context, info, tasks, upload);
+            environment = Veng::EnvironmentMap::PrepareAsync(context, info, tasks, upload);
         }
         else
         {
-            environment = Veng::Environment::PrepareSync(context, info);
+            environment = Veng::EnvironmentMap::PrepareSync(context, info);
         }
 
         return Detail::LoadJob{

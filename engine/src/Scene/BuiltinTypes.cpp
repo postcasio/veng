@@ -45,10 +45,13 @@ namespace Veng
         registry.Register<Session>();
         registry.Register<GameModeConfig>();
 
-        // Level-scoped render settings a Level carries and the app maps onto the renderer.
+        // Level-scoped post/pipeline render knobs a Level carries and the app maps onto the renderer.
         registry.Register<LevelRenderSettings>();
 
-        // Procedural-atmosphere parameters the editor inspects and the sky pass consumes.
-        registry.Register<Renderer::Atmosphere>();
+        // Author-opt-in sky/lighting components: presence drives the renderer's sky/IBL topology.
+        // Renderer::Atmosphere registers transitively through the Atmosphere component's Params field.
+        registry.Register<Environment>();
+        registry.Register<Atmosphere>();
+        registry.Register<Skylight>();
     }
 }

@@ -158,13 +158,16 @@ namespace Veng
         LevelInstance instance = m_WorldLevel.Get()->LoadInto(*m_AssetManager, m_SystemRegistry);
         m_World = std::move(instance.World);
 
-        // Seed the managed viewport's topology and the per-frame view knobs from the level's render
-        // settings (a scene component now), starting from the configured initial settings.
+        // Seed the managed viewport's topology and the per-frame view knobs from the scene, starting
+        // from the configured initial settings: the level's post knobs (a seeded LevelRenderSettings
+        // component) plus the author-opt-in sky/lighting components (Environment / Atmosphere /
+        // Skylight) and the directional light's sun. Seeded once here; the game owns later changes.
         Renderer::SceneRendererSettings settings = m_Info.ManagedViewport->Settings;
         if (const LevelRenderSettings* render = m_World->TryGetFirst<LevelRenderSettings>())
         {
             ApplyLevelRenderSettings(*render, settings, m_WorldView);
         }
+        ApplySceneSky(*m_World, settings, m_WorldView);
         m_PrimaryViewport->Configure(settings);
 
         // Hand the world to the subclass before the simulation starts, so a game can read its

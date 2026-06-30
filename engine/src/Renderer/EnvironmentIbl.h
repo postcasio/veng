@@ -7,7 +7,7 @@
 
 namespace Veng
 {
-    class Environment;
+    class EnvironmentMap;
     class AssetManager;
 }
 
@@ -23,7 +23,7 @@ namespace Veng::Renderer
     class ComputePipeline;
     class PipelineLayout;
 
-    /// @brief Generates and owns the image-based-lighting maps derived from an Environment.
+    /// @brief Generates and owns the image-based-lighting maps derived from an EnvironmentMap.
     ///
     /// From an equirectangular HDR panorama it builds a radiance cubemap (the skybox source),
     /// a diffuse irradiance cubemap, a GGX-prefiltered specular cubemap (roughness mip chain),
@@ -60,7 +60,7 @@ namespace Veng::Renderer
         /// @param cmd         The command buffer the generation is recorded into.
         /// @param environment The source panorama; its bindless handle samples the equirect.
         /// @pre EnsureInitialized has run (or runs in the same Execute before this).
-        void Generate(CommandBuffer& cmd, const Veng::Environment& environment);
+        void Generate(CommandBuffer& cmd, const Veng::EnvironmentMap& environment);
 
         /// @brief The consumer descriptor-set layout the lighting pipeline reserves (set 2).
         [[nodiscard]] const Ref<DescriptorSetLayout>& GetSetLayout() const

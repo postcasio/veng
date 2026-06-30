@@ -58,7 +58,7 @@ namespace VengEditor
         {
             return AssetType::Animation;
         }
-        if (type == TypeIdOf<AssetHandle<Environment>>())
+        if (type == TypeIdOf<AssetHandle<EnvironmentMap>>())
         {
             return AssetType::Environment;
         }

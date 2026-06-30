@@ -100,7 +100,7 @@ namespace Veng::Renderer
                         .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
                         .Enabled = view.AtmosphereEnabled ? 1u : 0u,
                         .SunDirection = view.SunDirection,
-                        .Intensity = view.EnvironmentIntensity,
+                        .Intensity = view.AtmosphereIntensity,
                         .RayleighScattering = a.RayleighScattering,
                         .RayleighHeight = a.RayleighHeight,
                         .MieScattering = a.MieScattering,
