@@ -456,6 +456,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/bounds.cpp
             tests/unit/visibility.cpp
             tests/unit/frustum.cpp
+            tests/unit/spherical_harmonics.cpp
             tests/unit/bvh.cpp
             tests/unit/shadow_cascades.cpp
             tests/unit/punctual_shadows.cpp
