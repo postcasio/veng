@@ -21,10 +21,10 @@ tweakable**, an instance **tweaks it cheaply across many copies that share the g
 pipeline**. Plans 05–06 land that split — the planset's runtime/cook/asset work, where the generated
 parameter schema earns a cheap consumer.
 
-This is [future area 13](../future/README.md#13-material-domains--shader-graph-codegen--prioritized)'s
+This is [future area 13](../future/README.md#13-material-domains--shader-graph-codegen--delivered-plansets-18-38-39)'s
 **prioritized follow-on** (node→Slang codegen), built on the material-domains slice
 (planset-18) and the node-graph surface (planset-15). It folds in
-[future area 14](../future/README.md#14-engine-owned-material-shader-header--cross-pack-slang-includes--prioritized)
+[future area 14](../future/README.md#14-engine-owned-material-shader-header--cross-pack-slang-includes--done-planset-38)
 (engine-owned material shader header + cross-pack Slang includes) as its **precursor** (Plan 00),
 because a generated fragment shader must be able to `#include` the engine's material contract —
 which nothing can do today. **Design overview:** [material-codegen.md](../future/material-codegen.md).

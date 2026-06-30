@@ -11,12 +11,14 @@ Captured now so the earlier phases stay coherent with where veng is going.
 Numbered for stable cross-references. **Delivered** areas are documented in their
 plansets (see [plans/README.md](../README.md)) and are *not* re-narrated here —
 only their **still-future remainder** is kept, plus any delivered capability a
-pending area builds on directly. The substance of this document is the
-**remaining** work: **material domains + shader-graph codegen (area 13)**, the
-editor's scene editor (area 6, sub-area D), **engine-owned material shader header +
-cross-pack Slang includes (area 14)**, **multi-seat input routing + networking (area 4),
-now that the event-routed input core is delivered** — and the named still-future increments
-of the areas done in part (areas 1, 2, 7, 8, 9, 10, 12, 15).
+pending area builds on directly. The substance of this document is now the
+**remaining** work: **multi-seat input routing + networking (area 4), now that the
+event-routed input core is delivered** — and the named still-future increments of the
+areas done in part (areas 1, 2, 7, 8, 9, 10, 12, 15). The areas that were the prioritized
+next work — **material domains + shader-graph codegen (area 13)**, the editor's **scene
+editor (area 6, sub-area D)**, and **engine-owned material shader header + cross-pack Slang
+includes (area 14)** — are now **delivered** (plansets 36–39) and documented in their
+plansets.
 
 ### 1. Asset system — remaining: hot-reload
 
@@ -82,8 +84,8 @@ descoped.
 
 The authoring environment, spanning several plansets. **Design overview:**
 [editor.md](editor.md), with the build-model prerequisite in
-[game-module.md](game-module.md). Delivered sub-areas — the scene editor builds on
-all three:
+[game-module.md](game-module.md). All four sub-areas are delivered — sub-area D
+(the scene editor) builds on the first three:
 
 - **Sub-area A — game = shared lib + launcher (planset-9).** `libgame` + a thin
   launcher that `dlopen`s one C-ABI `VengModuleRegister`; the ABI carries an
@@ -104,15 +106,23 @@ all three:
   `NodeCatalog` + JSON (de)serialization) — **reused by sub-area D** — its material
   specialization, the `MaterialEditorPanel`, and the reusable `MaterialPreview`.
 
-**Sub-area D — scene editor — STILL FUTURE (the only remaining editor sub-area).**
-Viewport panel (reuses the `SceneRenderer`, area 8), hierarchy panel, gizmos
-(ImGuizmo or hand-rolled), save round-trip to `.prefab.json`. **All its gates are
-met:** the runtime scene model (area 7, planset-10), the cooked prefab + module
-reflection (area 10, planset-11), the inspector + cook-on-demand foundation
-(sub-area B, planset-14), and the reusable `VengEditor/NodeGraph/` surface
-(sub-area C, planset-15). Its native-type inspectors reuse area 10's module
-reflection rather than re-introducing it; its viewport renders one `Scene` through
-N `SceneRenderer` instances with no API change. A planset of its own.
+**Sub-area D — scene editor — DELIVERED.** The scene-editing surface is the **prefab
+editor** (`PrefabEditorPanel`, registered for `AssetType::Prefab`): it `SpawnInto`s a
+prefab into a document-owned live `Scene` and hosts a `SceneViewportPanel` (its own
+registered `Offscreen` viewport the engine renders), a `PrefabExplorerPanel` scene-graph
+tree over the intrusive `Hierarchy`, and the reflection `InspectorPanel`, over one shared
+`PrefabEditContext`. The **level editor** (`LevelEditorPanel`) **derives from** it, reusing
+the viewport/explorer/inspector unchanged and adding the level-scoped systems + settings
+panels (area 7, planset-29). **planset-37** closed the authoring loop: GPU **id-buffer
+picking** (`Viewport::Pick`, an off-by-default `SceneRenderer` battery) for click-to-select
+of meshes *and* light/camera billboards, **hand-rolled translate/rotate/scale gizmos** over
+`ScreenToWorldRay`, a **per-`AssetEditorPanel` undo/redo** command stack, and a
+reflection-driven **`Scene` → `.prefab.json` save-back** (preserve-unknown-keys, stable
+per-entity ids; the level editor routes its edits to the referenced world prefab). **planset-36**
+gave the inspector a **presentation axis** — the `FieldDisplay` cascade (widget kinds, named-enum
+combos, collapsible structs/arrays/categories, conditional display). Native-type inspectors reuse
+area 10's module reflection; a `Scene` is runtime-only, so the authored asset is the `Prefab`, not
+a cooked scene. The current editor is documented in [editor/CLAUDE.md](../../editor/CLAUDE.md).
 
 **The editor is a single shell launched against a project — delivered.** `veng_add_editor`
 no longer builds a per-game editor binary: one project-agnostic `veng-editor` exe (in `editor/`)
@@ -190,6 +200,14 @@ object, no registry, no ABI bump); the systems **catalog** (`SystemId`/`VE_SYSTE
 host-owned `SystemRegistry`); the thin **`Level`** asset (a world prefab by reference plus
 the level-scoped game-mode/system/render wiring, loaded into play); the editor's
 **`LevelEditorPanel`**; and a hand-written **`docs/guides/`** tutorial.
+
+**Delivered — planset-36 (reflection display options):** the reflection layer gained a
+**presentation axis** orthogonal to `FieldClass` — a `FieldDisplay` cascade (a type default on
+`TypeInfo` + a per-field override on `FieldDescriptor`, resolved field → type → hard default)
+carrying widget kind, `Min`/`Max`/`Step`, and collapsible/category state; **enumerator
+{name, value} reflection** (`VE_ENUM`, turning the raw-integer enum drag into a named combo and
+retiring the hand-written enum combos); and **conditional display** (`VisibleIf`/`EnabledIf`
+type-erased predicates). Editor-and-reflection only — no cooked-format or render change.
 
 **Still future:**
 
@@ -345,6 +363,17 @@ hitch) and the `MaxAllocationScale` HiDPI cap (now a **static** ceiling) are kep
 `StepAllocationTier` EMA/hysteresis/dwell state and the tier-driven `Resize` are deleted. Dynamic
 resolution now adapts **cost** (the sub-rect), not **allocation footprint**.
 
+**Delivered — planset-39 (emissive + atmospheric sky + dynamic ambient):** **color-decoupled
+emissive** as an additive forward `EmissiveScenePass` into the lit HDR target (RGB, replacing the
+scalar ORM emissive term — and *not* a fourth g-buffer target, the form this area had reserved); a
+**Bruneton precomputed atmospheric sky** (the first real `Type3D` volume-texture consumer — the 4D
+scattering table packed as a 3D texture) rendered in the skybox slot; and a **dynamic SH ambient**
+that projects that sky into order-2 spherical harmonics each frame as the third ambient arm
+(`IBL : skylightSH : flat constant`), so the no-environment ambient is directional and tracks the
+sun. An order-2 `SphericalHarmonics.h` math primitive and the `Type3D` create/storage-write/sample/
+retire lifecycle land foundation-first with it. **Aerial perspective** and a **sky-driven specular
+prefilter** are named follow-ons.
+
 **Still future (after the tier removal):** a **memory-driven fixed-allocation choice** — picking the
 one fixed allocation up front from a device memory-budget query
 (`VkPhysicalDeviceMemoryProperties`) so a memory-starved device starts smaller; this replaces the
@@ -370,7 +399,7 @@ sample shader unchanged; lands alongside clustered culling). The bloom battery's
 gated on validating `globallycoherent` + device-scope atomics under MoltenVK) and a separate
 **FFT/convolution lens bloom** (a GPU FFT convolution against a kernel texture for anamorphic
 streaks / aperture ghosts — a cinematic feature of its own, distinct from the everyday glow). Also
-named: **colored emissive** (a fourth g-buffer target). Also future: **history-buffer ringing** for
+future: **history-buffer ringing** for
 temporal effects (TAA/motion-blur reading an older frame); **cross-queue synchronization** (an
 explicit semaphore once a handoff side moves off the single graphics queue); and **parallel
 pass recording** into secondary command buffers (area 2's seam — the user-pointer channel is
@@ -447,100 +476,69 @@ the editor panels + menu bar) migrated onto it, wrapper-only (ImGui stays PUBLIC
 
 **Design overview:** [ui-toolkit.md](ui-toolkit.md).
 
-### 13. Material domains + shader-graph codegen — domains slice DONE (planset-18); codegen PRIORITIZED
+### 13. Material domains + shader-graph codegen — DELIVERED (plansets 18, 38, 39)
 
-The **material-domains slice is delivered (planset-18)** — the prioritized first half of
-this area. A material's parameters are now **one reflection-sized, ring-buffered block** (the
-fixed engine `MaterialData` struct deleted; an arbitrary shader-defined handle set), and a
-`Material` carries a first-class **`MaterialDomain`** (Surface + PostProcess). The PostProcess
-**fullscreen-material path** (`PostProcessScenePass`) stands up in `SceneRenderer`, the engine
-ships the **standard vertex shader per domain** (`surface.vert`, `fullscreen.vert`), **tonemap
-is the first PostProcess material** (authorable exposure), and the node catalog is
-**domain-aware** (`MaterialOutput`'s pins follow the domain's output contract). Fixed plumbing
-composites (`SwapChainCompositePass`, the debug blits) stay hardcoded engine passes.
-
-The committed end-state is **shader-graph codegen** — the node graph **generates** the Slang
-source — which **remains the still-future follow-on**: every node an expression emitter, a
-`Param` gaining const-vs-exposed, compile's target becoming generated Slang. The domains slice
-lands the foundational inversion it needs (a domain-correct output sink). What was delivered:
-
-- **Material domains (delivered, planset-18) — Surface and PostProcess.** A first-class
-  **domain** selects the output contract (g-buffer channels vs a single final color),
-  the inputs, the pipeline shape, and the invocation site — the standard cross-engine
-  factoring (Unreal `MaterialDomain`, Unity targets, Godot `shader_type`), with the
-  parameter schema / bindless / authoring / inspector shared across domains. The
-  PostProcess domain's **fullscreen material pipeline path** in `SceneRenderer`
-  (a `ScenePass` building a pipeline from a postprocess material against one color
-  target) is the authorable **exposure / tonemap-curve / color-grading** stack
-  named under [area 8](#8-scene-renderer--render-pipeline-architecture--remaining-the-über-pipeline-batteries),
-  expressed as materials. Fixed-dataflow batteries (bloom, SSAO, the shadow atlas) and
-  *plumbing* composites (`SwapChainCompositePass`) stay hardcoded engine passes — a
-  postprocess material is for *tunable effects*, not plumbing.
-- **Node→Slang codegen (the still-future follow-on).** The graph emits the fragment source instead
-  of binding to a pre-authored one. The node catalog is **reshaped toward it**:
-  `MaterialOutput` becomes a **domain-driven sink** (its pins are the domain's output
-  contract, not a reflection of a hand-authored shader's `GetFields()`); every node
-  becomes an **expression emitter** (`TextureSample` → `tex.Sample(…)`, math nodes →
-  real code — the "basic math" nodes are inert in a pure binding model, the tell that
-  the catalog was already half-built for codegen); a `Param` gains a **const-vs-exposed**
-  distinction (folded inline vs a generated `MaterialParams` uniform); and compile's
-  target changes from a `.vmat` field list to **generated Slang** the cooker compiles
-  like any shader (Slang → SPIR-V + reflection; no new runtime path). planset-15's
-  topology core (typed pins over the `TypeId` space, coercion-on-link, reflected node
-  properties, the JSON round-trip) is already codegen-ready; the reshaping is in the
-  material catalog + compile target + the new domain concept.
-- **Materials vs. material instances (rides on codegen).** Once the graph generates a
-  parent shader **and** its exposed-param schema, that schema is the override surface of
-  a **material instance** — the standard cross-engine split (Unreal *Material* vs
-  *Material Instance*). A parent `Material` owns the expensive half (the generated shader →
-  pipeline + the schema); a new **`MaterialInstance`** owns the cheap half (one slot in the
-  already-ring-buffered per-material SSBO + a texture override set + a sparse override), so
-  30 tinted bricks are 1 generated shader + 30 instances, not 30 identical pipelines. veng's
-  fused `Material` already carries the instance half (the per-material slot + the stall-free
-  `SetParam`); the work is to **move** it onto `MaterialInstance` and leave the parent owning
-  the pipeline. A runtime instance + per-frame `SetParam` is the **MID**; a static-switch
-  param (one that changes the compiled shader) is a parent-variant permutation key, not an
-  instance override.
-
-**Now taken up as [planset-38](../planset-38/README.md):** the node→Slang codegen follow-on
-(Plans 00–04) plus the material-instance split (Plan 05), the generated exposed-param schema
-being the instance's override surface. **Supersedes planset-15 decision 9** — codegen is now
-committed direction, not a possibility the node model merely tolerates. **Design overview:**
+Both halves of this area are now delivered. **Design overview:**
 [material-codegen.md](material-codegen.md).
 
-### 14. Engine-owned material shader header + cross-pack Slang includes — PRIORITIZED
+**Delivered — planset-18 (material domains).** A material's parameters are **one
+reflection-sized, ring-buffered block** (the fixed engine `MaterialData` struct deleted; an
+arbitrary shader-defined handle set), and a `Material` carries a first-class **`MaterialDomain`**
+(Surface + PostProcess) selecting the output contract (g-buffer channels vs a single final
+color), inputs, pipeline shape, and invocation site — the standard cross-engine factoring
+(Unreal `MaterialDomain`, Unity targets, Godot `shader_type`). The PostProcess **fullscreen-
+material path** (`PostProcessScenePass`) stands up in `SceneRenderer`, the engine ships the
+**standard vertex shader per domain** (`surface.vert`, `fullscreen.vert`), **tonemap is the
+first PostProcess material** (authorable exposure), and the node catalog is **domain-aware**
+(`MaterialOutput`'s pins follow the domain's output contract). Fixed plumbing composites
+(`SwapChainCompositePass`, the debug blits) and fixed-dataflow batteries (bloom, SSAO, the
+shadow atlas) stay hardcoded engine passes — a PostProcess material is for *tunable effects*,
+not plumbing.
 
-A consumer's material fragment shader (e.g.
-`examples/hello-triangle/assets/shaders/brick.frag.slang`) `#include`s a **vendored
-copy** of the engine's material declarations (`material_data.slang`), kept
-byte-identical-by-hand with the engine core copy
-(`engine/assets/core/shaders/material.slang`). The cooker's Slang session adds only
-the source file's **own directory** to its search paths (`searchPathCount = 1`, in
-`ShaderImporter.cpp` + `SlangReflect.cpp`'s two sites), so a consumer shader has no
-include path into the engine core pack — hence the duplicate. These declarations are
-the **engine's** concern; a consumer should *import* them, not vendor them. Two coupled
-changes:
+**Delivered — planset-38 (node→Slang codegen + the material-instance split).** The node
+material editor stopped *wiring* a hand-authored fragment shader and started *generating* it.
+Every node is now an **expression emitter**, `CompileMaterialGraph` is a **topological emit
+walk** threading a thin typed **`EmittedValue`** (the graph *is* the AST; Slang is the
+compiler — no parsed-AST intermediate), and `MaterialOutput` emits the domain entry point
+(`GBufferOutput` for Surface, `SV_Target0` for PostProcess). A `Param` gained a **provenance**
+(const folds inline / exposed becomes an author-tweakable `MaterialParams` field / engine-bound
+is a field the engine writes by name), and the emit walk generates the `MaterialParams` struct
+(large-alignment-first) + the `.vmat` field list **together** so the cooker's offset-patching
+agrees by construction. The emit walk lives in a shared **`veng::graph`** lib both the editor
+and cooker link, so editor preview == offline cook; a fragment shader's *source* changed from a
+`.slang` file to a **graph** (no new asset, no checked-in generated file). On that, the
+**material vs. material-instance** split: a generated parent shader + its exposed-param
+**schema** is a parent `Material` (the pipeline); a new **`MaterialInstance`** is a cheap sparse
+override over it (its own SSBO slot + texture set, the parent's pipeline), so 30 tinted bricks
+are 1 shader + 30 instances. The instance half (the per-material slot + stall-free `SetParam`)
+**moved** off the fused `Material`; a runtime instance + per-frame `SetParam` is the **MID**.
+**Supersedes planset-15 decision 9** — codegen is committed direction, delivered.
 
-- **Cross-pack Slang include resolution.** The cooker adds the engine core shader
-  directory to every Slang session's search paths (the three setup sites share a
-  helper), so a consumer `.slang` can `#include "Veng/material.slang"` and resolve the
-  engine header directly. The vendored `material_data.slang` is deleted and
-  `brick.frag.slang` includes the engine header.
-- **The header split — engine contract vs authored surface.** The engine header keeps
-  only the **engine's** contract: the set-0 bindless binding declarations
-  (`g_Textures`/`g_Samplers`/`g_MaterialParams`), `MaterialParamStride`, the
-  `GBufferOutput` g-buffer contract, and the shared `PushConstants` block. **`MaterialParams`
-  moves out into the authoring shader** (`brick.frag.slang`): the per-material parameter
-  struct is **per-shader by definition** — the cooker reflects each material shader's own
-  struct to pack its fields at the reflected offsets — so a single "shared" copy that must
-  stay byte-identical across engine and consumer is conceptually wrong. `LoadMaterialParams`
-  either becomes generic (a `T Load<T>(uint)` over the engine's `g_MaterialParams` + stride)
-  or is authored beside the moved struct. The C++ mirror (`Veng/Renderer/MaterialParams.h`,
-  static_assert-guarded) follows the same split if it remains a shared engine type.
+**Delivered — planset-39 (material-instance ids).** Retired planset-38 Plan 05's parent-id
+**overload** (one `AssetId` naming both a `Material` parent and its implicit zero-override
+`MaterialInstance`) for explicit minted **`defaultInstance`** ids the cook emits real instances
+at and every reference is rewritten to, restoring "one id ⇒ one asset of one type"; the editor
+mints that id on material create/save.
 
-A natural **precursor to node→Slang codegen** (area 13): generated fragment shaders will
-`#include` the engine material header rather than each carrying a copy, and will emit their
-own `MaterialParams` struct — exactly the split this lands.
+**Still future — graph-editing refinements.** Named follow-ons the codegen model leaves open:
+**pure-shader graph editing**, **wired asset pins**, **custom-expression nodes**, **subgraph/
+function nodes**, **vertex-stage codegen**, **static switches** (a param that changes the
+compiled shader — a parent-variant permutation key, not an instance override), **draw-sort by
+parent pipeline**, and **instance-of-instance chains**.
+
+### 14. Engine-owned material shader header + cross-pack Slang includes — DONE (planset-38)
+
+Delivered as planset-38's **Plan 00** (the codegen precursor it was named the precursor to).
+A consumer's material fragment shader no longer `#include`s a **vendored copy** of the engine's
+material declarations: a shared cooker Slang-session helper adds the engine core shader-include
+directory to every session's search paths (the three former `searchPathCount = 1` sites), so any
+`.slang` can `#include "Veng/material.slang"` and resolve the engine header directly. The engine
+header (`material.slang`) was split to keep only the **engine's** contract — the set-0 bindless
+binding declarations, `g_ViewConstants`, the `GBufferOutput` g-buffer contract, `DrawData`, the
+domain-keyed push blocks, and the per-domain fragment-input struct — while **`MaterialParams`
+moved out into the authoring shader** (it is per-shader by definition, reflected per material).
+All **four** vendored `material_data.slang` copies, the `Veng/Renderer/MaterialParams.h` C++
+mirror, and its drift-guard test were deleted. Same SPIR-V — `smoke_golden` did not move.
 
 ### 15. Build configurations & project settings — remaining: footprint specialization, persistence, cross-compile
 
@@ -556,15 +554,16 @@ host-triple-defaulted; `cook-all-packs`); and the editor's **host-capability pre
 structs (`Veng/Project/`) draw their editor panels free through `DrawFieldWidget`. **Design
 overview:** [build-configurations.md](build-configurations.md).
 
-**Still future — new formats/encoders and orthogonal concerns, not settings-tier work.** The
-role *taxonomy* is settled, but its *per-codec specialization* is not: under the two current
-codecs every role maps full-channel (`Color`→sRGB, the rest→unorm), and the channel-specialized
-mappings ride the footprint follow-ons. The right home for each is the role → format table a
-build configuration already owns:
+**Delivered — planset-39 Plan 03 (BC5/BC4 channel specialization).** `Normal → BC5`
+(two-channel) and `Mask → BC4` (single-channel) on the role → format table, with the **ASTC
+normal-packing convention** (XY + Z reconstruct, since ASTC has no two-channel mode) and one
+shared codec-agnostic normal-unpack shader helper. The first per-codec channel specialization
+of the settled role taxonomy.
 
-- **BC5/BC4 channel specialization** — two-channel normals / single-channel masks (`Normal →
-  BC5`, `Mask → BC4` rather than full BC7/ASTC), plus the ASTC normal-packing convention ASTC
-  needs since it has no two-channel mode.
+**Still future — more formats/encoders and orthogonal concerns, not settings-tier work.** The
+role *taxonomy* is settled and its first channel specialization is delivered; the remaining
+per-codec footprint choices ride the role → format table a build configuration already owns:
+
 - **Wider ASTC footprints** (6×6, 8×8) — more compression at lower quality, a per-role choice.
 - **HDR ASTC** — the cooked block codec is LDR-only; HDR sources keep their `RGBA16Sfloat`
   panorama path.
@@ -636,30 +635,22 @@ A cooker-pipeline item like area 17, deferred until taken up.
 ## Ordering & dependencies
 
 The order to *take the remaining areas up* (each becomes its own planset), not a
-schedule:
+schedule. The areas that were the prioritized next work are now delivered:
 
-1. **Material domains (area 13's first slice) is delivered (planset-18)**: the domain
-   concept (Surface + PostProcess), the unified ring-buffered parameter block, the
-   PostProcess fullscreen-material path, and the domain-aware node catalog. Its named
-   follow-on, **node→Slang codegen** (the graph emits the fragment source — every node
-   an expression emitter, const-vs-exposed params, generated-Slang compile target), is
-   now **prioritized**, with the domain slice having landed the foundational
-   domain-driven output sink it needs.
-2. **Editor — scene editor (area 6, sub-area D)** is the **next editor planset**;
-   all its gates are met (area 7, area 10, area 8's `SceneRenderer`, and editor
-   sub-areas B/C).
-3. **Engine-owned material shader header + cross-pack Slang includes (area 14)** is a
-   small, self-contained prioritized item and a **codegen precursor** — fold it into the
-   node→Slang codegen planset (it lands the engine-header import that generated shaders
-   need) or take it first on its own.
+- **Material domains + shader-graph codegen (area 13) — delivered.** The domain concept
+  (planset-18), node→Slang codegen + the material-instance split (planset-38), and the
+  explicit default-instance ids (planset-39).
+- **Editor — scene editor (area 6, sub-area D) — delivered.** The prefab + level editors
+  (the scene-editing surface), closed by planset-37's picking/gizmos/undo/save-back and
+  planset-36's reflection display options.
+- **Engine-owned material shader header + cross-pack Slang includes (area 14) — delivered**
+  as planset-38's codegen precursor (Plan 00).
 
-   Node→Slang codegen, the scene editor, and area 14 are the prioritized next areas,
-   whichever is taken up first.
-4. **Event & input + networking (area 4)** is the **next gate** the delivered gameplay
-   layer (area 7, planset-29) motivates — multi-seat input routing and a net layer
-   consuming the `Intent`/`Authority`/Sim-View seams. The remaining named still-future
-   increments of the areas done in part (1, 2, 7, 8, 9, 10, 12) are each independent and
-   off the critical path — slot in whenever wanted.
+**Event & input + networking (area 4)** is now the **next gate** the delivered gameplay layer
+(area 7, planset-29) motivates — multi-seat input routing and a net layer consuming the
+`Intent`/`Authority`/Sim-View seams, built on the event-routed input core (planset-30). The
+remaining named still-future increments of the areas done in part (1, 2, 7, 8, 9, 10, 12, 15)
+are each independent and off the critical path — slot in whenever wanted.
 
 ## Cross-cutting concerns
 
@@ -668,7 +659,7 @@ retrofit.
 
 - **Process discipline.** Keep planset-1's cadence — small, sample-verified,
   per-plan increments. Every planset to date has followed it; the same discipline
-  applies to the scene editor (area 6, sub-D) ahead.
+  applies to area 4 (events/input + networking) ahead.
 
 ## Status
 
@@ -682,21 +673,33 @@ per `Viewer` seat resolved by a pure function, the Input → Intent → Movement
 (`SystemId`/`VE_SYSTEM`/`SystemRegistry`), the thin `Level` asset + its cooker importer +
 editor `LevelEditorPanel`, and the `docs/guides/` tutorial. It motivates and shapes area 4.
 
-**Delivered (planset-18):** area 13's **material-domains first slice** — the material
-**domain** concept (Surface + PostProcess), the unified ring-buffered parameter block,
-the PostProcess fullscreen-material path, the standard per-domain vertex shaders,
-tonemap-as-material, and the domain-aware node catalog.
+**Delivered (planset-18 + planset-38 + planset-39):** area 13's **material domains + shader-
+graph codegen**, both halves. Domains (Surface + PostProcess), the unified ring-buffered
+parameter block, the PostProcess fullscreen-material path, the per-domain vertex shaders, and
+the domain-aware node catalog (planset-18); **node→Slang codegen** — every node an expression
+emitter, the topological emit walk in a shared `veng::graph` lib, const/exposed/engine-bound
+params, generated-Slang compile target — and the **material vs. material-instance split**
+(planset-38), with explicit minted `defaultInstance` ids (planset-39).
 
-**Prioritized:** area 13's named follow-on, **node→Slang codegen** (the graph generates
-the fragment source — every node an expression emitter, const-vs-exposed params,
-generated-Slang compile target); the **scene editor** (area 6, sub-area D — all its
-gates met: areas 7, 10, 8, and editor sub-areas B/C); and **engine-owned material shader
-header + cross-pack Slang includes** (area 14 — the cooker resolves a consumer shader's
-`#include` into the engine core pack and `MaterialParams` moves to the authoring shader; a
-codegen precursor that can fold into that planset). Whichever the next planset takes up.
+**Delivered (planset-38, Plan 00):** area 14 — **engine-owned material shader header + cross-
+pack Slang includes**. The cooker resolves a consumer shader's `#include "Veng/material.slang"`
+into the engine core pack, `MaterialParams` moved to the authoring shader, and all four vendored
+copies + the C++ mirror were deleted (the codegen precursor).
+
+**Delivered (planset-36 + planset-37):** area 6's **scene editor (sub-area D)** — the prefab
+editor (the scene-editing surface) + the level editor deriving from it, closed by id-buffer
+picking, hand-rolled gizmos, per-document undo/redo, and `Scene` → `.prefab.json` save-back
+(planset-37), with the reflection inspector's presentation axis — the `FieldDisplay` cascade,
+named-enum combos, collapsible structs/arrays/categories, conditional display (planset-36).
+
+**Delivered (planset-39):** renderer additions — **color-decoupled emissive** (additive forward
+pass), a **Bruneton precomputed atmospheric sky** (the first `Type3D` consumer), a **dynamic SH
+ambient**, and **BC5/BC4 channel-specialized codecs** on the role → format table; plus the
+removal of planset-32's allocation-tier outer loop (it hitched).
 
 **The next gate:** area 4 (**events/input + networking**) — multi-seat input routing and
-a net layer over the `Intent`/`Authority`/Sim-View seams planset-29 established.
+a net layer over the `Intent`/`Authority`/Sim-View seams planset-29 established, built on the
+event-routed input core (planset-30).
 
 **Undetailed / unscheduled:** the named still-future
 increments of the
@@ -713,7 +716,8 @@ history-buffer ringing / cross-queue
 sync, area 9's culling / multi-queue /
 parallel recording, area 10's **cross-compiled cooking**, area 12's **drive
 imgui private** + stateful editor-widget classes (the base `Veng::UI` vocab + full
-migration delivered by planset-17), and area 15's **footprint specialization** (BC5/BC4,
-wider ASTC, HDR ASTC, an uncompressed fallback pack) + **editor active-config persistence**
-+ the **Windows cross-compile constraint** (the build-configuration developer-control layer
-delivered by planset-35). Each becomes its own planset when taken up.
+migration delivered by planset-17), and area 15's remaining **footprint specialization**
+(wider ASTC, HDR ASTC, an uncompressed fallback pack — BC5/BC4 channel specialization
+delivered by planset-39) + **editor active-config persistence** + the **Windows cross-compile
+constraint** (the build-configuration developer-control layer delivered by planset-35). Each
+becomes its own planset when taken up.

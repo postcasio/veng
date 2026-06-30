@@ -270,7 +270,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
 
 - **[planset-18](planset-18/README.md)** — material parameter storage, domains, and the
   PostProcess fullscreen-material path (✅ done, 8 plans). Takes up
-  [future area 13](future/README.md#13-material-domains--shader-graph-codegen--prioritized)'s
+  [future area 13](future/README.md#13-material-domains--shader-graph-codegen--delivered-plansets-18-38-39)'s
   **prioritized first slice**. First **reworks material parameter storage**: the fixed engine
   `MaterialData` block and its separate set-0 SSBO are deleted, and a material's bindless
   handle slots + authored params share **one reflection-sized block** per material (set 0
@@ -461,7 +461,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   `MeshRenderer` and the cooked mesh format are unchanged.
 
 - **[planset-27](planset-27/README.md)** — self-resolving components (the spawn-resolve
-  thunk) (📝 proposed, 7 plans). Closes the one gap in "load an asset or spawn a prefab
+  thunk) (✅ done, 7 plans). Closes the one gap in "load an asset or spawn a prefab
   and every dependent streams in with no further intervention": a cooked dependency graph
   already auto-streams, but a **generated** resource (a `PrimitiveComponent`'s mesh — a
   recipe, not an `AssetId`) cannot ride the cascade. The deliverable is a generic
@@ -646,7 +646,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   channel specialization, wider ASTC footprints, HDR ASTC, and an uncompressed fallback pack stay named
   area-15 follow-ons behind the delivered role → format table.
 
-- **[planset-36](planset-36/README.md)** — reflection display options for the editor (📝 proposed,
+- **[planset-36](planset-36/README.md)** — reflection display options for the editor (✅ done,
   5 plans). Gives the reflection layer a structured way to say **how a reflected value appears and
   behaves in the editor**, and teaches the inspector to honor it. The keystone is a **presentation axis
   orthogonal to `FieldClass`** (which today decides both data shape *and* widget): a closed `WidgetKind`
@@ -670,7 +670,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   range slider, enum-flags).
 
 - **[planset-37](planset-37/README.md)** — scene editor interaction: id-buffer picking, gizmos,
-  undo/redo, prefab save-back (📝 proposed, 5 plans). Closes the scene editor's authoring loop —
+  undo/redo, prefab save-back (✅ done, 5 plans). Closes the scene editor's authoring loop —
   the remaining slice of [future area 6](future/README.md#6-editor-application) **sub-area D**
   over the delivered prefab editing surface (`PrefabEditorPanel` + viewport/hierarchy/inspector).
   Four pieces: **pick → manipulate → undo → save**, on the keystone decision that the editor has
@@ -692,7 +692,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   module-ABI change. Gates met by planset-10/11/12/14 + the pointer-to-world seam (planset-31).
 
 - **[planset-38](planset-38/README.md)** — node→Slang material codegen (the graph generates
-  the shader) (📝 proposed, 7 plans). Takes up [future area 13](future/README.md#13-material-domains--shader-graph-codegen--prioritized)'s
+  the shader) (✅ done, 7 plans). Takes up [future area 13](future/README.md#13-material-domains--shader-graph-codegen--delivered-plansets-18-38-39)'s
   **prioritized follow-on**: the node material editor stops *wiring* a hand-authored fragment
   shader and starts *generating* it. Every node becomes an **expression emitter**, `CompileMaterialGraph`
   becomes a **topological emit walk** threading a thin typed **`EmittedValue`** (the code-chunk model —
@@ -708,7 +708,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   link). So there is **no new asset, no minted/derived id, and no checked-in generated file** — the
   authored graph is the single source of truth, generated Slang/SPIR-V are cook output, and editor
   preview == offline cook by construction (and **no cooked-material format change and no runtime
-  change**). Folds in [future area 14](future/README.md#14-engine-owned-material-shader-header--cross-pack-slang-includes--prioritized)
+  change**). Folds in [future area 14](future/README.md#14-engine-owned-material-shader-header--cross-pack-slang-includes--done-planset-38)
   as its **precursor** (Plan 00): a shared cooker Slang-session helper resolves a cross-pack `#include
   "Veng/material.slang"`, `material.slang` splits into the engine contract (kept, with domain-keyed push
   blocks) + `MaterialParams` (moved to the authoring shader), and all four vendored `material_data.slang`
@@ -726,7 +726,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   **instance-of-instance chains** stay future.
 
 - **[planset-39](planset-39/README.md)** — grab bag: material instances, codecs, emissive, atmosphere,
-  allocation honesty (📝 proposed, 8 plans). A coherent grab bag anchored by a precomputed atmospheric
+  allocation honesty (✅ done, 8 plans). A coherent grab bag anchored by a precomputed atmospheric
   sky. **(1) Material instances finish their story** — retire planset-38 Plan 05's parent-id
   **overload** (one `AssetId` naming both a `Material` parent and its implicit zero-override
   `MaterialInstance`, kept apart by a composite `(type,id)` cache key + a resolve bridge) for explicit

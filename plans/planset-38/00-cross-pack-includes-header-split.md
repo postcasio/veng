@@ -5,7 +5,7 @@
 coupled changes: the cooker's Slang sessions gain an engine shader-include directory on their search
 path, and `engine/assets/core/shaders/material.slang` splits into an **engine contract** half
 (imported by consumers) and a **per-shader** half (`MaterialParams`, which moves to the authoring
-shader). This is [future area 14](../future/README.md#14-engine-owned-material-shader-header--cross-pack-slang-includes--prioritized),
+shader). This is [future area 14](../future/README.md#14-engine-owned-material-shader-header--cross-pack-slang-includes--done-planset-38),
 taken as the codegen precursor. It changes **no SPIR-V** — every shader compiles to the same bytes,
 so `smoke_golden` does not move. **Foundational; nothing precedes it.**
 

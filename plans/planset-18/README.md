@@ -9,7 +9,7 @@ standard vertex shader, and invocation site — while the rest of the material s
 (parameter schema, bindless, authoring, inspector) stays one shared mechanism. Then stand up
 the **PostProcess fullscreen-material path** in `SceneRenderer` and prove it by migrating the
 hardcoded tonemap stage into the first PostProcess-domain material. Takes up
-[future area 13](../future/README.md#13-material-domains--shader-graph-codegen--prioritized)'s
+[future area 13](../future/README.md#13-material-domains--shader-graph-codegen--delivered-plansets-18-38-39)'s
 **prioritized first slice**; the full design overview is
 [future/material-codegen.md](../future/material-codegen.md).
 
