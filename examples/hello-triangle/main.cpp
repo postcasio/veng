@@ -577,16 +577,14 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                     .ManagedViewport =
                         ManagedViewportInfo{
                             // Render at the full backing extent — native resolution on a HiDPI
-                            // display, not supersampling. The allocation-tier outer loop reclaims
-                            // footprint under sustained load; a lower ceiling is the knob for a fixed
-                            // perf budget, not the default posture.
+                            // display, not supersampling. The fixed allocation cap; a lower ceiling
+                            // is the knob for a fixed perf budget, not the default posture.
                             .MaxAllocationScale = 1.0f,
-                            // The windowed app opts into both adaptive-resolution loops: the inner
-                            // loop drives the per-frame sub-rect, the outer-loop tier controller
-                            // follows the sustained sub-rect and sizes the allocation down a tier
-                            // under durable load. The smoke capture leaves them off so the golden
-                            // renders at the fixed baseline (the controller is inert headless
-                            // anyway — no GPU timing means the sub-rect holds at the ceiling).
+                            // The windowed app opts into adaptive resolution: the per-frame sub-rect
+                            // scale eases toward the GPU-frame-time budget over the fixed allocation,
+                            // adapting cost without reallocating. The smoke capture leaves it off so
+                            // the golden renders at the fixed baseline (the controller is inert
+                            // headless anyway — no GPU timing means the sub-rect holds at the ceiling).
                             .DynamicResolution =
                                 smoke
                                     ? std::nullopt
@@ -594,13 +592,6 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                                           Renderer::
                                               DynamicResolutionSettings>{Renderer::
                                                                              DynamicResolutionSettings{}},
-                            .AllocationTier =
-                                smoke
-                                    ? std::nullopt
-                                    : optional<
-                                          Renderer::
-                                              AllocationTierSettings>{Renderer::
-                                                                          AllocationTierSettings{}},
                         },
                     // The engine bootstraps the world: it reads the cooked project, mounts its
                     // packs, loads the startup level, owns the running scene + simulation, and ticks

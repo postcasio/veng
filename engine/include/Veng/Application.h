@@ -62,16 +62,10 @@ namespace Veng
         /// @brief Enables automatic render-scale control on the managed viewport when set.
         ///
         /// The viewport eases its RenderScale toward this budget from measured GPU frame time
-        /// each frame (see Viewport::SetDynamicResolution); inert on a device without GPU timing.
-        /// Unset leaves the scale fixed at RenderScale.
+        /// each frame (see Viewport::SetDynamicResolution), rendering into a sub-rect of the fixed
+        /// allocation; inert on a device without GPU timing. Unset leaves the scale fixed at
+        /// RenderScale.
         optional<Renderer::DynamicResolutionSettings> DynamicResolution;
-        /// @brief Enables the outer-loop allocation-tier controller on the managed viewport when set.
-        ///
-        /// Folds the per-frame RenderScale into a long EMA and steps a quantized allocation tier so
-        /// the allocation follows the sustained sub-rect (see Viewport::SetDynamicResolution).
-        /// Honored only when DynamicResolution is also set (the inner loop feeds the outer loop);
-        /// unset leaves the allocation at the inner loop's MaxScale.
-        optional<Renderer::AllocationTierSettings> AllocationTier;
     };
 
     /// @brief Opt-in configuration for the engine-managed game world.

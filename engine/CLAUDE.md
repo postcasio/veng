@@ -569,49 +569,30 @@ hits (a scene raycast) is editor or gameplay code. Editor entity-picking consume
 now; multi-seat *pointer* routing (which quadrant a click landed in) consumes them
 later.
 
-**Adaptive resolution is two loops at two timescales over one physical quantity.**
-`SetDynamicResolution(settings, tierSettings)` engages them; both run inside `Render`,
-before the pending-resize apply. The **inner loop** (the fast knob) eases the per-frame
-`RenderScale` toward a GPU-frame-time budget — each `Render` reads
-`Context::GetLastGpuFrameTimeMs()` and steps `ComputeDynamicResolutionScale`
-(`Veng/Renderer/DynamicResolution.h`), which renders into a `round(allocExtent ·
-RenderScale)` sub-rect of the allocated targets that the terminal tonemap upscales. It
-is free: a sub-rect change moves no allocation, only the per-frame `SceneView::RenderScale`
-fraction. The **outer loop** (the slow knob, engaged only when `tierSettings` is passed)
-sizes the **allocation** those targets live in. It never measures perf directly: it folds
-the inner loop's freshly-updated `RenderScale` into a multi-second EMA (`StepAllocationTier`)
-and picks a quantized **allocation tier** from `AllocationTierSettings::Tiers`
-(`{1.0, 0.75, 0.5}` by default); a tier change debounces a `SceneRenderer::Resize` to the
-next `Render` through the same pending-extent path a region change uses. `GetAllocationScale()`
-reports the live tier's scale, `GetAllocationTierIndex()` the index.
+**Adaptive resolution eases a per-frame sub-rect over a fixed allocation.**
+`SetDynamicResolution(settings)` engages it; it runs inside `Render`, before the
+pending-resize apply. Each `Render` reads `Context::GetLastGpuFrameTimeMs()` and steps
+`ComputeDynamicResolutionScale` (`Veng/Renderer/DynamicResolution.h`) toward a
+GPU-frame-time budget, rendering into a `round(allocExtent · RenderScale)` sub-rect of the
+allocated targets that the terminal tonemap upscales. It is **free**: a sub-rect change moves
+no allocation, only the per-frame `SceneView::RenderScale` fraction — so it adapts **cost**,
+never the allocation footprint, and never hitches. `GetAllocationScale()` reports the fixed
+allocation scale (`MaxScale` while dynamic resolution is on, else the static `RenderScale`).
+The allocation is sized **once** to the region's native extent (capped by
+`MaxAllocationScale`), and the expensive `SceneRenderer::Resize` — which retires every target,
+re-registers bindless, and recompiles the graph — fires only on a genuine region/window extent
+change or an explicit render-scale/`MaxScale` change, never from frame-time pressure.
 
-**The allocation never reacts to instantaneous frame time; it follows a multi-second EMA
-of the sub-rect scale across quantized tiers through a hysteresis band, so it cannot
-oscillate.** The expensive `Resize` (which retires every target, re-registers bindless,
-and recompiles the graph) is wired to nothing fast enough to thrash it: it moves only
-across a wide hysteresis gap (step down below one threshold, back up only above a higher
-one), only after an **asymmetric dwell** (quicker to shrink under sustained load, slow to
-grow back), and only between a few coarse tiers. A scene parked near a boundary lives in
-the dead band without flipping. **A tier change keeps the rendered pixel count constant,
-so reallocation does not pop:** the allocation and the sub-rect are the same scale at two
-timescales — shrinking 1.0→0.5 turns a sub-rect riding at "0.5-of-1.0" into "1.0-of-0.5"
-— and a down-step fires only once the live sub-rect already fits the smaller tier, so the
-continuity holds exactly. The outer loop reclaims footprint and bandwidth it was not
-using; it is not a quality decision.
-
-**`MaxAllocationScale` is a ceiling on the allocation relative to the backing extent,
+**`MaxAllocationScale` is a fixed ceiling on the allocation relative to the backing extent,
 defaulting to `1.0` (full native).** It caps the allocation to a fraction of the region's
-pixels and is the **outermost** of three multiplicative scales — the allocation extent is
+pixels and is the **outer** of two multiplicative scales — the allocation extent is
 `round(region · MaxAllocationScale · GetAllocationScale())` (`ExtentForScale`), then the
 sub-rect rides inside it as `GetViewRenderScale()`. A managed viewport tracks the full
 swapchain framebuffer extent — 2× the logical window on a HiDPI display — and the default
 `1.0` renders at those backing pixels: **native resolution on a HiDPI display, not
-supersampling**. Reclaiming footprint under load is the allocation-tier outer loop's job,
-not the cap's. A value below `1.0` is a deliberate lower ceiling for an app that wants a
-fixed perf budget; it is not the default posture. The managed primary viewport exposes all
-of this through `ManagedViewportInfo` (`RenderScale`, `MaxAllocationScale`,
-`DynamicResolution`, `AllocationTier`); `AllocationTier` is honored only alongside
-`DynamicResolution`, since the inner loop feeds the outer one.
+supersampling**. A value below `1.0` is a deliberate lower ceiling for an app that wants a
+fixed perf budget; it is not the default posture. The managed primary viewport exposes this
+through `ManagedViewportInfo` (`RenderScale`, `MaxAllocationScale`, `DynamicResolution`).
 
 **The registration-order RTT contract.** An `Offscreen` viewport's `GetOutputHandle`
 can be bound into a material (`Material::SetTextureHandle`) so one viewport samples

@@ -37,14 +37,11 @@ namespace Veng::UI
         const Ref<Renderer::Image> target = renderer.GetOutput()->GetImage();
         UI::Text(fmt::format("Render target: {}x{}", target->GetWidth(), target->GetHeight()));
 
-        // The outer loop's allocation: the tier the targets are sized at, its scale, and the
-        // resulting allocation extent. The allocation extent and the render target match at the
-        // baseline tier and diverge once a tier step shrinks the allocation below the rendered
-        // sub-rect's high-water mark.
+        // The fixed allocation the targets are sized at: its scale and extent. The per-frame
+        // sub-rect renders inside this and the tonemap upscales it to the full output, so the
+        // allocation extent holds steady while the rendered sub-rect shrinks with the scale.
         const uvec2 allocExtent = viewport.GetAllocationExtent();
-        UI::Text(fmt::format("Allocation tier: {} ({:.2f}){}", viewport.GetAllocationTierIndex(),
-                             viewport.GetAllocationScale(),
-                             viewport.IsAllocationTierEnabled() ? " (auto)" : " (static)"));
+        UI::Text(fmt::format("Allocation: {:.2f}", viewport.GetAllocationScale()));
         UI::Text(fmt::format("Allocation extent: {}x{}", allocExtent.x, allocExtent.y));
 
         // The cull funnel: gathered submesh candidates → frustum survivors → draws issued.
@@ -143,8 +140,7 @@ namespace Veng::UI
                 {
                     if (dynamic)
                     {
-                        viewport.SetDynamicResolution(Renderer::DynamicResolutionSettings{},
-                                                      Renderer::AllocationTierSettings{});
+                        viewport.SetDynamicResolution(Renderer::DynamicResolutionSettings{});
                     }
                     else
                     {
@@ -153,23 +149,7 @@ namespace Veng::UI
                 }
             }
 
-            // The outer-loop allocation-tier controller, meaningful only while dynamic resolution
-            // feeds it. Re-engages dynamic resolution with or without the tier controller.
-            if (dynamic)
-            {
-                bool tier = viewport.IsAllocationTierEnabled();
-                if (UI::Checkbox("Allocation tier", tier))
-                {
-                    viewport.SetDynamicResolution(
-                        Renderer::DynamicResolutionSettings{},
-                        tier ? optional<
-                                   Renderer::AllocationTierSettings>{Renderer::
-                                                                         AllocationTierSettings{}}
-                             : std::nullopt);
-                }
-            }
-
-            // Render scale is a per-viewport property. While the controllers are on it reads out
+            // Render scale is a per-viewport property. While dynamic resolution is on it reads out
             // the live sub-rect scale; touching it is the manual override — it drops dynamic
             // resolution and holds the value, sizing the render target directly. Steps by 0.05 from
             // a 0.25 floor.
