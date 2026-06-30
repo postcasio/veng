@@ -199,8 +199,15 @@ namespace Veng::Renderer
         const mat4 viewProj = camera.ViewProjection();
         const mat4 invViewProj = glm::inverse(viewProj);
 
-        f32 near = camera.GetNear();
-        f32 far = camera.GetFar();
+        // The camera's own near/far define the view-depth range SliceCorners
+        // interpolates over (its fraction maps cameraNear→0, cameraFar→1). The fitted
+        // near/far below drive the split *distribution*, but a split's view depth must
+        // be converted to a slice fraction against this camera range, not the fitted slab.
+        const f32 cameraNear = camera.GetNear();
+        const f32 cameraFar = camera.GetFar();
+
+        f32 near = cameraNear;
+        f32 far = cameraFar;
 
         // Fit the split range to the *visible* scene: the view-depth extent of the
         // intersection of the camera frustum and the scene bound, not the whole bound.
@@ -255,8 +262,8 @@ namespace Veng::Renderer
         {
             data.SplitFar[k] = splits[k + 1];
 
-            const f32 nearFraction = (splits[k] - near) / (far - near);
-            const f32 farFraction = (splits[k + 1] - near) / (far - near);
+            const f32 nearFraction = (splits[k] - cameraNear) / (cameraFar - cameraNear);
+            const f32 farFraction = (splits[k + 1] - cameraNear) / (cameraFar - cameraNear);
             const std::array<vec3, 8> corners =
                 SliceCorners(invViewProj, nearFraction, farFraction);
 

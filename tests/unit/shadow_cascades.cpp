@@ -235,6 +235,33 @@ TEST_CASE("ComputeCascades: scene bound clamps the split range to the scene")
     }
 }
 
+TEST_CASE(
+    "ComputeCascades: a fitted cascade's XY extent tracks the visible slab, not the far plane")
+{
+    // A camera whose far plane (1000) sits far past the scene. The split range fits the
+    // scene, but each cascade's XY extent is the camera frustum slice at the cascade's
+    // *fitted* depth — so the slice fraction must be measured against the camera's near/far
+    // (what SliceCorners interpolates over), not the fitted slab. Measuring it against the
+    // fitted slab pushes the last cascade's far edge out to the 1000-unit far plane, blowing
+    // the ortho extent up ~16x and shrinking the scene to a tiny corner of the atlas tile.
+    const CameraView camera = MakeTestCamera(0.1f, 1000.0f);
+    const vec3 lightDir(0.3f, -1.0f, 0.2f);
+    const CascadeSettings settings{};
+
+    const AABB sceneBounds{.Min = vec3(-15.0f, -2.0f, -15.0f), .Max = vec3(15.0f, 8.0f, 15.0f)};
+    const CascadeData data = ComputeCascades(camera, lightDir, sceneBounds, settings);
+
+    // Project a 15-unit horizontal world span (well within the scene) through the last
+    // cascade and measure how much of the NDC tile it covers. A tightly fit cascade
+    // (extent ~tens of units) gives a large NDC span; an extent inflated to the far-plane
+    // slice (~1150 units wide) squishes the same span to a few percent of the tile.
+    const u32 last = data.Count - 1;
+    const vec4 a = data.ViewProj[last] * vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    const vec4 b = data.ViewProj[last] * vec4(15.0f, 0.0f, 0.0f, 1.0f);
+    const f32 ndcSpan = glm::length(vec2(vec3(b) / b.w) - vec2(vec3(a) / a.w));
+    CHECK(ndcSpan > 0.1f);
+}
+
 TEST_CASE("ComputeCascades: a bound fully behind the camera leaves the range untouched")
 {
     const CameraView camera = MakeTestCamera(0.1f, 100.0f);
