@@ -1,13 +1,12 @@
 {
-  "image": "tex/nathan_norm.jpg",
+  "image": "texture_8x8.png",
   "srgb": false,
   "role": "Normal",
-  "max_size": 2048,
   "sampler": {
     "min": "linear",
     "mag": "linear",
     "mipmap": "linear",
-    "wrap_u": "repeat",
-    "wrap_v": "repeat"
+    "wrap_u": "clamp_to_edge",
+    "wrap_v": "clamp_to_edge"
   }
 }

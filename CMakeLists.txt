@@ -442,6 +442,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/pure_logic.cpp
             tests/unit/task_system.cpp
             tests/unit/type_mapping.cpp
+            tests/unit/format_info.cpp
             tests/unit/barrier_decision.cpp
             tests/unit/render_graph_schedule.cpp
             tests/unit/input_events.cpp

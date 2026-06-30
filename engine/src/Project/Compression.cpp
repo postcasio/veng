@@ -53,6 +53,10 @@ namespace Veng
             return "ASTC4x4Srgb";
         case CompressionFormat::RGBA16Sfloat:
             return "RGBA16Sfloat";
+        case CompressionFormat::BC5Unorm:
+            return "BC5Unorm";
+        case CompressionFormat::BC4Unorm:
+            return "BC4Unorm";
         }
         return {};
     }
@@ -87,6 +91,10 @@ namespace Veng
             return Renderer::Format::ASTC4x4Srgb;
         case CompressionFormat::RGBA16Sfloat:
             return Renderer::Format::RGBA16Sfloat;
+        case CompressionFormat::BC5Unorm:
+            return Renderer::Format::BC5Unorm;
+        case CompressionFormat::BC4Unorm:
+            return Renderer::Format::BC4Unorm;
         }
         VE_ASSERT(false, "ToRendererFormat: unmapped CompressionFormat {}",
                   static_cast<u32>(format));

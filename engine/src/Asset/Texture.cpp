@@ -48,7 +48,8 @@ namespace Veng
     }
 
     Texture::Texture(Context& context, const TextureData& info)
-        : m_Context(context), m_Name(info.Name), m_Extent(info.Extent), m_Format(info.Format)
+        : m_Context(context), m_Name(info.Name), m_Extent(info.Extent), m_Format(info.Format),
+          m_ChannelLayout(info.ChannelLayout)
     {
         const u32 mipLevels = std::max(1u, info.MipLevels);
 

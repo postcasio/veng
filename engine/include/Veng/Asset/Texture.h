@@ -4,6 +4,7 @@
 #include <Veng/Asset/AssetBuild.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetType.h>
+#include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Types.h>
@@ -42,6 +43,8 @@ namespace Veng
         std::span<const u8> Pixels;
         /// @brief Sampler parameters.
         Renderer::SamplerInfo Sampler;
+        /// @brief Channel convention of the stored pixels (Direct, or the XY-only normal layout).
+        CookedChannelLayout ChannelLayout = CookedChannelLayout::Direct;
     };
 
     /// @brief An Image + ImageView + Sampler, sampled bindlessly (set 0) after Finalize() registers it.
@@ -75,6 +78,13 @@ namespace Veng
 
         /// @brief Returns the texture's dimensions in pixels.
         [[nodiscard]] uvec2 GetExtent() const { return m_Extent; }
+
+        /// @brief Returns the texture's channel convention.
+        ///
+        /// CookedChannelLayout::NormalXY marks a tangent-space normal whose Z the sampler
+        /// reconstructs (a BC5 two-channel normal or an ASTC XY-packed normal); Direct is
+        /// every other texture.
+        [[nodiscard]] CookedChannelLayout GetChannelLayout() const { return m_ChannelLayout; }
 
         /// @brief Returns the bindless texture handle (valid after Finalize()).
         [[nodiscard]] Renderer::TextureHandle GetHandle() const { return m_TextureHandle; }
@@ -123,6 +133,7 @@ namespace Veng
         string m_Name;
         uvec2 m_Extent;
         Renderer::Format m_Format;
+        CookedChannelLayout m_ChannelLayout = CookedChannelLayout::Direct;
 
         Ref<Renderer::Image> m_Image;
         Ref<Renderer::ImageView> m_View;

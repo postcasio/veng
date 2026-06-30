@@ -1,6 +1,7 @@
 {
   "image": "ground_flatnormal.png",
   "srgb": false,
+  "role": "Normal",
   "sampler": {
     "min": "linear",
     "mag": "linear",

@@ -20,6 +20,8 @@
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Asset/Shader.h>
 #include <Veng/Asset/Texture.h>
+#include <Veng/Project/BuildConfiguration.h>
+#include <Veng/Project/CompressionFormat.h>
 #include <Veng/Renderer/Types.h>
 
 #include <gpu/fixture.h>
@@ -293,6 +295,122 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(pixels[1] > 40);
     CHECK(pixels[1] < 130);
     CHECK(pixels[3] > 200);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "texture loader: a BC5 normal cooks, loads with the NormalXY layout, and decodes "
+                  "(skips without BC)")
+{
+    if (!Context.IsBlockCompressionSupported())
+    {
+        MESSAGE("textureCompressionBC unsupported on this device; skipping BC5 load test");
+        return;
+    }
+
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "texture_bc5_pack.json";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_gpu_texture_bc5.vengpack";
+
+    // A Normal role resolves to BC5 only through a build configuration's role table (BC5 has no raw
+    // "compression" escape hatch), so the test drives the cook with an explicit Normal → BC5 config.
+    const BuildConfiguration config{
+        .Name = "bc5-test",
+        .Formats = {.Normal = CompressionFormat::BC5Unorm},
+    };
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, outArchive, {}, nullptr, nullptr, nullptr, &config, {})
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Texture>> handle =
+        assets.LoadSync<Texture>(AssetId{0x163E4F068BDD8003ULL});
+    REQUIRE(handle.has_value());
+    REQUIRE(handle->IsLoaded());
+
+    const Texture& texture = *handle->Get();
+    // The Normal role lowered to the two-channel BC5 codec, flagged NormalXY so the sampler
+    // reconstructs Z.
+    CHECK(texture.GetFormat() == Format::BC5Unorm);
+    CHECK(texture.GetChannelLayout() == CookedChannelLayout::NormalXY);
+    CHECK(texture.GetExtent() == uvec2{8, 8});
+    CHECK(texture.GetImage()->GetMipLevels() == 4u);
+    CHECK(texture.GetHandle().IsValid());
+    CHECK(texture.GetSamplerHandle().IsValid());
+
+    auto outputImage =
+        Image::Create(Context, {
+                                   .Name = "BC5 Sample Output",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    auto outputView =
+        ImageView::Create(Context, {.Name = "BC5 Sample Output View", .Image = outputImage});
+
+    AssetManager shaderAssets(Context, Tasks, Types);
+    REQUIRE(shaderAssets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    const AssetResult<AssetHandle<Shader>> vertexAsset =
+        shaderAssets.LoadSync<Shader>(AssetId{0x1F42});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset =
+        shaderAssets.LoadSync<Shader>(AssetId{0x1F44});
+    REQUIRE(vertexAsset.has_value());
+    REQUIRE(fragmentAsset.has_value());
+
+    Ref<PipelineLayout> layout;
+    auto pipeline = CreateSamplePipeline(Context, layout, vertexAsset->Get()->Module,
+                                         fragmentAsset->Get()->Module);
+
+    auto& bindless = Context.GetBindlessRegistry();
+
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            RenderGraph graph(Context);
+            const ResourceId outputId = graph.Import("Output");
+
+            graph.AddPass("Sample BC5 Texture")
+                .Color({
+                    .Resource = outputId,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                })
+                .Execute(
+                    [&](PassContext& ctx)
+                    {
+                        CommandBuffer& passCmd = ctx.Cmd();
+                        passCmd.BindPipeline(pipeline);
+                        passCmd.SetViewport({0, 0}, {Size, Size});
+                        passCmd.SetScissor({0, 0}, {Size, Size});
+                        bindless.Bind(passCmd);
+                        passCmd.PushConstants(SamplePushConstants{
+                            .TextureIndex = texture.GetHandle().Index,
+                            .SamplerIndex = texture.GetSamplerHandle().Index,
+                        });
+                        passCmd.DrawFullscreenTriangle();
+                    });
+
+            const RenderGraph::ImportBinding binding{.Id = outputId, .View = outputView};
+            graph.Compile()->Execute(cmd, {&binding, 1});
+        });
+
+    // The 8x8 source is a solid (200, 80, 40, 255). BC5 carries only R/G, so the sample returns the
+    // source's R and G in those channels (B is the codec's reconstructed-from-zero blue, not the
+    // source's). Assert R/G survive the BC5 decode close to the source — the proof the BC5 block
+    // image, created with the BC feature enabled, samples through the bindless set on this device.
+    const vector<u8> pixels = outputImage->Download();
+    REQUIRE(pixels.size() == static_cast<size_t>(Size) * Size * 4);
+    CHECK(pixels[0] > 150);
+    CHECK(pixels[1] > 40);
+    CHECK(pixels[1] < 130);
 
     std::filesystem::remove(outArchive);
 }

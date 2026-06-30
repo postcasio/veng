@@ -79,6 +79,15 @@ namespace Veng::Renderer
         ///        The entity-id picking target's color format. Appended (not inserted) so the
         ///        underlying enum values cooked blobs persist by integer stay stable.
         R32Uint,
+        /// @brief BC5 block-compressed two-channel RG, normalized [0,1] (4x4 16-byte blocks).
+        ///        The two-channel normal-map codec (X/Y stored, Z reconstructed in-shader).
+        ///        Appended at the fixed ordinal 26 for cooked-blob integer stability; the cooker
+        ///        writes the literal and the texture loader reads it.
+        BC5Unorm,
+        /// @brief BC4 block-compressed single-channel R, normalized [0,1] (4x4 8-byte blocks).
+        ///        The single-channel mask codec. Appended at the fixed ordinal 27 for cooked-blob
+        ///        integer stability; the cooker writes the literal and the texture loader reads it.
+        BC4Unorm,
     };
 
     /// @brief Requested display output mode for the presentable swapchain.

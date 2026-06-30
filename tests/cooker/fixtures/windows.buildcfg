@@ -5,8 +5,8 @@
   "compressionLevel": 12,
   "formats": {
     "Color": "BC7Srgb",
-    "Normal": "BC7Unorm",
-    "Mask": "BC7Unorm",
+    "Normal": "BC5Unorm",
+    "Mask": "BC4Unorm",
     "HDR": "RGBA16Sfloat",
     "UI": "BC7Unorm"
   }

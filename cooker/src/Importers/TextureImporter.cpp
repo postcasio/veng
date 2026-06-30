@@ -10,6 +10,7 @@
 #include <astcenc.h>
 #include <bc7enc.h>
 #include <fmt/format.h>
+#include <rgbcx.h>
 #include <stb_image.h>
 #include <stb_image_resize2.h>
 
@@ -24,13 +25,18 @@ namespace Veng::Cook
     {
         // The texture cook's compression codec, the encode-path selector. ASTC is the
         // Metal-blessed codec on the primary MoltenVK platform; BC7 targets the desktop/Windows
-        // platform; None packs uncompressed RGBA8. The raw "compression": "astc"/"bc7"/"none"
+        // platform; BC5/BC4 are the channel-specialized block codecs for a Normal/Mask role on
+        // the BC target; None packs uncompressed RGBA8. The raw "compression": "astc"/"bc7"/"none"
         // escape-hatch key pins one directly; otherwise the codec is derived from the resolved
-        // CompressionFormat (role table or the hardcoded ASTC zero-config default).
+        // CompressionFormat (role table or the hardcoded ASTC zero-config default). BC5/BC4 have no
+        // raw escape-hatch spelling — they ride the role table only, since the role carries the
+        // channel intent the raw codec name lacks.
         enum class TextureCodec
         {
             None,
             BC7,
+            BC5,
+            BC4,
             ASTC,
         };
 
@@ -53,22 +59,27 @@ namespace Veng::Cook
 
         // Renderer::Format ordinals (Types.h), hand-synced per the cycle-avoidance rule:
         // 2 = RGBA8Unorm, 3 = RGBA8Srgb, 21 = BC7Unorm, 22 = BC7Srgb, 23 = ASTC4x4Unorm,
-        // 24 = ASTC4x4Srgb. CookedTextureHeader.Format stores these literals and the engine's
-        // TextureLoader::BridgeFormat reads them back.
+        // 24 = ASTC4x4Srgb, 26 = BC5Unorm, 27 = BC4Unorm. CookedTextureHeader.Format stores these
+        // literals and the engine's TextureLoader::BridgeFormat reads them back.
         constexpr u32 RGBA8UnormFormat = 2;
         constexpr u32 RGBA8SrgbFormat = 3;
         constexpr u32 BC7UnormFormat = 21;
         constexpr u32 BC7SrgbFormat = 22;
         constexpr u32 ASTC4x4UnormFormat = 23;
         constexpr u32 ASTC4x4SrgbFormat = 24;
+        constexpr u32 BC5UnormFormat = 26;
+        constexpr u32 BC4UnormFormat = 27;
 
-        // A texture's cook is one codec + one header Format ordinal. The codec drives the encode
-        // path (block-compress vs. raw copy); the ordinal is the hand-synced Renderer::Format value
-        // the engine's TextureLoader::BridgeFormat reads back.
+        // A texture's cook is one codec + one header Format ordinal + a channel layout. The codec
+        // drives the encode path (block-compress vs. raw copy); the ordinal is the hand-synced
+        // Renderer::Format value the engine's TextureLoader::BridgeFormat reads back; the layout is
+        // the channel convention the runtime sampler reads (NormalXY for a two-channel normal whose
+        // Z it reconstructs).
         struct ResolvedFormat
         {
             TextureCodec Codec{};
             u32 FormatOrdinal{};
+            CookedChannelLayout ChannelLayout = CookedChannelLayout::Direct;
         };
 
         // Parses a "role" name to its CompressionRole. The names match the canonical authoring
@@ -120,10 +131,17 @@ namespace Veng::Cook
         }
 
         // Lowers a CompressionFormat (the closed codec-output set a role table holds) to the cook's
-        // codec + header Format ordinal. RGBA16Sfloat has no LDR encode path in this importer, so a
-        // role resolving to it is an error here — an HDR source is an environment asset.
-        Result<ResolvedFormat> ResolveCompressionFormat(CompressionFormat format)
+        // codec + header Format ordinal + channel layout. RGBA16Sfloat has no LDR encode path in
+        // this importer, so a role resolving to it is an error here — an HDR source is an
+        // environment asset. @p role carries the channel intent the format alone cannot: an ASTC
+        // (RGBA) codec resolving from a Normal role stores X/Y and reconstructs Z, so it reports the
+        // NormalXY layout; BC5 is a native two-channel normal codec and always reports it.
+        Result<ResolvedFormat> ResolveCompressionFormat(CompressionFormat format,
+                                                        CompressionRole role)
         {
+            const CookedChannelLayout astcLayout = role == CompressionRole::Normal
+                                                       ? CookedChannelLayout::NormalXY
+                                                       : CookedChannelLayout::Direct;
             switch (format)
             {
             case CompressionFormat::RGBA8Unorm:
@@ -136,12 +154,20 @@ namespace Veng::Cook
                 return ResolvedFormat{.Codec = TextureCodec::BC7, .FormatOrdinal = BC7UnormFormat};
             case CompressionFormat::BC7Srgb:
                 return ResolvedFormat{.Codec = TextureCodec::BC7, .FormatOrdinal = BC7SrgbFormat};
+            case CompressionFormat::BC5Unorm:
+                return ResolvedFormat{.Codec = TextureCodec::BC5,
+                                      .FormatOrdinal = BC5UnormFormat,
+                                      .ChannelLayout = CookedChannelLayout::NormalXY};
+            case CompressionFormat::BC4Unorm:
+                return ResolvedFormat{.Codec = TextureCodec::BC4, .FormatOrdinal = BC4UnormFormat};
             case CompressionFormat::ASTC4x4Unorm:
                 return ResolvedFormat{.Codec = TextureCodec::ASTC,
-                                      .FormatOrdinal = ASTC4x4UnormFormat};
+                                      .FormatOrdinal = ASTC4x4UnormFormat,
+                                      .ChannelLayout = astcLayout};
             case CompressionFormat::ASTC4x4Srgb:
                 return ResolvedFormat{.Codec = TextureCodec::ASTC,
-                                      .FormatOrdinal = ASTC4x4SrgbFormat};
+                                      .FormatOrdinal = ASTC4x4SrgbFormat,
+                                      .ChannelLayout = astcLayout};
             case CompressionFormat::RGBA16Sfloat:
                 return std::unexpected(
                     string("the HDR role resolves to RGBA16Sfloat, which an LDR texture cannot "
@@ -282,9 +308,35 @@ namespace Veng::Cook
             return blocks;
         }
 
-        // Encodes one RGBA8 mip level (tightly packed, row-major) to BC7 blocks. Partial edge
-        // tiles on a non-multiple-of-4 level replicate the nearest in-bounds texel into the 4x4
-        // source block, the standard edge-padding for block compression.
+        // BC4 packs one channel into an 8-byte block; BC5 packs two channels into a 16-byte block.
+        constexpr usize Bc4BlockBytes = 8;
+        constexpr usize Bc5BlockBytes = 16;
+
+        // Builds the padded 4x4x4 RGBA source block at (bx, by), replicating the nearest in-bounds
+        // texel on a partial edge tile — the shared block gather the BC4/BC5/BC7 encoders read. The
+        // standard edge-padding for block compression: a non-multiple-of-4 level encodes whole.
+        std::array<u8, BlockSize * BlockSize * 4> GatherBlock(const u8* rgba, u32 width, u32 height,
+                                                              u32 bx, u32 by)
+        {
+            std::array<u8, BlockSize * BlockSize * 4> source{};
+            for (u32 py = 0; py < BlockSize; py++)
+            {
+                const u32 sy = std::min(by * BlockSize + py, height - 1);
+                for (u32 px = 0; px < BlockSize; px++)
+                {
+                    const u32 sx = std::min(bx * BlockSize + px, width - 1);
+                    const usize src = (static_cast<usize>(sy) * width + sx) * 4;
+                    const usize dst = (static_cast<usize>(py) * BlockSize + px) * 4;
+                    source[dst + 0] = rgba[src + 0];
+                    source[dst + 1] = rgba[src + 1];
+                    source[dst + 2] = rgba[src + 2];
+                    source[dst + 3] = rgba[src + 3];
+                }
+            }
+            return source;
+        }
+
+        // Encodes one RGBA8 mip level (tightly packed, row-major) to BC7 blocks.
         vector<u8> EncodeBc7Level(const u8* rgba, u32 width, u32 height,
                                   const bc7enc_compress_block_params& params)
         {
@@ -297,25 +349,59 @@ namespace Veng::Cook
             {
                 for (u32 bx = 0; bx < blocksWide; bx++)
                 {
-                    std::array<u8, BlockSize * BlockSize * 4> source{};
-                    for (u32 py = 0; py < BlockSize; py++)
-                    {
-                        const u32 sy = std::min(by * BlockSize + py, height - 1);
-                        for (u32 px = 0; px < BlockSize; px++)
-                        {
-                            const u32 sx = std::min(bx * BlockSize + px, width - 1);
-                            const usize src = (static_cast<usize>(sy) * width + sx) * 4;
-                            const usize dst = (static_cast<usize>(py) * BlockSize + px) * 4;
-                            source[dst + 0] = rgba[src + 0];
-                            source[dst + 1] = rgba[src + 1];
-                            source[dst + 2] = rgba[src + 2];
-                            source[dst + 3] = rgba[src + 3];
-                        }
-                    }
-
+                    const std::array<u8, BlockSize * BlockSize * 4> source =
+                        GatherBlock(rgba, width, height, bx, by);
                     const usize blockIndex = static_cast<usize>(by) * blocksWide + bx;
                     bc7enc_compress_block(blocks.data() + blockIndex * BlockBytes, source.data(),
                                           &params);
+                }
+            }
+
+            return blocks;
+        }
+
+        // Encodes one RGBA8 mip level to BC5 blocks (two-channel RG, 16 bytes/block): the X/Y of a
+        // tangent-space normal map, the Z dropped and reconstructed in-shader. rgbcx reads channels
+        // 0 and 1 of each gathered 4x4 RGBA block.
+        vector<u8> EncodeBc5Level(const u8* rgba, u32 width, u32 height)
+        {
+            const u32 blocksWide = (width + BlockSize - 1) / BlockSize;
+            const u32 blocksHigh = (height + BlockSize - 1) / BlockSize;
+
+            vector<u8> blocks(static_cast<usize>(blocksWide) * blocksHigh * Bc5BlockBytes);
+
+            for (u32 by = 0; by < blocksHigh; by++)
+            {
+                for (u32 bx = 0; bx < blocksWide; bx++)
+                {
+                    const std::array<u8, BlockSize * BlockSize * 4> source =
+                        GatherBlock(rgba, width, height, bx, by);
+                    const usize blockIndex = static_cast<usize>(by) * blocksWide + bx;
+                    rgbcx::encode_bc5(blocks.data() + blockIndex * Bc5BlockBytes, source.data(), 0,
+                                      1, 4);
+                }
+            }
+
+            return blocks;
+        }
+
+        // Encodes one RGBA8 mip level to BC4 blocks (single-channel R, 8 bytes/block): the R channel
+        // of a mask map. rgbcx reads channel 0 of each gathered 4x4 RGBA block.
+        vector<u8> EncodeBc4Level(const u8* rgba, u32 width, u32 height)
+        {
+            const u32 blocksWide = (width + BlockSize - 1) / BlockSize;
+            const u32 blocksHigh = (height + BlockSize - 1) / BlockSize;
+
+            vector<u8> blocks(static_cast<usize>(blocksWide) * blocksHigh * Bc4BlockBytes);
+
+            for (u32 by = 0; by < blocksHigh; by++)
+            {
+                for (u32 bx = 0; bx < blocksWide; bx++)
+                {
+                    const std::array<u8, BlockSize * BlockSize * 4> source =
+                        GatherBlock(rgba, width, height, bx, by);
+                    const usize blockIndex = static_cast<usize>(by) * blocksWide + bx;
+                    rgbcx::encode_bc4(blocks.data() + blockIndex * Bc4BlockBytes, source.data(), 4);
                 }
             }
 
@@ -459,7 +545,7 @@ namespace Veng::Cook
         else if (context.Config != nullptr)
         {
             const CompressionFormat roleFormat = RoleFormat(context.Config->Formats, role);
-            const Result<ResolvedFormat> lowered = ResolveCompressionFormat(roleFormat);
+            const Result<ResolvedFormat> lowered = ResolveCompressionFormat(roleFormat, role);
             if (!lowered)
             {
                 return std::unexpected(fmt::format("texture importer: '{}': {}",
@@ -472,6 +558,9 @@ namespace Veng::Cook
             // Zero-config default: the hardcoded ASTC codec, the Metal-blessed codec on the primary
             // platform, preserved bit-for-bit for an un-migrated project.
             resolved = RawCodecFormat(TextureCodec::ASTC, srgb);
+            // ASTC has no two-channel mode; a Normal role still stores X/Y and reconstructs Z.
+            resolved.ChannelLayout = role == CompressionRole::Normal ? CookedChannelLayout::NormalXY
+                                                                     : CookedChannelLayout::Direct;
         }
 
         const TextureCodec codec = resolved.Codec;
@@ -561,6 +650,7 @@ namespace Veng::Cook
         header.Width = baseWidth;
         header.Height = baseHeight;
         header.MipCount = mipCount;
+        header.ChannelLayout = static_cast<u32>(resolved.ChannelLayout);
 
         // Sampler defaults mirror Veng::Renderer::SamplerInfo's defaults
         // (Renderer/Sampler.h).
@@ -648,30 +738,38 @@ namespace Veng::Cook
             }
         }
 
-        // The byte size of one mip level in the chosen codec: 4x4 16-byte blocks
-        // (ceil(w/4)*ceil(h/4)*16) for BC7 and ASTC, or uncompressed RGBA8 (w*h*4). Mirrors the
+        // The byte size of one mip level in the chosen codec: a BC4 4x4 block is 8 bytes; BC7,
+        // BC5, and ASTC are 16-byte 4x4 blocks; None is uncompressed RGBA8 (w*h*4). Mirrors the
         // engine's BytesForLevel.
-        const bool blockCodec = codec == TextureCodec::BC7 || codec == TextureCodec::ASTC;
-        const auto levelBytes = [blockCodec](u32 levelWidth, u32 levelHeight) -> usize
+        const usize codecBlockBytes = codec == TextureCodec::BC4 ? Bc4BlockBytes : BlockBytes;
+        const bool blockCodec = codec == TextureCodec::BC7 || codec == TextureCodec::ASTC ||
+                                codec == TextureCodec::BC5 || codec == TextureCodec::BC4;
+        const auto levelBytes = [blockCodec, codecBlockBytes](u32 levelWidth,
+                                                              u32 levelHeight) -> usize
         {
             if (blockCodec)
             {
                 const u32 blocksWide = (levelWidth + BlockSize - 1) / BlockSize;
                 const u32 blocksHigh = (levelHeight + BlockSize - 1) / BlockSize;
-                return static_cast<usize>(blocksWide) * blocksHigh * BlockBytes;
+                return static_cast<usize>(blocksWide) * blocksHigh * codecBlockBytes;
             }
             return static_cast<usize>(levelWidth) * levelHeight * 4;
         };
 
-        // Encodes one RGBA8 level into the codec's on-disk bytes at blob[writeOffset]. BC7 and ASTC
-        // pack 4x4 blocks; None copies the RGBA8 bytes through unchanged. The ASTC profile is the
-        // sRGB-aware LDR profile matching the chosen format pair.
+        // Encodes one RGBA8 level into the codec's on-disk bytes at blob[writeOffset]. BC7/BC5/BC4
+        // and ASTC pack 4x4 blocks; None copies the RGBA8 bytes through unchanged. The ASTC profile
+        // is the sRGB-aware LDR profile matching the chosen format pair.
         bc7enc_compress_block_params params{};
         if (codec == TextureCodec::BC7)
         {
             bc7enc_compress_block_init();
             bc7enc_compress_block_params_init(&params);
             params.m_uber_level = BC7UberLevel;
+        }
+        // rgbcx backs both BC4 and BC5; init builds its shared block-encode tables once.
+        if (codec == TextureCodec::BC5 || codec == TextureCodec::BC4)
+        {
+            rgbcx::init();
         }
         const astcenc_profile astcProfile = srgbEncode ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR;
 
@@ -681,6 +779,16 @@ namespace Veng::Cook
             if (codec == TextureCodec::BC7)
             {
                 const vector<u8> blocks = EncodeBc7Level(rgba, lw, lh, params);
+                std::memcpy(blob.data() + writeOffset, blocks.data(), blocks.size());
+            }
+            else if (codec == TextureCodec::BC5)
+            {
+                const vector<u8> blocks = EncodeBc5Level(rgba, lw, lh);
+                std::memcpy(blob.data() + writeOffset, blocks.data(), blocks.size());
+            }
+            else if (codec == TextureCodec::BC4)
+            {
+                const vector<u8> blocks = EncodeBc4Level(rgba, lw, lh);
                 std::memcpy(blob.data() + writeOffset, blocks.data(), blocks.size());
             }
             else if (codec == TextureCodec::ASTC)

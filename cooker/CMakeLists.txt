@@ -87,10 +87,11 @@ FetchContent_MakeAvailable(astc_encoder)
 # and an -O0 scalar/Debug encode dominates the cook wall-clock. Release keeps the codec's own -O3.
 target_compile_options(${VENG_ASTCENC_TARGET} PRIVATE $<$<CONFIG:Debug>:-O2>)
 
-# Same reasoning for the BC7 encoder TU and the TextureImporter's mip-resize + block-encode loops:
-# force -O2 in Debug so the cook does not run them unoptimized. Release inherits its own -O3.
+# Same reasoning for the BC7/BC5/BC4 encoder TUs and the TextureImporter's mip-resize + block-encode
+# loops: force -O2 in Debug so the cook does not run them unoptimized. Release inherits its own -O3.
 set_source_files_properties(
         ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp
+        ${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp
         src/Importers/TextureImporter.cpp
         PROPERTIES COMPILE_OPTIONS $<$<CONFIG:Debug>:-O2>)
 
@@ -223,6 +224,7 @@ add_library(veng_cook_objs OBJECT
         src/Vendor/TinyExr.cpp
         src/Vendor/XxHash.cpp
         ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp
+        ${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp
 )
 
 target_include_directories(veng_cook_objs PUBLIC

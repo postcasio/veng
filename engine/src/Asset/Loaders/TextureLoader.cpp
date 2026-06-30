@@ -37,6 +37,23 @@ namespace Veng
                 return Renderer::Format::ASTC4x4Unorm;
             case 24:
                 return Renderer::Format::ASTC4x4Srgb;
+            case 26:
+                return Renderer::Format::BC5Unorm;
+            case 27:
+                return Renderer::Format::BC4Unorm;
+            default:
+                return std::nullopt;
+            }
+        }
+
+        optional<CookedChannelLayout> BridgeChannelLayout(u32 value)
+        {
+            switch (value)
+            {
+            case static_cast<u32>(CookedChannelLayout::Direct):
+                return CookedChannelLayout::Direct;
+            case static_cast<u32>(CookedChannelLayout::NormalXY):
+                return CookedChannelLayout::NormalXY;
             default:
                 return std::nullopt;
             }
@@ -58,6 +75,8 @@ namespace Veng
             {
             case Renderer::Format::BC7Unorm:
             case Renderer::Format::BC7Srgb:
+            case Renderer::Format::BC5Unorm:
+            case Renderer::Format::BC4Unorm:
                 return CompressedCodec::BC;
             case Renderer::Format::ASTC4x4Unorm:
             case Renderer::Format::ASTC4x4Srgb:
@@ -139,6 +158,8 @@ namespace Veng
         }
 
         const optional<Renderer::Format> format = BridgeFormat(header.Format);
+        const optional<CookedChannelLayout> channelLayout =
+            BridgeChannelLayout(header.ChannelLayout);
         const optional<Renderer::Filter> minFilter = BridgeFilter(header.MinFilter);
         const optional<Renderer::Filter> magFilter = BridgeFilter(header.MagFilter);
         const optional<Renderer::MipmapMode> mipmapMode = BridgeMipmapMode(header.MipmapMode);
@@ -146,13 +167,14 @@ namespace Veng
         const optional<Renderer::AddressMode> addressModeV = BridgeAddressMode(header.AddressModeV);
         const optional<Renderer::AddressMode> addressModeW = BridgeAddressMode(header.AddressModeW);
 
-        if (!format || !minFilter || !magFilter || !mipmapMode || !addressModeU || !addressModeV ||
-            !addressModeW)
+        if (!format || !channelLayout || !minFilter || !magFilter || !mipmapMode || !addressModeU ||
+            !addressModeV || !addressModeW)
         {
             return std::unexpected(AssetLoadError{
                 .Kind = AssetError::Corrupt,
                 .Id = id,
-                .Detail = "texture: unrecognized format/sampler enum value in cooked header",
+                .Detail = "texture: unrecognized format/sampler/channel-layout enum value in "
+                          "cooked header",
             });
         }
 
@@ -230,6 +252,7 @@ namespace Veng
                     .AnisotropyEnabled = header.AnisotropyEnabled != 0,
                     .MaxAnisotropy = header.MaxAnisotropy,
                 },
+            .ChannelLayout = *channelLayout,
         };
 
         Ref<Veng::Texture> texture;

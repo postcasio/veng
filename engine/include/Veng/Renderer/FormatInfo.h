@@ -19,11 +19,12 @@ namespace Veng::Renderer
     /// ceil-divide sizing math covers compressed and uncompressed formats alike.
     struct FormatBlockInfo
     {
-        /// @brief Block width in texels (1 for an uncompressed format, 4 for BC7).
+        /// @brief Block width in texels (1 for an uncompressed format, 4 for a block codec).
         u32 BlockWidth = 1;
-        /// @brief Block height in texels (1 for an uncompressed format, 4 for BC7).
+        /// @brief Block height in texels (1 for an uncompressed format, 4 for a block codec).
         u32 BlockHeight = 1;
         /// @brief Encoded bytes per block (bytes-per-texel for an uncompressed format).
+        ///        16 for BC7/BC5/ASTC 4x4, 8 for BC4.
         u32 Bytes = 0;
     };
 
@@ -40,9 +41,12 @@ namespace Veng::Renderer
         {
         case Format::BC7Unorm:
         case Format::BC7Srgb:
+        case Format::BC5Unorm:
         case Format::ASTC4x4Unorm:
         case Format::ASTC4x4Srgb:
             return {.BlockWidth = 4, .BlockHeight = 4, .Bytes = 16};
+        case Format::BC4Unorm:
+            return {.BlockWidth = 4, .BlockHeight = 4, .Bytes = 8};
         case Format::R8Unorm:
             return {.BlockWidth = 1, .BlockHeight = 1, .Bytes = 1};
         case Format::RGBA8Unorm:
