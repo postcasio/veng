@@ -582,8 +582,10 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   silently supersampled across every render-graph image — the steady-state fix the originating MoltenVK
   perf problem needed (scaling the sub-rect barely helped because the allocation footprint and the
   full-allocation tail — tonemap/upscale, gather + composite, TAA history-copy — did not shrink with it).
-  **Safe-moment reallocation**, a **memory-budget-driven initial tier**, and a **TAA history ping-pong**
-  stay the named follow-ons.
+  **The outer loop (`StepAllocationTier` + the tier-driven `Resize`) was removed in
+  [planset-39](planset-39/README.md)** — its reallocation hitched; the delivered-and-kept parts are the
+  per-frame sub-rect **inner loop** and the `MaxAllocationScale` HiDPI cap (now a static ceiling). A
+  **memory-driven fixed-allocation choice** and a **TAA history ping-pong** stay the named follow-ons.
 
 - **[planset-33](planset-33/README.md)** — textures cook compressed and mipped. The texture path cooks
   **raw, single-mip RGBA8**, the `Renderer::Format` enum has **no compressed formats**, and the
@@ -604,8 +606,9 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
 
 - **[planset-34](planset-34/README.md)** — grab bag: render-allocation honesty, meshes-are-meshes,
   residency, editor play, gizmos (proposed, 6 plans). Lifts the sample's hardcoded half-resolution
-  cap so the managed viewport renders at **native HiDPI** and the planset-32 allocation tier discovers
-  the operating point itself. Retires the special-cased two-pass `Primitive` resolve: a procedural
+  cap so the managed viewport renders at **native HiDPI** (at the time, to let the planset-32 allocation
+  tier discover the operating point — that outer loop was since removed in
+  [planset-39](planset-39/README.md); the native allocation is now the fixed ceiling). Retires the special-cased two-pass `Primitive` resolve: a procedural
   primitive becomes a mesh whose **source** is an inline recipe (`cooked AssetId | recipe`), resolved
   through the ordinary async load path (the **Godot `PrimitiveMesh : Mesh` model**) — removing the
   `SpawnResolve`/`VE_RESOLVE` pass and the scattered `ResolveComponents` hazard. Residency-on-spawn
@@ -722,16 +725,24 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   **vertex-stage codegen**, **static switches**, **draw-sort by parent pipeline**, and
   **instance-of-instance chains** stay future.
 
-- **[planset-39](planset-39/README.md)** — explicit material-instance ids (📝 proposed, 1 plan).
-  Retires planset-38 Plan 05's parent-id **overload**, where one `AssetId` names both a `Material`
-  parent and its implicit zero-override `MaterialInstance`, kept apart only by a composite
-  `(type, id)` cache key and a resolve-time bridge (`LoadDefaultInstance`). Takes the explicit-id path
-  Plan 05 chose against: a parent `*.vmat.json` declares a minted **`defaultInstance`** id, the cook
-  emits a real zero-override instance at it, and **every material reference in every pack (and every
-  C++ literal) is rewritten** to name that id. The composite cache key reverts to id-only and the
-  resolve bridge is **deleted**, restoring the "one id ⇒ one asset of one type" invariant; `smoke_golden`
-  holds because a cooked zero-override instance packs the same bytes the synthesized default did.
-  Depends on planset-38 (Plans 05 + 06).
+- **[planset-39](planset-39/README.md)** — grab bag: material instances, codecs, emissive, atmosphere,
+  allocation honesty (📝 proposed, 8 plans). A coherent grab bag anchored by a precomputed atmospheric
+  sky. **(1) Material instances finish their story** — retire planset-38 Plan 05's parent-id
+  **overload** (one `AssetId` naming both a `Material` parent and its implicit zero-override
+  `MaterialInstance`, kept apart by a composite `(type,id)` cache key + a resolve bridge) for explicit
+  minted **`defaultInstance`** ids the cook emits real instances at and every reference is rewritten to,
+  deleting the cache-key overload and the bridge ("one id ⇒ one asset of one type" restored); then the
+  **editor mints** that id on material create/save (cook-time minting rejected — it would mutate source
+  or invent an unreferenceable id). **(2) Channel-specialized codecs** — `Normal → BC5`, `Mask → BC4` on
+  planset-35's role→format table, with the ASTC normal-packing convention. **(3) Atmosphere + dynamic
+  ambient** — color-decoupled emissive as an additive forward pass (no fourth g-buffer target); a
+  foundation-first **SH math** primitive (`Veng/Math/SphericalHarmonics.h`); a **Bruneton** precomputed
+  atmospheric sky (the first real **`Type3D`** consumer — the 4D scattering table as a volume texture);
+  and a **dynamic SH ambient** that projects the sky into SH each frame as the third ambient arm
+  (`IBL : skylightSH : flat constant`), so the no-environment ambient tracks the sun. **(4) Allocation
+  honesty** — remove planset-32's allocation-tier outer loop (it hitches) and keep the non-hitching
+  sub-rect inner loop over a fixed allocation. **Supersedes planset-32's outer loop.** Depends on
+  planset-38 (Plans 05 + 06) for thread 1; threads 2–4 are independent.
 
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material

@@ -50,7 +50,9 @@ the `defaultInstance` id:
   Each hardcoded `AssetId{0x…ULL}` that named a `Material` becomes the corresponding `defaultInstance`
   id (uppercase hex `0x…ULL` per house style).
 - The minted ids are produced with `vengc generate-id` (with `--reference <pack.json>` per pack so they
-  cannot collide), replacing clearly-marked placeholders.
+  cannot collide), replacing clearly-marked placeholders. The hand-mint is the floor; [Plan 02](02-editor-default-instance-id.md)
+  makes the material editor mint and write the id automatically for editor-authored materials, with the
+  cook-time "must declare `defaultInstance`" error below demoted to a safety net.
 
 ### 3. Delete the overload
 

@@ -226,22 +226,14 @@ drive a **CPU memcpy** in the component case and a **GPU buffer write** in the m
 case. Decide that representation up front; it is painful to retrofit onto a populated
 descriptor table.
 
-**Named follow-on — container/array fields in the reflection layer.** `FieldClass` is closed
-and has **no list/array class** (`Vector` is a glm math vector, not `std::vector<T>`), so a
-`vector<T>` or `T[N]` field cannot be reflected, serialized, or inspected today —
-`FieldClassOf<T>()` silently falls through to `FieldClass::Struct` for an unspecialised type.
-A later planset adds container support: a fixed-size `T[N]`/`std::array` is the easy subset
-(walkable by element offset + stride — element `TypeId` + count on the `FieldDescriptor`, no
-erased ops), while a dynamic `vector<T>` needs the `FieldDescriptor` to carry **type-erased
-container ops** (size / element-at / resize) plus the element's `TypeId`/`FieldClass`, with the
-generic walker, the name-keyed serializer, and the editor inspectors each gaining an `Array`
-arm. That erased-ops payload is exactly the complexity the closed `FieldClass` set was built to
-keep out, so it is a deliberate reflection-layer decision — it pairs with the
-`ShaderInterface`/`MaterialField` unification above (both grow `FieldDescriptor`) and is decided
-at the reflection layer, not in a consumer. (The node-based material editor needs none of this:
-its node properties are flat leaves, the graph's node/link collections use a bespoke graph
-serializer, and a variable-arity node is modelled as **dynamic pins on the node instance**, never
-as an array-typed property.)
+**Container/array fields in the reflection layer — DELIVERED.** `FieldClass::Array` exists and
+covers the **dynamic `vector<T>`** case (the hard half), not just fixed-size: the `FieldDescriptor`
+carries the type-erased container ops (`ArraySize` / `ArrayElement` / `ArrayElementConst` /
+`ArrayResize`) plus the element `TypeId`, authored through the `VE_ARRAY_FIELD` macro
+(`FinishArrayField`), and the generic walker / name-keyed serializer / editor inspector all have their
+`Array` arm. `ProjectSettings::Configurations` (a `vector<BuildConfiguration>`) is the live consumer.
+The `ShaderInterface`/`MaterialField` unification above is still the open reflection-layer follow-on;
+container support is done.
 
 ### 8. Scene renderer / render-pipeline architecture — remaining: the über-pipeline batteries
 
@@ -345,17 +337,24 @@ constant, so reallocation does not pop). Separately, a **`MaxAllocationScale`** 
 allocation baseline from the **swapchain framebuffer extent**, so a small window on a 2× **HiDPI**
 display is not silently supersampled across every render-graph image.
 
-**Still future (planset-32's named follow-ons):** **safe-moment reallocation** — deferring the
-tier-change `Resize` to a scene transition / static camera / loading screen rather than firing it
-inline (the dwell already makes the inline hitch rare and acceptable; this is polish).
-**Memory-driven initial tier** — choosing the *initial* tier from a device memory-budget query
-(`VkPhysicalDeviceMemoryProperties`) so a memory-starved device starts low, distinct from the
-perf-driven outer loop; this is the seam where the allocation work meets planset-33's texture
-compression, since ~8:1 block compression materially changes the texture VRAM residency the query
-reads. A **TAA history ping-pong** to remove the TAA history-copy from the full-allocation tail —
-the one full-res cost the sub-rect cannot reduce (it scales with allocation, so a tier step *does*
-help it; the ping-pong removes it entirely), the next lever if TAA stays too expensive once the
-allocation is right.
+**The allocation-tier outer loop was removed in [planset-39](../planset-39/README.md).** Its
+tier-change `Resize` **hitched** — the dwell made the hitch rare, not absent, and a steady-state
+reallocation hitch is worse than running at a fixed allocation. The **inner loop**
+(`ComputeDynamicResolutionScale`, per-frame sub-rect scaling over a fixed allocation — no realloc, no
+hitch) and the `MaxAllocationScale` HiDPI cap (now a **static** ceiling) are kept; the
+`StepAllocationTier` EMA/hysteresis/dwell state and the tier-driven `Resize` are deleted. Dynamic
+resolution now adapts **cost** (the sub-rect), not **allocation footprint**.
+
+**Still future (after the tier removal):** a **memory-driven fixed-allocation choice** — picking the
+one fixed allocation up front from a device memory-budget query
+(`VkPhysicalDeviceMemoryProperties`) so a memory-starved device starts smaller; this replaces the
+removed perf-driven tier as the footprint lever and is the seam where the allocation work meets
+planset-33's texture compression, since ~8:1 block compression materially changes the texture VRAM
+residency the query reads. A **TAA history ping-pong** to remove the TAA history-copy from the
+full-allocation tail — the one full-res cost the sub-rect cannot reduce — stays the next lever if TAA
+is too expensive at the fixed allocation. (**Safe-moment reallocation** is **dropped**: with the
+tier-driven `Resize` gone there is no footprint reallocation left to defer; only a genuine
+region/window extent change reallocates, which is correct, not a hitch to schedule away.)
 
 **Still future:** a **transparent/forward pass** (a second material contract whose fragment
 outputs final color) and **MSAA**, reading the delivered `AABB`/`Frustum`/broadphase facility. The
@@ -609,6 +608,30 @@ cook saturates ~6 cores (623% CPU, ~17 s of work in ~2.8 s wall). A natural exte
 parallelism (a thread pool over the importer), but within-texture threading is the cleaner first step
 and is what astc-encoder is built for. Optionally pairs with a content-addressed per-asset cook cache
 (area 15, Decision 3) so an unchanged texture is not re-encoded at all.
+
+### 18. Cook-time dead-asset pruning — asset tree-shaking
+
+**Motivated by [planset-39](../planset-39/README.md)'s default-instance question.** Plan 01 emits a
+companion zero-override `MaterialInstance` for every parent material; a material referenced *only* as a
+parent (never directly) ends up with a default instance nobody loads. That is one symptom of a general
+missing capability: the cook does not **prune unreferenced assets** from a pack. The real item is
+linker-style **tree-shaking** over the cooked asset graph:
+
+- **Mark-and-sweep from roots.** Roots are what the project entry-points (the startup level, plus any
+  explicitly-exported assets). Transitively follow every asset reference — level → prefab → component
+  `AssetHandle` fields, mesh → material instances, instance → parent material, material →
+  shader/textures — and drop anything unreached rather than cooking it into the pack. The
+  default-instance prune falls out as a special case.
+- **The interesting part is cross-pack visibility.** An asset can be unreferenced *within its own
+  pack* but named from another pack, so naïve per-pack pruning would drop a live asset. The fix is the
+  linker **exported-symbol** concept: an asset is a root if it is project-reachable *or* marked
+  public/exported, so cross-pack consumers keep it alive. Whole-project reachability vs. an explicit
+  export marker is the design decision this area settles.
+- **Composes with existing cook infrastructure** — the content-hash + TOC (planset-9), the per-config
+  cook (planset-35), and a content-addressed cook cache (area 17's note): pruning is another cook-time
+  pass over the same reference graph.
+
+A cooker-pipeline item like area 17, deferred until taken up.
 
 ## Ordering & dependencies
 
