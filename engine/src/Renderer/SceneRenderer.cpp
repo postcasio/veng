@@ -84,6 +84,39 @@ namespace Veng::Renderer
                    a.PlanetRadius == b.PlanetRadius && a.AtmosphereRadius == b.AtmosphereRadius &&
                    a.SunAngularRadius == b.SunAngularRadius && a.SunIrradiance == b.SunIrradiance;
         }
+        // Number of fixed directions the sky is sampled in to project it into SH. A uniform
+        // Fibonacci-sphere set; the order-2 projection is band-limited, so a few hundred
+        // samples capture it well below the cost of re-prefiltering a cubemap.
+        constexpr u32 SkyShSampleCount = 256;
+
+        // Projects the CPU sky-radiance eval into a cosine-convolved irradiance SH set. Samples
+        // AtmosphereSkyRadiance in a fixed uniform direction set (the device-free path — no GPU
+        // readback), accumulates a radiance SH, then convolves with the Lambertian cosine lobe.
+        // The result is the irradiance SH the lighting pass reconstructs per fragment.
+        Sh9 ProjectSkyToIrradiance(const Atmosphere& atmosphere, const vec3& sunDirection)
+        {
+            const vec3 sun = glm::length(sunDirection) > 1e-4f ? glm::normalize(sunDirection)
+                                                               : vec3(0.0f, 1.0f, 0.0f);
+            Sh9 radiance = Sh9::Zero();
+
+            // Uniform sphere sampling weight: 4*pi / N so the coefficients integrate.
+            const f32 weight = 4.0f * glm::pi<f32>() / static_cast<f32>(SkyShSampleCount);
+            const f32 goldenAngle = glm::pi<f32>() * (3.0f - std::sqrt(5.0f));
+            for (u32 i = 0; i < SkyShSampleCount; ++i)
+            {
+                // Fibonacci sphere: z stepped uniformly, azimuth by the golden angle.
+                const f32 z =
+                    1.0f - (2.0f * static_cast<f32>(i) + 1.0f) / static_cast<f32>(SkyShSampleCount);
+                const f32 r = std::sqrt(std::max(0.0f, 1.0f - z * z));
+                const f32 phi = goldenAngle * static_cast<f32>(i);
+                const vec3 direction(r * std::cos(phi), z, r * std::sin(phi));
+
+                const vec3 sky = AtmosphereSkyRadiance(atmosphere, direction, sun);
+                ProjectSample(radiance, direction, sky, weight);
+            }
+            return ConvolveCosine(radiance);
+        }
+
         // The additive forward emissive pass shaders: the dedicated vertex stage forwarding
         // the per-draw emissive color + texture handles, and the fragment writing only the
         // additive emissive term into the lit HDR target.
@@ -355,9 +388,10 @@ namespace Veng::Renderer
             u32 LightBase;
             u32 LightCount;
             u32 IblEnabled; // 1 = sample the IBL set's maps; 0 = flat ambient fallback
-            u32 Pad0;       // (was the folded-in skybox flag; the skybox is its own pass now)
+            u32 SkylightOn; // 1 = SH skylight ambient (second arm); 0 = flat ambient fallback
             u32 PrefilterMipCount; // prefiltered specular mip count (roughness → LOD)
             f32 EnvIntensity;      // scales the IBL ambient
+            f32 SkylightIntensity; // scales the SH skylight ambient
         };
 
         // The SSAO-enabled lighting variant's push block: the base + IBL fields plus the AO
@@ -374,13 +408,13 @@ namespace Veng::Renderer
             u32 LightBase;
             u32 LightCount;
             u32 IblEnabled;
-            u32 Pad0; // (was the folded-in skybox flag; the skybox is its own pass now)
+            u32 SkylightOn;
             u32 PrefilterMipCount;
             f32 EnvIntensity;
+            f32 SkylightIntensity;
             u32 SsaoTexture;
             u32 Pad1;
             u32 Pad2;
-            u32 Pad3;
         };
 
         // The per-frame view-constants block (set-0 binding 5): camera/view state only.
@@ -396,6 +430,9 @@ namespace Veng::Renderer
             mat4 CurViewProj;    // this frame's unjittered world → clip (TAA velocity)
             vec4 RenderScaleUV;  // xy this frame's validExtent/allocExtent, zw previous frame's
             vec4 MaxValidUV;     // xy this frame's (validExtent-0.5)/allocExtent, zw previous
+            // Cosine-convolved sky irradiance SH (9 RGB coefficients, .xyz per element, .w pad).
+            // vec4[9] (not vec3[9]) to share one 16-byte std140 stride with the shader.
+            std::array<vec4, ShCoefficientCount> SkyShCoeffs;
         };
 
         static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,
@@ -1027,12 +1064,12 @@ namespace Veng::Renderer
                                       uvec2 extent, bool useSsao, Ref<DescriptorSet> shadowSet,
                                       u32 shadowRingStride, u32 punctualRingStride,
                                       Ref<DescriptorSet> iblSet, u32 prefilterMipCount,
-                                      bool writeToOutput = false)
+                                      bool skylight, bool writeToOutput = false)
                 : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent),
                   m_UseSsao(useSsao), m_ShadowSet(std::move(shadowSet)),
                   m_ShadowRingStride(shadowRingStride), m_PunctualRingStride(punctualRingStride),
                   m_IblSet(std::move(iblSet)), m_PrefilterMipCount(prefilterMipCount),
-                  m_WriteToOutput(writeToOutput)
+                  m_Skylight(skylight), m_WriteToOutput(writeToOutput)
             {
             }
 
@@ -1047,6 +1084,7 @@ namespace Veng::Renderer
                 const TextureHandle ssaoHandle = io.SsaoHandle;
                 const SamplerHandle samplerHandle = io.SamplerHandle;
                 const bool useSsao = m_UseSsao;
+                const bool skylight = m_Skylight;
                 const Ref<DescriptorSet> shadowSet = m_ShadowSet;
                 const u32 shadowRingStride = m_ShadowRingStride;
                 const u32 punctualRingStride = m_PunctualRingStride;
@@ -1086,8 +1124,8 @@ namespace Veng::Renderer
                 const u32 prefilterMipCount = m_PrefilterMipCount;
                 builder.Execute(
                     [this, albedoHandle, normalHandle, ormHandle, depthHandle, ssaoHandle,
-                     samplerHandle, useSsao, shadowSet, shadowRingStride, punctualRingStride,
-                     iblSet, prefilterMipCount](PassContext& inner)
+                     samplerHandle, useSsao, skylight, shadowSet, shadowRingStride,
+                     punctualRingStride, iblSet, prefilterMipCount](PassContext& inner)
                     {
                         const ScenePassContext ctx = Wrap(inner);
                         CommandBuffer& cmd = ctx.Cmd();
@@ -1118,6 +1156,10 @@ namespace Veng::Renderer
                         // per-frame SceneView; the skybox is a separate pass.
                         const SceneView& view = ctx.View();
                         const u32 iblEnabled = view.Environment.IsLoaded() ? 1u : 0u;
+                        // The SH skylight is the second ambient arm, below IBL: active only when
+                        // its setting is on AND no environment is bound (IBL wins). The shader's
+                        // three-way branch reads it after IblEnabled.
+                        const u32 skylightOn = (skylight && iblEnabled == 0u) ? 1u : 0u;
 
                         if (useSsao)
                         {
@@ -1131,8 +1173,10 @@ namespace Veng::Renderer
                                 .LightBase = registry.GetCurrentLightBase(),
                                 .LightCount = view.LightCount,
                                 .IblEnabled = iblEnabled,
+                                .SkylightOn = skylightOn,
                                 .PrefilterMipCount = prefilterMipCount,
                                 .EnvIntensity = view.EnvironmentIntensity,
+                                .SkylightIntensity = view.SkylightIntensity,
                                 .SsaoTexture = ssaoHandle.Index,
                             });
                         }
@@ -1148,8 +1192,10 @@ namespace Veng::Renderer
                                 .LightBase = registry.GetCurrentLightBase(),
                                 .LightCount = view.LightCount,
                                 .IblEnabled = iblEnabled,
+                                .SkylightOn = skylightOn,
                                 .PrefilterMipCount = prefilterMipCount,
                                 .EnvIntensity = view.EnvironmentIntensity,
+                                .SkylightIntensity = view.SkylightIntensity,
                             });
                         }
                         cmd.DrawFullscreenTriangle();
@@ -1166,6 +1212,7 @@ namespace Veng::Renderer
             u32 m_PunctualRingStride = 0;
             Ref<DescriptorSet> m_IblSet;
             u32 m_PrefilterMipCount = 0;
+            bool m_Skylight = false;
             bool m_WriteToOutput = false;
         };
 
@@ -3426,7 +3473,7 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
                 ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
-                m_Ibl->GetPrefilterMipCount()));
+                m_Ibl->GetPrefilterMipCount(), m_Settings.Skylight));
 
             // Skybox composites the radiance cube over the lit scene color, before the
             // TAA/SSR/bloom tail so the sky resolves, reflects, and tonemaps with the scene.
@@ -3552,7 +3599,7 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_CascadeDebugPipeline, m_Extent, /*useSsao=*/false, m_ShadowSet,
                 m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
-                m_Ibl->GetPrefilterMipCount(), /*writeToOutput=*/true));
+                m_Ibl->GetPrefilterMipCount(), m_Settings.Skylight, /*writeToOutput=*/true));
             break;
         case DebugView::Bloom:
             // Bloom samples the lit HDR, so the lighting pass runs first; the force-wired bloom
@@ -3561,7 +3608,7 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
                 ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
-                m_Ibl->GetPrefilterMipCount()));
+                m_Ibl->GetPrefilterMipCount(), m_Settings.Skylight));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_AlbedoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Bloom));
             break;
@@ -3578,7 +3625,7 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_LightingPipeline, m_Extent, /*useSsao=*/false, m_ShadowSet,
                 m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
-                m_Ibl->GetPrefilterMipCount()));
+                m_Ibl->GetPrefilterMipCount(), m_Settings.Skylight));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_AlbedoBlitPipeline, m_Extent,
                 FullscreenBlitScenePass::Source::Reflections));
@@ -4654,8 +4701,26 @@ namespace Veng::Renderer
             renderProj[2][0] += 2.0f * jitterPixel.x / static_cast<f32>(validExtent.x);
             renderProj[2][1] += 2.0f * jitterPixel.y / static_cast<f32>(validExtent.y);
         }
+        // Dynamic skylight: project the CPU sky eval into irradiance SH for the lighting pass's
+        // second ambient arm. Gated on the same sun/atmosphere dirty signal the LUTs use, so a
+        // static sky projects once; an animated sun re-projects every frame by design (the cheap
+        // path — a fixed-direction sky sample + a 9-coefficient projection, far below
+        // re-prefiltering a cubemap). The coefficients ride the view-constants block below.
+        const bool skylightActive = m_Settings.Skylight;
+        if (skylightActive)
+        {
+            if (!m_SkyShValid || view.SunDirection != m_LastSkyShSunDirection ||
+                !AtmosphereEquals(view.Atmosphere, m_LastSkyShAtmosphere))
+            {
+                m_SkySh = ProjectSkyToIrradiance(view.Atmosphere, view.SunDirection);
+                m_LastSkyShSunDirection = view.SunDirection;
+                m_LastSkyShAtmosphere = view.Atmosphere;
+                m_SkyShValid = true;
+            }
+        }
+
         const mat4 renderViewProj = renderProj * view.Camera.View();
-        const ViewConstantsBlock viewConstants{
+        ViewConstantsBlock viewConstants{
             .InvViewProj = glm::inverse(renderViewProj),
             .CameraPosition = vec4(view.Camera.GetPosition(), 0.0f),
             .View = view.Camera.View(),
@@ -4665,6 +4730,11 @@ namespace Veng::Renderer
             .RenderScaleUV = vec4(renderScaleUV, m_PreviousRenderScaleUV),
             .MaxValidUV = vec4(maxValidUV, m_PreviousMaxValidUV),
         };
+        for (u32 i = 0; i < ShCoefficientCount; ++i)
+        {
+            viewConstants.SkyShCoeffs[i] =
+                skylightActive ? vec4(m_SkySh.Coefficients[i], 0.0f) : vec4(0.0f);
+        }
         registry.WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
 
         // Decide whether last frame's pyramid is trustworthy this frame. The reset

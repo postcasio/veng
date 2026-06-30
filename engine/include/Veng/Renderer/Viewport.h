@@ -56,6 +56,8 @@ namespace Veng::Renderer
         AssetHandle<Environment> Environment;
         /// @brief Scales the IBL ambient + skybox radiance (and the procedural atmosphere sky).
         f32 EnvironmentIntensity = 1.0f;
+        /// @brief Scales the dynamic SH skylight ambient (SceneRendererSettings::Skylight).
+        f32 SkylightIntensity = 1.0f;
         /// @brief Whether the procedural atmosphere sky renders this frame.
         bool AtmosphereEnabled = false;
         /// @brief Normalized direction toward the sun for the procedural atmosphere (world up +Y).

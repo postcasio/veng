@@ -27,6 +27,13 @@ struct ViewConstants
     // scale 1.0 RenderScaleUV is 1 and the map is identity, so a full-resolution frame is unchanged.
     float4 RenderScaleUV; // xy this frame's validExtent/allocExtent, zw previous frame's
     float4 MaxValidUV;    // xy this frame's (validExtent-0.5)/allocExtent, zw previous frame's
+
+    // The cosine-convolved sky irradiance SH (order-2, 9 RGB coefficients) the dynamic
+    // skylight ambient evaluates per fragment. Each element carries one RGB coefficient in
+    // .xyz (.w is std140 padding); a vec4 array, not a vec3 array, so the C++ upload and the
+    // shader read share one 16-byte stride and cannot drift. Valid only when the lighting
+    // push SkylightOn is set; zeroed otherwise.
+    float4 SkyShCoeffs[9];
 };
 
 static const uint ViewConstantsStride = 512;

@@ -290,6 +290,16 @@ namespace Veng::UI
             }
         }
 
+        // The dynamic SH skylight is a topology toggle (the lighting pass's three-way ambient
+        // branch); its intensity is a per-frame ViewState value. It projects the same Atmosphere
+        // sky into SH, so the sun direction above drives it too. The intensity greys out when off.
+        changed |= UI::Checkbox("Skylight", settings.Skylight);
+        {
+            auto skylightDisabled = UI::Disabled(!settings.Skylight);
+            (void)UI::Drag("Skylight intensity", view.SkylightIntensity,
+                           {.Speed = 0.01f, .Min = 0.0f, .Max = 8.0f});
+        }
+
         // Bloom on/off and the kernel are topology; threshold/intensity/radius are per-frame
         // ViewState values. The per-bloom knobs grey out when bloom is off.
         changed |= UI::Checkbox("Bloom", settings.Bloom);

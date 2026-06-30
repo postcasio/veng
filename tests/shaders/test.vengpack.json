@@ -10,6 +10,7 @@
     { "id": 8007, "type": "shader", "source": "indirect_instance.frag.shader.json" },
     { "id": 8008, "type": "shader", "source": "indirect_cull.comp.shader.json" },
     { "id": 8009, "type": "shader", "source": "volume_write.comp.shader.json" },
-    { "id": 8010, "type": "shader", "source": "volume_sample.comp.shader.json" }
+    { "id": 8010, "type": "shader", "source": "volume_sample.comp.shader.json" },
+    { "id": 8011, "type": "shader", "source": "sh_eval.comp.shader.json" }
   ]
 }

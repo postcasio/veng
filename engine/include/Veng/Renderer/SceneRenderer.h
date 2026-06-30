@@ -12,6 +12,8 @@
 #include <Veng/Renderer/PunctualShadows.h>
 #include <Veng/Renderer/ShadowCascades.h>
 
+#include <Veng/Math/SphericalHarmonics.h>
+
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/SceneBroadphase.h>
@@ -311,6 +313,18 @@ namespace Veng::Renderer
         /// image-based lighting (the Environment IBL path is independent).
         bool Atmosphere = false;
 
+        /// @brief Whether the dynamic sky-projected SH ambient lights the scene's diffuse term.
+        ///
+        /// Gates the per-frame CPU project-and-upload: each Execute samples the Atmosphere sky
+        /// (the device-free CPU eval) in a fixed direction set, projects it to order-2 SH,
+        /// cosine-convolves it to irradiance, and uploads the 9 coefficients into the lighting
+        /// constants — re-projecting only when the sun/atmosphere changes (a static sky projects
+        /// once). The lighting pass's ambient branch becomes three-way: IBL when an environment
+        /// is bound, else this SH skylight when on, else the flat fallback. Off by default, so
+        /// the shipping path and smoke_golden are untouched. The diffuse half of a dynamic sky's
+        /// lighting; it does not touch the specular path or replace IBL.
+        bool Skylight = false;
+
         /// @brief Whether the additive forward emissive pass runs.
         ///
         /// A topology change: it inserts/removes the EmissiveScenePass between deferred lighting
@@ -438,6 +452,12 @@ namespace Veng::Renderer
         /// Rides the per-frame push (no recompile). Ignored when no environment is bound.
         /// Also scales the procedural atmosphere sky + sun disk when the atmosphere is enabled.
         f32 EnvironmentIntensity = 1.0f;
+
+        /// @brief Scales the dynamic SH skylight ambient; pushed to the lighting pass each Execute.
+        ///
+        /// Rides the per-frame push (no recompile). Effective only when SceneRendererSettings::Skylight
+        /// is on and no environment is bound (the SH skylight is the second ambient arm, below IBL).
+        f32 SkylightIntensity = 1.0f;
 
         /// @brief Whether the procedural atmosphere sky renders this frame.
         ///
@@ -1655,6 +1675,23 @@ namespace Veng::Renderer
 
         /// @brief Whether the atmosphere LUTs regenerated during the most recent Execute (diagnostic).
         bool m_AtmosphereRegeneratedLastFrame = false;
+
+        /// @brief The cosine-convolved sky irradiance SH uploaded to the lighting constants.
+        ///
+        /// Projected from the CPU Atmosphere sky eval and cached; re-projected only when this
+        /// frame's sun direction or Atmosphere parameters differ from the last projection (a
+        /// static sky projects once, an animated sun every frame by design). Zeroed until the
+        /// first projection. Read every Execute the skylight is active to fill the SkyShCoeffs.
+        Sh9 m_SkySh = Sh9::Zero();
+
+        /// @brief Whether m_SkySh holds a projected set (false until the first projection).
+        bool m_SkyShValid = false;
+
+        /// @brief The sun direction m_SkySh was last projected from; gates re-projection.
+        vec3 m_LastSkyShSunDirection{0.0f, 1.0f, 0.0f};
+
+        /// @brief The Atmosphere m_SkySh was last projected from; gates re-projection (field-wise).
+        Atmosphere m_LastSkyShAtmosphere;
 
         /// @brief Immediate-mode debug-draw accumulator flushed by the DebugDrawScenePass.
         ///

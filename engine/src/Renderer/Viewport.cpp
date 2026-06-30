@@ -265,6 +265,7 @@ namespace Veng::Renderer
             .Exposure = m_ViewState.Exposure,
             .Environment = m_ViewState.Environment,
             .EnvironmentIntensity = m_ViewState.EnvironmentIntensity,
+            .SkylightIntensity = m_ViewState.SkylightIntensity,
             .AtmosphereEnabled = m_ViewState.AtmosphereEnabled,
             .SunDirection = m_ViewState.SunDirection,
             .Atmosphere = m_ViewState.Atmosphere,
