@@ -47,6 +47,15 @@ namespace VengEditor
             return std::unexpected(Veng::string{"this document has no save action"});
         }
 
+        /// @brief Returns true when the document holds edits not yet written to its source.
+        ///
+        /// Drives the Save action's enabled state (File menu, toolbar button) and the document
+        /// title's unsaved marker. The base has no editable state and reports false; a
+        /// scene-editing document reports its command stack's dirty flag (the level editor folds
+        /// in its config dirtiness).
+        /// @return True when there is something to save.
+        [[nodiscard]] virtual bool HasUnsavedChanges() const { return false; }
+
         /// @brief Returns true when this editor's document window or one of its children is focused.
         ///
         /// Set each Draw from ImGui window focus, including the editor's docked children, so the

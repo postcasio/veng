@@ -117,21 +117,26 @@ namespace VengEditor
         // components share a display name.
         auto scope = UI::PushId(fmt::format("{}", id));
 
+        // Hierarchy topology is owned by the hierarchy panel, so it offers no removal.
+        const bool removable = id != TypeIdOf<Hierarchy>();
+
         // The header shows the bare type name with its namespace de-emphasized beside it.
         // ImGui's header takes one flat label, so draw a hidden-label collapsing header
         // (full-width, collapsible) and overlay the styled type label over its text area,
         // past the disclosure arrow and vertically centered in the frame.
         const vec2 headerOrigin = UI::CursorPos();
+        const f32 regionWidth = UI::ContentRegionAvail().x;
+        // Let the remove button below sit atop the header's hit area.
+        if (removable)
+        {
+            ImGui::SetNextItemAllowOverlap();
+        }
         auto header = UI::CollapsingHeader("##header", UI::TreeFlags::DefaultOpen);
-        const vec2 afterHeader = UI::CursorPos();
-        const f32 vpad = (UI::GetFrameHeight() - UI::GetTextLineHeight()) * 0.5f;
-        UI::SetCursorPos(vec2{headerOrigin.x + UI::GetFrameHeight(), headerOrigin.y + vpad});
-        UI::TypeLabel(info.Name, info.Namespace);
-        UI::SetCursorPos(afterHeader);
         const bool open = static_cast<bool>(header);
+        const vec2 afterHeader = UI::CursorPos();
 
-        // Hierarchy topology is owned by the hierarchy panel, so it offers no removal.
-        const bool removable = id != TypeIdOf<Hierarchy>();
+        // Bind the context menu to the full-width header (right-click anywhere on it), before the
+        // overlaid label/button below become the "last item".
         if (auto menu = UI::PopupContextItem("##compmenu"))
         {
             if (removable && UI::MenuItem("Remove Component"))
@@ -149,6 +154,28 @@ namespace VengEditor
                     CreateUnique<ResetComponentCommand>(entity, id, std::move(snapshot)));
             }
         }
+
+        // Overlay the styled type label over the header's text area, past the disclosure arrow and
+        // vertically centered in the frame.
+        const f32 frameHeight = UI::GetFrameHeight();
+        const f32 vpad = (frameHeight - UI::GetTextLineHeight()) * 0.5f;
+        UI::SetCursorPos(vec2{headerOrigin.x + frameHeight, headerOrigin.y + vpad});
+        UI::TypeLabel(info.Name, info.Namespace);
+
+        // A right-aligned remove button overlaid on the header, the visible companion to the
+        // context-menu Remove Component above; the header's SetNextItemAllowOverlap lets it click.
+        if (removable)
+        {
+            UI::SetCursorPos(
+                vec2{headerOrigin.x + regionWidth - frameHeight, headerOrigin.y + vpad});
+            if (UI::SmallButton(Icons::Remove))
+            {
+                outRemoveId = id;
+                outRemove = true;
+            }
+            UI::Tooltip("Remove component");
+        }
+        UI::SetCursorPos(afterHeader);
 
         if (!open)
         {

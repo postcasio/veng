@@ -66,6 +66,21 @@ namespace VengEditor
         /// @brief Draws the document toolbar: the shared play/gizmo transport plus the active-system-set readout.
         void OnUI() override;
 
+        /// @brief Saves the world prefab's entity edits and the level's own config, then recooks.
+        ///
+        /// Extends the base prefab save (the world .prefab.json) with the level's .level.json
+        /// config (systems + game-mode + render): whichever side is dirty is written, then a
+        /// recook re-mounts the Level behind its stable handle. Config edits accumulate in memory
+        /// until this runs — nothing is written per-edit.
+        /// @return Empty on success; an error string on an I/O or save failure.
+        [[nodiscard]] Veng::VoidResult Save() override;
+
+        /// @brief Returns true when the scene edits or the level config have unsaved changes.
+        [[nodiscard]] bool HasUnsavedChanges() const override
+        {
+            return m_Commands.IsDirty() || m_ConfigDirty;
+        }
+
     protected:
         /// @brief Splits the dockspace: explorer + systems (left), viewport (center), inspector + settings (right).
         void BuildDefaultLayout(Veng::u32 dockspaceId) override;
@@ -97,7 +112,7 @@ namespace VengEditor
         /// @brief Submits a recook of the current on-disk source through the cook driver.
         void TriggerCook();
 
-        /// @brief Marks the level dirty: persists the edit and arms a debounced recook.
+        /// @brief Flags the level config dirty so the next Save persists and recooks it.
         void MarkDirty();
 
         /// @brief Draws the systems-catalog child: enable toggles, drag-reorder, phase labels.
@@ -132,9 +147,8 @@ namespace VengEditor
 
         /// @brief Cook submitted but not yet mounted; suppresses concurrent cooks.
         bool m_Cooking = false;
-        /// @brief A config change is pending; fires TriggerCook when m_DebounceRemaining reaches zero.
-        bool m_CookPending = false;
-        Veng::f32 m_DebounceRemaining = 0.0f;
+        /// @brief Unsaved config edits (systems / game-mode / render) await the next Save.
+        bool m_ConfigDirty = false;
         Veng::optional<Veng::string> m_CookError;
 
         Veng::usize m_SystemsChild = 0;

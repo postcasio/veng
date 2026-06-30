@@ -75,17 +75,22 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   surface, which the viewport resolves each frame (`ApplySceneSky`) so the sky appears the moment a
   component is added. System *params* stay components, edited through the world surface like any
   other; the level editor adds **no new inspector machinery** — the catalog drives the systems panel
-  and reflection draws the config. Editing recooks the `*.level.json` off the render thread and hot-reloads
-  behind the stable handle (the round-trip preserves unknown keys, like the texture editor).
-  Play runs **exactly the level's ordered system set** through the base's play machinery
-  (`GetPlaySystems`), distinct from a bare prefab document's "all registered" set.
+  and reflection draws the config. Config edits (systems / game-mode / render) accumulate in memory and
+  preview live in the viewport (render settings push straight through `ApplyLevelRenderSettings`); they
+  persist only on **Save**, which writes both the world `*.prefab.json` (the base scene save) and the
+  `*.level.json` config, then recooks the level off the render thread and hot-reloads behind the stable
+  handle (the round-trip preserves unknown keys, like the texture editor). The document's unsaved-changes
+  marker and the Save action's enabled state fold the config dirtiness in alongside the command stack
+  (`HasUnsavedChanges`). Play runs **exactly the level's ordered system set** through the base's play
+  machinery (`GetPlaySystems`), distinct from a bare prefab document's "all registered" set.
 - **`PrefabExplorerPanel` is a full scene-graph tree** over the intrusive `Hierarchy`
   ([engine/CLAUDE.md](../engine/CLAUDE.md)): roots are entities with a null parent, children
   walk `ForEachChild` in order. It drives the shared selection (click / Ctrl-click toggle),
   inline-renames (double-click), drag-reparents (`Scene::SetParent`) and reorders siblings
   (`Scene::MoveBefore`) — both with a cycle pre-check so the engine's fatal cycle assert is
   never reached — and creates / adds-child / duplicates / deletes entities, plus a name
-  filter and row/empty-space context menus. Every structural edit is **queued during the
+  filter and row/empty-space context menus. Delete is reachable three ways: the toolbar trash
+  button, the row context menu, and the `Delete` key over the selection. Every structural edit is **queued during the
   draw and applied after** the snapshot walk returns, so nothing mutates the scene
   mid-iteration (the `Scene` contract). Duplicating an entity round-trips its components into
   the copy but builds no derived mesh, so `DuplicateSubtree` calls `ResolveEntity` on each
@@ -105,8 +110,11 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
 - **Reflection-driven inspector.** `InspectorPanel` edits `PrefabEditContext::Active`: an
   editable name header, a searchable **Add Component** picker (every registered
   `FieldClass::Struct` type not already present, minus the hierarchy-owned `Hierarchy`), and
-  per-component remove / reset-to-default — the remove queued and applied after the
-  `Scene::ForEachComponent` walk. Each component's fields render in a two-column
+  per-component remove / reset-to-default — remove offered both as a right-aligned button
+  overlaid on the component header (the header sets `SetNextItemAllowOverlap` so the button
+  takes the click) and in the header context menu, queued and applied after the
+  `Scene::ForEachComponent` walk (the `Hierarchy` component is hierarchy-panel-owned and offers
+  neither). Each component's fields render in a two-column
   `UI::PropertyTable` via the shared `DrawFieldWidget` helper (`editor/src/FieldWidget.{h,cpp}`,
   taking a `FieldWidgetContext { AssetManager&, const AssetSourceIndex&, const EditorRegistry& }`),
   which draws a built-in widget per `FieldClass`

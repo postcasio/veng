@@ -6,7 +6,6 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
-#include <Veng/Time.h>
 #include <Veng/UI/UI.h>
 #include <Veng/Vendor/ImGuiInternal.h>
 
@@ -27,8 +26,6 @@ namespace VengEditor
 
     namespace
     {
-        constexpr f32 DebounceSeconds = 0.3f;
-
         // The active-set drag-reorder payload: the index being dragged, matched within the
         // systems panel only.
         constexpr string_view SystemReorderPayload = "VENG_LEVEL_SYSTEM";
@@ -412,28 +409,42 @@ namespace VengEditor
 
     void LevelEditorPanel::MarkDirty()
     {
-        // A live recook reads the on-disk source, so persist the edit before arming the
-        // debounce; the cook then picks up the change.
-        SaveConfig();
-        m_CookPending = true;
-        m_DebounceRemaining = DebounceSeconds;
+        // Config edits (systems, game-mode, render) accumulate in memory and show live in the
+        // viewport (DrawSettingsPanel pushes the render subset directly); they persist and recook
+        // only on Save, so nothing touches the source file per-frame.
+        m_ConfigDirty = true;
+    }
+
+    VoidResult LevelEditorPanel::Save()
+    {
+        // The level spans two sources: the world prefab's .prefab.json (its entity layout, saved
+        // through the base) and its own .level.json (systems + config). Persist whichever is dirty,
+        // then recook so the mounted Level reflects the config edits. A clean half is skipped; the
+        // prefab failure aborts before the config write.
+        if (m_Commands.IsDirty())
+        {
+            const VoidResult prefab = PrefabEditorPanel::Save();
+            if (!prefab)
+            {
+                return prefab;
+            }
+        }
+        if (m_ConfigDirty)
+        {
+            if (!SaveConfig())
+            {
+                return std::unexpected(m_CookError.value_or(string{"failed to save level config"}));
+            }
+            m_ConfigDirty = false;
+            TriggerCook();
+        }
+        return {};
     }
 
     void LevelEditorPanel::OnUI()
     {
         // This overrides the base OnUI, so it owns driving the play tick the base would have run.
         TickPlaySimulation();
-
-        // Debounce so a slider drag or a reorder does not fire a cook per frame.
-        if (m_CookPending)
-        {
-            m_DebounceRemaining -= Time::GetDeltaTime();
-            if (m_DebounceRemaining <= 0.0f)
-            {
-                m_CookPending = false;
-                TriggerCook();
-            }
-        }
 
         if (auto bar = UI::Toolbar("##level-toolbar"))
         {

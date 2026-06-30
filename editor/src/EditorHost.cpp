@@ -831,8 +831,7 @@ namespace VengEditor
                 // Save targets the focused document; enabled only when one is focused and has a
                 // dirty stack, so the action reflects whether there is anything to write.
                 AssetEditorPanel* editor = FocusedAssetEditor();
-                CommandStack* stack = editor != nullptr ? editor->GetCommandStack() : nullptr;
-                const bool canSave = stack != nullptr && stack->IsDirty();
+                const bool canSave = editor != nullptr && editor->HasUnsavedChanges();
                 if (UI::MenuItem("Save", canSave))
                 {
                     const VoidResult saved = editor->Save();
@@ -1088,7 +1087,8 @@ namespace VengEditor
         if (!ImGui::GetIO().WantTextInput && (UI::IsCtrlDown() || UI::IsSuperDown()) &&
             UI::IsKeyPressed(UI::Key::S))
         {
-            if (AssetEditorPanel* editor = FocusedAssetEditor())
+            if (AssetEditorPanel* editor = FocusedAssetEditor();
+                editor != nullptr && editor->HasUnsavedChanges())
             {
                 const VoidResult saved = editor->Save();
                 if (!saved)

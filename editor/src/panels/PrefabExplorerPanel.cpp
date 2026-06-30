@@ -125,12 +125,21 @@ namespace VengEditor
 
         m_Pending.clear();
 
-        // Toolbar: add a root entity, then the name filter.
+        // Toolbar: add a root entity, delete the selection, then the name filter.
         if (UI::Button(Icons::Add))
         {
             m_Pending.push_back(PendingOp{.Op = PendingOp::Kind::CreateRoot});
         }
         UI::Tooltip("Add a root entity");
+        UI::SameLine();
+        {
+            const UI::DisabledScope disabled = UI::Disabled(!m_Ctx.HasSelection());
+            if (UI::Button(Icons::Clear))
+            {
+                m_Pending.push_back(PendingOp{.Op = PendingOp::Kind::DeleteSelection});
+            }
+        }
+        UI::Tooltip("Delete the selected entities (Del)");
         UI::SameLine();
         UI::SetNextItemWidth(-1.0f);
         if (UI::InputTextWithHint("##search", "Search…", m_Filter))

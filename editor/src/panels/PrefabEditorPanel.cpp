@@ -65,7 +65,7 @@ namespace VengEditor
         // Recompute each call so the host's dock-key lookup and the document window label agree.
         // The "##" suffix is the stable ImGui dock identity; only the visible label before it
         // carries the unsaved marker, so toggling the marker never re-docks the window.
-        const bool dirty = m_Commands.IsDirty();
+        const bool dirty = HasUnsavedChanges();
         m_DisplayTitle = fmt::format("{}{}{}", dirty ? "*" : "", m_BaseTitle, m_TitleId);
         return m_DisplayTitle;
     }
@@ -227,6 +227,25 @@ namespace VengEditor
     {
         const UI::Theme& theme = UI::GetTheme();
         const bool playing = m_Context.IsPlaying();
+
+        // Save the document; greyed out with nothing unsaved. Mirrors File-menu Save / Ctrl+S,
+        // dispatching to the document's own Save (a level saves its config too).
+        {
+            const UI::DisabledScope disabled = UI::Disabled(!HasUnsavedChanges());
+            if (UI::Button(Icons::Save))
+            {
+                const VoidResult saved = Save();
+                if (!saved)
+                {
+                    Log::Error("editor: save failed: {}", saved.error());
+                }
+            }
+        }
+        UI::Tooltip("Save the document (Ctrl+S)");
+
+        UI::SameLine();
+        UI::Separator();
+        UI::SameLine();
 
         // Play transport: Play while editing; Stop + Pause/Resume while playing.
         {

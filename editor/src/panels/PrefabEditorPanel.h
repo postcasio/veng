@@ -106,6 +106,9 @@ namespace VengEditor
         /// @brief Returns this document's undo/redo stack — the seam the host dispatches shortcuts to.
         [[nodiscard]] CommandStack* GetCommandStack() override { return &m_Commands; }
 
+        /// @brief Returns true when the edited scene has unsaved command-stack edits.
+        [[nodiscard]] bool HasUnsavedChanges() const override { return m_Commands.IsDirty(); }
+
     protected:
         /// @brief Draws the shared document toolbar: the play transport and the gizmo-mode segment.
         ///
