@@ -8,6 +8,8 @@
     { "id": 8005, "type": "shader", "source": "material_param.frag.shader.json" },
     { "id": 8006, "type": "shader", "source": "indirect_instance.vert.shader.json" },
     { "id": 8007, "type": "shader", "source": "indirect_instance.frag.shader.json" },
-    { "id": 8008, "type": "shader", "source": "indirect_cull.comp.shader.json" }
+    { "id": 8008, "type": "shader", "source": "indirect_cull.comp.shader.json" },
+    { "id": 8009, "type": "shader", "source": "volume_write.comp.shader.json" },
+    { "id": 8010, "type": "shader", "source": "volume_sample.comp.shader.json" }
   ]
 }

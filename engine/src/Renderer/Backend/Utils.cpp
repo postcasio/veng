@@ -71,6 +71,9 @@ namespace Veng::Renderer
         {
         case vk::ImageLayout::eUndefined:
             return {};
+        case vk::ImageLayout::eGeneral:
+            // Storage images live in General; a manual transition covers both read and write.
+            return vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
         case vk::ImageLayout::eColorAttachmentOptimal:
             return vk::AccessFlagBits::eColorAttachmentWrite |
                    vk::AccessFlagBits::eColorAttachmentRead;
@@ -105,6 +108,9 @@ namespace Veng::Renderer
         {
         case vk::ImageLayout::eUndefined:
             return vk::PipelineStageFlagBits::eTopOfPipe;
+        case vk::ImageLayout::eGeneral:
+            // Storage images are produced and consumed by compute.
+            return vk::PipelineStageFlagBits::eComputeShader;
         case vk::ImageLayout::eDepthReadOnlyOptimal:
             return vk::PipelineStageFlagBits::eEarlyFragmentTests;
         case vk::ImageLayout::eDepthStencilReadOnlyOptimal:
