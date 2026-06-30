@@ -10,6 +10,11 @@
 
 #include <unordered_map>
 
+namespace Veng
+{
+    class TypeRegistry;
+}
+
 namespace VengGraph
 {
     /// @brief How a Param node's value reaches the generated shader.
@@ -198,6 +203,16 @@ namespace VengGraph
     /// @param catalog Target catalog; mutated by registration.
     /// @param emit    Target emit table; one entry added per node type.
     void RegisterMathNodeTypes(NodeCatalog& catalog, MaterialEmitTable& emit);
+
+    /// @brief Registers the reflected enum types carried by material node properties.
+    ///
+    /// A node's enum property (a Param's ParamProvenance, a Constant's MaterialLeafType)
+    /// is drawn by the editor's reflection inspector, which resolves the enumerator names
+    /// through the host TypeRegistry; an unregistered enum id is a fatal lookup. The catalog
+    /// itself is registry-free (it reads FieldClass/TypeId directly), so a host that draws
+    /// node properties registers these once alongside the engine builtins.
+    /// @param registry Target registry; the enum types are registered idempotently.
+    void RegisterMaterialGraphTypes(Veng::TypeRegistry& registry);
 
     /// @brief Connection predicate for material graphs: exact TypeId equality plus
     /// f32→vecN splat and vec4→vec3/vec2 truncation.

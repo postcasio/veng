@@ -14,6 +14,8 @@
 #include <Veng/Vendor/ImGui.h>
 #include <Veng/Vendor/ImGuiInternal.h>
 
+#include <VengGraph/MaterialCatalog.h>
+
 #include "AssetEditorPanel.h"
 #include "AssetSourceIndex.h"
 #include "CommandStack.h"
@@ -464,6 +466,11 @@ namespace VengEditor
 
         RegisterBuiltinTypes(registries->Types);
         RegisterBuiltinSystems(registries->Systems);
+
+        // The material node editor's reflection inspector resolves a node's enum property
+        // (Param provenance, Constant leaf type) through this registry; register those graph
+        // enum types beside the builtins so the lookup never misses.
+        VengGraph::RegisterMaterialGraphTypes(registries->Types);
 
         // The project is the editor's entrypoint: it names the module(s) to load, resolved as
         // shared libraries beside the project's build output.

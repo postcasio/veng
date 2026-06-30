@@ -82,12 +82,14 @@ target_link_libraries(veng_editor PRIVATE nlohmann_json::nlohmann_json)
 target_compile_definitions(veng_editor PRIVATE JSON_NOEXCEPTION)
 
 # imnodes — the material editor's node canvas, included only in .cpp (imnodes.h
-# never appears in a VengEditor/ public header). The imnodes symbols are hosted
-# in veng::veng (its Vendor/ImGui.cpp aggregation TU compiles imnodes.cpp beside
-# ImGui), so libveng_editor imports them across the PUBLIC veng::veng link; this
-# PRIVATE link of imnodes' own target binds the symbols even if that aggregation
-# changes, without adding a second imnodes.cpp build.
-target_link_libraries(veng_editor PRIVATE imnodes)
+# never appears in a VengEditor/ public header). imnodes.cpp is compiled exactly
+# once, into veng::veng's Vendor/ImGui.cpp aggregation TU beside ImGui, and
+# libveng_editor imports those symbols across the PUBLIC veng::veng link (the
+# imnodes.h include dir rides veng's PUBLIC interface). Do NOT link imnodes' own
+# static target here: that compiles a second imnodes.cpp into libveng_editor,
+# giving it a private GImNodes the engine's ImNodes::CreateContext (in libveng)
+# never initializes — under two-level namespaces the editor's ImNodes calls bind
+# to that null context and crash on first use.
 
 # The editor shell's main and the cook-on-demand seam (CookSession). CookSession
 # links libveng_cook — compiled into the exe, never into libveng_editor, so the

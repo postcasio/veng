@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Reflection/TypeId.h>
+#include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Asset/AssetHandle.h>
 
@@ -365,5 +366,11 @@ namespace VengGraph
         }
 
         return false;
+    }
+
+    void RegisterMaterialGraphTypes(Veng::TypeRegistry& registry)
+    {
+        registry.Register<ParamProvenance>();
+        registry.Register<MaterialLeafType>();
     }
 }

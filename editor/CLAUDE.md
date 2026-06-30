@@ -224,9 +224,13 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   `libveng_editor` and `libveng_cook` link it PUBLIC (`veng::graph → veng::veng`;
   `editor → graph`; `cooker → graph` — no cycle), so the editor preview and the offline cook
   run the identical walk. The editor's node-graph **UI** (imnodes canvas, panels) stays in
-  the editor; imnodes is used **only by the editor** (linked PRIVATE into `libveng_editor`,
-  src-only — its header never appears in a public header; its symbols are vendored in
-  `libveng`'s ImGui aggregation TU and imported across the PUBLIC `veng::veng` link).
+  the editor; imnodes is used **only by the editor** in `.cpp` (its header never appears in a
+  public header). imnodes.cpp is compiled **exactly once**, vendored into `libveng`'s ImGui
+  aggregation TU, and `libveng_editor` imports those symbols across the PUBLIC `veng::veng`
+  link (the include dir rides veng's PUBLIC interface). `libveng_editor` must **not** also link
+  imnodes' own static target: that compiles a second imnodes.cpp into the editor, giving it a
+  private `GImNodes` the engine's `ImNodes::CreateContext` never initializes — under two-level
+  namespaces the editor's calls bind to that null context and crash.
 - **Node types are data, not subclasses.** A `NodeType` is pins (typed in/out) + a reflected
   property struct; a node instance stores property bytes the reflection serializer and
   inspector widgets walk, exactly like an ECS component. `NodeTypeId` is graph-local
