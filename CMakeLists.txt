@@ -728,13 +728,17 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_instance.vert.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_instance.frag.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_cull.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/volume_write.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/volume_sample.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/invert.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/fullscreen.vert.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sample.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/bindless_sample.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_instance.vert.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_instance.frag.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_cull.comp.shader.json)
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_cull.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/volume_write.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/volume_sample.comp.shader.json)
 
     add_executable(veng_test_compute_dispatch tests/compute_dispatch.cpp)
     target_link_libraries(veng_test_compute_dispatch PRIVATE veng::veng veng_test_support)
@@ -779,6 +783,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/viewport.cpp
             tests/gpu/splitscreen.cpp
             tests/gpu/hi_z_pyramid.cpp
+            tests/gpu/volume_texture_3d.cpp
             tests/gpu/occlusion_test.cpp
             tests/gpu/prefab_spawn.cpp
             tests/gpu/level_loader.cpp

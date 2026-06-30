@@ -326,11 +326,14 @@ namespace Veng::Renderer
     vector<u8> Image::Download()
     {
         auto buffer = Buffer::Create(
-            m_Context, {
-                           .Name = m_Name + " (Download)",
-                           .Size = m_Extent.x * m_Extent.y * vk::blockSize(ToVk(m_Format)),
-                           .Usage = BufferUsage::TransferDst,
-                       });
+            m_Context,
+            {
+                .Name = m_Name + " (Download)",
+                // Fold the depth axis in: a Type3D image's mip-0 copy spans all z slices.
+                .Size = static_cast<u64>(m_Extent.x) * m_Extent.y * m_Extent.z *
+                        vk::blockSize(ToVk(m_Format)),
+                .Usage = BufferUsage::TransferDst,
+            });
 
         const ImageLayout originalLayout = FromVk(m_Native->At(0, 0).Layout);
 
