@@ -84,7 +84,13 @@ at cook time:
 - **Materials** (`*.vmat.json`) are validated against the fragment shader's reflected
   parameters — the declared, explicitly-typed field list must match — and the
   fragment outputs are validated against the material domain's contract (Surface →
-  g-buffer MRT `SV_Target0`..`SV_Target3`; PostProcess → a single `SV_Target0`).
+  g-buffer MRT `SV_Target0`..`SV_Target3`; PostProcess → a single `SV_Target0`). A parent material
+  entry may declare a **`"defaultInstance"`** id in the pack manifest: when present, the cook emits a
+  companion **zero-override `MaterialInstance`** at that id beside the parent `Material` blob (the
+  `CookDefaultInstanceBlob` helper synthesizes a `{ "parent": <id>, "overrides": {} }` document and
+  runs it through the instance importer's shared cook, so the companion is byte-identical to a
+  hand-authored zero-override `*.vmatinst.json`). Every direct material reference names that
+  default-instance id, so a reference resolves a real `MaterialInstance` archive entry.
 - **Material instances** (`*.vmatinst.json`) cook a sparse parameter override over a parent
   `Material` through the `MaterialInstanceImporter`. The source declares `"parent"` (a parent
   `Material` `AssetId`) and a sparse `"overrides"` object (parent-field name → value for a param,

@@ -63,12 +63,13 @@ TEST_CASE("Cooker: cooks a mesh pack into a CookedMeshHeader + buffers + submesh
     cursor += header.AttributeCount * sizeof(CookedVertexAttribute);
 
     // Submesh table: one submesh covering the whole index buffer, with the
-    // material override from cube.mesh.json's "materials": { "0": 1003 }.
+    // material override from cube.mesh.json's "materials": { "0": 9001003 } — the
+    // brick material's default-instance id.
     CookedSubMesh subMesh{};
     std::memcpy(&subMesh, entry->Blob.data() + cursor, sizeof(subMesh));
     CHECK(subMesh.IndexOffset == 0);
     CHECK(subMesh.IndexCount == 36);
-    CHECK(subMesh.MaterialId == 1003);
+    CHECK(subMesh.MaterialId == 9001003);
     cursor += header.SubMeshCount * sizeof(CookedSubMesh);
 
     // Buffers: header advertises sizes that exactly account for the blob tail.

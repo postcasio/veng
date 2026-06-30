@@ -289,27 +289,23 @@ namespace Veng
         /// @brief Returns the cache entry for an id, or null if it is not cached.
         ///
         /// Untyped — the prefab loader uses it to rehydrate an embedded handle without naming
-        /// the asset's concrete type. The cache is keyed by (type, id); when an id is cached
-        /// under more than one type (a Material and its parent-id default MaterialInstance), this
-        /// returns the first found — prefab rehydration loads each embedded handle under exactly
-        /// one type, so the ambiguity does not arise there. Never touches mounted archives or loaders.
+        /// the asset's concrete type. One id names one cached asset of one type, so a direct
+        /// lookup is unambiguous. Never touches mounted archives or loaders.
         [[nodiscard]] Ref<Detail::AssetCacheEntry> CachedEntry(AssetId id) const
         {
-            for (const auto& [key, entry] : m_Cache)
+            const auto it = m_Cache.find(id);
+            if (it == m_Cache.end())
             {
-                if (key.Id == id)
-                {
-                    return entry;
-                }
+                return nullptr;
             }
-            return nullptr;
+            return it->second;
         }
 
         /// @brief Cache-only typed lookup — never touches mounted archives or loaders.
         template <typename T>
         [[nodiscard]] optional<AssetHandle<T>> Get(AssetId id) const
         {
-            const auto it = m_Cache.find(CacheKey{AssetTypeTrait<T>::Type, id});
+            const auto it = m_Cache.find(id);
             if (it == m_Cache.end())
             {
                 return std::nullopt;
@@ -407,47 +403,16 @@ namespace Veng
         [[nodiscard]] AssetResult<std::pair<AssetLoader*, ArchiveEntry>> Resolve(AssetType type,
                                                                                  AssetId id);
 
-        /// @brief Resolves and runs the loader for a (type, id), applying the default-instance rule.
+        /// @brief Resolves and runs the loader for a (type, id).
         ///
-        /// For AssetType::MaterialInstance the loader accepts either a MaterialInstance archive
-        /// entry (the explicit instance blob) or a Material entry (the implicit zero-override
-        /// default instance), routing the latter through MaterialInstanceLoader::LoadDefaultInstance.
-        /// Other types resolve exactly. Shared by the async and sync load paths.
+        /// The archive entry's type must match the requested type exactly; a mismatch is a
+        /// WrongType error. Shared by the async and sync load paths.
         [[nodiscard]] AssetResult<Detail::LoadJob> RunLoader(AssetType type, AssetId id,
                                                              bool async);
 
         [[nodiscard]] optional<ArchiveEntry> Find(AssetId id) const;
 
         void RegisterLoader(Unique<AssetLoader> loader);
-
-        /// @brief Cache key: an asset's id paired with the type it was loaded under.
-        ///
-        /// One id may be cached under two types — a parent Material and its parent-id default
-        /// MaterialInstance (the default-instance rule) — so the type is part of the key.
-        struct CacheKey
-        {
-            /// @brief The type the entry was loaded under.
-            AssetType Type{};
-            /// @brief The asset id.
-            AssetId Id;
-
-            /// @brief Equality over (Type, Id).
-            bool operator==(const CacheKey& other) const
-            {
-                return Type == other.Type && Id.Value == other.Id.Value;
-            }
-        };
-
-        /// @brief Hash for CacheKey, mixing the type ordinal into the id.
-        struct CacheKeyHash
-        {
-            /// @brief Hashes a CacheKey.
-            usize operator()(const CacheKey& key) const
-            {
-                return std::hash<u64>{}(key.Id.Value) ^
-                       (std::hash<u32>{}(static_cast<u32>(key.Type)) << 1);
-            }
-        };
 
         Renderer::Context& m_Context;
         TaskSystem& m_Tasks;
@@ -458,7 +423,7 @@ namespace Veng
         vector<MemoryMount> m_MemoryMounts;
         u64 m_NextMemoryToken = 1;
         unordered_map<AssetType, Unique<AssetLoader>> m_Loaders;
-        std::unordered_map<CacheKey, Ref<Detail::AssetCacheEntry>, CacheKeyHash> m_Cache;
+        std::unordered_map<AssetId, Ref<Detail::AssetCacheEntry>> m_Cache;
         vector<PendingLoad> m_Pending;
     };
 }

@@ -130,28 +130,48 @@ namespace VengEditor
         }
     }
 
+    AssetResult<AssetHandle<MaterialInstance>>
+    MaterialInstanceEditorPanel::ParentInstance(AssetId parentId)
+    {
+        // The schema/preview source is a zero-override instance over the parent Material. The parent
+        // has no cooked default-instance id the panel can name, so the default instance is built at
+        // runtime over the freshly-loaded parent.
+        const AssetResult<AssetHandle<Material>> parent = m_Assets.LoadSync<Material>(parentId);
+        if (!parent)
+        {
+            return std::unexpected(parent.error());
+        }
+
+        return m_Assets.BuildSync<MaterialInstance>(MaterialInstanceInfo{
+            .Name = fmt::format("Material-instance editor parent {}", parentId.Value),
+            .Context = &m_Context,
+            .Parent = *parent,
+            .Overrides = {},
+        });
+    }
+
     bool MaterialInstanceEditorPanel::LoadInstance()
     {
         ReadSource();
 
-        // Load through the default-instance rule: the previewed asset is this instance over its
-        // parent, and GetFields()/GetDomain() delegate to the parent's schema. The parent id is
-        // resolved from the source so the schema is read from the authored parent even before the
-        // first cook.
-        const AssetId loadId = m_ParentId.IsValid() ? m_ParentId : m_Id;
-        const AssetResult<AssetHandle<MaterialInstance>> loaded =
-            m_Assets.LoadSync<MaterialInstance>(loadId);
+        // The previewed asset is this instance over its parent, and GetFields()/GetDomain() delegate
+        // to the parent's schema. The parent id is resolved from the source so the schema is read
+        // from the authored parent even before the first cook; with no parent yet authored, the
+        // instance's own cooked blob is loaded directly.
+        AssetResult<AssetHandle<MaterialInstance>> loaded =
+            m_ParentId.IsValid() ? ParentInstance(m_ParentId)
+                                 : m_Assets.LoadSync<MaterialInstance>(m_Id);
         if (!loaded)
         {
             m_CookError = loaded.error().Detail;
-            Log::Error("Material-instance editor: failed to load parent 0x{:X}: {}", loadId.Value,
-                       loaded.error().Detail);
+            Log::Error("Material-instance editor: failed to load parent 0x{:X}: {}",
+                       m_ParentId.IsValid() ? m_ParentId.Value : m_Id.Value, loaded.error().Detail);
             return false;
         }
         m_Parent = *loaded;
         if (!m_ParentId.IsValid())
         {
-            m_ParentId = loadId;
+            m_ParentId = m_Parent.Get()->GetParent().Id();
         }
 
         BuildSlots();
@@ -374,7 +394,7 @@ namespace VengEditor
                     m_AuthoredParams.clear();
                     m_AuthoredTextures.clear();
                     const AssetResult<AssetHandle<MaterialInstance>> reloaded =
-                        m_Assets.LoadSync<MaterialInstance>(m_ParentId);
+                        ParentInstance(m_ParentId);
                     if (reloaded)
                     {
                         m_Parent = *reloaded;

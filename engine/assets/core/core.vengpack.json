@@ -54,6 +54,6 @@
     { "id": 7909061617139444202, "type": "shader", "source": "shaders/debug_line.frag.shader.json" },
     { "id": 4042385539205693696, "type": "shader", "source": "shaders/debug_billboard.vert.shader.json" },
     { "id": 3834025836854019546, "type": "shader", "source": "shaders/debug_billboard.frag.shader.json" },
-    { "id": 13589203438992884788, "type": "material", "source": "materials/tonemap.vmat.json" }
+    { "id": 13589203438992884788, "type": "material", "source": "materials/tonemap.vmat.json", "defaultInstance": 13090400782638046225 }
   ]
 }

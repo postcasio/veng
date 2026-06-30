@@ -190,7 +190,7 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
     { "id": 8001, "type": "vertex_layout",     "source": "canonical.vlayout.json" },
     { "id": 8002, "type": "shader",            "source": "surface.vert.shader.json" },
     { "id": 8003, "type": "shader",            "source": "brick.frag.shader.json" },
-    { "id": 8004, "type": "material",          "source": "brick.vmat.json" },
+    { "id": 8004, "type": "material",          "source": "brick.vmat.json", "defaultInstance": 9008004 },
     { "id": 8005, "type": "material_instance", "source": "tinted.vmatinst.json" }
   ]
 })");
@@ -211,13 +211,12 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
     const string instanceErr = instance.has_value() ? string{} : instance.error().Detail;
     REQUIRE_MESSAGE(instance.has_value(), instanceErr);
     const AssetResult<AssetHandle<MaterialInstance>> defaultInstance =
-        assets.LoadSync<MaterialInstance>(AssetId{8004});
+        assets.LoadSync<MaterialInstance>(AssetId{9008004}); // the parent's cooked default instance
     REQUIRE(defaultInstance.has_value());
 
     // The authored instance and the parent's default instance own distinct SSBO slots — the
     // per-instance slot the override seeds. (The pipeline-sharing invariant between two explicit
-    // instances over one parent id is pinned by material_instance.cpp; the default instance here
-    // builds its own private parent copy, so it is a separate Material by design.)
+    // instances over one parent id is pinned by material_instance.cpp.)
     CHECK(instance->Get()->GetIndex() != defaultInstance->Get()->GetIndex());
     CHECK(instance->Get()->GetPipeline().get() != nullptr);
 

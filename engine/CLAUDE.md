@@ -919,18 +919,19 @@ and differ only by a per-material slot — 30 tinted bricks are 1 generated shad
 the prefab/level reflected `AssetHandle` fields all hold `AssetHandle<MaterialInstance>`; the draw path
 binds `GetMaterials()[MaterialIndex]` (an instance) exactly as before.
 
-**A bare parent doubles as a zero-override instance.** `Load<MaterialInstance>(id)` over a
-`Material`-typed archive entry resolves to the parent's **implicit default instance** (the
-`MaterialInstanceLoader::LoadDefaultInstance` path: the parent is built inline and owned by the
-instance, never separately id-cached, so two default-instance references to one parent id dedup to one
-cached instance). So a cooked mesh **and** a reflected prefab field referencing a bare `Material` id
-both keep loading, and assigning a `Material` id where an instance is expected is opt-in to authoring an
-explicit `*.vmatinst.json` (Plan 06). The cooked-mesh `MaterialId` and the reflected-field
-`AssetSourceIndex` resolution both accept a `Material`-typed source id for a `MaterialInstance` field.
-The asset cache is keyed by **(type, id)**, so a parent `Material@id` and its default
-`MaterialInstance@id` coexist. A **MID** (Material Instance Dynamic) is just a runtime-built instance:
-`AssetManager::Build<MaterialInstance>(MaterialInstanceInfo{ .Parent = …, .Overrides = … })` (or
-`Adopt`) plus per-frame `SetParam` — no separate dynamic type.
+**A parent declares an explicit default instance.** A parent `*.vmat.json` declares a minted
+**`defaultInstance`** `AssetId`; the cook emits a real zero-override `MaterialInstance` at that id
+beside the parent `Material` blob. Every material reference (a cooked mesh's material list, a
+reflected prefab/level `AssetHandle<MaterialInstance>` field, a C++ literal) names the
+default-instance id, not the parent id — so a reference resolves an ordinary `MaterialInstance`
+archive entry through the same `Load`/`LoadSync` path any cooked asset takes. **One `AssetId` names
+one asset of one type:** the asset cache is keyed by **id alone**, and a `MaterialInstance` request
+for a bare `Material` id is an ordinary `WrongType`, not a synthesized default — the parent id and
+its default-instance id are distinct assets. A **MID** (Material Instance Dynamic) is just a
+runtime-built instance: `AssetManager::Build<MaterialInstance>(MaterialInstanceInfo{ .Parent = …,
+.Overrides = … })` (or `Adopt`) plus per-frame `SetParam` — no separate dynamic type; the editor
+previews a parent through a runtime default instance over it (no cooked default-instance id needed
+for the preview).
 
 A material instance's GPU parameters are **one reflection-sized block** per instance (set 0
 binding 4, byte-addressed at `index * MaterialParamStride`): its bindless handle slots

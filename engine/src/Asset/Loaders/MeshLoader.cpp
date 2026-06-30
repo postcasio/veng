@@ -156,8 +156,8 @@ namespace Veng
                 }
             }
 
-            // A cooked submesh id is a Material id; the default-instance rule resolves a bare
-            // parent material to its zero-override default instance.
+            // A cooked submesh material id names a MaterialInstance — a material reference is
+            // rewritten to a parent's default-instance id at cook time.
             const AssetResult<AssetHandle<Veng::MaterialInstance>> result =
                 manager.LoadSync<Veng::MaterialInstance>(AssetId{materialId});
             if (!result)

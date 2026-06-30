@@ -50,11 +50,11 @@ using namespace Veng::Renderer;
 
 namespace
 {
-    // The brick g-buffer fixture material id (decimal 9003), the same fixture
-    // scene_renderer.cpp cooks. The core pack (auto-mounted by AssetManager)
-    // supplies the canonical layout the brick vertex shader references and the
-    // lighting/blit shaders the SceneRenderer loads.
-    constexpr AssetId BrickMaterialId{0x232BULL};
+    // The brick g-buffer fixture material's default-instance id (decimal 9000003), the same
+    // fixture scene_renderer.cpp cooks. The core pack (auto-mounted by AssetManager) supplies
+    // the canonical layout the brick vertex shader references and the lighting/blit shaders the
+    // SceneRenderer loads.
+    constexpr AssetId BrickInstanceId{0x895443ULL};
 
     int g_Failures = 0;
 
@@ -127,7 +127,7 @@ int main()
         Check(mountResult.has_value(), "mount brick fixture pack");
 
         const AssetResult<AssetHandle<MaterialInstance>> brick =
-            assets.LoadSync<MaterialInstance>(BrickMaterialId);
+            assets.LoadSync<MaterialInstance>(BrickInstanceId);
         Check(brick.has_value(), "load brick material");
 
         constexpr uvec2 previewExtent{256, 256};

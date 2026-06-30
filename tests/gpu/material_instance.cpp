@@ -1,12 +1,16 @@
 // MaterialInstance round-trip + parent/instance split.
 //
-// Cooks the brick g-buffer fixture (a Surface parent Material, id 0x232B), then:
+// Cooks the brick g-buffer fixture (a Surface parent Material, id 0x232B, whose pack declares a
+// `defaultInstance` id 0x895443), then:
 //   - hand-builds a CookedMaterialInstance blob over that parent overriding the exposed
 //     BaseColorFactor vec4, mounts it, LoadSync<MaterialInstance>s it, and asserts the
 //     instance binds the parent's pipeline (pointer-equal), owns a DISTINCT SSBO slot from
-//     the parent's implicit default instance, and inherits the parent's schema;
-//   - loads two default instances of the same bare parent id and asserts they share the
-//     parent's GraphicsPipeline (the pipeline-sharing invariant) yet own different slots;
+//     the cooked default instance, and inherits the parent's schema;
+//   - asserts the parent Material id and its default-instance id are distinct assets that each
+//     resolve under their own type, and that a MaterialInstance request for the bare parent id
+//     is now NotFound (the parent-id default-instance bridge is gone);
+//   - loads the cooked default instance twice and asserts the same cached instance (its pipeline
+//     and parent pointer-equal) — the per-id cache;
 //   - builds a runtime MID (Build<MaterialInstance>(parent) + a per-frame SetParam) to prove
 //     the stall-free override write path.
 //
@@ -37,6 +41,8 @@ namespace
 {
     // The brick Surface parent in the g-buffer fixture pack.
     constexpr AssetId BrickParentId{0x232BULL}; // 9003
+    // The companion zero-override default instance the pack's `defaultInstance` key emits.
+    constexpr AssetId BrickDefaultInstanceId{0x895443ULL}; // 9000003
     // A test-local id for the hand-built instance (distinct from any cooked asset).
     constexpr AssetId InstanceId{0x5005A11CE0000001ULL};
 
@@ -102,11 +108,24 @@ TEST_CASE_FIXTURE(
     }
     REQUIRE(instance->IsLoaded());
 
-    // The parent's implicit zero-override default instance.
+    // The cooked zero-override default instance the pack emitted beside the parent.
     const AssetResult<AssetHandle<MaterialInstance>> defaultInstance =
-        assets.LoadSync<MaterialInstance>(BrickParentId);
+        assets.LoadSync<MaterialInstance>(BrickDefaultInstanceId);
     REQUIRE(defaultInstance.has_value());
     REQUIRE(defaultInstance->IsLoaded());
+
+    // The parent id and its default-instance id are distinct assets, each resolving under its
+    // own type: the parent id is a Material, the default-instance id a MaterialInstance.
+    CHECK(BrickParentId.Value != BrickDefaultInstanceId.Value);
+    const AssetResult<AssetHandle<Material>> parentTyped = assets.LoadSync<Material>(BrickParentId);
+    REQUIRE(parentTyped.has_value());
+
+    // The parent-id default-instance bridge is gone: a MaterialInstance request for the bare
+    // parent Material id is an ordinary NotFound, not a synthesized default instance.
+    const AssetResult<AssetHandle<MaterialInstance>> bridged =
+        assets.LoadSync<MaterialInstance>(BrickParentId);
+    REQUIRE_FALSE(bridged.has_value());
+    CHECK(bridged.error().Kind == AssetError::WrongType);
 
     const MaterialInstance& inst = *instance->Get();
     const MaterialInstance& def = *defaultInstance->Get();
@@ -116,7 +135,7 @@ TEST_CASE_FIXTURE(
     CHECK(inst.GetDomain() == MaterialDomain::Surface);
     CHECK_FALSE(inst.GetFields().empty());
 
-    // A distinct SSBO slot from the parent's default instance.
+    // A distinct SSBO slot from the cooked default instance.
     CHECK(inst.GetIndex() != MaterialHandle::Invalid);
     CHECK(def.GetIndex() != MaterialHandle::Invalid);
     CHECK(inst.GetIndex() != def.GetIndex());
@@ -125,7 +144,7 @@ TEST_CASE_FIXTURE(
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "material instance: two default instances of one parent share its pipeline")
+                  "material instance: the cooked default instance caches by id")
 {
     const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
     const path outArchive =
@@ -141,15 +160,15 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
 
-    // Loading the same bare parent id twice hits one cached default instance.
+    // Loading the same default-instance id twice hits one cached instance.
     const AssetResult<AssetHandle<MaterialInstance>> a =
-        assets.LoadSync<MaterialInstance>(BrickParentId);
+        assets.LoadSync<MaterialInstance>(BrickDefaultInstanceId);
     const AssetResult<AssetHandle<MaterialInstance>> b =
-        assets.LoadSync<MaterialInstance>(BrickParentId);
+        assets.LoadSync<MaterialInstance>(BrickDefaultInstanceId);
     REQUIRE(a.has_value());
     REQUIRE(b.has_value());
 
-    // The same cached default instance, so the same parent pipeline (pointer-equal).
+    // The same cached instance, so the same parent pipeline (pointer-equal).
     CHECK(a->Get()->GetPipeline().get() == b->Get()->GetPipeline().get());
     CHECK(a->Get()->GetParent().Get() == b->Get()->GetParent().Get());
 

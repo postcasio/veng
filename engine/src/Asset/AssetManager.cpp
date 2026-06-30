@@ -268,28 +268,6 @@ namespace Veng
 
     AssetResult<Detail::LoadJob> AssetManager::RunLoader(AssetType type, AssetId id, bool async)
     {
-        const optional<ArchiveEntry> found = Find(id);
-        if (!found)
-        {
-            return std::unexpected(AssetLoadError{
-                .Kind = AssetError::NotFound,
-                .Id = id,
-                .Detail = fmt::format("asset {} not found in any mounted archive", id.Value),
-            });
-        }
-
-        // The default-instance rule: a MaterialInstance request over a bare Material archive entry
-        // resolves to the parent's implicit zero-override default instance.
-        if (type == AssetType::MaterialInstance && found->Type == AssetType::Material)
-        {
-            const auto loaderIt = m_Loaders.find(AssetType::MaterialInstance);
-            VE_ASSERT(loaderIt != m_Loaders.end(),
-                      "AssetManager: no MaterialInstance loader registered");
-            auto* instanceLoader = static_cast<MaterialInstanceLoader*>(loaderIt->second.get());
-            return instanceLoader->LoadDefaultInstance(*this, m_Context, m_Tasks, m_Types, id,
-                                                       found->Blob, async);
-        }
-
         const AssetResult<std::pair<AssetLoader*, ArchiveEntry>> resolved = Resolve(type, id);
         if (!resolved)
         {
@@ -302,11 +280,16 @@ namespace Veng
 
     Ref<Detail::AssetCacheEntry> AssetManager::LoadUntyped(AssetType type, AssetId id)
     {
-        // A cache hit (resident or pending) returns the existing entry. A type
-        // mismatch in the cache is a hard misuse (the async path has no error
-        // channel), so it asserts.
-        if (const auto it = m_Cache.find(CacheKey{type, id}); it != m_Cache.end())
+        // A cache hit (resident or pending) returns the existing entry. One id names one asset of
+        // one type, so a cached entry of a different type is a failed load, not a reinterpret.
+        if (const auto it = m_Cache.find(id); it != m_Cache.end())
         {
+            if (it->second->Type != type)
+            {
+                Log::Error("AssetManager::Load: asset {} is a {}, not {}", id.Value,
+                           ToString(it->second->Type), ToString(type));
+                return nullptr;
+            }
             return it->second;
         }
 
@@ -325,7 +308,7 @@ namespace Veng
                 .Type = type,
                 .Resource = nullptr,
             });
-        m_Cache[CacheKey{type, id}] = entry;
+        m_Cache[id] = entry;
 
         if (job->Finalize)
         {
@@ -434,8 +417,20 @@ namespace Veng
     AssetResult<Ref<Detail::AssetCacheEntry>> AssetManager::LoadSyncUntyped(AssetType type,
                                                                             AssetId id)
     {
-        if (const auto it = m_Cache.find(CacheKey{type, id}); it != m_Cache.end())
+        if (const auto it = m_Cache.find(id); it != m_Cache.end())
         {
+            // One id names one asset of one type: a cached entry of a different type is a
+            // WrongType, the same as a miss against an archive entry of the wrong type.
+            if (it->second->Type != type)
+            {
+                return std::unexpected(AssetLoadError{
+                    .Kind = AssetError::WrongType,
+                    .Id = id,
+                    .Detail = fmt::format("asset {} is a {}, not {}", id.Value,
+                                          ToString(it->second->Type), ToString(type)),
+                });
+            }
+
             // The id was already Load()ed async and is still pending. A sync
             // handle must be resident, so drain the finalize queue now (it
             // finalizes dependencies before dependents) to land it inline.
@@ -485,7 +480,7 @@ namespace Veng
                 .Resource = std::move(job->Resource),
             });
 
-        m_Cache[CacheKey{type, id}] = entry;
+        m_Cache[id] = entry;
         return entry;
     }
 }
