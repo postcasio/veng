@@ -21,6 +21,7 @@
 // read as textures in the engine — rather than stored in a fat position target.
 #include "view_constants.slang"
 #include "shadow.slang"
+#include "Veng/sh.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
@@ -63,14 +64,14 @@ struct PushConstants
     uint LightBase;           // current frame's base index into the light buffer
     uint LightCount;          // live light count this frame
     uint IblEnabled;          // 1 = split-sum IBL ambient; 0 = flat ambient fallback
-    uint Pad0;                // (was the folded-in skybox flag; the skybox is its own pass now)
+    uint SkylightOn;          // 1 = SH skylight ambient (second arm, below IBL); 0 = flat fallback
     uint PrefilterMipCount;   // prefiltered specular mip count (roughness -> LOD)
     float EnvIntensity;       // scales the IBL ambient
+    float SkylightIntensity;  // scales the SH skylight ambient
 #if VE_USE_SSAO
     uint SsaoTexture;         // screen-space AO bindless index (the SSAO variant only)
     uint Pad1;
     uint Pad2;
-    uint Pad3;
 #endif
 };
 
@@ -284,9 +285,12 @@ float4 fsMain(VSOutput input) : SV_Target
     float ambientOcclusion = occlusion;
 #endif
 
-    // Indirect (ambient) term. With an environment bound, the flat hemispheric fill is
-    // replaced by split-sum IBL: diffuse irradiance + GGX-prefiltered specular weighted by
-    // the BRDF LUT. Both are gated by the combined occlusion so the occlusion channel reads.
+    // Indirect (ambient) term, three-way. With an environment bound, split-sum IBL: diffuse
+    // irradiance + GGX-prefiltered specular weighted by the BRDF LUT. With no environment but
+    // a dynamic skylight, the diffuse-only SH ambient: the sky projected to order-2 SH on the
+    // CPU each frame, reconstructed here per fragment (directional, day/night) and tinted by
+    // albedo. Otherwise the flat hemispheric fill. Every arm is gated by the combined
+    // occlusion so the occlusion channel reads.
     float3 ambient;
     if (g_PC.IblEnabled != 0)
     {
@@ -305,6 +309,13 @@ float4 fsMain(VSOutput input) : SV_Target
         float3 specularIbl = prefiltered * (fresnel * brdf.x + brdf.y);
 
         ambient = (diffuseIbl + specularIbl) * g_PC.EnvIntensity * ambientOcclusion;
+    }
+    else if (g_PC.SkylightOn != 0)
+    {
+        // The cosine-convolved coefficients reconstruct cosine-weighted irradiance directly;
+        // clamp the SH ringing below zero before it darkens the surface.
+        float3 irradiance = max(ShEvalIrradiance(vc.SkyShCoeffs, N), float3(0.0));
+        ambient = irradiance * albedo * g_PC.SkylightIntensity * ambientOcclusion;
     }
     else
     {
