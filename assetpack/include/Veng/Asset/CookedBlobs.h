@@ -18,6 +18,26 @@
 
 namespace Veng
 {
+    /// @brief Channel layout of a cooked texture's encoded blocks.
+    ///
+    /// Tells the runtime sampler how to interpret a texture's stored channels. Most codecs
+    /// store their data verbatim (RGBA, two-channel RG, single-channel R), but the ASTC
+    /// normal-map convention drops Z and stores only X/Y in two channels, so the sampler must
+    /// reconstruct Z. The flag is distinct from the pixel format: an ASTC-XY normal is still an
+    /// ASTC RGBA block, so the format ordinal alone cannot signal the convention.
+    enum class CookedChannelLayout : u32
+    {
+        /// @brief The texture's channels are sampled as stored (the default for every codec).
+        Direct = 0,
+        /// @brief A tangent-space normal with X/Y stored and Z reconstructed in-shader.
+        ///
+        /// The ASTC normal convention: ASTC has no two-channel mode, so the cook stores X/Y in
+        /// the texture's first two channels (unsigned, *2-1 unpack) and drops Z; the sampler
+        /// reconstructs z = sqrt(1 - x^2 - y^2). BC5 carries the same XY-only normal data in a
+        /// native two-channel codec and also reports this layout.
+        NormalXY = 1,
+    };
+
     /// @brief Cooked header for a texture asset.
     ///
     /// Sampler fields mirror Veng::Renderer::SamplerInfo, stored as underlying integer/float
@@ -29,6 +49,10 @@ namespace Veng
     /// max(1, Width >> i) * max(1, Height >> i) * bytes-per-pixel(Format) — so the blob carries
     /// no per-level offset table; the loader walks the levels arithmetically. A single-mip
     /// texture (MipCount == 1) is the degenerate one-level case of this layout.
+    ///
+    /// The trailing ChannelLayout field carries the texture's channel convention; adding it set
+    /// the texture header's on-disk layout, so a pack cooked before the field is size-mismatched
+    /// and re-cooks (the loader rejects a blob shorter than this header).
     struct CookedTextureHeader
     {
         /// @brief Pixel format; underlying Renderer::Format integer.
@@ -56,6 +80,8 @@ namespace Veng
         u32 AnisotropyEnabled = 0;
         /// @brief Maximum anisotropy level when anisotropic filtering is enabled.
         f32 MaxAnisotropy = 1.0f;
+        /// @brief Channel convention; underlying CookedChannelLayout integer (0 = Direct).
+        u32 ChannelLayout = 0;
     };
 
     /// @brief Cooked header for a mesh asset.

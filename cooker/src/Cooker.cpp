@@ -143,6 +143,10 @@ namespace Veng::Cook
                 return "ASTC4x4Srgb";
             case CompressionFormat::RGBA16Sfloat:
                 return "RGBA16Sfloat";
+            case CompressionFormat::BC5Unorm:
+                return "BC5Unorm";
+            case CompressionFormat::BC4Unorm:
+                return "BC4Unorm";
             }
             return {};
         }

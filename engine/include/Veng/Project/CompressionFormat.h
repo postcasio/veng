@@ -34,14 +34,19 @@ namespace Veng
         ASTC4x4Srgb,
         /// @brief 16-bit-per-channel RGBA float. The uncompressed HDR output.
         RGBA16Sfloat,
+        /// @brief BC5 two-channel (RG) block codec, linear. The block-target normal-map codec.
+        BC5Unorm,
+        /// @brief BC4 single-channel (R) block codec, linear. The block-target mask codec.
+        BC4Unorm,
     };
 
     /// @brief The ordered list of every CompressionFormat, for enumeration and name-table lookup.
-    inline constexpr std::array<CompressionFormat, 7> CompressionFormats = {
+    inline constexpr std::array<CompressionFormat, 9> CompressionFormats = {
         CompressionFormat::RGBA8Unorm,   CompressionFormat::RGBA8Srgb,
         CompressionFormat::BC7Unorm,     CompressionFormat::BC7Srgb,
         CompressionFormat::ASTC4x4Unorm, CompressionFormat::ASTC4x4Srgb,
-        CompressionFormat::RGBA16Sfloat};
+        CompressionFormat::RGBA16Sfloat, CompressionFormat::BC5Unorm,
+        CompressionFormat::BC4Unorm};
 
     /// @brief The canonical authoring name of a compression format (e.g. "ASTC4x4Srgb").
     ///
@@ -78,4 +83,6 @@ VE_ENUMERATOR(BC7Srgb)
 VE_ENUMERATOR(ASTC4x4Unorm)
 VE_ENUMERATOR(ASTC4x4Srgb)
 VE_ENUMERATOR(RGBA16Sfloat)
+VE_ENUMERATOR(BC5Unorm)
+VE_ENUMERATOR(BC4Unorm)
 VE_ENUM_END();

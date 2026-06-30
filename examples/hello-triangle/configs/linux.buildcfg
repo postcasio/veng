@@ -3,8 +3,8 @@
     "formats": {
         "Color": "BC7Srgb",
         "HDR": "RGBA16Sfloat",
-        "Mask": "BC7Unorm",
-        "Normal": "BC7Unorm",
+        "Mask": "BC4Unorm",
+        "Normal": "BC5Unorm",
         "UI": "BC7Unorm"
     },
     "name": "linux",

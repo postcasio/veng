@@ -47,9 +47,9 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
     float3 worldNormal = normalize(input.v_WorldNormal);
     if (p.Normal != 0)
     {
-        float3 sampled = g_Textures[NonUniformResourceIndex(p.Normal)].Sample(
-            g_Samplers[NonUniformResourceIndex(p.NormalSampler)], input.v_UV).xyz;
-        float3 tangentNormal = sampled * 2.0 - 1.0;
+        float4 sampled = g_Textures[NonUniformResourceIndex(p.Normal)].Sample(
+            g_Samplers[NonUniformResourceIndex(p.NormalSampler)], input.v_UV);
+        float3 tangentNormal = UnpackNormal(sampled);
 
         float3 T = normalize(input.v_WorldTangent.xyz -
                              worldNormal * dot(worldNormal, input.v_WorldTangent.xyz));

@@ -84,6 +84,20 @@ float2 ComputeMotionVector(float4 curClip, float4 prevClip)
     return curUv - prevUv;
 }
 
+// Unpacks a tangent-space normal from a sampled normal map, codec-agnostic across BC5,
+// the ASTC XY convention, and a full-channel BC7/ASTC normal. Only X/Y are read from the
+// sample (unsigned, *2-1); Z is reconstructed as sqrt(1 - x^2 - y^2). The two-channel
+// codecs (BC5) and the ASTC XY convention store only X/Y and drop Z, so the reconstruct is
+// mandatory there; a full-channel normal's stored Z is discarded and recomputed identically,
+// so one helper serves every codec and a call site samples a normal without knowing its
+// codec. The result is a unit tangent-space normal (+Z out of the surface).
+float3 UnpackNormal(float4 sampled)
+{
+    const float2 xy = sampled.xy * 2.0 - 1.0;
+    const float z = sqrt(max(0.0, 1.0 - dot(xy, xy)));
+    return float3(xy, z);
+}
+
 // The surface push block, used by the vertex stage and read by a Surface fragment's
 // LoadDrawData. FrameBase folds the ring-buffered draw-data region into the candidate id
 // (the current frame's region base); ViewConstantsIndex selects the per-frame set-0
