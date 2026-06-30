@@ -1,5 +1,5 @@
 // Deferred lighting fragment stage: samples the g-buffer (G0 albedo, G1
-// world-space normal, G2 packed occlusion/roughness/metallic/emissive, and the
+// world-space normal, G2 packed occlusion/roughness/metallic, and the
 // depth attachment) through the bindless set-0 array, reconstructs world position
 // from depth, and evaluates a Cook-Torrance BRDF over a list of typed lights read
 // from the per-frame light buffer. Writes linear HDR.
@@ -180,7 +180,6 @@ float4 fsMain(VSOutput input) : SV_Target
     float occlusion = orm.r;
     float roughness = clamp(orm.g, 0.04, 1.0);
     float metallic  = orm.b;
-    float emissive  = orm.a;
 
     float normalLength = length(normal);
     float3 N = normalLength > 1e-4 ? normal / normalLength : float3(0.0, 0.0, 0.0);
@@ -312,8 +311,5 @@ float4 fsMain(VSOutput input) : SV_Target
         ambient = AmbientColor * albedo * ambientOcclusion;
     }
 
-    // Scalar emissive: the surface's own albedo scaled by the emissive strength.
-    float3 emission = albedo * emissive;
-
-    return float4(direct + ambient + emission, 1.0);
+    return float4(direct + ambient, 1.0);
 }

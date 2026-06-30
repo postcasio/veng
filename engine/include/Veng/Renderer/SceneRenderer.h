@@ -105,7 +105,8 @@ namespace Veng::Renderer
     /// after the up-sweep — the accumulated bloom contribution before composite —
     /// force-wiring the bloom pass regardless of the Settings.Bloom toggle. MotionVectors blits
     /// the per-object velocity g-buffer channel (G3, written by the surface pass every frame)
-    /// colorized as an optical-flow field.
+    /// colorized as an optical-flow field. Emissive runs the additive forward emissive pass into a
+    /// cleared target and blits it — the emissive contribution alone, independent of lighting.
     enum class DebugView : u8
     {
         /// @brief Full deferred pipeline output.
@@ -136,6 +137,8 @@ namespace Veng::Renderer
         MotionVectors,
         /// @brief Raw SSR reflection target (rgb radiance, force-wires the SSR pass).
         Reflections,
+        /// @brief The additive emissive contribution alone (the emissive pass into a cleared target).
+        Emissive,
     };
 
     /// @brief Selects the bloom pyramid's down/up filter kernel.
@@ -294,6 +297,14 @@ namespace Veng::Renderer
         /// per-frame SceneView. Independent of image-based lighting, which is driven by the
         /// presence of an environment regardless of this toggle.
         bool Skybox = true;
+
+        /// @brief Whether the additive forward emissive pass runs.
+        ///
+        /// A topology change: it inserts/removes the EmissiveScenePass between deferred lighting
+        /// and the bloom/tonemap tail. The pass re-rasterizes the gathered geometry and adds each
+        /// surface's RGB emissive term into the lit HDR target; a non-emitting material contributes
+        /// nothing. With it off, the image equals a render with every emissive term zeroed.
+        bool Emissive = true;
 
         /// @brief Whether scene passes cull by frustum.
         ///
@@ -775,6 +786,16 @@ namespace Veng::Renderer
         /// @param skinnedMaterial A loaded skinned surface material whose layout/vertex stage to reuse; may be null.
         void EnsurePickingPipelines(const MaterialInstance* staticMaterial,
                                     const MaterialInstance* skinnedMaterial);
+
+        /// @brief Builds the additive emissive pipelines lazily from a surface material's layout.
+        ///
+        /// Pairs the dedicated emissive vertex/fragment stages with the shared surface pipeline
+        /// layout (set 0 bindless + set 1 DrawData [+ set 2 palette]) against the HDR target format,
+        /// additive blend, and a read-only depth test (no depth write). Cached after the first build.
+        /// @param staticMaterial  A loaded static surface material whose layout to reuse; may be null.
+        /// @param skinnedMaterial A loaded skinned surface material whose layout to reuse; may be null.
+        void EnsureEmissivePipelines(const MaterialInstance* staticMaterial,
+                                     const MaterialInstance* skinnedMaterial);
 
         /// @brief Recreates the owned output image and view at the current extent and format.
         void CreateOutput();
@@ -1604,6 +1625,11 @@ namespace Veng::Renderer
         /// @brief Static + skinned id-writing pipelines; built lazily on first Execute with a material.
         Ref<class GraphicsPipeline> m_PickingPipeline;
         Ref<class GraphicsPipeline> m_PickingSkinnedPipeline;
+
+        /// @brief Static additive emissive pipeline; built lazily on first Execute with a material.
+        Ref<class GraphicsPipeline> m_EmissivePipeline;
+        /// @brief Skinned additive emissive pipeline; built lazily on first Execute with a material.
+        Ref<class GraphicsPipeline> m_EmissiveSkinnedPipeline;
 
         /// @brief Host-visible staging buffer the picking readback copies the search window into.
         ///

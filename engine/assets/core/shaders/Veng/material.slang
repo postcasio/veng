@@ -41,6 +41,11 @@ struct DrawData
     uint     PrevPaletteBase; // skinned meshes: previous frame's palette base (TAA velocity)
     uint     EntityIndex;    // packed Entity slot index; the picking fragment writes index + 1
     float4x4 PrevWorld;      // previous frame's model matrix (TAA velocity; equals World with no motion)
+    float4   EmissiveColor;  // rgb additive emissive term (a unused); the emissive forward pass reads it
+    uint     EmissiveTexture; // emissive texture bindless handle (0 = none, flat color)
+    uint     EmissiveSampler; // emissive sampler bindless handle
+    uint     EmissivePad0;
+    uint     EmissivePad1;
 };
 
 // The per-draw data SSBO (set 1, binding 0). Off the set-0 bindless registry — a
@@ -58,15 +63,16 @@ DrawData LoadDrawData(uint candidateId)
 // The deferred opaque g-buffer outputs the material fragment stage writes. The
 // metallic-roughness channel set plus the screen-space motion vector, funnelled
 // through one struct: albedo into G0 (sRGB target, the sampler decodes to linear on
-// read), the world-space normal into G1, packed occlusion/roughness/metallic/emissive
+// read), the world-space normal into G1, packed occlusion/roughness/metallic
 // into G2, and the per-object motion vector into G3 (the TAA resolve reprojects through
 // it). G3 is written every frame by the same surface pipeline, so motion vectors cost
-// no second geometry pass; with TAA off the channel is written but unread.
+// no second geometry pass; with TAA off the channel is written but unread. Emissive is
+// not a g-buffer channel — it is an additive forward pass into the lit HDR target.
 struct GBufferOutput
 {
     float4 Albedo   : SV_Target0;  // rgb sRGB albedo; a unused
     float4 Normal   : SV_Target1;  // world-space normal in xyz
-    float4 ORM      : SV_Target2;  // R occlusion, G roughness, B metallic, A emissive strength
+    float4 ORM      : SV_Target2;  // R occlusion, G roughness, B metallic, A unused
     float2 Velocity : SV_Target3;  // screen-space motion vector (curUV - prevUV)
 };
 

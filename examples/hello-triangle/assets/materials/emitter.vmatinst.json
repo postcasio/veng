@@ -1,0 +1,7 @@
+{
+  "parent": 1003,
+  "overrides": {
+    "BaseColorFactor": [0.02, 0.02, 0.02, 1.0],
+    "EmissiveColor": [4.0, 0.5, 6.0, 0.0]
+  }
+}
