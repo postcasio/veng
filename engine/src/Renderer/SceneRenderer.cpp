@@ -3,6 +3,8 @@
 
 #include "DebugDrawScenePass.h"
 #include "EnvironmentIbl.h"
+#include "Passes/AtmospherePrecompute.h"
+#include "Passes/SkyScenePass.h"
 #include "ShadowScenePass.h"
 #include "PunctualShadowScenePass.h"
 #include "Picking.h"
@@ -67,6 +69,21 @@ namespace Veng::Renderer
         constexpr AssetId DeferredLightingSsaoFragId{0x6EEF5D26BAF2849FULL};
         constexpr AssetId DeferredLightingCascadesFragId{0x834ED7C05F336E01ULL};
         constexpr AssetId SkyboxFragId{0xFCA568CC3463618FULL};
+        constexpr AssetId AtmosphereSkyFragId{0x7DC6D927B2DF7858ULL};
+
+        // Field-wise equality of two Atmosphere parameter sets; gates the once-per-change LUT
+        // regeneration. An exact compare is right — the LUTs are a pure function of these fields,
+        // so any bit change must regenerate and an unchanged set must not.
+        bool AtmosphereEquals(const Atmosphere& a, const Atmosphere& b)
+        {
+            return a.RayleighScattering == b.RayleighScattering &&
+                   a.RayleighHeight == b.RayleighHeight && a.MieScattering == b.MieScattering &&
+                   a.MieExtinction == b.MieExtinction && a.MieHeight == b.MieHeight &&
+                   a.MieAnisotropy == b.MieAnisotropy && a.OzoneAbsorption == b.OzoneAbsorption &&
+                   a.OzoneCenter == b.OzoneCenter && a.OzoneWidth == b.OzoneWidth &&
+                   a.PlanetRadius == b.PlanetRadius && a.AtmosphereRadius == b.AtmosphereRadius &&
+                   a.SunAngularRadius == b.SunAngularRadius && a.SunIrradiance == b.SunIrradiance;
+        }
         // The additive forward emissive pass shaders: the dedicated vertex stage forwarding
         // the per-draw emissive color + texture handles, and the fragment writing only the
         // additive emissive term into the lit HDR target.
@@ -1611,6 +1628,9 @@ namespace Veng::Renderer
         // The IBL maps + their consumer set layout exist before the pipelines so the lighting
         // layout can reserve the set (set 2).
         m_Ibl = EnvironmentIbl::Create(m_Context, m_Assets);
+        // The atmosphere LUTs + their consumer set layout exist before the pipelines so the sky
+        // layout can reserve the set (set 1).
+        m_Atmosphere = AtmospherePrecompute::Create(m_Context, m_Assets);
         CreatePipelines();
 
         CreateOutput();
@@ -1745,6 +1765,21 @@ namespace Veng::Renderer
                        });
         m_SkyboxPipeline =
             MakePipeline("SceneRenderer Skybox Pipeline", m_SkyboxLayout, skyboxFs, HdrFormat);
+
+        // Procedural atmosphere sky: a fullscreen pass sampling the precomputed LUTs along each
+        // view ray. It reads the atmosphere set (set 1, scattering + transmittance + sampler) and
+        // the depth target through bindless; its push is 128 bytes (matches SkyScenePass's
+        // SkyPushConstants: the 32-byte header + the 96-byte AtmosphereParams block).
+        const AssetHandle<Veng::Shader> skyFs =
+            LoadShader(AtmosphereSkyFragId, "atmosphere sky fragment");
+        m_SkyLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Sky Layout",
+                           .DescriptorSetLayouts = {m_Atmosphere->GetSetLayout()},
+                           .PushConstantRanges = {PushConstantRange{
+                               .Stages = ShaderStage::Fragment, .Offset = 0, .Size = 128}},
+                       });
+        m_SkyPipeline = MakePipeline("SceneRenderer Sky Pipeline", m_SkyLayout, skyFs, HdrFormat);
 
         // Push block is eight u32s (g-buffer slots + extent); Size = 32 matches SsaoPushConstants.
         m_SsaoLayout = PipelineLayout::Create(
@@ -3403,6 +3438,16 @@ namespace Veng::Renderer
                     m_DepthHandle, m_SamplerHandle, m_Extent));
             }
 
+            // Procedural atmosphere sky composites in the same slot as the cubemap skybox; per
+            // frame it is a no-op unless SceneView::AtmosphereEnabled is pushed. Independent of the
+            // skybox toggle — a sample drives one or the other through the per-frame flag.
+            if (m_Settings.Atmosphere)
+            {
+                m_Passes.push_back(CreateUnique<SkyScenePass>(
+                    m_Context, m_SkyPipeline, m_Atmosphere->GetSet(), lightingTargetId, depthId,
+                    m_DepthHandle, m_SamplerHandle, m_Extent));
+            }
+
             // Emissive adds each surface's RGB emissive term into the lit scene color, after the
             // sky composites and before the TAA/bloom tail, so the emission resolves and blooms with
             // the scene. Re-rasterizes the gathered survivors with additive blend + read-only depth.
@@ -4787,6 +4832,23 @@ namespace Veng::Renderer
         }
         m_LastEnvironment = environment;
 
+        // Procedural atmosphere: transition the LUTs to a sampled layout once, then regenerate
+        // them only when this frame's Atmosphere differs from the last generated set — the
+        // once-per-change contract (the sun direction is a runtime push, not a precompute input).
+        // Gated on the sky pass being present so the cost is absent on the shipping path.
+        m_AtmosphereRegeneratedLastFrame = false;
+        if (m_Settings.Atmosphere)
+        {
+            m_Atmosphere->EnsureInitialized(cmd);
+            if (!m_AtmosphereGenerated || !AtmosphereEquals(view.Atmosphere, m_LastAtmosphere))
+            {
+                m_Atmosphere->Generate(cmd, view.Atmosphere);
+                m_LastAtmosphere = view.Atmosphere;
+                m_AtmosphereGenerated = true;
+                m_AtmosphereRegeneratedLastFrame = true;
+            }
+        }
+
         m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
 
         // Service a pending pick: the picking pass left the EntityId target in ColorAttachment
@@ -4905,6 +4967,10 @@ namespace Veng::Renderer
     bool SceneRenderer::DidBroadphaseRebuildLastFrame() const
     {
         return m_Broadphase.DidRebuildLastSync();
+    }
+    bool SceneRenderer::DidRegenerateAtmosphereLastFrame() const
+    {
+        return m_AtmosphereRegeneratedLastFrame;
     }
     u32 SceneRenderer::GetBroadphaseNodeCount() const
     {

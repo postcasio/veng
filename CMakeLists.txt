@@ -463,6 +463,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/punctual_shadows.cpp
             tests/unit/hi_z_history.cpp
             tests/unit/taa_jitter.cpp
+            tests/unit/atmosphere.cpp
             tests/unit/scene_ecs.cpp
             tests/unit/scene_queries.cpp
             tests/unit/scene_version.cpp
