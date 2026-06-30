@@ -70,8 +70,17 @@ namespace VengEditor
             Veng::AssetId Texture;
         };
 
-        /// @brief Loads the parent material (via the default-instance rule), the schema, and the
-        /// authored overrides from the source document.
+        /// @brief Builds a runtime zero-override default instance over a parent Material.
+        ///
+        /// The panel reads the override schema and previews through an instance over the parent; the
+        /// parent has no cooked default-instance id the panel can name, so the default instance is
+        /// built at runtime over the freshly-loaded parent.
+        /// @param parentId  The parent Material's AssetId.
+        /// @return The resident default instance, or the parent's load error.
+        Veng::AssetResult<Veng::AssetHandle<Veng::MaterialInstance>>
+        ParentInstance(Veng::AssetId parentId);
+
+        /// @brief Loads the parent material's schema and the authored overrides from the source.
         /// @return False (logged) on a load failure.
         bool LoadInstance();
 

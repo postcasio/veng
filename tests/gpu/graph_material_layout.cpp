@@ -191,7 +191,7 @@ SurfaceFragmentInput vsMain(VSInput input)
     { "id": 9701, "type": "vertex_layout", "source": "canonical.vlayout.json" },
     { "id": 9702, "type": "shader",        "source": "surface.vert.shader.json" },
     { "id": 9703, "type": "shader",        "source": "tint.frag.shader.json" },
-    { "id": 9704, "type": "material",      "source": "tint.vmat.json" }
+    { "id": 9704, "type": "material",      "source": "tint.vmat.json", "defaultInstance": 9009704 }
   ]
 })");
 
@@ -207,7 +207,7 @@ SurfaceFragmentInput vsMain(VSInput input)
     REQUIRE(assets.Mount(outArchive).has_value());
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{9704});
+        assets.LoadSync<MaterialInstance>(AssetId{9009704}); // the tint material's default instance
     REQUIRE(material.has_value());
     REQUIRE(material->IsLoaded());
 

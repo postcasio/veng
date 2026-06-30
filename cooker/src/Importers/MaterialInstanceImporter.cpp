@@ -214,8 +214,13 @@ namespace Veng::Cook
         {
             return std::unexpected(instDocResult.error());
         }
-        const json& inst = *instDocResult;
 
+        return CookMaterialInstanceDocument(context, *instDocResult, instPath.string());
+    }
+
+    Result<vector<u8>> CookMaterialInstanceDocument(const CookContext& context, const json& inst,
+                                                    std::string_view label)
+    {
         if (!context.Resolve)
         {
             return std::unexpected("material instance importer: no resolver available");
@@ -227,7 +232,7 @@ namespace Veng::Cook
         {
             return std::unexpected(fmt::format("material instance importer: '{}': 'parent' must be "
                                                "an unsigned integer Material AssetId",
-                                               instPath.string()));
+                                               label));
         }
         const u64 parentId = inst["parent"].get<u64>();
 
@@ -280,9 +285,8 @@ namespace Veng::Cook
         {
             if (!inst["overrides"].is_object())
             {
-                return std::unexpected(
-                    fmt::format("material instance importer: '{}': 'overrides' must be an object",
-                                instPath.string()));
+                return std::unexpected(fmt::format(
+                    "material instance importer: '{}': 'overrides' must be an object", label));
             }
 
             for (const auto& [name, value] : inst["overrides"].items())
@@ -294,7 +298,7 @@ namespace Veng::Cook
                                                        "'{}' is not an exposed field of "
                                                        "parent material {} (an engine-bound or "
                                                        "undeclared field is not overridable)",
-                                                       instPath.string(), name, parentId));
+                                                       label, name, parentId));
                 }
                 const ExposedField& field = exposedIt->second;
 
@@ -320,7 +324,7 @@ namespace Veng::Cook
                         return std::unexpected(fmt::format(
                             "material instance importer: '{}': texture override '{}' must be an "
                             "unsigned AssetId (or {{ \"id\": <AssetId> }})",
-                            instPath.string(), name));
+                            label, name));
                     }
 
                     const optional<ResolvedSource> texResolved =
@@ -330,15 +334,14 @@ namespace Veng::Cook
                         return std::unexpected(fmt::format(
                             "material instance importer: '{}': override texture {} for field '{}' "
                             "not found in pack or reference packs",
-                            instPath.string(), textureId, name));
+                            label, textureId, name));
                     }
                     if (texResolved->Type != AssetType::Texture)
                     {
                         return std::unexpected(fmt::format(
                             "material instance importer: '{}': asset {} for field '{}' has type {} "
                             "(expected Texture)",
-                            instPath.string(), textureId, name,
-                            static_cast<u32>(texResolved->Type)));
+                            label, textureId, name, static_cast<u32>(texResolved->Type)));
                     }
 
                     co.Kind = 1; // texture
@@ -359,14 +362,14 @@ namespace Veng::Cook
                             return std::unexpected(fmt::format(
                                 "material instance importer: '{}': override '{}' is declared uint "
                                 "but the parent field is not a scalar uint",
-                                instPath.string(), name));
+                                label, name));
                         }
                         if (!value.is_number_unsigned())
                         {
                             return std::unexpected(fmt::format(
                                 "material instance importer: '{}': uint override '{}' must be an "
                                 "unsigned integer",
-                                instPath.string(), name));
+                                label, name));
                         }
                         const u32 v = value.get<u32>();
                         co.Kind = 0;
@@ -388,7 +391,7 @@ namespace Veng::Cook
                             return std::unexpected(fmt::format(
                                 "material instance importer: '{}': override '{}' has unsupported "
                                 "parent field type '{}'",
-                                instPath.string(), name, field.Type));
+                                label, name, field.Type));
                         }
                         if (!layout.IsFloat || layout.ComponentCount != arity)
                         {
@@ -396,7 +399,7 @@ namespace Veng::Cook
                                 fmt::format("material instance importer: '{}': override '{}' is "
                                             "declared {} but "
                                             "the parent field's reflected layout does not match",
-                                            instPath.string(), name, field.Type));
+                                            label, name, field.Type));
                         }
 
                         vector<f32> values;
@@ -407,7 +410,7 @@ namespace Veng::Cook
                                 return std::unexpected(fmt::format(
                                     "material instance importer: '{}': float override '{}' must be "
                                     "a number",
-                                    instPath.string(), name));
+                                    label, name));
                             }
                             values.push_back(value.get<f32>());
                         }
@@ -418,7 +421,7 @@ namespace Veng::Cook
                                 return std::unexpected(fmt::format(
                                     "material instance importer: '{}': {} override '{}' must be an "
                                     "array of {} numbers",
-                                    instPath.string(), field.Type, name, arity));
+                                    label, field.Type, name, arity));
                             }
                             for (const json& elem : value)
                             {
@@ -427,7 +430,7 @@ namespace Veng::Cook
                                     return std::unexpected(fmt::format(
                                         "material instance importer: '{}': override '{}' array "
                                         "contains a non-number element",
-                                        instPath.string(), name));
+                                        label, name));
                                 }
                                 values.push_back(elem.get<f32>());
                             }
@@ -455,5 +458,15 @@ namespace Veng::Cook
         header.ValueRegionBytes = static_cast<u32>(valueRegion.size());
 
         return BuildBlob(header, overrides, valueRegion);
+    }
+
+    Result<vector<u8>> CookDefaultInstanceBlob(const CookContext& context, u64 parentId)
+    {
+        json inst;
+        inst["parent"] = parentId;
+        inst["overrides"] = json::object();
+
+        return CookMaterialInstanceDocument(
+            context, inst, fmt::format("default instance over material {}", parentId));
     }
 }

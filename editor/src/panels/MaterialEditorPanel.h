@@ -66,6 +66,14 @@ namespace VengEditor
         void OnUI() override;
 
     private:
+        /// @brief Builds a runtime zero-override default instance over the edited parent material.
+        ///
+        /// The previewed material is an instance over the parent the panel cooks; the parent has no
+        /// cooked default-instance id here (the editor cooks only the parent), so the default
+        /// instance is built at runtime over a freshly-loaded parent rather than loaded by id.
+        /// @return The resident default instance, or the parent's load error.
+        Veng::AssetResult<Veng::AssetHandle<Veng::MaterialInstance>> PreviewInstance();
+
         /// @brief Loads the material synchronously, populating m_Fields and shader ids.
         /// @return False (logged) if the material fails to load.
         bool LoadInterface();

@@ -93,7 +93,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(mountResult.has_value());
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B}); // 9003, the brick material
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443}); // the brick default instance
     REQUIRE(material.has_value());
 
     constexpr uvec2 extent{160, 160};

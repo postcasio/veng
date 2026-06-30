@@ -12,6 +12,8 @@
 #include <Veng/Project/CompressionFormat.h>
 #include <Veng/Project/CompressionRole.h>
 
+#include "Importers/MaterialInstanceImporter.h"
+
 namespace Veng::Cook
 {
     namespace
@@ -793,6 +795,36 @@ namespace Veng::Cook
         }
 
         EmitBlob(writer, AssetId{.Value = id}, *type, *blob, level);
+
+        // A parent Material that declares a `defaultInstance` id emits a companion zero-override
+        // MaterialInstance at that id, so every direct reference names a real instance archive entry.
+        if (*type == AssetType::Material && entry.contains("defaultInstance"))
+        {
+            if (!entry["defaultInstance"].is_number_unsigned())
+            {
+                return std::unexpected("'defaultInstance' must be an unsigned u64 AssetId");
+            }
+            const u64 defaultInstanceId = entry["defaultInstance"].get<u64>();
+            if (defaultInstanceId == 0)
+            {
+                return std::unexpected("'defaultInstance' id 0 is reserved (invalid AssetId)");
+            }
+            if (!seenIds.insert(defaultInstanceId).second)
+            {
+                return std::unexpected(
+                    fmt::format("default-instance id {} duplicated", defaultInstanceId));
+            }
+
+            const Result<vector<u8>> instanceBlob = CookDefaultInstanceBlob(context, id);
+            if (!instanceBlob)
+            {
+                return std::unexpected(instanceBlob.error());
+            }
+
+            EmitBlob(writer, AssetId{.Value = defaultInstanceId}, AssetType::MaterialInstance,
+                     *instanceBlob, level);
+        }
+
         return {};
     }
 }

@@ -114,12 +114,29 @@ namespace VengEditor
         std::filesystem::remove(m_TempPath, ec);
     }
 
+    AssetResult<AssetHandle<MaterialInstance>> MaterialEditorPanel::PreviewInstance()
+    {
+        // The previewed material is a runtime zero-override instance over the edited parent, so the
+        // preview shows the parent's authored defaults and GetFields()/GetDomain() delegate to its
+        // schema. The parent has no cooked default-instance id of its own here (the editor cooks
+        // only the parent), so the default instance is built at runtime rather than loaded by id.
+        const AssetResult<AssetHandle<Material>> parent = m_Assets.LoadSync<Material>(m_Id);
+        if (!parent)
+        {
+            return std::unexpected(parent.error());
+        }
+
+        return m_Assets.BuildSync<MaterialInstance>(MaterialInstanceInfo{
+            .Name = fmt::format("Material editor preview {}", m_Id.Value),
+            .Context = &m_Context,
+            .Parent = *parent,
+            .Overrides = {},
+        });
+    }
+
     bool MaterialEditorPanel::LoadInterface()
     {
-        // Load through the default-instance rule so the previewed material is an instance over the
-        // edited parent; GetFields()/GetDomain() delegate to the parent's schema.
-        const AssetResult<AssetHandle<MaterialInstance>> loaded =
-            m_Assets.LoadSync<MaterialInstance>(m_Id);
+        const AssetResult<AssetHandle<MaterialInstance>> loaded = PreviewInstance();
         if (!loaded)
         {
             m_CookError = loaded.error().Detail;
@@ -444,10 +461,18 @@ namespace VengEditor
                        return;
                    }
 
-                   // Replace the mount and re-fetch; OnUI swaps the handle into the
-                   // preview once the async load lands resident.
+                   // Replace the mount and rebuild a default instance over the freshly-cooked
+                   // parent; OnUI swaps the handle into the preview once it is resident.
                    m_Mount = std::move(*mount);
-                   m_Handle = m_Assets.Load<MaterialInstance>(m_Id);
+                   AssetResult<AssetHandle<MaterialInstance>> rebuilt = PreviewInstance();
+                   if (!rebuilt)
+                   {
+                       m_CookError = rebuilt.error().Detail;
+                       Log::Error("Material editor: preview rebuild failed: {}",
+                                  rebuilt.error().Detail);
+                       return;
+                   }
+                   m_Handle = std::move(*rebuilt);
                    m_MaterialDirty = true;
                });
     }

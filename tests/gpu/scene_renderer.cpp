@@ -851,7 +851,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(mountResult.has_value());
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B}); // 9003
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443}); // the brick default instance
     REQUIRE(material.has_value());
     REQUIRE(material->IsLoaded());
 
@@ -1030,7 +1030,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "scene renderer: two renderers (differ
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_two_renderer.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     const Ref<Mesh> cube =
@@ -1134,7 +1134,7 @@ TEST_CASE_FIXTURE(
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_mode_recompile.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Mode Cube");
@@ -1277,7 +1277,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_exposure.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     const Ref<Mesh> cube =
@@ -1350,7 +1350,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_brdf_property.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "BRDF Cube");
@@ -1426,7 +1426,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_multi_light.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     const Ref<Mesh> cube =
@@ -1525,7 +1525,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_bloom.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     // A smooth metal: a tight, strong specular peak at the aligned N=L=V geometry,
@@ -1676,7 +1676,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_bloom_kawase.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     auto& mat = const_cast<MaterialInstance&>(*material->Get());
@@ -1795,7 +1795,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_shadow.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     // A large receiver plane in the XZ plane (world normal +Y) at the origin, and a
@@ -1902,7 +1902,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_ssao.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     // A flat dielectric so the ambient term (which SSAO modulates) is a meaningful
@@ -2017,7 +2017,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_shadow_ring.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     const Ref<Mesh> plane =
@@ -2176,7 +2176,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_cascades.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     // A long receiver plane in the XZ plane, big enough that its visible length spans
@@ -2316,7 +2316,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_punctual_presence.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     // A caster cube and a receiver plane below it, both brick (so the depth pass
@@ -2452,7 +2452,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_punctual_cull.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     const Ref<Mesh> cube =
@@ -2664,7 +2664,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_punctual_spot_lit.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     const Ref<Mesh> plane =
@@ -2787,7 +2787,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_punctual_point_lit.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     const Ref<Mesh> floor = Mesh::BuildSync(
@@ -2908,7 +2908,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_punctual_slotgate.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     const Ref<Mesh> floor =
@@ -3042,7 +3042,7 @@ TEST_CASE_FIXTURE(
     // GraphicsPipeline is NOT (the pass builds it against its color format), and its
     // domain is PostProcess.
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{9503});
+        assets.LoadSync<MaterialInstance>(AssetId{9000503});
     REQUIRE(material.has_value());
     REQUIRE(material->IsLoaded());
 
@@ -3171,7 +3171,7 @@ TEST_CASE_FIXTURE(
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_cull.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.0f, *material), "Cull Cube");
@@ -3336,7 +3336,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_primitive_normals.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     constexpr uvec2 extent{64, 64};
@@ -3463,7 +3463,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_taa.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     constexpr uvec2 extent{96, 72};
@@ -3610,7 +3610,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_picking.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.0f, *material), "Pick Cube");
@@ -3750,7 +3750,7 @@ TEST_CASE_FIXTURE(
     const path outArchive = CookAndMountBrick(assets, "veng_gpu_billboard_pick.vengpack");
 
     const AssetResult<AssetHandle<MaterialInstance>> material =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B});
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
     REQUIRE(material.has_value());
 
     const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.0f, *material), "Pick Cube");

@@ -68,7 +68,7 @@ namespace Veng::Renderer
         constexpr AssetId DeferredLightingCascadesFragId{0x834ED7C05F336E01ULL};
         constexpr AssetId SkyboxFragId{0xFCA568CC3463618FULL};
         constexpr AssetId SsaoFragId{0xCCBA63DB760A4E8EULL};
-        constexpr AssetId TonemapMaterialId{0xBC968C8771B00434ULL};
+        constexpr AssetId TonemapInstanceId{0xB5AA7227E8A2DC11ULL};
         constexpr AssetId AlbedoBlitFragId{0xF90F709155D04BE7ULL};
         constexpr AssetId NormalBlitFragId{0x5A2CD7B270EAE5CDULL};
         constexpr AssetId DepthBlitFragId{0xE05F5F86E72F96D5ULL};
@@ -1602,10 +1602,10 @@ namespace Veng::Renderer
                                          taaCopyFs, HdrFormat);
 
         // Loaded resident so the PostProcessScenePass builds its pipeline against the output format.
-        // The tonemap material is a bare parent; the default-instance rule resolves it to its
-        // zero-override default instance.
+        // The tonemap material's cooked zero-override default instance — its parent supplies the
+        // PostProcess pipeline and exposed schema.
         const AssetResult<AssetHandle<MaterialInstance>> tonemap =
-            m_Assets.LoadSync<MaterialInstance>(TonemapMaterialId);
+            m_Assets.LoadSync<MaterialInstance>(TonemapInstanceId);
         VE_ASSERT(tonemap.has_value(), "SceneRenderer: tonemap material load failed: {}",
                   tonemap.error().Detail);
         m_TonemapMaterial = *tonemap;

@@ -5,7 +5,7 @@
     { "id": 4101, "type": "shader", "source": "shaders/brick.vert.shader.json" },
     { "id": 4102, "type": "shader", "source": "shaders/brick.frag.shader.json" },
     { "id": 2001, "type": "texture", "source": "textures/texture.tex.json" },
-    { "id": 1003, "type": "material", "source": "materials/brick.vmat.json" },
+    { "id": 1003, "type": "material", "source": "materials/brick.vmat.json", "defaultInstance": 9001003 },
     { "id": 3001, "type": "mesh", "source": "meshes/cube.mesh.json" }
   ]
 }

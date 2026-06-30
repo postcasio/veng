@@ -104,9 +104,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             << (fixtureDir / "shaders/brick.vert.shader.json").string() << R"(" },
     { "id": 9102, "type": "shader",   "source": ")"
             << (fixtureDir / "shaders/brick.frag.shader.json").string() << R"(" },
-    { "id": 9003, "type": "material", "source": ")"
+    { "id": 9003, "type": "material", "defaultInstance": 9000003, "source": ")"
             << (fixtureDir / "materials/brick.vmat.json").string() << R"(" },
-    { "id": 9013, "type": "material", "source": ")"
+    { "id": 9013, "type": "material", "defaultInstance": 9009013, "source": ")"
             << (fixtureDir / "materials/brick.vmat.json").string() << R"(" }
   ]
 })";
@@ -128,7 +128,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // ── Producer scene A: a brick cube tinted green ───────────────────────────────
     const AssetResult<AssetHandle<MaterialInstance>> producerMaterial =
-        assets.LoadSync<MaterialInstance>(AssetId{0x232B}); // brick (9003)
+        assets.LoadSync<MaterialInstance>(AssetId{9000003}); // brick default instance (over 9003)
     REQUIRE(producerMaterial.has_value());
     REQUIRE(producerMaterial->IsLoaded());
     const_cast<MaterialInstance&>(*producerMaterial->Get())
@@ -156,7 +156,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // ── Consumer scene B: a brick cube whose BaseColor is the producer's output ───
     const AssetResult<AssetHandle<MaterialInstance>> consumerMaterial =
-        assets.LoadSync<MaterialInstance>(AssetId{9013}); // second brick instance
+        assets.LoadSync<MaterialInstance>(
+            AssetId{9009013}); // second brick default instance (over 9013)
     REQUIRE(consumerMaterial.has_value());
     REQUIRE(consumerMaterial->IsLoaded());
 
