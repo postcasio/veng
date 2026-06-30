@@ -37,6 +37,171 @@ namespace VengEditor
         {
             return phase == SceneSystem::Phase::View ? "View" : "Sim";
         }
+
+        // The level's gameMode/render config blocks are tolerant reflection records (scalars,
+        // vectors, asset handles, nested structs). These two helpers round-trip one such block
+        // through nlohmann, mirroring the cooker's LevelImporter read and libveng's WriteFields —
+        // so the editor writes exactly what the cooker reads. Unknown source keys are left to the
+        // caller's preserve-unknown-keys merge; an omitted field keeps its default (schema
+        // tolerance), an unsupported field class is skipped.
+
+        void ReadConfigObject(const nlohmann::json& object, void* obj, const TypeInfo& info,
+                              const TypeRegistry& types)
+        {
+            for (const FieldDescriptor& field : info.Fields)
+            {
+                if (!object.contains(field.Name))
+                {
+                    continue;
+                }
+                const nlohmann::json& value = object[field.Name];
+                void* fieldPtr = static_cast<u8*>(obj) + field.Offset;
+                switch (field.Class)
+                {
+                case FieldClass::Scalar:
+                {
+                    if (field.Type == TypeIdOf<bool>() && value.is_boolean())
+                    {
+                        const bool v = value.get<bool>();
+                        std::memcpy(fieldPtr, &v, sizeof(v));
+                    }
+                    else if (field.Type == TypeIdOf<f32>() && value.is_number())
+                    {
+                        const f32 v = value.get<f32>();
+                        std::memcpy(fieldPtr, &v, sizeof(v));
+                    }
+                    else if (field.Type == TypeIdOf<i32>() && value.is_number())
+                    {
+                        const i32 v = value.get<i32>();
+                        std::memcpy(fieldPtr, &v, sizeof(v));
+                    }
+                    break;
+                }
+                case FieldClass::Vector:
+                {
+                    const bool unsignedVector = field.Type == TypeIdOf<uvec2>();
+                    const usize componentSize = unsignedVector ? sizeof(u32) : sizeof(f32);
+                    const usize arity = types.Info(field.Type).Size / componentSize;
+                    if (!value.is_array() || value.size() != arity)
+                    {
+                        break;
+                    }
+                    for (usize i = 0; i < arity; ++i)
+                    {
+                        if (unsignedVector)
+                        {
+                            const u32 v = value[i].get<u32>();
+                            std::memcpy(static_cast<u8*>(fieldPtr) + i * sizeof(u32), &v,
+                                        sizeof(v));
+                        }
+                        else
+                        {
+                            const f32 v = value[i].get<f32>();
+                            std::memcpy(static_cast<u8*>(fieldPtr) + i * sizeof(f32), &v,
+                                        sizeof(v));
+                        }
+                    }
+                    break;
+                }
+                case FieldClass::AssetHandle:
+                {
+                    if (value.is_number_unsigned())
+                    {
+                        const u64 v = value.get<u64>();
+                        std::memcpy(fieldPtr, &v, sizeof(v));
+                    }
+                    break;
+                }
+                case FieldClass::Struct:
+                {
+                    if (value.is_object())
+                    {
+                        ReadConfigObject(value, fieldPtr, types.Info(field.Type), types);
+                    }
+                    break;
+                }
+                default:
+                    break;
+                }
+            }
+        }
+
+        void WriteConfigObject(nlohmann::json& object, const void* obj, const TypeInfo& info,
+                               const TypeRegistry& types)
+        {
+            for (const FieldDescriptor& field : info.Fields)
+            {
+                const auto* fieldPtr = static_cast<const u8*>(obj) + field.Offset;
+                switch (field.Class)
+                {
+                case FieldClass::Scalar:
+                {
+                    if (field.Type == TypeIdOf<bool>())
+                    {
+                        bool v = false;
+                        std::memcpy(&v, fieldPtr, sizeof(v));
+                        object[field.Name] = v;
+                    }
+                    else if (field.Type == TypeIdOf<f32>())
+                    {
+                        f32 v = 0.0f;
+                        std::memcpy(&v, fieldPtr, sizeof(v));
+                        object[field.Name] = v;
+                    }
+                    else if (field.Type == TypeIdOf<i32>())
+                    {
+                        i32 v = 0;
+                        std::memcpy(&v, fieldPtr, sizeof(v));
+                        object[field.Name] = v;
+                    }
+                    break;
+                }
+                case FieldClass::Vector:
+                {
+                    const bool unsignedVector = field.Type == TypeIdOf<uvec2>();
+                    const usize componentSize = unsignedVector ? sizeof(u32) : sizeof(f32);
+                    const usize arity = types.Info(field.Type).Size / componentSize;
+                    nlohmann::json array = nlohmann::json::array();
+                    for (usize i = 0; i < arity; ++i)
+                    {
+                        if (unsignedVector)
+                        {
+                            u32 v = 0;
+                            std::memcpy(&v, fieldPtr + i * sizeof(u32), sizeof(v));
+                            array.push_back(v);
+                        }
+                        else
+                        {
+                            f32 v = 0.0f;
+                            std::memcpy(&v, fieldPtr + i * sizeof(f32), sizeof(v));
+                            array.push_back(v);
+                        }
+                    }
+                    object[field.Name] = std::move(array);
+                    break;
+                }
+                case FieldClass::AssetHandle:
+                {
+                    u64 v = 0;
+                    std::memcpy(&v, fieldPtr, sizeof(v));
+                    object[field.Name] = v;
+                    break;
+                }
+                case FieldClass::Struct:
+                {
+                    nlohmann::json& nested = object[field.Name];
+                    if (!nested.is_object())
+                    {
+                        nested = nlohmann::json::object();
+                    }
+                    WriteConfigObject(nested, fieldPtr, types.Info(field.Type), types);
+                    break;
+                }
+                default:
+                    break;
+                }
+            }
+        }
     }
 
     // A child panel that forwards its body back to the owning level editor, so the systems
@@ -160,50 +325,7 @@ namespace VengEditor
             {
                 return;
             }
-            const TypeInfo& info = types.Info(type);
-            const nlohmann::json& object = level[key];
-            for (const FieldDescriptor& field : info.Fields)
-            {
-                if (!object.contains(field.Name))
-                {
-                    continue;
-                }
-                const nlohmann::json& value = object[field.Name];
-                void* fieldPtr = static_cast<u8*>(obj) + field.Offset;
-                switch (field.Class)
-                {
-                case FieldClass::Scalar:
-                {
-                    if (field.Type == TypeIdOf<bool>() && value.is_boolean())
-                    {
-                        const bool v = value.get<bool>();
-                        std::memcpy(fieldPtr, &v, sizeof(v));
-                    }
-                    else if (field.Type == TypeIdOf<f32>() && value.is_number())
-                    {
-                        const f32 v = value.get<f32>();
-                        std::memcpy(fieldPtr, &v, sizeof(v));
-                    }
-                    else if (field.Type == TypeIdOf<i32>() && value.is_number())
-                    {
-                        const i32 v = value.get<i32>();
-                        std::memcpy(fieldPtr, &v, sizeof(v));
-                    }
-                    break;
-                }
-                case FieldClass::AssetHandle:
-                {
-                    if (value.is_number_unsigned())
-                    {
-                        const u64 v = value.get<u64>();
-                        std::memcpy(fieldPtr, &v, sizeof(v));
-                    }
-                    break;
-                }
-                default:
-                    break;
-                }
-            }
+            ReadConfigObject(level[key], obj, types.Info(type), types);
         };
 
         readConfig("gameMode", &m_GameMode, TypeIdOf<GameModeConfig>());
@@ -239,50 +361,12 @@ namespace VengEditor
         const TypeRegistry& types = m_Context.Scene->GetTypeRegistry();
         auto writeConfig = [&](const char* key, const void* obj, TypeId type)
         {
-            const TypeInfo& info = types.Info(type);
             nlohmann::json& object = level[key];
             if (!object.is_object())
             {
                 object = nlohmann::json::object();
             }
-            for (const FieldDescriptor& field : info.Fields)
-            {
-                const auto* fieldPtr = static_cast<const u8*>(obj) + field.Offset;
-                switch (field.Class)
-                {
-                case FieldClass::Scalar:
-                {
-                    if (field.Type == TypeIdOf<bool>())
-                    {
-                        bool v = false;
-                        std::memcpy(&v, fieldPtr, sizeof(v));
-                        object[field.Name] = v;
-                    }
-                    else if (field.Type == TypeIdOf<f32>())
-                    {
-                        f32 v = 0.0f;
-                        std::memcpy(&v, fieldPtr, sizeof(v));
-                        object[field.Name] = v;
-                    }
-                    else if (field.Type == TypeIdOf<i32>())
-                    {
-                        i32 v = 0;
-                        std::memcpy(&v, fieldPtr, sizeof(v));
-                        object[field.Name] = v;
-                    }
-                    break;
-                }
-                case FieldClass::AssetHandle:
-                {
-                    u64 v = 0;
-                    std::memcpy(&v, fieldPtr, sizeof(v));
-                    object[field.Name] = v;
-                    break;
-                }
-                default:
-                    break;
-                }
-            }
+            WriteConfigObject(object, obj, types.Info(type), types);
         };
 
         writeConfig("gameMode", &m_GameMode, TypeIdOf<GameModeConfig>());

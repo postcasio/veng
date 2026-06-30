@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Reflection/Variant.h>
@@ -514,6 +515,29 @@ namespace Veng
         f32 EnvironmentIntensity = 1.0f;
         /// @brief Whether the environment renders as the background skybox (a topology toggle).
         bool Skybox = true;
+        /// @brief Whether the procedural Bruneton atmosphere renders as the background sky.
+        ///
+        /// Drives both the SkyScenePass topology toggle and the per-frame SceneView enable, so a
+        /// level turns the procedural sky on with one flag. An alternative sky source to the
+        /// environment skybox, not a replacement for image-based lighting.
+        bool Atmosphere = false;
+        /// @brief Direction toward the sun for the procedural atmosphere (world up +Y).
+        ///
+        /// Drives the sky color and sun-disk placement (and the SH skylight when on); normalized
+        /// when applied. Ignored when Atmosphere is off.
+        vec3 SunDirection{0.0f, 1.0f, 0.0f};
+        /// @brief Whether the dynamic sky-projected SH ambient lights the scene's diffuse term.
+        ///
+        /// A topology toggle; effective only with no environment bound (the SH skylight is the
+        /// second ambient arm, below IBL). Projects the same atmosphere the sun direction drives.
+        bool Skylight = false;
+        /// @brief Scales the dynamic SH skylight ambient, fed into the per-frame SceneView.
+        f32 SkylightIntensity = 1.0f;
+        /// @brief Physically-based parameters of the procedural atmosphere.
+        ///
+        /// Fed into the per-frame SceneView; the renderer regenerates its LUTs only when these
+        /// change. The defaults describe Earth at sea level. Ignored when Atmosphere is off.
+        Renderer::Atmosphere AtmosphereParams;
     };
 }
 
@@ -707,4 +731,11 @@ VE_FIELD(AO, .DisplayName = "SSAO")
 VE_FIELD(Environment, .DisplayName = "Environment")
 VE_FIELD(EnvironmentIntensity, .DisplayName = "Environment Intensity", .Display = {.Min = 0.0})
 VE_FIELD(Skybox, .DisplayName = "Skybox")
+VE_FIELD(Atmosphere, .DisplayName = "Atmosphere")
+VE_FIELD(SunDirection, .DisplayName = "Sun Direction", .VisibleIf = VE_WHEN(self.Atmosphere))
+VE_FIELD(Skylight, .DisplayName = "Skylight")
+VE_FIELD(SkylightIntensity, .DisplayName = "Skylight Intensity", .Display = {.Min = 0.0},
+         .VisibleIf = VE_WHEN(self.Skylight))
+VE_FIELD(AtmosphereParams, .DisplayName = "Atmosphere Parameters",
+         .VisibleIf = VE_WHEN(self.Atmosphere))
 VE_REFLECT_END();
