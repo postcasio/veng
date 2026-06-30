@@ -424,7 +424,8 @@ namespace VengEditor
         // A topology change is the only thing that needs a Configure recompile, and this is called
         // per settings-panel edit (an Exposure drag too), so flip dirty only when a toggle moved.
         if (next.Bloom != m_Settings.Bloom || next.Shadows != m_Settings.Shadows ||
-            next.AO != m_Settings.AO || next.Skybox != m_Settings.Skybox)
+            next.AO != m_Settings.AO || next.Skybox != m_Settings.Skybox ||
+            next.Atmosphere != m_Settings.Atmosphere || next.Skylight != m_Settings.Skylight)
         {
             m_Settings = next;
             m_SettingsDirty = true;
@@ -433,6 +434,10 @@ namespace VengEditor
         m_Exposure = scratch.Exposure;
         m_BloomIntensity = scratch.BloomIntensity;
         m_EnvironmentIntensity = scratch.EnvironmentIntensity;
+        m_AtmosphereEnabled = scratch.AtmosphereEnabled;
+        m_SkylightIntensity = scratch.SkylightIntensity;
+        m_SunDirection = scratch.SunDirection;
+        m_Atmosphere = scratch.Atmosphere;
 
         // The shared mapping leaves scratch.Environment id-only here: the level config is hand-parsed
         // (not run through the Level loader that resolves it as a dependency), so resolve it into a
@@ -697,6 +702,10 @@ namespace VengEditor
             .Exposure = m_Exposure,
             .Environment = m_Environment,
             .EnvironmentIntensity = m_EnvironmentIntensity,
+            .SkylightIntensity = m_SkylightIntensity,
+            .AtmosphereEnabled = m_AtmosphereEnabled,
+            .SunDirection = m_SunDirection,
+            .Atmosphere = m_Atmosphere,
             .BloomIntensity = m_BloomIntensity,
         });
 

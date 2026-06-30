@@ -191,6 +191,15 @@ namespace VengEditor
         /// @brief Per-frame environment intensity written into the pushed ViewState each frame.
         Veng::f32 m_EnvironmentIntensity = 1.0f;
 
+        /// @brief Whether the procedural atmosphere sky renders, written into the pushed ViewState.
+        bool m_AtmosphereEnabled = false;
+        /// @brief Per-frame SH skylight intensity written into the pushed ViewState each frame.
+        Veng::f32 m_SkylightIntensity = 1.0f;
+        /// @brief Normalized sun direction written into the pushed ViewState each frame.
+        Veng::vec3 m_SunDirection{0.0f, 1.0f, 0.0f};
+        /// @brief Procedural-atmosphere parameters written into the pushed ViewState each frame.
+        Veng::Renderer::Atmosphere m_Atmosphere;
+
         /// @brief Last extent the ImGui texture was fetched at; re-fetch when the viewport resizes.
         Veng::uvec2 m_TextureExtent{};
 
