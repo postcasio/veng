@@ -36,6 +36,11 @@ hitch, drop the footprint-reclamation that does.
   `Viewport`'s tier-change `Resize` debounce. The allocation is sized **once** to the region's native
   extent, capped by `MaxAllocationScale`, and resized only on a genuine region/window extent change —
   not on load.
+- This is a **public-API removal**, not just an internal one: `ManagedViewportInfo::AllocationTier`
+  (`Application.h`), `Viewport::GetAllocationTierIndex()` / `IsAllocationTierEnabled()`, and the
+  `tierSettings` parameter of `SetDynamicResolution` all go. The tier debug UI in
+  `engine/src/UI/DebugPanels.cpp` (which calls `GetAllocationTierIndex` / `IsAllocationTierEnabled`) and
+  both examples' call sites are migrated in the same pass, or they fail to compile.
 - **Keep** `ComputeDynamicResolutionScale` (the inner loop) unchanged: it eases `RenderScale` over the
   now-fixed allocation toward the GPU-frame-time budget, exactly as today, with no reallocation.
 - **Keep** `MaxAllocationScale` as the **static** ceiling (the HiDPI decoupling is still wanted — a
@@ -55,12 +60,21 @@ hitch, drop the footprint-reclamation that does.
 
 ## Files (sketch — the agent confirms against the tree)
 
-- `engine/include/Veng/Renderer/DynamicResolution.h` + impl — delete `StepAllocationTier` and its
-  state; keep `ComputeDynamicResolutionScale`.
+- `engine/include/Veng/Renderer/DynamicResolution.h` + impl — delete `StepAllocationTier`,
+  `AllocationTierSettings`, `AllocationTierState` and their EMA/hysteresis/dwell state; keep
+  `ComputeDynamicResolutionScale`. **Rewrite the `MinScale` doc comment** — it currently reads "Sits
+  strictly below the outer-loop floor tier (`AllocationTierSettings` default 0.5)…", a reference to the
+  deleted concept (and a house-rule stale-narrative smell). State `MinScale` as the floor of the
+  per-frame sub-rect over the fixed allocation.
 - `engine/src/Renderer/Viewport.*` — remove the tier-change `Resize` debounce; size the allocation once
-  from the region extent + `MaxAllocationScale`.
-- Both examples — drop any reliance on the tier discovering the operating point (they already render at
-  the native allocation; no content change expected).
+  from the region extent + `MaxAllocationScale`. Delete `GetAllocationTierIndex` / `IsAllocationTierEnabled`.
+- `engine/include/Veng/Application.h` + `Application.cpp` — drop the `ManagedViewportInfo::AllocationTier`
+  field and its plumbing; `SetDynamicResolution` loses the `tierSettings` parameter.
+- `engine/src/UI/DebugPanels.cpp` — remove the allocation-tier readout and the auto/static toggle.
+- Both examples — drop the tier call sites. `hello-triangle` keeps `MaxAllocationScale = 1.0f`
+  (`main.cpp`): it was lifted to `1.0` for tier discovery, but full-native is the intended sample
+  ceiling — it is now simply the fixed cap, no longer a tier input. Note the why in passing; no other
+  content change expected.
 - Docs: the renderer/dynamic-resolution comments that described the outer loop; `engine/CLAUDE.md` if it
   documents the tier.
 - Roadmap: `plans/README.md`, `plans/future/README.md` per the section above.

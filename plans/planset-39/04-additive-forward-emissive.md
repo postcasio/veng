@@ -1,21 +1,28 @@
-# Plan 04 — additive forward emissive (color decoupled from albedo, no fourth g-buffer target)
+# Plan 04 — additive forward emissive (color decoupled from albedo, no fifth g-buffer target)
 
 **Goal:** give the deferred renderer **color-decoupled** emissive — a surface that emits a color
-unrelated to its base color, including a dark-albedo surface that glows — without adding a fourth
-g-buffer target. The current emissive is a **scalar** packed in the ORM target (planset-19), added
-post-lighting as roughly `albedo · emissiveScalar`: it cannot emit a color the albedo lacks and a
-black albedo cannot glow at all. Since emissive is an **additive, lighting-independent** term, it does
-not belong in the g-buffer; it is written in a small **additive forward pass** into the lit HDR target.
+unrelated to its base color, including a dark-albedo surface that glows — without adding a fifth
+g-buffer target. The g-buffer is already four MRT targets (G0 albedo / G1 world-normal / G2 ORM /
+G3 velocity); an RGB emissive channel would be a fifth. The current emissive is a **scalar** packed
+in the ORM target (planset-19), added post-lighting as roughly `albedo · emissiveScalar`: it cannot
+emit a color the albedo lacks and a black albedo cannot glow at all. Since emissive is an **additive,
+lighting-independent** term, it does not belong in the g-buffer; it is written in a small **additive
+forward pass** into the lit HDR target.
 
 ## Why a forward pass, not a g-buffer target
 
-Emissive is not a lighting *input* — it is an output addend. Carrying RGB emissive through a fourth
-g-buffer target pays MRT bandwidth on **every** geometry pixel to store a value that is zero for the
-~all of them that do not emit. An additive forward pass re-rasterizes **only** emissive geometry into
-the already-lit HDR target after the deferred lighting pass, so non-emitters cost nothing and the
+Emissive is not a lighting *input* — it is an output addend. Carrying RGB emissive through a fifth
+g-buffer target pays MRT (multiple-render-target) bandwidth on **every** geometry pixel to store a
+value that is zero for the ~all of them that do not emit. (The engine `CLAUDE.md` notes colored
+emissive is "one free channel away from needing a fifth target" via the unused G0.a — that packed-
+channel framing is superseded here: a single alpha channel cannot carry an RGB color, and the
+forward pass avoids the target entirely.) An additive forward pass re-rasterizes **only** emissive
+geometry into the already-lit HDR target after the deferred lighting pass, so non-emitters cost
+nothing — each *emitter* pays one extra rasterization (vertex shader + read-only depth test) — and the
 emissive color is fully independent of albedo. Driving albedo above 1.0 (the forward-renderer trick)
-does not work here: a deferred albedo is consumed as `albedo · BRDF · light`, so a shadowed emitter
-computes to black and an albedo > 1 breaks energy conservation for any reflection/IBL.
+does not work here: a deferred albedo is consumed as `albedo · BRDF · light` (the BRDF, the surface's
+bidirectional reflectance), so a shadowed emitter computes to black and an albedo > 1 breaks energy
+conservation for any reflection/IBL.
 
 ## The starting point
 
@@ -30,9 +37,12 @@ computes to black and an albedo > 1 breaks energy conservation for any reflectio
 ### 1. An RGB emissive material term
 
 - A surface material gains an **emissive color** (RGB) parameter — and, where authored, an emissive
-  texture handle — in its `MaterialParams` block. The scalar ORM emissive is **retired** in favor of
-  the RGB term (or kept only as a multiplier into it; the agent picks the simpler of the two against
-  the current shader and documents which).
+  texture handle — in its `MaterialParams` block. The scalar ORM emissive (`ORM.a`, added in the
+  lighting shader as `albedo · emissive`) is **retired** in favor of the RGB term — one emissive path,
+  not two. The observable contract: a surface that previously emitted via the scalar is re-authored
+  onto the RGB term (set `emissiveColor = albedo · oldScalar` to reproduce the old look exactly, or a
+  new color to decouple). The sample's existing scalar emitter is re-authored this way; no asset keeps
+  a live scalar path.
 
 ### 2. An `EmissiveScenePass`
 
@@ -55,8 +65,11 @@ computes to black and an albedo > 1 breaks energy conservation for any reflectio
 - `engine/src/Renderer/Passes/EmissiveScenePass.*` (new) — the additive forward pass.
 - `engine/src/Renderer/SceneRenderer.cpp` — wire the pass into the compiled graph between lighting and
   bloom.
-- `engine/assets/core/shaders/` — the emissive fragment shader; remove/retain the scalar ORM emissive
-  in the surface + lighting shaders per the decision above.
+- `engine/assets/core/shaders/` — the emissive fragment shader; remove the scalar ORM emissive from
+  the surface + lighting shaders (the `ORM.a` write and the `albedo · emissive` add).
+- `engine/CLAUDE.md` — update the g-buffer note that frames colored emissive as "one free channel away
+  from needing a fifth target": colored emissive lands as a forward additive pass, not a packed
+  channel.
 - The surface material param block + its C++ mirror — the RGB emissive field.
 
 ## Examples to co-migrate
@@ -69,20 +82,23 @@ zero emissive draws and costs nothing.
 ## Verification
 
 - The emissive object glows independent of its albedo and lights (visible in shadow); bloom blooms it.
-- `smoke_golden` **moves** (the sample gains an emitter) — regenerate it **once** per the documented
-  procedure, then it holds.
+- `smoke_golden` **moves** (the sample gains an emitter, and the scalar path is retired) — see the
+  planset README's golden-regeneration note: the golden is regenerated **once against the integrated
+  tree**, not per-plan, since Plans 04/06/07 all move it.
 - Validation gate clean (`build-debug -L validation`) — the additive blend + read-only depth binding
   is exactly where a barrier/attachment validation error would surface.
-- With the settings toggle off, the image is byte-identical to the pre-plan render (a guard that the
-  pass is purely additive).
+- With the `Emissive` toggle off, the image equals a render with the emissive term zeroed — the guard
+  that the pass is **purely additive**. (Not byte-identical to the *pre-plan* render: retiring the
+  scalar path removes the old `albedo · scalar` glow, which is the point.)
 
 ## Risks
 
 - **Read-only depth during an additive pass** — the depth attachment must be bound read-only (no
   writes) so the pass occludes correctly without disturbing later reads; a read-write binding is a
   validation/hazard error.
-- **Double-counting emissive** if the scalar ORM emissive is left live alongside the RGB term — pick
-  one path; do not add both.
+- **Double-counting emissive** if the retired scalar ORM term is left live in the lighting shader
+  alongside the new RGB pass — the scalar `albedo · emissive` add must be fully removed, not just
+  unused.
 - **HDR precision** — additive emissive can drive values high; it shares the HDR target's range with
   lighting, which is already HDR, so no new format, but extreme emissive + bloom can clip — a tuning
   concern, not a correctness one.

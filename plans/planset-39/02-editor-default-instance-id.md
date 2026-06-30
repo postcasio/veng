@@ -30,6 +30,12 @@ real `generate-id` mint written into source — identical in kind to every other
 leaves the cook a pure function. The only thing that changes versus a human pasting it is *who runs
 the minter*.
 
+This automates the **editor** path only. A material in a pack that is never opened in the editor — the
+engine `core` pack, the test fixtures, a CLI-only project — stays on Plan 01's hand-mint floor (run
+`vengc generate-id`, paste). That is a deliberate limitation, not an oversight; the natural lift is a
+non-cook `vengc` mint-and-write command (the same "who runs the minter" reframing, at the CLI instead of
+the editor), filed as future and not built here.
+
 ## What lands
 
 ### 1. An id generator on the cook backend

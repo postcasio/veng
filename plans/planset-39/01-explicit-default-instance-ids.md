@@ -29,10 +29,13 @@ restoring the "one id ⇒ one asset of one type" invariant. Depends on planset-3
 - A parent `*.vmat.json` gains an optional **`defaultInstance`** key: a minted `AssetId` (decimal in the
   pack JSON). It is the id of the zero-override instance every direct reference to this material uses.
 - The cook emits, beside the `Material` blob, a **zero-override `MaterialInstance`** blob at the
-  `defaultInstance` id — `parent` = this material's id, `overrides` = empty — through the Plan 06
-  `MaterialInstanceImporter` (or, equivalently, the importer's blob writer invoked from the material
-  cook). The emitted blob is byte-identical to what `LoadDefaultInstance` synthesized, so the resident
-  param block is unchanged.
+  `defaultInstance` id — `parent` = this material's id, `overrides` = empty. `MaterialInstanceImporter::Cook`
+  takes a source `json& entry`, so the material cook synthesizes an in-memory
+  `{ "parent": <id>, "overrides": {} }` object and feeds it to that importer (or a small
+  `CookDefaultInstanceBlob(parentId)` helper is factored out and called from both) — there is no
+  separate "blob writer" entry point today, so the agent picks one of these two and says which. The
+  resident param block the emitted instance resolves to is identical to what `LoadDefaultInstance`
+  synthesized, so the rendered result is unchanged.
 - Validation: a material that is referenced as an instance **must** declare `defaultInstance`; the
   cooker errors (located `Result`) if a reference names a material id with no companion default instance.
 
@@ -56,12 +59,18 @@ the `defaultInstance` id:
 
 ### 3. Delete the overload
 
-With every reference naming a real `MaterialInstance` archive entry, the bridge is dead weight:
+With every reference naming a real `MaterialInstance` archive entry, the bridge is dead weight. Do
+this **last**, in order: (1) add the `defaultInstance` keys + cook the companion instances, (2) rewrite
+every reference, (3) confirm green *with the bridge still present* (nothing falls through to it), (4)
+delete the bridge. Deleting before the rewrite is exhaustive leaves no buildable intermediate, so a
+missed reference cannot be bisected.
 
 - **Cache key → id-only.** `AssetManager`'s `std::unordered_map<CacheKey, …>` reverts to
-  `std::unordered_map<AssetId, …>`; `CacheKey`/`CacheKeyHash` are deleted; the two `m_Cache.find/insert`
-  sites and `CachedEntry(AssetId)` go back to a direct `id` lookup (the cross-type scan is gone). Verify
-  no remaining caller depends on two types sharing an id.
+  `std::unordered_map<AssetId, …>`; `CacheKey`/`CacheKeyHash` are deleted. Migrate **every** `CacheKey`
+  construction site, not only the obvious two: the `LoadUntyped`/`LoadSyncUntyped` find/insert pair,
+  `Get<T>` (which builds a `CacheKey{type, id}` for its find), and `CachedEntry(AssetId)` (whose
+  cross-type scan collapses to a direct `id` lookup). Verify no remaining caller depends on two types
+  sharing an id.
 - **Resolve bridge deleted.** The `type == MaterialInstance && found->Type == Material` branch in
   `AssetManager::Resolve` is removed; a `MaterialInstance` request now resolves only a real
   `MaterialInstance` archive entry (a missing one is an ordinary `NotFound`).
@@ -86,16 +95,24 @@ With every reference naming a real `MaterialInstance` archive entry, the bridge 
 ## Examples to co-migrate
 
 Both `hello-triangle` and `template` declare `defaultInstance` ids on their materials and rewrite their
-mesh/prefab/level references. Neither authors an override instance for this plan (Plan 06's sample
-already proves the override path); the change here is purely default-instance ids + reference rewriting.
+mesh/prefab/level references. Neither authors an override instance for this plan (planset-38 Plan 06's
+sample already proves the override path); the change here is purely default-instance ids + reference rewriting.
 
 ## Verification
 
 - Clean build; full `ctest` green. Add a test asserting (a) a material id and its `defaultInstance` id
   are distinct and both resolve to their own typed asset, and (b) a `MaterialInstance` request for an id
   that is a bare `Material` now returns `NotFound` (the bridge is gone).
+- **Prefab/level material rehydrate is the load-bearing coverage** (no cooker referrer-side validation
+  is added — the migration leans on tests). The smoke path already rehydrates a prefab
+  (`PlayerPrefab.SpawnInto`), and `tests/gpu/prefab_spawn.cpp`, `tests/gpu/level_loader.cpp`, and
+  `tests/gpu/primitive_resolve.cpp` cover the prefab/level/primitive-default material paths — so their
+  fixtures **must** be migrated to the `defaultInstance` ids (a missed binary reference then aborts in
+  `SpawnInto` rather than shipping silent). Confirm each carries a material reference that exercises the
+  default-instance path.
 - `HT_SMOKE` writes the 2,764,816-byte PPM and **`smoke_golden` holds** — a cooked zero-override
-  instance packs the same bytes the synthesized default did, so the image does not move.
+  instance resolves to the same resident param block the synthesized default did, so the image does not
+  move.
 - **Validation gate** (`build-debug -L validation`) clean — the loader/resolve change is exactly where a
   Vulkan validation error would hide.
 - Grep proves no `CacheKey`, no `LoadDefaultInstance`, and no `type == … MaterialInstance && … Material`

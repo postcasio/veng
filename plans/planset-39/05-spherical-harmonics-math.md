@@ -1,7 +1,7 @@
 # Plan 05 — `Veng/Math/SphericalHarmonics.h` (the SH math, foundation-first)
 
 **Goal:** add a pure, device-free spherical-harmonics math header beside `AABB` / `Frustum` / `BVH` /
-`Ray` / `ShadowCascades` in `Veng/Math/` — project a radiance sample into low-order SH, convolve
+`Ray` in `Veng/Math/` — project a radiance sample into low-order SH, convolve
 radiance SH into **irradiance** SH (the Lambertian cosine lobe), and evaluate SH in a direction.
 Foundation-first and fully unit-tested with **no consumer in this plan** — Plan 07 (dynamic SH
 ambient) is its consumer; later GI (per-probe irradiance) is its long-term one. This mirrors how
@@ -52,11 +52,17 @@ Plan 07 (and any later GI) free of re-deriving the easy-to-get-wrong convolution
 - **Directional sample** — a single bright direction projects and reconstructs a smooth lobe peaking at
   that direction.
 - **Linearity / superposition** — projecting a sum of radiances equals the sum of projections.
+- **Golden constants for the GPU to match** — a fixed `Sh9` coefficient set with hand-computed
+  `EvalIrradiance` values at a few normals, checked in as literals. This is the numeric target Plan 07's
+  shader `EvalIrradiance` must reproduce, so the CPU↔GPU basis contract is pinned **here** rather than
+  only described in prose for Plan 07 to re-derive.
 
 ## Risks
 
 - **Basis/normalization convention** — there are several SH normalization conventions; fix one and
   document it, because Plan 07's *shader* evaluation must use the identical basis or the ambient is
-  subtly wrong. The CPU↔GPU consistency check lives in Plan 07; this plan pins the CPU side.
+  subtly wrong. This plan pins the CPU side **numerically** (the golden-constants test above), so the
+  convention is enforced by checked-in values, not prose, two plans before its consumer lands; Plan 07's
+  CPU↔GPU consistency check then matches the shader to those same goldens.
 - **Over-scoping** — keep it order-2 (9 coefficients). Higher orders, rotation, and per-probe sets are
   later GI concerns, not this header's.
