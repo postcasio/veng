@@ -86,6 +86,33 @@ namespace Veng
         return nullptr;
     }
 
+    MaterialInstance::EmissiveParams MaterialInstance::GetEmissive() const
+    {
+        EmissiveParams emissive;
+
+        const MaterialField* colorField = FindField("EmissiveColor");
+        if (colorField != nullptr && colorField->Offset + sizeof(vec3) <= m_Block.size())
+        {
+            vec3 color{0.0f};
+            std::memcpy(&color, m_Block.data() + colorField->Offset, sizeof(vec3));
+            emissive.Color = color;
+        }
+
+        const MaterialField* textureField = FindField("EmissiveTexture");
+        if (textureField != nullptr && textureField->Offset + sizeof(u32) <= m_Block.size())
+        {
+            std::memcpy(&emissive.Texture, m_Block.data() + textureField->Offset, sizeof(u32));
+
+            const MaterialField* samplerField = FindField("EmissiveSampler");
+            if (samplerField != nullptr && samplerField->Offset + sizeof(u32) <= m_Block.size())
+            {
+                std::memcpy(&emissive.Sampler, m_Block.data() + samplerField->Offset, sizeof(u32));
+            }
+        }
+
+        return emissive;
+    }
+
     void MaterialInstance::Finalize()
     {
         VE_ASSERT(!m_Registered, "MaterialInstance::Finalize: '{}' already registered", m_Name);

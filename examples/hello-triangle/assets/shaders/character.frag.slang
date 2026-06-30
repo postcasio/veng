@@ -17,7 +17,7 @@ struct MaterialParams
     uint   Normal;           uint NormalSampler;      // tangent-space normal-map handle + sampler (0 = unbound)
     uint   Pad0;             uint Pad1;
     float4 BaseColorFactor;  // tint applied to the sampled base color
-    float4 EmissiveFactor;   // rgb reserved (colored emissive is a follow-on); a = strength
+    float4 EmissiveColor;    // rgb additive emissive term read by the forward emissive pass (a unused)
     float  MetallicFactor;   float RoughnessFactor;
     float  OcclusionStrength; float Pad2;
 };
@@ -62,7 +62,8 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
     GBufferOutput output;
     output.Albedo = baseColor * p.BaseColorFactor;
     output.Normal = float4(worldNormal, 0.0);
-    output.ORM = float4(occlusion, roughness, metallic, p.EmissiveFactor.a);
+    // ORM.a is unused: emissive is an additive forward pass, not a g-buffer channel.
+    output.ORM = float4(occlusion, roughness, metallic, 0.0);
     output.Velocity = ComputeMotionVector(input.v_CurClip, input.v_PrevClip);
     return output;
 }

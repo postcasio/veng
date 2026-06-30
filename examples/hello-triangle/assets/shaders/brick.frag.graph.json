@@ -25,6 +25,15 @@
         {
             "type": "Multiply",
             "position": [300.0, 60.0]
+        },
+        {
+            "type": "Param",
+            "position": [0.0, 360.0],
+            "properties": {
+                "Value": [0.0, 0.0, 0.0, 0.0],
+                "Provenance": 1,
+                "Name": "EmissiveColor"
+            }
         }
     ],
     "links": [

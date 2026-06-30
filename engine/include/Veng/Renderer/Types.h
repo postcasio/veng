@@ -495,6 +495,20 @@ namespace Veng::Renderer
                 .AlphaOp = BlendOp::Add,
             };
         }
+
+        /// @brief Returns an additive blend state (src + dst), for a pure light-emitting addend.
+        static BlendState Additive()
+        {
+            return {
+                .Enable = true,
+                .SrcColorFactor = BlendFactor::One,
+                .DstColorFactor = BlendFactor::One,
+                .ColorOp = BlendOp::Add,
+                .SrcAlphaFactor = BlendFactor::One,
+                .DstAlphaFactor = BlendFactor::One,
+                .AlphaOp = BlendOp::Add,
+            };
+        }
     };
 
     /// @brief RGBA clear value for a color attachment.

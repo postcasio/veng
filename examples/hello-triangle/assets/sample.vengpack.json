@@ -8,6 +8,7 @@
     { "id": 1005, "type": "shader",   "source": "shaders/brick.frag.shader.json" },
     { "id": 1003, "type": "material", "source": "materials/brick.vmat.json" },
     { "id": 37147948036194274, "type": "material_instance", "source": "materials/brick_tinted.vmatinst.json" },
+    { "id": 12029434833302479675, "type": "material_instance", "source": "materials/emitter.vmatinst.json" },
     { "id": 14864592943833126790, "type": "texture",  "source": "textures/ground_white.tex.json" },
     { "id": 3191587071494521605,  "type": "texture",  "source": "textures/ground_flatnormal.tex.json" },
     { "id": 8259845233708650356,  "type": "texture",  "source": "textures/ground_orm_gradient.tex.json" },

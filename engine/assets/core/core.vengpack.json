@@ -54,6 +54,9 @@
     { "id": 7909061617139444202, "type": "shader", "source": "shaders/debug_line.frag.shader.json" },
     { "id": 4042385539205693696, "type": "shader", "source": "shaders/debug_billboard.vert.shader.json" },
     { "id": 3834025836854019546, "type": "shader", "source": "shaders/debug_billboard.frag.shader.json" },
+    { "id": 7542712814785632894, "type": "shader", "source": "shaders/emissive.vert.shader.json" },
+    { "id": 14613782249640445990, "type": "shader", "source": "shaders/emissive.frag.shader.json" },
+    { "id": 3261539366325962248, "type": "shader", "source": "shaders/emissive_skinned.vert.shader.json" },
     { "id": 13589203438992884788, "type": "material", "source": "materials/tonemap.vmat.json" }
   ]
 }
