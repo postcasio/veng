@@ -3295,17 +3295,22 @@ namespace Veng::Renderer
         const bool debugCascades = m_Settings.Mode == DebugView::Cascades;
         const bool debugPunctual = m_Settings.Mode == DebugView::PunctualShadows;
 
-        const bool shadowActive = (m_Settings.Mode == DebugView::Final && m_Settings.Shadows) ||
-                                  debugShadow || debugCascades;
+        // The Final view and the Bloom debug arm both composite the full scene before the bloom
+        // tail, so both fold in the same contributors (shadows, SSAO, sky, emissive) gated on their
+        // own toggles — the Bloom pyramid then blooms the same HDR the Final view would.
+        const bool sceneComposited = m_Settings.Mode == DebugView::Final || debugBloom;
+
+        const bool shadowActive =
+            (sceneComposited && m_Settings.Shadows) || debugShadow || debugCascades;
         m_ShadowActive = shadowActive;
         m_ShadowPass = nullptr;
 
         const bool punctualShadowActive =
-            (m_Settings.Mode == DebugView::Final && m_Settings.PunctualShadows) || debugPunctual;
+            (sceneComposited && m_Settings.PunctualShadows) || debugPunctual;
         m_PunctualShadowActive = punctualShadowActive;
         m_PunctualShadowPass = nullptr;
 
-        const bool ssaoFold = m_Settings.Mode == DebugView::Final && m_Settings.AO;
+        const bool ssaoFold = sceneComposited && m_Settings.AO;
         const bool ssaoActive = ssaoFold || debugAo;
         m_SsaoActive = ssaoActive;
         m_SsaoPass = nullptr;
@@ -3602,13 +3607,34 @@ namespace Veng::Renderer
                 m_Ibl->GetPrefilterMipCount(), m_Settings.Skylight, /*writeToOutput=*/true));
             break;
         case DebugView::Bloom:
-            // Bloom samples the lit HDR, so the lighting pass runs first; the force-wired bloom
-            // sweep (DeclareBloom, after the last pass) writes the pyramid, and the terminal blit
-            // shows mip 0 after the up-sweep — the accumulated bloom before composite.
+            // Bloom samples the composited HDR, so the same contributors the Final arm folds into it
+            // run first — lighting, then the sky/atmosphere/emissive composites (each gated on its
+            // own toggle, writing the lit target before the tail) — so the pyramid blooms the scene
+            // the Final view blooms. The force-wired bloom sweep (DeclareBloom, after the last pass)
+            // writes the pyramid, and the terminal blit shows mip 0 after the up-sweep — the
+            // accumulated bloom before composite.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
                 ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
                 m_Ibl->GetPrefilterMipCount(), m_Settings.Skylight));
+            if (m_Settings.Skybox)
+            {
+                m_Passes.push_back(CreateUnique<SkyboxScenePass>(
+                    m_Context, m_SkyboxPipeline, m_Ibl->GetSet(), lightingTargetId, depthId,
+                    m_DepthHandle, m_SamplerHandle, m_Extent));
+            }
+            if (m_Settings.Atmosphere)
+            {
+                m_Passes.push_back(CreateUnique<SkyScenePass>(
+                    m_Context, m_SkyPipeline, m_Atmosphere->GetSet(), lightingTargetId, depthId,
+                    m_DepthHandle, m_SamplerHandle, m_Extent));
+            }
+            if (m_Settings.Emissive)
+            {
+                m_Passes.push_back(CreateUnique<EmissiveScenePass>(
+                    m_Context, m_Extent, &m_Internal->Plan, &m_EmissivePipeline,
+                    &m_EmissiveSkinnedPipeline, lightingTargetId, depthId));
+            }
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_AlbedoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Bloom));
             break;

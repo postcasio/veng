@@ -178,10 +178,10 @@ namespace Veng::UI
         bool changed = false;
 
         // Entries mirror the DebugView enum in declaration order; combo index == enum value.
-        static constexpr std::array<string_view, 14> modeNames{
-            "Final",          "Albedo",     "Normal",  "Depth",    "Roughness",        "Metallic",
-            "Occlusion",      "AO",         "Shadows", "Cascades", "Punctual shadows", "Bloom",
-            "Motion vectors", "Reflections"};
+        static constexpr std::array<string_view, 15> modeNames{
+            "Final",          "Albedo",      "Normal",  "Depth",    "Roughness",        "Metallic",
+            "Occlusion",      "AO",          "Shadows", "Cascades", "Punctual shadows", "Bloom",
+            "Motion vectors", "Reflections", "Emissive"};
         i32 mode = static_cast<i32>(settings.Mode);
         if (UI::Combo("View", mode, modeNames))
         {
