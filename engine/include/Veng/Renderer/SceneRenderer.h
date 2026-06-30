@@ -19,6 +19,7 @@
 #include <Veng/Scene/SceneBroadphase.h>
 #include <Veng/Scene/Visibility.h>
 
+#include <array>
 #include <span>
 
 /// @brief Long-lived, configurable deferred render pipeline.
@@ -144,6 +145,18 @@ namespace Veng::Renderer
         /// @brief The additive emissive contribution alone (the emissive pass into a cleared target).
         Emissive,
     };
+
+    /// @brief Display names for the DebugView arms, indexed by enum value.
+    ///
+    /// The single source of truth for the "View" combo in both the engine debug panel and the
+    /// editor viewport: entry N is the name of DebugView N, so a combo's selected index casts
+    /// straight to the enum. The static_assert below keeps it in lockstep with the enum.
+    inline constexpr std::array<string_view, 15> DebugViewNames{
+        "Final",          "Albedo",      "Normal",  "Depth",    "Roughness",        "Metallic",
+        "Occlusion",      "AO",          "Shadows", "Cascades", "Punctual shadows", "Bloom",
+        "Motion vectors", "Reflections", "Emissive"};
+    static_assert(DebugViewNames.size() == static_cast<usize>(DebugView::Emissive) + 1,
+                  "DebugViewNames must list every DebugView arm in declaration order.");
 
     /// @brief Selects the bloom pyramid's down/up filter kernel.
     ///

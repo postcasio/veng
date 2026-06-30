@@ -177,13 +177,8 @@ namespace Veng::UI
         // Accumulates whether any topology field changed; the caller reconfigures on a true return.
         bool changed = false;
 
-        // Entries mirror the DebugView enum in declaration order; combo index == enum value.
-        static constexpr std::array<string_view, 15> modeNames{
-            "Final",          "Albedo",      "Normal",  "Depth",    "Roughness",        "Metallic",
-            "Occlusion",      "AO",          "Shadows", "Cascades", "Punctual shadows", "Bloom",
-            "Motion vectors", "Reflections", "Emissive"};
         i32 mode = static_cast<i32>(settings.Mode);
-        if (UI::Combo("View", mode, modeNames))
+        if (UI::Combo("View", mode, Renderer::DebugViewNames))
         {
             settings.Mode = static_cast<Renderer::DebugView>(mode);
             changed = true;

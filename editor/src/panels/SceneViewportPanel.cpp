@@ -469,14 +469,9 @@ namespace VengEditor
             // Debug visualizations: the DebugView dropdown plus the battery toggles.
             // The change is deferred via m_SettingsDirty so Configure runs once in OnUI,
             // not per widget.
-            // Entries mirror the DebugView enum in declaration order; combo index == enum value.
-            static constexpr std::array<string_view, 13> modeNames{
-                "Final",         "Albedo", "Normal",  "Depth",    "Roughness",        "Metallic",
-                "Occlusion",     "AO",     "Shadows", "Cascades", "Punctual shadows", "Bloom",
-                "Motion vectors"};
             i32 mode = static_cast<i32>(m_Settings.Mode);
             UI::SetNextItemWidth(120.0f);
-            if (UI::Combo("View", mode, modeNames))
+            if (UI::Combo("View", mode, Renderer::DebugViewNames))
             {
                 m_Settings.Mode = static_cast<Renderer::DebugView>(mode);
                 m_SettingsDirty = true;
