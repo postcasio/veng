@@ -30,8 +30,8 @@ namespace Veng::Cook
         }
 
         // Binds one JSON value into the field at obj+field.Offset, validating it against the
-        // field's FieldClass / leaf TypeId. The level config structs are flat scalar/handle
-        // records (game mode, render settings), so this covers Scalar, AssetHandle, and a
+        // field's FieldClass / leaf TypeId. The level config structs are scalar/vector/handle
+        // records (game mode, render settings), so this covers Scalar, Vector, AssetHandle, and a
         // nested Struct; an unsupported class is a located error rather than silent omission.
         VoidResult BindField(void* obj, const FieldDescriptor& field, const json& value,
                              const TypeRegistry& registry, const string& file,
@@ -81,6 +81,49 @@ namespace Veng::Cook
                 else
                 {
                     return err("unsupported scalar leaf type");
+                }
+                return {};
+            }
+
+            case FieldClass::Vector:
+            {
+                // Components are written in the field's storage type — f32 for a float vector, u32
+                // for an unsigned-integer vector — arity = byte size / component size.
+                const bool unsignedVector = field.Type == TypeIdOf<uvec2>();
+                const usize componentSize = unsignedVector ? sizeof(u32) : sizeof(f32);
+                const usize arity = registry.Info(field.Type).Size / componentSize;
+
+                if (!value.is_array() || value.size() != arity)
+                {
+                    return err(fmt::format("expected an array of {} numbers", arity));
+                }
+                for (const json& elem : value)
+                {
+                    if (!elem.is_number())
+                    {
+                        return err("array contains a non-number element");
+                    }
+                }
+
+                if (unsignedVector)
+                {
+                    vector<u32> components;
+                    components.reserve(arity);
+                    for (const json& elem : value)
+                    {
+                        components.push_back(elem.get<u32>());
+                    }
+                    std::memcpy(fieldPtr, components.data(), arity * sizeof(u32));
+                }
+                else
+                {
+                    vector<f32> components;
+                    components.reserve(arity);
+                    for (const json& elem : value)
+                    {
+                        components.push_back(elem.get<f32>());
+                    }
+                    std::memcpy(fieldPtr, components.data(), arity * sizeof(f32));
                 }
                 return {};
             }

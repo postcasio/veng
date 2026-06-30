@@ -31,10 +31,22 @@ namespace Veng
         settings.Shadows = render.Shadows;
         settings.AO = render.AO;
         settings.Skybox = render.Skybox;
+        settings.Atmosphere = render.Atmosphere;
+        settings.Skylight = render.Skylight;
 
         view.Exposure = render.Exposure;
         view.BloomIntensity = render.BloomIntensity;
         view.Environment = render.Environment;
         view.EnvironmentIntensity = render.EnvironmentIntensity;
+
+        // One level flag drives both the sky pass topology and its per-frame enable.
+        view.AtmosphereEnabled = render.Atmosphere;
+        view.SkylightIntensity = render.SkylightIntensity;
+        view.Atmosphere = render.AtmosphereParams;
+
+        // The sky and SH skylight read a normalized sun direction; an authored value need not be.
+        const f32 sunLength = glm::length(render.SunDirection);
+        view.SunDirection =
+            sunLength > 1e-4f ? render.SunDirection / sunLength : vec3(0.0f, 1.0f, 0.0f);
     }
 }
