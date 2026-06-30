@@ -89,14 +89,12 @@ namespace Veng::Renderer
         f32 RenderScale = 1.0f;
         /// @brief Caps the allocation extent to this fraction of the region's pixels.
         ///
-        /// A ceiling on the allocation relative to the region's backing extent: the SceneRenderer is
-        /// allocated no larger than round(Region.Extent * MaxAllocationScale * upper-bound-scale). The
-        /// default 1.0 allocates at the full region — on a 2× HiDPI display that is native resolution
-        /// at the backing pixels, not supersampling. A value < 1.0 is a deliberate lower ceiling (a
-        /// fixed perf budget); reclaiming footprint under sustained load is the allocation-tier outer
-        /// loop's job, not this cap's. It is the outermost of the three multiplicative scales — the
-        /// cap, then the upper-bound (MaxScale or static) allocation scale, then the per-frame
-        /// sub-rect — so it bounds them. Must be > 0.
+        /// A fixed ceiling on the allocation relative to the region's backing extent: the
+        /// SceneRenderer is allocated at round(Region.Extent * MaxAllocationScale * upper-bound-scale).
+        /// The default 1.0 allocates at the full region — on a 2× HiDPI display that is native
+        /// resolution at the backing pixels, not supersampling. A value < 1.0 is a deliberate lower
+        /// ceiling (a fixed perf budget). It is the outer of the two multiplicative scales — the cap,
+        /// then the per-frame sub-rect rendered inside it — so it bounds the allocation. Must be > 0.
         f32 MaxAllocationScale = 1.0f;
         /// @brief Whether the engine compositor places this viewport into its region.
         ViewportRole Role = ViewportRole::Offscreen;
@@ -169,24 +167,15 @@ namespace Veng::Renderer
         /// @brief Returns the current render-resolution multiplier.
         [[nodiscard]] f32 GetRenderScale() const;
 
-        /// @brief Returns the live allocation scale the render target is sized at.
+        /// @brief Returns the fixed allocation scale the render target is sized at.
         ///
-        /// The fraction of the (capped) region the SceneRenderer is allocated to. With the
-        /// allocation-tier controller enabled this is the current tier's scale (it follows the
-        /// sustained sub-rect through StepAllocationTier); otherwise it is the static ceiling
-        /// (MaxScale while dynamic resolution is on, else the static RenderScale). Reads with
-        /// GetRenderScale() as "rendering at GetRenderScale() of an allocation that is this of the
-        /// region."
+        /// The fraction of the (capped) region the SceneRenderer is allocated to: the upper bound of
+        /// the render scale — MaxScale while dynamic resolution is on, else the static RenderScale.
+        /// The allocation never reacts to frame-time pressure; the per-frame sub-rect inside it does.
+        /// Reads with GetRenderScale() as "rendering at GetRenderScale() of an allocation that is this
+        /// of the region."
         /// @return The allocation scale, > 0.
         [[nodiscard]] f32 GetAllocationScale() const;
-
-        /// @brief Returns the live allocation-tier index, or 0 when the tier controller is disabled.
-        ///
-        /// The outer loop's quantized state: an index into the AllocationTierSettings::Tiers array
-        /// (0 = baseline / full allocation, increasing = smaller). 0 when no tier controller is
-        /// configured (the allocation is the static ceiling).
-        /// @return The current tier index.
-        [[nodiscard]] u32 GetAllocationTierIndex() const;
 
         /// @brief Returns the renderer's current allocation extent in pixels.
         ///
@@ -200,29 +189,16 @@ namespace Veng::Renderer
         ///
         /// Each Render the viewport reads Context::GetLastGpuFrameTimeMs() and eases its
         /// RenderScale toward the settings' frame budget (ComputeDynamicResolutionScale), rendering
-        /// into a sub-rect of the target without a resize. The render target is sized to the
-        /// allocation scale — by default MaxScale, the ceiling the inner loop can reach — so this
-        /// call resizes the SceneRenderer images whenever that scale moves the integer extent
-        /// (invalidating GetOutput()/GetOutputHandle(); re-fetch after), and a sub-1 allocation
-        /// scale shrinks them rather than allocating full-region. The current scale is clamped into
-        /// [MinScale, MaxScale]. The control is inert — the scale is left as set — when
-        /// Context::IsGpuTimingSupported() is false. The whole-frame GPU time drives it, so it is
-        /// meaningful for the dominant (primary) viewport; on a device with several heavy viewports
-        /// the measurement is not attributed per viewport.
-        ///
-        /// Passing tierSettings additionally enables the outer-loop allocation-tier controller: the
-        /// viewport folds its per-frame RenderScale into a long EMA and steps a quantized allocation
-        /// tier (StepAllocationTier) after each inner-loop update, so the allocation follows the
-        /// sustained sub-rect rather than sitting at MaxScale. A tier change debounces a
-        /// SceneRenderer::Resize to the next Render. With tierSettings omitted the allocation is the
-        /// static MaxScale (the prior behavior). The inner loop is sized so the sub-rect always fits
-        /// inside the chosen tier, so a tier change is visually continuous (the rendered pixel count
-        /// is preserved across the resize).
-        /// @param settings      The inner-loop tuning (budget, scale bounds, deadband, rate limit).
-        /// @param tierSettings  The outer-loop tier tuning; omitted leaves the allocation at MaxScale.
-        void
-        SetDynamicResolution(const DynamicResolutionSettings& settings,
-                             const optional<AllocationTierSettings>& tierSettings = std::nullopt);
+        /// into a sub-rect of the fixed allocation without a resize — adapting cost, never the
+        /// allocation footprint. The render target is sized once to the allocation scale (MaxScale,
+        /// the ceiling the controller can reach), so this call resizes the SceneRenderer images only
+        /// if that ceiling moves the integer extent (invalidating GetOutput()/GetOutputHandle();
+        /// re-fetch after). The current scale is clamped into [MinScale, MaxScale]. The control is
+        /// inert — the scale is left as set — when Context::IsGpuTimingSupported() is false. The
+        /// whole-frame GPU time drives it, so it is meaningful for the dominant (primary) viewport;
+        /// on a device with several heavy viewports the measurement is not attributed per viewport.
+        /// @param settings  The controller tuning (budget, scale bounds, deadband, rate limit).
+        void SetDynamicResolution(const DynamicResolutionSettings& settings);
 
         /// @brief Disables automatic render-scale control, holding the current RenderScale.
         ///
@@ -232,13 +208,6 @@ namespace Veng::Renderer
 
         /// @brief Returns whether automatic render-scale control is enabled.
         [[nodiscard]] bool IsDynamicResolutionEnabled() const;
-
-        /// @brief Returns whether the outer-loop allocation-tier controller is enabled.
-        ///
-        /// True when SetDynamicResolution was passed tier settings: the allocation follows the
-        /// sustained sub-rect across quantized tiers. False when the allocation is the static
-        /// MaxScale ceiling (the inner loop alone, or no controller at all).
-        [[nodiscard]] bool IsAllocationTierEnabled() const;
 
         /// @brief Returns a counter bumped whenever the output view/handle is replaced.
         ///
@@ -422,16 +391,6 @@ namespace Veng::Renderer
         /// when control is disabled or timing is unsupported.
         void UpdateDynamicResolution();
 
-        /// @brief Steps the allocation tier from the live RenderScale when the tier controller is on.
-        ///
-        /// Called in Render after UpdateDynamicResolution, so the outer loop reads the inner loop's
-        /// freshly-updated sub-rect scale. Folds m_RenderScale into the long EMA and advances the
-        /// tier via StepAllocationTier; on a tier-index change it debounces a SceneRenderer::Resize
-        /// to the next Render (the allocation now follows the sustained sub-rect). A no-op when no
-        /// tier controller is configured.
-        /// @param delta  The frame delta in seconds, from the bound ViewState.
-        void UpdateAllocationTier(f32 delta);
-
         /// @brief The Vulkan context, for bindless registration.
         Context& m_Context;
         /// @brief The owned deferred renderer.
@@ -444,13 +403,6 @@ namespace Veng::Renderer
         f32 m_MaxAllocationScale = 1.0f;
         /// @brief Automatic render-scale controller tuning; unset when control is disabled.
         optional<DynamicResolutionSettings> m_DynamicResolution;
-        /// @brief Outer-loop allocation-tier controller tuning; unset when the tier controller is off.
-        ///
-        /// Set only alongside m_DynamicResolution (the inner loop feeds the outer loop). When unset
-        /// the allocation is the static MaxScale; when set GetAllocationScale() is the live tier.
-        optional<AllocationTierSettings> m_TierSettings;
-        /// @brief Caller-held state for the allocation-tier controller; meaningful only with m_TierSettings.
-        AllocationTierState m_TierState;
         /// @brief Whether the engine compositor places this viewport.
         ViewportRole m_Role;
 
