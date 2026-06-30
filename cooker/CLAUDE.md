@@ -84,13 +84,15 @@ at cook time:
 - **Materials** (`*.vmat.json`) are validated against the fragment shader's reflected
   parameters — the declared, explicitly-typed field list must match — and the
   fragment outputs are validated against the material domain's contract (Surface →
-  g-buffer MRT `SV_Target0`..`SV_Target3`; PostProcess → a single `SV_Target0`). A parent material
-  entry may declare a **`"defaultInstance"`** id in the pack manifest: when present, the cook emits a
+  g-buffer MRT `SV_Target0`..`SV_Target3`; PostProcess → a single `SV_Target0`). A parent
+  `*.vmat.json` may declare a top-level **`"defaultInstance"`** id: when present, the cook emits a
   companion **zero-override `MaterialInstance`** at that id beside the parent `Material` blob (the
   `CookDefaultInstanceBlob` helper synthesizes a `{ "parent": <id>, "overrides": {} }` document and
   runs it through the instance importer's shared cook, so the companion is byte-identical to a
   hand-authored zero-override `*.vmatinst.json`). Every direct material reference names that
-  default-instance id, so a reference resolves a real `MaterialInstance` archive entry.
+  default-instance id, so a reference resolves a real `MaterialInstance` archive entry. The id lives
+  in the material source, not the pack manifest, so the material editor mints and writes it through
+  the same `.vmat` round-trip it already owns; a hand-authored material declares it directly.
 - **Material instances** (`*.vmatinst.json`) cook a sparse parameter override over a parent
   `Material` through the `MaterialInstanceImporter`. The source declares `"parent"` (a parent
   `Material` `AssetId`) and a sparse `"overrides"` object (parent-field name → value for a param,
@@ -223,7 +225,10 @@ loader share one encoder.
 - **`verify`** — re-hash a `.vengpack`'s blobs + TOC digest and exit nonzero on any
   mismatch.
 - **`generate-id`** — mint a collision-free `AssetId` (prints hex for C++ literals and
-  decimal for JSON packs; `--reference <pack.json>` to avoid existing ids).
+  decimal for JSON packs; `--reference <pack.json>` to avoid existing ids). The same mint is a
+  callable in-process API — `GenerateAssetId(span<const path> referencePackPaths)` (`Cooker.h`,
+  over `ParseAssetPack` + the `AssetPack`-checking overload) — so the editor mints the
+  `defaultInstance` id without shelling out to the CLI.
 - **`generate-type-id`** — the `TypeId` analogue of `generate-id`.
 - The tool can also emit a **type manifest**.
 

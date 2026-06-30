@@ -1,6 +1,8 @@
 #include <VengEditor/EditorHost.h>
 
 #include <Veng/Application.h>
+#include <Veng/Cook/Cooker.h>
+#include <Veng/Log.h>
 
 #include "CookSession.h"
 
@@ -46,6 +48,17 @@ int main(const int argc, char** argv)
         // CookSession is stateless; build one per request.
         .Cook = [](const VengEditor::CookRequest& request, Veng::TaskSystem& tasks)
         { return VengEditor::CookSession().Cook(request, tasks); },
+        // The cooker's id-generator, run in-process against the project's reference packs.
+        .MintId = [](std::span<const Veng::path> references) -> Veng::AssetId
+        {
+            const Veng::Result<Veng::AssetId> id = Veng::Cook::GenerateAssetId(references);
+            if (!id)
+            {
+                Veng::Log::Error("editor: AssetId mint failed: {}", id.error());
+                return Veng::AssetId{};
+            }
+            return *id;
+        },
     };
 
     // The editor consumes its own --project/--build-dir flags above; Application::Run reads only a

@@ -57,6 +57,6 @@
     { "id": 7542712814785632894, "type": "shader", "source": "shaders/emissive.vert.shader.json" },
     { "id": 14613782249640445990, "type": "shader", "source": "shaders/emissive.frag.shader.json" },
     { "id": 3261539366325962248, "type": "shader", "source": "shaders/emissive_skinned.vert.shader.json" },
-    { "id": 13589203438992884788, "type": "material", "source": "materials/tonemap.vmat.json", "defaultInstance": 13090400782638046225 }
+    { "id": 13589203438992884788, "type": "material", "source": "materials/tonemap.vmat.json" }
   ]
 }

@@ -299,9 +299,9 @@ namespace VengEditor
         public:
             MaterialEditorFactory(const AssetSourceIndex& index, Application& app,
                                   AssetManager& assets, ImGuiLayer& imgui, EditorRegistry& editors,
-                                  VengEditor::CookDriver cook)
+                                  VengEditor::CookDriver cook, function<AssetId()> mintId)
                 : m_Index(index), m_App(app), m_Assets(assets), m_ImGui(imgui), m_Editors(editors),
-                  m_Cook(std::move(cook))
+                  m_Cook(std::move(cook)), m_MintId(std::move(mintId))
             {
             }
 
@@ -316,7 +316,8 @@ namespace VengEditor
                 }
 
                 return CreateUnique<MaterialEditorPanel>(id, entry->Source, m_Index, m_App,
-                                                         m_Assets, m_ImGui, m_Editors, m_Cook);
+                                                         m_Assets, m_ImGui, m_Editors, m_Cook,
+                                                         m_MintId);
             }
 
         private:
@@ -326,6 +327,7 @@ namespace VengEditor
             ImGuiLayer& m_ImGui;
             EditorRegistry& m_Editors;
             VengEditor::CookDriver m_Cook;
+            function<AssetId()> m_MintId;
         };
 
         // Resolves a material-instance AssetId to its .vmatinst.json source through the manifest
@@ -670,9 +672,10 @@ namespace VengEditor
                     [this] { return GetPreviewConfiguration(); }));
 
             m_Registries->Editor.RegisterAssetEditor(
-                AssetType::Material, CreateUnique<MaterialEditorFactory>(
-                                         *m_Sources, *this, GetAssetManager(), *GetImGuiLayer(),
-                                         m_Registries->Editor, cookFor()));
+                AssetType::Material,
+                CreateUnique<MaterialEditorFactory>(*m_Sources, *this, GetAssetManager(),
+                                                    *GetImGuiLayer(), m_Registries->Editor,
+                                                    cookFor(), [this] { return MintAssetId(); }));
 
             m_Registries->Editor.RegisterAssetEditor(
                 AssetType::MaterialInstance,
@@ -713,6 +716,23 @@ namespace VengEditor
         {
             OpenAssetEditor(AssetType::Level, m_ProjectSettings.StartupLevel);
         }
+    }
+
+    AssetId EditorHost::MintAssetId() const
+    {
+        if (!m_Info.MintId)
+        {
+            return AssetId{};
+        }
+
+        // The same reference set RequestCook resolves against: every project pack plus the core
+        // pack, so the minted id avoids the whole project's one AssetId namespace.
+        vector<path> references = m_ProjectSettings.Packs;
+        if (!m_CorePackManifest.empty())
+        {
+            references.push_back(m_CorePackManifest);
+        }
+        return m_Info.MintId(references);
     }
 
     void EditorHost::RequestCook(const CookRequest& request,

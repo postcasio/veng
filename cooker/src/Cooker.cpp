@@ -319,6 +319,30 @@ namespace Veng::Cook
         return result;
     }
 
+    Result<AssetId> GenerateAssetId(std::span<const path> referencePackPaths)
+    {
+        vector<AssetPack> packs;
+        packs.reserve(referencePackPaths.size());
+        for (const path& refPath : referencePackPaths)
+        {
+            Result<AssetPack> packResult = ParseAssetPack(refPath);
+            if (!packResult)
+            {
+                return std::unexpected(packResult.error());
+            }
+            packs.push_back(std::move(*packResult));
+        }
+
+        vector<const AssetPack*> packPtrs;
+        packPtrs.reserve(packs.size());
+        for (const AssetPack& pack : packs)
+        {
+            packPtrs.push_back(&pack);
+        }
+
+        return GenerateAssetId(std::span<const AssetPack* const>(packPtrs));
+    }
+
     Result<BuildConfiguration> ParseBuildConfiguration(const path& configFile)
     {
         const std::ifstream file(configFile, std::ios::binary);
@@ -796,33 +820,49 @@ namespace Veng::Cook
 
         EmitBlob(writer, AssetId{.Value = id}, *type, *blob, level);
 
-        // A parent Material that declares a `defaultInstance` id emits a companion zero-override
-        // MaterialInstance at that id, so every direct reference names a real instance archive entry.
-        if (*type == AssetType::Material && entry.contains("defaultInstance"))
+        // A parent Material whose `*.vmat.json` declares a `defaultInstance` id emits a companion
+        // zero-override MaterialInstance at that id, so every direct reference names a real instance
+        // archive entry. The id lives in the material source, not the pack manifest, so the material
+        // editor mints and writes it through the same `.vmat` round-trip it already owns.
+        if (*type == AssetType::Material && entry.contains("source") && entry["source"].is_string())
         {
-            if (!entry["defaultInstance"].is_number_unsigned())
+            const path vmatPath = context.PackDir / entry["source"].get<string>();
+            const std::ifstream vmatFile(vmatPath, std::ios::binary);
+            std::ostringstream vmatContent;
+            vmatContent << vmatFile.rdbuf();
+            const json vmat = json::parse(vmatContent.str(), nullptr, false);
+            if (vmat.is_discarded() || !vmat.is_object())
             {
-                return std::unexpected("'defaultInstance' must be an unsigned u64 AssetId");
-            }
-            const u64 defaultInstanceId = entry["defaultInstance"].get<u64>();
-            if (defaultInstanceId == 0)
-            {
-                return std::unexpected("'defaultInstance' id 0 is reserved (invalid AssetId)");
-            }
-            if (!seenIds.insert(defaultInstanceId).second)
-            {
-                return std::unexpected(
-                    fmt::format("default-instance id {} duplicated", defaultInstanceId));
+                return std::unexpected(fmt::format("material source '{}' is not a JSON object",
+                                                   entry["source"].get<string>()));
             }
 
-            const Result<vector<u8>> instanceBlob = CookDefaultInstanceBlob(context, id);
-            if (!instanceBlob)
+            if (vmat.contains("defaultInstance"))
             {
-                return std::unexpected(instanceBlob.error());
-            }
+                if (!vmat["defaultInstance"].is_number_unsigned())
+                {
+                    return std::unexpected("'defaultInstance' must be an unsigned u64 AssetId");
+                }
+                const u64 defaultInstanceId = vmat["defaultInstance"].get<u64>();
+                if (defaultInstanceId == 0)
+                {
+                    return std::unexpected("'defaultInstance' id 0 is reserved (invalid AssetId)");
+                }
+                if (!seenIds.insert(defaultInstanceId).second)
+                {
+                    return std::unexpected(
+                        fmt::format("default-instance id {} duplicated", defaultInstanceId));
+                }
 
-            EmitBlob(writer, AssetId{.Value = defaultInstanceId}, AssetType::MaterialInstance,
-                     *instanceBlob, level);
+                const Result<vector<u8>> instanceBlob = CookDefaultInstanceBlob(context, id);
+                if (!instanceBlob)
+                {
+                    return std::unexpected(instanceBlob.error());
+                }
+
+                EmitBlob(writer, AssetId{.Value = defaultInstanceId}, AssetType::MaterialInstance,
+                         *instanceBlob, level);
+            }
         }
 
         return {};

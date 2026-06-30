@@ -5,6 +5,6 @@
     { "id": 9001, "type": "texture",  "source": "textures/brick.tex.json" },
     { "id": 9101, "type": "shader",   "source": "shaders/brick.vert.shader.json" },
     { "id": 9102, "type": "shader",   "source": "shaders/brick.frag.shader.json" },
-    { "id": 9003, "type": "material", "source": "materials/brick.vmat.json", "defaultInstance": 9000003 }
+    { "id": 9003, "type": "material", "source": "materials/brick.vmat.json" }
   ]
 }

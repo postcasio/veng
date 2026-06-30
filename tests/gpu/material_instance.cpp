@@ -41,7 +41,7 @@ namespace
 {
     // The brick Surface parent in the g-buffer fixture pack.
     constexpr AssetId BrickParentId{0x232BULL}; // 9003
-    // The companion zero-override default instance the pack's `defaultInstance` key emits.
+    // The companion zero-override default instance the material's `defaultInstance` key emits.
     constexpr AssetId BrickDefaultInstanceId{0x895443ULL}; // 9000003
     // A test-local id for the hand-built instance (distinct from any cooked asset).
     constexpr AssetId InstanceId{0x5005A11CE0000001ULL};

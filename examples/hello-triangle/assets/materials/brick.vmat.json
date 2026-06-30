@@ -1,10 +1,40 @@
 {
+  "defaultInstance": 13053759821581030982,
   "domain": "surface",
-  "shaders": { "vertex": 7619531439638779021, "fragment": 1005 },
+  "shaders": {
+    "vertex": 7619531439638779021,
+    "fragment": 1005
+  },
   "fields": [
-    { "name": "BaseColorFactor",  "type": "vec4",    "value": [1.0, 1.0, 1.0, 1.0] },
-    { "name": "EmissiveColor",    "type": "vec4",    "value": [0.0, 0.0, 0.0, 0.0] },
-    { "name": "BaseColor",        "type": "texture", "id": 1001 },
-    { "name": "BaseColorSampler", "type": "sampler", "texture": "BaseColor" }
+    {
+      "name": "BaseColorFactor",
+      "type": "vec4",
+      "value": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "name": "EmissiveColor",
+      "type": "vec4",
+      "value": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "BaseColor",
+      "type": "texture",
+      "id": 1001
+    },
+    {
+      "name": "BaseColorSampler",
+      "type": "sampler",
+      "texture": "BaseColor"
+    }
   ]
 }

@@ -3,6 +3,6 @@
   "assets": [
     { "id": 9501, "type": "shader",   "source": "shaders/fullscreen.vert.shader.json" },
     { "id": 9502, "type": "shader",   "source": "shaders/identity_post.frag.shader.json" },
-    { "id": 9503, "type": "material", "source": "materials/identity_post.vmat.json", "defaultInstance": 9000503 }
+    { "id": 9503, "type": "material", "source": "materials/identity_post.vmat.json" }
   ]
 }

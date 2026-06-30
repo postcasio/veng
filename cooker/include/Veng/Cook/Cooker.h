@@ -25,6 +25,15 @@ namespace Veng::Cook
     /// @param packJson  Path to the pack JSON file.
     [[nodiscard]] Result<AssetPack> ParseAssetPack(const path& packJson);
 
+    /// @brief Mints a collision-free AssetId checked against the packs at the given manifest paths.
+    ///
+    /// Parses each manifest through ParseAssetPack and mints an id colliding with none of their
+    /// entries — the in-process form of `vengc generate-id --reference`, so an editor-authored
+    /// id is the same kind of mint the CLI produces against the same references.
+    /// @param referencePackPaths  Pack manifest paths whose ids the minted id must avoid.
+    /// @return A fresh, collision-free AssetId, or a located parse error.
+    [[nodiscard]] Result<AssetId> GenerateAssetId(std::span<const path> referencePackPaths);
+
     /// @brief Hand-parses a `*.buildcfg` JSON authoring file into a BuildConfiguration.
     ///
     /// The cooker's parser for the build-configuration authoring file, mirroring the per-asset

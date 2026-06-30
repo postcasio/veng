@@ -169,6 +169,7 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
 
     WriteFile(dir / "brick.vmat.json",
               fmt::format(R"({{
+  "defaultInstance": 9008004,
   "domain": "surface",
   "shaders": {{ "vertex": 8002, "fragment": 8003 }},
   "fields": [
@@ -190,7 +191,7 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
     { "id": 8001, "type": "vertex_layout",     "source": "canonical.vlayout.json" },
     { "id": 8002, "type": "shader",            "source": "surface.vert.shader.json" },
     { "id": 8003, "type": "shader",            "source": "brick.frag.shader.json" },
-    { "id": 8004, "type": "material",          "source": "brick.vmat.json", "defaultInstance": 9008004 },
+    { "id": 8004, "type": "material",          "source": "brick.vmat.json" },
     { "id": 8005, "type": "material_instance", "source": "tinted.vmatinst.json" }
   ]
 })");

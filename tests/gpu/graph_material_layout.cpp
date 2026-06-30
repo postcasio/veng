@@ -182,8 +182,10 @@ SurfaceFragmentInput vsMain(VSInput input)
     // with the reflected offsets by construction.
     const MaterialShaderInterface iface{
         .Fields = {}, .VertexShader = AssetId{9702}, .FragmentShader = AssetId{9703}};
-    WriteFile(dir / "tint.vmat.json",
-              WriteMaterialVmat(generated->Fields, iface, MaterialDomain::Surface));
+    // The default-instance id lives in the .vmat source; inject it into the generated document.
+    string tintVmat = WriteMaterialVmat(generated->Fields, iface, MaterialDomain::Surface);
+    tintVmat.insert(tintVmat.find('{') + 1, "\n  \"defaultInstance\": 9009704,");
+    WriteFile(dir / "tint.vmat.json", tintVmat);
 
     WriteFile(dir / "pack.json", R"({
   "version": 1,
@@ -191,7 +193,7 @@ SurfaceFragmentInput vsMain(VSInput input)
     { "id": 9701, "type": "vertex_layout", "source": "canonical.vlayout.json" },
     { "id": 9702, "type": "shader",        "source": "surface.vert.shader.json" },
     { "id": 9703, "type": "shader",        "source": "tint.frag.shader.json" },
-    { "id": 9704, "type": "material",      "source": "tint.vmat.json", "defaultInstance": 9009704 }
+    { "id": 9704, "type": "material",      "source": "tint.vmat.json" }
   ]
 })");
 

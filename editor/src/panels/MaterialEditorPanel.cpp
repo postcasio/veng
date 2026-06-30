@@ -77,12 +77,31 @@ namespace VengEditor
     MaterialEditorPanel::MaterialEditorPanel(AssetId id, path sourcePath,
                                              const AssetSourceIndex& sources, Application& app,
                                              AssetManager& assets, ImGuiLayer& imgui,
-                                             EditorRegistry& editors, CookDriver cook)
+                                             EditorRegistry& editors, CookDriver cook,
+                                             function<AssetId()> mintId)
         : m_Id(id), m_SourcePath(std::move(sourcePath)), m_Sources(sources),
           m_Context(app.GetRenderContext()), m_Assets(assets), m_ImGui(imgui), m_Editors(editors),
-          m_Cook(std::move(cook))
+          m_Cook(std::move(cook)), m_MintId(std::move(mintId))
     {
         m_Title = fmt::format("Material: {}", m_SourcePath.filename().string());
+
+        // Read the parent's declared default-instance id from the source, if any; a save backfills
+        // it (minting through m_MintId) when absent, so an editor-authored material never needs the
+        // hand-mint Plan 01's cook requires of a referenced material.
+        {
+            const std::ifstream file(m_SourcePath, std::ios::binary);
+            if (file)
+            {
+                std::ostringstream contents;
+                contents << file.rdbuf();
+                const Json doc = Json::parse(contents.str(), nullptr, false);
+                if (!doc.is_discarded() && doc.is_object() && doc.contains("defaultInstance") &&
+                    doc["defaultInstance"].is_number_unsigned())
+                {
+                    m_DefaultInstanceId = AssetId{doc["defaultInstance"].get<u64>()};
+                }
+            }
+        }
 
         // The temp cook source is a fixed dotfile beside the real source so the
         // importer's source-dir-relative .shader.json resolution still resolves.
@@ -337,7 +356,17 @@ namespace VengEditor
             {
                 return std::nullopt;
             }
-            return WriteMaterialVmat(generated->Fields, Interface(), m_Domain);
+            Json doc = Json::parse(WriteMaterialVmat(generated->Fields, Interface(), m_Domain),
+                                   nullptr, false);
+            if (doc.is_discarded() || !doc.is_object())
+            {
+                return std::nullopt;
+            }
+            if (m_DefaultInstanceId.IsValid())
+            {
+                doc["defaultInstance"] = m_DefaultInstanceId.Value;
+            }
+            return doc.dump(4);
         }
 
         // The non-graph material stays on its on-disk field list; only the embedded "_editor"
@@ -366,11 +395,34 @@ namespace VengEditor
             doc[EditorKey] = graphDoc;
         }
 
+        if (m_DefaultInstanceId.IsValid())
+        {
+            doc["defaultInstance"] = m_DefaultInstanceId.Value;
+        }
+
         return doc.dump(4);
     }
 
     bool MaterialEditorPanel::WriteVmat(const path& target)
     {
+        // Saving to the real source backfills a missing default-instance id: mint once (against the
+        // project packs) and cache it, so AssembleVmat writes it and every reference resolves a real
+        // MaterialInstance archive entry. The temp cook target needs none (the preview builds a
+        // runtime instance over the parent).
+        if (target == m_SourcePath && !m_DefaultInstanceId.IsValid() && m_MintId)
+        {
+            const AssetId minted = m_MintId();
+            if (minted.IsValid())
+            {
+                m_DefaultInstanceId = minted;
+            }
+            else
+            {
+                Log::Error("Material editor: could not mint a defaultInstance id for {}",
+                           m_SourcePath.filename().string());
+            }
+        }
+
         const optional<string> document = AssembleVmat();
         if (!document)
         {
@@ -794,6 +846,13 @@ namespace VengEditor
         {
             UI::TextColored({0.9f, 0.6f, 0.3f, 1.0f}, fmt::format("Rejected: {}", *m_Toast));
         }
+
+        // Identity, read-only: the parent material id and the companion default-instance id a save
+        // mints. The default-instance id is what every reference names; it is identity, not a tunable.
+        UI::TextDisabled(fmt::format("Material id: 0x{:X}", m_Id.Value));
+        UI::TextDisabled(m_DefaultInstanceId.IsValid()
+                             ? fmt::format("Default instance id: 0x{:X}", m_DefaultInstanceId.Value)
+                             : string("Default instance id: (minted on save)"));
 
         UI::Separator();
 

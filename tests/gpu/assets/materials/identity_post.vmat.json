@@ -1,8 +1,19 @@
 {
+  "defaultInstance": 9000503,
   "domain": "postprocess",
-  "shaders": { "vertex": 9501, "fragment": 9502 },
+  "shaders": {
+    "vertex": 9501,
+    "fragment": 9502
+  },
   "fields": [
-    { "name": "Source",        "type": "texture" },
-    { "name": "SourceSampler", "type": "sampler", "texture": "Source" }
+    {
+      "name": "Source",
+      "type": "texture"
+    },
+    {
+      "name": "SourceSampler",
+      "type": "sampler",
+      "texture": "Source"
+    }
   ]
 }

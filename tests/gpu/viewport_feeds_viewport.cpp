@@ -104,10 +104,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             << (fixtureDir / "shaders/brick.vert.shader.json").string() << R"(" },
     { "id": 9102, "type": "shader",   "source": ")"
             << (fixtureDir / "shaders/brick.frag.shader.json").string() << R"(" },
-    { "id": 9003, "type": "material", "defaultInstance": 9000003, "source": ")"
+    { "id": 9003, "type": "material", "source": ")"
             << (fixtureDir / "materials/brick.vmat.json").string() << R"(" },
-    { "id": 9013, "type": "material", "defaultInstance": 9009013, "source": ")"
-            << (fixtureDir / "materials/brick.vmat.json").string() << R"(" }
+    { "id": 9013, "type": "material", "source": ")"
+            << (fixtureDir / "materials/brick_b.vmat.json").string() << R"(" }
   ]
 })";
     }

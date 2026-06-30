@@ -46,6 +46,12 @@ namespace VengEditor
         /// @brief Cook-on-demand backend, injected by the editor exe (which links
         /// libveng_cook). Null disables cook-on-demand; RequestCook then reports an error.
         VengEditor::CookBackend Cook;
+
+        /// @brief AssetId minter, injected by the editor exe (which links libveng_cook).
+        ///
+        /// Mints the `defaultInstance` id the material editor writes into a new or legacy
+        /// `.vmat.json`. Null leaves authored materials on the hand-mint floor.
+        VengEditor::AssetIdMinter MintId;
     };
 
     /// @brief The editor application: an Application subclass that hosts the module
@@ -78,6 +84,14 @@ namespace VengEditor
         /// @param onComplete Continuation called on the main thread with the result.
         void RequestCook(const VengEditor::CookRequest& request,
                          Veng::function<void(Veng::Result<Veng::MountHandle>)> onComplete);
+
+        /// @brief Mints a collision-free AssetId against the open project's pack manifests.
+        ///
+        /// Passes the project's packs (and the core pack) as references, the same set
+        /// RequestCook resolves against, so a freshly minted id cannot collide with an
+        /// existing one. Returns an invalid AssetId when no minter is configured.
+        /// @return A fresh AssetId, or an invalid one (Value 0) when minting is unavailable.
+        [[nodiscard]] Veng::AssetId MintAssetId() const;
 
         /// @brief Returns the project's active build configuration, or nullptr when none resolves.
         ///
