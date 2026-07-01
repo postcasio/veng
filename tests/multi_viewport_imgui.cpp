@@ -5,16 +5,18 @@
 // each SceneViewportPanel owns an Offscreen viewport and draws its output with
 // ImGui::Image; two open panels put two viewports on screen in one frame.
 //
-// The regression it guards is the multi-viewport rendering bug: when two lit
-// viewports render in the same frame, only the last one registered comes out
-// correct — every earlier viewport's deferred-lighting result is lost (it reads
-// back black), so the two side-by-side panels do not both show their own scene.
-// (The existing Albedo-mode multi_viewport_isolation case does not catch this; the
-// fault is specific to the Final/lighting path, which this exercises.) The test
-// drives the full ImGui interaction (BeginFrame, build both windows,
-// ImGuiLayer::Render into the UI's offscreen image), reads back that composited
-// image, and asserts the left half is red-dominant and the right half is
-// green-dominant — distinct colors the bug (a black, unlit earlier viewport) fails.
+// The regression it guards: the terminal tonemap ran through one shared PostProcess
+// MaterialInstance (the cooked tonemap default, cached by AssetManager and loaded by
+// every SceneRenderer). Its per-frame param slot — which the tonemap pass fills with
+// this viewport's HDR source handle each Execute — rings by frame-in-flight, not per
+// view, so two viewports rendering in one frame clobbered it: the last writer's source
+// won, and every earlier viewport's tonemap sampled the wrong (often not-yet-written)
+// HDR and read back black. The fix gives each SceneRenderer its own tonemap instance.
+// (The Albedo-mode multi_viewport_isolation case never hit this — it has no tonemap
+// tail — so the fault was specific to the Final path this exercises.) The test drives
+// the full ImGui interaction (BeginFrame, build both windows, ImGuiLayer::Render into
+// the UI's offscreen image), reads back that composited image, and asserts the left
+// half is red-dominant and the right half green-dominant — distinct colors the bug fails.
 //
 // The UI image is ColorAttachment|Sampled (not TransferSrc), so it cannot be
 // downloaded directly; a fullscreen pass samples it into a TransferSrc target the
@@ -421,9 +423,6 @@ int main()
         // the seam between the two windows.
         const vec3 left = DecodeTexel(pixels, uiExtent.x, uiExtent.x / 4, uiExtent.y / 2);
         const vec3 right = DecodeTexel(pixels, uiExtent.x, uiExtent.x * 3 / 4, uiExtent.y / 2);
-
-        std::fprintf(stderr, "[info] left=(%.3f,%.3f,%.3f) right=(%.3f,%.3f,%.3f)\n", left.r,
-                     left.g, left.b, right.r, right.g, right.b);
 
         // Each half carries its own viewport's light color.
         Check(left.r > 0.1f && left.r > left.g && left.r > left.b,

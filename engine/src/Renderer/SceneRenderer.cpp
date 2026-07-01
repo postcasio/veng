@@ -1867,7 +1867,20 @@ namespace Veng::Renderer
             m_Assets.LoadSync<MaterialInstance>(TonemapInstanceId);
         VE_ASSERT(tonemap.has_value(), "SceneRenderer: tonemap material load failed: {}",
                   tonemap.error().Detail);
-        m_TonemapMaterial = *tonemap;
+
+        // Build a per-renderer instance over the shared tonemap parent rather than using the
+        // cached shared instance. The tonemap pass writes per-viewport state — the HDR source
+        // handle and this frame's exposure/render-scale — into the instance's single param-block
+        // slot every Execute. That slot rings by frame-in-flight, not per view, so two viewports
+        // rendering in one frame through one shared instance clobber each other: the last writer's
+        // source handle wins, and every earlier viewport's tonemap samples the wrong (often
+        // not-yet-written) HDR. A distinct instance per renderer gives each its own slot.
+        m_TonemapMaterial = m_Assets.BuildSync<MaterialInstance>(MaterialInstanceInfo{
+            .Name = "SceneRenderer Tonemap",
+            .Context = &m_Context,
+            .Parent = tonemap->Get()->GetParent(),
+            .Overrides = {},
+        });
 
         // The g-buffer debug blits share the BlitPushConstants layout; only the
         // fragment shader differs.
