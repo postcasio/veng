@@ -111,7 +111,7 @@ namespace Veng
         struct EmissiveParams
         {
             /// @brief rgb additive emissive color; zero when the material declares no EmissiveColor.
-            vec3 Color;
+            vec3 Color{0.0f};
             /// @brief Bindless texture handle index modulating Color, or 0 for a flat color.
             u32 Texture = 0;
             /// @brief Bindless sampler handle index for Texture; unused when Texture is 0.
