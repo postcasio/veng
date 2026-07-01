@@ -703,6 +703,22 @@ if (VENG_BUILD_TESTS)
     add_test(NAME mcp_world COMMAND veng_test_mcp_world)
     set_tests_properties(mcp_world PROPERTIES LABELS mcp)
 
+    # The mutation-tools proof: an McpServer with AllowMutations on + a null ApplyMutation
+    # (raw-scene path), a device-free Scene, and a loopback round-trip over entity.spawn /
+    # add_component / get / set_field / remove_component / destroy — asserting each edit took, the
+    # JsonToFields ↔ FieldsToJson round-trip, the stale-handle isError, and the spatial-version
+    # bump, plus a read-only server proving the mutation tools are absent. Device-free (the
+    # scene-only ops touch no Assets), so it runs in the default band.
+    add_executable(veng_test_mcp_mutation tests/mcp_mutation.cpp)
+    target_link_libraries(veng_test_mcp_mutation PRIVATE veng::mcp veng::veng
+            nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_mutation PRIVATE JSON_NOEXCEPTION)
+    target_include_directories(veng_test_mcp_mutation SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+
+    add_test(NAME mcp_mutation COMMAND veng_test_mcp_mutation)
+    set_tests_properties(mcp_mutation PROPERTIES LABELS mcp)
+
     # The render-tools proof (mcp_screenshot) is registered after veng_test_shaders
     # (it renders the cube fixture through the test shader pack) further below.
 

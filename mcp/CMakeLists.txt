@@ -14,6 +14,7 @@ add_library(veng_mcp SHARED
         src/ReflectToJson.cpp
         src/WorldTools.cpp
         src/RenderTools.cpp
+        src/MutationTools.cpp
         src/Vendor/HttpLib.cpp
         src/Vendor/StbImageWrite.cpp
 )

@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
 
+#include "MutationTools.h"
 #include "RenderTools.h"
 #include "WorldTools.h"
 
@@ -325,6 +326,13 @@ namespace Veng::Mcp
         // first pump land before the network thread reads the (then-immutable) registry.
         RegisterWorldTools(*server, mcpHost);
         RegisterRenderTools(*server, mcpHost);
+
+        // Mutation tools are opt-in: a read-only server (the default) exposes none of them, so
+        // tools/list honestly reflects the server's write capability.
+        if (info.AllowMutations)
+        {
+            RegisterMutationTools(*server, mcpHost);
+        }
         return server;
     }
 
