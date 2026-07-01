@@ -12,11 +12,13 @@
 #include "EditorMcp.h"
 
 #include "AssetEditorPanel.h"
+#include "AssetSourceIndex.h"
 #include "CommandStack.h"
 #include "panels/PrefabEditContext.h"
 
 #include <VengEditor/EditorPanel.h>
 
+#include <Veng/Asset/AssetType.h>
 #include <Veng/Mcp/McpHost.h>
 #include <Veng/Mcp/McpServer.h>
 #include <Veng/Mcp/McpServerInfo.h>
@@ -35,6 +37,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <fstream>
 #include <string>
 #include <thread>
 
@@ -245,6 +248,186 @@ TEST_CASE("editor MCP reflection seam + command routing")
         // no save action, surfaced as an isError.
         const Json saved = CallTool(client, "editor.save", Json::object());
         CHECK(saved.value("isError", false) == true);
+    }
+
+    done.store(true);
+    pump.join();
+}
+
+namespace
+{
+    // A bare tool panel (not an asset editor) standing in for a host-owned panel the visibility
+    // toggle addresses.
+    class TestToolPanel final : public VengEditor::EditorPanel
+    {
+    public:
+        [[nodiscard]] string_view GetTitle() const override { return "Console"; }
+        void OnUI() override {}
+    };
+
+    Veng::path WriteTempManifest()
+    {
+        const Veng::path dir = std::filesystem::temp_directory_path();
+        const Veng::path manifest = dir / "veng_editor_mcp_host_tools.vengpack.json";
+        std::ofstream out(manifest, std::ios::binary | std::ios::trunc);
+        out << R"({
+  "assets": [
+    { "id": 1001, "type": "texture",  "source": "a.tex.json" },
+    { "id": 1002, "type": "texture",  "source": "b.tex.json" },
+    { "id": 2001, "type": "material", "source": "m.vmat.json" }
+  ]
+})";
+        return manifest;
+    }
+}
+
+TEST_CASE("editor MCP host tools: list_assets, set_panel_visible, open_asset, cook status")
+{
+    TypeRegistry registry;
+    RegisterBuiltinTypes(registry);
+
+    const Veng::path manifest = WriteTempManifest();
+    const VengEditor::AssetSourceIndex sources = VengEditor::AssetSourceIndex::Parse(manifest);
+
+    TestToolPanel console;
+    bool consoleOpen = true;
+
+    // Captured effects of the host verbs, so the test asserts a tool call reached the host.
+    std::optional<Veng::AssetId> opened;
+    std::optional<Veng::AssetId> cooked;
+
+    const VengEditor::EditorMcpHost editorHost{
+        .Types = registry,
+        .Panels = [&] { return vector<VengEditor::EditorPanel*>{&console}; },
+        .FocusedDocument = [] { return static_cast<VengEditor::AssetEditorPanel*>(nullptr); },
+        .DocumentScene = [] { return static_cast<Scene*>(nullptr); },
+        .AssetSources = [&] { return &sources; },
+        .OpenAsset =
+            [&](Veng::AssetId id)
+        {
+            // Only ids in the index open; unknown ids report failure (isError).
+            if (sources.Find(id) == nullptr)
+            {
+                return false;
+            }
+            opened = id;
+            return true;
+        },
+        .SetPanelVisible =
+            [&](string_view title, bool visible)
+        {
+            if (title == "Console")
+            {
+                consoleOpen = visible;
+                return true;
+            }
+            return false;
+        },
+        .PanelViewport = [](string_view)
+        { return static_cast<Veng::Renderer::Viewport*>(nullptr); },
+        .RequestCook = [&](Veng::AssetId id) -> Veng::VoidResult
+        {
+            if (sources.Find(id) == nullptr)
+            {
+                return std::unexpected(Veng::string{"unknown asset"});
+            }
+            cooked = id;
+            return {};
+        },
+        .CookStatus = [&](Veng::AssetId id) -> std::optional<Veng::string>
+        {
+            if (cooked && cooked->Value == id.Value)
+            {
+                return Veng::string{"running"};
+            }
+            return std::nullopt;
+        }};
+
+    AssetManager* assets = nullptr;
+    const Mcp::McpHost host{.Types = registry, .Assets = *assets};
+
+    Mcp::McpServerInfo info;
+    info.Port = 0;
+
+    Unique<Mcp::McpServer> server = Mcp::McpServer::Create(info, host);
+    VengEditor::RegisterEditorHostTools(*server, editorHost);
+    const u16 port = server->GetPort();
+    REQUIRE(port != 0);
+
+    std::atomic<bool> done{false};
+    std::thread pump(
+        [&]
+        {
+            while (!done.load())
+            {
+                server->Pump();
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            server->Pump();
+        });
+
+    {
+        httplib::Client client("127.0.0.1", port);
+        client.set_connection_timeout(5, 0);
+        client.set_read_timeout(10, 0);
+
+        // editor.list_assets returns every index entry, sorted by id.
+        const Json all = Payload(CallTool(client, "editor.list_assets", Json::object()));
+        REQUIRE(all.is_object());
+        REQUIRE(all["assets"].size() == 3);
+        CHECK(all["assets"][0].value("id", std::string{}) == "1001");
+        CHECK(all["assets"][0].value("type", std::string{}) == "texture");
+        CHECK_FALSE(all.contains("nextCursor"));
+
+        // A type filter narrows the set; an unknown type name is an isError.
+        const Json textures =
+            Payload(CallTool(client, "editor.list_assets", Json{{"type", "texture"}}));
+        CHECK(textures["assets"].size() == 2);
+        const Json badType = CallTool(client, "editor.list_assets", Json{{"type", "nope"}});
+        CHECK(badType.value("isError", false) == true);
+
+        // Pagination: a limit of 1 pages the tail through nextCursor.
+        const Json page = Payload(CallTool(client, "editor.list_assets", Json{{"limit", 1}}));
+        CHECK(page["assets"].size() == 1);
+        REQUIRE(page.contains("nextCursor"));
+        const Json page2 = Payload(CallTool(client, "editor.list_assets",
+                                            Json{{"limit", 1}, {"cursor", page["nextCursor"]}}));
+        CHECK(page2["assets"].size() == 1);
+        CHECK(page2["assets"][0].value("id", std::string{}) != page["assets"][0].value("id", ""));
+
+        // editor.set_panel_visible flips the tool panel's Open flag; an unknown title is an isError.
+        const Json hide = Payload(CallTool(client, "editor.set_panel_visible",
+                                           Json{{"panel", "Console"}, {"visible", false}}));
+        CHECK(hide.value("visible", true) == false);
+        CHECK(consoleOpen == false);
+        const Json badPanel = CallTool(client, "editor.set_panel_visible",
+                                       Json{{"panel", "Nope"}, {"visible", true}});
+        CHECK(badPanel.value("isError", false) == true);
+
+        // editor.open_asset resolves a known id through the host; an unknown id is an isError.
+        const Json openOk = Payload(CallTool(client, "editor.open_asset", Json{{"asset", "1001"}}));
+        CHECK(openOk.value("opened", std::string{}) == "1001");
+        REQUIRE(opened.has_value());
+        CHECK(opened->Value == 1001);
+        const Json openBad = CallTool(client, "editor.open_asset", Json{{"asset", "9999"}});
+        CHECK(openBad.value("isError", false) == true);
+
+        // editor.request_cook kicks the cook (fire-and-poll) and editor.cook_status reports it.
+        const Json started =
+            Payload(CallTool(client, "editor.request_cook", Json{{"asset", "2001"}}));
+        CHECK(started.value("status", std::string{}) == "started");
+        REQUIRE(cooked.has_value());
+        CHECK(cooked->Value == 2001);
+        const Json status =
+            Payload(CallTool(client, "editor.cook_status", Json{{"asset", "2001"}}));
+        CHECK(status.value("status", std::string{}) == "running");
+        const Json noStatus =
+            Payload(CallTool(client, "editor.cook_status", Json{{"asset", "1001"}}));
+        CHECK(noStatus.value("status", std::string{}) == "none");
+
+        // editor.screenshot_panel over a scene-less host reports no scene, never a null deref.
+        const Json shot = CallTool(client, "editor.screenshot_panel", Json{{"panel", "Console"}});
+        CHECK(shot.value("isError", false) == true);
     }
 
     done.store(true);

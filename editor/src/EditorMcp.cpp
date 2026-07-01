@@ -1,12 +1,21 @@
 #include "EditorMcp.h"
 
 #include "AssetEditorPanel.h"
+#include "AssetSourceIndex.h"
 #include "CommandStack.h"
 #include "EditorCommand.h"
 
 #include <Veng/Mcp/McpHost.h>
 #include <Veng/Mcp/McpServer.h>
 #include <Veng/Mcp/McpTool.h>
+
+// The shared viewport-capture path (Download -> tonemap -> PNG -> base64) behind render.screenshot,
+// reused by editor.screenshot_panel. An internal veng::mcp source header reached through the
+// editor's private include of mcp/src.
+#include "ViewportCapture.h"
+
+#include <Veng/Asset/AssetType.h>
+#include <Veng/Renderer/Viewport.h>
 
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetManager.h>
@@ -26,6 +35,9 @@
 #include "ReflectToJson.h"
 
 #include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <charconv>
 
 namespace VengEditor
 {
@@ -368,6 +380,320 @@ namespace VengEditor
                 const bool did = stack->CanRedo();
                 stack->Redo();
                 return Json{{"redone", did}}.dump();
+            };
+            server.RegisterTool(std::move(tool));
+        }
+    }
+
+    namespace
+    {
+        /// @brief Default page size for editor.list_assets when the caller omits `limit`.
+        constexpr u32 ListAssetsDefaultLimit = 200;
+
+        /// @brief Parses the optional `limit` argument, clamped to the page cap.
+        u32 ParseLimit(const Json& args)
+        {
+            if (!args.is_object() || !args.contains("limit") || !args["limit"].is_number())
+            {
+                return ListAssetsDefaultLimit;
+            }
+            const i64 requested = args["limit"].get<i64>();
+            if (requested <= 0)
+            {
+                return ListAssetsDefaultLimit;
+            }
+            return static_cast<u32>(std::min<i64>(requested, ListAssetsDefaultLimit));
+        }
+
+        /// @brief Parses the opaque `cursor` (the resume offset into the sorted id list), defaulting to 0.
+        u32 ParseCursor(const Json& args)
+        {
+            if (!args.is_object() || !args.contains("cursor"))
+            {
+                return 0;
+            }
+            const Json& cursor = args["cursor"];
+            if (cursor.is_number())
+            {
+                const i64 value = cursor.get<i64>();
+                return value > 0 ? static_cast<u32>(value) : 0;
+            }
+            if (cursor.is_string())
+            {
+                const string text = cursor.get<string>();
+                u32 value = 0;
+                const auto [ptr, ec] =
+                    std::from_chars(text.data(), text.data() + text.size(), value);
+                return ec == std::errc{} ? value : 0;
+            }
+            return 0;
+        }
+
+        /// @brief Resolves an AssetId argument (decimal string or number) from a request, or a false optional.
+        optional<AssetId> ParseAssetId(const Json& args)
+        {
+            if (!args.is_object() || !args.contains("asset"))
+            {
+                return std::nullopt;
+            }
+            const Json& asset = args["asset"];
+            if (asset.is_string())
+            {
+                const string text = asset.get<string>();
+                u64 value = 0;
+                const auto [ptr, ec] =
+                    std::from_chars(text.data(), text.data() + text.size(), value);
+                if (ec != std::errc{} || ptr != text.data() + text.size())
+                {
+                    return std::nullopt;
+                }
+                return AssetId{value};
+            }
+            if (asset.is_number_unsigned())
+            {
+                return AssetId{asset.get<u64>()};
+            }
+            return std::nullopt;
+        }
+    }
+
+    void RegisterEditorHostTools(Mcp::McpServer& server, const EditorMcpHost& host)
+    {
+        // editor.open_asset — opens the registered editor for an asset (the "open the editor for
+        // this asset" verb), resolving its type from the source index.
+        {
+            Mcp::McpTool tool;
+            tool.Name = "editor.open_asset";
+            tool.Description =
+                "Opens the registered editor for an asset. Argument: { asset: <AssetId> } (a "
+                "decimal id string or number). Errors when the id is unknown to the project or its "
+                "type has no editor.";
+            tool.InputSchemaJson =
+                R"({"type":"object","required":["asset"],"properties":{"asset":{"type":"string"}}})";
+            tool.Handler = [&host](string_view argsJson) -> Result<string>
+            {
+                const Json args = Json::parse(argsJson, nullptr, false);
+                const optional<AssetId> id = ParseAssetId(args);
+                if (!id)
+                {
+                    return std::unexpected(string("expected { asset: <AssetId> }"));
+                }
+                if (!host.OpenAsset)
+                {
+                    return std::unexpected(string("opening assets is unavailable"));
+                }
+                if (!host.OpenAsset(*id))
+                {
+                    return std::unexpected(
+                        fmt::format("asset {} is unknown or its type has no editor", id->Value));
+                }
+                return Json{{"opened", std::to_string(id->Value)}}.dump();
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
+        // editor.set_panel_visible — the programmatic Window-menu toggle (show/hide a tool panel,
+        // open/close a document).
+        {
+            Mcp::McpTool tool;
+            tool.Name = "editor.set_panel_visible";
+            tool.Description = "Shows or hides an open panel by title. Argument: { panel: <title>, "
+                               "visible: bool }. "
+                               "A tool panel hides and can be reshown; a document panel closes "
+                               "when hidden. Errors "
+                               "when no open panel matches the title.";
+            tool.InputSchemaJson =
+                R"({"type":"object","required":["panel","visible"],"properties":)"
+                R"({"panel":{"type":"string"},"visible":{"type":"boolean"}}})";
+            tool.Handler = [&host](string_view argsJson) -> Result<string>
+            {
+                const Json args = Json::parse(argsJson, nullptr, false);
+                if (!args.is_object() || !args.contains("panel") || !args["panel"].is_string() ||
+                    !args.contains("visible") || !args["visible"].is_boolean())
+                {
+                    return std::unexpected(string("expected { panel: <title>, visible: bool }"));
+                }
+                if (!host.SetPanelVisible)
+                {
+                    return std::unexpected(string("panel visibility is unavailable"));
+                }
+                const string title = args["panel"].get<string>();
+                const bool visible = args["visible"].get<bool>();
+                if (!host.SetPanelVisible(title, visible))
+                {
+                    return std::unexpected(fmt::format("no open panel titled '{}'", title));
+                }
+                return Json{{"panel", title}, {"visible", visible}}.dump();
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
+        // editor.list_assets — project-wide asset inspection over the source index, paginated and
+        // optionally filtered by type.
+        {
+            Mcp::McpTool tool;
+            tool.Name = "editor.list_assets";
+            tool.Description =
+                "Lists the project's assets from the source index: each id, name, type, and source "
+                "path. Argument: { type?: <AssetType name>, limit?, cursor? }. 'type' filters by a "
+                "canonical type name (texture, material, prefab, level, …). Paginated: returns "
+                "{ assets, nextCursor? } — page the tail through nextCursor.";
+            tool.InputSchemaJson = R"({"type":"object","properties":{"type":{"type":"string"},)"
+                                   R"("limit":{"type":"integer"},"cursor":{"type":"string"}}})";
+            tool.Handler = [&host](string_view argsJson) -> Result<string>
+            {
+                const Json args = Json::parse(argsJson, nullptr, false);
+
+                optional<AssetType> filter;
+                if (args.is_object() && args.contains("type") && args["type"].is_string())
+                {
+                    const string typeName = args["type"].get<string>();
+                    filter = ParseAssetType(typeName);
+                    if (!filter)
+                    {
+                        return std::unexpected(fmt::format("unknown asset type '{}'", typeName));
+                    }
+                }
+
+                const AssetSourceIndex* sources = host.AssetSources ? host.AssetSources() : nullptr;
+                if (sources == nullptr)
+                {
+                    return Json{{"assets", Json::array()}}.dump();
+                }
+
+                // Collect the matching (id, entry) pairs, then sort by id so the cursor is a stable
+                // offset across calls (the index enumerates in unspecified order).
+                struct Row
+                {
+                    AssetId Id;
+                    const AssetSourceIndex::Entry* Entry;
+                };
+                vector<Row> rows;
+                sources->ForEachEntry(
+                    [&](AssetId id, const AssetSourceIndex::Entry& entry)
+                    {
+                        if (!filter || entry.Type == *filter)
+                        {
+                            rows.push_back({.Id = id, .Entry = &entry});
+                        }
+                    });
+                std::ranges::sort(rows, [](const Row& a, const Row& b)
+                                  { return a.Id.Value < b.Id.Value; });
+
+                const u32 limit = ParseLimit(args);
+                const u32 cursor = ParseCursor(args);
+                Json assets = Json::array();
+                usize index = cursor;
+                for (; index < rows.size() && assets.size() < limit; ++index)
+                {
+                    const Row& row = rows[index];
+                    assets.push_back(Json{{"id", std::to_string(row.Id.Value)},
+                                          {"name", row.Entry->RelativeSource.string()},
+                                          {"type", ToString(row.Entry->Type)},
+                                          {"source", row.Entry->Source.string()}});
+                }
+
+                Json result{{"assets", std::move(assets)}};
+                if (index < rows.size())
+                {
+                    result["nextCursor"] = std::to_string(index);
+                }
+                return result.dump();
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
+        // editor.screenshot_panel — a named panel's Offscreen viewport captured through the same
+        // Download -> PNG -> base64 path render.screenshot uses.
+        {
+            Mcp::McpTool tool;
+            tool.Name = "editor.screenshot_panel";
+            tool.Description =
+                "Captures a named editor panel's rendered scene as a PNG image (tonemapped 8-bit "
+                "scene color). Argument: { panel: <title> }. Errors when the title names no open "
+                "panel or the panel renders no scene. Returns an image content block.";
+            tool.InputSchemaJson =
+                R"({"type":"object","required":["panel"],"properties":{"panel":{"type":"string"}}})";
+            tool.ReturnsContentBlocks = true;
+            tool.Handler = [&host](string_view argsJson) -> Result<string>
+            {
+                const Json args = Json::parse(argsJson, nullptr, false);
+                if (!args.is_object() || !args.contains("panel") || !args["panel"].is_string())
+                {
+                    return std::unexpected(string("expected { panel: <title> }"));
+                }
+                const string title = args["panel"].get<string>();
+                Renderer::Viewport* viewport =
+                    host.PanelViewport ? host.PanelViewport(title) : nullptr;
+                if (viewport == nullptr)
+                {
+                    return std::unexpected(
+                        fmt::format("no open panel titled '{}' renders a scene", title));
+                }
+                return Mcp::CaptureViewportContentBlocks(*viewport);
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
+        // editor.request_cook — the editor-only cook-on-demand path (fire-and-poll), distinct from
+        // the runtime world.load_prefab which never cooks.
+        {
+            Mcp::McpTool tool;
+            tool.Name = "editor.request_cook";
+            tool.Description =
+                "Cooks a project asset on demand and hot-reloads it, off the render thread. "
+                "Argument: { asset: <AssetId> }. Returns { status: \"started\" } immediately — "
+                "poll "
+                "editor.cook_status for completion. Errors when the id is unknown or "
+                "cook-on-demand "
+                "is unconfigured.";
+            tool.InputSchemaJson =
+                R"({"type":"object","required":["asset"],"properties":{"asset":{"type":"string"}}})";
+            tool.Handler = [&host](string_view argsJson) -> Result<string>
+            {
+                const Json args = Json::parse(argsJson, nullptr, false);
+                const optional<AssetId> id = ParseAssetId(args);
+                if (!id)
+                {
+                    return std::unexpected(string("expected { asset: <AssetId> }"));
+                }
+                if (!host.RequestCook)
+                {
+                    return std::unexpected(string("cook-on-demand is unavailable"));
+                }
+                const VoidResult kicked = host.RequestCook(*id);
+                if (!kicked)
+                {
+                    return std::unexpected(kicked.error());
+                }
+                return Json{{"status", "started"}, {"asset", std::to_string(id->Value)}}.dump();
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
+        // editor.cook_status — the companion poll for editor.request_cook.
+        {
+            Mcp::McpTool tool;
+            tool.Name = "editor.cook_status";
+            tool.Description =
+                "Reports the latest cook status of an asset requested through editor.request_cook. "
+                "Argument: { asset: <AssetId> }. Returns { status } — \"running\", \"ok\", or an "
+                "error message — or { status: \"none\" } when no cook of this id was requested.";
+            tool.InputSchemaJson =
+                R"({"type":"object","required":["asset"],"properties":{"asset":{"type":"string"}}})";
+            tool.Handler = [&host](string_view argsJson) -> Result<string>
+            {
+                const Json args = Json::parse(argsJson, nullptr, false);
+                const optional<AssetId> id = ParseAssetId(args);
+                if (!id)
+                {
+                    return std::unexpected(string("expected { asset: <AssetId> }"));
+                }
+                const optional<string> status =
+                    host.CookStatus ? host.CookStatus(*id) : std::nullopt;
+                return Json{{"asset", std::to_string(id->Value)},
+                            {"status", status.value_or(string("none"))}}
+                    .dump();
             };
             server.RegisterTool(std::move(tool));
         }

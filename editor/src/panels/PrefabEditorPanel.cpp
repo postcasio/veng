@@ -110,6 +110,11 @@ namespace VengEditor
         m_InspectorChild = AddChild(std::move(inspector));
     }
 
+    Veng::Renderer::Viewport* PrefabEditorPanel::GetDocumentViewport()
+    {
+        return m_Viewport != nullptr ? m_Viewport->GetViewport() : nullptr;
+    }
+
     PrefabEditorPanel::~PrefabEditorPanel()
     {
         // Children (which hold m_Context and m_Scene by reference) are released by the

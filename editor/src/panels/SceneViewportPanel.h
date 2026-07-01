@@ -71,6 +71,12 @@ namespace VengEditor
 
         void OnUI() override;
 
+        /// @brief Returns the owned Offscreen viewport, or null before it is constructed.
+        ///
+        /// The document's screenshot seam (editor.screenshot_panel) captures this viewport's ready
+        /// output through the shared render-thread Download path.
+        [[nodiscard]] Veng::Renderer::Viewport* GetViewport() const { return m_Viewport.get(); }
+
         /// @brief Applies a level's post/pipeline render subset to the viewport, mirroring the runtime mapping.
         ///
         /// Folds the topology toggles (Bloom/Shadows/AO) into the SceneRendererSettings, flagged for

@@ -14,6 +14,7 @@ add_library(veng_mcp SHARED
         src/ReflectToJson.cpp
         src/WorldTools.cpp
         src/RenderTools.cpp
+        src/ViewportCapture.cpp
         src/MutationTools.cpp
         src/Vendor/HttpLib.cpp
         src/Vendor/StbImageWrite.cpp
@@ -70,3 +71,21 @@ target_include_directories(veng_mcp PRIVATE ${stb_SOURCE_DIR})
 # supplies the portable Threads::Threads target.
 find_package(Threads REQUIRED)
 target_link_libraries(veng_mcp PRIVATE Threads::Threads)
+
+# The installed veng-editor exe links veng::mcp, so libveng_mcp must be co-installed beside the
+# other SDK libraries for the installed editor to resolve it at load. This is a plain runtime
+# co-install, NOT part of the vengTargets export set — an out-of-tree find_package(veng) consumer
+# still cannot target_link_libraries(app veng::mcp) yet (the imported target + headers join
+# vengTargets in the SDK-install plan). The installed lib finds libveng beside it through
+# @loader_path (macOS) or $ORIGIN (Linux).
+if (VENG_INSTALL_SDK OR PROJECT_IS_TOP_LEVEL)
+    if (APPLE)
+        set_target_properties(veng_mcp PROPERTIES INSTALL_RPATH "@loader_path")
+    elseif (NOT MSVC)
+        set_target_properties(veng_mcp PROPERTIES INSTALL_RPATH "$ORIGIN")
+    endif ()
+
+    install(TARGETS veng_mcp
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif ()

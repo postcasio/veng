@@ -1,11 +1,19 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Asset/AssetId.h>
+#include <Veng/Asset/AssetType.h>
+#include <Veng/Result.h>
 
 namespace Veng
 {
     class Scene;
     class TypeRegistry;
+
+    namespace Renderer
+    {
+        class Viewport;
+    }
 
     namespace Mcp
     {
@@ -17,6 +25,7 @@ namespace Veng
 namespace VengEditor
 {
     class AssetEditorPanel;
+    class AssetSourceIndex;
     class EditorPanel;
 
     /// @brief The provider seam the generic editor tools reach the live editor state through.
@@ -49,6 +58,48 @@ namespace VengEditor
         /// The same scene McpHost::CurrentWorld serves; the command router reads a component's
         /// current bytes from it to build an undoable command. Null makes the router decline.
         Veng::function<Veng::Scene*()> DocumentScene;
+
+        /// @brief Returns the project's AssetId→source index, or null when no project is open.
+        ///
+        /// editor.list_assets browses these entries (id, name, type, source path). Null (the
+        /// no-project state) makes the tool report an empty asset list.
+        Veng::function<const AssetSourceIndex*()> AssetSources;
+
+        /// @brief Opens the registered editor for an asset, resolving its type from the source index.
+        ///
+        /// editor.open_asset dispatches to this — PanelHost::OpenAssetEditor plus the index type
+        /// resolution. Returns false when the id is unknown to the project or its type has no
+        /// registered editor, surfaced by the tool as a located error.
+        Veng::function<bool(Veng::AssetId)> OpenAsset;
+
+        /// @brief Shows or hides an open panel by title, or opens/closes a document panel.
+        ///
+        /// editor.set_panel_visible flips the panel's Open flag at the frame's panel-erase point.
+        /// Returns whether a panel matched the title (false makes the tool report "no such panel").
+        Veng::function<bool(Veng::string_view title, bool visible)> SetPanelVisible;
+
+        /// @brief Resolves an open panel's Offscreen viewport by title, or null.
+        ///
+        /// editor.screenshot_panel captures this viewport through the shared render-thread Download
+        /// path. Null when the title names no open panel or the panel renders no scene.
+        Veng::function<Veng::Renderer::Viewport*(Veng::string_view title)> PanelViewport;
+
+        /// @brief Kicks a cook of the asset off the render thread, returning immediately.
+        ///
+        /// editor.request_cook dispatches to this. It resolves the id's source through the index,
+        /// builds a CookRequest, and kicks EditorHost::RequestCook — fire-and-poll: the cook's
+        /// completion lands earlier in a later frame than McpServer::Pump(), so the tool must not
+        /// block on it (that would deadlock the frame). editor.cook_status reports completion.
+        /// Returns a located error when the id is unknown or cook-on-demand is unconfigured.
+        Veng::function<Veng::VoidResult(Veng::AssetId)> RequestCook;
+
+        /// @brief Reports the latest cook status of an asset, or nullopt when none was requested.
+        ///
+        /// editor.cook_status reads this: "running" while the cook is in flight, "ok" once it
+        /// mounted, or an error string when it failed. nullopt means no cook of this id has been
+        /// requested through editor.request_cook. Runs on the render thread, so it shares the
+        /// render-thread state RequestCook's continuation updates with no locking.
+        Veng::function<Veng::optional<Veng::string>(Veng::AssetId)> CookStatus;
     };
 
     /// @brief Registers the generic editor property/command tools into the server.
@@ -61,6 +112,17 @@ namespace VengEditor
     /// @param server  The server to register the tools into (before its first Pump()).
     /// @param host    The provider seam, captured by reference into each handler; must outlive the server.
     void RegisterEditorReflectionTools(Veng::Mcp::McpServer& server, const EditorMcpHost& host);
+
+    /// @brief Registers the editor's non-reflection host tools into the server.
+    ///
+    /// Adds editor.open_asset, editor.set_panel_visible, editor.list_assets (paginated over the
+    /// AssetSourceIndex), editor.screenshot_panel (the shared viewport-capture path against a
+    /// named panel), editor.request_cook (fire-and-poll cook-on-demand), and editor.cook_status.
+    /// Each reaches the editor host through the EditorMcpHost closures; a null closure makes its
+    /// tool report the feature unavailable rather than crash.
+    /// @param server  The server to register the tools into (before its first Pump()).
+    /// @param host    The provider seam, captured by reference into each handler; must outlive the server.
+    void RegisterEditorHostTools(Veng::Mcp::McpServer& server, const EditorMcpHost& host);
 
     /// @brief Applies a world mutation as an undoable command against the focused document.
     ///

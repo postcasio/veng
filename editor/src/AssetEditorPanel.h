@@ -5,6 +5,16 @@
 
 #include <VengEditor/EditorPanel.h>
 
+namespace Veng
+{
+    class Scene;
+
+    namespace Renderer
+    {
+        class Viewport;
+    }
+}
+
 namespace VengEditor
 {
     class CommandStack;
@@ -61,6 +71,21 @@ namespace VengEditor
         /// Set each Draw from ImGui window focus, including the editor's docked children, so the
         /// host can resolve which open document the keyboard shortcuts target.
         [[nodiscard]] bool IsDocumentFocused() const { return m_Focused; }
+
+        /// @brief Returns the live Scene this document edits, or null when it edits no scene.
+        ///
+        /// A scene-editing document (the prefab/level editor) returns its edited Scene — the world
+        /// McpHost::CurrentWorld / DocumentScene follow when this document is focused; the
+        /// texture/material editors have no scene and return null (the world tools then report an
+        /// empty world). Null is never a deref.
+        [[nodiscard]] virtual Veng::Scene* GetDocumentScene() { return nullptr; }
+
+        /// @brief Returns the document's rendered viewport, or null when it renders no scene.
+        ///
+        /// A scene-editing document returns its Offscreen scene viewport — the seam
+        /// editor.screenshot_panel captures. The texture/material editors render into their own
+        /// preview targets rather than a scene viewport and return null.
+        [[nodiscard]] virtual Veng::Renderer::Viewport* GetDocumentViewport() { return nullptr; }
 
     protected:
         /// @brief Constructs the base, assigning this instance its unique dock id and class.
