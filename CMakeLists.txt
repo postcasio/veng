@@ -898,6 +898,26 @@ if (VENG_BUILD_TESTS)
         add_test(NAME veng_test_material_preview COMMAND veng_test_material_preview)
         set_tests_properties(veng_test_material_preview PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
     endif ()
+
+    # ---- Multi-viewport ImGui interaction ----------------------------------
+    # Drives the editor's real shape headless: two ImGui windows side by side, each
+    # hosting an Offscreen Viewport that renders a distinctly-colored scene, then
+    # ImGuiLayer::Render into the UI's offscreen image. It reads that composited
+    # image back (veng::cook cooks the white-plane fixture in-process) and asserts
+    # the two halves are different colors — the guard against viewport duplication.
+    # Windowed (ImGui Vulkan backend), so it skips (SKIP_RETURN_CODE 77) with no ICD.
+    add_executable(veng_test_multi_viewport_imgui tests/multi_viewport_imgui.cpp)
+    target_link_libraries(veng_test_multi_viewport_imgui PRIVATE
+            veng::veng veng::cook veng_test_support)
+    target_compile_definitions(veng_test_multi_viewport_imgui PRIVATE
+            GPU_GBUFFER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
+            # The white-plane fixture reuses the brick shaders, which
+            # `#include "Veng/material.slang"`; the in-process cook adds the engine
+            # core shader dir to its Slang search path.
+            VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}")
+
+    add_test(NAME veng_test_multi_viewport_imgui COMMAND veng_test_multi_viewport_imgui)
+    set_tests_properties(veng_test_multi_viewport_imgui PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
 endif ()
 
 # ---------------------------------------------------------------------------
