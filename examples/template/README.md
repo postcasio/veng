@@ -4,6 +4,15 @@ The minimal veng game: the smallest app that opens a window and renders a lit cu
 with its world authored as **data** — a Level that references a world Prefab.
 **Copy this directory to start a new veng game.**
 
+This is a **standalone project consumed out of the engine tree**: its `CMakeLists.txt`
+discovers veng with `find_package(veng REQUIRED)` and authors against the package's
+`veng_add_project` / `veng_add_game` / `veng_add_editor` vocabulary — no veng source tree
+is required to build it, only a discoverable veng package. `find_package(veng)` resolves
+against an installed prefix (`-DCMAKE_PREFIX_PATH=<prefix>`) or, to develop against a local
+engine checkout, the engine's build-tree export (`-Dveng_ROOT=<veng>/build`); see
+[`docs/guides/consuming-veng.md`](../../docs/guides/consuming-veng.md) in the engine tree
+for the three consumption modes and the co-development override.
+
 Where `hello-triangle` is the engine's *maximal* sample — every battery, the full
 debug UI, custom components and systems, gameplay — this is its *minimal* counterpart:
 no debug UI, no custom component or system, the smallest correct app. Both are migrated
@@ -51,13 +60,21 @@ with the per-platform cook already wired: a bare `cmake --build` cooks the host-
 configuration, and `cook-all-packs` builds them all. The texture codec each role resolves
 to is edited in the editor's **Project Settings** panel.
 
-Build and run (from the repo root):
+Build and run (standalone, against a build-tree veng — configure the engine first):
 
 ```sh
-cmake -S . -B build
+# once: configure + build the engine so its build-tree veng-config.cmake exists
+cmake -S <veng> -B <veng>/build
+cmake --build <veng>/build
+
+# from this directory: discover veng from its build tree, build, run
+cmake -S . -B build -Dveng_ROOT=<veng>/build
 cmake --build build --target template-launcher
-./build/examples/template/template-launcher
+./build/template-launcher
 ```
+
+Point `find_package` at an installed prefix instead with
+`-DCMAKE_PREFIX_PATH=<prefix>` in place of `-Dveng_ROOT`.
 
 For the richer surface — the batteries, the debug UI, build configurations, custom
 components and systems, gameplay — read `examples/hello-triangle` and the editor's

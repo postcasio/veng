@@ -1,3 +1,16 @@
+# The template is a standalone project consumed out of the engine tree: it discovers veng as a
+# CMake package and authors against the exact same veng_add_project / veng_add_game /
+# veng_add_editor vocabulary the in-tree examples use. cmake_minimum_required and the C++
+# standard are the project's own — they do not come from the package.
+cmake_minimum_required(VERSION 4.1)
+project(template LANGUAGES CXX)
+
+# Not STANDARD_REQUIRED — AppleClang doesn't advertise the C++26 dialect flag, so the standard
+# decays to the newest the compiler supports rather than hard-erroring, matching the engine.
+set(CMAKE_CXX_STANDARD 26)
+
+find_package(veng REQUIRED)
+
 # Cook the template project with vengc at build time, into the build tree. veng_add_project
 # reads project.veng for the packs and ship configurations and cooks each config's packs
 # plus its cooked project file (.vengproj); veng_add_game copies the host-default config's
@@ -15,8 +28,8 @@ veng_add_project(template_assets
         # systems via --module (here only the engine builtins).
         MODULE     template
         # The material's vertex shader references the core canonical vertex layout by
-        # AssetId; resolve it from the engine core pack.
-        REFERENCE  ${CMAKE_SOURCE_DIR}/engine/assets/core/core.vengpack.json)
+        # AssetId; resolve it from the engine core pack (mode-resolved by the package).
+        REFERENCE  ${veng_CORE_PACK_JSON})
 
 # The game splits into libtemplate (the runtime) and template-launcher (the shipped exe that
 # dlopens it). veng_add_game copies the host-default config's cooked project + packs beside the
