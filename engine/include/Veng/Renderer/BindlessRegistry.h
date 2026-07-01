@@ -161,44 +161,52 @@ namespace Veng::Renderer
         /// @return The base material slot index for the current frame-in-flight.
         [[nodiscard]] u32 GetCurrentFrameBase() const;
 
-        /// @brief Writes the per-frame view-constants block into the current frame-in-flight's
-        /// region of the ring-buffered view-constants buffer.
+        /// @brief Advances to the next view slot within the current frame-in-flight.
         ///
-        /// Writing the current region is always safe — that frame is not yet submitted.
-        /// A pass selects this frame's region by pushing GetCurrentViewConstantsIndex(),
-        /// folded into the shader's index * ViewConstantsStride load, exactly as the
-        /// material block avoids a dynamic descriptor offset inside set 0's Metal argument
-        /// buffer on MoltenVK.
+        /// Called once per Viewport::Render (per SceneRenderer::Execute), before its
+        /// WriteViewConstants / WriteLights, so that two viewports rendering in one frame write
+        /// distinct regions and each's draws read its own. OnFrameAcquired resets the slot to the
+        /// first each frame. Asserts if more than MaxViewsPerFrame viewports render in one frame.
+        /// @pre Called before WriteViewConstants / WriteLights for this Execute.
+        void BeginView();
+
+        /// @brief Writes the per-frame view-constants block into the current view slot's region
+        /// of the shared view-constants buffer.
+        ///
+        /// Writing the current region is always safe — that frame is not yet submitted, and each
+        /// view slot is distinct within the frame. A pass selects the region by pushing
+        /// GetCurrentViewConstantsIndex(), folded into the shader's index * ViewConstantsStride
+        /// load, exactly as the material block avoids a dynamic descriptor offset inside set 0's
+        /// Metal argument buffer on MoltenVK.
         /// @param block The view-constants data; must be <= ViewConstantsStride bytes.
         void WriteViewConstants(std::span<const std::byte> block);
 
-        /// @brief The current frame-in-flight's index into the ring-buffered view-constants
-        /// buffer (== the frame-in-flight slot).
+        /// @brief The current view slot's index into the shared view-constants buffer
+        /// (frameInFlight * MaxViewsPerFrame + the BeginView slot).
         ///
-        /// A pass pushes it so the shader's index * ViewConstantsStride load reads this
-        /// frame's region.
-        /// @return The current frame-in-flight index.
+        /// A pass pushes it so the shader's index * ViewConstantsStride load reads this view's
+        /// region. Distinct per viewport render, so two viewports in one frame do not collide.
+        /// @return The current view-constants index.
         [[nodiscard]] u32 GetCurrentViewConstantsIndex() const;
 
-        /// @brief Writes the per-frame light list into the current frame-in-flight's region
-        /// of the ring-buffered light buffer.
+        /// @brief Writes the per-frame light list into the current view slot's region of the
+        /// shared light buffer.
         ///
-        /// Writing the current region is always safe — that frame is not yet submitted —
-        /// and the whole region is rewritten every frame (light count and contents are
-        /// per-frame data). A pass selects this frame's region by folding
-        /// GetCurrentLightBase() into its per-light index, exactly as the material block
-        /// avoids a dynamic descriptor offset inside set 0's Metal argument buffer on
-        /// MoltenVK.
+        /// Writing the current region is always safe — that frame is not yet submitted, each view
+        /// slot is distinct, and the whole region is rewritten every Execute (light count and
+        /// contents are per-view data). A pass selects the region by folding GetCurrentLightBase()
+        /// into its per-light index, exactly as the material block avoids a dynamic descriptor
+        /// offset inside set 0's Metal argument buffer on MoltenVK.
         /// @param lights Per-frame light entries; must hold at most MaxLights entries,
         ///               each LightStride bytes.
         void WriteLights(std::span<const std::byte> lights);
 
-        /// @brief The base light index of the current frame-in-flight's region in the
-        /// ring-buffered light buffer: currentFrameInFlight * MaxLights.
+        /// @brief The base light index of the current view slot's region in the shared light
+        /// buffer: GetCurrentViewConstantsIndex() * MaxLights.
         ///
-        /// A pass folds this into its per-light index so the shader's index * LightStride
-        /// load lands in this frame's region.
-        /// @return The base light index for the current frame-in-flight.
+        /// A pass folds this into its per-light index so the shader's index * LightStride load
+        /// lands in this view's region.
+        /// @return The base light index for the current view slot.
         [[nodiscard]] u32 GetCurrentLightBase() const;
 
         /// @brief Returns the descriptor set layout for set 0.
@@ -233,9 +241,20 @@ namespace Veng::Renderer
 
         /// @brief The fixed cap on lights the deferred lighting pass loops per pixel.
         ///
-        /// The light SSBO holds framesInFlight copies of MaxLights entries; the pass
-        /// evaluates the full Cook-Torrance BRDF per light up to the live count.
+        /// The light SSBO holds framesInFlight * MaxViewsPerFrame copies of MaxLights
+        /// entries; the pass evaluates the full Cook-Torrance BRDF per light up to the live count.
         static constexpr u32 MaxLights = 16;
+
+        /// @brief The fixed cap on distinct viewport renders sharing one frame-in-flight.
+        ///
+        /// The view-constants and light buffers are shared across every Viewport, but each
+        /// Viewport::Render writes its own camera and lights. Ringing only by frame-in-flight
+        /// would let a second viewport's Execute clobber the region the first's draws still read
+        /// at submit (both record into one frame's command buffer, reading the final host value).
+        /// So each buffer holds framesInFlight * MaxViewsPerFrame regions; BeginView advances a
+        /// per-frame view slot each Execute, and GetCurrentViewConstantsIndex() folds it in. The
+        /// editor renders one viewport per visible panel; this bounds how many may be live at once.
+        static constexpr u32 MaxViewsPerFrame = 16;
 
         /// @brief The fixed byte stride of one material's parameter block in the
         /// MaterialParamBinding ByteAddressBuffer.
@@ -351,29 +370,39 @@ namespace Veng::Renderer
         /// region of the mapped buffer.
         void WriteMaterialRegion(u32 materialIndex, u32 frameInFlight) const;
 
-        /// @brief The per-frame view-constants buffer (binding ViewConstantsBinding).
+        /// @brief The shared view-constants buffer (binding ViewConstantsBinding).
         ///
-        /// A host-visible, persistently-mapped storage buffer holding framesInFlight
-        /// copies of one ViewConstantsStride region, bound at its full range. Each
-        /// frame-in-flight f owns the region [f * ViewConstantsStride, ...); a pass
-        /// pushes f (GetCurrentViewConstantsIndex()) so the shader's
-        /// index * ViewConstantsStride load reads the current frame's region. Like the
-        /// material block, it is a plain (non-dynamic) storage buffer selected by a folded
-        /// index, not a dynamic offset (which mistranslates inside set 0's Metal argument
-        /// buffer on MoltenVK). A frame's view constants are rewritten every Execute, so
-        /// only the current (not-yet-submitted) region is touched — no fence, no staging.
+        /// A host-visible, persistently-mapped storage buffer holding
+        /// framesInFlight * MaxViewsPerFrame copies of one ViewConstantsStride region, bound at
+        /// its full range. Each (frame f, view slot v) owns the region at index
+        /// (f * MaxViewsPerFrame + v) * ViewConstantsStride; a pass pushes that index
+        /// (GetCurrentViewConstantsIndex()) so the shader's index * ViewConstantsStride load reads
+        /// its own view's region. Like the material block, it is a plain (non-dynamic) storage
+        /// buffer selected by a folded index, not a dynamic offset (which mistranslates inside set
+        /// 0's Metal argument buffer on MoltenVK). Each view's constants are rewritten every
+        /// Execute, and per-view slots keep two viewports in one frame from colliding, so only the
+        /// current (not-yet-submitted) region is touched — no fence, no staging.
         Ref<Buffer> m_ViewConstantsBuffer;
 
-        /// @brief The per-frame light buffer (binding LightBinding).
+        /// @brief The shared light buffer (binding LightBinding).
         ///
-        /// A host-visible, persistently-mapped storage buffer holding framesInFlight
-        /// copies of the MaxLights * LightStride light table, bound at its full range.
-        /// Each frame-in-flight f owns the region [f * MaxLights * LightStride, ...); a
-        /// pass folds f's base (GetCurrentLightBase()) into its per-light index so the
-        /// shader's index * LightStride load reads the current frame's region. Selected by
-        /// the folded index, not a dynamic offset (which mistranslates inside set 0's Metal
-        /// argument buffer on MoltenVK). The whole region is rewritten every Execute, so
-        /// only the current (not-yet-submitted) region is touched.
+        /// A host-visible, persistently-mapped storage buffer holding
+        /// framesInFlight * MaxViewsPerFrame copies of the MaxLights * LightStride light table,
+        /// bound at its full range. Each (frame f, view slot v) owns the region based at
+        /// (f * MaxViewsPerFrame + v) * MaxLights * LightStride; a pass folds that base
+        /// (GetCurrentLightBase()) into its per-light index so the shader's index * LightStride
+        /// load reads its own view's region. Selected by the folded index, not a dynamic offset
+        /// (which mistranslates inside set 0's Metal argument buffer on MoltenVK). The whole
+        /// region is rewritten every Execute, per view slot, so only the current
+        /// (not-yet-submitted) region is touched.
         Ref<Buffer> m_LightBuffer;
+
+        /// @brief Distinct viewport renders seen so far in the current frame-in-flight.
+        ///
+        /// Reset to 0 by OnFrameAcquired; BeginView takes the current slot from it and increments.
+        u32 m_ViewsThisFrame = 0;
+
+        /// @brief The view slot the current Execute writes and reads (set by BeginView).
+        u32 m_ViewSlot = 0;
     };
 }

@@ -1139,10 +1139,11 @@ namespace Veng::Renderer
 
                         // Bind set 1 (the shadow system: both atlases, comparison sampler, and
                         // both ring-buffered dynamic uniforms) and set 2 (the IBL maps + sampler,
-                        // always valid). Dynamic offsets select the current frame-in-flight shadow
-                        // region; the IBL set has no dynamic descriptors so the offsets still map
-                        // to set 1's two dynamic uniforms in binding order.
-                        const u32 frameSlot = registry.GetCurrentViewConstantsIndex();
+                        // always valid). The shadow rings are renderer-owned and framesInFlight-deep,
+                        // so their dynamic offset is the frame-in-flight index — not the shared
+                        // view-constants slot, which rings per viewport render. The IBL set has no
+                        // dynamic descriptors so the offsets still map to set 1's two in binding order.
+                        const u32 frameSlot = m_Context.GetCurrentFrameInFlight();
                         cmd.BindDescriptorSets(DescriptorSetBindInfo{
                             .Sets = {shadowSet, iblSet},
                             .FirstSet = 1,
@@ -4263,7 +4264,10 @@ namespace Veng::Renderer
         plan.SkinnedGroups.clear();
         m_PaletteBaseByEntity.clear();
 
-        const u32 frameIndex = m_Context.GetBindlessRegistry().GetCurrentViewConstantsIndex();
+        // The DrawData / candidate / palette / indirect buffers are renderer-owned and
+        // framesInFlight-deep, so they ring by the frame-in-flight index; only the shared
+        // view-constants push (viewConstantsIndex) rings per viewport render.
+        const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
         const u32 frameBase = frameIndex * MaxCullCandidates;
         const u32 paletteRegionBase = frameIndex * MaxSkinningMatricesPerFrame;
         u32 paletteCursor = 0;
@@ -4709,6 +4713,11 @@ namespace Veng::Renderer
         resolvedView.Broadphase = &m_Broadphase;
 
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+
+        // Claim this Execute's view slot before any shared-buffer write below: the view-constants
+        // and light buffers are shared across every viewport, so each render writes its own region
+        // rather than clobbering the one another viewport's draws still read this frame.
+        registry.BeginView();
         registry.WriteLights(std::as_bytes(std::span(packed.Lights.data(), packed.LightCount)));
 
         // Pack view constants (camera/view state only; shadow system rides set-1).
@@ -4804,9 +4813,10 @@ namespace Veng::Renderer
             vec4(1.0f / static_cast<f32>(m_Settings.ShadowResolution), blendBand,
                  static_cast<f32>(cascades.Count), shadowEnabled ? 1.0f : 0.0f);
 
-        // Write only the current frame's region (not yet submitted; safe).
-        // The bind selects it via dynamic offset frame * stride.
-        const u32 frameIndex = registry.GetCurrentViewConstantsIndex();
+        // Write only the current frame's region (not yet submitted; safe). These rings are
+        // renderer-owned and framesInFlight-deep, so they index by the frame-in-flight — not the
+        // shared view-constants slot; the bind selects it via dynamic offset frame * stride.
+        const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
         std::memcpy(static_cast<u8*>(m_ShadowConstantsBuffer->GetMappedData()) +
                         static_cast<usize>(frameIndex) * m_ShadowRingStride,
                     &shadowConstants, sizeof(ShadowConstantsBlock));
@@ -4827,7 +4837,9 @@ namespace Veng::Renderer
         }
 
         // Fill the per-draw DrawData buffer + (GPU) the candidate buffer and submission plan.
-        PrepareDraws(resolvedView, frameIndex);
+        // The surface push's ViewConstantsIndex is the shared per-view slot, distinct from the
+        // renderer-owned frame-in-flight rings PrepareDraws indexes internally.
+        PrepareDraws(resolvedView, registry.GetCurrentViewConstantsIndex());
 
         // Build the id-writing pipeline variants on the first frame a surface material is available
         // (their layout is shared across surface materials), so the picking pass can re-draw the

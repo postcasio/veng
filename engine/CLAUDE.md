@@ -335,9 +335,14 @@ the component is the scene-authoring front-end that references it.)
 
 Per-view data rides a **ring-buffered view-constants buffer**, not push constants: the
 `InvViewProj`/`CameraPosition` (for world-position reconstruction), the view/projection,
-and the SSAO view/projection live in a per-frame set-0 buffer ringed for frames-in-flight
-and selected by an index fold (a dynamic-offset descriptor mistranslates in set 0 on
-MoltenVK). Its stride is **512 bytes**. The shadow system's own state — the cascade
+and the SSAO view/projection live in a set-0 buffer selected by an index fold (a
+dynamic-offset descriptor mistranslates in set 0 on MoltenVK). This buffer is **shared
+across every `Viewport`** (it lives in the `Context`-owned `BindlessRegistry`), so it is
+ringed `framesInFlight * MaxViewsPerFrame` deep and each `SceneRenderer::Execute` claims its
+own slot (`BindlessRegistry::BeginView`, reset per frame): two viewports rendering in one
+frame write distinct regions rather than the second's camera clobbering the region the
+first's draws still read at submit. The shared per-frame light buffer rings the same way.
+Its stride is **512 bytes**. The shadow system's own state — the cascade
 matrices, splits, and params — rides the **set-1** `ShadowConstants` block instead, so
 set 0 stays a lean, material-facing view block (shared by materials, lighting, and SSAO).
 Push constants in the deferred path carry only

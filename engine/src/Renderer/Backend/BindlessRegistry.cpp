@@ -120,24 +120,27 @@ namespace Veng::Renderer
                                     });
         m_Set->Write(MaterialParamBinding, m_MaterialParamBuffer);
 
-        // Ring-buffered by framesInFlight; each frame rewrites its own region every Execute.
-        m_ViewConstantsBuffer = Buffer::Create(
-            context, {
-                         .Name = "Bindless ViewConstants",
-                         .Size = static_cast<u64>(m_FramesInFlight) * ViewConstantsStride,
-                         .Usage = BufferUsage::Storage,
-                         .HostMapped = true,
-                     });
+        // Ringed by framesInFlight * MaxViewsPerFrame: each viewport render owns a distinct region
+        // within the frame (BeginView advances the slot), so two viewports in one frame do not clobber.
+        m_ViewConstantsBuffer =
+            Buffer::Create(context, {
+                                        .Name = "Bindless ViewConstants",
+                                        .Size = static_cast<u64>(m_FramesInFlight) *
+                                                MaxViewsPerFrame * ViewConstantsStride,
+                                        .Usage = BufferUsage::Storage,
+                                        .HostMapped = true,
+                                    });
         m_Set->Write(ViewConstantsBinding, m_ViewConstantsBuffer);
 
-        // Ring-buffered by framesInFlight; each frame rewrites its own region every Execute.
-        m_LightBuffer = Buffer::Create(
-            context, {
-                         .Name = "Bindless Lights",
-                         .Size = static_cast<u64>(m_FramesInFlight) * MaxLights * LightStride,
-                         .Usage = BufferUsage::Storage,
-                         .HostMapped = true,
-                     });
+        // Ringed by framesInFlight * MaxViewsPerFrame, like the view constants above.
+        m_LightBuffer =
+            Buffer::Create(context, {
+                                        .Name = "Bindless Lights",
+                                        .Size = static_cast<u64>(m_FramesInFlight) *
+                                                MaxViewsPerFrame * MaxLights * LightStride,
+                                        .Usage = BufferUsage::Storage,
+                                        .HostMapped = true,
+                                    });
         m_Set->Write(LightBinding, m_LightBuffer);
 
         m_Textures.Init(MaxTextures, m_FramesInFlight);
@@ -320,23 +323,32 @@ namespace Veng::Renderer
         return m_Context.GetCurrentFrameInFlight() * MaxMaterials;
     }
 
+    void BindlessRegistry::BeginView()
+    {
+        VE_ASSERT(m_ViewsThisFrame < MaxViewsPerFrame,
+                  "BindlessRegistry::BeginView: more than MaxViewsPerFrame ({}) viewports rendered "
+                  "in one frame",
+                  MaxViewsPerFrame);
+        m_ViewSlot = m_ViewsThisFrame;
+        ++m_ViewsThisFrame;
+    }
+
     void BindlessRegistry::WriteViewConstants(std::span<const std::byte> block)
     {
         VE_ASSERT(block.size() <= ViewConstantsStride,
                   "BindlessRegistry::WriteViewConstants: block is {} bytes, exceeds stride {}",
                   block.size(), ViewConstantsStride);
 
-        // Write only the current frame's region; it is rewritten every Execute so
-        // other regions need no flush.
-        const u64 offset =
-            static_cast<u64>(m_Context.GetCurrentFrameInFlight()) * ViewConstantsStride;
+        // Write only the current view slot's region; it is rewritten every Execute and each
+        // view slot is distinct within the frame, so other regions need no flush.
+        const u64 offset = static_cast<u64>(GetCurrentViewConstantsIndex()) * ViewConstantsStride;
         auto* base = static_cast<u8*>(m_ViewConstantsBuffer->GetMappedData());
         std::memcpy(base + offset, block.data(), block.size());
     }
 
     u32 BindlessRegistry::GetCurrentViewConstantsIndex() const
     {
-        return m_Context.GetCurrentFrameInFlight();
+        return m_Context.GetCurrentFrameInFlight() * MaxViewsPerFrame + m_ViewSlot;
     }
 
     void BindlessRegistry::WriteLights(std::span<const std::byte> lights)
@@ -345,17 +357,16 @@ namespace Veng::Renderer
                   "BindlessRegistry::WriteLights: {} bytes exceeds the {}-light region ({} bytes)",
                   lights.size(), MaxLights, static_cast<usize>(MaxLights) * LightStride);
 
-        // Write only the current frame's region; it is rewritten every Execute so
-        // other regions need no flush.
-        const u64 offset =
-            static_cast<u64>(m_Context.GetCurrentFrameInFlight()) * MaxLights * LightStride;
+        // Write only the current view slot's region; it is rewritten every Execute and each view
+        // slot is distinct within the frame, so other regions need no flush.
+        const u64 offset = static_cast<u64>(GetCurrentLightBase()) * LightStride;
         auto* base = static_cast<u8*>(m_LightBuffer->GetMappedData());
         std::memcpy(base + offset, lights.data(), lights.size());
     }
 
     u32 BindlessRegistry::GetCurrentLightBase() const
     {
-        return m_Context.GetCurrentFrameInFlight() * MaxLights;
+        return GetCurrentViewConstantsIndex() * MaxLights;
     }
 
     void BindlessRegistry::OnFrameAcquired(u32 frameInFlight)
@@ -364,6 +375,10 @@ namespace Veng::Renderer
         m_Samplers.OnFrameAcquired(frameInFlight);
         m_StorageImages.OnFrameAcquired(frameInFlight);
         m_Materials.OnFrameAcquired(frameInFlight);
+
+        // Reset the per-frame view slot: the first Viewport::Render this frame takes slot 0.
+        m_ViewsThisFrame = 0;
+        m_ViewSlot = 0;
 
         // Flush still-dirty materials into the region just made current — the fence
         // was waited before this call, so the prior GPU use has completed.

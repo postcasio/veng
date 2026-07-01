@@ -849,6 +849,10 @@ if (VENG_BUILD_TESTS)
             # through a consumer viewport's material, in registration order.
             # Cooks the brick g-buffer fixture, so it is gated with the rest.
             tests/gpu/viewport_feeds_viewport.cpp
+            # The multi-viewport isolation proof: two viewports with different
+            # cameras in one frame each render through their own view, guarding the
+            # per-view slotting of the shared view-constants buffer.
+            tests/gpu/multi_viewport_isolation.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::cook)
     target_compile_definitions(veng_test_gpu PRIVATE
