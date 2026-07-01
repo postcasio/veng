@@ -152,6 +152,7 @@ if (VENG_INSTALL_SDK OR PROJECT_IS_TOP_LEVEL)
     add_executable(veng-editor ${VENG_EDITOR_MAIN} ${VENG_EDITOR_COOK_SESSION})
     target_link_libraries(veng-editor PRIVATE veng::veng veng_editor::veng_editor veng::cook)
     target_include_directories(veng-editor PRIVATE ${VENG_EDITOR_EXE_INCLUDE})
+    target_compile_definitions(veng-editor PRIVATE VENG_EDITOR_VERSION="${PROJECT_VERSION}")
 
     # The editor's own icon pack sits beside the exe (its own content, ExecutableDirectory()-mounted).
     if (TARGET veng_editor_icons)

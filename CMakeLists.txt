@@ -1034,6 +1034,36 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle_assets-macos
         LABELS cooker RUN_SERIAL ON)
 endif ()
 
+# SDK conformance: the out-of-tree find_package(veng) consumer proof. Each test discovers
+# veng as a CMake package (an install prefix, or the build-tree export), then configures +
+# builds the standalone examples/template against it and runs veng-editor --version — the
+# build-time analogue of the relocatable-trio test, catching a broken install/export surface
+# in ctest rather than a downstream first build. The in-tree consumption mode is covered
+# separately by hello_triangle_launcher_smoke, so the template never builds in-tree.
+#
+# Registered only when veng builds the full SDK (the imported vengc / veng-editor the template
+# resolves come from this build's install/export). Labelled gpu with SKIP_RETURN_CODE 77 — the
+# driver's ICD probe returns 77 with no device, keeping them in the gpu skip band. Each carries
+# a TIMEOUT so a hung inner build fails the test rather than stalling the whole run, and runs
+# serially — each does a heavy nested configure + build.
+if (VENG_BUILD_TESTS AND VENG_INSTALL_SDK AND TARGET veng-editor AND TARGET vengc
+        AND TARGET veng_test_headless_smoke)
+    foreach (MODE install buildtree)
+        add_test(NAME sdk_conformance_${MODE}
+            COMMAND ${CMAKE_COMMAND}
+                -D VENG_MODE=${MODE}
+                -D VENG_CMAKE=${CMAKE_COMMAND}
+                -D VENG_ENGINE_BUILD_DIR=${CMAKE_BINARY_DIR}
+                -D VENG_TEMPLATE_SRC=${CMAKE_CURRENT_SOURCE_DIR}/examples/template
+                -D VENG_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/sdk_conformance_${MODE}
+                -D VENG_PROBE_BIN=$<TARGET_FILE:veng_test_headless_smoke>
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SdkConformance.cmake
+        )
+        set_tests_properties(sdk_conformance_${MODE} PROPERTIES
+            LABELS gpu SKIP_RETURN_CODE 77 RUN_SERIAL ON TIMEOUT 900)
+    endforeach ()
+endif ()
+
 # ---------------------------------------------------------------------------
 # Documentation
 # ---------------------------------------------------------------------------

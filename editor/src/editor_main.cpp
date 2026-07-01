@@ -4,7 +4,13 @@
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Log.h>
 
+#include <cstdio>
+
 #include "CookSession.h"
+
+#ifndef VENG_EDITOR_VERSION
+#define VENG_EDITOR_VERSION "unknown"
+#endif
 
 // veng-editor: the single, project-agnostic editor shell. Launched with a project; it reads the
 // module(s) the project names (ProjectSettings::Module / EditorModule) and dlopens them from the
@@ -15,6 +21,19 @@
 int main(const int argc, char** argv)
 {
     const Veng::vector<Veng::string> args(argv, argv + argc);
+
+    // A no-op query flag that prints the build version and exits before any window or device is
+    // created — the source-tree-free identity probe the SDK conformance test runs to cover the
+    // installed exe's runtime resolution without a project.
+    for (Veng::usize i = 1; i < args.size(); ++i)
+    {
+        if (args[i] == "--version")
+        {
+            std::printf("veng-editor %s\n", VENG_EDITOR_VERSION);
+            return 0;
+        }
+    }
+
     Veng::optional<Veng::path> projectPath;
     Veng::optional<Veng::path> buildDir;
     for (Veng::usize i = 1; i < args.size(); ++i)
