@@ -12,59 +12,6 @@ namespace VengEditor
 {
     using namespace Veng;
 
-    namespace
-    {
-        // Maps the manifest "type" string to an AssetType (Cooker.h schema).
-        optional<AssetType> ParseAssetType(const std::string& name)
-        {
-            if (name == "raw")
-            {
-                return AssetType::Raw;
-            }
-            if (name == "texture")
-            {
-                return AssetType::Texture;
-            }
-            if (name == "mesh")
-            {
-                return AssetType::Mesh;
-            }
-            if (name == "shader")
-            {
-                return AssetType::Shader;
-            }
-            if (name == "material")
-            {
-                return AssetType::Material;
-            }
-            if (name == "vertex_layout")
-            {
-                return AssetType::VertexLayout;
-            }
-            if (name == "prefab")
-            {
-                return AssetType::Prefab;
-            }
-            if (name == "level")
-            {
-                return AssetType::Level;
-            }
-            if (name == "skeleton")
-            {
-                return AssetType::Skeleton;
-            }
-            if (name == "animation")
-            {
-                return AssetType::Animation;
-            }
-            if (name == "environment")
-            {
-                return AssetType::Environment;
-            }
-            return std::nullopt;
-        }
-    }
-
     AssetSourceIndex AssetSourceIndex::Parse(const path& manifestPath)
     {
         AssetSourceIndex index;

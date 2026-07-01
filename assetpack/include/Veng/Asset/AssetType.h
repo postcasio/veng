@@ -2,6 +2,8 @@
 
 #include <Veng/Asset/Types.h>
 
+#include <string_view>
+
 namespace Veng
 {
     /// @brief Identifies what kind of cooked blob a TOC entry points at.
@@ -35,4 +37,20 @@ namespace Veng
         /// @brief A parameter override over a parent Material (see CookedMaterialInstanceHeader).
         MaterialInstance,
     };
+
+    /// @brief Canonical authoring/manifest name of an asset type ("texture", "material_instance", …).
+    ///
+    /// The single spelling the pack manifest and every tool agree on. The inverse of
+    /// @ref ParseAssetType. An unmapped value returns "unknown".
+    /// @param type  The asset type.
+    /// @return A static, never-null name string.
+    [[nodiscard]] const char* ToString(AssetType type);
+
+    /// @brief Parses a canonical authoring/manifest type name into an AssetType.
+    ///
+    /// The inverse of @ref ToString; the one place the manifest's "type" string is decoded,
+    /// shared by the cooker and the editor's source index.
+    /// @param name  The manifest type name (e.g. "material_instance").
+    /// @return The matching type, or nullopt when the name is unrecognized.
+    [[nodiscard]] optional<AssetType> ParseAssetType(std::string_view name);
 }

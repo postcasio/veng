@@ -21,17 +21,6 @@ namespace VengEditor
     {
         const vec4 FolderColor{0.80f, 0.70f, 0.35f, 1.0f};
 
-        // Source filename with the cooked extension(s) stripped (foo.tex.json -> foo).
-        string DisplayName(const path& relativeSource)
-        {
-            path name = relativeSource.filename().stem();
-            if (name.has_extension())
-            {
-                name = name.stem();
-            }
-            return name.string();
-        }
-
         string ToLower(string_view text)
         {
             string lower(text);
@@ -77,8 +66,7 @@ namespace VengEditor
                 .Id = entry.Id,
                 .Type = entry.Type,
                 .Size = entry.Size,
-                .Name = source != nullptr ? DisplayName(source->RelativeSource)
-                                          : fmt::format("0x{:X}", entry.Id.Value),
+                .Name = AssetDisplayName(entry.Id, m_Sources),
             };
 
             // Descend (creating) the folder chain from the source's parent path; an asset

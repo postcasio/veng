@@ -69,60 +69,6 @@ namespace Veng::Cook
             writer.Add(id, type, blob, Xxh3_128(blob));
         }
 
-        optional<AssetType> ParseAssetType(const string& name)
-        {
-            if (name == "raw")
-            {
-                return AssetType::Raw;
-            }
-            if (name == "texture")
-            {
-                return AssetType::Texture;
-            }
-            if (name == "mesh")
-            {
-                return AssetType::Mesh;
-            }
-            if (name == "shader")
-            {
-                return AssetType::Shader;
-            }
-            if (name == "material")
-            {
-                return AssetType::Material;
-            }
-            if (name == "material_instance")
-            {
-                return AssetType::MaterialInstance;
-            }
-            if (name == "vertex_layout")
-            {
-                return AssetType::VertexLayout;
-            }
-            if (name == "prefab")
-            {
-                return AssetType::Prefab;
-            }
-            if (name == "level")
-            {
-                return AssetType::Level;
-            }
-            if (name == "skeleton")
-            {
-                return AssetType::Skeleton;
-            }
-            if (name == "animation")
-            {
-                return AssetType::Animation;
-            }
-            if (name == "environment")
-            {
-                return AssetType::Environment;
-            }
-
-            return std::nullopt;
-        }
-
         // The canonical authoring name of a CompressionFormat. The names match the spellings in
         // Veng::ToString(CompressionFormat); duplicated here rather than calling that libveng symbol,
         // since Cooker.cpp links into the veng-free core (and the core-pack bootstrap) that cannot

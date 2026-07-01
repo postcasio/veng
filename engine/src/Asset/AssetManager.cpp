@@ -27,42 +27,6 @@ namespace Veng
 
 namespace Veng
 {
-    namespace
-    {
-        string_view ToString(AssetType type)
-        {
-            switch (type)
-            {
-            case AssetType::Raw:
-                return "Raw";
-            case AssetType::Texture:
-                return "Texture";
-            case AssetType::Mesh:
-                return "Mesh";
-            case AssetType::Shader:
-                return "Shader";
-            case AssetType::Material:
-                return "Material";
-            case AssetType::VertexLayout:
-                return "VertexLayout";
-            case AssetType::Prefab:
-                return "Prefab";
-            case AssetType::Level:
-                return "Level";
-            case AssetType::Skeleton:
-                return "Skeleton";
-            case AssetType::Animation:
-                return "Animation";
-            case AssetType::Environment:
-                return "EnvironmentMap";
-            case AssetType::MaterialInstance:
-                return "MaterialInstance";
-            }
-
-            VE_ASSERT(false, "AssetManager: unhandled AssetType {}", static_cast<u32>(type));
-        }
-    }
-
     AssetManager::AssetManager(Renderer::Context& context, TaskSystem& tasks, TypeRegistry& types,
                                const AssetManagerInfo& /*info*/)
         : m_Context(context), m_Tasks(tasks), m_Types(types)

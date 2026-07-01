@@ -25,38 +25,6 @@ namespace Veng::Cook
         {
             return h.Lo == 0 && h.Hi == 0;
         }
-
-        const char* TypeName(AssetType type)
-        {
-            switch (type)
-            {
-            case AssetType::Raw:
-                return "raw";
-            case AssetType::Texture:
-                return "texture";
-            case AssetType::Mesh:
-                return "mesh";
-            case AssetType::Shader:
-                return "shader";
-            case AssetType::Material:
-                return "material";
-            case AssetType::VertexLayout:
-                return "vertex_layout";
-            case AssetType::Prefab:
-                return "prefab";
-            case AssetType::Level:
-                return "level";
-            case AssetType::Skeleton:
-                return "skeleton";
-            case AssetType::Animation:
-                return "animation";
-            case AssetType::Environment:
-                return "environment";
-            case AssetType::MaterialInstance:
-                return "material_instance";
-            }
-            return "unknown";
-        }
     }
 
     VerifyReport VerifyArchive(const path& archivePath)
@@ -112,7 +80,7 @@ namespace Veng::Cook
         for (const VerifiedAsset& asset : report.Assets)
         {
             fmt::print("{:<8} {:>5}  0x{:016X}\n", asset.Ok ? "OK" : "MISMATCH",
-                       TypeName(asset.Type), asset.Id.Value);
+                       ToString(asset.Type), asset.Id.Value);
             if (!asset.Ok)
             {
                 ++mismatches;
