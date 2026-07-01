@@ -10,9 +10,12 @@
 // The httplib client is the same vendored header compiled here (this TU builds with
 // exceptions, like the rest of the test suite), so it needs no new dependency.
 
+#include <Veng/Mcp/McpHost.h>
 #include <Veng/Mcp/McpServer.h>
 #include <Veng/Mcp/McpServerInfo.h>
 #include <Veng/Mcp/McpTool.h>
+
+#include <Veng/Reflection/TypeRegistry.h>
 
 #include <nlohmann/json.hpp>
 
@@ -60,7 +63,18 @@ int main()
     info.Port = 0;
     info.BindLoopbackOnly = true;
 
-    Unique<Mcp::McpServer> server = Mcp::McpServer::Create(info);
+    // The loopback proof exercises only the ping tool and the auto-registered world tools with
+    // no world (CurrentWorld returns null), which never touch Assets. Bind Assets through a
+    // never-dereferenced pointer: an AssetManager needs a render Context this device-free test
+    // has none of, and no code path here reads it.
+    TypeRegistry registry;
+    AssetManager* assets = nullptr;
+    const Mcp::McpHost host{.Types = registry,
+                            .Assets = *assets,
+                            .CurrentWorld = [] { return static_cast<Scene*>(nullptr); },
+                            .Viewport = {}};
+
+    Unique<Mcp::McpServer> server = Mcp::McpServer::Create(info, host);
 
     Mcp::McpTool ping;
     ping.Name = "ping";

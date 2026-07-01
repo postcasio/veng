@@ -3,6 +3,8 @@
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
 
+#include "WorldTools.h"
+
 #include <nlohmann/json.hpp>
 
 // httplib appears here only, never in a public header — it is a PRIVATE dependency
@@ -236,7 +238,7 @@ namespace Veng::Mcp
         }
     }
 
-    Unique<McpServer> McpServer::Create(const McpServerInfo& info)
+    Unique<McpServer> McpServer::Create(const McpServerInfo& info, const McpHost& mcpHost)
     {
         Unique<McpServer> server(new McpServer());
         server->m_Native = CreateUnique<Native>();
@@ -300,6 +302,7 @@ namespace Veng::Mcp
         // The socket is bound here so GetPort() resolves immediately, but the listener
         // thread starts on the first Pump() — so tools registered between Create and the
         // first pump land before the network thread reads the (then-immutable) registry.
+        RegisterWorldTools(*server, mcpHost);
         return server;
     }
 

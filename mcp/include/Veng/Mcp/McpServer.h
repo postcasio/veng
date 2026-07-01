@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Mcp/McpServerInfo.h>
+#include <Veng/Mcp/McpHost.h>
 #include <Veng/Mcp/McpTool.h>
 
 namespace Veng::Mcp
@@ -26,13 +27,17 @@ namespace Veng::Mcp
     class VE_API McpServer
     {
     public:
-        /// @brief Constructs a server, binds the socket, and starts the network thread.
+        /// @brief Constructs a server, binds the socket, and registers the built-in tools.
         ///
         /// The bound address and resolved port are logged at Info once the socket is
-        /// listening. A Port of 0 resolves to an ephemeral port readable via GetPort().
+        /// listening. A Port of 0 resolves to an ephemeral port readable via GetPort(). The
+        /// read-only world tools (world.list_entities, entity.get, world.query, scene.stats)
+        /// auto-register from @p host, so a consumer that just links veng::mcp and constructs a
+        /// server gets them. The host is captured by reference and must outlive the server.
         /// @param info  The server descriptor.
+        /// @param host  The provider seam the built-in tools reach live state through.
         /// @return The owned server.
-        static Unique<McpServer> Create(const McpServerInfo& info);
+        static Unique<McpServer> Create(const McpServerInfo& info, const McpHost& host);
 
         /// @brief Stops the listener thread, closes the socket, and drains in-flight requests.
         ~McpServer();

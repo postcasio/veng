@@ -689,6 +689,20 @@ if (VENG_BUILD_TESTS)
     add_test(NAME mcp_loopback COMMAND veng_test_mcp_loopback)
     set_tests_properties(mcp_loopback PROPERTIES LABELS mcp)
 
+    # The world-tools proof: a TypeRegistry with the builtins + a test component, a small
+    # Scene, an McpHost returning it, and a loopback round-trip over world.list_entities /
+    # entity.get / world.query / scene.stats — asserting the JSON, the ReflectToJson round-trip,
+    # the unregistered-type isError, and pagination. Device-free, so it runs in the default band.
+    add_executable(veng_test_mcp_world tests/mcp_world.cpp)
+    target_link_libraries(veng_test_mcp_world PRIVATE veng::mcp veng::veng
+            nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_world PRIVATE JSON_NOEXCEPTION)
+    target_include_directories(veng_test_mcp_world SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+
+    add_test(NAME mcp_world COMMAND veng_test_mcp_world)
+    set_tests_properties(mcp_world PROPERTIES LABELS mcp)
+
     # ---- Editor unit band (device-free) -------------------------------------
     # The NodeGraph topology core and the rest of libveng_editor's pure logic.
     # veng_test_unit links only veng::veng, so the editor symbols need their own

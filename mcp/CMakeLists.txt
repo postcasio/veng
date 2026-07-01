@@ -11,6 +11,8 @@
 
 add_library(veng_mcp SHARED
         src/McpServer.cpp
+        src/ReflectToJson.cpp
+        src/WorldTools.cpp
         src/Vendor/HttpLib.cpp
 )
 add_library(veng::mcp ALIAS veng_mcp)
