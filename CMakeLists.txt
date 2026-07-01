@@ -270,6 +270,12 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(nlohmann_json)
 add_subdirectory(graph)
 
+# The optional MCP server library — an engine-tier lib a consumer opts into to expose
+# its live systems to AI agents. Not linked by libveng; built unconditionally from
+# source (like the cooker). It links veng::veng, so it comes after engine, and needs
+# nlohmann/json (made available above), so it comes after that.
+add_subdirectory(mcp)
+
 add_subdirectory(cooker)
 
 # The editor is the heavy GUI authoring surface above the cooker. The cooker + graph
@@ -656,6 +662,32 @@ if (VENG_BUILD_TESTS)
             veng_editor::veng_editor)
 
     add_test(NAME include_hygiene COMMAND veng_test_include_hygiene)
+
+    # ---- MCP band (veng::mcp, driver-free) ----------------------------------
+    # A sibling include-hygiene guard over the Veng/Mcp/ public headers: it links
+    # veng::mcp but NOT nlohmann/json or the vendored httplib, so a json/httplib leak
+    # into a public header fails this build. A different boundary than the Vulkan/GLFW
+    # exclusion above, so it gets its own test rather than growing that link line.
+    add_executable(veng_test_mcp_include_hygiene tests/mcp_include_hygiene.cpp)
+    target_link_libraries(veng_test_mcp_include_hygiene PRIVATE veng::mcp)
+
+    add_test(NAME mcp_include_hygiene COMMAND veng_test_mcp_include_hygiene)
+
+    # The loopback proof: an McpServer on Port 0 + a `ping` tool, a background pump
+    # loop, and a real HTTP initialize -> tools/list -> tools/call round-trip from a
+    # client. It compiles the vendored httplib client into its own TU (exceptions on,
+    # like the rest of the suite) + nlohmann/json, so it needs no new dependency. Pure
+    # logic + loopback socket, no GPU, so it runs in the default band.
+    add_executable(veng_test_mcp_loopback tests/mcp_loopback.cpp)
+    target_link_libraries(veng_test_mcp_loopback PRIVATE veng::mcp nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_loopback PRIVATE JSON_NOEXCEPTION)
+    # The vendored httplib single-header is a SYSTEM include so clang-tidy skips the
+    # third-party code it pulls into this TU, matching the imgui/stb vendor posture.
+    target_include_directories(veng_test_mcp_loopback SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+
+    add_test(NAME mcp_loopback COMMAND veng_test_mcp_loopback)
+    set_tests_properties(mcp_loopback PROPERTIES LABELS mcp)
 
     # ---- Editor unit band (device-free) -------------------------------------
     # The NodeGraph topology core and the rest of libveng_editor's pure logic.
