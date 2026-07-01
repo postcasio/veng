@@ -38,6 +38,7 @@
 #include <atomic>
 #include <chrono>
 #include <fstream>
+#include <set>
 #include <string>
 #include <thread>
 
@@ -158,7 +159,8 @@ TEST_CASE("editor MCP reflection seam + command routing")
     info.AllowMutations = true;
 
     Unique<Mcp::McpServer> server = Mcp::McpServer::Create(info, host);
-    VengEditor::RegisterEditorReflectionTools(*server, editorHost);
+    VengEditor::RegisterEditorReadTools(*server, editorHost);
+    VengEditor::RegisterEditorWriteTools(*server, editorHost);
     const u16 port = server->GetPort();
     REQUIRE(port != 0);
 
@@ -248,6 +250,88 @@ TEST_CASE("editor MCP reflection seam + command routing")
         // no save action, surfaced as an isError.
         const Json saved = CallTool(client, "editor.save", Json::object());
         CHECK(saved.value("isError", false) == true);
+    }
+
+    done.store(true);
+    pump.join();
+}
+
+TEST_CASE("editor MCP read-only server omits the mutating verbs")
+{
+    TypeRegistry registry;
+    RegisterBuiltinTypes(registry);
+
+    Unique<Scene> scene = Scene::Create(registry);
+
+    TestDocumentPanel panel(*scene);
+
+    const VengEditor::EditorMcpHost editorHost{
+        .Types = registry,
+        .Panels = [&] { return vector<VengEditor::EditorPanel*>{&panel}; },
+        .FocusedDocument = [&] { return static_cast<VengEditor::AssetEditorPanel*>(&panel); },
+        .DocumentScene = [&] { return scene.get(); }};
+
+    AssetManager* assets = nullptr;
+    const Mcp::McpHost host{.Types = registry, .Assets = *assets};
+
+    // A read-only server: AllowMutations left false, and only the read tools registered — exactly
+    // the veng-editor path under --mcp without --mcp-write.
+    Mcp::McpServerInfo info;
+    info.Port = 0;
+
+    Unique<Mcp::McpServer> server = Mcp::McpServer::Create(info, host);
+    VengEditor::RegisterEditorReadTools(*server, editorHost);
+    const u16 port = server->GetPort();
+    REQUIRE(port != 0);
+
+    std::atomic<bool> done{false};
+    std::thread pump(
+        [&]
+        {
+            while (!done.load())
+            {
+                server->Pump();
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            server->Pump();
+        });
+
+    {
+        httplib::Client client("127.0.0.1", port);
+        client.set_connection_timeout(5, 0);
+        client.set_read_timeout(10, 0);
+
+        // tools/list advertises the read verbs and none of the mutating ones.
+        const Json list = Post(client, Json{{"jsonrpc", "2.0"},
+                                            {"id", g_Id++},
+                                            {"method", "tools/list"},
+                                            {"params", Json::object()}});
+        REQUIRE(list.contains("result"));
+        std::set<std::string> names;
+        for (const Json& tool : list["result"]["tools"])
+        {
+            names.insert(tool.value("name", std::string{}));
+        }
+        CHECK(names.contains("editor.list_panels"));
+        CHECK(names.contains("editor.inspect"));
+        CHECK(names.contains("editor.cook_status"));
+        CHECK_FALSE(names.contains("editor.set_field"));
+        CHECK_FALSE(names.contains("editor.save"));
+        CHECK_FALSE(names.contains("editor.undo"));
+        CHECK_FALSE(names.contains("editor.redo"));
+        CHECK_FALSE(names.contains("editor.open_asset"));
+        CHECK_FALSE(names.contains("editor.set_panel_visible"));
+        CHECK_FALSE(names.contains("editor.request_cook"));
+
+        // A read verb still executes; the mutating verb is an unknown tool (isError), never a write.
+        const Json inspected = Payload(CallTool(
+            client, "editor.inspect", Json{{"panel", "Level"}, {"inspectable", "renderSettings"}}));
+        CHECK(inspected.value("name", std::string{}) == "renderSettings");
+        const Json set = CallTool(client, "editor.set_field",
+                                  Json{{"panel", "Level"},
+                                       {"inspectable", "renderSettings"},
+                                       {"values", {{"Exposure", 2.5f}}}});
+        CHECK(set.value("isError", false) == true);
     }
 
     done.store(true);
@@ -350,7 +434,8 @@ TEST_CASE("editor MCP host tools: list_assets, set_panel_visible, open_asset, co
     info.Port = 0;
 
     Unique<Mcp::McpServer> server = Mcp::McpServer::Create(info, host);
-    VengEditor::RegisterEditorHostTools(*server, editorHost);
+    VengEditor::RegisterEditorReadTools(*server, editorHost);
+    VengEditor::RegisterEditorWriteTools(*server, editorHost);
     const u16 port = server->GetPort();
     REQUIRE(port != 0);
 

@@ -111,8 +111,16 @@ namespace
             info.AllowMutations = options.AllowMutations;
 
             m_Server = Mcp::McpServer::Create(info, m_Host);
-            VengEditor::RegisterEditorReflectionTools(*m_Server, m_EditorHost);
-            VengEditor::RegisterEditorHostTools(*m_Server, m_EditorHost);
+            VengEditor::RegisterEditorReadTools(*m_Server, m_EditorHost);
+
+            // The mutating editor verbs register only under the write gate, exactly as the McpHost's
+            // built-in mutation tools do — so a read-only server (--mcp without --mcp-write) exposes
+            // no editor.set_field / save / undo / redo / open_asset / set_panel_visible / request_cook,
+            // and tools/list honestly reflects the server's write capability.
+            if (options.AllowMutations)
+            {
+                VengEditor::RegisterEditorWriteTools(*m_Server, m_EditorHost);
+            }
 
             // The world/render/mutation tools auto-register from the McpHost at Create; the editor
             // tools register above. Drive Pump() each frame at the host's scene-safe point.

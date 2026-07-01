@@ -190,10 +190,16 @@ family registers from the editor side.
   `entity.destroy`, `world.load_prefab`. Each builds a resolved, validated `McpMutation` and
   applies it at the mutation-safe pump point.
 - **`editor.*`** (`editor/src/EditorMcp.cpp`, registered by the `veng-editor` exe, not the
-  library) — the generic property/command verbs `editor.list_panels`, `editor.inspect`,
-  `editor.set_field`, `editor.save`, `editor.undo`, `editor.redo`; and the host verbs
-  `editor.open_asset`, `editor.set_panel_visible`, `editor.list_assets` (paginated),
-  `editor.screenshot_panel`, `editor.request_cook`, `editor.cook_status`.
+  library) — split by write posture exactly as the built-in tools are, so a read-only editor
+  server honestly lists no write verbs. `RegisterEditorReadTools` (always) registers the
+  inspection verbs `editor.list_panels`, `editor.inspect`, `editor.list_assets` (paginated),
+  `editor.screenshot_panel`, and `editor.cook_status` (a poll that reads status only).
+  `RegisterEditorWriteTools`, registered by the exe **only when `AllowMutations` is set** (the
+  analogue of `RegisterMutationTools`), registers the mutating verbs `editor.set_field`,
+  `editor.save`, `editor.undo`, `editor.redo`, `editor.open_asset`, `editor.set_panel_visible`,
+  and `editor.request_cook` — the ones that change document, project, or editor-navigation state.
+  So `--mcp` without `--mcp-write` opens a read-only editor surface, matching the same posture the
+  engine tools hold.
 
 ### List pagination
 

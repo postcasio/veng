@@ -102,27 +102,30 @@ namespace VengEditor
         Veng::function<Veng::optional<Veng::string>(Veng::AssetId)> CookStatus;
     };
 
-    /// @brief Registers the generic editor property/command tools into the server.
+    /// @brief Registers the read-only editor inspection tools into the server.
     ///
-    /// Adds editor.list_panels, editor.inspect, editor.set_field, editor.save, editor.undo, and
-    /// editor.redo — all fully generic over the panel Inspectable seam, with no per-panel code.
-    /// editor.set_field walks the same ReflectToJson JsonToFields the inspector walks through
-    /// DrawFieldWidget, then calls OnInspectableChanged so the panel recooks / marks dirty as a UI
-    /// edit would. The save/undo/redo verbs ride the focused AssetEditorPanel's virtuals.
+    /// Adds editor.list_panels, editor.inspect, editor.list_assets (paginated over the
+    /// AssetSourceIndex), editor.screenshot_panel (the shared viewport-capture path against a named
+    /// panel), and editor.cook_status (a poll that reads status only). None mutate document, project,
+    /// or panel state, so they register unconditionally — the analogue of veng::mcp's RegisterWorldTools
+    /// / RegisterRenderTools. The inspection walks read the same reflection the inspector draws through
+    /// DrawFieldWidget, so a new reflected field appears over MCP with no MCP change. A null host
+    /// closure makes its tool report the feature unavailable rather than crash.
     /// @param server  The server to register the tools into (before its first Pump()).
     /// @param host    The provider seam, captured by reference into each handler; must outlive the server.
-    void RegisterEditorReflectionTools(Veng::Mcp::McpServer& server, const EditorMcpHost& host);
+    void RegisterEditorReadTools(Veng::Mcp::McpServer& server, const EditorMcpHost& host);
 
-    /// @brief Registers the editor's non-reflection host tools into the server.
+    /// @brief Registers the mutating editor tools into the server, gated on the write posture.
     ///
-    /// Adds editor.open_asset, editor.set_panel_visible, editor.list_assets (paginated over the
-    /// AssetSourceIndex), editor.screenshot_panel (the shared viewport-capture path against a
-    /// named panel), editor.request_cook (fire-and-poll cook-on-demand), and editor.cook_status.
-    /// Each reaches the editor host through the EditorMcpHost closures; a null closure makes its
-    /// tool report the feature unavailable rather than crash.
+    /// Adds editor.set_field (a partial reflected write plus the panel's recook/mark-dirty reaction),
+    /// editor.save / editor.undo / editor.redo (the focused AssetEditorPanel's lifecycle virtuals),
+    /// editor.open_asset and editor.set_panel_visible (editor navigation state), and editor.request_cook
+    /// (fire-and-poll cook-on-demand). Each changes document, project, or editor state, so the caller
+    /// registers this set only when McpServerInfo::AllowMutations is set — the analogue of veng::mcp's
+    /// RegisterMutationTools — leaving a read-only server's tools/list honestly free of write verbs.
     /// @param server  The server to register the tools into (before its first Pump()).
     /// @param host    The provider seam, captured by reference into each handler; must outlive the server.
-    void RegisterEditorHostTools(Veng::Mcp::McpServer& server, const EditorMcpHost& host);
+    void RegisterEditorWriteTools(Veng::Mcp::McpServer& server, const EditorMcpHost& host);
 
     /// @brief Applies a world mutation as an undoable command against the focused document.
     ///
