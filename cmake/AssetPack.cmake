@@ -1,4 +1,4 @@
-# add_asset_pack(<target>
+# veng_add_asset_pack(<target>
 #     PACK      <pack.json>                # relative to CMAKE_CURRENT_SOURCE_DIR
 #     OUTPUT    <out.vengpack>             # absolute path in the build tree
 #     [CONFIG    <file.buildcfg>]          # build configuration driving the cook
@@ -33,14 +33,14 @@
 # The resolved custom-target name (suffixed under CONFIG, bare without) is returned
 # in the parent scope as ${TARGET_NAME}_TARGET, so a caller threading the
 # host-default CONFIG does not need to know the suffix to depend on the target.
-function(add_asset_pack TARGET_NAME)
+function(veng_add_asset_pack TARGET_NAME)
     cmake_parse_arguments(ARG "" "PACK;OUTPUT;MODULE;CONFIG" "DEPENDS;REFERENCE" ${ARGN})
 
     if (NOT ARG_PACK)
-        message(FATAL_ERROR "add_asset_pack(${TARGET_NAME}): PACK is required")
+        message(FATAL_ERROR "veng_add_asset_pack(${TARGET_NAME}): PACK is required")
     endif ()
     if (NOT ARG_OUTPUT)
-        message(FATAL_ERROR "add_asset_pack(${TARGET_NAME}): OUTPUT is required")
+        message(FATAL_ERROR "veng_add_asset_pack(${TARGET_NAME}): OUTPUT is required")
     endif ()
 
     cmake_path(ABSOLUTE_PATH ARG_PACK
@@ -70,7 +70,7 @@ function(add_asset_pack TARGET_NAME)
                 BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} NORMALIZE
                 OUTPUT_VARIABLE CONFIG_ABS)
         if (NOT EXISTS ${CONFIG_ABS})
-            message(FATAL_ERROR "add_asset_pack(${TARGET_NAME}): CONFIG '${CONFIG_ABS}' not found")
+            message(FATAL_ERROR "veng_add_asset_pack(${TARGET_NAME}): CONFIG '${CONFIG_ABS}' not found")
         endif ()
 
         # OutputSuffix in the configuration file is the single source of truth for the
@@ -79,7 +79,7 @@ function(add_asset_pack TARGET_NAME)
         string(JSON CONFIG_SUFFIX ERROR_VARIABLE SUFFIX_ERROR GET ${CONFIG_JSON} "outputSuffix")
         if (SUFFIX_ERROR)
             message(FATAL_ERROR
-                    "add_asset_pack(${TARGET_NAME}): CONFIG '${CONFIG_ABS}' has no string outputSuffix")
+                    "veng_add_asset_pack(${TARGET_NAME}): CONFIG '${CONFIG_ABS}' has no string outputSuffix")
         endif ()
 
         # Splice the suffix in before the extension: sample.vengpack -> sample-macos.vengpack.

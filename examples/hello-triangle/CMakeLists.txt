@@ -1,4 +1,4 @@
-# Cook the hello-triangle project with vengc at build time, into the build tree. add_project
+# Cook the hello-triangle project with vengc at build time, into the build tree. veng_add_project
 # reads project.veng for the packs and ship configurations and cooks each config's packs plus
 # its cooked project file (.vengproj); veng_add_game copies the host-default config's project +
 # packs beside the launcher (renamed to their un-suffixed mount names), so the launcher + module
@@ -8,7 +8,7 @@ set(HT_ASSET_DIR "${CMAKE_CURRENT_BINARY_DIR}/assets")
 # The project owns its pack + configuration set (project.veng lists assets/sample.vengpack.json
 # and the three ship targets with macOS active). VENG_BUILD_CONFIG (defaulting from the host
 # triple) names the configuration the launcher's artifacts cook under.
-add_project(hello_triangle_assets
+veng_add_project(hello_triangle_assets
         PROJECT    project.veng
         OUTPUT_DIR ${HT_ASSET_DIR}
         # The pack carries a prefab whose components include the game's Spinner, so the cook

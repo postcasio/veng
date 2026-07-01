@@ -113,7 +113,7 @@ set(VENG_EDITOR_EXE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 # The editor is the heavy GUI surface above the cooker, built top-level-only (the cooker
 # beneath it always builds from source).
 if (PROJECT_IS_TOP_LEVEL)
-    add_asset_pack(veng_editor_icons
+    veng_add_asset_pack(veng_editor_icons
             PACK   assets/icons/editor_icons.vengpack.json
             OUTPUT ${CMAKE_BINARY_DIR}/editor_icons.vengpack)
     set(VENG_EDITOR_ICON_PACK "${CMAKE_BINARY_DIR}/editor_icons.vengpack"

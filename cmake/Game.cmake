@@ -1,25 +1,29 @@
 # veng_add_game(<name>
 #     SOURCES   <game sources...>        # the libgame translation units
-#     [PROJECT  <add_project host target>] # optional: the project's host-config target
+#     [PROJECT  <veng_add_project host target>] # optional: the project's host-config target
 # )
 #
 # Produces lib<name> (SHARED, links veng::veng) and <name>-launcher (exe, the veng
 # launcher compiled with VENG_GAME_MODULE pointing at lib<name>).
 #
-# A PROJECT target (from add_project) declares MODULE <name> so its cook reflects
+# A PROJECT target (from veng_add_project) declares MODULE <name> so its cook reflects
 # lib<name>'s native component types and the build graph orders lib<name> -> cook ->
 # copy beside launcher. The cooked project file and every pack it names are copied
 # beside the launcher (renamed to their un-suffixed mount names), so the relocatable
 # set (launcher + lib + project + packs) is a self-contained, movable directory.
 #
-# In-tree only: it serves the example and the tests, which build veng as the top-level
-# project. Installed-package wiring (resolving the launcher source from an installed
-# veng) is a separate packaging concern, out of scope here.
+# The same body serves an in-tree build (veng as the top-level project) and a
+# find_package(veng) consumer: only the launcher-source path differs, resolved per
+# consumption mode below.
 
-# VENG_LAUNCHER_MAIN is the launcher source. In-tree it is the source-tree path,
-# set right here.
-set(VENG_LAUNCHER_MAIN "${CMAKE_CURRENT_LIST_DIR}/../engine/src/Launcher/launcher_main.cpp"
-    CACHE INTERNAL "veng launcher source")
+# VENG_LAUNCHER_MAIN is the launcher source compiled into each game's launcher. Its path
+# is resolved per consumption mode: in-tree (VENG_PACKAGE_MODE unset) it is the source-tree
+# file set here; a find_package(veng) consumer gets the installed copy, which veng-config
+# sets before including this module.
+if (NOT VENG_PACKAGE_MODE)
+    set(VENG_LAUNCHER_MAIN "${CMAKE_CURRENT_LIST_DIR}/../engine/src/Launcher/launcher_main.cpp"
+        CACHE INTERNAL "veng launcher source")
+endif ()
 
 function(veng_add_game NAME)
     cmake_parse_arguments(ARG "" "PROJECT" "SOURCES" ${ARGN})
@@ -58,7 +62,7 @@ function(veng_add_game NAME)
     # project + packs) is then a self-contained, movable directory. The host-config
     # project target records the cooked outputs (possibly suffixed per build
     # configuration) and the un-suffixed mount names the runtime loads, both set by
-    # add_project, so this copy reads them without the caller restating the paths. Each
+    # veng_add_project, so this copy reads them without the caller restating the paths. Each
     # copy renames source -> mount name, so the per-config suffix never leaves the build
     # tree and the launcher loads the same names whichever config cooked them.
     #

@@ -9,6 +9,47 @@ find_dependency(fmt)
 find_dependency(VulkanMemoryAllocator)
 find_dependency(nfd)
 
+# zstd is PUBLIC through assetpack (the runtime inflates compressed archive blobs), so its
+# imported target must be resolved for veng-targets.cmake's link interface to import.
+find_dependency(zstd)
+
 include("${CMAKE_CURRENT_LIST_DIR}/veng-targets.cmake")
+
+# vengc is exported as an IMPORTED executable under the veng:: namespace. Recreate the
+# unqualified name so the helper modules' $<TARGET_FILE:vengc> resolves downstream exactly
+# as it does in-tree (a built target there, an aliased imported one here). ALIAS on an
+# imported executable is legal on the CMake this package requires.
+if (NOT TARGET vengc)
+    add_executable(vengc ALIAS veng::vengc)
+endif ()
+
+# The consumption mode the helper modules resolve their mode-keyed path variables against.
+# A find_package(veng) against an install prefix is INSTALL; the in-tree build leaves this
+# unset, and the build-tree config sets BUILD_TREE.
+set(VENG_PACKAGE_MODE "INSTALL")
+
+# The launcher source veng_add_game compiles into each game's launcher, installed under
+# share/veng/launcher. Set before including Game.cmake so its mode-aware resolution uses it.
+set(VENG_LAUNCHER_MAIN "@PACKAGE_CMAKE_INSTALL_DATADIR@/veng/launcher/launcher_main.cpp"
+    CACHE INTERNAL "veng launcher source")
+
+# The engine core-data paths, resolved to the installed prefix. VENG_CORE_* is the internal
+# scaffolding the helper bodies thread to every cook (--shader-include / --reference); the
+# lowercase veng_CORE_* aliases are the consumer-facing find_package result API a downstream
+# veng_add_project(... REFERENCE ${veng_CORE_PACK_JSON}) reads.
+set(VENG_CORE_SHADER_DIR "@PACKAGE_CMAKE_INSTALL_DATADIR@/veng/core/shaders"
+    CACHE PATH "Engine core shader directory added to every cook's Slang search path")
+set(VENG_CORE_PACK_JSON "@PACKAGE_CMAKE_INSTALL_DATADIR@/veng/core/core.vengpack.json"
+    CACHE FILEPATH "Engine core pack source manifest referenced by a downstream cook")
+set(veng_CORE_SHADER_DIR "${VENG_CORE_SHADER_DIR}")
+set(veng_CORE_PACK_JSON "${VENG_CORE_PACK_JSON}")
+
+# The authoring vocabulary — veng_add_project / veng_add_asset_pack / veng_add_game and the
+# build-config helpers. They reference vengc through the alias above and the core-data paths
+# set above, so a consumer gets the full authoring surface on find_package(veng).
+include("${CMAKE_CURRENT_LIST_DIR}/AssetPack.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/BuildConfig.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/Project.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/Game.cmake")
 
 check_required_components(veng)

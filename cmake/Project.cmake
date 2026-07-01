@@ -1,4 +1,4 @@
-# add_project(<target>
+# veng_add_project(<target>
 #     PROJECT    <project.veng>            # the authoring project, relative to CMAKE_CURRENT_SOURCE_DIR
 #     OUTPUT_DIR <dir>                      # absolute build-tree dir for the cooked packs + .vengproj
 #     [MODULE    <lib target>]             # game module to dlopen for prefab/level reflection
@@ -24,21 +24,21 @@
 #   VENG_PACK_OUTPUTS    the cooked pack paths (suffixed), parallel to VENG_PACK_MOUNTS
 #   VENG_PACK_MOUNTS     the un-suffixed pack names the runtime mounts
 #   VENG_PROJECT_SOURCE  the absolute project.veng source path (for the editor)
-function(add_project TARGET_NAME)
+function(veng_add_project TARGET_NAME)
     cmake_parse_arguments(ARG "" "PROJECT;OUTPUT_DIR;MODULE" "REFERENCE" ${ARGN})
 
     if (NOT ARG_PROJECT)
-        message(FATAL_ERROR "add_project(${TARGET_NAME}): PROJECT is required")
+        message(FATAL_ERROR "veng_add_project(${TARGET_NAME}): PROJECT is required")
     endif ()
     if (NOT ARG_OUTPUT_DIR)
-        message(FATAL_ERROR "add_project(${TARGET_NAME}): OUTPUT_DIR is required")
+        message(FATAL_ERROR "veng_add_project(${TARGET_NAME}): OUTPUT_DIR is required")
     endif ()
 
     cmake_path(ABSOLUTE_PATH ARG_PROJECT
             BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} NORMALIZE
             OUTPUT_VARIABLE PROJECT_ABS)
     if (NOT EXISTS ${PROJECT_ABS})
-        message(FATAL_ERROR "add_project(${TARGET_NAME}): PROJECT '${PROJECT_ABS}' not found")
+        message(FATAL_ERROR "veng_add_project(${TARGET_NAME}): PROJECT '${PROJECT_ABS}' not found")
     endif ()
     cmake_path(GET PROJECT_ABS PARENT_PATH PROJECT_DIR)
     cmake_path(GET PROJECT_ABS STEM LAST_ONLY PROJECT_STEM)
@@ -63,7 +63,7 @@ function(add_project TARGET_NAME)
     # The packs the project owns, resolved to mount names + per-config output stems.
     string(JSON PACK_COUNT ERROR_VARIABLE PACK_ERR LENGTH ${PROJECT_JSON} packs)
     if (PACK_ERR OR PACK_COUNT EQUAL 0)
-        message(FATAL_ERROR "add_project(${TARGET_NAME}): project '${PROJECT_ABS}' lists no packs")
+        message(FATAL_ERROR "veng_add_project(${TARGET_NAME}): project '${PROJECT_ABS}' lists no packs")
     endif ()
 
     set(PACK_MANIFESTS)  # absolute pack JSON sources
@@ -87,7 +87,7 @@ function(add_project TARGET_NAME)
     string(JSON CFG_COUNT ERROR_VARIABLE CFG_ERR LENGTH ${PROJECT_JSON} configurations)
     if (CFG_ERR OR CFG_COUNT EQUAL 0)
         message(FATAL_ERROR
-                "add_project(${TARGET_NAME}): project '${PROJECT_ABS}' lists no configurations")
+                "veng_add_project(${TARGET_NAME}): project '${PROJECT_ABS}' lists no configurations")
     endif ()
 
     math(EXPR CFG_LAST "${CFG_COUNT} - 1")
@@ -97,7 +97,7 @@ function(add_project TARGET_NAME)
                 OUTPUT_VARIABLE CFG_ABS)
         if (NOT EXISTS ${CFG_ABS})
             message(FATAL_ERROR
-                    "add_project(${TARGET_NAME}): configuration '${CFG_ABS}' not found")
+                    "veng_add_project(${TARGET_NAME}): configuration '${CFG_ABS}' not found")
         endif ()
 
         # The configuration's name (the --config selector) and pack suffix come from the
@@ -107,7 +107,7 @@ function(add_project TARGET_NAME)
         string(JSON CFG_SUFFIX ERROR_VARIABLE SUFFIX_ERR GET ${CFG_JSON} outputSuffix)
         if (NAME_ERR OR SUFFIX_ERR)
             message(FATAL_ERROR
-                    "add_project(${TARGET_NAME}): config '${CFG_ABS}' needs string name + outputSuffix")
+                    "veng_add_project(${TARGET_NAME}): config '${CFG_ABS}' needs string name + outputSuffix")
         endif ()
 
         # The per-config outputs: each pack (suffixed) plus the cooked project (suffixed).

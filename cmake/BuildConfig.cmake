@@ -39,7 +39,7 @@ set(VENG_BUILD_CONFIG "${VENG_BUILD_CONFIG_DEFAULT}" CACHE STRING
 message(STATUS "veng: asset cook build configuration = ${VENG_BUILD_CONFIG}")
 
 # The cook-all-packs aggregate depends on every configuration's output pack, for CI /
-# ship that wants all platforms' packs in one build. add_asset_pack feeds each
+# ship that wants all platforms' packs in one build. veng_add_asset_pack feeds each
 # per-config pack target into it via veng_register_all_packs_target; the default build
 # still cooks only the host-default pack, so a developer's incremental build never pays
 # for foreign-platform encodes it does not need.

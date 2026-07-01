@@ -1,7 +1,7 @@
 # veng_add_editor(<name>
 #     GAME_MODULE    <game target>             # libgame the editor loads (named in project.veng)
 #     [EDITOR_MODULE <editor target>]          # optional libgame_editor, placed in the build dir
-#     PROJECT        <add_project host target>  # the project whose project.veng the editor opens
+#     PROJECT        <veng_add_project host target>  # the project whose project.veng the editor opens
 # )
 #
 # Does NOT build an editor binary. The single shared veng-editor exe (built in editor/) is the
@@ -42,7 +42,7 @@ function(veng_add_editor NAME)
     endif ()
 
     # The module libraries + cooked packs live beside the launcher (veng_add_game's relocatable
-    # set); the editor opens the project's source project.veng (baked absolute by add_project).
+    # set); the editor opens the project's source project.veng (baked absolute by veng_add_project).
     set(BUILD_DIR $<TARGET_FILE_DIR:${ARG_GAME_MODULE}-launcher>)
     set(PROJECT_SOURCE $<TARGET_PROPERTY:${ARG_PROJECT},VENG_PROJECT_SOURCE>)
     set(EDITOR_DEPS veng-editor ${ARG_GAME_MODULE} ${ARG_GAME_MODULE}-launcher ${ARG_PROJECT})
@@ -62,7 +62,7 @@ function(veng_add_editor NAME)
     #
     # corePackManifest records the engine core pack's source manifest so the editor's cook-on-demand
     # resolves core-pack ids (the standard vertex shaders) — the same --reference the file-based
-    # add_project cook passes; without it a recooked material referencing a core-pack shader fails.
+    # veng_add_project cook passes; without it a recooked material referencing a core-pack shader fails.
     get_target_property(PROJECT_SRC_ABS ${ARG_PROJECT} VENG_PROJECT_SOURCE)
     get_filename_component(PROJECT_SRC_DIR "${PROJECT_SRC_ABS}" DIRECTORY)
     file(GENERATE OUTPUT "${PROJECT_SRC_DIR}/.veng/build.json"

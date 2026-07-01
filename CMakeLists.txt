@@ -731,7 +731,7 @@ if (VENG_BUILD_TESTS)
     # engine has no runtime Slang compiler, so cooking is the only path to a
     # shader module. None of these shaders declare vertex inputs, so the pack
     # needs no REFERENCE for a vertex-layout id.
-    add_asset_pack(veng_test_shaders
+    veng_add_asset_pack(veng_test_shaders
             PACK   tests/shaders/test.vengpack.json
             OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/test_shaders.vengpack
             DEPENDS
@@ -1061,6 +1061,26 @@ install(DIRECTORY engine/include/Veng DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 # no cooked artifact to keep in sync.
 install(DIRECTORY engine/assets/core/ DESTINATION ${CMAKE_INSTALL_DATADIR}/veng/core)
 
+# The authoring helper modules — the veng_add_project / veng_add_game /
+# veng_add_asset_pack vocabulary a game drives its build with. They land beside the
+# generated veng-config.cmake / veng-targets.cmake, which includes them so a
+# find_package(veng) consumer gets the functions with no manual include of an SDK path.
+install(FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/AssetPack.cmake
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Project.cmake
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Game.cmake
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildConfig.cmake
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PerConfigInvalidation.cmake
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/veng
+)
+
+# The launcher source veng_add_game compiles into each game's <name>-launcher. Installed
+# so VENG_LAUNCHER_MAIN resolves to a real file when the helpers load from a package.
+install(FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/src/Launcher/launcher_main.cpp
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/veng/launcher
+)
+
 # Third-party headers reachable from veng's public headers, so that an
 # installed veng is self-contained for find_package consumers.
 install(FILES
@@ -1090,6 +1110,7 @@ configure_package_config_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/veng-config.cmake.in
         ${CMAKE_CURRENT_BINARY_DIR}/veng-config.cmake
         INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/veng
+        PATH_VARS CMAKE_INSTALL_DATADIR
 )
 
 write_basic_package_version_file(
