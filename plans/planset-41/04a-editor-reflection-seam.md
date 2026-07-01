@@ -32,9 +32,12 @@ there is no second API surface to keep in sync. Depends on Plans 02 + 03.
 
 ### 1. The panel reflection seam
 
-Add to the panel base (`EditorPanel` or `AssetEditorPanel` — whichever the panels that need it derive
-from; the asset editors derive `AssetEditorPanel`, the texture/material editors are their own base, so
-the seam likely lives on `EditorPanel` so all can implement it):
+Add the seam to **`EditorPanel`**, the common base. The material, material-instance, and texture
+editors derive `EditorPanel` directly (not `AssetEditorPanel`), so `EditorPanel` is the one base every
+inspectable-bearing panel shares; the lifecycle verbs (save/undo/redo) ride `AssetEditorPanel`'s
+existing virtuals as before. `EditorPanel.h` gains `#include <Veng/Reflection/ReflectionTypes.h>` for
+`TypeId` (a trivial `u64` alias — a new but lightweight dependency of the panel base on the reflection
+layer):
 
 ```cpp
 /// @brief One reflected object this panel edits, named for addressing.
@@ -95,6 +98,10 @@ through the command stack, undoable) → `editor.inspect { panel, "renderSetting
 `editor.set_field` to tune the level → `editor.save`. All generic; none of it names a specific panel
 in the MCP library.
 
+The editor host **asserts/logs if it builds an `McpHost` over a document scene without setting
+`ApplyMutation`** — since a null hook silently falls back to raw scene edits (correct for a game, a
+bug here), the missing wiring is caught rather than producing un-undoable agent edits (see Plan 03).
+
 ## Notes & constraints
 
 - **Direction is `editor → veng::mcp`.** The seam methods live on the editor panel base and the tools
@@ -110,7 +117,8 @@ in the MCP library.
 
 ## Files (sketch)
 
-- `editor/include/VengEditor/EditorPanel.h` — the `Inspectable` struct + the two virtuals.
+- `editor/include/VengEditor/EditorPanel.h` — the `Inspectable` struct + the two virtuals, plus the
+  new `#include <Veng/Reflection/ReflectionTypes.h>` for `TypeId`.
 - `editor/src/AssetEditorPanel.{h,cpp}` + the 4 asset-editor panels — `GetInspectables()` /
   `OnInspectableChanged()` overrides (thin, beside their `DrawFieldWidget` sites).
 - `editor/src/EditorMcp.{h,cpp}` (new; the registration side, shared with Plan 04b) —
@@ -118,11 +126,16 @@ in the MCP library.
 
 ## Verification
 
-- A headless/editor test (labelled `gpu` where a document scene needs a device): open a level editor
-  document, and over loopback `editor.list_panels` (asserts the level editor + its inspectable names),
-  `editor.inspect` the render settings (round-trips a known value), `editor.set_field` one and confirm
-  the document is now dirty (`HasUnsavedChanges`), `entity.add_component` a Light through the routed
-  path and confirm `editor.undo` removes it (command-stack routing works).
+- A **default-band** (no GPU) editor test carries the bulk: the seam + command routing + reflection
+  round-trip, following the device-free `tests/editor/` precedent (`asset_source_index`,
+  `field_widget`, `node_graph`). Over loopback: `editor.list_panels` (asserts the level editor + its
+  inspectable names), `editor.inspect` the render settings (round-trips a known value),
+  `editor.set_field` one and confirm the document is now dirty (`HasUnsavedChanges`),
+  `entity.add_component` a Light through the routed path and confirm `editor.undo` removes it
+  (command-stack routing works) — none of which needs a live device.
+- A small **`gpu`**-labelled smoke covers only the part that genuinely needs a device (a document
+  scene that must render, e.g. `editor.screenshot_panel` in Plan 04b), so the seam logic above still
+  runs on a machine with no ICD instead of skipping wholesale.
 - `include_hygiene` green; `libveng_mcp` still links no editor target.
 
 ## Deferred (noted in Plan 06's roadmap pass)

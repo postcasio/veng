@@ -9,14 +9,26 @@ and run the full verification band. The closer. Depends on Plans 00–05.
 ### 1. `mcp/CLAUDE.md` — the module guide
 
 A new per-module architecture doc (the fifth module guide, joining engine/editor/cooker/assetpack),
-covering: the `McpServer` / `McpHost` / `ToolRegistry` model; the network-thread ↔ render-thread
-request-queue-and-pump contract (and why it is the inverse of `TaskSystem`); the JSON-library-free
-public surface + the `Result<string>(string_view)` handler shape; the loopback Streamable-HTTP
-transport and the vendored-httplib-TU exception override; `ReflectToJson`/`JsonToFields` as the
-reflection (de)serializer; the built-in engine tool families (`world.*`/`entity.*`/`scene.*`/
-`render.*`) and the editor-side tool families (`editor.*`); the `AllowMutations` + loopback gating;
-and the "optional, separately-linked, editor-free" posture. Written to the house comment/doc rules
-(no plan citations, present-tense fact).
+covering: the `McpServer` / `McpHost` / `ToolRegistry` model — including the **fully-assembled
+`McpHost` struct** (all fields together: `Types`, `Assets`, `CurrentWorld`, `Viewport`,
+`ViewportNames`, `ApplyMutation`), which the plans build up incrementally across 01–03 and which a
+consumer must see whole; the network-thread ↔ render-thread request-queue-and-pump contract (and why
+it is the inverse of `TaskSystem`, reusing its mutex/condvar/slot handshake rather than
+`std::promise`), including the **request timeout** and the fact that a synchronous main-thread modal
+(a native file dialog) stalls the server for that window; the JSON-library-free public surface + the
+`Result<string>(string_view)` handler shape; the loopback Streamable-HTTP transport, the
+vendored-httplib-TU `-fexceptions` override **and its containment boundary** (no exception crosses out
+of the vendor TU); `ReflectToJson`/`JsonToFields` as the reflection (de)serializer; the built-in
+engine tool families (`world.*`/`entity.*`/`scene.*`/`render.*`) and the editor-side tool families
+(`editor.*`); the shared **list-pagination convention** (`{ limit?, cursor? }` → `{ items…,
+nextCursor? }`, MCP's `cursor`/`nextCursor` idiom); and the **security posture** as one place: loopback-only bind + `Origin`-header
+rejection (the same-host browser defense) + `AllowMutations` off by default, with the explicit facts
+that **(a)** a shipped build must never default the MCP env-gate on (an on-by-default server is a live
+local read/screenshot surface of the game), and **(b)** no MCP tool argument is ever a filesystem
+path — every engine reference crosses the wire as an opaque `AssetId`, matching `AssetManager`'s own
+external contract (`Mount` takes a raw path and is never exposed to a tool). Close on the "optional,
+separately-linked, editor-free" posture. Written to the house comment/doc rules (no plan citations,
+present-tense fact).
 
 ### 2. Root `CLAUDE.md` — the layout entry
 

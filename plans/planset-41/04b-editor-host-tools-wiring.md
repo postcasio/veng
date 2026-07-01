@@ -11,10 +11,10 @@ full agent surface. `libveng_mcp` stays editor-free. Depends on Plan 04a.
   `libveng_editor`, `libveng_cook`), launched with `--project <project.veng>`
   ([editor/CLAUDE.md](../../editor/CLAUDE.md)). `EditorHost` is an `Application` subclass owning the
   panel set, the dockspace, the `EditorRegistry`, and the live document scene(s).
-- `PanelHost::OpenAssetEditor(AssetType, AssetId)` already exists and is deferred-safe — it adopts the
-  panel into the set at the next safe frame point (`editor/src/EditorHost.cpp:555`). Opening a panel is
-  a one-line passthrough; showing/hiding one is flipping `PanelSlot::Open` (the Window menu already
-  does this).
+- `EditorHost::OpenAssetEditor(AssetType, AssetId)` (satisfying the `PanelHost` interface panels call
+  through, implemented at `editor/src/EditorHost.cpp:555`) already exists and is deferred-safe — it
+  adopts the panel into the set at the next safe frame point. Opening a panel is a one-line
+  passthrough; showing/hiding one is flipping `PanelSlot::Open` (the Window menu already does this).
 - `EditorHost` builds an **`AssetSourceIndex`** from the union of the project's pack manifests
   (`AssetSourceIndex::ParsePacks`) — the id → name/type/source map the inspector's chips and pickers
   already search.
@@ -34,6 +34,8 @@ full agent surface. `libveng_mcp` stays editor-free. Depends on Plan 04a.
   `EditorHost`: `Types`/`Assets` from the host; `CurrentWorld` returns the **focused** document
   editor's `Scene*` (or null when no document is open); `Viewport`/`ViewportNames` expose the open
   scene panels' viewports by a stable name; and `ApplyMutation` is the Plan 04a command-routing hook.
+  The host construction **asserts `ApplyMutation` is set** (it always is, here) — a document-scene
+  host with a null hook would silently make agent edits un-undoable (Plan 03/04a).
 - `EditorHost` calls `server->Pump()` once per frame at a scene-safe point (before the panels iterate
   their scenes — the same window the editor's own after-the-walk edits land in).
 
@@ -47,15 +49,19 @@ Registered beside Plan 04a's reflection tools, in the same `editor/src/EditorMcp
 - **`editor.set_panel_visible`** — arg `{ panel, visible }` → flips the panel's `Open` at the pump
   point (the Window-menu toggle, programmatic). Close reachable for document panels the same way the
   host already erases closed documents.
-- **`editor.list_assets`** — arg `{ type?: <AssetType> }` → the `AssetSourceIndex` entries (id, name,
-  type, source path), optionally filtered. Project-wide asset inspection an agent can browse.
+- **`editor.list_assets`** — arg `{ type?: <AssetType>, limit?, cursor? }` → the `AssetSourceIndex`
+  entries (id, name, type, source path), optionally filtered, `{ assets, nextCursor? }`. Project-wide
+  asset inspection an agent can browse, **paginated** per the shared list convention (a project has
+  many assets).
 - **`editor.screenshot_panel`** — arg `{ panel }` → the Plan 02 capture path against the named panel's
   `Offscreen` viewport. Lets an agent see a specific editor panel, not just the game view.
 - **`editor.request_cook`** — arg `{ asset: <AssetId> }` → kicks `EditorHost::RequestCook` and returns
-  `{ status: "started" }` immediately; a companion **`editor.cook_status`** (or the tool holding its
-  request until the async callback lands — the implementing agent picks the simpler shape and
-  documents it) reports completion. The editor-only cook-on-demand path, distinct from the runtime
-  `world.load_prefab` which never cooks.
+  `{ status: "started" }` immediately; a companion **`editor.cook_status`** tool reports completion.
+  The tool must **not** hold its request open until the cook callback lands: `RequestCook`'s completion
+  fires on the main thread through `TaskSystem`'s continuation pump, which runs earlier in the frame
+  than `McpServer::Pump()` and not again until the next frame — a handler blocking inside `Pump()`
+  waiting for it would deadlock the frame. So the cook is fire-and-poll, not fire-and-block. The
+  editor-only cook-on-demand path, distinct from the runtime `world.load_prefab` which never cooks.
 
 ### 3. The `McpHost` closures are document-aware
 

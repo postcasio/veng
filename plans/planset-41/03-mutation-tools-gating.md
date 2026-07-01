@@ -49,7 +49,12 @@ in reverse — parse a JSON object into a component's bytes by field `Name`, wit
 schema-drift tolerance (an unknown key is skipped, not an error; a type-mismatched value is a located
 error). Enum by name-or-integer, `AssetHandle` from an `AssetId`, `Variant` from `{ type, value }`,
 `Array` via the `ArrayResize`/`ArrayElement` shims, `Struct` recursion — the same coverage
-`FieldsToJson` has.
+`FieldsToJson` has. Every agent-supplied type name it resolves (a `Variant`'s active-type
+`QualifiedName`, an enum enumerator) goes through the fallible registry lookup and yields a located
+error on a miss — it never reaches an asserting `registry.Info()` (see Plan 01). The `Array` arm
+resizes to the incoming JSON array's element count with a sensible sanity cap, so a malformed
+`values` array can't trigger a pathological allocation (single trusted local client, so this is a
+guard against an accidental huge count, not a hostile one).
 
 ### 3. The optional mutation-routing seam
 
@@ -67,6 +72,12 @@ the tool applies the edit **directly** to `McpHost::CurrentWorld()`; when it is 
 tool hands the `McpMutation` to the host, which pushes the corresponding editor command onto the
 `CommandStack` — so an agent's edit undoes exactly like a human's. Same generic tools, two backends;
 the tools never branch on "am I in the editor", they just consult the hook.
+
+A null hook is a *silent* raw-scene path, which is correct for a game but a bug for an editor host
+that meant to route through the `CommandStack`. The fallback is therefore deliberately load-bearing:
+Plan 04a's editor host **asserts/logs** if it constructs an `McpHost` over a document scene without
+setting `ApplyMutation`, so a forgotten wiring is caught rather than silently producing
+un-undoable agent edits.
 
 ### 4. The mutation tools (registered only when `AllowMutations`)
 

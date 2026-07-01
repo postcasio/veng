@@ -43,9 +43,16 @@ On top of planset-40's completed install machinery:
 - `hello-triangle`'s `CMakeLists.txt` links `veng::mcp` (in-tree, via the target).
 - Its `Application` subclass constructs an `McpServer` when `HT_MCP=<port>` (or `HT_MCP=1` for a
   default port) is set, fills the `McpHost` from `GetTypeRegistry()`/`GetAssetManager()`/the managed
-  world/`GetPrimaryViewport()`, and calls `server->Pump()` at the top of `OnUpdate` (before the
-  spinner logic and render). `AllowMutations` follows a second env flag (`HT_MCP_WRITE`), default off.
-  Kept env-gated so the default smoke path and the shipped sample do not open a socket.
+  world/`GetPrimaryViewport()`, and calls `server->Pump()` once per frame at its scene-safe point (in
+  the app-level `OnUpdate`, which runs after `TickSimulation` and before render — the same window the
+  world tools read/write in; the spinner is a system that has already ticked by then, so the pump does
+  not sit "before" it). `AllowMutations` follows a second env flag (`HT_MCP_WRITE`), default off. Kept
+  env-gated so the default smoke path and the shipped sample do not open a socket.
+- **`HT_MCP` suppresses the `HT_SMOKE` 20-frame auto-exit.** In plain `HT_SMOKE` the app renders a
+  fixed pose and `RequestExit()`s at frame 20 (tens of ms) — far too short for a client to connect.
+  When `HT_MCP` is also set, the app keeps running (rendering the same scene) so there is a real
+  serving window; the conformance harness drives its calls and then terminates the process. `HT_SMOKE`
+  alone (the golden path) is unchanged.
 - This is the ~10-line consumer recipe the docs (Plan 06) point at: link the lib, construct with an
   `McpHost`, pump once per frame.
 
@@ -62,11 +69,16 @@ co-migration rule satisfied: the template still compiles and runs unchanged.)
 A headless ctest (`mcp_conformance`) that is the build-time analogue of the loopback tests but through
 the **shipping consumer path**:
 
-- Runs `hello_triangle-launcher` (or the game) under `HT_SMOKE` **plus** `HT_MCP=<ephemeral>`, and
-  from the test harness performs `initialize` → `tools/list` over loopback, asserting the engine tool
-  families are present (`world.*`, `render.*`, and — with `HT_MCP_WRITE` — `entity.set_field` etc.)
-  and that `world.list_entities` returns the sample scene's entities. Labelled `gpu` (it drives the
-  real render path), `SKIP_RETURN_CODE 77`.
+- Launches `hello_triangle-launcher` (or the game) with `HT_MCP=0` (ephemeral port) — plus `HT_SMOKE`
+  for the deterministic scene — and **waits on the readiness signal** before connecting: the harness
+  reads the launcher's stdout for the `McpServer` "listening on <ip>:<port>" log line (Plan 00), which
+  gives it both the ready-to-serve edge and the actual port (avoiding a race against socket bind and a
+  fixed-port collision). It then performs `initialize` → `tools/list` over loopback, asserting the
+  engine tool families are present (`world.*`, `render.*`, and — with `HT_MCP_WRITE` — `entity.set_field`
+  etc.) and that `world.list_entities` returns the sample scene's entities, then terminates the
+  launcher and treats a clean exchange as pass. Labelled `gpu` (it drives the real render path),
+  `SKIP_RETURN_CODE 77`. Because `HT_MCP` suppresses the 20-frame exit, the process stays up for the
+  whole exchange rather than racing its own shutdown.
 - If the staged-install conformance harness from planset-40 is in place, additionally add an
   **out-of-tree** consumption check: a throwaway configure+build of a tiny app that
   `find_package(veng)` + `target_link_libraries(app veng::mcp)` + constructs a server, proving the

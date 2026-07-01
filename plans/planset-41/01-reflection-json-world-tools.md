@@ -75,17 +75,22 @@ Registered in a `RegisterWorldTools(McpServer&, const McpHost&)` the server call
 construction (so a consumer that just links `veng::mcp` and constructs a server gets them). All run
 under `Pump()` on the render thread; all read through `const` scene accessors (no version bump):
 
-- **`world.list_entities`** — `{ entities: [{ id: {index, generation}, name, components: [<QualifiedName>…] }] }`.
+- **`world.list_entities`** — `{ entities: [{ id: {index, generation}, name, components: [<QualifiedName>…] }], nextCursor? }`.
   Iterates the scene's entities; `name` from the `Name` component if present; `components` from
   `ForEachComponent` collecting each `TypeId`'s `QualifiedName`. Optional arg `component`
-  (`QualifiedName`) filters to entities having it. Optional `limit`/`offset` for large worlds.
+  (`QualifiedName`) filters to entities having it. **Paginated** per the shared list convention:
+  args `{ limit?, cursor? }`, `limit` defaulting to a sensible cap (e.g. 200) so an unbounded world is
+  not dumped in one call, and the response carries `nextCursor` while more entities remain — the agent
+  pages through the whole set rather than losing the tail. The cursor is opaque (internally the resume
+  entity index; a cursor whose entity was destroyed resumes at the next live one). (An
+  information-volume convention, not a DoS defense — the server has a single trusted local client.)
 - **`entity.get`** — arg `{ id: {index, generation} }` (or `{ index, generation }`) → the full
   component dump: `{ id, name, components: { <QualifiedName>: <FieldsToJson> } }`. A stale/invalid
   entity is an `isError` result (never the silent-UB stale-handle path — validate against the scene
   before access).
-- **`world.query`** — arg `{ component: <QualifiedName> }` → the entities having that component
-  (ids + names); the "which entities have a `Light`?"-style question, distinct from
-  `world.list_entities`'s full listing.
+- **`world.query`** — arg `{ component: <QualifiedName>, limit?, cursor? }` → the entities having that
+  component (ids + names), `{ entities, nextCursor? }`; the "which entities have a `Light`?"-style
+  question, distinct from `world.list_entities`'s full listing. **Paginated** the same way.
 - **`scene.stats`** — `{ entity_count, spatial_version, bounds: {min, max} }` from the scene's entity
   count, `GetSpatialVersion()`, and `SceneBounds(scene)` (`Veng/Scene/Transforms.h`). Cheap
   situational awareness for an agent.
@@ -101,6 +106,12 @@ later `render.*` / `editor.*` families read consistently.
 - **`QualifiedName` is the type key** in tool arguments and output (`"Veng::Light"`,
   `"MyGame::Spinner"`), matched with `TypeNameMatches` (strict) — the same key the editor and cooker
   match on. Namespaces disambiguate.
+- **An agent-supplied type name is validated against the registry before any asserting lookup.**
+  `TypeRegistry` resolution that assumes registration (`registry.Info(TypeId)` / `IdOf`) is a fatal
+  assert on an unregistered type — a schema fault, not recoverable. So every tool that takes a
+  `QualifiedName` (here `component`; in Plan 03 the mutation types, enum values, nested struct types)
+  looks it up through the *fallible* path first and returns an `isError` result on a miss, never
+  letting an unknown agent-supplied string reach a codepath that aborts the whole process.
 - The walk **tolerates schema drift** the same way the serializer does: an unregistered nested type
   or an empty variant is reported as such, not a crash.
 
@@ -120,6 +131,10 @@ later `render.*` / `editor.*` families read consistently.
   loopback call `world.list_entities` / `entity.get` / `world.query` / `scene.stats`, asserting the
   JSON (entity count, a known component's field values round-trip through `FieldsToJson`, the type
   filter works). This exercises `ReflectToJson` across `Scalar`/`Vector`/`Enum`/`AssetHandle`/`Struct`
-  at least.
+  at least. Include a case calling `world.query` / `entity.get`'s `component` filter with an
+  **unregistered** `QualifiedName` and assert an `isError` result with the process **still alive**
+  (guards the fatal-assert path above). Add a **pagination** case: `world.list_entities` with a small
+  `limit` over a scene larger than it returns `nextCursor`, and paging with that cursor walks the
+  **full** entity set exactly once with no duplicates or gaps.
 - `include_hygiene` still green (`ReflectToJson.h` is under `src/`, never public).
 - `ctest` green; no example or GPU change.

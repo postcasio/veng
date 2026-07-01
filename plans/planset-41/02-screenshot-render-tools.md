@@ -36,11 +36,9 @@ returning "no viewports", not a crash.
 
 ### 2. PNG encode
 
-stb_image_write vendored into a `veng::mcp` TU (`mcp/src/Vendor/StbImageWrite.cpp`, its own
-`.clang-tidy` `-*` override), or — lighter — reuse the already-vendored copy by adding
-`stb_image_write` to the fetched stb include dir; the agent picks the smaller diff (**prefer a
-dedicated `veng_mcp` vendor TU** so the lib stays self-contained and does not reach into engine
-vendor internals). A small `EncodePng(width, height, rgb8)` → `vector<u8>` wraps
+stb_image_write is vendored into a dedicated `veng::mcp` TU (`mcp/src/Vendor/StbImageWrite.cpp`, its
+own `.clang-tidy` `-*` override), so the lib stays self-contained and does not reach into
+`libveng`'s private vendor symbols. A small `EncodePng(width, height, rgb8)` → `vector<u8>` wraps
 `stbi_write_png_to_func`.
 
 ### 3. The render tools (`RegisterRenderTools(McpServer&, const McpHost&)`)

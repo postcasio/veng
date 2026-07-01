@@ -33,7 +33,8 @@ surface*, not new engine mechanism:
 - **Main-thread marshaling is a solved shape.** `TaskSystem` already lands off-thread work on the
   render thread through a pumped queue (`PumpMainThread`, `EnqueueMainThread`). The MCP server owns
   the *inverse* of that queue: a request arrives on the network thread, is pushed onto a
-  main-thread request queue, and the network thread blocks on a per-request future until the
+  main-thread request queue, and the network thread blocks on a per-request result slot (the same
+  `mutex` + `condition_variable` handshake `TaskSystem` uses, not `std::promise`) until the
   render-thread `Pump()` services it. `EnqueueMainThread` is private to `TaskSystem`, so the MCP
   server owns its **own** pump rather than reaching into the engine's.
 - **The install/SDK machinery is arriving in planset-40.** `veng::mcp` joins the same
@@ -47,9 +48,9 @@ surface*, not new engine mechanism:
   MCP client  ──HTTP──►  parse JSON-RPC ─► ToolRegistry lookup           each frame:
                           │  protocol methods (initialize / tools/list)     server->Pump()
                           │    answered inline (no engine access)             drains the queue,
-                          └► engine tool: push {args, promise} ──────────►    runs each handler on
-                             block on future ◄───────────────────────────     the render thread,
-                          write HTTP response                                  fulfils the promise
+                          └► engine tool: push {args, slot} ───────────►     runs each handler on
+                             block on slot's condvar ◄──────────────────     the render thread,
+                          write HTTP response                                  fills + signals the slot
 ```
 
 - **`McpServer`** (`veng::mcp`, `Veng/Mcp/`) owns: a loopback **Streamable-HTTP transport**
@@ -57,6 +58,16 @@ surface*, not new engine mechanism:
   `tools/call` methods, a **`ToolRegistry`** (name → `{ description, JSON input schema, handler }`),
   and its **own main-thread request queue** drained by `Pump()`. It is **`Unique`, single-owner**;
   `Create(const McpServerInfo&)` is the factory.
+- **Tool names follow a `noun.verb` / `noun.property` convention** across every plan's families —
+  `world.*`, `entity.*`, `scene.*`, `render.*`, `editor.*` — so the surface reads consistently. Each
+  plan that adds tools keeps to it.
+- **List tools are paginated, not truncated.** Any tool returning an unbounded list
+  (`world.list_entities`, `world.query`, `editor.list_assets`) takes `{ limit?, cursor? }` and returns
+  `{ items…, nextCursor? }` — mirroring MCP's own `cursor`/`nextCursor` idiom. `limit` defaults to a
+  sensible cap so no single call dumps a whole large world into an agent's context, and `nextCursor`
+  (opaque; internally the resume offset/index) is present exactly while more remain, so the agent pages
+  through the **full** set rather than losing the tail. This is a context-volume convention for a
+  single trusted local client, not a DoS defense.
 - **The public surface is JSON-library-free.** A tool handler is
   `Result<string>(string_view argsJson)` — it receives its arguments as a JSON string and returns a
   JSON string (or a located error); the library parses/serializes internally with nlohmann/json
@@ -68,7 +79,8 @@ surface*, not new engine mechanism:
   function<Renderer::Viewport*(string_view)> Viewport; }`. A game fills `CurrentWorld` with its
   managed world and `Viewport` with the primary viewport; the editor fills them with the active
   document's scene and its panel viewports. A null `CurrentWorld()` (no world loaded, a closed
-  document) makes the world tools return an empty result, never a null deref.
+  document) makes the world tools return an empty result, never a null deref. Plans 02 and 03 extend
+  the struct (`ViewportNames`, `ApplyMutation`); Plan 06 documents the fully-assembled shape.
 - **Central pumping, local ownership.** The app owns the `Unique<McpServer>` and calls `Pump()` at a
   render-thread-safe point (the top of its per-frame update, before any `View`/`Each` iteration and
   before render) — so a mutation tool never edits the scene mid-iteration (the `Scene` contract).
@@ -106,7 +118,9 @@ surface*, not new engine mechanism:
   routing hook) and is the first plan touching the editor — it adds the panel reflection seam + the
   generic editor tools. **04b** depends on 04a — it wires the `veng-editor` exe and adds the editor
   host tools (open/list-assets/cook/screenshot). They share `editor/src/EditorMcp.{h,cpp}`, so merge
-  04a then 04b.
+  04a then 04b. The editor work is split into two lettered sub-plans (rather than a flat 04/05) because
+  it is two plan-sized chunks that share one file and must land as one coherent editor unit before the
+  SDK plan; keeping them `04a`/`04b` leaves the SDK/docs plans as `05`/`06`.
 - **05** depends on 00–04b **and on planset-40** — it edits the same install block
   ([`CMakeLists.txt`](../../CMakeLists.txt) `install(TARGETS … EXPORT vengTargets)` +
   [`cmake/veng-config.cmake.in`](../../cmake/veng-config.cmake.in)) planset-40 is reworking, so it
@@ -120,16 +134,15 @@ not see a locally-committed-but-unpushed base: dispatch each plan against a manu
 the prior plan's integration commit. The chain is **00 → 01 → { 02, 03 } → 04a → 04b → 05 → 06**, with
 02/03 the one parallelizable pair.
 
-## Relationship to planset-40 (in flight)
+## Relationship to planset-40
 
-planset-40 reworks the build system into the installable veng SDK (imported tools, tri-mode
-`veng-config`, the `veng_add_*` renames). It is **orthogonal** to the MCP work with **one seam of
-overlap**: the SDK install/export set. planset-41 plans 00–04 add and wire `libveng_mcp` entirely
-within the from-source build and never touch the install block, so they are safe to develop
-concurrently. **Only plan 05** installs `libveng_mcp` into `vengTargets`, and it must land on top of
-planset-40's completed install machinery (`install(EXPORT)` + the build-tree `export(EXPORT)` +
-`veng-config`), joining the export set the same way `assetpack`/`graph`/`editor` do. If planset-40 is
-still open when 00–04 are ready, 05 waits.
+planset-40 (the installable veng SDK: imported tools, tri-mode `veng-config`, the `veng_add_*`
+renames) is **complete** — its install/export machinery (`install(EXPORT)` + the build-tree
+`export(EXPORT)` + `veng-config`) is landed. The one seam of overlap with this planset is that set:
+only **plan 05** installs `libveng_mcp` into `vengTargets`, joining it the same way
+`assetpack`/`graph`/`editor` do (see the plan-05 dependency note above). Plans 00–04 never touch the
+install block, so nothing here waits on it. Plan 05's dispatch should re-confirm planset-40's status
+column rather than trust this note if time has passed.
 
 ## The decisions this planset settles
 
@@ -143,13 +156,19 @@ still open when 00–04 are ready, 05 waits.
   `Result<string>(string_view)`; nlohmann/json (`JSON_NOEXCEPTION`) and cpp-httplib are PRIVATE and
   never reach a public header, so `veng::mcp` holds the same include-hygiene guarantee `libveng`
   does. An `include_hygiene`-style compile check over the `Veng/Mcp/` headers enforces it.
-- **Transport is loopback Streamable HTTP (cpp-httplib), bound to `127.0.0.1` by default.** A GUI
-  process owns its stdio, so the stdio MCP transport is unavailable; Streamable HTTP is the standard
-  transport an MCP client connects to a running local server over. A request/response tool server
-  answers each POST with a JSON body (no SSE stream is opened — server→client notifications are not
-  used), which is spec-compliant and keeps the transport minimal. cpp-httplib is header-only and
-  vendored into a dedicated TU compiled `-fexceptions` (the tinyexr/imgui vendor-TU precedent), so
-  its few `throw`s do not fight veng's `-fno-exceptions`.
+- **Transport is loopback Streamable HTTP (cpp-httplib), bound to `127.0.0.1` by default, with
+  `Origin`-header rejection.** A GUI process owns its stdio, so the stdio MCP transport is
+  unavailable; Streamable HTTP is the standard transport an MCP client connects to a running local
+  server over. A request/response tool server answers each POST with a JSON body (no SSE stream is
+  opened — server→client notifications are not used), which is spec-compliant and keeps the transport
+  minimal. A loopback bind alone does not stop a browser tab on the same machine from POSTing to the
+  port, so a request carrying a non-empty `Origin` header is rejected (a real MCP client sends none) —
+  the standard local-dev-server defense. cpp-httplib is header-only and vendored into a dedicated TU
+  compiled `-fexceptions` so its `throw`s compile while the rest of `veng_mcp` stays
+  `-fno-exceptions`; per-TU exception settings are a standard, supported mix (**not** the tinyexr
+  precedent — tinyexr goes the other way, built `TINYEXR_USE_EXCEPTIONS=0`). Safety rests on
+  containment: cpp-httplib catches exceptions at its own dispatch boundary (`set_exception_handler`),
+  so none unwind out of the vendor TU into a `-fno-exceptions` frame.
 - **Every engine-touching tool runs on the render thread at the pump point.** The network thread
   never touches a `Scene`, a `Viewport`, or the `AssetManager` directly; it enqueues and blocks. The
   app calls `Pump()` once per frame before any scene iteration, so both reads and mutations are
@@ -178,12 +197,14 @@ still open when 00–04 are ready, 05 waits.
 
 - **Server→client notifications / streaming (SSE).** This planset is request/response only (POST →
   JSON). An SSE stream for push events (an entity spawned, a cook finished, a frame rendered) rides
-  the same transport later, behind the event/input seams (future area 4).
+  the same transport later, behind the event/input seams (the events/input area,
+  [plans/future/README.md](../future/README.md)).
 - **Prompts and resources.** MCP `resources/*` (expose assets/levels as addressable resources) and
   `prompts/*` are natural follow-ons; this planset ships **tools** only, the core agent-actuation
   surface.
-- **Authentication / non-loopback exposure.** The default is loopback + no auth. A remote/authâ€‘gated
-  server (a shared dev instance, a hosted build) is a separate concern layered on the transport.
+- **Authentication / non-loopback exposure.** The default is loopback + `Origin` rejection + no auth.
+  A remote/auth-gated server (a shared dev instance, a hosted build) reachable off-host is a separate
+  concern layered on the transport — distinct from the same-host browser defense this planset ships.
 - **A richer world-editing vocabulary.** Reparenting and multi-entity transactions are additive
   tools on the same seam. (Component add/remove and single-edit undo-in-editor land *this* planset.)
 - **Rich node-graph editing.** Adding/connecting nodes in the material editor is exposed later

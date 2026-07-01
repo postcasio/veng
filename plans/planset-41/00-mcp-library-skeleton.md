@@ -38,18 +38,24 @@ A new `mcp/` subdir with `mcp/CMakeLists.txt` modeled on `graph/CMakeLists.txt`:
   through this link.
 - `target_link_libraries(veng_mcp PRIVATE nlohmann_json::nlohmann_json)` +
   `target_compile_definitions(veng_mcp PRIVATE JSON_NOEXCEPTION)`.
-- cpp-httplib: a new `FetchContent_Declare` at top level with a **pinned tag**
-  (`yhirose/cpp-httplib`, header-only, MIT), `*_INSTALL` handling to match planset-40's
-  self-contained-`find_package` posture (it is header-only, so the install is headers only — confirm
-  whether it needs to join the export set at all, or whether vendoring the single header sidesteps
-  the transitive-dependency question entirely; **prefer vendoring the single header** into
-  `mcp/src/Vendor/` to avoid adding a `find_dependency` to `veng-config`, matching how stb/imgui are
-  vendored rather than found).
+- cpp-httplib (`yhirose/cpp-httplib`, header-only, MIT) is **vendored as its single header** into
+  `mcp/src/Vendor/httplib.h` at a pinned version, rather than fetched — matching how stb/imgui are
+  vendored, so it adds no `find_dependency` to `veng-config` and never joins the export set.
 - cpp-httplib compiled in a dedicated TU (`mcp/src/Vendor/HttpLib.cpp` — a single
   `#define CPPHTTPLIB_IMPLEMENTATION` / include aggregation) with a `set_source_files_properties(…
   COMPILE_OPTIONS -fexceptions)` override so its `throw`s compile; the rest of `veng_mcp` stays
-  `-fno-exceptions`. A `mcp/src/Vendor/.clang-tidy` with `Checks: '-*'` keeps the vendored TU out of
-  the lint allowlist, mirroring `engine/src/Vendor/.clang-tidy`.
+  `-fno-exceptions`. Per-TU exception settings are a supported, standard mix (the runtime unwinder is
+  always present; `-fno-exceptions` only forbids `throw`/`catch` in that TU and omits its cleanup
+  landing pads). **This is new to veng** — the existing vendor TUs go the other way (tinyexr is built
+  `TINYEXR_USE_EXCEPTIONS=0` to *disable* its exceptions), so it is not literally the tinyexr
+  precedent. Safety rests on **containment**: an exception must never unwind out of the `-fexceptions`
+  TU into a `-fno-exceptions` frame. cpp-httplib is built for this — its dispatch loop wraps handler
+  invocation in `try/catch` and exposes `set_exception_handler`, so a throw from its parser or a
+  handler is caught inside the vendored TU and turned into a 500; the veng handler lambda is
+  `-fno-exceptions` and cannot throw. The plan **states this containment requirement explicitly** and
+  a verification smoke (feed a malformed request, assert a clean 500, no `terminate`) confirms it on
+  the vendored version. A `mcp/src/Vendor/.clang-tidy` with `Checks: '-*'` keeps the vendored TU out
+  of the lint allowlist, mirroring `engine/src/Vendor/.clang-tidy`.
 - `add_subdirectory(mcp)` from the top-level `CMakeLists.txt`, after `engine` (it links
   `veng::veng`), unconditionally when building from source. **No install wiring in this plan** —
   that is Plan 05, on planset-40's install block.
@@ -71,9 +77,10 @@ JSON-library-free and httplib-free — only house vocabulary + `Veng::Result`:
   idiom hiding the httplib server + the JSON machinery + the thread + the request queue in
   `mcp/src/McpServer.cpp`. Public surface:
   - `void RegisterTool(McpTool tool)` — adds to the `ToolRegistry`; asserts on a duplicate name.
-  - `void Pump()` — drains the render-thread request queue: for each pending `{ tool, args, promise }`
-    it runs `tool.Handler(args)` on the calling (render) thread and fulfils the promise. Called once
-    per frame by the owner at a scene-safe point.
+  - `void Pump()` — drains the render-thread request queue: for each pending request it runs
+    `tool.Handler(args)` on the calling (render) thread, stores the result in the request's slot, and
+    signals its condition variable to wake the blocked network thread. Called once per frame by the
+    owner at a scene-safe point.
   - `[[nodiscard]] u16 GetPort() const` — the bound port (resolves `Port = 0` to the actual one).
   - dtor stops the listener thread and closes the socket (RAII; matches "dropping the `Unique` is the
     whole of cleanup").
@@ -84,7 +91,15 @@ JSON-library-free and httplib-free — only house vocabulary + `Veng::Result`:
   construction, before `Pump()` runs).
 - The **network thread**: `Create` spawns a thread running the httplib listener bound to
   `127.0.0.1` (or all interfaces if `BindLoopbackOnly == false`) on `Port`. A single POST endpoint
-  (the MCP Streamable-HTTP message endpoint) receives a JSON-RPC 2.0 message.
+  (the MCP Streamable-HTTP message endpoint) receives a JSON-RPC 2.0 message. Once the socket is
+  bound, the server **logs `Log::Info` "MCP server listening on <ip>:<port>"** with the resolved
+  bind address and port — a startup record and the readiness signal a launcher/test waits on (Plan
+  05).
+- **Origin rejection.** A request carrying a non-empty `Origin` header is rejected (403) before
+  dispatch. A loopback bind does not stop a browser tab on the same machine from issuing a
+  `fetch()` POST to `127.0.0.1:<port>`; a real MCP client sends no `Origin`, a browser always does,
+  so this defeats the same-host browser-origin vector cheaply. (Non-loopback exposure and auth stay
+  future — this is only the local browser defense.)
 - **JSON-RPC dispatch** implementing the MCP methods:
   - `initialize` — answered **inline on the network thread** (no engine access): returns
     `protocolVersion` (pin the MCP spec version at implementation time), `serverInfo`
@@ -92,17 +107,31 @@ JSON-library-free and httplib-free — only house vocabulary + `Veng::Result`:
   - `notifications/initialized` — accepted, no-op.
   - `tools/list` — answered inline from the `ToolRegistry`: `{ tools: [{ name, description,
     inputSchema }] }` (the registry is immutable once serving, so reading it off-thread is safe).
-  - `tools/call` — the engine path: parse `{ name, arguments }`, look up the tool, **enqueue**
-    `{ tool, argumentsJson, promise }` onto the render-thread request queue, block the network
-    thread on the future, and on fulfilment wrap the handler's returned JSON string in an MCP tool
-    result (`{ content: [{ type: "text", text: <json> }] }`, `isError` from a `Result` error).
-    An unknown tool name is a `tools/call` error result. A malformed JSON-RPC envelope is a
-    JSON-RPC error response.
-- **The request queue** is the inverse of `TaskSystem`'s: a mutex-guarded `vector` of pending
-  requests, each carrying a `std::promise<Result<string>>`; the network thread pushes and waits on
-  the future, `Pump()` pops and fulfils. A request enqueued while the server is shutting down (the
-  owner dropped the `Unique` between accept and `Pump`) is failed with an error so the network
-  thread unblocks — the dtor drains and rejects any in-flight request before joining the thread.
+  - `tools/call` — the engine path: parse `{ name, arguments }`, look up the tool, **enqueue** the
+    request (with its result slot) onto the render-thread request queue, block the network thread on
+    the slot's condition variable (with the request timeout), and on completion wrap the handler's
+    returned JSON string in an MCP tool result (`{ content: [{ type: "text", text: <json> }] }`,
+    `isError` from a `Result` error). An unknown tool name is a `tools/call` error result. A
+    malformed JSON-RPC envelope is a JSON-RPC error response.
+- **The request queue** is the inverse of `TaskSystem`'s, and reuses `TaskSystem`'s exact handshake
+  primitive rather than `std::promise`/`std::future`: each pending request carries a small
+  result-slot struct (a `std::mutex` + `std::condition_variable` + a `Done` flag + a
+  `Result<string>` value), mirroring `TaskSystem`'s `Detail::TaskState<T>`. `std::promise`/`future`
+  are **deliberately avoided** — they are used nowhere in veng because their misuse paths (a promise
+  destroyed without a value → `broken_promise`) *throw*, which is fatal under `-fno-exceptions`; the
+  shutdown-drain below is exactly such a path. The network thread pushes a request, then blocks on
+  its condition variable (with the timeout below); `Pump()` pops, runs the handler, fills the slot,
+  and signals. A request enqueued while the server is shutting down (the owner dropped the `Unique`
+  between accept and `Pump`) is failed with an error so the network thread unblocks — the dtor drains
+  and rejects any in-flight request before joining the thread.
+- **A request timeout bounds the network-thread wait.** The block on the slot's condition variable
+  uses a `wait_for` with a bounded timeout (a few seconds); on expiry the network thread returns a
+  JSON-RPC error result ("host busy — the render thread did not pump in time") rather than blocking
+  forever. This defends the one real stall: any synchronous main-thread modal on the render thread
+  (a native `Window::OpenDialog`/`SaveDialog`, a debugger breakpoint) holds the event loop so `Pump()`
+  never runs; without a timeout the network thread would wait indefinitely. The timeout also means a
+  request whose slot is never serviced eventually frees its network thread. (`mcp/CLAUDE.md`, Plan 06,
+  documents that a native dialog stalls the server for the timeout window.)
 
 ### 4. The `ping` tool
 
@@ -128,14 +157,21 @@ without any engine dependency.
 - `mcp/src/McpServer.cpp` (new) — `Native`, the thread, JSON-RPC dispatch, the queue.
 - `mcp/src/Vendor/HttpLib.cpp`, `mcp/src/Vendor/.clang-tidy` (new) — the vendored transport TU.
 - `mcp/src/Vendor/httplib.h` (vendored) — the pinned single header.
-- Top-level `CMakeLists.txt` — the cpp-httplib fetch/vendor note + `add_subdirectory(mcp)`.
-- `tests/…` — a headless loopback test (below), wired into ctest.
+- Top-level `CMakeLists.txt` — `add_subdirectory(mcp)`, plus the `mcp_loopback` /
+  `mcp_include_hygiene` test targets. **There is no `tests/CMakeLists.txt`** — test executables are
+  wired inline in the root `CMakeLists.txt` (`add_executable` + `add_test` + `set_tests_properties`,
+  the `veng_test_gpu`/loader-test pattern). This plan adds the two `mcp_*` binaries there; the later
+  plans (01–03) **add doctest cases to the Plan 00 `mcp` test binary** rather than standing up a new
+  executable each, sharing its fixtures the way `veng_test_unit`/`veng_test_gpu` aggregate.
+- `tests/mcp_*.cpp` (new) — the loopback + hygiene test sources.
 
 ## Verification
 
-- Clean build with `veng_mcp` linked into the test; `include_hygiene`-style check compiles the
-  `Veng/Mcp/` public headers with only veng's PUBLIC deps (no json, no httplib leak) — extend the
-  existing `include_hygiene` test to cover `Veng/Mcp/*` (or add an `mcp_include_hygiene` sibling).
+- Clean build with `veng_mcp` linked into the test; a dedicated **`mcp_include_hygiene`** sibling
+  (not folded into the existing `include_hygiene`) compiles the `Veng/Mcp/` public headers with only
+  veng's PUBLIC deps and asserts no json/httplib leak. It is a *different* boundary than
+  `include_hygiene`'s Vulkan/GLFW exclusion, so it gets its own test rather than growing that one's
+  link line — a failure names which boundary broke.
 - A new **`mcp_loopback`** ctest (labelled to skip cleanly where a loopback socket is unavailable):
   constructs an `McpServer` on `Port = 0` with the `ping` tool, drives a background pump loop, and
   from the test thread performs a real HTTP `initialize` → `tools/list` (asserts `ping` present) →
