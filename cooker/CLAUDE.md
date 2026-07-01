@@ -18,10 +18,20 @@ editor preview and the offline cook generate identical text by construction. The
 ## Toolchain isolation
 
 The cooker's heavy/toolchain deps — **stb, assimp, Slang** (shader compile +
-reflection), and **nlohmann/json** — are **cooker-only**: gated behind
-`VENG_BUILD_TOOLS` and never linked into `libveng` or its consumers, which load the
-*binary* archive and never parse a source asset. The split is the whole point — the
-runtime gains no importer, no source parser, no Slang, and no re-cook path.
+reflection), and **nlohmann/json** — are **cooker-only**: linked into `vengc`
+alone, never into `libveng` or its consumers, which load the *binary* archive and
+never parse a source asset. The split is the whole point — the runtime gains no
+importer, no source parser, no Slang, and no re-cook path.
+
+`vengc` (and `veng::graph`) build **unconditionally from a source build** — veng
+*is* the tools, so there is no build toggle to skip them (the retired
+`VENG_BUILD_TOOLS`). A library-only consumer instead uses `find_package(veng)` and
+gets `vengc` as a **prebuilt imported executable** in `vengTargets`; `veng-config`
+recreates the unqualified `vengc` name so `$<TARGET_FILE:vengc>` resolves in every
+consumption mode. The installed `vengc` carries an `INSTALL_RPATH` and **requires the
+host's Vulkan SDK / Slang present to run** — Slang is not vendored. A downstream cook
+resolves `--reference` / `--shader-include` against the installed core-data source
+under `share/veng/core/` (`veng_CORE_PACK_JSON` / `veng_CORE_SHADER_DIR`).
 
 The **content-hash function lives only here** (and in `vengc verify`): the cooker
 writes each blob's xxh3-128 hash and the TOC digest into a `.vengpack` (format v5),
@@ -35,7 +45,7 @@ every blob is considered for compression by construction; the content hash cover
 **stored** bytes, so `vengc verify` re-hashes exactly what is on disk with no decode.
 
 The **texture-encoder deps — `bc7enc_rdo` (BC7) and ARM's `astc-encoder` (ASTC LDR) —
-are cooker-only**, gated behind `VENG_BUILD_TOOLS` and never linked into `libveng`, like
+are cooker-only**, linked into `vengc` alone and never into `libveng`, like
 stb / assimp / Slang. The runtime samples the cooked block-compressed format directly; only
 the cook encodes it.
 
@@ -71,7 +81,7 @@ at cook time:
   its search paths through one helper (`BuildSlangSearchPaths`, in `Importers/SlangSession.{h,cpp}`):
   `{ sourceFileDir, engineShaderIncludeDir }`, **source dir first** so a local file always wins
   over a same-named engine file. The engine core shader dir is threaded as `--shader-include <dir>`
-  (`CookContext::ShaderIncludeDir`, set by the `add_asset_pack` / `add_project` CMake from
+  (`CookContext::ShaderIncludeDir`, set by the `veng_add_asset_pack` / `veng_add_project` CMake from
   `${VENG_CORE_SHADER_DIR}`; the editor's cook-on-demand fills it from the core pack's own
   directory). A consumer (or generated) `.slang` therefore `#include`s the engine's material
   contract directly as `#include "Veng/material.slang"` — the engine header at
@@ -221,7 +231,7 @@ loader share one encoder.
   share one AssetId namespace:** each pack is cooked with the project's *other* packs (plus the
   CLI `--reference` packs) as references, so an asset in one pack may reference an asset declared
   in a sibling — resolution is by-id over source manifests, needing no cooked sibling and no
-  build-order edge between packs. `add_project` wires it.
+  build-order edge between packs. `veng_add_project` wires it.
 - **`verify`** — re-hash a `.vengpack`'s blobs + TOC digest and exit nonzero on any
   mismatch.
 - **`generate-id`** — mint a collision-free `AssetId` (prints hex for C++ literals and
@@ -234,12 +244,12 @@ loader share one encoder.
 
 ## Build wiring
 
-`add_asset_pack(... MODULE <lib>)` grows a `lib → cook → bundle` build-order edge so a
+`veng_add_asset_pack(... MODULE <lib>)` grows a `lib → cook → bundle` build-order edge so a
 pack containing prefabs cooks after its game module is built; packs without prefabs
 stay module-independent. `veng_add_game` wires the example's prefab pack to depend on
 `libhello_triangle`.
 
-`add_project(... PROJECT <project.veng> OUTPUT_DIR <dir>)` (`cmake/Project.cmake`) is the
+`veng_add_project(... PROJECT <project.veng> OUTPUT_DIR <dir>)` (`cmake/Project.cmake`) is the
 game-project entry: it reads `packs` + `configurations` from `project.veng` at configure
 time and, **per configuration**, issues one `vengc cook-project --config <name>` command
 producing that config's packs + `.vengproj` (suffix from each buildcfg's `outputSuffix`,
@@ -250,4 +260,4 @@ project + packs beside the launcher and `veng_add_editor` reads to bake the edit
 path. `cmake/BuildConfig.cmake` owns `VENG_BUILD_CONFIG` (host-triple-defaulted), the
 `cook-all-packs` aggregate, and `veng_register_all_packs_target`. Both examples declare a
 macOS / Windows / Linux configuration set and cook the host-default one by default;
-`add_asset_pack` remains for engine-internal single packs (the core pack, editor icons).
+`veng_add_asset_pack` remains for engine-internal single packs (the core pack, editor icons).

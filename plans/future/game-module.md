@@ -5,8 +5,9 @@
 > through a single C-ABI `VengModuleRegister` entry; `veng_add_game` emits the pair
 > in-tree, and `hello-triangle` ships as `libhello_triangle` + a launcher. This doc
 > keeps the **enduring seams** the model fixed and the **editor-only forward work**
-> that builds on them (the type-reflection layer, `libgame_editor`/`EditorRegistry`,
-> and installed-package wiring). Direction for the editor area
+> that builds on them (the type-reflection layer, `libgame_editor`/`EditorRegistry`).
+> The **installed-package wiring is DELIVERED (planset-40)** — `find_package(veng)`
+> brings `veng_add_game` and the imported tools out-of-tree. Direction for the editor area
 > ([README](README.md), [editor.md](editor.md)) — not a firm plan; the remaining
 > pieces become their own plansets when taken up.
 
@@ -176,23 +177,21 @@ later stretch gated on a serialize-across-reload story.
 ```cmake
 veng_add_game(my_game
     SOURCES      src/Game.cpp src/Components.cpp ...
-    ASSET_PACK   my_game_assets)                # an add_asset_pack target to copy beside the launcher
+    ASSET_PACK   my_game_assets)                # a veng_add_asset_pack target to copy beside the launcher
 ```
 
 It produces `libmy_game` (shared) and `my_game-launcher` (exe), copies the cooked
 pack beside the launcher, and sets the `$ORIGIN`/`@loader_path` rpath so the trio is
-relocatable. The **`EDITOR` arm** (`libmy_game_editor`, excluded from the shipped
-set) is **future** — `libveng_editor` does not exist yet.
+relocatable. The editor-extension arm (`libmy_game_editor`) links
+`veng_editor::veng_editor` and is wired through `veng_add_editor`.
 
-`veng_add_game` ships **in-tree only** (it serves the example and the tests, which
-build veng as the top-level project). **Installed-package wiring remains forward
-work:** to make it callable from a downstream project consuming an *installed* veng
-via `find_package(veng)`, install the helper `.cmake` files (`Game.cmake`,
-`AssetPack.cmake`) + `launcher_main.cpp`, `include()` them from
-`veng-config.cmake.in`, and resolve `VENG_LAUNCHER_MAIN` to the installed path. This
-also fixes `AssetPack.cmake`'s pre-existing missing install. A full shipped product
-additionally ships `libveng` beside the launcher (the in-tree launcher resolves
-`libveng` via its build rpath, so the in-tree relocatable copy need not include it).
+`veng_add_game` is part of the **installed public vocabulary** — `find_package(veng)`
+brings it (and `veng_add_project` / `veng_add_editor` / `veng_add_asset_pack`) to a
+downstream project consuming veng in-tree, from a build tree, or from an install prefix,
+all through one `veng-config`. The helper `.cmake` files and `launcher_main.cpp` are
+installed and `include()`d from `veng-config`; `VENG_LAUNCHER_MAIN` and the core-data
+paths are mode-resolved. See [README.md](README.md)'s area 6 recap and
+[docs/guides/consuming-veng.md](../../docs/guides/consuming-veng.md).
 
 ## Resolved decisions
 

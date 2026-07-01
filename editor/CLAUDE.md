@@ -8,7 +8,20 @@ conventions live in the [root CLAUDE.md](../CLAUDE.md).
 
 `libveng_editor` is the editor **framework** library; the editor is a **single,
 project-agnostic `veng-editor` exe** (built in `editor/`, links `libveng`, `libveng_editor`,
-and `libveng_cook`) — **not** a per-game binary. It is launched with `--project <project.veng>`;
+and `libveng_cook`) — **not** a per-game binary.
+
+Both `libveng_editor` and `veng-editor` are an **installed SDK surface**, gated behind the
+`VENG_INSTALL_SDK` option (default `${PROJECT_IS_TOP_LEVEL}`) that gates the editor
+build/install. `find_package(veng)` exports `veng-editor` as an **imported executable** in
+`vengTargets`; `veng-config` recreates the unqualified `veng-editor` name and the
+`veng_editor::veng_editor` library alias with `NOT TARGET`-guarded aliases, so `veng_add_editor`
+resolves the imported exe and a downstream `EDITOR_MODULE` links `veng_editor::veng_editor` in
+every consumption mode. The installed `veng-editor` carries an `INSTALL_RPATH` and requires the
+host's Vulkan SDK / Slang at runtime. **`veng-editor --version`** prints `veng-editor <version>`
+and exits before opening a window or creating a device — the SDK identity probe the conformance
+tests run.
+
+It is launched with `--project <project.veng>`;
 it reads the module(s) the project names (`ProjectSettings::Module` / `EditorModule`, from the
 `"module"` / `"editorModule"` keys) and `dlopen`s them from the project's **build-output dir** the
 same way the launcher does — but passing a non-null `EditorRegistry*` in `VengModuleHost::Editor`.

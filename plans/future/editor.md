@@ -321,6 +321,15 @@ edited `Scene` to its `.prefab.json` source — is drafted as
 [planset-37](../planset-37/README.md). (A `Scene` is runtime-only — there is no cooked
 `.scene` asset; the authored document is the prefab.)
 
+**The editor is now consumed through `find_package(veng)` — DELIVERED (planset-40).**
+`libveng_editor` + `veng-editor` are an installed SDK surface behind `VENG_INSTALL_SDK`;
+`find_package(veng)` exports `veng-editor` as an imported executable and recreates the
+`veng_editor::veng_editor` alias, so `veng_add_editor` and a downstream `EDITOR_MODULE`
+resolve out-of-tree in every consumption mode. What stays future is the **module-ABI /
+SDK freeze** for hosting *separately built* third-party modules in a *shipped* editor
+(see [README.md](README.md), area 6), and a **project-picker launcher** built on the
+installed `veng-editor` and the `.veng/build.json` sidecar.
+
 ## Open decisions
 
 - **Multi-viewport** — single-window docking v1 (recommended) vs. real OS windows

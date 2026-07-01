@@ -744,6 +744,25 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   sub-rect inner loop over a fixed allocation. **Supersedes planset-32's outer loop.** Depends on
   planset-38 (Plans 05 + 06) for thread 1; threads 2–4 are independent.
 
+- **[planset-40](planset-40/README.md)** — the installable veng SDK & out-of-tree consumption
+  (✅ done, 7 plans). A game can now live **outside the engine tree** and consume veng as a normal
+  CMake package: `find_package(veng)` brings `veng::veng`, the imported `vengc` + `veng-editor`
+  executables, the `veng::graph` / `veng_editor::veng_editor` library aliases, and the full
+  authoring vocabulary (`veng_add_project` / `veng_add_game` / `veng_add_editor` /
+  `veng_add_asset_pack`) with no veng source present. One `veng-config` serves **three discovery
+  modes** — in-tree (`add_subdirectory`), build-tree (`-Dveng_ROOT=<veng>/build`, no install), and
+  install-prefix (`-DCMAKE_PREFIX_PATH=<prefix>`) — plus a `FETCHCONTENT_SOURCE_DIR_VENG` redirect,
+  by exporting the tools as **imported executables** and mode-resolving the path vars
+  (`VENG_LAUNCHER_MAIN`, the core-data dirs). **`VENG_BUILD_TOOLS` is retired** (veng *is* the
+  tools; the editor gates behind `VENG_INSTALL_SDK`), and the exported surface is uniformly
+  `veng_`-prefixed (`add_project` → `veng_add_project`, `add_asset_pack` → `veng_add_asset_pack`).
+  `examples/template` becomes the **out-of-tree** `find_package` exemplar (removed from the engine
+  build, exercised by the `sdk_conformance_*` tests) while `hello-triangle` stays the **in-tree**
+  one — the dual-mode conformance check. Delivers [future area 6](future/README.md#6-editor-application)'s
+  install-wiring item and the CMake-surface forward work in
+  [game-module.md](future/game-module.md); the module-ABI/SDK freeze for hosting *separately built*
+  third-party modules stays future.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the

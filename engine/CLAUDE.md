@@ -97,12 +97,21 @@ and the `SystemRegistry` (`GetTypeRegistry()` / `GetSystemRegistry()`) and still
 `Context`/`AssetManager`/`TaskSystem` unchanged — the
 launcher reads the factory back, constructs the app, and calls `Run()`.
 `veng_add_game(<name> SOURCES … [ASSET_PACK …])` is the build entry: it emits
-`lib<name>` + `<name>-launcher` from one declaration. The editor is the **single
+`lib<name>` + `<name>-launcher` from one declaration. It compiles the launcher exe from
+**`launcher_main.cpp`** — an **installed SDK artifact** whose path is `VENG_LAUNCHER_MAIN`,
+mode-resolved to the source tree in-tree and to the installed/build-tree location under a
+`find_package(veng)` — so a downstream game builds the real shipping launcher without a veng
+source tree. The core-data paths a build references are likewise mode-resolved: the internal
+`VENG_CORE_SHADER_DIR` / `VENG_CORE_PACK_JSON` (consumer-facing lowercase
+`veng_CORE_SHADER_DIR` / `veng_CORE_PACK_JSON`) point at source paths in-tree and installed
+`share/veng/core/` paths when found as a package, so a downstream cook resolves
+`--shader-include` / `--reference` against the shipped core data. The editor is the **single
 project-agnostic `veng-editor` exe** (built in `editor/`), launched against a project; it
 reads the module(s) the project names and `dlopen`s them. **`veng_add_editor(<name> GAME_MODULE
 <t> [EDITOR_MODULE <t>] PROJECT <p>)`** builds no exe — it registers a per-project `<name>-editor`
-**run target** that launches `veng-editor` with the project; the optional `lib<name>_editor`
-editor-extension module is a caller-built `add_library` linking `libveng_editor`. See
+**run target** that launches `veng-editor` (built in-tree or the imported exe `veng-config`
+recreates) with the project; the optional `lib<name>_editor` editor-extension module is a
+caller-built `add_library` linking `libveng_editor` (`veng_editor::veng_editor`). See
 [editor/CLAUDE.md](../editor/CLAUDE.md).
 
 - **Same toolchain, one STL, one flag set.** Only the *entry* is C ABI; the payload
@@ -692,9 +701,11 @@ section covers runtime loading.
 
 Assets are **cooked offline** into a binary archive, never imported at runtime —
 there is no cook-on-demand, no source parser, no re-cook path in `libveng`. The
-`vengc cook` tool (built behind `VENG_BUILD_TOOLS`, wired into the example's
-build) turns a hand-written JSON **asset pack** into a single `.vengpack`
-archive; the engine *mounts* archives and resolves assets against them.
+`vengc cook` tool (always built from source in-tree; a downstream `find_package(veng)`
+consumer gets it as a **prebuilt imported executable** whose unqualified `vengc` name
+`veng-config` recreates, so `$<TARGET_FILE:vengc>` resolves either way) turns a
+hand-written JSON **asset pack** into a single `.vengpack` archive; the engine
+*mounts* archives and resolves assets against them.
 
 - **`.vengpack` archives (format v5) carry content hashes.** Every cooked blob
   gets a content hash and the table of contents gets a digest (over the serialized
@@ -749,7 +760,7 @@ archive; the engine *mounts* archives and resolves assets against them.
   or cooker) owns the `TypeRegistry`: it constructs it, pre-registers the builtins,
   puts it in the `VengModuleHost` as `Types`, calls `VengModuleRegister` (at which
   point the module registers its component types), and threads it onward.
-- **Build-order edge: `add_asset_pack(... MODULE <lib>)`.** A pack containing
+- **Build-order edge: `veng_add_asset_pack(... MODULE <lib>)`.** A pack containing
   prefabs names its game module; the build graph grows a `lib → cook → bundle` edge
   so the pack cooks after its lib is built. Packs without prefabs stay
   module-independent. `veng_add_game` wires the example's prefab pack to depend on
@@ -1320,7 +1331,10 @@ be graph-sourced without a separate cycle-breaking refactor.
   has **no** lifecycle override, per-frame code, custom component or system, system
   registration, or debug UI — the rotating cube is authored as cooked data and driven by an
   engine system, not built or driven in code. Its `project.veng` (at the example root) lists its
-  pack and names the `startupLevel` the cook writes into the cooked project (`add_project`), and
+  pack and names the `startupLevel` the cook writes into the cooked project (`veng_add_project`), and
   its pack carries a prefab + level, so the cook reflects `libtemplate` via `MODULE template`
-  (only engine builtins, no custom types). It is the minimal **conformance** check: if the
-  smallest app stops compiling, a breaking change missed it.
+  (only engine builtins, no custom types). It is a **standalone** project consumed
+  out-of-tree via `find_package(veng)` — removed from the engine build and exercised only by
+  the SDK conformance tests (`sdk_conformance_install` / `sdk_conformance_buildtree`). It is
+  the minimal **out-of-tree conformance** check: if the smallest app stops compiling or fails
+  to consume the SDK, a breaking change missed it.

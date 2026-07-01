@@ -54,22 +54,27 @@ is thin (shared deps + `add_subdirectory` per lib).
   the project's build-output dir — **discovered** from a gitignored `.veng/build.json`
   sidecar the build writes beside the project. There is no per-game editor binary.
 - `examples/hello-triangle/` — the canonical **maximal** sample app and the smoke
-  test. It is a **game module + launcher**, not one binary: `veng_add_game` builds
-  `libhello_triangle` (shared, the app) plus `hello_triangle-launcher` (the exe
+  test, and the **in-tree consumption exemplar** (built as part of the engine tree via
+  `add_subdirectory`). It is a **game module + launcher**, not one binary: `veng_add_game`
+  builds `libhello_triangle` (shared, the app) plus `hello_triangle-launcher` (the exe
   that `dlopen`s it). A root `project.veng` is the entrypoint: it lists the pack(s) under
   `assets/` (hand-written, cooked at build time, copied beside the launcher) and the
   `*.buildcfg` ship targets under `configs/`.
 - `examples/template/` — the **minimal** sample: the smallest correct app a new
-  developer copies to start (`veng_add_game`, a window + a rotating cube, no debug UI).
+  developer copies to start (`veng_add_game`, a window + a rotating cube, no debug UI),
+  and the **out-of-tree consumption exemplar**. It is a **standalone** project that
+  discovers veng with `find_package(veng)` and is **removed from the engine build**
+  (`add_subdirectory(template)` is not called) — only the SDK conformance test builds it.
   Its `main.cpp` is a bare `Application` with a managed viewport + game world: the engine
   reads the cooked project, mounts its packs, loads the project's startup level, and drives
   the world — the world is authored as cooked data and bootstrapped by the engine, not built
   or driven in code. Like `hello-triangle` it has a root `project.veng` (listing its pack
   under `assets/`, naming the `startupLevel` the cook writes into the cooked project, and
   referencing a `*.buildcfg` per ship target under `configs/`: macOS / Windows / Linux), so a
-  copy starts with the per-platform cook already wired. It is the engine's minimal conformance
-  surface — **co-migrated with `hello-triangle` on every breaking change** (see
-  **Working norms**).
+  copy starts with the per-platform cook already wired. It is the engine's out-of-tree
+  conformance surface — **co-migrated with `hello-triangle` on every breaking change** (see
+  **Working norms**); a template breakage surfaces in the `sdk_conformance_*` tests, not in a
+  plain `cmake --build`.
 - `tests/` — `include_hygiene`, `headless_smoke`, `compute_dispatch`, plus the
   `unit`, `death`, `gpu`, and `cooker` suites (and `shaders/`, `support/`).
 - `plans/` — the roadmap. See **Working norms** below.
@@ -164,9 +169,48 @@ Two ways to run it, both opt-in:
   against `build/compile_commands.json` (exported unconditionally). It skips
   cleanly when clang-tidy, the diff driver, or a compile DB is missing.
 
-Tests, examples, and the `vengc` cooker tool build only when veng is the
-top-level project (`PROJECT_IS_TOP_LEVEL`); toggles are `VENG_BUILD_TESTS` /
-`VENG_BUILD_EXAMPLES` / `VENG_BUILD_TOOLS`.
+Tests and examples build only when veng is the top-level project
+(`PROJECT_IS_TOP_LEVEL`); toggles are `VENG_BUILD_TESTS` / `VENG_BUILD_EXAMPLES`.
+The cooker (`vengc`) and `veng::graph` build **unconditionally from source** — veng
+*is* the tools, so a from-source build always produces them. The **editor**
+(`libveng_editor` + `veng-editor`) is gated behind **`VENG_INSTALL_SDK`** (default
+`${PROJECT_IS_TOP_LEVEL}`), which also gates the SDK export/install of the editor.
+
+### Consuming veng — three modes through one `veng-config`
+
+A game lives **outside** the engine tree and discovers veng as a normal CMake
+package. `find_package(veng)` brings `veng::veng`, the imported `vengc` and
+`veng-editor` executables (recreated under their unqualified names so
+`$<TARGET_FILE:vengc>` resolves), the `veng::graph` / `veng_editor::veng_editor`
+library aliases, and the full authoring vocabulary (`veng_add_project` /
+`veng_add_game` / `veng_add_editor` / `veng_add_asset_pack`). The same `veng-config`
+resolves against three sources:
+
+```
+in-tree         add_subdirectory(veng)            hello-triangle, the tests        — unchanged
+build tree      find_package(veng) → veng/build   co-develop engine + game, NO install
+install prefix  find_package(veng) → <prefix>     the shipped SDK
+```
+
+- **in-tree** — veng is the top-level project; helpers `include()` from the tree and
+  resolve source paths. This is the engine's own build (`hello-triangle`, the tests).
+- **build tree** — `-Dveng_ROOT=<veng>/build` (no install). The engine's
+  `export(EXPORT vengTargets)` writes a build-tree `veng-config.cmake`; a game
+  configured against it discovers veng with no install step, and the engine's
+  `cmake --build` refreshes the exported targets in place.
+- **install prefix** — `-DCMAKE_PREFIX_PATH=<prefix>` against a `cmake --install`ed
+  SDK.
+
+Mode is captured in `VENG_PACKAGE_MODE` (`INSTALL` / `BUILD_TREE`, unset in-tree).
+Path variables are mode-resolved through the one config: the internal
+`VENG_LAUNCHER_MAIN` / `VENG_CORE_SHADER_DIR` / `VENG_CORE_PACK_JSON` (and the
+consumer-facing lowercase `veng_CORE_SHADER_DIR` / `veng_CORE_PACK_JSON` a downstream
+cook references) point at source paths in-tree and installed/build-tree paths when
+found as a package. A game repo that declares veng as a pinned `FetchContent`
+dependency can redirect to a live checkout with `FETCHCONTENT_SOURCE_DIR_VENG`. The
+installed `vengc` / `veng-editor` carry an `INSTALL_RPATH` and require the host's
+Vulkan SDK (with its Slang component) at runtime — Slang is not vendored. See
+[docs/guides/consuming-veng.md](docs/guides/consuming-veng.md).
 
 When Doxygen is installed, `VENG_BUILD_DOCS` (default `PROJECT_IS_TOP_LEVEL`)
 adds a `docs` target that renders the public-header Doxygen comments into an HTML
@@ -180,9 +224,9 @@ glm, and zlib (`find_package`). **zstd is the one third-party codec linked into
 archive blobs at runtime); it adds no public-header include (the codec is a plain
 enum field, all zstd calls confined to `Archive.cpp`). The cooker's heavy/toolchain
 deps (nlohmann/json, assimp, and Slang for shader compile + reflection, plus the
-**`bc7enc_rdo` / `astc-encoder` texture encoders**) are **cooker-only** — gated behind
-`VENG_BUILD_TOOLS` and never linked into `libveng` or its consumers, which load the
-*binary* archive and never parse or encode a source asset.
+**`bc7enc_rdo` / `astc-encoder` texture encoders**) are **cooker-only** — linked into
+`vengc` alone, never into `libveng` or its consumers, which load the *binary* archive
+and never parse or encode a source asset.
 
 ### Build configurations — role on the asset, format on the platform
 
@@ -206,8 +250,8 @@ A bare `cmake --build` cooks the **host-matching configuration** by default:
 the macOS/ASTC pack with no flag. Override with `-DVENG_BUILD_CONFIG=windows` to cook a
 foreign config (always allowed — the encoder is CPU), and the `cook-all-packs` aggregate
 target builds every configuration's output for CI / ship. An engine-internal pack cooked
-through `add_asset_pack` with **no** configuration uses the zero-config codec default (the
-hardcoded ASTC fallback); both example apps drive `add_project` from a root `project.veng`,
+through `veng_add_asset_pack` with **no** configuration uses the zero-config codec default (the
+hardcoded ASTC fallback); both example apps drive `veng_add_project` from a root `project.veng`,
 so neither relies on it. The data model is in `engine/CLAUDE.md`, the cook
 resolution + CMake selection in `cooker/CLAUDE.md`, and the editor surface + host-capability
 preview gate in `editor/CLAUDE.md`.
@@ -543,11 +587,16 @@ planset/future README carries the detail, decisions, and per-plan status column.
 appropriate (independent plans in parallel, dependent plans in sequence, derived from
 the plans' direction). Per plan:
 1. Implement it.
-2. Migrate **both** `examples/hello-triangle` (the maximal sample) and
-   `examples/template` (the minimal one a new developer copies) in the *same* pass as
-   the breaking changes — the template is the standing check that the smallest correct
-   app still compiles and runs.
-3. Verify (clean build, `ctest` green, smoke binary writes a correct-sized PPM).
+2. Migrate **both** `examples/hello-triangle` (the maximal sample, consumed
+   **in-tree**) and `examples/template` (the minimal one a new developer copies,
+   consumed **out-of-tree** via `find_package(veng)`) in the *same* pass as the
+   breaking changes — together they are the dual-mode conformance check. The template
+   is **not** built by the default in-tree `cmake --build`, so a template breakage
+   surfaces in the SDK conformance tests (`sdk_conformance_install` /
+   `sdk_conformance_buildtree`, the `gpu` band), not in a plain build.
+3. Verify (clean build, `ctest` green, `hello_triangle-launcher` under `HT_SMOKE`
+   writes a correct-sized PPM). The template has no smoke/PPM path; its conformance
+   tests configure + build it standalone and probe `veng-editor --version`.
 4. Update the planset README status column.
 5. Commit, one commit per plan: `Plan NN: <summary>` (or `planset-N:` / `future:`
    for roadmap-only changes), with a `Co-Authored-By` trailer.

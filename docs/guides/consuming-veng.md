@@ -28,6 +28,14 @@ find_package(veng REQUIRED)
 veng_add_game(mygame SOURCES src/main.cpp PROJECT mygame_project)
 ```
 
+Set `CMAKE_CXX_STANDARD 26` **without** `CMAKE_CXX_STANDARD_REQUIRED ON`.
+`veng::veng` already carries a `cxx_std_26` `INTERFACE` compile feature, so the
+game compiles as C++26 either way; but a compiler that does not advertise a
+dedicated C++26 dialect flag (AppleClang 21 does not) makes
+`CMAKE_CXX_STANDARD_REQUIRED ON` a hard configure error against that interface
+feature. Leaving it off lets CMake fall back to the newest dialect the compiler
+does advertise, which is what the engine's own build does.
+
 ### Build tree — co-develop the engine and the game, no install
 
 Point the game at the engine's build directory. `find_package(veng)` resolves the
@@ -103,3 +111,22 @@ local-checkout redirect) are supported; neither is privileged.
 - **Result variables** — `veng_CORE_PACK_JSON` / `veng_CORE_SHADER_DIR` (a
   downstream cook references them) and `VENG_PACKAGE_MODE` (`INSTALL` /
   `BUILD_TREE`, unset in-tree).
+
+`veng-editor --version` prints `veng-editor <version>` and exits before opening a
+window or creating a device — the SDK identity probe. It is what the conformance
+tests run to confirm the installed/build-tree editor resolves its runtime linkage.
+
+## Runtime prerequisites
+
+The installed `vengc` and `veng-editor` are shipped **binaries** with an
+`INSTALL_RPATH` that resolves veng's own bundled dependencies from the prefix, but
+they still need two things from the host at runtime:
+
+- **The Vulkan SDK**, including its **Slang** component. `veng-editor` creates a
+  device, and `vengc` compiles shaders through Slang — Slang is **not vendored**, so
+  it must be present on the host. A machine that can build veng already has this.
+- **A matching toolchain.** veng builds `-fno-exceptions` on one C++ standard
+  library; the package advertises only `SameMajorVersion` compatibility, which at
+  `0.x` is effectively no gate. Consume a veng built with the **same toolchain**
+  (ideally the same tree). This is a **convention**, not an ABI freeze — a
+  toolchain/STL mismatch surfaces as a link or ODR failure, not a clear diagnostic.

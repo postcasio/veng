@@ -147,18 +147,29 @@ reading the sidecar) is reused by both the editor and the launcher. Multi-build-
 built in `build/` and `build-debug/`) is **last-configure-wins** today; the launcher could surface
 the choice.
 
-**Hosting third-party game modules (the module ABI / SDK freeze) — STILL FUTURE.** The single-shell
-editor above is **same-tree only**: a module must be built from the same source tree as the editor,
-the `VengModuleAbiVersion` integer handshake rejecting a mismatch loudly at load. Letting a
-separately built (third-party) module load into a *shipped* editor needs a **frozen module ABI +
-a shipped SDK**:
+**The installable SDK / out-of-tree consumption — DELIVERED (planset-40).** A game can now live
+outside the engine tree and consume veng as a normal CMake package: `find_package(veng)` brings
+`veng::veng`, the imported `vengc` + `veng-editor` executables, the `veng::graph` /
+`veng_editor::veng_editor` library aliases, and the full authoring vocabulary (`veng_add_project`
+/ `veng_add_game` / `veng_add_editor` / `veng_add_asset_pack`) with no veng source present. One
+`veng-config` serves three discovery modes — in-tree (`add_subdirectory`), build-tree
+(`-Dveng_ROOT=<veng>/build`, no install), and install-prefix (`-DCMAKE_PREFIX_PATH=<prefix>`) —
+plus a `FETCHCONTENT_SOURCE_DIR_VENG` redirect. This delivered the packaging named in
+[game-module.md](game-module.md) and the editor's "consumed through `find_package(veng)`": the
+installed library + tools + helpers, the imported-tool export, mode-resolved path vars, and the
+uniformly `veng_`-prefixed surface (`add_project` → `veng_add_project`, `add_asset_pack` →
+`veng_add_asset_pack`). See [docs/guides/consuming-veng.md](../../docs/guides/consuming-veng.md).
 
-- a versioned SDK — installed headers + import libs + the `veng-editor` binary + a bundled cooker —
-  consumed through `find_package(veng)` (the install wiring named in
-  [game-module.md](game-module.md), which the editor shell now shares the need for);
+**Hosting third-party game modules (the module ABI / SDK freeze) — STILL FUTURE.** The single-shell
+editor above is **same-tree only**: a module must be built from the same source tree (or the same
+toolchain) as the editor, the `VengModuleAbiVersion` integer handshake rejecting a mismatch loudly
+at load. The packaging above ships the *build-time* SDK; letting a *separately built* (third-party)
+module load into a *shipped* editor still needs a **frozen module ABI**:
+
 - a **pinned, enforced toolchain contract** — same compiler/STL, and `-fno-exceptions`/no-RTTI
   uniformity (a module built *with* exceptions against `-fno-exceptions` veng is UB at the
-  boundary), today only convention;
+  boundary), today only convention (`find_package(veng)` gates only `SameMajorVersion`, no ABI
+  enforcement);
 - **frozen, additive-only boundary interfaces** — the `VengModuleHost` layout and the
   `Application` / `EditorPanel` / `SceneSystem` vtables a plugin derives from — versioned by semver
   or capability negotiation rather than the blunt single integer, so an older module keeps loading
@@ -166,11 +177,13 @@ a shipped SDK**:
 
 Type / asset / system identity already crosses the boundary as authored `u64` ids (not RTTI or name
 mangling), and type registration is GPU-free by contract, so a bundled cooker reflects a plugin's
-types with no device — the hard parts of plugin identity are in hand. The gap is **packaging +
-interface-freezing discipline**, deferred until the engine surface stops churning each planset.
+types with no device — the hard parts of plugin identity are in hand. The gap is now purely
+**interface-freezing discipline**, deferred until the engine surface stops churning each planset.
 
-Also still future: **installing `veng_add_game` for downstream
-`find_package(veng)` consumers** (see [game-module.md](game-module.md)).
+Also still future: a **project-picker launcher** — the standalone front-end that lists projects and
+spawns `veng-editor --project <path>`, built on the installed `veng-editor` and the `.veng/build.json`
+sidecar planset-40 ships — and **Windows packaging specifics** (the dllimport/dllexport visibility
+flip and an installer, riding the anticipated Windows port).
 
 ### 7. Scene / entity model — remaining: systems, perf, reflection follow-ons
 
