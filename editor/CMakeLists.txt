@@ -109,7 +109,10 @@ set(VENG_EDITOR_EXE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 # resolves them to bindless TextureHandles for the debug-draw billboards. Cooked
 # once here and copied beside the editor exe (its own content, mounted by EditorHost
 # from ExecutableDirectory() — distinct from a project's build dir).
-if (VENG_BUILD_TOOLS)
+#
+# The editor is the heavy GUI surface above the cooker, built top-level-only (the cooker
+# beneath it always builds from source).
+if (PROJECT_IS_TOP_LEVEL)
     add_asset_pack(veng_editor_icons
             PACK   assets/icons/editor_icons.vengpack.json
             OUTPUT ${CMAKE_BINARY_DIR}/editor_icons.vengpack)
@@ -127,7 +130,7 @@ endif ()
 # registers a per-project `<name>-editor` run target that launches this with the right
 # arguments. Links libveng_cook PRIVATE through CookSession (the importer never reaches
 # libveng_editor). In-build it resolves libveng/libveng_editor/slang via the auto build rpath.
-if (VENG_BUILD_TOOLS)
+if (PROJECT_IS_TOP_LEVEL)
     add_executable(veng-editor ${VENG_EDITOR_MAIN} ${VENG_EDITOR_COOK_SESSION})
     target_link_libraries(veng-editor PRIVATE veng::veng veng_editor::veng_editor veng::cook)
     target_include_directories(veng-editor PRIVATE ${VENG_EDITOR_EXE_INCLUDE})

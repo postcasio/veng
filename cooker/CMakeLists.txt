@@ -5,14 +5,10 @@
 # assetpack's ArchiveWriter. All of its dependencies (nlohmann/json, stb,
 # assimp, Slang, xxHash) are cooker-only — the engine never links any of them,
 # nor libveng_cook itself.
-
-option(VENG_BUILD_TOOLS "Build the asset-cooking tools (vengc)" ${PROJECT_IS_TOP_LEVEL})
-
-if (NOT VENG_BUILD_TOOLS)
-    add_library(libveng_cook INTERFACE)
-    add_library(veng::cook ALIAS libveng_cook)
-    return()
-endif ()
+#
+# veng is the tools: the cooker builds unconditionally whenever veng is built from
+# source. A library-only consumer uses find_package(veng) and gets the prebuilt
+# vengc imported from vengTargets instead of building the cooker's heavy deps.
 
 # The cooker fetches its heavy third-party deps (bc7enc_rdo, astc-encoder, assimp)
 # inline below. Shield them from the debug build's -Werror, inherited here as a
@@ -34,9 +30,9 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(xxhash)
 
-# bc7enc_rdo — BC7 block encoder for the TextureImporter, cooker-only (behind
-# VENG_BUILD_TOOLS like stb/assimp/Slang; never linked into libveng, which uploads
-# the cooked blocks and never encodes). The repo's CMakeLists builds a standalone
+# bc7enc_rdo — BC7 block encoder for the TextureImporter, cooker-only (like
+# stb/assimp/Slang; never linked into libveng, which uploads the cooked blocks and
+# never encodes). The repo's CMakeLists builds a standalone
 # app, so SOURCE_SUBDIR points at a directory with no CMakeLists — the populate adds
 # the sources without any of its targets (the stb header-only pattern). bc7enc.cpp /
 # bc7enc.h are a self-contained pair (libc + <algorithm> only); the encoder TU is
@@ -50,8 +46,8 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(bc7enc_rdo)
 
-# astc-encoder (ARM) — ASTC LDR block encoder for the TextureImporter, cooker-only (behind
-# VENG_BUILD_TOOLS; never linked into libveng, which uploads the cooked blocks and never encodes).
+# astc-encoder (ARM) — ASTC LDR block encoder for the TextureImporter, cooker-only (never
+# linked into libveng, which uploads the cooked blocks and never encodes).
 # A proper CMake project: build one per-architecture SIMD static codec library — NEON on Apple
 # Silicon, SSE4.1 on x86_64 — with no CLI, no shared lib, no tests. Pinned to a tagged release.
 #
@@ -106,8 +102,8 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
-# assimp — mesh import. The one heavy dependency; strictly cooker-only
-# (behind VENG_BUILD_TOOLS), so a consumer of libveng never pays for it. Trim it
+# assimp — mesh import. The one heavy dependency; strictly cooker-only, so a
+# consumer of libveng never pays for it. Trim it
 # hard: no tools/tests/exports, only the importers veng's assets use (OBJ +
 # glTF + FBX, the rigged-character format), and a static lib so vengc stays
 # self-contained.
@@ -322,6 +318,25 @@ target_compile_options(libveng_cook PRIVATE -fno-exceptions)
 
 add_executable(vengc tool/main.cpp)
 target_link_libraries(vengc PRIVATE veng::cook fmt::fmt)
+
+# The installed vengc ships with the SDK as an imported executable in vengTargets. The
+# build-tree auto-rpath does not survive an install, so set an explicit INSTALL_RPATH: the
+# co-installed libveng / libveng_graph resolve through @loader_path/../lib (macOS) or
+# $ORIGIN/../lib (Linux), and the host's Slang resolves through the directory find_library
+# found it in. Slang is not vendored — an installed veng requires the Vulkan SDK (with its
+# Slang component) present to run the cooker, the same prerequisite the in-tree build carries.
+get_filename_component(VENG_SLANG_LIBDIR "${Slang_LIBRARY}" DIRECTORY)
+if (APPLE)
+    set_target_properties(vengc PROPERTIES
+            INSTALL_RPATH "@loader_path/../${CMAKE_INSTALL_LIBDIR};${VENG_SLANG_LIBDIR}")
+else ()
+    set_target_properties(vengc PROPERTIES
+            INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR};${VENG_SLANG_LIBDIR}")
+endif ()
+
+install(TARGETS vengc
+        EXPORT vengTargets
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # veng_cook_bootstrap — a minimal cooker that links the veng-free core only (no
 # veng::veng, no module reflection), used to cook veng's embedded core pack. It

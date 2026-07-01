@@ -100,9 +100,9 @@ set(VENG_GATE_ENVS
     "HT_SMOKE=${VENG_GATE_LAUNCHER_CAPTURE}"
 )
 
-# The MaterialPreview GPU target (two live SceneRenderers) is gated on
-# VENG_BUILD_TOOLS + the editor library, so it may not exist in every build. Add
-# it to the gate only when its path was passed in.
+# The MaterialPreview GPU target (two live SceneRenderers) is gated on the editor
+# library, so it may not exist in every build. Add it to the gate only when its path
+# was passed in.
 if (VENG_GATE_BIN_MATERIAL_PREVIEW)
     list(APPEND VENG_GATE_NAMES "veng_test_material_preview")
     list(APPEND VENG_GATE_PATHS "${VENG_GATE_BIN_MATERIAL_PREVIEW}")

@@ -49,3 +49,14 @@ endif ()
 # contract (JSON_THROW becomes std::abort, guarded by is_*() checks).
 target_link_libraries(veng_graph PRIVATE nlohmann_json::nlohmann_json)
 target_compile_definitions(veng_graph PRIVATE JSON_NOEXCEPTION)
+
+# veng_graph is a shared library the installed vengc loads at runtime (vengc →
+# veng::cook → veng::graph), so it joins vengTargets and installs beside libveng —
+# the installed cooker resolves it through @loader_path/../lib. Its public headers
+# and downstream ALIAS are installed in a later plan; this install makes the imported
+# vengc runnable from the prefix.
+install(TARGETS veng_graph
+        EXPORT vengTargets
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

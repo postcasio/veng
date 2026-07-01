@@ -38,8 +38,7 @@ function(veng_add_editor NAME)
     endif ()
     if (NOT TARGET veng-editor)
         message(FATAL_ERROR
-                "veng_add_editor(${NAME}): the veng-editor shell is not built "
-                "(needs VENG_BUILD_TOOLS)")
+                "veng_add_editor(${NAME}): the veng-editor shell is not built")
     endif ()
 
     # The module libraries + cooked packs live beside the launcher (veng_add_game's relocatable

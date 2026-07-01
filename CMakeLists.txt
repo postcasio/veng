@@ -27,12 +27,26 @@ include(FetchContent)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-# The engine core shader directory, threaded to every cook as `--shader-include` so a
-# consumer (or generated) `.slang` resolves `#include "Veng/material.slang"` against the
-# engine header. add_asset_pack / add_project pass it; the test cooks pass it too. The
-# core pack itself cooks without it — its shaders reach the header through their own dir.
+# The engine core-data paths, resolved to source-tree locations for an in-tree build.
+# The uppercase VENG_CORE_* names are the engine-internal scaffolding the helper bodies
+# and the top-level build read; the generated veng-config sets these to installed paths
+# downstream. The lowercase veng_CORE_* aliases are the consumer-facing find_package
+# result API a downstream veng_add_project(... REFERENCE ${veng_CORE_PACK_JSON}) reads —
+# matching the veng_FOUND / veng_VERSION casing find_package(veng) generates. In-tree the
+# two audiences resolve to the same source-tree paths.
+#
+# VENG_CORE_SHADER_DIR is threaded to every cook as `--shader-include` so a consumer (or
+# generated) `.slang` resolves `#include "Veng/material.slang"` against the engine header;
+# veng_add_asset_pack / veng_add_project pass it, and the test cooks pass it too. The core
+# pack itself cooks without it — its shaders reach the header through their own dir.
+# VENG_CORE_PACK_JSON is the core pack's source manifest a downstream cook `--reference`s
+# to resolve core-pack ids (the standard vertex shaders).
 set(VENG_CORE_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/shaders"
         CACHE PATH "Engine core shader directory added to every cook's Slang search path")
+set(VENG_CORE_PACK_JSON "${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/core.vengpack.json"
+        CACHE FILEPATH "Engine core pack source manifest referenced by a downstream cook")
+set(veng_CORE_SHADER_DIR "${VENG_CORE_SHADER_DIR}")
+set(veng_CORE_PACK_JSON "${VENG_CORE_PACK_JSON}")
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AssetPack.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildConfig.cmake)
@@ -241,22 +255,20 @@ add_subdirectory(assetpack)
 add_subdirectory(engine)
 
 # The shared node-graph + material-codegen library is consumed by both the cooker
-# (graph-sourced fragment cook) and the editor (graph UI + preview); build it
-# whenever either is in play (the same gate as the cooker/editor below). It needs
-# nlohmann/json (graph serialization), so make that available before the cooker's
+# (graph-sourced fragment cook) and the editor (graph UI + preview). veng is the tools:
+# a from-source build always builds the cooker + graph, so this builds unconditionally
+# (a library-only consumer uses find_package(veng) and gets the prebuilt imported tools).
+# It needs nlohmann/json (graph serialization), so make that available before the cooker's
 # own fetch declares it.
-option(VENG_BUILD_TOOLS "Build the asset-cooking tools (vengc)" ${PROJECT_IS_TOP_LEVEL})
-if (VENG_BUILD_TOOLS OR PROJECT_IS_TOP_LEVEL)
-    set(JSON_BuildTests OFF CACHE INTERNAL "")
-    FetchContent_Declare(
-            nlohmann_json
-            GIT_REPOSITORY https://github.com/nlohmann/json.git
-            GIT_TAG v3.11.3
-            GIT_SHALLOW TRUE
-    )
-    FetchContent_MakeAvailable(nlohmann_json)
-    add_subdirectory(graph)
-endif ()
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+FetchContent_Declare(
+        nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
+        GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+add_subdirectory(graph)
 
 add_subdirectory(cooker)
 
@@ -366,8 +378,7 @@ endfunction()
 # -> veng). veng_cook_bootstrap links only the cooker's veng-free core, so veng
 # can depend on it.
 if (TARGET veng_cook_bootstrap)
-    set(VENG_CORE_PACK_JSON ${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/core.vengpack.json)
-    set(VENG_CORE_PACK_BIN  ${CMAKE_CURRENT_BINARY_DIR}/core.vengpack)
+    set(VENG_CORE_PACK_BIN ${CMAKE_CURRENT_BINARY_DIR}/core.vengpack)
 
     # veng_cook_bootstrap writes a depfile of every source the cook read (the
     # manifest, the vertex-layout JSONs, and each shader's .slang and its
@@ -813,45 +824,43 @@ if (VENG_BUILD_TESTS)
 
     # texture_loader.cpp cooks a fixture pack in-process (plan 06), so it needs
     # the cooker library and the cooker fixtures' directory.
-    if (VENG_BUILD_TOOLS)
-        target_sources(veng_test_gpu PRIVATE
-                tests/gpu/texture_loader.cpp
-                tests/gpu/mesh_loader.cpp
-                tests/gpu/shader_loader.cpp
-                tests/gpu/material_loader.cpp
-                tests/gpu/vertex_layout_loader.cpp
-                # The graph-sourced material layout guard: cooks a graph whose generated
-                # MaterialParams mixes a vec4 param with uint handle slots and renders it,
-                # pinning the large-alignment-first ordering (std140/scalar offset agreement).
-                tests/gpu/graph_material_layout.cpp
-                # The parent/instance split: a hand-built cooked MaterialInstance blob over the
-                # brick parent, the pipeline-sharing invariant, and the runtime MID path.
-                tests/gpu/material_instance.cpp
-                # The authoring → cook → render proof: cooks a *.vmatinst.json over a parent
-                # and asserts the override renders a different albedo than the parent default.
-                tests/gpu/material_instance_override.cpp
-                # The RTT-into-material proof: a producer viewport's output, sampled
-                # through a consumer viewport's material, in registration order.
-                # Cooks the brick g-buffer fixture, so it is gated with the rest.
-                tests/gpu/viewport_feeds_viewport.cpp
-        )
-        target_link_libraries(veng_test_gpu PRIVATE veng::cook)
-        target_compile_definitions(veng_test_gpu PRIVATE
-                GPU_COOKER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
-                # The deferred g-buffer oracle (scene_renderer.cpp) cooks this pack
-                # in-process: a brick material on the core canonical layout, drawn
-                # through the SceneRenderer to assert the albedo blit.
-                GPU_GBUFFER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
-                # The PostProcess fullscreen-material proof (scene_renderer.cpp)
-                # cooks an identity PostProcess material and drives it through a
-                # PostProcessScenePass to assert it samples an upstream target and
-                # writes it through unchanged.
-                GPU_POSTPROCESS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
-                # The gbuffer fixture's brick shaders `#include "Veng/material.slang"`,
-                # so the in-process cook adds the engine core shader dir to its search path.
-                VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}"
-        )
-    endif ()
+    target_sources(veng_test_gpu PRIVATE
+            tests/gpu/texture_loader.cpp
+            tests/gpu/mesh_loader.cpp
+            tests/gpu/shader_loader.cpp
+            tests/gpu/material_loader.cpp
+            tests/gpu/vertex_layout_loader.cpp
+            # The graph-sourced material layout guard: cooks a graph whose generated
+            # MaterialParams mixes a vec4 param with uint handle slots and renders it,
+            # pinning the large-alignment-first ordering (std140/scalar offset agreement).
+            tests/gpu/graph_material_layout.cpp
+            # The parent/instance split: a hand-built cooked MaterialInstance blob over the
+            # brick parent, the pipeline-sharing invariant, and the runtime MID path.
+            tests/gpu/material_instance.cpp
+            # The authoring → cook → render proof: cooks a *.vmatinst.json over a parent
+            # and asserts the override renders a different albedo than the parent default.
+            tests/gpu/material_instance_override.cpp
+            # The RTT-into-material proof: a producer viewport's output, sampled
+            # through a consumer viewport's material, in registration order.
+            # Cooks the brick g-buffer fixture, so it is gated with the rest.
+            tests/gpu/viewport_feeds_viewport.cpp
+    )
+    target_link_libraries(veng_test_gpu PRIVATE veng::cook)
+    target_compile_definitions(veng_test_gpu PRIVATE
+            GPU_COOKER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
+            # The deferred g-buffer oracle (scene_renderer.cpp) cooks this pack
+            # in-process: a brick material on the core canonical layout, drawn
+            # through the SceneRenderer to assert the albedo blit.
+            GPU_GBUFFER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
+            # The PostProcess fullscreen-material proof (scene_renderer.cpp)
+            # cooks an identity PostProcess material and drives it through a
+            # PostProcessScenePass to assert it samples an upstream target and
+            # writes it through unchanged.
+            GPU_POSTPROCESS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
+            # The gbuffer fixture's brick shaders `#include "Veng/material.slang"`,
+            # so the in-process cook adds the engine core shader dir to its search path.
+            VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}"
+    )
 
     add_test(NAME veng_test_gpu COMMAND veng_test_gpu)
     set_tests_properties(veng_test_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
@@ -860,11 +869,11 @@ if (VENG_BUILD_TESTS)
     # The one GPU target that links libveng_editor: it constructs a
     # VengEditor::MaterialPreview (which owns a SceneRenderer + a Ref<ImGuiTexture>),
     # so it needs a windowed Context and the ImGui Vulkan backend. It cooks the brick
-    # g-buffer fixture in-process (veng::cook), so it is gated on VENG_BUILD_TOOLS and
-    # the editor library. A second viewport-style SceneRenderer is recorded alongside
-    # the preview, so the two-renderer cross-graph handoff runs under the validation
-    # gate. Skips (SKIP_RETURN_CODE 77) with no Vulkan ICD.
-    if (VENG_BUILD_TOOLS AND TARGET veng_editor)
+    # g-buffer fixture in-process (veng::cook), so it is gated on the editor library. A
+    # second viewport-style SceneRenderer is recorded alongside the preview, so the
+    # two-renderer cross-graph handoff runs under the validation gate. Skips
+    # (SKIP_RETURN_CODE 77) with no Vulkan ICD.
+    if (TARGET veng_editor)
         add_executable(veng_test_material_preview tests/material_preview.cpp)
         target_link_libraries(veng_test_material_preview PRIVATE
                 veng::veng veng_editor veng::cook veng_test_support)
@@ -905,7 +914,7 @@ endif ()
 # registered after the examples subdirectory defines that module. Like veng_test_unit
 # it compiles with exceptions (doctest needs them); -fno-exceptions is PRIVATE to
 # veng/cook.
-if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
+if (VENG_BUILD_TESTS AND TARGET hello_triangle)
     add_executable(veng_test_cooker
             tests/unit/main.cpp
             tests/cooker/cook_roundtrip.cpp
@@ -937,7 +946,7 @@ if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle)
             VENG_HELLO_TRIANGLE_MODULE_PATH="$<TARGET_FILE:hello_triangle>"
             VENG_BAD_VERSION_MODULE_PATH="$<TARGET_FILE:veng_test_bad_version_module>"
             VENG_HT_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/hello-triangle/assets"
-            VENG_CORE_PACK_JSON="${CMAKE_CURRENT_SOURCE_DIR}/engine/assets/core/core.vengpack.json"
+            VENG_CORE_PACK_JSON="${VENG_CORE_PACK_JSON}"
             # A material cook reflects a fragment that `#include`s the engine header; the
             # cook adds the engine core shader dir to its Slang search path.
             VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}"
@@ -978,9 +987,9 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
     # runs under the gate too. Registered after the examples subdirectory so the
     # launcher target exists. Under the default (non-VE_DEBUG) build no validation
     # layers are enabled, so this is trivially green.
-    # The MaterialPreview gate binary exists only under VENG_BUILD_TOOLS + editor;
-    # pass its path through only when the target was built so the gate runs the
-    # two-renderer handoff there too.
+    # The MaterialPreview gate binary exists only when the editor is built; pass its
+    # path through only when the target was built so the gate runs the two-renderer
+    # handoff there too.
     set(VENG_GATE_MATERIAL_PREVIEW_ARG)
     if (TARGET veng_test_material_preview)
         set(VENG_GATE_MATERIAL_PREVIEW_ARG
@@ -1003,9 +1012,8 @@ endif ()
 # Per-config cook isolation: asserts editing one build configuration re-cooks only its
 # pack. Drives the real build graph (cook-all-packs) over hello-triangle's macOS/ASTC +
 # Windows/BC7 configuration pair, so it is registered after the examples subdirectory
-# defines those packs and needs VENG_BUILD_TOOLS (vengc). ICD-free — a texture cook needs
-# no GPU — so it runs unconditionally.
-if (VENG_BUILD_TESTS AND VENG_BUILD_TOOLS AND TARGET hello_triangle_assets-macos
+# defines those packs. ICD-free — a texture cook needs no GPU — so it runs unconditionally.
+if (VENG_BUILD_TESTS AND TARGET hello_triangle_assets-macos
         AND TARGET hello_triangle_assets-windows)
     add_test(NAME cook_per_config_invalidation
         COMMAND ${CMAKE_COMMAND}
@@ -1044,6 +1052,14 @@ install(TARGETS veng
 )
 
 install(DIRECTORY engine/include/Veng DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+# Engine core-data source: the core pack manifest (core.vengpack.json), the vertex-layout
+# JSONs, and shaders/ (the Veng/material.slang header a consumer shader #includes and the
+# standard per-domain vertex shaders a material references by core-pack id). A downstream
+# cook resolves core-pack ids from the source manifest (--reference) and #includes the
+# engine shader header off its Slang search path — the installed source serves both, with
+# no cooked artifact to keep in sync.
+install(DIRECTORY engine/assets/core/ DESTINATION ${CMAKE_INSTALL_DATADIR}/veng/core)
 
 # Third-party headers reachable from veng's public headers, so that an
 # installed veng is self-contained for find_package consumers.
