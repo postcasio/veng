@@ -703,6 +703,9 @@ if (VENG_BUILD_TESTS)
     add_test(NAME mcp_world COMMAND veng_test_mcp_world)
     set_tests_properties(mcp_world PROPERTIES LABELS mcp)
 
+    # The render-tools proof (mcp_screenshot) is registered after veng_test_shaders
+    # (it renders the cube fixture through the test shader pack) further below.
+
     # ---- Editor unit band (device-free) -------------------------------------
     # The NodeGraph topology core and the rest of libveng_editor's pure logic.
     # veng_test_unit links only veng::veng, so the editor symbols need their own
@@ -919,6 +922,28 @@ if (VENG_BUILD_TESTS)
 
     add_test(NAME veng_test_gpu COMMAND veng_test_gpu)
     set_tests_properties(veng_test_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+
+    # ---- MCP render-tools proof (GPU band) ---------------------------------
+    # A headless Context + a Viewport rendering a one-cube scene, an McpHost returning it
+    # for the primary name, and a loopback round-trip over render.list_viewports /
+    # render.stats / render.screenshot — decoding the returned base64 PNG and asserting its
+    # dimensions match the viewport extent (plus a coarse non-blank check). It renders the
+    # cube through the test shader pack, so it depends on veng_test_shaders (defined above)
+    # and skips (77) with no ICD like the rest of the gpu band.
+    add_executable(veng_test_mcp_screenshot tests/mcp_screenshot.cpp)
+    target_link_libraries(veng_test_mcp_screenshot PRIVATE veng::mcp veng::veng
+            veng_test_support nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_screenshot PRIVATE JSON_NOEXCEPTION)
+    # The vendored httplib (client) and stb_image (PNG decode) are SYSTEM includes so
+    # clang-tidy skips the third-party code they pull into this TU.
+    target_include_directories(veng_test_mcp_screenshot SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor ${stb_SOURCE_DIR})
+    add_dependencies(veng_test_mcp_screenshot veng_test_shaders)
+    target_compile_definitions(veng_test_mcp_screenshot PRIVATE
+            TEST_SHADER_PACK="${CMAKE_CURRENT_BINARY_DIR}/test_shaders.vengpack")
+
+    add_test(NAME mcp_screenshot COMMAND veng_test_mcp_screenshot)
+    set_tests_properties(mcp_screenshot PROPERTIES LABELS "gpu;mcp" SKIP_RETURN_CODE 77)
 
     # ---- MaterialPreview surface (editor src) ------------------------------
     # The one GPU target that links libveng_editor: it constructs a

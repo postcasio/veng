@@ -44,7 +44,19 @@ namespace Veng::Mcp
 
         /// @brief Resolves a viewport by name, or null when unknown or unset.
         ///
-        /// Left unset here; the render tools that consume it arrive later.
+        /// The render tools (render.screenshot, render.stats) resolve a viewport through
+        /// this. A game fills it to return its primary viewport for a well-known name
+        /// (e.g. "" or "primary") and null otherwise; the editor returns a named panel's
+        /// viewport. Left unset (or returning null) makes the render tools report "no
+        /// viewport", never a null deref.
         function<Renderer::Viewport*(string_view name)> Viewport;
+
+        /// @brief Names the viewports the render tools expose, or empty when none.
+        ///
+        /// render.list_viewports reports these names; the app both names them here and
+        /// resolves each through Viewport, so the server never enumerates the engine
+        /// drive-list itself. Left unset (or returning an empty list) leaves
+        /// render.list_viewports reporting no viewports, not a crash.
+        function<vector<string>()> ViewportNames;
     };
 }

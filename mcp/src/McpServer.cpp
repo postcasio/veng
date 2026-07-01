@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
 
+#include "RenderTools.h"
 #include "WorldTools.h"
 
 #include <nlohmann/json.hpp>
@@ -56,6 +57,8 @@ namespace Veng::Mcp
         function<Result<string>(string_view)> Handler;
         /// @brief The `arguments` object as a JSON string, passed to the handler.
         string Arguments;
+        /// @brief Whether a successful handler result is a pre-formed content array.
+        bool ReturnsContentBlocks = false;
 
         /// @brief Guards Done and Value.
         std::mutex Mutex;
@@ -128,20 +131,31 @@ namespace Veng::Mcp
 
         /// @brief Wraps a handler's returned JSON string in an MCP tool result.
         ///
-        /// A successful result becomes a single text content block; a located error
-        /// becomes an isError result carrying the error text.
-        Json MakeToolResult(const Result<string>& handlerResult)
+        /// A located error becomes an isError result carrying the error text. A success
+        /// from a plain tool becomes a single text content block; a success from a
+        /// content-block tool (@p returnsContentBlocks) is the `content` array itself,
+        /// spliced in verbatim (falling back to a text block if it is not a valid array).
+        Json MakeToolResult(const Result<string>& handlerResult, bool returnsContentBlocks)
         {
-            if (handlerResult)
+            if (!handlerResult)
             {
-                return Json{
-                    {"content", Json::array({Json{{"type", "text"}, {"text", *handlerResult}}})},
-                    {"isError", false}};
+                return Json{{"content", Json::array({Json{{"type", "text"},
+                                                          {"text", handlerResult.error()}}})},
+                            {"isError", true}};
+            }
+
+            if (returnsContentBlocks)
+            {
+                const Json content = Json::parse(*handlerResult, nullptr, false);
+                if (content.is_array())
+                {
+                    return Json{{"content", content}, {"isError", false}};
+                }
             }
 
             return Json{
-                {"content", Json::array({Json{{"type", "text"}, {"text", handlerResult.error()}}})},
-                {"isError", true}};
+                {"content", Json::array({Json{{"type", "text"}, {"text", *handlerResult}}})},
+                {"isError", false}};
         }
 
         /// @brief Answers a single JSON-RPC message on the network thread.
@@ -195,9 +209,12 @@ namespace Veng::Mcp
                 const auto it = native.Tools.find(name);
                 if (it == native.Tools.end())
                 {
-                    return MakeResult(id, MakeToolResult(std::unexpected(
-                                              fmt::format("unknown tool '{}'", name))));
+                    return MakeResult(
+                        id, MakeToolResult(std::unexpected(fmt::format("unknown tool '{}'", name)),
+                                           /*returnsContentBlocks=*/false));
                 }
+
+                const bool returnsContentBlocks = it->second.ReturnsContentBlocks;
 
                 const Json arguments =
                     params.contains("arguments") ? params.at("arguments") : Json::object();
@@ -205,13 +222,15 @@ namespace Veng::Mcp
                 auto request = CreateRef<PendingRequest>();
                 request->Handler = it->second.Handler;
                 request->Arguments = arguments.dump();
+                request->ReturnsContentBlocks = returnsContentBlocks;
 
                 {
                     const std::scoped_lock lock(native.QueueMutex);
                     if (native.ShuttingDown)
                     {
                         return MakeResult(
-                            id, MakeToolResult(std::unexpected(string("server is shutting down"))));
+                            id, MakeToolResult(std::unexpected(string("server is shutting down")),
+                                               returnsContentBlocks));
                     }
                     native.Queue.push_back(request);
                 }
@@ -222,12 +241,14 @@ namespace Veng::Mcp
                 if (!serviced)
                 {
                     return MakeResult(
-                        id, MakeToolResult(std::unexpected(
-                                string("host busy — the render thread did not pump in time"))));
+                        id,
+                        MakeToolResult(std::unexpected(string(
+                                           "host busy — the render thread did not pump in time")),
+                                       returnsContentBlocks));
                 }
                 const Result<string> value = std::move(request->Value);
                 lock.unlock();
-                return MakeResult(id, MakeToolResult(value));
+                return MakeResult(id, MakeToolResult(value, returnsContentBlocks));
             }
 
             if (isNotification)
@@ -303,6 +324,7 @@ namespace Veng::Mcp
         // thread starts on the first Pump() — so tools registered between Create and the
         // first pump land before the network thread reads the (then-immutable) registry.
         RegisterWorldTools(*server, mcpHost);
+        RegisterRenderTools(*server, mcpHost);
         return server;
     }
 

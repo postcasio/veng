@@ -317,6 +317,9 @@ namespace Veng
         /// @brief Returns the type registry the prefab loader and editor reflect components through.
         [[nodiscard]] TypeRegistry& GetTypeRegistry() const { return m_Types; }
 
+        /// @brief Returns the render context the manager builds and uploads GPU resources through.
+        [[nodiscard]] Renderer::Context& GetContext() const { return m_Context; }
+
         /// @brief Runs any pending async finalizes whose uploads completed and whose dependencies are resident.
         ///
         /// Called from the frame loop after the task system's continuation pump, on the main thread.
