@@ -39,4 +39,17 @@ target_link_libraries(hello_triangle_editor PRIVATE veng::veng veng_editor::veng
 veng_add_editor(hello_triangle
         GAME_MODULE   hello_triangle
         EDITOR_MODULE hello_triangle_editor
-        PROJECT       ${hello_triangle_assets_HOST_TARGET})
+        PROJECT       ${hello_triangle_assets_HOST_TARGET}
+        # Launch the editor with its MCP server on a fixed loopback port, mutations enabled,
+        # so an agent can inspect and edit the scene.
+        ARGS          --mcp=5123 --mcp-write)
+
+# Convenience run target: launch the game with its MCP server on the same fixed port (HT_MCP=<port>),
+# mutations enabled (HT_MCP_WRITE). The smoke/golden ctests set their own environment, so this leaves
+# them untouched (no socket).
+add_custom_target(hello_triangle-run
+        COMMAND ${CMAKE_COMMAND} -E env HT_MCP=5123 HT_MCP_WRITE=1 $<TARGET_FILE:hello_triangle-launcher>
+        DEPENDS hello_triangle-launcher
+        USES_TERMINAL
+        VERBATIM
+        COMMENT "Launching hello_triangle with MCP on 127.0.0.1:5123 (writes enabled)")

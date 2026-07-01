@@ -2,6 +2,7 @@
 #     GAME_MODULE    <game target>             # libgame the editor loads (named in project.veng)
 #     [EDITOR_MODULE <editor target>]          # optional libgame_editor, placed in the build dir
 #     PROJECT        <veng_add_project host target>  # the project whose project.veng the editor opens
+#     [ARGS          <extra veng-editor args...>]     # appended to the run target's command line
 # )
 #
 # Does NOT build an editor binary. The single shared veng-editor exe (built in editor/) is the
@@ -23,7 +24,7 @@
 # CookSession; libveng_editor does not, so the importer table stays out of the framework library.
 
 function(veng_add_editor NAME)
-    cmake_parse_arguments(ARG "" "GAME_MODULE;EDITOR_MODULE;PROJECT" "" ${ARGN})
+    cmake_parse_arguments(ARG "" "GAME_MODULE;EDITOR_MODULE;PROJECT" "ARGS" ${ARGN})
 
     if (NOT ARG_GAME_MODULE)
         message(FATAL_ERROR "veng_add_editor(${NAME}): GAME_MODULE is required")
@@ -72,7 +73,7 @@ function(veng_add_editor NAME)
     # build dir from the sidecar above (the same path the launcher will use). The dependencies build
     # the module(s), launcher, and the cooked project + packs first.
     add_custom_target(${NAME}-editor
-            COMMAND $<TARGET_FILE:veng-editor> --project ${PROJECT_SOURCE}
+            COMMAND $<TARGET_FILE:veng-editor> --project ${PROJECT_SOURCE} ${ARG_ARGS}
             DEPENDS ${EDITOR_DEPS}
             USES_TERMINAL
             VERBATIM
