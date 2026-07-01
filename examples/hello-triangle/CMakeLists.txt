@@ -25,6 +25,12 @@ veng_add_game(hello_triangle
         SOURCES main.cpp
         PROJECT ${hello_triangle_assets_HOST_TARGET})
 
+# The maximal sample links veng::mcp — the optional MCP server library — as the worked example
+# a consumer copies: construct an McpServer from an McpHost, pump it once per frame. It stays
+# env-gated behind HT_MCP in main.cpp, so the default HT_SMOKE/golden path opens no socket. Only
+# the JSON-library-free Veng/Mcp/ public headers are used, so no nlohmann link is needed here.
+target_link_libraries(hello_triangle PRIVATE veng::mcp)
+
 # The game's editor module: the editor host dlopens it beside the game module to register the
 # game's editor-only views. It registers none yet, exercising the editor-module load path.
 add_library(hello_triangle_editor SHARED hello_triangle_editor.cpp)

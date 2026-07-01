@@ -1084,6 +1084,29 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
         LABELS gpu SKIP_RETURN_CODE 77
         ENVIRONMENT "HT_SMOKE=${CMAKE_CURRENT_BINARY_DIR}/hello_triangle_launcher_smoke.ppm")
 
+    # ---- MCP conformance smoke (gpu;mcp band) -------------------------------
+    # The build-time analogue of the loopback tests, but through the shipping consumer path: it
+    # launches hello_triangle-launcher under HT_MCP=0 (ephemeral port) + HT_SMOKE, reads the
+    # launcher's stdout for the McpServer readiness line, then does initialize + tools/list over
+    # loopback and asserts the engine tool families are present and world.list_entities returns
+    # the sample scene. It compiles the vendored httplib client into its own TU (exceptions on,
+    # like the rest of the suite) + nlohmann/json, so it needs no new dependency. Labelled gpu (it
+    # drives the real render path); the harness returns 77 when the launcher itself skipped for
+    # want of a Vulkan ICD, keeping it in the gpu skip band.
+    add_executable(veng_test_mcp_conformance tests/mcp_conformance.cpp)
+    target_link_libraries(veng_test_mcp_conformance PRIVATE nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_conformance PRIVATE JSON_NOEXCEPTION
+        VENG_LAUNCHER_BIN="$<TARGET_FILE:hello_triangle-launcher>")
+    # The vendored httplib single-header is a SYSTEM include so clang-tidy skips the third-party
+    # code it pulls into this TU, matching the imgui/stb vendor posture.
+    target_include_directories(veng_test_mcp_conformance SYSTEM PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+    add_dependencies(veng_test_mcp_conformance hello_triangle-launcher)
+
+    add_test(NAME mcp_conformance COMMAND veng_test_mcp_conformance)
+    set_tests_properties(mcp_conformance PROPERTIES LABELS "gpu;mcp" SKIP_RETURN_CODE 77
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:hello_triangle-launcher>)
+
     # ---- Local validation-error gate ----------------------------------------
     # ctest -L validation: runs the gpu-labelled binaries that emit Vulkan
     # validation messages under VE_DEBUG and fails if a new [ERROR] Vulkan

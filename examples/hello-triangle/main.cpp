@@ -17,6 +17,10 @@
 #include <Veng/UI/UI.h>
 #include <Veng/UI/DebugPanels.h>
 
+#include <Veng/Mcp/McpHost.h>
+#include <Veng/Mcp/McpServer.h>
+#include <Veng/Mcp/McpServerInfo.h>
+
 #include <Veng/Input.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/AnimationSystem.h>
@@ -267,6 +271,8 @@ protected:
     {
         m_SmokeOutput = std::getenv("HT_SMOKE");
 
+        StartMcpServerIfRequested();
+
         if (GetImGuiLayer())
         {
             // Translucent debug windows so the lit scene shows through behind the
@@ -361,8 +367,17 @@ protected:
     void OnUpdate(const f32) override
     {
         // The engine ticks the managed world's simulation (control, movement, spinners) and pushes
-        // the resolved camera into the viewport each frame; the sample handles only smoke capture
-        // and gameplay input focus here.
+        // the resolved camera into the viewport each frame; the sample handles only smoke capture,
+        // the optional MCP pump, and gameplay input focus here.
+
+        // Drain the MCP request queue at the render-thread-safe point: the engine has ticked the
+        // world's simulation before OnUpdate, and no View/Each iteration runs until render, so a
+        // world/mutation tool reads and writes the scene outside any iteration.
+        if (m_McpServer)
+        {
+            m_McpServer->Pump();
+        }
+
         if (m_SmokeOutput)
         {
             // Smoke pins a fixed pose for golden comparison: the world is paused (no tick), so the
@@ -372,8 +387,10 @@ protected:
                 [](Entity, Transform& transform, Spinner& spinner)
                 { transform.Rotation = glm::angleAxis(SmokeAngle, glm::normalize(spinner.Axis)); });
 
-            // Runs before this frame's commands record, so the image holds the previous frame.
-            if (++m_FrameCount == 20)
+            // Runs before this frame's commands record, so the image holds the previous frame. The
+            // MCP server suppresses the 20-frame auto-exit: a client needs a real serving window, so
+            // the app keeps rendering the fixed pose and the conformance harness terminates it.
+            if (++m_FrameCount == 20 && !m_McpServer)
             {
                 WriteSceneCapture(m_SmokeOutput);
                 RequestExit();
@@ -407,11 +424,54 @@ protected:
 
     void OnDispose() override
     {
+        // Drop the server first: its destructor stops the listener thread and closes the socket, so
+        // no in-flight tool handler can touch engine state while the rest of the app tears down.
+        m_McpServer.reset();
         m_SceneTexture.reset();
         m_SceneSampler.reset();
     }
 
 private:
+    // Constructs the MCP server when HT_MCP=<port> is set (HT_MCP=0 picks an ephemeral port), so the
+    // sample exposes its live world/render surface to an agent. This is the ~10-line consumer recipe:
+    // fill an McpHost from the app's systems, construct the server, and pump it once per frame
+    // (OnUpdate, above). Env-gated so the default HT_SMOKE/golden path opens no socket and no thread.
+    // Writes (spawn/destroy/set-field) follow the second gate HT_MCP_WRITE; both default off.
+    void StartMcpServerIfRequested()
+    {
+        const char* portEnv = std::getenv("HT_MCP");
+        if (portEnv == nullptr)
+        {
+            return;
+        }
+
+        Mcp::McpServerInfo info;
+        info.ServerName = "hello-triangle";
+        info.Port = static_cast<u16>(std::atoi(portEnv));
+        info.AllowMutations = std::getenv("HT_MCP_WRITE") != nullptr;
+
+        // The host resolves live state per call on the render thread during Pump(). CurrentWorld
+        // returns the managed world (null before it loads, which the world tools handle); Viewport /
+        // ViewportNames expose the single primary viewport under "" and "primary". The server
+        // captures the host by reference, so it is a member outliving m_McpServer.
+        m_McpHost.emplace(Mcp::McpHost{
+            .Types = GetTypeRegistry(),
+            .Assets = GetAssetManager(),
+            .CurrentWorld = [this] { return GetWorld(); },
+            .Viewport = [this](string_view name) -> Renderer::Viewport*
+            {
+                if (name.empty() || name == "primary")
+                {
+                    return GetPrimaryViewport();
+                }
+                return nullptr;
+            },
+            .ViewportNames = [] { return vector<string>{"primary"}; },
+        });
+
+        m_McpServer = Mcp::McpServer::Create(info, *m_McpHost);
+    }
+
     // Configure can recreate the viewport's output image, so the ImGui texture must be re-fetched
     // after each call. The engine's gather reads the viewport output fresh per frame as its
     // placement, so it picks up the new view with no re-pointing here. Headless (smoke) has no
@@ -529,6 +589,13 @@ private:
 
     u32 m_FrameCount = 0;
     const char* m_SmokeOutput = nullptr;
+
+    // The optional MCP server and the provider seam it captures by reference. m_McpHost holds the
+    // TypeRegistry/AssetManager references and the per-frame world/viewport closures; it must
+    // outlive m_McpServer, so it is declared first (destroyed last) and reset after the server in
+    // OnDispose. Both stay empty unless HT_MCP is set.
+    optional<Mcp::McpHost> m_McpHost;
+    Unique<Mcp::McpServer> m_McpServer;
 
     // Pauses the managed world's simulation so the broadphase reads `static`; never set in smoke.
     bool m_PauseSpin = false;

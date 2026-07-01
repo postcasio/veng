@@ -72,12 +72,12 @@ target_include_directories(veng_mcp PRIVATE ${stb_SOURCE_DIR})
 find_package(Threads REQUIRED)
 target_link_libraries(veng_mcp PRIVATE Threads::Threads)
 
-# The installed veng-editor exe links veng::mcp, so libveng_mcp must be co-installed beside the
-# other SDK libraries for the installed editor to resolve it at load. This is a plain runtime
-# co-install, NOT part of the vengTargets export set — an out-of-tree find_package(veng) consumer
-# still cannot target_link_libraries(app veng::mcp) yet (the imported target + headers join
-# vengTargets in the SDK-install plan). The installed lib finds libveng beside it through
-# @loader_path (macOS) or $ORIGIN (Linux).
+# veng_mcp is an optional SDK library an out-of-tree find_package(veng) consumer opts into
+# (target_link_libraries(app veng::mcp)) and the installed veng-editor exe links, so it joins
+# the vengTargets export set and installs its public Veng/Mcp/ headers beside libveng — exactly
+# as veng::graph does. The installed lib finds libveng beside it through @loader_path (macOS) or
+# $ORIGIN (Linux). nlohmann/json and the vendored httplib stay PRIVATE — never a Veng/Mcp/ public
+# header — so a consumer linking veng::mcp needs no extra find_dependency in veng-config.
 if (VENG_INSTALL_SDK OR PROJECT_IS_TOP_LEVEL)
     if (APPLE)
         set_target_properties(veng_mcp PROPERTIES INSTALL_RPATH "@loader_path")
@@ -86,6 +86,11 @@ if (VENG_INSTALL_SDK OR PROJECT_IS_TOP_LEVEL)
     endif ()
 
     install(TARGETS veng_mcp
+            EXPORT vengTargets
             LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+            INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+    install(DIRECTORY include/Veng/Mcp DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/Veng)
 endif ()
