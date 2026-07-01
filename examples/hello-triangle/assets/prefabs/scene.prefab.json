@@ -4391,187 +4391,6 @@
     {
       "components": {
         "::Veng::Name": {
-          "Value": "Sun"
-        },
-        "::Veng::Transform": {
-          "Position": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "Rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "Scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        },
-        "::Veng::Light": {
-          "Type": 0,
-          "Direction": [
-            0.0,
-            -1.0,
-            0.0
-          ],
-          "Color": [
-            1.0,
-            1.0,
-            1.0
-          ],
-          "Intensity": 0.8
-        }
-      }
-    },
-    {
-      "components": {
-        "::Veng::Name": {
-          "Value": "Light Orbit"
-        },
-        "::Veng::Transform": {
-          "Position": [
-            0.0,
-            3.0,
-            0.0
-          ],
-          "Rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "Scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        },
-        "Spinner": {
-          "SpeedRadiansPerSec": 0.7
-        }
-      }
-    },
-    {
-      "components": {
-        "::Veng::Name": {
-          "Value": "Red Light"
-        },
-        "::Veng::Transform": {
-          "Position": [
-            4.5,
-            0.0,
-            0.0
-          ],
-          "Rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "Scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        },
-        "::Veng::Light": {
-          "Type": 1,
-          "Color": [
-            1.0,
-            0.1,
-            0.1
-          ],
-          "Intensity": 28.0,
-          "Range": 16.0
-        },
-        "::Veng::Hierarchy": {
-          "Parent": 101
-        }
-      }
-    },
-    {
-      "components": {
-        "::Veng::Name": {
-          "Value": "Green Light"
-        },
-        "::Veng::Transform": {
-          "Position": [
-            -2.25,
-            0.0,
-            3.897
-          ],
-          "Rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "Scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        },
-        "::Veng::Light": {
-          "Type": 1,
-          "Color": [
-            0.1,
-            1.0,
-            0.1
-          ],
-          "Intensity": 28.0,
-          "Range": 16.0
-        },
-        "::Veng::Hierarchy": {
-          "Parent": 101
-        }
-      }
-    },
-    {
-      "components": {
-        "::Veng::Name": {
-          "Value": "Blue Light"
-        },
-        "::Veng::Transform": {
-          "Position": [
-            -2.25,
-            0.0,
-            -3.897
-          ],
-          "Rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "Scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        },
-        "::Veng::Light": {
-          "Type": 1,
-          "Color": [
-            0.15,
-            0.35,
-            1.0
-          ],
-          "Intensity": 28.0,
-          "Range": 16.0
-        },
-        "::Veng::Hierarchy": {
-          "Parent": 101
-        }
-      }
-    },
-    {
-      "components": {
-        "::Veng::Name": {
           "Value": "Ground Plane"
         },
         "::Veng::Transform": {
@@ -4613,12 +4432,73 @@
     {
       "components": {
         "::Veng::Name": {
-          "Value": "Environment"
+          "Value": "Atmosphere"
         },
-        "::Veng::Environment": {
-          "Map": 10517717547470730851,
-          "Intensity": 1.0,
-          "Skybox": true
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Atmosphere": {
+          "Intensity": 30.0
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Sun"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Light": {
+          "Type": 0,
+          "Direction": [
+            -0.3,
+            -1.0,
+            -0.55
+          ],
+          "Color": [
+            1.0,
+            0.96,
+            0.9
+          ],
+          "Intensity": 1.8
+        },
+        "::Veng::Skylight": {
+          "Intensity": 0.3
+        },
+        "::Veng::Hierarchy": {
+          "Parent": 101
         }
       }
     }
