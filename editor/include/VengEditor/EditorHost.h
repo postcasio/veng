@@ -11,6 +11,11 @@
 #include <VengEditor/EditorRegistry.h>
 #include <VengEditor/PanelHost.h>
 
+namespace Veng::Renderer
+{
+    class Viewport;
+}
+
 namespace VengEditor
 {
     class AssetEditorPanel;
@@ -124,6 +129,59 @@ namespace VengEditor
         /// back to host-safe rather than failing.
         /// @param name  The ship configuration to preview through, or nullopt for host-safe.
         void SetPreviewShipConfig(Veng::optional<Veng::string> name);
+
+        /// @brief Installs a per-frame callback run at a scene-safe point each frame, or clears it.
+        ///
+        /// Invoked at the top of OnRender, before any panel iterates its scene and before the
+        /// engine renders the panel viewports — the same window the editor's own after-the-walk
+        /// edits land in. The MCP host drives McpServer::Pump() through this, so a mutation tool
+        /// never edits a scene mid-iteration. Passing an empty function clears it.
+        /// @param pump  The callback, or an empty function to clear.
+        void SetFramePump(Veng::function<void()> pump);
+
+        /// @brief Returns the host's open panels, in Window-menu order (a nulls-free snapshot).
+        ///
+        /// The MCP EditorMcpHost::Panels closure and editor.list_assets / editor.set_panel_visible
+        /// resolve panels among these. The pointers are valid until the next frame's panel adoption.
+        [[nodiscard]] Veng::vector<EditorPanel*> GetOpenPanels();
+
+        /// @brief Returns the focused asset-editor document, or null when none holds focus.
+        ///
+        /// The public form of FocusedAssetEditor: the MCP lifecycle verbs and the world tools'
+        /// focused-scene closures resolve through it, so they follow whatever document the editor
+        /// shows. Null when no document is focused.
+        [[nodiscard]] AssetEditorPanel* GetFocusedDocument();
+
+        /// @brief Resolves an open panel's registered Offscreen viewport by title, or null.
+        ///
+        /// The name→panel-viewport seam the MCP render tools and editor.screenshot_panel resolve
+        /// through: an asset-editor document exposes its scene viewport (GetDocumentViewport). A
+        /// title naming no open panel, or a panel that renders no scene, returns null.
+        /// @param panelTitle  The panel title to resolve.
+        [[nodiscard]] Veng::Renderer::Viewport* GetPanelViewport(Veng::string_view panelTitle);
+
+        /// @brief Names the open scene-rendering panels — the viewports the render tools expose.
+        ///
+        /// Each open document that renders a scene (GetDocumentViewport non-null) contributes its
+        /// title. render.list_viewports reports these, and each resolves through GetPanelViewport.
+        [[nodiscard]] Veng::vector<Veng::string> GetSceneViewportNames();
+
+        /// @brief Returns the project's AssetId→source index, or null when no project is open.
+        ///
+        /// editor.list_assets browses these entries. Null in the no-project state (no manifest to
+        /// parse), which the tool reports as an empty asset list.
+        [[nodiscard]] const AssetSourceIndex* GetAssetSources() const { return m_Sources.get(); }
+
+        /// @brief Shows or hides an open panel by title, or opens/closes a document panel.
+        ///
+        /// Flips the panel slot's Open flag (the programmatic Window-menu toggle). A tool panel
+        /// hides and can be reshown; a document panel closes (releasing its viewport) when hidden,
+        /// exactly as the ✕ does. Applied at the frame's panel-erase point, so it is safe to call
+        /// from the MCP pump. A no-op for an unknown title; returns whether a panel matched.
+        /// @param panelTitle  The panel title to toggle.
+        /// @param visible     True to show, false to hide/close.
+        /// @return True when a panel matched the title.
+        bool SetPanelVisible(Veng::string_view panelTitle, bool visible);
 
     protected:
         /// @brief Initializes the panel set and source index.
@@ -254,5 +312,11 @@ namespace VengEditor
 
         /// @brief Whether the one-time default host dock layout has been attempted.
         bool m_HostLayoutBuilt = false;
+
+        /// @brief Per-frame callback run at the top of OnRender, or empty when none installed.
+        ///
+        /// The MCP host drives McpServer::Pump() through this so agent edits land at the same
+        /// scene-safe point the editor's own edits do.
+        Veng::function<void()> m_FramePump;
     };
 }

@@ -1,0 +1,4 @@
+# HttpLib.cpp is a thin aggregation TU that #includes cpp-httplib's single-header
+# implementation to compile it once into libveng_mcp. Tidying it would lint the
+# vendored code, so all checks are disabled.
+Checks: '-*'

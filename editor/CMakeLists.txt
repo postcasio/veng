@@ -119,6 +119,14 @@ set(VENG_EDITOR_MAIN "${CMAKE_CURRENT_SOURCE_DIR}/src/editor_main.cpp"
     CACHE INTERNAL "veng editor shell main source")
 set(VENG_EDITOR_COOK_SESSION "${CMAKE_CURRENT_SOURCE_DIR}/src/CookSession.cpp"
     CACHE INTERNAL "veng editor cook-on-demand source")
+# The generic editor MCP tools + command-routing (EditorMcp). Like CookSession, compiled into the
+# consumer (the veng-editor exe wires it behind --mcp in plan 04b, the editor test links it) rather
+# than into libveng_editor, so the framework library exports no veng_mcp link and libveng_mcp stays
+# editor-free. It reaches the shared FieldsToJson / JsonToFields walk through mcp/src.
+set(VENG_EDITOR_MCP "${CMAKE_CURRENT_SOURCE_DIR}/src/EditorMcp.cpp"
+    CACHE INTERNAL "veng editor MCP tools source")
+set(VENG_EDITOR_MCP_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/../mcp/src"
+    CACHE INTERNAL "veng mcp src-private include dir (ReflectToJson.h)")
 set(VENG_EDITOR_EXE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/src"
     CACHE INTERNAL "veng editor exe-private include dir (CookSession.h)")
 
@@ -149,10 +157,21 @@ endif ()
 # arguments. Links libveng_cook PRIVATE through CookSession (the importer never reaches
 # libveng_editor). In-build it resolves libveng/libveng_editor/slang via the auto build rpath.
 if (VENG_INSTALL_SDK OR PROJECT_IS_TOP_LEVEL)
-    add_executable(veng-editor ${VENG_EDITOR_MAIN} ${VENG_EDITOR_COOK_SESSION})
-    target_link_libraries(veng-editor PRIVATE veng::veng veng_editor::veng_editor veng::cook)
-    target_include_directories(veng-editor PRIVATE ${VENG_EDITOR_EXE_INCLUDE})
-    target_compile_definitions(veng-editor PRIVATE VENG_EDITOR_VERSION="${PROJECT_VERSION}")
+    # veng::mcp is an SDK library the exe links unconditionally; --mcp gates its runtime activation
+    # (the server is never constructed without the flag), so the editor's smokes are unaffected when
+    # it is absent. EditorMcp.cpp (the editor host + reflection tools) is compiled into the exe here,
+    # not libveng_editor, so the framework lib stays MCP-free and libveng_mcp stays editor-free; it
+    # reaches the shared ReflectToJson / ViewportCapture walk through the mcp/src include. The exe
+    # touches only the public Veng/Mcp/ headers and mcp/src internal headers (no vendored httplib),
+    # so it needs no SYSTEM include for the vendored transport.
+    add_executable(veng-editor
+            ${VENG_EDITOR_MAIN} ${VENG_EDITOR_COOK_SESSION} ${VENG_EDITOR_MCP})
+    target_link_libraries(veng-editor PRIVATE veng::veng veng_editor::veng_editor veng::cook
+            veng::mcp nlohmann_json::nlohmann_json)
+    target_include_directories(veng-editor PRIVATE ${VENG_EDITOR_EXE_INCLUDE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src ${VENG_EDITOR_MCP_INCLUDE})
+    target_compile_definitions(veng-editor PRIVATE VENG_EDITOR_VERSION="${PROJECT_VERSION}"
+            JSON_NOEXCEPTION)
 
     # The editor's own icon pack sits beside the exe (its own content, ExecutableDirectory()-mounted).
     if (TARGET veng_editor_icons)

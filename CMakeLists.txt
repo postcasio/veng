@@ -270,6 +270,12 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(nlohmann_json)
 add_subdirectory(graph)
 
+# The optional MCP server library — an engine-tier lib a consumer opts into to expose
+# its live systems to AI agents. Not linked by libveng; built unconditionally from
+# source (like the cooker). It links veng::veng, so it comes after engine, and needs
+# nlohmann/json (made available above), so it comes after that.
+add_subdirectory(mcp)
+
 add_subdirectory(cooker)
 
 # The editor is the heavy GUI authoring surface above the cooker. The cooker + graph
@@ -657,6 +663,65 @@ if (VENG_BUILD_TESTS)
 
     add_test(NAME include_hygiene COMMAND veng_test_include_hygiene)
 
+    # ---- MCP band (veng::mcp, driver-free) ----------------------------------
+    # A sibling include-hygiene guard over the Veng/Mcp/ public headers: it links
+    # veng::mcp but NOT nlohmann/json or the vendored httplib, so a json/httplib leak
+    # into a public header fails this build. A different boundary than the Vulkan/GLFW
+    # exclusion above, so it gets its own test rather than growing that link line.
+    add_executable(veng_test_mcp_include_hygiene tests/mcp_include_hygiene.cpp)
+    target_link_libraries(veng_test_mcp_include_hygiene PRIVATE veng::mcp)
+
+    add_test(NAME mcp_include_hygiene COMMAND veng_test_mcp_include_hygiene)
+
+    # The loopback proof: an McpServer on Port 0 + a `ping` tool, a background pump
+    # loop, and a real HTTP initialize -> tools/list -> tools/call round-trip from a
+    # client. It compiles the vendored httplib client into its own TU (exceptions on,
+    # like the rest of the suite) + nlohmann/json, so it needs no new dependency. Pure
+    # logic + loopback socket, no GPU, so it runs in the default band.
+    add_executable(veng_test_mcp_loopback tests/mcp_loopback.cpp)
+    target_link_libraries(veng_test_mcp_loopback PRIVATE veng::mcp nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_loopback PRIVATE JSON_NOEXCEPTION)
+    # The vendored httplib single-header is a SYSTEM include so clang-tidy skips the
+    # third-party code it pulls into this TU, matching the imgui/stb vendor posture.
+    target_include_directories(veng_test_mcp_loopback SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+
+    add_test(NAME mcp_loopback COMMAND veng_test_mcp_loopback)
+    set_tests_properties(mcp_loopback PROPERTIES LABELS mcp)
+
+    # The world-tools proof: a TypeRegistry with the builtins + a test component, a small
+    # Scene, an McpHost returning it, and a loopback round-trip over world.list_entities /
+    # entity.get / world.query / scene.stats — asserting the JSON, the ReflectToJson round-trip,
+    # the unregistered-type isError, and pagination. Device-free, so it runs in the default band.
+    add_executable(veng_test_mcp_world tests/mcp_world.cpp)
+    target_link_libraries(veng_test_mcp_world PRIVATE veng::mcp veng::veng
+            nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_world PRIVATE JSON_NOEXCEPTION)
+    target_include_directories(veng_test_mcp_world SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+
+    add_test(NAME mcp_world COMMAND veng_test_mcp_world)
+    set_tests_properties(mcp_world PROPERTIES LABELS mcp)
+
+    # The mutation-tools proof: an McpServer with AllowMutations on + a null ApplyMutation
+    # (raw-scene path), a device-free Scene, and a loopback round-trip over entity.spawn /
+    # add_component / get / set_field / remove_component / destroy — asserting each edit took, the
+    # JsonToFields ↔ FieldsToJson round-trip, the stale-handle isError, and the spatial-version
+    # bump, plus a read-only server proving the mutation tools are absent. Device-free (the
+    # scene-only ops touch no Assets), so it runs in the default band.
+    add_executable(veng_test_mcp_mutation tests/mcp_mutation.cpp)
+    target_link_libraries(veng_test_mcp_mutation PRIVATE veng::mcp veng::veng
+            nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_mutation PRIVATE JSON_NOEXCEPTION)
+    target_include_directories(veng_test_mcp_mutation SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+
+    add_test(NAME mcp_mutation COMMAND veng_test_mcp_mutation)
+    set_tests_properties(mcp_mutation PROPERTIES LABELS mcp)
+
+    # The render-tools proof (mcp_screenshot) is registered after veng_test_shaders
+    # (it renders the cube fixture through the test shader pack) further below.
+
     # ---- Editor unit band (device-free) -------------------------------------
     # The NodeGraph topology core and the rest of libveng_editor's pure logic.
     # veng_test_unit links only veng::veng, so the editor symbols need their own
@@ -673,13 +738,22 @@ if (VENG_BUILD_TESTS)
             tests/editor/editor_camera.cpp
             tests/editor/preview_capability.cpp
             tests/editor/status_tracker.cpp
+            tests/editor/editor_mcp.cpp
+            ${VENG_EDITOR_MCP}
     )
     # The serialization cases drive the JSON object directly, so the test target
     # links nlohmann/json (PRIVATE in libveng_editor — never exposed in a header).
-    target_link_libraries(veng_test_editor_unit PRIVATE veng_editor::veng_editor doctest::doctest
-            nlohmann_json::nlohmann_json)
+    # veng::mcp: the editor MCP tools (VENG_EDITOR_MCP, compiled here as it is into the exe
+    # rather than the framework lib) register into an McpServer the editor_mcp case drives over
+    # loopback; the mcp/src include reaches the shared ReflectToJson walk, and mcp/src/Vendor is a
+    # SYSTEM include so clang-tidy skips the vendored httplib the loopback case pulls in.
+    target_link_libraries(veng_test_editor_unit PRIVATE veng_editor::veng_editor veng::mcp
+            doctest::doctest nlohmann_json::nlohmann_json)
     target_compile_definitions(veng_test_editor_unit PRIVATE JSON_NOEXCEPTION)
-    target_include_directories(veng_test_editor_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
+    target_include_directories(veng_test_editor_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src
+            ${VENG_EDITOR_MCP_INCLUDE})
+    target_include_directories(veng_test_editor_unit SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
 
     doctest_discover_tests(veng_test_editor_unit PROPERTIES LABELS unit)
 
@@ -874,6 +948,28 @@ if (VENG_BUILD_TESTS)
     add_test(NAME veng_test_gpu COMMAND veng_test_gpu)
     set_tests_properties(veng_test_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
 
+    # ---- MCP render-tools proof (GPU band) ---------------------------------
+    # A headless Context + a Viewport rendering a one-cube scene, an McpHost returning it
+    # for the primary name, and a loopback round-trip over render.list_viewports /
+    # render.stats / render.screenshot — decoding the returned base64 PNG and asserting its
+    # dimensions match the viewport extent (plus a coarse non-blank check). It renders the
+    # cube through the test shader pack, so it depends on veng_test_shaders (defined above)
+    # and skips (77) with no ICD like the rest of the gpu band.
+    add_executable(veng_test_mcp_screenshot tests/mcp_screenshot.cpp)
+    target_link_libraries(veng_test_mcp_screenshot PRIVATE veng::mcp veng::veng
+            veng_test_support nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_screenshot PRIVATE JSON_NOEXCEPTION)
+    # The vendored httplib (client) and stb_image (PNG decode) are SYSTEM includes so
+    # clang-tidy skips the third-party code they pull into this TU.
+    target_include_directories(veng_test_mcp_screenshot SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor ${stb_SOURCE_DIR})
+    add_dependencies(veng_test_mcp_screenshot veng_test_shaders)
+    target_compile_definitions(veng_test_mcp_screenshot PRIVATE
+            TEST_SHADER_PACK="${CMAKE_CURRENT_BINARY_DIR}/test_shaders.vengpack")
+
+    add_test(NAME mcp_screenshot COMMAND veng_test_mcp_screenshot)
+    set_tests_properties(mcp_screenshot PROPERTIES LABELS "gpu;mcp" SKIP_RETURN_CODE 77)
+
     # ---- MaterialPreview surface (editor src) ------------------------------
     # The one GPU target that links libveng_editor: it constructs a
     # VengEditor::MaterialPreview (which owns a SceneRenderer + a Ref<ImGuiTexture>),
@@ -1007,6 +1103,29 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
     set_tests_properties(hello_triangle_launcher_smoke PROPERTIES
         LABELS gpu SKIP_RETURN_CODE 77
         ENVIRONMENT "HT_SMOKE=${CMAKE_CURRENT_BINARY_DIR}/hello_triangle_launcher_smoke.ppm")
+
+    # ---- MCP conformance smoke (gpu;mcp band) -------------------------------
+    # The build-time analogue of the loopback tests, but through the shipping consumer path: it
+    # launches hello_triangle-launcher under HT_MCP=0 (ephemeral port) + HT_SMOKE, reads the
+    # launcher's stdout for the McpServer readiness line, then does initialize + tools/list over
+    # loopback and asserts the engine tool families are present and world.list_entities returns
+    # the sample scene. It compiles the vendored httplib client into its own TU (exceptions on,
+    # like the rest of the suite) + nlohmann/json, so it needs no new dependency. Labelled gpu (it
+    # drives the real render path); the harness returns 77 when the launcher itself skipped for
+    # want of a Vulkan ICD, keeping it in the gpu skip band.
+    add_executable(veng_test_mcp_conformance tests/mcp_conformance.cpp)
+    target_link_libraries(veng_test_mcp_conformance PRIVATE nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_conformance PRIVATE JSON_NOEXCEPTION
+        VENG_LAUNCHER_BIN="$<TARGET_FILE:hello_triangle-launcher>")
+    # The vendored httplib single-header is a SYSTEM include so clang-tidy skips the third-party
+    # code it pulls into this TU, matching the imgui/stb vendor posture.
+    target_include_directories(veng_test_mcp_conformance SYSTEM PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+    add_dependencies(veng_test_mcp_conformance hello_triangle-launcher)
+
+    add_test(NAME mcp_conformance COMMAND veng_test_mcp_conformance)
+    set_tests_properties(mcp_conformance PROPERTIES LABELS "gpu;mcp" SKIP_RETURN_CODE 77
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:hello_triangle-launcher>)
 
     # ---- Local validation-error gate ----------------------------------------
     # ctest -L validation: runs the gpu-labelled binaries that emit Vulkan

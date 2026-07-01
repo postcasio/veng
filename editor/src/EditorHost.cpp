@@ -822,6 +822,70 @@ namespace VengEditor
         return editor != nullptr ? editor->GetCommandStack() : nullptr;
     }
 
+    void EditorHost::SetFramePump(function<void()> pump)
+    {
+        m_FramePump = std::move(pump);
+    }
+
+    vector<EditorPanel*> EditorHost::GetOpenPanels()
+    {
+        vector<EditorPanel*> panels;
+        panels.reserve(m_Panels.size());
+        for (PanelSlot& slot : m_Panels)
+        {
+            if (slot.Open && slot.Panel != nullptr)
+            {
+                panels.push_back(slot.Panel.get());
+            }
+        }
+        return panels;
+    }
+
+    AssetEditorPanel* EditorHost::GetFocusedDocument()
+    {
+        return FocusedAssetEditor();
+    }
+
+    Renderer::Viewport* EditorHost::GetPanelViewport(string_view panelTitle)
+    {
+        for (PanelSlot& slot : m_Panels)
+        {
+            auto* editor = dynamic_cast<AssetEditorPanel*>(slot.Panel.get());
+            if (editor != nullptr && editor->GetTitle() == panelTitle)
+            {
+                return editor->GetDocumentViewport();
+            }
+        }
+        return nullptr;
+    }
+
+    vector<string> EditorHost::GetSceneViewportNames()
+    {
+        vector<string> names;
+        for (PanelSlot& slot : m_Panels)
+        {
+            auto* editor = dynamic_cast<AssetEditorPanel*>(slot.Panel.get());
+            if (editor != nullptr && editor->GetDocumentViewport() != nullptr)
+            {
+                names.emplace_back(editor->GetTitle());
+            }
+        }
+        return names;
+    }
+
+    bool EditorHost::SetPanelVisible(string_view panelTitle, bool visible)
+    {
+        for (PanelSlot& slot : m_Panels)
+        {
+            if (slot.Panel != nullptr && slot.Panel->GetTitle() == panelTitle)
+            {
+                slot.Open = visible;
+                return true;
+            }
+        }
+        return false;
+    }
+
     void EditorHost::DrawMenuBar()
     {
         if (auto bar = UI::MainMenuBar())
@@ -1002,6 +1066,15 @@ namespace VengEditor
 
     void EditorHost::OnRender()
     {
+        // Drive the MCP server (when installed) before any panel draws or iterates its scene, so an
+        // agent's mutation lands at the same scene-safe point the editor's own after-the-walk edits
+        // do. The engine renders the panel viewports after this, so a screenshot the pump serviced
+        // this frame reads the prior frame's output — the same one-frame latency the editor carries.
+        if (m_FramePump)
+        {
+            m_FramePump();
+        }
+
         const ImGuiID dockspaceId = ImGui::DockSpaceOverViewport();
 
         // First frame with no restored imgui.ini layout: lay out the default docking. An empty

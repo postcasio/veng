@@ -599,6 +599,28 @@ namespace VengEditor
         }
     }
 
+    vector<Inspectable> LevelEditorPanel::GetInspectables()
+    {
+        return {
+            Inspectable{.Name = "renderSettings",
+                        .Type = TypeIdOf<LevelRenderSettings>(),
+                        .Data = &m_Render},
+            Inspectable{
+                .Name = "gameMode", .Type = TypeIdOf<GameModeConfig>(), .Data = &m_GameMode},
+        };
+    }
+
+    void LevelEditorPanel::OnInspectableChanged(string_view name)
+    {
+        if (name == "renderSettings")
+        {
+            // A render-settings write previews live in the viewport ahead of the debounced recook,
+            // exactly as a DrawSettingsPanel edit does; a game-mode write only marks dirty.
+            m_Viewport->ApplyLevelRenderSettings(m_Render);
+        }
+        MarkDirty();
+    }
+
     void LevelEditorPanel::BuildDefaultLayout(u32 dockspaceId)
     {
         ImGuiID center = dockspaceId;

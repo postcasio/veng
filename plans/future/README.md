@@ -645,6 +645,48 @@ linker-style **tree-shaking** over the cooked asset graph:
 
 A cooker-pipeline item like area 17, deferred until taken up.
 
+### 19. MCP server — remaining: streaming, resources/prompts, auth, richer editing
+
+**Delivered by [planset-41](../planset-41/README.md).** The optional `veng::mcp` library — a
+distinct target a game or the editor links to expose its live systems to AI agents over the
+Model Context Protocol — is landed and documented in [mcp/CLAUDE.md](../../mcp/CLAUDE.md). It
+assembled existing engine seams rather than new mechanism: **reflection** as the component
+(de)serializer (`FieldsToJson`/`JsonToFields`, the read/write analogue of the inspector's
+`DrawFieldWidget`), the editor's **`GetInspectables()`** seam (a panel hands back the reflected
+objects it already edits), the **screenshot download path** (a viewport `Download` → PNG →
+base64, the smoke capture's own path), and the **task-pump shape** (the inverse of
+`TaskSystem`'s main-thread queue — a network-thread request marshalled onto the render thread
+at a per-frame `Pump()`). The read/render/mutation tool families ship, gated loopback-only +
+`Origin`-rejection + `AllowMutations`-off-by-default, with the editor contributing its own
+`editor.*` family. **Still future**, each additive on the same transport and seams:
+
+- **Server→client notifications / streaming (SSE).** The delivered transport is
+  request/response only (POST → JSON). An SSE stream for push events (an entity spawned, a cook
+  finished, a frame rendered) rides the same transport later, behind the event/input seams
+  (area 4 above) — the events queue is the natural source.
+- **MCP `resources/*` and `prompts/*`.** The library ships **tools** only, the core
+  agent-actuation surface. Exposing assets/levels as addressable MCP resources, and prompt
+  templates, are natural follow-ons over the same server.
+- **Authentication / non-loopback exposure.** The default is loopback + `Origin` rejection +
+  no auth. A remote/auth-gated server (a shared dev instance, a hosted build) reachable off-host
+  is a separate concern layered on the transport — distinct from the same-host browser defense
+  this delivered.
+- **A richer world-editing vocabulary.** Reparenting and multi-entity transactions are additive
+  tools on the same mutation seam. (Component add/remove and single-edit undo-in-editor landed.)
+- **Rich node-graph editing via the `NodeGraph` serializer.** Adding/connecting nodes in the
+  material editor is exposed later through the `veng::graph` `NodeGraph` serialize + mutation
+  vocabulary, **not** a hand-mirrored node API — the same "consume the existing serializer"
+  principle the delivered reflection tools follow, one seam deeper.
+- **Reflected commands / a scripting surface.** Method/function reflection is deliberately
+  *not* built — the property surface is data reflection (already present) and the action surface
+  is a handful of lifecycle verbs (already virtuals). If a broad need emerges (a data-driven
+  command palette, gameplay-system actions, scripted tools), it earns the subsystem then and the
+  MCP tools ride it for free.
+- **Programmatic dock-layout choreography.** Moving/splitting/retabbing panels is `DockBuilder`
+  + `.ini` state manipulation, deferred as fiddly and low-value; floating OS windows are a
+  standing design non-goal (multi-viewport is disabled). The editor window verbs delivered are
+  list/open/show-hide/focus only.
+
 ## Ordering & dependencies
 
 The order to *take the remaining areas up* (each becomes its own planset), not a
@@ -709,6 +751,14 @@ named-enum combos, collapsible structs/arrays/categories, conditional display (p
 pass), a **Bruneton precomputed atmospheric sky** (the first `Type3D` consumer), a **dynamic SH
 ambient**, and **BC5/BC4 channel-specialized codecs** on the role → format table; plus the
 removal of planset-32's allocation-tier outer loop (it hitched).
+
+**Delivered (planset-41):** area 19's **optional MCP server library** (`veng::mcp`) — the
+server + `McpHost` seam + render-thread request pump, the reflection-driven world/render/mutation
+tool families, the loopback + `Origin` + `AllowMutations` safety posture, the editor's own
+`editor.*` family over the `GetInspectables()` seam, SDK install + `hello-triangle` wiring +
+conformance. Streaming/SSE, `resources/*`/`prompts/*`, auth/non-loopback, richer world-editing,
+node-graph-editing via the `NodeGraph` serializer, reflected commands, and dock-layout
+choreography stay future (area 19 above).
 
 **The next gate:** area 4 (**events/input + networking**) — multi-seat input routing and
 a net layer over the `Intent`/`Authority`/Sim-View seams planset-29 established, built on the

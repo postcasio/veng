@@ -109,6 +109,12 @@ namespace VengEditor
         /// @brief Returns true when the edited scene has unsaved command-stack edits.
         [[nodiscard]] bool HasUnsavedChanges() const override { return m_Commands.IsDirty(); }
 
+        /// @brief Returns the document's live edit Scene — the world tools' focused scene.
+        [[nodiscard]] Veng::Scene* GetDocumentScene() override { return m_Context.Scene; }
+
+        /// @brief Returns the scene viewport's Offscreen viewport — the screenshot seam's target.
+        [[nodiscard]] Veng::Renderer::Viewport* GetDocumentViewport() override;
+
     protected:
         /// @brief Draws the shared document toolbar: the play transport and the gizmo-mode segment.
         ///

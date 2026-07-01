@@ -34,6 +34,11 @@ veng_add_project(template_assets
 # The game splits into libtemplate (the runtime) and template-launcher (the shipped exe that
 # dlopens it). veng_add_game copies the host-default config's cooked project + packs beside the
 # launcher so the set is a relocatable directory.
+#
+# The template deliberately stays MCP-free: an MCP server is not part of "the smallest correct
+# app". A find_package(veng) consumer adds one by linking veng::mcp and constructing an McpServer
+# from an McpHost (the maximal sample, examples/hello-triangle, is the worked recipe behind
+# HT_MCP); the minimal starter does not, so it opens no socket and pulls in no server thread.
 veng_add_game(template
         SOURCES main.cpp
         PROJECT ${template_assets_HOST_TARGET})
