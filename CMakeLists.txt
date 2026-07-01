@@ -272,9 +272,14 @@ add_subdirectory(graph)
 
 add_subdirectory(cooker)
 
-# The editor framework library is top-level-only (same gate as tests/examples):
-# it serves the example editor and is not part of the installed library surface.
-if (PROJECT_IS_TOP_LEVEL)
+# The editor is the heavy GUI authoring surface above the cooker. The cooker + graph
+# always build from source (veng is the tools); this option decides only whether the
+# editor builds and installs, so a packaging superbuild produces a complete authoring
+# SDK regardless of how the build was invoked. Defaults to a top-level build (the
+# examples' editor), and is forced ON when the SDK is being installed.
+option(VENG_INSTALL_SDK "Build and install the editor as part of the veng SDK" ${PROJECT_IS_TOP_LEVEL})
+
+if (VENG_INSTALL_SDK OR PROJECT_IS_TOP_LEVEL)
     add_subdirectory(editor)
 endif ()
 
@@ -1069,6 +1074,7 @@ install(FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/AssetPack.cmake
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Project.cmake
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Game.cmake
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Editor.cmake
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildConfig.cmake
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PerConfigInvalidation.cmake
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/veng

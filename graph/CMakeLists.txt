@@ -51,12 +51,24 @@ target_link_libraries(veng_graph PRIVATE nlohmann_json::nlohmann_json)
 target_compile_definitions(veng_graph PRIVATE JSON_NOEXCEPTION)
 
 # veng_graph is a shared library the installed vengc loads at runtime (vengc →
-# veng::cook → veng::graph), so it joins vengTargets and installs beside libveng —
-# the installed cooker resolves it through @loader_path/../lib. Its public headers
-# and downstream ALIAS are installed in a later plan; this install makes the imported
-# vengc runnable from the prefix.
+# veng::cook → veng::graph) and a downstream EDITOR_MODULE links PUBLIC through
+# veng_editor, so it joins vengTargets and installs beside libveng with its public
+# VengGraph/ headers. The installed lib finds libveng beside it through
+# @loader_path/../lib (macOS) or $ORIGIN/../lib (Linux). nlohmann/json stays PRIVATE —
+# never a VengGraph/ public header.
+if (APPLE)
+    set_target_properties(veng_graph PROPERTIES
+            INSTALL_RPATH "@loader_path/../${CMAKE_INSTALL_LIBDIR}")
+else ()
+    set_target_properties(veng_graph PROPERTIES
+            INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+endif ()
+
 install(TARGETS veng_graph
         EXPORT vengTargets
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(DIRECTORY include/VengGraph DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

@@ -23,6 +23,24 @@ if (NOT TARGET vengc)
     add_executable(vengc ALIAS veng::vengc)
 endif ()
 
+# The editor surface arrives under the veng:: namespace (veng::veng_graph /
+# veng::veng_editor / veng::veng-editor). Recreate the in-tree alias spellings the helper
+# modules and a downstream EDITOR_MODULE use, each behind a NOT TARGET guard: veng_add_editor's
+# $<TARGET_FILE:veng-editor> and target_link_libraries(... veng_editor::veng_editor / veng::graph)
+# resolve downstream exactly as they do in-tree. libveng_cook is statically linked into the exes
+# and not exported, so no cook alias is needed — a consumer never links the cooker. The editor's
+# only PUBLIC deps (veng::veng, veng::graph, and the ImGui headers riding veng's interface) are
+# already resolved above, so no extra find_dependency is required.
+if (NOT TARGET veng-editor)
+    add_executable(veng-editor ALIAS veng::veng-editor)
+endif ()
+if (NOT TARGET veng::graph)
+    add_library(veng::graph ALIAS veng::veng_graph)
+endif ()
+if (NOT TARGET veng_editor::veng_editor)
+    add_library(veng_editor::veng_editor ALIAS veng::veng_editor)
+endif ()
+
 # The consumption mode the helper modules resolve their mode-keyed path variables against.
 # A find_package(veng) against an install prefix is INSTALL; the in-tree build leaves this
 # unset, and the build-tree config sets BUILD_TREE.
@@ -51,5 +69,6 @@ include("${CMAKE_CURRENT_LIST_DIR}/AssetPack.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/BuildConfig.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/Project.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/Game.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/Editor.cmake")
 
 check_required_components(veng)

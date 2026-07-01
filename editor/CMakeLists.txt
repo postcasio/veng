@@ -81,6 +81,27 @@ endif ()
 target_link_libraries(veng_editor PRIVATE nlohmann_json::nlohmann_json)
 target_compile_definitions(veng_editor PRIVATE JSON_NOEXCEPTION)
 
+# veng_editor is a shared library a downstream EDITOR_MODULE links (veng_editor::veng_editor),
+# so it joins vengTargets and installs its public VengEditor/ headers beside libveng. The
+# installed lib finds libveng / libveng_graph beside it through @loader_path/../lib (macOS) or
+# $ORIGIN/../lib (Linux). imnodes/nlohmann stay PRIVATE — never a VengEditor/ public header.
+if (APPLE)
+    set_target_properties(veng_editor PROPERTIES
+            INSTALL_RPATH "@loader_path/../${CMAKE_INSTALL_LIBDIR}")
+else ()
+    set_target_properties(veng_editor PROPERTIES
+            INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+endif ()
+
+install(TARGETS veng_editor
+        EXPORT vengTargets
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(DIRECTORY include/VengEditor DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
 # imnodes — the material editor's node canvas, included only in .cpp (imnodes.h
 # never appears in a VengEditor/ public header). imnodes.cpp is compiled exactly
 # once, into veng::veng's Vendor/ImGui.cpp aggregation TU beside ImGui, and
@@ -109,10 +130,7 @@ set(VENG_EDITOR_EXE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 # resolves them to bindless TextureHandles for the debug-draw billboards. Cooked
 # once here and copied beside the editor exe (its own content, mounted by EditorHost
 # from ExecutableDirectory() — distinct from a project's build dir).
-#
-# The editor is the heavy GUI surface above the cooker, built top-level-only (the cooker
-# beneath it always builds from source).
-if (PROJECT_IS_TOP_LEVEL)
+if (VENG_INSTALL_SDK OR PROJECT_IS_TOP_LEVEL)
     veng_add_asset_pack(veng_editor_icons
             PACK   assets/icons/editor_icons.vengpack.json
             OUTPUT ${CMAKE_BINARY_DIR}/editor_icons.vengpack)
@@ -130,7 +148,7 @@ endif ()
 # registers a per-project `<name>-editor` run target that launches this with the right
 # arguments. Links libveng_cook PRIVATE through CookSession (the importer never reaches
 # libveng_editor). In-build it resolves libveng/libveng_editor/slang via the auto build rpath.
-if (PROJECT_IS_TOP_LEVEL)
+if (VENG_INSTALL_SDK OR PROJECT_IS_TOP_LEVEL)
     add_executable(veng-editor ${VENG_EDITOR_MAIN} ${VENG_EDITOR_COOK_SESSION})
     target_link_libraries(veng-editor PRIVATE veng::veng veng_editor::veng_editor veng::cook)
     target_include_directories(veng-editor PRIVATE ${VENG_EDITOR_EXE_INCLUDE})
@@ -152,4 +170,23 @@ if (PROJECT_IS_TOP_LEVEL)
                 $<TARGET_RUNTIME_DLLS:veng-editor> $<TARGET_FILE_DIR:veng-editor>
             COMMAND_EXPAND_LISTS)
     endif ()
+
+    # veng-editor ships with the SDK as an imported executable in vengTargets, so
+    # veng_add_editor's $<TARGET_FILE:veng-editor> resolves downstream. The build-tree
+    # auto-rpath does not survive an install: the co-installed libveng / libveng_editor /
+    # libveng_graph resolve through @loader_path/../lib (macOS) or $ORIGIN/../lib (Linux),
+    # and the host's Slang (statically-linked libveng_cook loads it) resolves through the
+    # directory find_library found it in — the same Slang-is-a-host-prerequisite rule as vengc.
+    get_filename_component(VENG_EDITOR_SLANG_LIBDIR "${Slang_LIBRARY}" DIRECTORY)
+    if (APPLE)
+        set_target_properties(veng-editor PROPERTIES
+                INSTALL_RPATH "@loader_path/../${CMAKE_INSTALL_LIBDIR};${VENG_EDITOR_SLANG_LIBDIR}")
+    else ()
+        set_target_properties(veng-editor PROPERTIES
+                INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR};${VENG_EDITOR_SLANG_LIBDIR}")
+    endif ()
+
+    install(TARGETS veng-editor
+            EXPORT vengTargets
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif ()
