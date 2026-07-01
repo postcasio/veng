@@ -17,6 +17,11 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   author's side: world prefab versus level-scoped data (game mode, the active
   system set, render settings), why a level is not a prefab, and the
   load-to-play flow.
+- **[Consuming veng](guides/consuming-veng.md)** — discovering veng from a game
+  project with `find_package(veng)`: the three consumption modes (in-tree, build
+  tree, install prefix), the `veng_ROOT` / `CMAKE_PREFIX_PATH` /
+  `FETCHCONTENT_SOURCE_DIR_VENG` discovery incantations, and the co-development
+  loop that needs no reinstall.
 
 Every type, macro, and method these guides name exists in the engine as written,
 and the worked examples cross-reference the real

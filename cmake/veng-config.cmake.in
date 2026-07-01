@@ -2,6 +2,8 @@
 
 include(CMakeFindDependencyMacro)
 
+# veng's dependency targets resolve from the install prefix (every dep is configured
+# *_INSTALL ON so the prefix is self-contained).
 find_dependency(Vulkan)
 find_dependency(glfw3)
 find_dependency(glm)
@@ -13,41 +15,18 @@ find_dependency(nfd)
 # imported target must be resolved for veng-targets.cmake's link interface to import.
 find_dependency(zstd)
 
-include("${CMAKE_CURRENT_LIST_DIR}/veng-targets.cmake")
-
-# vengc is exported as an IMPORTED executable under the veng:: namespace. Recreate the
-# unqualified name so the helper modules' $<TARGET_FILE:vengc> resolves downstream exactly
-# as it does in-tree (a built target there, an aliased imported one here). ALIAS on an
-# imported executable is legal on the CMake this package requires.
-if (NOT TARGET vengc)
-    add_executable(vengc ALIAS veng::vengc)
-endif ()
-
-# The editor surface arrives under the veng:: namespace (veng::veng_graph /
-# veng::veng_editor / veng::veng-editor). Recreate the in-tree alias spellings the helper
-# modules and a downstream EDITOR_MODULE use, each behind a NOT TARGET guard: veng_add_editor's
-# $<TARGET_FILE:veng-editor> and target_link_libraries(... veng_editor::veng_editor / veng::graph)
-# resolve downstream exactly as they do in-tree. libveng_cook is statically linked into the exes
-# and not exported, so no cook alias is needed — a consumer never links the cooker. The editor's
-# only PUBLIC deps (veng::veng, veng::graph, and the ImGui headers riding veng's interface) are
-# already resolved above, so no extra find_dependency is required.
-if (NOT TARGET veng-editor)
-    add_executable(veng-editor ALIAS veng::veng-editor)
-endif ()
-if (NOT TARGET veng::graph)
-    add_library(veng::graph ALIAS veng::veng_graph)
-endif ()
-if (NOT TARGET veng_editor::veng_editor)
-    add_library(veng_editor::veng_editor ALIAS veng::veng_editor)
-endif ()
-
 # The consumption mode the helper modules resolve their mode-keyed path variables against.
 # A find_package(veng) against an install prefix is INSTALL; the in-tree build leaves this
 # unset, and the build-tree config sets BUILD_TREE.
 set(VENG_PACKAGE_MODE "INSTALL")
 
+# The helper *.cmake modules and the shared config body install beside this config, so both
+# load from the config's own directory.
+set(VENG_CMAKE_HELPER_DIR "${CMAKE_CURRENT_LIST_DIR}")
+
 # The launcher source veng_add_game compiles into each game's launcher, installed under
-# share/veng/launcher. Set before including Game.cmake so its mode-aware resolution uses it.
+# share/veng/launcher. Set before including the body (which includes Game.cmake) so its
+# mode-aware resolution uses it.
 set(VENG_LAUNCHER_MAIN "@PACKAGE_CMAKE_INSTALL_DATADIR@/veng/launcher/launcher_main.cpp"
     CACHE INTERNAL "veng launcher source")
 
@@ -62,13 +41,4 @@ set(VENG_CORE_PACK_JSON "@PACKAGE_CMAKE_INSTALL_DATADIR@/veng/core/core.vengpack
 set(veng_CORE_SHADER_DIR "${VENG_CORE_SHADER_DIR}")
 set(veng_CORE_PACK_JSON "${VENG_CORE_PACK_JSON}")
 
-# The authoring vocabulary — veng_add_project / veng_add_asset_pack / veng_add_game and the
-# build-config helpers. They reference vengc through the alias above and the core-data paths
-# set above, so a consumer gets the full authoring surface on find_package(veng).
-include("${CMAKE_CURRENT_LIST_DIR}/AssetPack.cmake")
-include("${CMAKE_CURRENT_LIST_DIR}/BuildConfig.cmake")
-include("${CMAKE_CURRENT_LIST_DIR}/Project.cmake")
-include("${CMAKE_CURRENT_LIST_DIR}/Game.cmake")
-include("${CMAKE_CURRENT_LIST_DIR}/Editor.cmake")
-
-check_required_components(veng)
+include("${CMAKE_CURRENT_LIST_DIR}/veng-config-body.cmake")

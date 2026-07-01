@@ -1112,11 +1112,14 @@ install(EXPORT vengTargets
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/veng
 )
 
-configure_package_config_file(
-        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/veng-config.cmake.in
-        ${CMAKE_CURRENT_BINARY_DIR}/veng-config.cmake
-        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/veng
-        PATH_VARS CMAKE_INSTALL_DATADIR
+# The shared config body both modes include() at config-load time — target import, alias
+# recreation, and helper includes. It carries no @VAR@ substitution (the modes differ only
+# in the preamble), so a plain configure_file lands one copy at the build-dir root beside the
+# build-tree config; the same copy installs beside the install config.
+configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/veng-config-body.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/veng-config-body.cmake
+        @ONLY
 )
 
 write_basic_package_version_file(
@@ -1125,8 +1128,51 @@ write_basic_package_version_file(
         COMPATIBILITY SameMajorVersion
 )
 
+# ---- Install-prefix config (the shipped SDK) --------------------------------
+# Staged under a subdirectory, not the build-dir root, so it does not collide with the
+# build-tree veng-config.cmake below; only the install(FILES) step consumes it.
+configure_package_config_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/veng-config.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/install-config/veng-config.cmake
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/veng
+        PATH_VARS CMAKE_INSTALL_DATADIR
+)
+
 install(FILES
-        ${CMAKE_CURRENT_BINARY_DIR}/veng-config.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/install-config/veng-config.cmake
         ${CMAKE_CURRENT_BINARY_DIR}/veng-config-version.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/veng-config-body.cmake
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/veng
+)
+
+# ---- Build-tree config (the co-development path, no install) -----------------
+# export(EXPORT) writes veng-targets.cmake into the build-dir root with the imported
+# vengc / veng-editor / editor libraries pointing at their build-tree locations, and the
+# build-tree veng-config.cmake resolves beside it — so a game configured with
+# -Dveng_ROOT=/path/to/veng/build (or that dir on CMAKE_PREFIX_PATH) discovers veng with no
+# install step. The engine's cmake --build refreshes the exported targets in place.
+#
+# veng's exported link interface names glm::glm and fmt::fmt (PUBLIC on veng) and
+# libzstd_static (PUBLIC through the static assetpack), so those dependency targets must be
+# in a build-tree export for veng-targets.cmake to import against. fmt and zstd already write
+# their own build-tree target files (_deps/fmt-build/fmt-targets.cmake,
+# _deps/zstd-build/zstdTargets.cmake); glm only install-exports, so export its set here.
+# glfw / VMA / nfd are PRIVATE to the shared veng and never enter its interface, so they need
+# no build-tree export.
+export(EXPORT glm
+        NAMESPACE glm::
+        FILE ${CMAKE_CURRENT_BINARY_DIR}/deps/glm-targets.cmake
+)
+export(EXPORT vengTargets
+        NAMESPACE veng::
+        FILE ${CMAKE_CURRENT_BINARY_DIR}/veng-targets.cmake
+)
+
+# A plain configure_file, not configure_package_config_file: the build-tree config sits at the
+# build-dir root (one level), so @PACKAGE_INIT@'s install-depth prefix math would resolve to an
+# unrelated ancestor. The build-tree preamble substitutes source-tree absolute paths directly.
+configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/veng-config-buildtree.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/veng-config.cmake
+        @ONLY
 )
