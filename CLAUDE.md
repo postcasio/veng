@@ -53,6 +53,15 @@ is thin (shared deps + `add_subdirectory` per lib).
   (`--project <project.veng>`) and `dlopen`s the module(s) the project names, resolved from
   the project's build-output dir — **discovered** from a gitignored `.veng/build.json`
   sidecar the build writes beside the project. There is no per-game editor binary.
+- `mcp/` — `libveng_mcp` (`veng::mcp`), the **optional** MCP server library a consuming
+  app (game *or* editor) links to expose its live systems to AI agents over the Model
+  Context Protocol. The consumer constructs one `McpServer` from an `McpHost`, hands it the
+  systems it wants reachable, and pumps it once per frame; the server runs a loopback MCP
+  endpoint on a background thread and marshals every engine-touching request onto the render
+  thread. Links `veng::veng` PUBLIC; nlohmann/json + cpp-httplib (vendored) PRIVATE, so the
+  public `Veng/Mcp/` surface stays JSON-library-free. **Not** linked by `libveng` — a
+  distinct target a consumer opts into, exactly as `veng::graph` is. Editor-free: the engine
+  tools live here, the editor registers its own into the same server (`editor/src/EditorMcp`).
 - `examples/hello-triangle/` — the canonical **maximal** sample app and the smoke
   test, and the **in-tree consumption exemplar** (built as part of the engine tree via
   `add_subdirectory`). It is a **game module + launcher**, not one binary: `veng_add_game`
@@ -93,6 +102,9 @@ per-module architecture lives in a `CLAUDE.md` inside each library:
   shader compile/reflection, `.vmat` validation, the prefab-cooking relaxation.
 - **[assetpack/CLAUDE.md](assetpack/CLAUDE.md)** — the on-disk `.vengpack` archive
   and cooked-blob format shared by the cooker and the runtime.
+- **[mcp/CLAUDE.md](mcp/CLAUDE.md)** — the optional MCP server library: the server +
+  host seam + render-thread request pump, the tool families, reflection as the
+  (de)serializer, and the loopback/`Origin`/`AllowMutations` safety posture.
 
 ## Build & test
 
@@ -226,7 +238,12 @@ enum field, all zstd calls confined to `Archive.cpp`). The cooker's heavy/toolch
 deps (nlohmann/json, assimp, and Slang for shader compile + reflection, plus the
 **`bc7enc_rdo` / `astc-encoder` texture encoders**) are **cooker-only** — linked into
 `vengc` alone, never into `libveng` or its consumers, which load the *binary* archive
-and never parse or encode a source asset.
+and never parse or encode a source asset. The **optional `veng::mcp`** library adds one
+more pinned dep — **cpp-httplib** (a vendored single header, its transport TU compiled
+`-fexceptions`) — plus nlohmann/json and stb, all **PRIVATE** to `veng_mcp`: they reach
+neither `libveng` nor a `Veng/Mcp/` public header, so a consumer that links `veng::mcp`
+pulls in no new public dependency, exactly as linking `veng::graph` (which links
+nlohmann/json PRIVATE) does not.
 
 ### Build configurations — role on the asset, format on the platform
 

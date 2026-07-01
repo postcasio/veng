@@ -763,6 +763,28 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   [game-module.md](future/game-module.md); the module-ABI/SDK freeze for hosting *separately built*
   third-party modules stays future.
 
+- **[planset-41](planset-41/README.md)** — the optional MCP server library `veng::mcp`
+  (✅ done, 7 plans). A game *or* the editor can now expose its live systems to AI agents over the
+  **Model Context Protocol** by linking one **optional** engine-tier library — not linked by
+  `libveng`, a distinct target a consumer opts into exactly as `veng::graph` is. The consumer fills
+  an **`McpHost`** (its world, `TypeRegistry`, `AssetManager`, viewports), constructs one
+  **`McpServer`**, and pumps it once per frame; the server runs a loopback Streamable-HTTP JSON-RPC
+  endpoint on a background thread and marshals every engine-touching request onto the render thread
+  (the **inverse** of `TaskSystem`'s pump). It is mostly **assembly of existing seams**: reflection
+  as the component (de)serializer (`FieldsToJson`/`JsonToFields`), the smoke capture's
+  viewport-`Download` screenshot path, and the editor's `GetInspectables()` reflection seam. The
+  tool families are `world.*`/`entity.*`/`scene.*` (read), `render.*` (screenshot/stats),
+  the `entity.*`/`world.load_prefab` **mutation** verbs (gated), and — from the editor side —
+  `editor.*`; list tools paginate (`{ limit?, cursor? }` → `{ items…, nextCursor? }`). The public
+  `Veng/Mcp/` surface is **JSON-library-free** (a handler is `Result<string>(string_view)`;
+  nlohmann/json + vendored cpp-httplib stay PRIVATE), holding the same include-hygiene guarantee
+  `libveng` does. Safety is **loopback-only bind + `Origin`-header rejection + `AllowMutations` off
+  by default**, and no tool argument is ever a filesystem path (every reference is an opaque
+  `AssetId`). Installs into `vengTargets`; `hello-triangle` wires it behind `HT_MCP` and the
+  editor behind `--mcp`. Delivers [future area 19](future/README.md#19-mcp-server--remaining-streaming-resourcesprompts-auth-richer-editing);
+  streaming/SSE, `resources/*`/`prompts/*`, auth/non-loopback, richer world- and node-graph-editing,
+  and reflected commands stay future.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the

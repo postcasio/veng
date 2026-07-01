@@ -22,6 +22,12 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   tree, install prefix), the `veng_ROOT` / `CMAKE_PREFIX_PATH` /
   `FETCHCONTENT_SOURCE_DIR_VENG` discovery incantations, and the co-development
   loop that needs no reinstall.
+- **[Exposing your app to an agent with the MCP server](guides/consuming-mcp.md)** —
+  linking the optional `veng::mcp` library: filling an `McpHost` from your
+  systems, constructing and pumping an `McpServer`, the read-only versus mutation
+  tool families, connecting an MCP client to the loopback endpoint, the editor host
+  and its `GetInspectables()` extension point, and the loopback/`Origin`/mutation
+  safety model.
 
 Every type, macro, and method these guides name exists in the engine as written,
 and the worked examples cross-reference the real

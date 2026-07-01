@@ -132,9 +132,10 @@ int main()
     widget.Tint = vec3(0.1f, 0.2f, 0.3f);
     widget.Kind = LightType::Spot;
     // The AssetHandle's leading AssetId sits at offset 0 (pinned by AssetHandleLayoutGuard);
-    // its value constructor is private, so seed the id the way the reflection serializer reads it.
+    // its value constructor is private, so seed the id the way the reflection serializer writes it
+    // — through a byte pointer, since AssetHandle<T> is not trivially copyable as a whole.
     const u64 modelId = 0x1234ABCDULL;
-    std::memcpy(&widget.Model, &modelId, sizeof(modelId));
+    std::memcpy(static_cast<void*>(&widget.Model), &modelId, sizeof(modelId));
     widget.Stat = Test::Stats{.Health = 42.0f, .Level = 7};
     scene->Add<Test::Widget>(hero, widget);
 

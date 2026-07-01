@@ -67,6 +67,12 @@ target_compile_definitions(veng_mcp PRIVATE JSON_NOEXCEPTION)
 # never a public header. ${stb_SOURCE_DIR} is the FetchContent-populated stb checkout.
 target_include_directories(veng_mcp PRIVATE ${stb_SOURCE_DIR})
 
+# stb_image_write's implementation calls the deprecated sprintf, which the VE_DEBUG build's
+# inherited -Werror would reject. Vendored code is not held to veng's warning bar, so the
+# vendor TU demotes that one warning — scoped to this TU, leaving veng's own code strict.
+set_source_files_properties(src/Vendor/StbImageWrite.cpp PROPERTIES
+        COMPILE_OPTIONS -Wno-error=deprecated-declarations)
+
 # httplib needs threads and (on some platforms) the socket libraries; find_package
 # supplies the portable Threads::Threads target.
 find_package(Threads REQUIRED)
