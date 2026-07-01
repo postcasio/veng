@@ -119,6 +119,14 @@ namespace
             Mcp::McpServer* server = m_Server.get();
             host.SetFramePump([server] { server->Pump(); });
 
+            // The console panel's sink owns Log output by now (Start runs after OnInitialize built
+            // the panels), so the readiness line goes straight to stdout too: it is the
+            // machine-readable contract an attaching agent or the conformance test parses for the
+            // bound port. The Log::Info shows the same line in the editor's own console.
+            std::printf("veng-editor: MCP server listening on 127.0.0.1:%u%s\n",
+                        static_cast<unsigned>(m_Server->GetPort()),
+                        options.AllowMutations ? " (writes enabled)" : " (read-only)");
+            std::fflush(stdout);
             Log::Info("veng-editor: MCP server listening on 127.0.0.1:{}{}", m_Server->GetPort(),
                       options.AllowMutations ? " (writes enabled)" : " (read-only)");
         }
@@ -264,10 +272,12 @@ int main(const int argc, char** argv)
 
     // The MCP server is constructed only under --mcp, so the editor's default launch and its smokes
     // are unaffected; it drives Pump() through the host's frame pump and stops with its Unique.
+    // Construction is deferred to the host's post-initialize callback: the service's McpHost binds
+    // GetAssetManager() by reference, which exists only once Run() has initialized the engine.
     Veng::Unique<EditorMcpService> mcp;
     if (mcpOptions.Enabled)
     {
-        mcp = StartMcp(*host, mcpOptions);
+        host->SetOnInitialized([&mcp, &host, mcpOptions] { mcp = StartMcp(*host, mcpOptions); });
     }
 
     host->Run({args.front()});

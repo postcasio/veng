@@ -6,6 +6,20 @@
 
 namespace VengEditor
 {
+    /// @brief Strips the leading unsaved-changes marker ('*') from a panel title.
+    ///
+    /// A document panel's display title carries a '*' while it has unsaved changes, so the raw
+    /// title is not a stable address — an edit would rename the panel out from under a caller
+    /// holding its name. Every by-title lookup (the MCP tools, the host's panel resolution)
+    /// compares marker-stripped titles, and the listing tools report the stripped form, so a
+    /// panel's externally visible name is stable across the dirty toggle.
+    /// @param title  A panel display title, possibly carrying the marker.
+    /// @return The title without the marker — the stable panel address.
+    [[nodiscard]] inline Veng::string_view StripUnsavedMarker(Veng::string_view title)
+    {
+        return title.starts_with('*') ? title.substr(1) : title;
+    }
+
     /// @brief One reflected object a panel edits, named for external addressing.
     ///
     /// A panel hands these back through GetInspectables() so the generic editor MCP tools

@@ -14,27 +14,19 @@
 //
 // The vendored httplib client is the same single header compiled here (this TU builds with
 // exceptions, like the rest of the suite), so it needs no new dependency. VENG_LAUNCHER_BIN is
-// baked in by CMake ($<TARGET_FILE:hello_triangle-launcher>).
+// baked in by CMake ($<TARGET_FILE:hello_triangle-launcher>). The spawn/read-port/terminate
+// scaffolding is the shared support/ProcessCapture.h, also used by editor_mcp_conformance.
 
 #include <nlohmann/json.hpp>
 
 #define CPPHTTPLIB_IMPLEMENTATION
 #include <httplib.h>
 
-#include <chrono>
+#include "support/ProcessCapture.h"
+
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <string>
-#include <thread>
-
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <csignal>
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
 
 using Json = nlohmann::json;
 
@@ -61,198 +53,7 @@ namespace
         }
         return Json::parse(res->body, nullptr, false);
     }
-
-    // Parses the port out of a "listening on <ip>:<port>" log line, or 0 if the line is not it.
-    int ParseListeningPort(const std::string& line)
-    {
-        const std::string marker = "listening on";
-        const std::size_t at = line.find(marker);
-        if (at == std::string::npos)
-        {
-            return 0;
-        }
-        const std::size_t colon = line.rfind(':');
-        if (colon == std::string::npos || colon < at)
-        {
-            return 0;
-        }
-        return std::atoi(line.c_str() + colon + 1);
-    }
 }
-
-#if defined(_WIN32)
-
-// Windows: spawn the launcher with a stdout pipe, read it for the listening line, and terminate
-// the process at the end. The environment (HT_MCP / HT_SMOKE) is inherited from this process,
-// which main() set before spawning.
-namespace
-{
-    struct Launched
-    {
-        PROCESS_INFORMATION Process{};
-        HANDLE ReadPipe = nullptr;
-    };
-
-    bool SpawnLauncher(Launched& out)
-    {
-        SECURITY_ATTRIBUTES attrs{};
-        attrs.nLength = sizeof(attrs);
-        attrs.bInheritHandle = TRUE;
-
-        HANDLE writePipe = nullptr;
-        if (!CreatePipe(&out.ReadPipe, &writePipe, &attrs, 0))
-        {
-            return false;
-        }
-        SetHandleInformation(out.ReadPipe, HANDLE_FLAG_INHERIT, 0);
-
-        STARTUPINFOA startup{};
-        startup.cb = sizeof(startup);
-        startup.dwFlags = STARTF_USESTDHANDLES;
-        startup.hStdOutput = writePipe;
-        startup.hStdError = writePipe;
-
-        std::string command = VENG_LAUNCHER_BIN;
-        const BOOL ok = CreateProcessA(nullptr, command.data(), nullptr, nullptr, TRUE, 0, nullptr,
-                                       nullptr, &startup, &out.Process);
-        CloseHandle(writePipe);
-        if (!ok)
-        {
-            CloseHandle(out.ReadPipe);
-            return false;
-        }
-        return true;
-    }
-
-    int ReadPort(Launched& launched)
-    {
-        std::string buffer;
-        char chunk[256];
-        DWORD read = 0;
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-        while (std::chrono::steady_clock::now() < deadline)
-        {
-            if (!ReadFile(launched.ReadPipe, chunk, sizeof(chunk), &read, nullptr) || read == 0)
-            {
-                break;
-            }
-            buffer.append(chunk, read);
-            std::size_t newline = 0;
-            while ((newline = buffer.find('\n')) != std::string::npos)
-            {
-                const std::string line = buffer.substr(0, newline);
-                buffer.erase(0, newline + 1);
-                const int port = ParseListeningPort(line);
-                if (port != 0)
-                {
-                    return port;
-                }
-            }
-        }
-        return 0;
-    }
-
-    void Terminate(Launched& launched)
-    {
-        TerminateProcess(launched.Process.hProcess, 0);
-        WaitForSingleObject(launched.Process.hProcess, 5000);
-        CloseHandle(launched.Process.hProcess);
-        CloseHandle(launched.Process.hThread);
-        CloseHandle(launched.ReadPipe);
-    }
-}
-
-#else
-
-// POSIX: fork/exec the launcher with its stdout redirected to a pipe, read the pipe for the
-// listening line, and SIGTERM the child at the end. The environment (HT_MCP / HT_SMOKE) is
-// inherited across exec from this process, which main() set before forking.
-namespace
-{
-    struct Launched
-    {
-        pid_t Pid = -1;
-        int ReadFd = -1;
-    };
-
-    bool SpawnLauncher(Launched& out)
-    {
-        int fds[2];
-        if (pipe(fds) != 0)
-        {
-            return false;
-        }
-        const pid_t pid = fork();
-        if (pid < 0)
-        {
-            close(fds[0]);
-            close(fds[1]);
-            return false;
-        }
-        if (pid == 0)
-        {
-            // Child: point stdout + stderr at the pipe's write end, then exec the launcher.
-            dup2(fds[1], STDOUT_FILENO);
-            dup2(fds[1], STDERR_FILENO);
-            close(fds[0]);
-            close(fds[1]);
-            execl(VENG_LAUNCHER_BIN, VENG_LAUNCHER_BIN, static_cast<char*>(nullptr));
-            _exit(127);
-        }
-        close(fds[1]);
-        out.Pid = pid;
-        out.ReadFd = fds[0];
-        return true;
-    }
-
-    int ReadPort(Launched& launched)
-    {
-        std::string buffer;
-        char chunk[256];
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-        while (std::chrono::steady_clock::now() < deadline)
-        {
-            const ssize_t got = read(launched.ReadFd, chunk, sizeof(chunk));
-            if (got <= 0)
-            {
-                break;
-            }
-            buffer.append(chunk, static_cast<std::size_t>(got));
-            std::size_t newline = 0;
-            while ((newline = buffer.find('\n')) != std::string::npos)
-            {
-                const std::string line = buffer.substr(0, newline);
-                buffer.erase(0, newline + 1);
-                const int port = ParseListeningPort(line);
-                if (port != 0)
-                {
-                    return port;
-                }
-            }
-        }
-        return 0;
-    }
-
-    void Terminate(Launched& launched)
-    {
-        kill(launched.Pid, SIGTERM);
-        int status = 0;
-        for (int attempt = 0; attempt < 50; ++attempt)
-        {
-            if (waitpid(launched.Pid, &status, WNOHANG) == launched.Pid)
-            {
-                close(launched.ReadFd);
-                return;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-        kill(launched.Pid, SIGKILL);
-        waitpid(launched.Pid, &status, 0);
-        close(launched.ReadFd);
-    }
-}
-
-#endif
 
 int main()
 {
@@ -266,19 +67,19 @@ int main()
     setenv("HT_SMOKE", "mcp_conformance_capture.ppm", 1);
 #endif
 
-    Launched launched;
-    if (!SpawnLauncher(launched))
+    VengTest::Launched launched;
+    if (!VengTest::SpawnCaptured({VENG_LAUNCHER_BIN}, launched))
     {
         std::fprintf(stderr, "mcp_conformance: failed to launch '%s'\n", VENG_LAUNCHER_BIN);
         return 1;
     }
 
-    const int port = ReadPort(launched);
+    const int port = VengTest::ReadPort(launched);
     if (port == 0)
     {
         // No listening line: the launcher most likely skipped for want of a Vulkan ICD (the whole
         // gpu band's skip contract) or crashed. Reap it and report the gpu-band skip code.
-        Terminate(launched);
+        VengTest::Terminate(launched);
         std::fprintf(stderr,
                      "mcp_conformance: no 'listening on' line from the launcher; treating as no "
                      "device (skip)\n");
@@ -350,9 +151,27 @@ int main()
                       !payload["entities"].empty(),
                   "world.list_entities reported the sample scene's entities");
         }
+
+        // render.stats executes against the primary viewport — the one tool reaching through
+        // McpHost::Assets into the render context, so calling it (not merely listing it) pins
+        // the host's engine references being live at tool time.
+        const Json stats = Post(
+            client, Json{{"jsonrpc", "2.0"},
+                         {"id", 4},
+                         {"method", "tools/call"},
+                         {"params", {{"name", "render.stats"}, {"arguments", Json::object()}}}});
+        Check(stats.contains("result"), "render.stats returned a result");
+        Check(stats["result"].value("isError", true) == false, "render.stats was not an error");
+        if (stats.contains("result") && !stats["result"]["content"].empty())
+        {
+            const std::string text = stats["result"]["content"][0].value("text", std::string{});
+            const Json payload = Json::parse(text, nullptr, false);
+            Check(payload.contains("visible") && payload.contains("gpu_frame_time_ms"),
+                  "render.stats reported the cull funnel and GPU frame time");
+        }
     }
 
-    Terminate(launched);
+    VengTest::Terminate(launched);
 
     if (g_Failures == 0)
     {

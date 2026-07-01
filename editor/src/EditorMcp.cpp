@@ -49,13 +49,17 @@ namespace VengEditor
     namespace
     {
         /// @brief Resolves a panel by title among the host's open panels, or null.
+        ///
+        /// Compares marker-stripped titles (see StripUnsavedMarker), so a name captured from
+        /// editor.list_panels keeps resolving after an edit marks the document dirty.
         EditorPanel* FindPanel(const EditorMcpHost& host, const string& title)
         {
+            const string_view wanted = StripUnsavedMarker(title);
             // The returned panel is mutated by the caller (GetInspectables / OnInspectableChanged
             // are non-const), so the loop pointee stays mutable.
             for (EditorPanel* panel : host.Panels()) // NOLINT(misc-const-correctness)
             {
-                if (panel != nullptr && panel->GetTitle() == title)
+                if (panel != nullptr && StripUnsavedMarker(panel->GetTitle()) == wanted)
                 {
                     return panel;
                 }
@@ -194,9 +198,12 @@ namespace VengEditor
                     {
                         names.push_back(inspectable.Name);
                     }
-                    panels.push_back(Json{{"title", string{panel->GetTitle()}},
+                    // The marker-stripped title is the stable panel address every by-title tool
+                    // resolves; the raw display title gains a '*' while the document is dirty.
+                    panels.push_back(Json{{"title", string{StripUnsavedMarker(panel->GetTitle())}},
                                           {"kind", PanelKind(*panel)},
                                           {"focused", panel == focused},
+                                          {"dirty", panel->GetTitle().starts_with('*')},
                                           {"inspectables", std::move(names)}});
                 }
                 return Json{{"panels", std::move(panels)}}.dump();

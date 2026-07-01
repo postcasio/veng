@@ -312,5 +312,11 @@ needs no extra `find_dependency` in `veng-config`.
 - **`mcp_include_hygiene`** — compiles every `Veng/Mcp/` public header linking only the PUBLIC
   deps, guarding the JSON-library-free surface.
 - **`mcp_conformance`** — the shipping path: drive the hello-triangle server behind `HT_MCP`,
-  assert the engine tool set is present.
+  assert the engine tool set is present and `render.stats` executes against the primary
+  viewport.
+- **`editor_mcp_conformance`** — the editor shipping path: launch `veng-editor --mcp` against
+  the hello-triangle project and drive `render.stats` plus an `editor.set_field` Bloom toggle
+  (a `Configure` recompile) against the startup level document, asserting each call succeeds
+  and the editor survives. Needs a display as well as a device (the editor opens a window);
+  either missing skips like the rest of the `gpu` band.
 - The editor `editor_mcp` cases cover the `editor.*` tools over a host.

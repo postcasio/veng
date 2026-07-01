@@ -34,8 +34,13 @@ vendored transport and JSON library stay PRIVATE to `veng_mcp`.
 ## Constructing and pumping a server
 
 A game fills an `McpHost` from its own systems, constructs the server, and pumps it once per
-frame at a scene-safe point. `hello-triangle` gates the whole thing behind an `HT_MCP`
-environment variable so its default `HT_SMOKE`/golden path opens no socket:
+frame at a scene-safe point. **Construct the host after the engine has initialized** — from
+`OnInitialize` or later, never before `Run()`: `McpHost::Assets` binds `GetAssetManager()` by
+reference, and the engine's systems (asset manager, task system, render context) exist only
+once `Run()` has initialized them; a host filled earlier captures a dead reference that
+crashes the first time a tool reaches through it (`GetAssetManager` asserts on the misuse).
+`hello-triangle` gates the whole thing behind an `HT_MCP` environment variable so its default
+`HT_SMOKE`/golden path opens no socket:
 
 ```cpp
 #include <Veng/Mcp/McpHost.h>

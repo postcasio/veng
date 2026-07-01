@@ -716,6 +716,13 @@ namespace VengEditor
         {
             OpenAssetEditor(AssetType::Level, m_ProjectSettings.StartupLevel);
         }
+
+        // The engine systems (asset manager, task system) now exist; wiring that binds them by
+        // reference (the MCP service) starts here, before the first frame.
+        if (m_OnInitialized)
+        {
+            m_OnInitialized();
+        }
     }
 
     AssetId EditorHost::MintAssetId() const
@@ -822,6 +829,11 @@ namespace VengEditor
         return editor != nullptr ? editor->GetCommandStack() : nullptr;
     }
 
+    void EditorHost::SetOnInitialized(function<void()> callback)
+    {
+        m_OnInitialized = std::move(callback);
+    }
+
     void EditorHost::SetFramePump(function<void()> pump)
     {
         m_FramePump = std::move(pump);
@@ -848,10 +860,13 @@ namespace VengEditor
 
     Renderer::Viewport* EditorHost::GetPanelViewport(string_view panelTitle)
     {
+        // Marker-stripped comparison: a title captured before an edit still resolves after the
+        // document's dirty '*' appears (see StripUnsavedMarker).
+        const string_view wanted = StripUnsavedMarker(panelTitle);
         for (PanelSlot& slot : m_Panels)
         {
             auto* editor = dynamic_cast<AssetEditorPanel*>(slot.Panel.get());
-            if (editor != nullptr && editor->GetTitle() == panelTitle)
+            if (editor != nullptr && StripUnsavedMarker(editor->GetTitle()) == wanted)
             {
                 return editor->GetDocumentViewport();
             }
@@ -867,7 +882,7 @@ namespace VengEditor
             auto* editor = dynamic_cast<AssetEditorPanel*>(slot.Panel.get());
             if (editor != nullptr && editor->GetDocumentViewport() != nullptr)
             {
-                names.emplace_back(editor->GetTitle());
+                names.emplace_back(StripUnsavedMarker(editor->GetTitle()));
             }
         }
         return names;
@@ -875,9 +890,10 @@ namespace VengEditor
 
     bool EditorHost::SetPanelVisible(string_view panelTitle, bool visible)
     {
+        const string_view wanted = StripUnsavedMarker(panelTitle);
         for (PanelSlot& slot : m_Panels)
         {
-            if (slot.Panel != nullptr && slot.Panel->GetTitle() == panelTitle)
+            if (slot.Panel != nullptr && StripUnsavedMarker(slot.Panel->GetTitle()) == wanted)
             {
                 slot.Open = visible;
                 return true;

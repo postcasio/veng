@@ -1127,6 +1127,32 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
     set_tests_properties(mcp_conformance PROPERTIES LABELS "gpu;mcp" SKIP_RETURN_CODE 77
         WORKING_DIRECTORY $<TARGET_FILE_DIR:hello_triangle-launcher>)
 
+    # ---- Editor MCP conformance smoke (gpu;mcp band) -------------------------
+    # The editor analogue of mcp_conformance, through the shipping veng-editor path: launches
+    # veng-editor against the hello-triangle project with --mcp=0 + --mcp-write, then drives
+    # render.stats and an editor.set_field Bloom toggle (a Configure recompile) against the
+    # startup level document, asserting each call succeeds and the editor survives — the two
+    # calls that crashed when the MCP host captured engine references before Run() created them.
+    # The editor opens a real window, so a missing display skips like a missing ICD (77).
+    if (TARGET veng-editor AND TARGET hello_triangle_editor)
+        add_executable(veng_test_editor_mcp_conformance tests/editor_mcp_conformance.cpp)
+        target_link_libraries(veng_test_editor_mcp_conformance PRIVATE nlohmann_json::nlohmann_json)
+        target_compile_definitions(veng_test_editor_mcp_conformance PRIVATE JSON_NOEXCEPTION
+            VENG_EDITOR_BIN="$<TARGET_FILE:veng-editor>"
+            VENG_EDITOR_PROJECT="${CMAKE_CURRENT_SOURCE_DIR}/examples/hello-triangle/project.veng"
+            VENG_EDITOR_BUILD_DIR="$<TARGET_FILE_DIR:hello_triangle-launcher>")
+        target_include_directories(veng_test_editor_mcp_conformance SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+        # The editor dlopens the game + editor modules from the build dir and mounts the packs the
+        # launcher's cook copied there, so the full example build must precede the test.
+        add_dependencies(veng_test_editor_mcp_conformance
+            veng-editor hello_triangle-launcher hello_triangle_editor)
+
+        add_test(NAME editor_mcp_conformance COMMAND veng_test_editor_mcp_conformance)
+        set_tests_properties(editor_mcp_conformance PROPERTIES LABELS "gpu;mcp" SKIP_RETURN_CODE 77
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    endif ()
+
     # ---- Local validation-error gate ----------------------------------------
     # ctest -L validation: runs the gpu-labelled binaries that emit Vulkan
     # validation messages under VE_DEBUG and fails if a new [ERROR] Vulkan

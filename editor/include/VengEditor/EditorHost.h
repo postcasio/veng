@@ -130,6 +130,16 @@ namespace VengEditor
         /// @param name  The ship configuration to preview through, or nullopt for host-safe.
         void SetPreviewShipConfig(Veng::optional<Veng::string> name);
 
+        /// @brief Installs a callback run once at the end of OnInitialize, or clears it.
+        ///
+        /// The seam for wiring that needs the engine's systems live: it fires inside Run(), after
+        /// the base Application has created the render context, task system, and asset manager
+        /// (and this host has mounted the project packs), but before the first frame. The MCP
+        /// service starts here — its McpHost binds GetAssetManager() by reference, which does not
+        /// exist before Run(). Installed before Run(); passing an empty function clears it.
+        /// @param callback  The callback, or an empty function to clear.
+        void SetOnInitialized(Veng::function<void()> callback);
+
         /// @brief Installs a per-frame callback run at a scene-safe point each frame, or clears it.
         ///
         /// Invoked at the top of OnRender, before any panel iterates its scene and before the
@@ -156,14 +166,17 @@ namespace VengEditor
         ///
         /// The name→panel-viewport seam the MCP render tools and editor.screenshot_panel resolve
         /// through: an asset-editor document exposes its scene viewport (GetDocumentViewport). A
-        /// title naming no open panel, or a panel that renders no scene, returns null.
+        /// title naming no open panel, or a panel that renders no scene, returns null. Titles
+        /// compare marker-stripped (StripUnsavedMarker), so a name stays valid across the
+        /// document's dirty toggle.
         /// @param panelTitle  The panel title to resolve.
         [[nodiscard]] Veng::Renderer::Viewport* GetPanelViewport(Veng::string_view panelTitle);
 
         /// @brief Names the open scene-rendering panels — the viewports the render tools expose.
         ///
         /// Each open document that renders a scene (GetDocumentViewport non-null) contributes its
-        /// title. render.list_viewports reports these, and each resolves through GetPanelViewport.
+        /// marker-stripped title (the stable panel address). render.list_viewports reports these,
+        /// and each resolves through GetPanelViewport.
         [[nodiscard]] Veng::vector<Veng::string> GetSceneViewportNames();
 
         /// @brief Returns the project's AssetId→source index, or null when no project is open.
@@ -177,7 +190,8 @@ namespace VengEditor
         /// Flips the panel slot's Open flag (the programmatic Window-menu toggle). A tool panel
         /// hides and can be reshown; a document panel closes (releasing its viewport) when hidden,
         /// exactly as the ✕ does. Applied at the frame's panel-erase point, so it is safe to call
-        /// from the MCP pump. A no-op for an unknown title; returns whether a panel matched.
+        /// from the MCP pump. Titles compare marker-stripped (StripUnsavedMarker). A no-op for an
+        /// unknown title; returns whether a panel matched.
         /// @param panelTitle  The panel title to toggle.
         /// @param visible     True to show, false to hide/close.
         /// @return True when a panel matched the title.
@@ -312,6 +326,12 @@ namespace VengEditor
 
         /// @brief Whether the one-time default host dock layout has been attempted.
         bool m_HostLayoutBuilt = false;
+
+        /// @brief One-shot callback fired at the end of OnInitialize, or empty when none installed.
+        ///
+        /// The exe starts the MCP service through this, once the engine systems its host binds
+        /// by reference (the asset manager) exist.
+        Veng::function<void()> m_OnInitialized;
 
         /// @brief Per-frame callback run at the top of OnRender, or empty when none installed.
         ///

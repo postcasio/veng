@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Assert.h>
 #include <Veng/Window.h>
 #include <Veng/Input.h>
 #include <Veng/InputRouter.h>
@@ -173,10 +174,24 @@ namespace Veng
         [[nodiscard]] Renderer::Context& GetRenderContext() { return m_RenderContext; }
 
         /// @brief Returns the task system.
-        [[nodiscard]] TaskSystem& GetTaskSystem() { return *m_TaskSystem; }
+        ///
+        /// @pre Run() has initialized the engine — the task system exists only inside Run().
+        [[nodiscard]] TaskSystem& GetTaskSystem()
+        {
+            VE_ASSERT(m_TaskSystem, "GetTaskSystem before Run(): the task system exists only once "
+                                    "Run() has initialized the engine");
+            return *m_TaskSystem;
+        }
 
         /// @brief Returns the asset manager.
-        [[nodiscard]] AssetManager& GetAssetManager() { return *m_AssetManager; }
+        ///
+        /// @pre Run() has initialized the engine — the asset manager exists only inside Run().
+        [[nodiscard]] AssetManager& GetAssetManager()
+        {
+            VE_ASSERT(m_AssetManager, "GetAssetManager before Run(): the asset manager exists only "
+                                      "once Run() has initialized the engine");
+            return *m_AssetManager;
+        }
 
         /// @brief Returns the host-owned, process-wide registry of reflected types.
         ///
