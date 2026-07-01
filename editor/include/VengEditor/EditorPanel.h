@@ -1,10 +1,30 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Reflection/ReflectionTypes.h>
 #include <Veng/UI/Types.h>
 
 namespace VengEditor
 {
+    /// @brief One reflected object a panel edits, named for external addressing.
+    ///
+    /// A panel hands these back through GetInspectables() so the generic editor MCP tools
+    /// can read and write the same reflected models the panel already draws through
+    /// DrawFieldWidget — no second API surface to keep in sync. The pointer must stay valid
+    /// for the frame the tool runs in (the same guarantee a DrawFieldWidget edit relies on);
+    /// a panel that rebuilds its model each frame returns the current pointer each call.
+    struct Inspectable
+    {
+        /// @brief The addressing name the tools reference this object by (e.g. "renderSettings").
+        Veng::string Name;
+
+        /// @brief The reflected type of Data, resolved against the type registry to walk its fields.
+        Veng::TypeId Type = Veng::InvalidTypeId;
+
+        /// @brief Pointer to the reflected object; valid for the frame this is returned in.
+        void* Data = nullptr;
+    };
+
     /// @brief Base class for a dockable editor window.
     ///
     /// The host owns the open/close toggle, the dock id, and the Window-menu
@@ -19,6 +39,21 @@ namespace VengEditor
 
         /// @brief Returns the panel's window title (stable across frames).
         [[nodiscard]] virtual Veng::string_view GetTitle() const = 0;
+
+        /// @brief The reflected models this panel exposes to inspection/editing. Default empty.
+        ///
+        /// A panel that edits reflected objects through the inspector returns them here (the
+        /// 1–3 objects it already holds), so the generic editor tools can walk them with the
+        /// same reflection the UI uses. A panel with no such surface returns an empty list.
+        /// @return The named reflected objects, each valid for the current frame.
+        [[nodiscard]] virtual Veng::vector<Inspectable> GetInspectables() { return {}; }
+
+        /// @brief Called after an external write into one of this panel's inspectables. Default no-op.
+        ///
+        /// The tools call this once the write lands so the panel runs its existing apply path —
+        /// the same reaction a UI edit triggers (recook, mark dirty, live preview push, re-resolve).
+        /// @param name  The Inspectable::Name that was written; empty or unknown names are ignored.
+        virtual void OnInspectableChanged(Veng::string_view name) { (void)name; }
 
         /// @brief Returns additional ImGui window flags for this panel.
         [[nodiscard]] virtual Veng::UI::WindowFlags GetWindowFlags() const

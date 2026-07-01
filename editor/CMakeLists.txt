@@ -119,6 +119,14 @@ set(VENG_EDITOR_MAIN "${CMAKE_CURRENT_SOURCE_DIR}/src/editor_main.cpp"
     CACHE INTERNAL "veng editor shell main source")
 set(VENG_EDITOR_COOK_SESSION "${CMAKE_CURRENT_SOURCE_DIR}/src/CookSession.cpp"
     CACHE INTERNAL "veng editor cook-on-demand source")
+# The generic editor MCP tools + command-routing (EditorMcp). Like CookSession, compiled into the
+# consumer (the veng-editor exe wires it behind --mcp in plan 04b, the editor test links it) rather
+# than into libveng_editor, so the framework library exports no veng_mcp link and libveng_mcp stays
+# editor-free. It reaches the shared FieldsToJson / JsonToFields walk through mcp/src.
+set(VENG_EDITOR_MCP "${CMAKE_CURRENT_SOURCE_DIR}/src/EditorMcp.cpp"
+    CACHE INTERNAL "veng editor MCP tools source")
+set(VENG_EDITOR_MCP_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/../mcp/src"
+    CACHE INTERNAL "veng mcp src-private include dir (ReflectToJson.h)")
 set(VENG_EDITOR_EXE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/src"
     CACHE INTERNAL "veng editor exe-private include dir (CookSession.h)")
 

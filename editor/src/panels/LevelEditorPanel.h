@@ -81,6 +81,22 @@ namespace VengEditor
             return m_Commands.IsDirty() || m_ConfigDirty;
         }
 
+        /// @brief Exposes the level's render settings and game-mode config as reflected inspectables.
+        ///
+        /// The world scene is served by the world tools (through the document's CurrentWorld);
+        /// this hands back the two config structs the settings panel draws through the inspector.
+        /// @return { "renderSettings": LevelRenderSettings, "gameMode": GameModeConfig }.
+        [[nodiscard]] Veng::vector<Inspectable> GetInspectables() override;
+
+        /// @brief Runs the settings panel's reaction to a config write: live preview + mark dirty.
+        ///
+        /// A write into "renderSettings" pushes the subset straight to the viewport preview and
+        /// marks the config dirty; a write into "gameMode" marks dirty only. Mirrors the reaction a
+        /// DrawSettingsPanel edit triggers, so an agent edit recooks/persists on the next Save
+        /// identically.
+        /// @param name  The written inspectable's name.
+        void OnInspectableChanged(Veng::string_view name) override;
+
     protected:
         /// @brief Splits the dockspace: explorer + systems (left), viewport (center), inspector + settings (right).
         void BuildDefaultLayout(Veng::u32 dockspaceId) override;

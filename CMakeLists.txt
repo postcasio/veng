@@ -738,13 +738,22 @@ if (VENG_BUILD_TESTS)
             tests/editor/editor_camera.cpp
             tests/editor/preview_capability.cpp
             tests/editor/status_tracker.cpp
+            tests/editor/editor_mcp.cpp
+            ${VENG_EDITOR_MCP}
     )
     # The serialization cases drive the JSON object directly, so the test target
     # links nlohmann/json (PRIVATE in libveng_editor — never exposed in a header).
-    target_link_libraries(veng_test_editor_unit PRIVATE veng_editor::veng_editor doctest::doctest
-            nlohmann_json::nlohmann_json)
+    # veng::mcp: the editor MCP tools (VENG_EDITOR_MCP, compiled here as it is into the exe
+    # rather than the framework lib) register into an McpServer the editor_mcp case drives over
+    # loopback; the mcp/src include reaches the shared ReflectToJson walk, and mcp/src/Vendor is a
+    # SYSTEM include so clang-tidy skips the vendored httplib the loopback case pulls in.
+    target_link_libraries(veng_test_editor_unit PRIVATE veng_editor::veng_editor veng::mcp
+            doctest::doctest nlohmann_json::nlohmann_json)
     target_compile_definitions(veng_test_editor_unit PRIVATE JSON_NOEXCEPTION)
-    target_include_directories(veng_test_editor_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
+    target_include_directories(veng_test_editor_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src
+            ${VENG_EDITOR_MCP_INCLUDE})
+    target_include_directories(veng_test_editor_unit SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
 
     doctest_discover_tests(veng_test_editor_unit PROPERTIES LABELS unit)
 
