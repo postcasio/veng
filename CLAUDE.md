@@ -109,11 +109,19 @@ per-module architecture lives in a `CLAUDE.md` inside each library:
 ## Build & test
 
 ```sh
-# Default build (validation OFF). Configure once, then build.
-cmake -B build -S .
-cmake --build build -j 4
-ctest --test-dir build --output-on-failure
+# Default build — VE_DEBUG=ON (Vulkan validation on). Configure once, then build.
+cmake -B build-debug -S . -DVE_DEBUG=ON
+cmake --build build-debug -j 4
+ctest --test-dir build-debug --output-on-failure
 ```
+
+**Build and test the debug build only — do not build twice.** The `build-debug`
+tree above (`VE_DEBUG=ON`) is the one build an agent configures, builds, and tests
+by default. It is `-Werror` and runs the validation gate, so it catches strictly
+more than the validation-OFF build. The release build (`build/`, validation OFF —
+see [The release build](#the-release-build-validation-off)) is **optional**: reach
+for it only when you specifically need to check release-only behavior, and never
+build both routinely.
 
 **If you parallelize the build, cap it at `-j 4`.** Do not go higher — *unless*
 you are building on the main thread with no concurrent subagent builds (no
@@ -273,16 +281,21 @@ so neither relies on it. The data model is in `engine/CLAUDE.md`, the cook
 resolution + CMake selection in `cooker/CLAUDE.md`, and the editor surface + host-capability
 preview gate in `editor/CLAUDE.md`.
 
-### The validation build (`VE_DEBUG`)
+### The release build (validation OFF)
 
-`VE_DEBUG=ON` enables Vulkan validation layers (`VE_ENABLE_VALIDATION_LAYERS`).
-The default `build/` has it OFF. Configure a **separate** dir from the repo root
-(both `build/` and `build-debug/` are gitignored):
+`VE_DEBUG=ON` enables Vulkan validation layers (`VE_ENABLE_VALIDATION_LAYERS`), and
+the default `build-debug` above turns it on — so validation runs by default. The
+validation-**OFF** build is the *optional* one, in its own `build/` dir (both
+`build/` and `build-debug/` are gitignored):
 
 ```sh
-cmake -B build-debug -S . -DVE_DEBUG=ON
-cmake --build build-debug -j 4
+cmake -B build -S .
+cmake --build build -j 4
 ```
+
+Configure it only when you need to check release-only behavior; the debug build is
+the default and catches more (it is `-Werror` and runs the validation gate). Do not
+build both routinely.
 
 ## Verification — read before you trust a green run
 
@@ -290,13 +303,13 @@ cmake --build build-debug -j 4
   (`HelloTriangleApp::SmokeAngle`), so the capture is reproducible run to run; the
   windowed app still rotates by accumulated wall-clock `delta`. The `smoke_golden`
   ctest renders the scene headless and fuzzy-compares it against
-  `tests/golden/hello_triangle_scene.png` (`ctest --test-dir build -R
+  `tests/golden/hello_triangle_scene.png` (`ctest --test-dir build-debug -R
   smoke_golden`). It is labelled `gpu` and skips cleanly with no Vulkan ICD. The
   capture runs through the **launcher** (which `dlopen`s `libhello_triangle`), the
   real shipping path. If a deliberate render change moves the capture, regenerate
   the golden:
   ```sh
-  HT_SMOKE=/tmp/ht.ppm build/examples/hello-triangle/hello_triangle-launcher
+  HT_SMOKE=/tmp/ht.ppm build-debug/examples/hello-triangle/hello_triangle-launcher
   sips -s format png /tmp/ht.ppm --out tests/golden/hello_triangle_scene.png
   ```
   The capture is a 1280×720 RGB PPM (≈ 2,764,816 bytes).
@@ -611,8 +624,9 @@ the plans' direction). Per plan:
    is **not** built by the default in-tree `cmake --build`, so a template breakage
    surfaces in the SDK conformance tests (`sdk_conformance_install` /
    `sdk_conformance_buildtree`, the `gpu` band), not in a plain build.
-3. Verify (clean build, `ctest` green, `hello_triangle-launcher` under `HT_SMOKE`
-   writes a correct-sized PPM). The template has no smoke/PPM path; its conformance
+3. Verify against the default debug build only (clean `build-debug`, `ctest` green,
+   `hello_triangle-launcher` under `HT_SMOKE` writes a correct-sized PPM) — don't
+   also do a separate release build. The template has no smoke/PPM path; its conformance
    tests configure + build it standalone and probe `veng-editor --version`.
 4. Update the planset README status column.
 5. Commit, one commit per plan: `Plan NN: <summary>` (or `planset-N:` / `future:`
