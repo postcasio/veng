@@ -828,6 +828,24 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   **Held back:** `Renderer::Format`/vertex-layout `VE_ENUM` migration, versioned JSON
   migrations, a generated JSON-Schema surface.
 
+- **[planset-44](planset-44/README.md)** — portable asset ids: 64-bit ids as zero-padded
+  hex strings (📝 proposed, 5 plans). Fixes a latent portability bug — every minted id
+  (`AssetId`/`SystemId`/`ActionId`) is stored in JSON as a **bare number**, which any
+  double-based JSON tool silently truncates above 2^53 (the tree already carries such
+  values). Moves them to a canonical **zero-padded hex string** (`"0x0D49F2A1C03B5E76"`),
+  and tightens the hardcoded **C++ literal** convention to the identical zero-padded
+  spelling, so a minted id reads byte-identical in a pack, a prefab, and C++ source. One
+  shared **`Veng/Asset/HexId.h`** codec in `assetpack` (the lowest common lib), built on the
+  reliable tool — `fmt`'s `{:016X}` to format and **`std::from_chars` base 16** to parse
+  (exception-free under `-fno-exceptions`, locale-independent, trailing-garbage-rejecting;
+  `stoull`/`strtoull`/streams/JSON-`double` all banned). **Hard cut** — readers accept the
+  hex string only, every id-bearing JSON asset and fixture migrates in the same planset (via
+  a Python `int`-only script, never `float`), and the minted C++ literals reformat to 16
+  digits. The one hard rule: entity-local `id`s, input `control` codes, and dimensions stay
+  numeric. **Held back:** `TypeId` stays serialized by **name** (no precision bug, and a
+  readable type key beats an opaque id); a type-rename alias table and a JSON-Schema surface
+  are future.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
