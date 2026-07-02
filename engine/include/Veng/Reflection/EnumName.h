@@ -2,7 +2,10 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Reflection/Reflect.h>
+#include <Veng/Reflection/TypeRegistry.h>
 
+#include <cstring>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -19,6 +22,90 @@ namespace Veng
             static const vector<EnumEntry> entries = VengReflect<T>::Enumerators();
             return entries;
         }
+
+        /// @brief The one matching loop behind both the templated and runtime-typed enum-name functions.
+        /// @param entries  The enum's {name, value} table, in declaration order.
+        /// @param value    The value to name.
+        /// @return The matching enumerator's name, or the decimal value when unmatched.
+        [[nodiscard]] inline string EnumeratorNameOf(std::span<const EnumEntry> entries, i64 value)
+        {
+            for (const EnumEntry& entry : entries)
+            {
+                if (entry.Value == value)
+                {
+                    return entry.Name;
+                }
+            }
+            return std::to_string(value);
+        }
+
+        /// @brief The one matching loop behind both the templated and runtime-typed enum-parse functions.
+        /// @param entries  The enum's {name, value} table, in declaration order.
+        /// @param name     The authored enumerator name.
+        /// @return The matching enumerator's value, or nullopt when `name` matches no enumerator.
+        [[nodiscard]] inline optional<i64> ParseEnumValueOf(std::span<const EnumEntry> entries,
+                                                            std::string_view name)
+        {
+            for (const EnumEntry& entry : entries)
+            {
+                if (entry.Name == name)
+                {
+                    return entry.Value;
+                }
+            }
+            return std::nullopt;
+        }
+    }
+
+    /// @brief The authored enumerator name of a runtime-typed enum value, via the type's VE_ENUM table.
+    ///
+    /// The runtime-typed sibling of EnumeratorName<T>, over a TypeInfo rather than a
+    /// compile-time type — what a reflection-walking serializer needs, since it holds
+    /// only a TypeId at the call site. A value matching no enumerator (or a
+    /// VE_LEAF-authored enum with no table) returns its raw integer in decimal, so a
+    /// corrupt or unmigrated value stays readable.
+    /// @param info   The enum's TypeInfo (Class == FieldClass::Enum).
+    /// @param value  The value to name, widened to i64.
+    /// @return The enumerator's name, or the decimal value when unmatched.
+    [[nodiscard]] inline string EnumeratorName(const TypeInfo& info, i64 value)
+    {
+        return Detail::EnumeratorNameOf(info.Enumerators, value);
+    }
+
+    /// @brief Parses a runtime-typed enum value by its authored enumerator name.
+    ///
+    /// The runtime-typed sibling of ParseEnum<T>. Matching is exact and case-sensitive.
+    /// @param info  The enum's TypeInfo (Class == FieldClass::Enum).
+    /// @param name  The authored enumerator name.
+    /// @return The value, or nullopt when `name` matches no enumerator.
+    [[nodiscard]] inline optional<i64> ParseEnumValue(const TypeInfo& info, std::string_view name)
+    {
+        return Detail::ParseEnumValueOf(info.Enumerators, name);
+    }
+
+    /// @brief Reads an enum field's backing bytes, widened to i64 per the type's size.
+    ///
+    /// Reads the low `info.Size` bytes at `fieldPtr` (host byte order) — the same
+    /// size-aware load the reflection walkers use for an Enum leaf.
+    /// @param fieldPtr  Pointer to the enum field's storage.
+    /// @param info      The enum's TypeInfo, whose Size gives the backing width.
+    /// @return The value widened to i64.
+    [[nodiscard]] inline i64 LoadEnumBits(const void* fieldPtr, const TypeInfo& info)
+    {
+        i64 value = 0;
+        std::memcpy(&value, fieldPtr, info.Size);
+        return value;
+    }
+
+    /// @brief Writes an enum field's backing bytes from an i64 value, per the type's size.
+    ///
+    /// Writes the low `info.Size` bytes of `value` at `fieldPtr` (host byte order).
+    /// @param fieldPtr  Pointer to the enum field's storage.
+    /// @param info      The enum's TypeInfo, whose Size gives the backing width.
+    /// @param value     The value to store, truncated to the field's byte width.
+    inline void StoreEnumBits(void* fieldPtr, const TypeInfo& info, i64 value)
+    {
+        std::memcpy(fieldPtr, &value, info.Size);
     }
 
     /// @brief Parses an enum value by its authored enumerator name (e.g. "Keyboard").
@@ -32,14 +119,12 @@ namespace Veng
     template <class T>
     [[nodiscard]] optional<T> ParseEnum(std::string_view name)
     {
-        for (const EnumEntry& entry : Detail::EnumEntriesOf<T>())
+        const optional<i64> value = Detail::ParseEnumValueOf(Detail::EnumEntriesOf<T>(), name);
+        if (!value)
         {
-            if (entry.Name == name)
-            {
-                return static_cast<T>(entry.Value);
-            }
+            return std::nullopt;
         }
-        return std::nullopt;
+        return static_cast<T>(*value);
     }
 
     /// @brief The authored enumerator name of an enum value, through the VE_ENUM table for T.
@@ -52,14 +137,6 @@ namespace Veng
     template <class T>
     [[nodiscard]] string EnumeratorName(T value)
     {
-        const i64 raw = static_cast<i64>(value);
-        for (const EnumEntry& entry : Detail::EnumEntriesOf<T>())
-        {
-            if (entry.Value == raw)
-            {
-                return entry.Name;
-            }
-        }
-        return std::to_string(raw);
+        return Detail::EnumeratorNameOf(Detail::EnumEntriesOf<T>(), static_cast<i64>(value));
     }
 }

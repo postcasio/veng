@@ -54,6 +54,7 @@ add_library(veng SHARED
         src/UI/DebugPanels.cpp
         src/Reflection/FieldDisplay.cpp
         src/Reflection/Serialize.cpp
+        src/Reflection/JsonSerialize.cpp
         src/Scene/AnimationSystem.cpp
         src/Scene/BuiltinSystems.cpp
         src/Scene/BuiltinTypes.cpp
