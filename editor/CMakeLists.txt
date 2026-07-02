@@ -22,6 +22,7 @@ add_library(veng_editor SHARED
         src/StatusTracker.cpp
         src/panels/AssetBrowserPanel.cpp
         src/panels/ConsolePanel.cpp
+        src/panels/InputMappingEditorPanel.cpp
         src/panels/InspectorPanel.cpp
         src/panels/LevelEditorPanel.cpp
         src/panels/MaterialEditorPanel.cpp

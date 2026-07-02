@@ -256,21 +256,32 @@ VE_ENUMERATOR(Completed)
 VE_ENUM_END();
 
 VE_REFLECT(::Veng::InputAction, 0xC81225F15105A79FULL)
-VE_FIELD(Id, .DisplayName = "Id")
-VE_FIELD(Name, .DisplayName = "Name")
-VE_FIELD(Kind, .DisplayName = "Kind")
+VE_FIELD(Id, .DisplayName = "Id",
+         .Tooltip = "Stable minted action identity bindings and control code reference.")
+VE_FIELD(Name, .DisplayName = "Name",
+         .Tooltip = "Display label; on-disk identity is Id, not this name.")
+VE_FIELD(Kind, .DisplayName = "Kind",
+         .Tooltip = "Value shape the action resolves to (button, 1D axis, 2D axis).")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::InputSource, 0x715BCFCB9DC23625ULL)
-VE_FIELD(Device, .DisplayName = "Device")
-VE_FIELD(Control, .DisplayName = "Control")
+VE_FIELD(Device, .DisplayName = "Device",
+         .Tooltip = "Raw device the Control code is interpreted against.")
+VE_FIELD(Control, .DisplayName = "Control",
+         .Tooltip = "Key / mouse-button / mouse-axis / gamepad control code.")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Binding, 0x700B5FF73EEE3953ULL)
-VE_FIELD(Source, .DisplayName = "Source")
-VE_FIELD(Action, .DisplayName = "Action")
-VE_FIELD(Axis, .DisplayName = "Axis")
-VE_FIELD(Scale, .DisplayName = "Scale")
+VE_FIELD(Source, .DisplayName = "Source", .Tooltip = "The raw control this binding reads.",
+         .Category = "Source")
+VE_FIELD(Action, .DisplayName = "Action", .Tooltip = "The action this binding contributes to.",
+         .Category = "Mapping")
+VE_FIELD(Axis, .DisplayName = "Axis",
+         .Tooltip = "Which action component the source drives (Whole for a native axis).",
+         .Category = "Mapping")
+VE_FIELD(Scale, .DisplayName = "Scale",
+         .Tooltip = "Signed scale applied to the source before accumulation (negative inverts).",
+         .Category = "Mapping")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::ActionSample, 0xCCB2AAE2234FF034ULL)

@@ -23,6 +23,7 @@
 #include "StatusTracker.h"
 #include "panels/AssetBrowserPanel.h"
 #include "panels/ConsolePanel.h"
+#include "panels/InputMappingEditorPanel.h"
 #include "panels/InspectorPanel.h"
 #include "panels/LevelEditorPanel.h"
 #include "panels/MaterialEditorPanel.h"
@@ -366,6 +367,41 @@ namespace VengEditor
             VengEditor::CookDriver m_Cook;
         };
 
+        // Resolves an input-map AssetId to its .inputmap.json source through the manifest index,
+        // then opens an InputMappingEditorPanel wired to the host's engine refs.
+        class InputMapEditorFactory final : public AssetEditorFactory
+        {
+        public:
+            InputMapEditorFactory(const AssetSourceIndex& index, AssetManager& assets,
+                                  EditorRegistry& editors, Input& input,
+                                  VengEditor::CookDriver cook)
+                : m_Index(index), m_Assets(assets), m_Editors(editors), m_Input(input),
+                  m_Cook(std::move(cook))
+            {
+            }
+
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            {
+                const AssetSourceIndex::Entry* entry = m_Index.Find(id);
+                if (!entry)
+                {
+                    Log::Error("Input map editor: no source manifest entry for asset 0x{:X}",
+                               id.Value);
+                    return nullptr;
+                }
+
+                return CreateUnique<InputMappingEditorPanel>(id, entry->Source, m_Assets, m_Editors,
+                                                             m_Index, m_Input, m_Cook);
+            }
+
+        private:
+            const AssetSourceIndex& m_Index;
+            AssetManager& m_Assets;
+            EditorRegistry& m_Editors;
+            Input& m_Input;
+            VengEditor::CookDriver m_Cook;
+        };
+
         // Opens a PrefabEditorPanel that spawns the prefab into a live Scene for editing.
         // Needs no manifest source: the prefab is edited in-scene, not recooked.
         class PrefabEditorFactory final : public AssetEditorFactory
@@ -687,6 +723,11 @@ namespace VengEditor
                                       *m_Sources, *this, GetAssetManager(), *GetImGuiLayer(),
                                       GetTypeRegistry(), m_Registries->Editor, GetInput(),
                                       GetInputRouter(), GetSystemRegistry(), cookFor()));
+
+            m_Registries->Editor.RegisterAssetEditor(
+                AssetType::InputMap,
+                CreateUnique<InputMapEditorFactory>(*m_Sources, GetAssetManager(),
+                                                    m_Registries->Editor, GetInput(), cookFor()));
         }
 
         // The asset browser reads the first mounted pack (cooked in the build dir under the source
