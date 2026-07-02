@@ -1,6 +1,7 @@
 #include <VengGraph/MaterialCompile.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Reflection/EnumName.h>
 #include <Veng/Reflection/TypeId.h>
 
 #include <fmt/format.h>
@@ -352,16 +353,7 @@ namespace VengGraph
                                    Veng::MaterialDomain domain)
     {
         Json out = Json::object();
-
-        switch (domain)
-        {
-        case Veng::MaterialDomain::Surface:
-            out["domain"] = "surface";
-            break;
-        case Veng::MaterialDomain::PostProcess:
-            out["domain"] = "postprocess";
-            break;
-        }
+        out["domain"] = Veng::EnumeratorName(domain);
 
         Json shaders = Json::object();
         shaders["vertex"] = shader.VertexShader.Value;

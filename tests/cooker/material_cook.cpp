@@ -367,7 +367,7 @@ TEST_CASE("Cooker: a material with no domain key cooks as Surface (domain 0)")
 
 TEST_CASE("Cooker: a postprocess material cooks with domain 1")
 {
-    // A postprocess material declares "domain": "postprocess" and its fragment
+    // A PostProcess material declares "domain": "PostProcess" and its fragment
     // shader writes a single float4 SV_Target0 — the postprocess output contract.
     const path packJson = FixtureDir / "material_postprocess_pack.json";
     const path outArchive =

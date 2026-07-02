@@ -1,5 +1,5 @@
 {
-  "domain": "surface",
+  "domain": "Surface",
   "shaders": { "vertex": 4101, "fragment": 4302 },
   "fields": [
     { "name": "Hdr",        "type": "texture", "id": 2001 },

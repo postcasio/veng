@@ -1,7 +1,7 @@
 {
   "image": "texture_8x8.png",
   "srgb": false,
-  "compression": "astc",
+  "compression": "ASTC",
   "sampler": {
     "min": "linear",
     "mag": "linear",

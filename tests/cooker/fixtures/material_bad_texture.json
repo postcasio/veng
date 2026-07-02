@@ -1,10 +1,10 @@
 {
   "version": 1,
   "assets": [
-    { "id": 7001, "type": "vertex_layout", "source": "layouts/canonical.vlayout.json" },
-    { "id": 4101, "type": "shader", "source": "shaders/brick.vert.shader.json" },
-    { "id": 4102, "type": "shader", "source": "shaders/brick.frag.shader.json" },
-    { "id": 2001, "type": "texture", "source": "textures/texture.tex.json" },
-    { "id": 3001, "type": "material", "source": "materials/brick_bad_texture.vmat.json" }
+    { "id": 7001, "type": "VertexLayout", "source": "layouts/canonical.vlayout.json" },
+    { "id": 4101, "type": "Shader", "source": "shaders/brick.vert.shader.json" },
+    { "id": 4102, "type": "Shader", "source": "shaders/brick.frag.shader.json" },
+    { "id": 2001, "type": "Texture", "source": "textures/texture.tex.json" },
+    { "id": 3001, "type": "Material", "source": "materials/brick_bad_texture.vmat.json" }
   ]
 }

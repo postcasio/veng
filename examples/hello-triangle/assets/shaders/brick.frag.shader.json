@@ -1,5 +1,5 @@
 {
   "source": "brick.frag.graph.json",
-  "domain": "surface",
+  "domain": "Surface",
   "entry": "fsMain"
 }

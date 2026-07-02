@@ -1,7 +1,7 @@
 {
   "image": "texture_4x4.png",
   "srgb": false,
-  "compression": "none",
+  "compression": "None",
   "generate_mips": false,
   "sampler": {
     "min": "nearest",

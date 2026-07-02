@@ -98,7 +98,7 @@ namespace
 
         json asset;
         asset["id"] = 4242;
-        asset["type"] = "prefab";
+        asset["type"] = "Prefab";
         asset["source"] = prefabPath.filename().string();
 
         json pack;

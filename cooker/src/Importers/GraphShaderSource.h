@@ -32,7 +32,7 @@ namespace Veng::Cook
     /// @brief Resolves whether a parsed *.shader.json names a graph source, generating its Slang.
     ///
     /// A graph-sourced entry names a `"source"` ending in `.graph.json` and a
-    /// `"domain"` (`"surface"` | `"postprocess"`, default surface). The helper reads the
+    /// `"domain"` (`"Surface"` | `"PostProcess"`, default Surface). The helper reads the
     /// graph relative to @p shaderJsonDir, runs the shared emit walk, and returns the
     /// generated Slang text. A `.slang` source returns `{ IsGraph = false }` and the caller
     /// compiles the file as today.

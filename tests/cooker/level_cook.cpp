@@ -88,7 +88,7 @@ namespace
         pack["version"] = 1;
         json asset;
         asset["id"] = 7777;
-        asset["type"] = "level";
+        asset["type"] = "Level";
         asset["source"] = levelPath.filename().string();
         pack["assets"] = json::array({asset});
         std::ofstream(packPath) << pack.dump();

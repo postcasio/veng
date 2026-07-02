@@ -72,7 +72,7 @@ namespace
         pack["version"] = 1;
         json asset;
         asset["id"] = 7777;
-        asset["type"] = "input_map";
+        asset["type"] = "InputMap";
         asset["source"] = mapPath.filename().string();
         pack["assets"] = json::array({asset});
         std::ofstream(packPath) << pack.dump();

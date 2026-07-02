@@ -1,6 +1,6 @@
 {
   "defaultInstance": 13090400782638046225,
-  "domain": "postprocess",
+  "domain": "PostProcess",
   "shaders": {
     "vertex": 17612966569144354344,
     "fragment": 7952927765378679446

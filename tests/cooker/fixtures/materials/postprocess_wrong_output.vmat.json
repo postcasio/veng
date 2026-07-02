@@ -1,5 +1,5 @@
 {
-  "domain": "postprocess",
+  "domain": "PostProcess",
   "shaders": { "vertex": 4101, "fragment": 4102 },
   "fields": [
     { "name": "Albedo",        "type": "texture", "id": 2001 },

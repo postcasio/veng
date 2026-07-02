@@ -165,12 +165,12 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
 }
 )");
     WriteFile(dir / "brick.frag.shader.json",
-              R"({ "source": "brick.frag.slang", "entry": "fsMain", "domain": "surface" })");
+              R"({ "source": "brick.frag.slang", "entry": "fsMain", "domain": "Surface" })");
 
     WriteFile(dir / "brick.vmat.json",
               fmt::format(R"({{
   "defaultInstance": 9008004,
-  "domain": "surface",
+  "domain": "Surface",
   "shaders": {{ "vertex": 8002, "fragment": 8003 }},
   "fields": [
     {{ "name": "BaseColorFactor", "type": "vec4", "value": [{}, {}, {}, {}] }}
@@ -188,11 +188,11 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
     WriteFile(dir / "pack.json", R"({
   "version": 1,
   "assets": [
-    { "id": 8001, "type": "vertex_layout",     "source": "canonical.vlayout.json" },
-    { "id": 8002, "type": "shader",            "source": "surface.vert.shader.json" },
-    { "id": 8003, "type": "shader",            "source": "brick.frag.shader.json" },
-    { "id": 8004, "type": "material",          "source": "brick.vmat.json" },
-    { "id": 8005, "type": "material_instance", "source": "tinted.vmatinst.json" }
+    { "id": 8001, "type": "VertexLayout",     "source": "canonical.vlayout.json" },
+    { "id": 8002, "type": "Shader",           "source": "surface.vert.shader.json" },
+    { "id": 8003, "type": "Shader",           "source": "brick.frag.shader.json" },
+    { "id": 8004, "type": "Material",         "source": "brick.vmat.json" },
+    { "id": 8005, "type": "MaterialInstance", "source": "tinted.vmatinst.json" }
   ]
 })");
 

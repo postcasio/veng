@@ -1,7 +1,7 @@
 {
   "image": "texture_8x8.png",
   "srgb": false,
-  "compression": "none",
+  "compression": "None",
   "sampler": {
     "min": "linear",
     "mag": "linear",

@@ -10,7 +10,7 @@
             "position": [0.0, 0.0],
             "properties": {
                 "Value": [0.6, 0.7, 0.9, 1.0],
-                "Provenance": 1,
+                "Provenance": "Exposed",
                 "Name": "BaseColorFactor"
             }
         }

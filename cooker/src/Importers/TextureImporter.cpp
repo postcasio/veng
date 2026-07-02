@@ -29,7 +29,7 @@ namespace Veng::Cook
         // The texture cook's compression codec, the encode-path selector. ASTC is the
         // Metal-blessed codec on the primary MoltenVK platform; BC7 targets the desktop/Windows
         // platform; BC5/BC4 are the channel-specialized block codecs for a Normal/Mask role on
-        // the BC target; None packs uncompressed RGBA8. The raw "compression": "astc"/"bc7"/"none"
+        // the BC target; None packs uncompressed RGBA8. The raw "compression": "ASTC"/"BC7"/"None"
         // escape-hatch key pins one directly; otherwise the codec is derived from the resolved
         // CompressionFormat (role table or the hardcoded ASTC zero-config default). BC5/BC4 have no
         // raw escape-hatch spelling — they ride the role table only, since the role carries the
@@ -45,15 +45,15 @@ namespace Veng::Cook
 
         optional<TextureCodec> ParseCodec(const string& name)
         {
-            if (name == "none")
+            if (name == "None")
             {
                 return TextureCodec::None;
             }
-            if (name == "bc7")
+            if (name == "BC7")
             {
                 return TextureCodec::BC7;
             }
-            if (name == "astc")
+            if (name == "ASTC")
             {
                 return TextureCodec::ASTC;
             }
@@ -424,7 +424,7 @@ namespace Veng::Cook
         {
             return std::unexpected(
                 fmt::format("texture importer: '{}': invalid compression '{}' (expected "
-                            "'astc', 'bc7', or 'none')",
+                            "'ASTC', 'BC7', or 'None')",
                             sourcePath.string(), texJson["compression"].get<string>()));
         }
 

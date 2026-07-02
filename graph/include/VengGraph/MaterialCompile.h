@@ -75,9 +75,9 @@ namespace VengGraph
 
     /// @brief Serializes a compiled field list into a .vmat JSON document string.
     ///
-    /// Writes the lowercase "domain" key, the "shaders" block (vertex/fragment ids
-    /// from @p shader), and the regenerated "fields" array. JSON assembly is in the
-    /// .cpp so this header carries no JSON type.
+    /// Writes the "domain" key as its enumerator name, the "shaders" block
+    /// (vertex/fragment ids from @p shader), and the regenerated "fields" array. JSON
+    /// assembly is in the .cpp so this header carries no JSON type.
     [[nodiscard]] Veng::string WriteMaterialVmat(const Veng::vector<CompiledField>& fields,
                                                  const MaterialShaderInterface& shader,
                                                  Veng::MaterialDomain domain);

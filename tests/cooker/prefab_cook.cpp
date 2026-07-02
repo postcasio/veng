@@ -103,7 +103,7 @@ namespace
         pack["assets"] = json::array();
         json asset;
         asset["id"] = 4242;
-        asset["type"] = "prefab";
+        asset["type"] = "Prefab";
         asset["source"] = prefabPath.filename().string();
         pack["assets"].push_back(asset);
         std::ofstream(packPath) << pack.dump();
@@ -363,7 +363,7 @@ TEST_CASE("prefab cook: an AssetHandle id resolving to the wrong type is a locat
     pack["version"] = 1;
     json asset;
     asset["id"] = 4242;
-    asset["type"] = "prefab";
+    asset["type"] = "Prefab";
     asset["source"] = prefabPath.filename().string();
     pack["assets"] = json::array({asset});
     const path packPath = dir / "prefab_handle_mismatch.pack.json";

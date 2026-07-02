@@ -83,6 +83,34 @@ namespace Veng
         return Detail::ParseEnumValueOf(info.Enumerators, name);
     }
 
+    /// @brief The authored enumerator name of a value, against an enumerator table read directly
+    /// off a FieldDescriptor::Enumerators span — no TypeRegistry lookup.
+    ///
+    /// For a consumer holding a FieldDescriptor with no TypeRegistry in scope (a node-graph
+    /// property walk). A value matching no enumerator (or an empty table) returns its raw
+    /// integer in decimal, so a corrupt or unmigrated value stays readable.
+    /// @param entries  The enum's {name, value} table, in declaration order.
+    /// @param value    The value to name, widened to i64.
+    /// @return The enumerator's name, or the decimal value when unmatched.
+    [[nodiscard]] inline string EnumeratorName(std::span<const EnumEntry> entries, i64 value)
+    {
+        return Detail::EnumeratorNameOf(entries, value);
+    }
+
+    /// @brief Parses an enum value by its authored enumerator name, against a
+    /// FieldDescriptor::Enumerators span — no TypeRegistry lookup.
+    ///
+    /// The registry-free sibling of ParseEnumValue(const TypeInfo&, …). Matching is exact
+    /// and case-sensitive.
+    /// @param entries  The enum's {name, value} table, in declaration order.
+    /// @param name     The authored enumerator name.
+    /// @return The value, or nullopt when `name` matches no enumerator.
+    [[nodiscard]] inline optional<i64> ParseEnumValue(std::span<const EnumEntry> entries,
+                                                      std::string_view name)
+    {
+        return Detail::ParseEnumValueOf(entries, name);
+    }
+
     /// @brief Reads an enum field's backing bytes, widened to i64 per the type's size.
     ///
     /// Reads the low `info.Size` bytes at `fieldPtr` (host byte order) — the same
@@ -106,6 +134,19 @@ namespace Veng
     inline void StoreEnumBits(void* fieldPtr, const TypeInfo& info, i64 value)
     {
         std::memcpy(fieldPtr, &value, info.Size);
+    }
+
+    /// @brief The enumerator table of a reflected enum, for attaching to a hand-authored FieldDescriptor.
+    ///
+    /// A registry-free alternative to a TypeRegistry lookup: an authoring site that has T at
+    /// compile time (a node-graph property table, built with no TypeRegistry in scope) hands
+    /// this straight into FieldDescriptor::Enumerators rather than requiring a registry.
+    /// @tparam T  A VE_ENUM-reflected enum type.
+    /// @return The type's {name, value} table, in declaration order. Stable for the program's lifetime.
+    template <class T>
+    [[nodiscard]] std::span<const EnumEntry> EnumeratorsOf()
+    {
+        return Detail::EnumEntriesOf<T>();
     }
 
     /// @brief Parses an enum value by its authored enumerator name (e.g. "Keyboard").

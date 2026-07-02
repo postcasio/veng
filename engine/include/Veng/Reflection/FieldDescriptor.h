@@ -5,6 +5,7 @@
 #include <Veng/Reflection/FieldDisplay.h>
 
 #include <functional>
+#include <span>
 
 namespace Veng
 {
@@ -84,5 +85,15 @@ namespace Veng
         const void* (*ArrayElementConst)(const void* arrayPtr, usize index) = nullptr;
         /// @brief Array-only: resizes the array to `count` default-constructed elements; null for a non-array field.
         void (*ArrayResize)(void* arrayPtr, usize count) = nullptr;
+
+        /// @brief Enum-only: the field type's {name, value} table, or empty for a non-enum field.
+        ///
+        /// A registry-free alternative to a TypeRegistry::Info(Type) lookup: the authoring site
+        /// (a VE_REFLECT/VE_ARRAY_FIELD call, or a hand-authored FieldDescriptor like a node
+        /// graph's property table) has the compile-time enum type in hand, so it hands the
+        /// VE_ENUM span straight in via EnumeratorsOf<T>(). A consumer that walks descriptors
+        /// with no TypeRegistry in scope (the node-graph JSON serializer) reads names through this
+        /// rather than requiring a registry lookup.
+        std::span<const EnumEntry> Enumerators;
     };
 }

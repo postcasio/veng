@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
+#include <Veng/Reflection/EnumName.h>
 #include <Veng/Reflection/TypeId.h>
 
 #include <nlohmann/json.hpp>
@@ -160,10 +161,12 @@ namespace VengGraph
             }
             case Veng::FieldClass::Enum:
             {
-                // The enum's underlying integer; serialized as a number.
+                // Serialized by name, through the enumerator table the authoring site
+                // attached to the FieldDescriptor (no TypeRegistry lookup — the cook path
+                // has none in scope).
                 Veng::i32 v = 0;
                 std::memcpy(&v, fieldPtr, sizeof(v));
-                return v;
+                return Veng::EnumeratorName(field.Enumerators, static_cast<Veng::i64>(v));
             }
             case Veng::FieldClass::AssetHandle:
             {
@@ -230,7 +233,19 @@ namespace VengGraph
             }
             case Veng::FieldClass::Enum:
             {
-                Veng::i32 v = value.is_number() ? value.get<Veng::i32>() : 0;
+                // Names only (the hard cut): an integer or an unmatched name leaves the
+                // zero-initialised default, the same schema tolerance a malformed value
+                // gets elsewhere in this walk.
+                Veng::i32 v = 0;
+                if (value.is_string())
+                {
+                    const Veng::optional<Veng::i64> parsed =
+                        Veng::ParseEnumValue(field.Enumerators, value.get<Veng::string>());
+                    if (parsed)
+                    {
+                        v = static_cast<Veng::i32>(*parsed);
+                    }
+                }
                 std::memcpy(fieldPtr, &v, sizeof(v));
                 break;
             }

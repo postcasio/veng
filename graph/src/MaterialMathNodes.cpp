@@ -1,6 +1,7 @@
 #include <VengGraph/MaterialCatalog.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Reflection/EnumName.h>
 #include <Veng/Reflection/TypeId.h>
 
 #include <fmt/format.h>
@@ -187,6 +188,7 @@ namespace VengGraph
                     .Type = TypeIdOf<MaterialLeafType>(),
                     .Class = Veng::FieldClass::Enum,
                     .Offset = offsetof(ConstantProps, LeafType),
+                    .Enumerators = Veng::EnumeratorsOf<MaterialLeafType>(),
                 },
             };
             type.PropertySize = sizeof(ConstantProps);
@@ -223,6 +225,7 @@ namespace VengGraph
                     .Type = TypeIdOf<ParamProvenance>(),
                     .Class = Veng::FieldClass::Enum,
                     .Offset = offsetof(ScalarParamProps, Provenance),
+                    .Enumerators = Veng::EnumeratorsOf<ParamProvenance>(),
                 },
                 Veng::FieldDescriptor{
                     .Name = NodeNameProperty,

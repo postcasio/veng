@@ -117,7 +117,7 @@ TEST_CASE("module reflect: cooking a prefab entry with no --module is a located 
         std::filesystem::temp_directory_path() / "veng_cooker_prefab_no_module_pack.json";
     {
         std::ofstream out(packPath, std::ios::binary);
-        out << R"({ "version": 1, "assets": [ { "id": 4242, "type": "prefab", "source": "x.prefab.json" } ] })";
+        out << R"({ "version": 1, "assets": [ { "id": 4242, "type": "Prefab", "source": "x.prefab.json" } ] })";
     }
 
     const Cooker cooker;

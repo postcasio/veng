@@ -7,7 +7,7 @@ namespace Veng::Cook
     /// @brief Cooks a *.vmat.json material source into a CookedMaterialHeader +
     /// CookedMaterialField table + a single param block (assetpack's CookedBlobs.h).
     ///
-    /// The source declares "domain" ("surface" or "postprocess"), "shaders" (vertex +
+    /// The source declares "domain" ("Surface" or "PostProcess"), "shaders" (vertex +
     /// fragment AssetIds), and "fields" (ordered, explicitly-typed list). Each field
     /// carries a "type": texture → Kind 1 handle; sampler → Kind 2 handle reusing a
     /// named texture field's id; scalar/vector → Kind 0 value. The param block layout

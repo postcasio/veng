@@ -1,7 +1,7 @@
 {
   "version": 1,
   "assets": [
-    { "id": 1001, "type": "raw", "source": "data/alpha.bin" },
-    { "id": 1001, "type": "raw", "source": "data/beta.bin" }
+    { "id": 1001, "type": "Raw", "source": "data/alpha.bin" },
+    { "id": 1001, "type": "Raw", "source": "data/beta.bin" }
   ]
 }

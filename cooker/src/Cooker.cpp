@@ -394,11 +394,12 @@ namespace Veng::Cook
                 if (entry.is_object() && entry.contains("type") && entry["type"].is_string())
                 {
                     const string typeStr = entry["type"].get<string>();
-                    if (typeStr == "prefab" || typeStr == "level")
+                    if (typeStr == "Prefab" || typeStr == "Level")
                     {
+                        const string lowerType = typeStr == "Prefab" ? "prefab" : "level";
                         return std::unexpected(
                             fmt::format("pack '{}': asset[{}]: {} cooking requires --module",
-                                        packJson.string(), index, typeStr));
+                                        packJson.string(), index, lowerType));
                     }
                 }
             }

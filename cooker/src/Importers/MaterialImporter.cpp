@@ -9,7 +9,9 @@
 #include <fmt/format.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/Material.h>
 #include <Veng/Cook/JsonFile.h>
+#include <Veng/Reflection/EnumName.h>
 
 #include "GraphShaderSource.h"
 #include "SlangReflect.h"
@@ -75,34 +77,29 @@ namespace Veng::Cook
         }
         const json& vmat = *vmatResult;
 
-        // --- 1b. Parse the optional domain (default surface) ---
+        // --- 1b. Parse the optional domain (default Surface) ---
 
-        // Absent → Surface (0); unknown value is a located cook error.
-        u32 domain = 0; // MaterialDomain::Surface
+        // Absent → Surface; unknown value is a located cook error.
+        MaterialDomain domainValue = MaterialDomain::Surface;
         if (vmat.contains("domain"))
         {
             if (!vmat["domain"].is_string())
             {
                 return std::unexpected(fmt::format("material importer: '{}': 'domain' must be a "
-                                                   "string (\"surface\" or \"postprocess\")",
+                                                   "string (\"Surface\" or \"PostProcess\")",
                                                    vmatPath.string()));
             }
             const string domainStr = vmat["domain"].get<string>();
-            if (domainStr == "surface")
-            {
-                domain = 0;
-            }
-            else if (domainStr == "postprocess")
-            {
-                domain = 1;
-            }
-            else
+            const optional<MaterialDomain> parsed = ParseEnum<MaterialDomain>(domainStr);
+            if (!parsed)
             {
                 return std::unexpected(fmt::format("material importer: '{}': unknown domain '{}' "
-                                                   "(expected \"surface\" or \"postprocess\")",
+                                                   "(expected \"Surface\" or \"PostProcess\")",
                                                    vmatPath.string(), domainStr));
             }
+            domainValue = *parsed;
         }
+        const u32 domain = static_cast<u32>(domainValue);
 
         // --- 2. Validate and resolve shader references ---
 
@@ -233,7 +230,7 @@ namespace Veng::Cook
             return std::unexpected(outputs.error());
         }
 
-        if (domain == 0) // Surface
+        if (domainValue == MaterialDomain::Surface)
         {
             const bool ok = outputs->size() == 4 && (*outputs)[0].TargetIndex == 0 &&
                             (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4 &&

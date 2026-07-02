@@ -7,6 +7,7 @@
 #include <Veng/Asset/AssetBuild.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetType.h>
+#include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 
@@ -224,3 +225,8 @@ namespace Veng
         static constexpr AssetType Type = AssetType::Material;
     };
 }
+
+VE_ENUM(::Veng::MaterialDomain, 0x34CF0B4F57300AF1ULL)
+VE_ENUMERATOR(Surface)
+VE_ENUMERATOR(PostProcess)
+VE_ENUM_END();

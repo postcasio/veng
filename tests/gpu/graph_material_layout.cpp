@@ -176,7 +176,7 @@ SurfaceFragmentInput vsMain(VSInput input)
 
     WriteFile(dir / "tint.frag.graph.json", WriteNodeGraph(graph, catalog));
     WriteFile(dir / "tint.frag.shader.json",
-              R"({ "source": "tint.frag.graph.json", "entry": "fsMain", "domain": "surface" })");
+              R"({ "source": "tint.frag.graph.json", "entry": "fsMain", "domain": "Surface" })");
 
     // The .vmat field list comes from the same walk as the shader, so its packed values agree
     // with the reflected offsets by construction.
@@ -190,10 +190,10 @@ SurfaceFragmentInput vsMain(VSInput input)
     WriteFile(dir / "pack.json", R"({
   "version": 1,
   "assets": [
-    { "id": 9701, "type": "vertex_layout", "source": "canonical.vlayout.json" },
-    { "id": 9702, "type": "shader",        "source": "surface.vert.shader.json" },
-    { "id": 9703, "type": "shader",        "source": "tint.frag.shader.json" },
-    { "id": 9704, "type": "material",      "source": "tint.vmat.json" }
+    { "id": 9701, "type": "VertexLayout", "source": "canonical.vlayout.json" },
+    { "id": 9702, "type": "Shader",       "source": "surface.vert.shader.json" },
+    { "id": 9703, "type": "Shader",       "source": "tint.frag.shader.json" },
+    { "id": 9704, "type": "Material",     "source": "tint.vmat.json" }
   ]
 })");
 

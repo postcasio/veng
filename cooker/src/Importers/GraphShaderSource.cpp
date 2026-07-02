@@ -5,6 +5,8 @@
 
 #include <fmt/format.h>
 
+#include <Veng/Reflection/EnumName.h>
+
 #include <VengGraph/MaterialCatalog.h>
 #include <VengGraph/MaterialCompile.h>
 #include <VengGraph/NodeGraph.h>
@@ -41,7 +43,7 @@ namespace Veng::Cook
         }
 
         // A graph-sourced shader names its material domain, which fixes the emit walk's
-        // entry-point signature and MaterialOutput sink set. Default surface; an unknown
+        // entry-point signature and MaterialOutput sink set. Default Surface; an unknown
         // value is a located error.
         MaterialDomain domain = MaterialDomain::Surface;
         if (shaderJson.contains("domain"))
@@ -49,24 +51,18 @@ namespace Veng::Cook
             if (!shaderJson["domain"].is_string())
             {
                 return std::unexpected("shader importer: graph 'domain' must be a string "
-                                       "(\"surface\" or \"postprocess\")");
+                                       "(\"Surface\" or \"PostProcess\")");
             }
             const string domainStr = shaderJson["domain"].get<string>();
-            if (domainStr == "surface")
-            {
-                domain = MaterialDomain::Surface;
-            }
-            else if (domainStr == "postprocess")
-            {
-                domain = MaterialDomain::PostProcess;
-            }
-            else
+            const optional<MaterialDomain> parsed = ParseEnum<MaterialDomain>(domainStr);
+            if (!parsed)
             {
                 return std::unexpected(
                     fmt::format("shader importer: unknown graph domain '{}' (expected "
-                                "\"surface\" or \"postprocess\")",
+                                "\"Surface\" or \"PostProcess\")",
                                 domainStr));
             }
+            domain = *parsed;
         }
 
         const path graphPath = shaderJsonDir / sourceField;

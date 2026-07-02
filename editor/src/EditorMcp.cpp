@@ -338,7 +338,7 @@ namespace VengEditor
             tool.Description =
                 "Lists the project's assets from the source index: each id, name, type, and source "
                 "path. Argument: { type?: <AssetType name>, limit?, cursor? }. 'type' filters by a "
-                "canonical type name (texture, material, prefab, level, …). Paginated: returns "
+                "canonical type name (Texture, Material, Prefab, Level, …). Paginated: returns "
                 "{ assets, nextCursor? } — page the tail through nextCursor.";
             tool.InputSchemaJson = R"({"type":"object","properties":{"type":{"type":"string"},)"
                                    R"("limit":{"type":"integer"},"cursor":{"type":"string"}}})";

@@ -89,7 +89,7 @@ TEST_CASE("Cooker: a raw 'compression' override wins over the role and the confi
         ParseBuildConfiguration(fixtureDir / "windows.buildcfg");
     REQUIRE(config.has_value());
 
-    // texture_override.tex.json is "role": "Color", "srgb": false, "compression": "bc7": the raw
+    // texture_override.tex.json is "role": "Color", "srgb": false, "compression": "BC7": the raw
     // codec pins BC7 directly, keyed off srgb=false → BC7Unorm (21), regardless of the BC7Srgb the
     // configuration's Color role would resolve to.
     const u32 format =

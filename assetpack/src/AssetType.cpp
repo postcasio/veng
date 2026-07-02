@@ -7,86 +7,86 @@ namespace Veng
         switch (type)
         {
         case AssetType::Raw:
-            return "raw";
+            return "Raw";
         case AssetType::Texture:
-            return "texture";
+            return "Texture";
         case AssetType::Mesh:
-            return "mesh";
+            return "Mesh";
         case AssetType::Shader:
-            return "shader";
+            return "Shader";
         case AssetType::Material:
-            return "material";
+            return "Material";
         case AssetType::MaterialInstance:
-            return "material_instance";
+            return "MaterialInstance";
         case AssetType::VertexLayout:
-            return "vertex_layout";
+            return "VertexLayout";
         case AssetType::Prefab:
-            return "prefab";
+            return "Prefab";
         case AssetType::Level:
-            return "level";
+            return "Level";
         case AssetType::Skeleton:
-            return "skeleton";
+            return "Skeleton";
         case AssetType::Animation:
-            return "animation";
+            return "Animation";
         case AssetType::Environment:
-            return "environment";
+            return "Environment";
         case AssetType::InputMap:
-            return "input_map";
+            return "InputMap";
         }
         return "unknown";
     }
 
     optional<AssetType> ParseAssetType(std::string_view name)
     {
-        if (name == "raw")
+        if (name == "Raw")
         {
             return AssetType::Raw;
         }
-        if (name == "texture")
+        if (name == "Texture")
         {
             return AssetType::Texture;
         }
-        if (name == "mesh")
+        if (name == "Mesh")
         {
             return AssetType::Mesh;
         }
-        if (name == "shader")
+        if (name == "Shader")
         {
             return AssetType::Shader;
         }
-        if (name == "material")
+        if (name == "Material")
         {
             return AssetType::Material;
         }
-        if (name == "material_instance")
+        if (name == "MaterialInstance")
         {
             return AssetType::MaterialInstance;
         }
-        if (name == "vertex_layout")
+        if (name == "VertexLayout")
         {
             return AssetType::VertexLayout;
         }
-        if (name == "prefab")
+        if (name == "Prefab")
         {
             return AssetType::Prefab;
         }
-        if (name == "level")
+        if (name == "Level")
         {
             return AssetType::Level;
         }
-        if (name == "skeleton")
+        if (name == "Skeleton")
         {
             return AssetType::Skeleton;
         }
-        if (name == "animation")
+        if (name == "Animation")
         {
             return AssetType::Animation;
         }
-        if (name == "environment")
+        if (name == "Environment")
         {
             return AssetType::Environment;
         }
-        if (name == "input_map")
+        if (name == "InputMap")
         {
             return AssetType::InputMap;
         }

@@ -214,13 +214,13 @@ VSOutput vsMain()
         WriteFile(fx.Dir / "color.frag.graph.json", graphDoc);
         WriteFile(
             fx.Dir / "color.frag.shader.json",
-            R"({ "source": "color.frag.graph.json", "entry": "fsMain", "domain": "postprocess" })");
+            R"({ "source": "color.frag.graph.json", "entry": "fsMain", "domain": "PostProcess" })");
 
         // The material's .vmat field list is hand-authored here to match the generated
         // MaterialParams; the editor regenerates it from the same walk. A const-param graph
         // generates no field, so the default list is empty.
         WriteFile(fx.Dir / "color.vmat.json", R"({
-  "domain": "postprocess",
+  "domain": "PostProcess",
   "shaders": { "vertex": 8801, "fragment": 8802 },
   "fields": []
 })");
@@ -228,9 +228,9 @@ VSOutput vsMain()
         WriteFile(fx.Dir / "pack.json", R"({
   "version": 1,
   "assets": [
-    { "id": 8801, "type": "shader",   "source": "fullscreen.vert.shader.json" },
-    { "id": 8802, "type": "shader",   "source": "color.frag.shader.json" },
-    { "id": 8803, "type": "material", "source": "color.vmat.json" }
+    { "id": 8801, "type": "Shader",   "source": "fullscreen.vert.shader.json" },
+    { "id": 8802, "type": "Shader",   "source": "color.frag.shader.json" },
+    { "id": 8803, "type": "Material", "source": "color.vmat.json" }
   ]
 })");
 
@@ -265,7 +265,7 @@ TEST_CASE("Cooker: an exposed Param graph cooks a generated fragment + a field w
 
     // The generated struct's single field is named after the Param's creation-order key.
     WriteFile(fx.Dir / "color.vmat.json", R"({
-  "domain": "postprocess",
+  "domain": "PostProcess",
   "shaders": { "vertex": 8801, "fragment": 8802 },
   "fields": [ { "name": "n1", "type": "vec4", "value": [0.2, 0.6, 0.9, 1.0] } ]
 })");

@@ -1,7 +1,7 @@
 {
   "image": "white.png",
   "srgb": false,
-  "compression": "none",
+  "compression": "None",
   "sampler": {
     "min": "nearest",
     "mag": "nearest",

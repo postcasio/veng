@@ -1,7 +1,7 @@
 {
   "image": "brick.png",
   "srgb": false,
-  "compression": "none",
+  "compression": "None",
   "sampler": {
     "min": "nearest",
     "mag": "nearest",

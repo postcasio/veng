@@ -356,9 +356,9 @@ namespace
         std::ofstream out(manifest, std::ios::binary | std::ios::trunc);
         out << R"({
   "assets": [
-    { "id": 1001, "type": "texture",  "source": "a.tex.json" },
-    { "id": 1002, "type": "texture",  "source": "b.tex.json" },
-    { "id": 2001, "type": "material", "source": "m.vmat.json" }
+    { "id": 1001, "type": "Texture",  "source": "a.tex.json" },
+    { "id": 1002, "type": "Texture",  "source": "b.tex.json" },
+    { "id": 2001, "type": "Material", "source": "m.vmat.json" }
   ]
 })";
         return manifest;
@@ -461,12 +461,12 @@ TEST_CASE("editor MCP host tools: list_assets, set_panel_visible, open_asset, co
         REQUIRE(all.is_object());
         REQUIRE(all["assets"].size() == 3);
         CHECK(all["assets"][0].value("id", std::string{}) == "1001");
-        CHECK(all["assets"][0].value("type", std::string{}) == "texture");
+        CHECK(all["assets"][0].value("type", std::string{}) == "Texture");
         CHECK_FALSE(all.contains("nextCursor"));
 
         // A type filter narrows the set; an unknown type name is an isError.
         const Json textures =
-            Payload(CallTool(client, "editor.list_assets", Json{{"type", "texture"}}));
+            Payload(CallTool(client, "editor.list_assets", Json{{"type", "Texture"}}));
         CHECK(textures["assets"].size() == 2);
         const Json badType = CallTool(client, "editor.list_assets", Json{{"type", "nope"}});
         CHECK(badType.value("isError", false) == true);

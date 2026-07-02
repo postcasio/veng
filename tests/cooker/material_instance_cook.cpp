@@ -113,11 +113,11 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
 
         WriteFile(dir / "brick.frag.slang", BrickFrag);
         WriteFile(dir / "brick.frag.shader.json",
-                  R"({ "source": "brick.frag.slang", "entry": "fsMain", "domain": "surface" })");
+                  R"({ "source": "brick.frag.slang", "entry": "fsMain", "domain": "Surface" })");
 
         // A 1x1 white texture so the parent's BaseColor handle resolves.
         WriteFile(dir / "white.tex.json",
-                  R"({ "image": "white.png", "srgb": true, "compression": "none",
+                  R"({ "image": "white.png", "srgb": true, "compression": "None",
                        "generate_mips": false })");
         // Minimal 1x1 white PNG.
         const unsigned char png[] = {
@@ -133,7 +133,7 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
         // The parent exposes BaseColorFactor (vec4) + BaseColor (texture) + BaseColorSampler;
         // EngineBound is reflected in the shader but NOT declared here, so it is not exposed.
         WriteFile(dir / "brick.vmat.json", R"({
-  "domain": "surface",
+  "domain": "Surface",
   "shaders": { "vertex": 7002, "fragment": 7003 },
   "fields": [
     { "name": "BaseColorFactor",  "type": "vec4",    "value": [1.0, 1.0, 1.0, 1.0] },
@@ -152,12 +152,12 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
         WriteFile(dir / "pack.json", fmt::format(R"({{
   "version": 1,
   "assets": [
-    {{ "id": 7001, "type": "vertex_layout",     "source": "canonical.vlayout.json" }},
-    {{ "id": 7002, "type": "shader",            "source": "surface.vert.shader.json" }},
-    {{ "id": 7003, "type": "shader",            "source": "brick.frag.shader.json" }},
-    {{ "id": 7004, "type": "texture",           "source": "white.tex.json" }},
-    {{ "id": 7005, "type": "material",          "source": "brick.vmat.json" }},
-    {{ "id": 7006, "type": "material_instance", "source": "{}" }}
+    {{ "id": 7001, "type": "VertexLayout",     "source": "canonical.vlayout.json" }},
+    {{ "id": 7002, "type": "Shader",           "source": "surface.vert.shader.json" }},
+    {{ "id": 7003, "type": "Shader",           "source": "brick.frag.shader.json" }},
+    {{ "id": 7004, "type": "Texture",          "source": "white.tex.json" }},
+    {{ "id": 7005, "type": "Material",         "source": "brick.vmat.json" }},
+    {{ "id": 7006, "type": "MaterialInstance", "source": "{}" }}
   ]
 }})",
                                                  instanceSource));

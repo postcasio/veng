@@ -128,7 +128,7 @@ namespace
         pack["version"] = 1;
         json asset;
         asset["id"] = id.Value;
-        asset["type"] = "prefab";
+        asset["type"] = "Prefab";
         asset["source"] = prefabPath.filename().string();
         pack["assets"] = json::array({asset});
         std::ofstream(packPath) << pack.dump();
