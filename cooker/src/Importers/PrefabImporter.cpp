@@ -404,7 +404,37 @@ namespace Veng::Cook
 
             case FieldClass::Array:
             {
-                return err("array fields are not supported in prefab sources");
+                if (!value.is_array())
+                {
+                    return err("expected an array");
+                }
+
+                const TypeInfo& element = registry.Info(field.ElementType);
+
+                // Resize to the source length, then bind each element through a synthetic
+                // element descriptor (offset 0, addressing the element pointer as its own base),
+                // the way WriteFields walks an array. The shared serializer emits the length
+                // prefix + element records, so binding only populates the live vector.
+                field.ArrayResize(fieldPtr, value.size());
+                for (usize i = 0; i < value.size(); ++i)
+                {
+                    FieldDescriptor elementDesc;
+                    elementDesc.Name = field.Name;
+                    elementDesc.Type = field.ElementType;
+                    elementDesc.Class = element.Class;
+                    elementDesc.Offset = 0;
+                    elementDesc.ElementType = InvalidTypeId;
+
+                    void* elementPtr = field.ArrayElement(fieldPtr, i);
+                    const VoidResult bound =
+                        BindField(elementPtr, elementDesc, value[i], registry, entityCount, resolve,
+                                  file, entityIndex, entityName, typeName);
+                    if (!bound)
+                    {
+                        return bound;
+                    }
+                }
+                return {};
             }
             }
 

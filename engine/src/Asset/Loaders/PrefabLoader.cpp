@@ -8,6 +8,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Environment.h>
+#include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
@@ -58,6 +59,10 @@ namespace Veng
             {
                 return AssetType::Environment;
             }
+            if (fieldType == TypeIdOf<AssetHandle<InputMappingContext>>())
+            {
+                return AssetType::InputMap;
+            }
             return std::nullopt;
         }
 
@@ -106,6 +111,8 @@ namespace Veng
                 return load.operator()<Animation>();
             case AssetType::Environment:
                 return load.operator()<EnvironmentMap>();
+            case AssetType::InputMap:
+                return load.operator()<InputMappingContext>();
             default:
                 return std::unexpected(Corrupt(
                     parentId,
@@ -172,6 +179,43 @@ namespace Veng
                         if (!nested)
                         {
                             return nested;
+                        }
+                    }
+                }
+                else if (field.Class == FieldClass::Array)
+                {
+                    const TypeInfo& element = registry.Info(field.ElementType);
+                    const usize count = field.ArraySize(fieldPtr);
+                    for (usize i = 0; i < count; ++i)
+                    {
+                        const void* elementPtr = field.ArrayElementConst(fieldPtr, i);
+                        if (element.Class == FieldClass::AssetHandle)
+                        {
+                            u64 fid = 0;
+                            std::memcpy(&fid, elementPtr, sizeof(fid));
+                            if (fid == 0)
+                            {
+                                continue;
+                            }
+                            const optional<AssetType> assetType =
+                                AssetTypeForHandleField(field.ElementType);
+                            if (!assetType)
+                            {
+                                return std::unexpected(fmt::format(
+                                    "prefab {}: array field '{}' holds AssetHandles of an "
+                                    "unrecognized asset type",
+                                    parentId.Value, field.Name));
+                            }
+                            out.push_back(HandleDep{.Id = fid, .Type = *assetType});
+                        }
+                        else if (element.Class == FieldClass::Struct)
+                        {
+                            const VoidResult nested =
+                                CollectHandleDeps(parentId, elementPtr, element, registry, out);
+                            if (!nested)
+                            {
+                                return nested;
+                            }
                         }
                     }
                 }

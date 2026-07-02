@@ -21,9 +21,9 @@
 #include <Veng/Mcp/McpServer.h>
 #include <Veng/Mcp/McpServerInfo.h>
 
+#include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
-#include <Veng/Input/RawInput.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/AnimationSystem.h>
@@ -85,7 +85,8 @@ VE_SYSTEM(SpinnerSystem, 0xB5BB5153EC6ACDDEULL, "Spinner");
 
 // The game's named input actions. Each is a minted ActionId a control system references and
 // a binding context targets — the AssetId pattern for input. An action exists by being
-// declared in a context, so there is no registry.
+// declared in a context, so there is no registry. These constants match the ids the cooked
+// gameplay.inputmap asset declares.
 namespace Actions
 {
     // Movement axes: X strafes (D +1 / A -1), Y advances (W +1 / S -1).
@@ -94,53 +95,6 @@ namespace Actions
     constexpr ActionId Look{0x6DB6F4088653942DULL};
     // Jump button.
     constexpr ActionId Jump{0xB64A2DFE34C4E523ULL};
-}
-
-// The gameplay input context: WASD → the 2D Move action, the mouse delta → the 2D Look
-// action, Space → the Jump button. Seeded onto a seat's InputContextStack when gameplay
-// has focus; Plan 02 replaces this in-C++ context with a cooked InputMappingContext asset.
-ResolvedContext GameplayContext()
-{
-    using Src = InputSource;
-    return ResolvedContext{
-        .Actions = {InputAction{.Id = Actions::Move, .Name = "Move", .Kind = ActionKind::Axis2D},
-                    InputAction{.Id = Actions::Look, .Name = "Look", .Kind = ActionKind::Axis2D},
-                    InputAction{.Id = Actions::Jump, .Name = "Jump", .Kind = ActionKind::Button}},
-        .Bindings = {Binding{.Source = Src{.Device = InputDeviceType::Keyboard,
-                                           .Control = static_cast<u32>(Key::D)},
-                             .Action = Actions::Move,
-                             .Axis = AxisComponent::X,
-                             .Scale = 1.0f},
-                     Binding{.Source = Src{.Device = InputDeviceType::Keyboard,
-                                           .Control = static_cast<u32>(Key::A)},
-                             .Action = Actions::Move,
-                             .Axis = AxisComponent::X,
-                             .Scale = -1.0f},
-                     Binding{.Source = Src{.Device = InputDeviceType::Keyboard,
-                                           .Control = static_cast<u32>(Key::W)},
-                             .Action = Actions::Move,
-                             .Axis = AxisComponent::Y,
-                             .Scale = 1.0f},
-                     Binding{.Source = Src{.Device = InputDeviceType::Keyboard,
-                                           .Control = static_cast<u32>(Key::S)},
-                             .Action = Actions::Move,
-                             .Axis = AxisComponent::Y,
-                             .Scale = -1.0f},
-                     Binding{.Source = Src{.Device = InputDeviceType::MouseAxis,
-                                           .Control = RawInput::MouseAxisX},
-                             .Action = Actions::Look,
-                             .Axis = AxisComponent::X,
-                             .Scale = 1.0f},
-                     Binding{.Source = Src{.Device = InputDeviceType::MouseAxis,
-                                           .Control = RawInput::MouseAxisY},
-                             .Action = Actions::Look,
-                             .Axis = AxisComponent::Y,
-                             .Scale = 1.0f},
-                     Binding{.Source = Src{.Device = InputDeviceType::Keyboard,
-                                           .Control = static_cast<u32>(Key::Space)},
-                             .Action = Actions::Jump,
-                             .Axis = AxisComponent::Whole,
-                             .Scale = 1.0f}}};
 }
 
 // Maps a resolved PlayerInput to an abstract Intent — the game-specific control policy,
@@ -428,18 +382,19 @@ protected:
             GetInputRouter().PushFocus(InputFocus::Gameplay);
         }
 
-        // The gameplay context is active exactly while gameplay has focus: pushing it onto each
-        // seat's InputContextStack lets InputMappingSystem resolve WASD/mouse/Space; popping it
-        // (an empty stack) resolves every action to None, so the pawn and follow camera stay
-        // still while ImGui owns the mouse — the InputContextStack replacing the old raw-capture
-        // gate. The seat is spawned by the game-mode rule, so this runs each frame outside any
-        // iteration once the seat exists.
+        // The seat's base gameplay context is authored on the player prefab; the focus gate only
+        // toggles it: with gameplay focused the seat's contexts resolve WASD/mouse/Space, and
+        // when ImGui owns the mouse the stack is emptied so every action resolves to None (the
+        // pawn and follow camera stay still). This replaces the old raw-capture gate. The seat is
+        // spawned by the game-mode rule, so this runs each frame outside any iteration.
         SyncGameplayContext(GetInputRouter().IsGameplayFocused());
     }
 
-    // Pushes or pops the gameplay context on every seat's InputContextStack so it matches the
-    // current gameplay focus. Idempotent: a focused seat with the context already active, or an
-    // unfocused seat with an empty stack, is left untouched, so it is safe to call every frame.
+    // Gates the seat's authored input contexts on gameplay focus. On losing focus it saves each
+    // seat's active contexts and empties the stack (all actions None); on regaining focus it
+    // restores the saved contexts. The base context is authored prefab data — this only pops it
+    // for the focus gate and pushes it back, never fabricates the binding scheme in code.
+    // Idempotent, so it is safe to call every frame.
     void SyncGameplayContext(const bool focused)
     {
         Scene* world = GetWorld();
@@ -448,27 +403,24 @@ protected:
             return;
         }
 
-        // Collect seats first: adding an InputContextStack is a structural change, illegal
-        // during a View/Each iteration, so the mutation runs after the query closes.
-        vector<Entity> seats;
-        world->Each<Viewer, PlayerInput>([&](const Entity seat, Viewer&, PlayerInput&)
-                                         { seats.emplace_back(seat); });
-
-        for (const Entity seat : seats)
-        {
-            InputContextStack& stack = world->Has<InputContextStack>(seat)
-                                           ? world->Get<InputContextStack>(seat)
-                                           : world->Add<InputContextStack>(seat, {});
-            const bool active = !stack.Active.empty();
-            if (focused && !active)
+        world->Each<Viewer, InputContextStack>(
+            [&](const Entity seat, Viewer&, InputContextStack& stack)
             {
-                stack.Active.emplace_back(GameplayContext());
-            }
-            else if (!focused && active)
-            {
-                stack.Active.clear();
-            }
-        }
+                if (!focused && !stack.Active.empty())
+                {
+                    m_SuspendedContexts[seat] = std::move(stack.Active);
+                    stack.Active.clear();
+                }
+                else if (focused && stack.Active.empty())
+                {
+                    if (const auto it = m_SuspendedContexts.find(seat);
+                        it != m_SuspendedContexts.end())
+                    {
+                        stack.Active = std::move(it->second);
+                        m_SuspendedContexts.erase(it);
+                    }
+                }
+            });
     }
 
     void OnRender() override
@@ -646,6 +598,10 @@ private:
 
     u32 m_FrameCount = 0;
     const char* m_SmokeOutput = nullptr;
+
+    // Each seat's authored input contexts, saved while gameplay is unfocused so the focus gate can
+    // empty the stack (all actions None) and restore it on refocus, without fabricating the scheme.
+    unordered_map<Entity, vector<AssetHandle<InputMappingContext>>> m_SuspendedContexts;
 
     // The optional MCP server and the provider seam it captures by reference. m_McpHost holds the
     // TypeRegistry/AssetManager references and the per-frame world/viewport closures; it must

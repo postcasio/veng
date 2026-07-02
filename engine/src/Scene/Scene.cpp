@@ -58,6 +58,33 @@ namespace Veng
                 break;
             }
 
+            case FieldClass::Array:
+            {
+                // Each element is fixed up by its own class: an AssetHandle element is handed
+                // to assetHandle directly (an array of context references), a struct element
+                // recurses so a nested reference or handle is reached.
+                const TypeInfo& element = registry.Info(field.ElementType);
+                const usize count = field.ArraySize(fieldPtr);
+                for (usize i = 0; i < count; ++i)
+                {
+                    void* elementPtr = field.ArrayElement(fieldPtr, i);
+                    if (element.Class == FieldClass::AssetHandle)
+                    {
+                        assetHandle(elementPtr);
+                    }
+                    else if (element.Class == FieldClass::Reference)
+                    {
+                        Entity& entity = *static_cast<Entity*>(elementPtr);
+                        entity = remap(entity);
+                    }
+                    else if (element.Class == FieldClass::Struct)
+                    {
+                        RemapComponentReferences(elementPtr, element, registry, remap, assetHandle);
+                    }
+                }
+                break;
+            }
+
             default:
                 break;
             }

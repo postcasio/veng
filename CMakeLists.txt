@@ -1059,6 +1059,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/prefab_variant_cook.cpp
             tests/cooker/prefab_save_roundtrip.cpp
             tests/cooker/level_cook.cpp
+            tests/cooker/input_map_cook.cpp
             tests/cooker/cook_source.cpp
     )
     # prefab_save_roundtrip.cpp uses VengEditor::PrefabSerialize, so the suite links

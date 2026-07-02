@@ -11,6 +11,7 @@ add_library(veng SHARED
         src/Asset/MaterialInstance.cpp
         src/Asset/Mesh.cpp
         src/Asset/Environment.cpp
+        src/Asset/InputMappingContext.cpp
         src/Asset/Prefab.cpp
         src/Asset/Primitives.cpp
         src/Asset/ResidencyBatch.cpp
@@ -18,6 +19,7 @@ add_library(veng SHARED
         src/Asset/Texture.cpp
         src/Asset/Loaders/AnimationLoader.cpp
         src/Asset/Loaders/EnvironmentLoader.cpp
+        src/Asset/Loaders/InputMapLoader.cpp
         src/Asset/Loaders/LevelLoader.cpp
         src/Asset/Loaders/MaterialLoader.cpp
         src/Asset/Loaders/MaterialInstanceLoader.cpp

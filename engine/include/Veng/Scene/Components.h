@@ -16,6 +16,7 @@ namespace Veng
     class MaterialInstance;
     class Prefab;
     class EnvironmentMap;
+    class InputMappingContext;
     struct Animation;
 
     /// @brief Human-readable label for an entity.
@@ -346,12 +347,13 @@ namespace Veng
     /// Gameplay systems push/pop entries to switch schemes (enter a vehicle, open a modal). The
     /// fine-grained, per-seat sibling of the InputRouter's coarse focus stack.
     ///
-    /// This holds resolver-ready ResolvedContexts directly, seeded in C++: it is runtime-only
-    /// seat scratch, neither serialized nor reflected.
+    /// Each entry is a cooked InputMappingContext referenced by AssetId — authored on a prefab
+    /// and resolved as an ordinary load-time dependency, so a seat's base scheme is data. A
+    /// not-yet-resident handle resolves to empty actions until it streams in.
     struct InputContextStack
     {
         /// @brief The active contexts, lowest priority first; resolved as a stack each tick.
-        vector<ResolvedContext> Active;
+        vector<AssetHandle<InputMappingContext>> Active;
     };
 
     /// @brief Abstract, source-agnostic command for what a pawn wants to do this tick.
@@ -715,10 +717,9 @@ VE_REFLECT(::Veng::PlayerInput, 0x5401D36B1EF55045ULL)
 VE_FIELD(State, .DisplayName = "State")
 VE_REFLECT_END();
 
-// Runtime-only seat scratch: it carries a TypeId so a Scene can pool it, but declares no
-// reflected fields, so it serializes to nothing (its Active contexts are seeded in C++,
-// never persisted). Plan 02 reshapes it into a reflected AssetHandle array.
-VE_TYPE(::Veng::InputContextStack, 0x89B0625016A01BE2ULL);
+VE_REFLECT(::Veng::InputContextStack, 0x89B0625016A01BE2ULL)
+VE_ARRAY_FIELD(Active, .DisplayName = "Active")
+VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Intent, 0x27F416122B525965ULL)
 VE_FIELD(Move, .DisplayName = "Move")

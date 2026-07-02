@@ -1,5 +1,6 @@
 #include <Veng/Scene/BuiltinTypes.h>
 
+#include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Scene/Components.h>
@@ -26,8 +27,11 @@ namespace Veng
         // The control pipeline: per-player snapshot, abstract command, seat→pawn link,
         // and per-pawn movement tuning.
         registry.Register<PlayerInput>();
-        // Runtime-only seat scratch (VE_TYPE, no fields); pooled by the Scene, never serialized.
+        // The seat's ordered active input contexts, referenced by AssetId; authored on a prefab
+        // and pushed/popped by gameplay, resolved through the ordinary load path.
         registry.Register<InputContextStack>();
+        // The reflected on-disk payload of an input map, read by InputMapLoader.
+        registry.Register<InputMapData>();
         registry.Register<Intent>();
         registry.Register<Possesses>();
         registry.Register<Mover>();

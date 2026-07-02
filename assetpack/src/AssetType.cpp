@@ -30,6 +30,8 @@ namespace Veng
             return "animation";
         case AssetType::Environment:
             return "environment";
+        case AssetType::InputMap:
+            return "input_map";
         }
         return "unknown";
     }
@@ -83,6 +85,10 @@ namespace Veng
         if (name == "environment")
         {
             return AssetType::Environment;
+        }
+        if (name == "input_map")
+        {
+            return AssetType::InputMap;
         }
         return std::nullopt;
     }

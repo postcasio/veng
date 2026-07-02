@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 
+#include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Reflection/Serialize.h>
@@ -131,6 +132,23 @@ namespace
                                  .Action = Move,
                                  .Axis = AxisComponent::Y,
                                  .Scale = 1.0f}}};
+    }
+
+    // Builds a resident AssetHandle<InputMappingContext> for the given context, without an
+    // AssetManager: a detached cache entry holding the constructed context, wired into a
+    // type-erased handle the way a prefab spawn rehydrates one. This lets the system test seed a
+    // seat's InputContextStack without a device or a real asset load.
+    AssetHandle<InputMappingContext> MakeResidentContext(const ResolvedContext& context)
+    {
+        const Ref<InputMappingContext> resource = InputMappingContext::Create(
+            vector<InputAction>(context.Actions.begin(), context.Actions.end()),
+            vector<Binding>(context.Bindings.begin(), context.Bindings.end()));
+        auto entry = CreateRef<Detail::AssetCacheEntry>(Detail::AssetCacheEntry{
+            .Id = AssetId{}, .Type = AssetType::InputMap, .Resource = Detail::RefAny(resource)});
+
+        AssetHandle<InputMappingContext> handle;
+        Detail::RehydrateHandleField(&handle, AssetId{}, std::move(entry));
+        return handle;
     }
 
     Entity MakePawn(Scene& scene, vec3 position, const Mover& mover)
@@ -380,7 +398,8 @@ TEST_CASE("InputMappingSystem resolves each seat's PlayerInput; a neutral snapsh
     const Entity seat = scene->CreateEntity();
     scene->Add<Viewer>(seat, Viewer{});
     scene->Add<PlayerInput>(seat, PlayerInput{});
-    scene->Add<InputContextStack>(seat, InputContextStack{.Active = {GameplayContext()}});
+    scene->Add<InputContextStack>(
+        seat, InputContextStack{.Active = {MakeResidentContext(GameplayContext())}});
 
     InputMappingSystem mapping;
     ContextStorage storage;

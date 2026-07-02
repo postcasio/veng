@@ -14,6 +14,7 @@
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
@@ -400,4 +401,57 @@ TEST_CASE("prefab cook: cooking a prefab with no --module is the requires-module
     const Result<vector<u8>> blob = CookPrefab(packJson, nullptr, {}, AssetId{4242});
     REQUIRE_FALSE(blob.has_value());
     CHECK(blob.error().find("prefab cooking requires --module") != string::npos);
+}
+
+TEST_CASE("prefab cook: an InputContextStack AssetHandle array round-trips its context ids")
+{
+    const LoadedModuleTypes module = LoadRegistry();
+    const TypeRegistry& types = module.Types;
+
+    // The seat component carries a reflected vector<AssetHandle<InputMappingContext>> — the
+    // array-of-handle field cooked through the prefab importer. The ids are runtime residency
+    // concerns; the cook accepts non-resident ids as-is, so this pins the array serialization.
+    constexpr u64 ContextA = 999999000000000001ULL;
+    constexpr u64 ContextB = 999999000000000002ULL;
+
+    json stack;
+    stack["Active"] = json::array({ContextA, ContextB});
+    json components;
+    components["::Veng::InputContextStack"] = stack;
+    const path packJson = WriteInlinePrefab("prefab_input_stack", components);
+
+    const Result<vector<u8>> blobResult = CookPrefab(packJson, &types, {}, AssetId{4242});
+    REQUIRE_MESSAGE(blobResult.has_value(),
+                    "cook failed: ", blobResult ? string{} : blobResult.error());
+
+    const vector<u8>& blob = *blobResult;
+    CookedPrefabHeader header{};
+    std::memcpy(&header, blob.data(), sizeof(header));
+
+    const u8* cursor = blob.data() + sizeof(CookedPrefabHeader);
+    cursor += header.EntityCount * sizeof(CookedPrefabEntity);
+    const auto* componentTable = reinterpret_cast<const CookedPrefabComponent*>(cursor);
+    cursor += header.ComponentCount * sizeof(CookedPrefabComponent);
+    const u8* records = cursor;
+
+    const CookedPrefabComponent* stackComponent = nullptr;
+    for (u32 i = 0; i < header.ComponentCount; ++i)
+    {
+        if (componentTable[i].TypeId == TypeIdOf<InputContextStack>())
+        {
+            stackComponent = &componentTable[i];
+            break;
+        }
+    }
+    REQUIRE(stackComponent != nullptr);
+
+    InputContextStack decoded;
+    REQUIRE(ReadFields(std::span<const u8>(records + stackComponent->RecordOffset,
+                                           stackComponent->RecordSize),
+                       &decoded, types.Info(TypeIdOf<InputContextStack>()), types)
+                .has_value());
+
+    REQUIRE(decoded.Active.size() == 2);
+    CHECK(decoded.Active[0].Id().Value == ContextA);
+    CHECK(decoded.Active[1].Id().Value == ContextB);
 }

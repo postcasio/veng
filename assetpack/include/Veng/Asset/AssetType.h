@@ -36,6 +36,8 @@ namespace Veng
         Environment,
         /// @brief A parameter override over a parent Material (see CookedMaterialInstanceHeader).
         MaterialInstance,
+        /// @brief A named set of input-action declarations and raw-source bindings (see CookedInputMapHeader).
+        InputMap,
     };
 
     /// @brief Canonical authoring/manifest name of an asset type ("texture", "material_instance", …).

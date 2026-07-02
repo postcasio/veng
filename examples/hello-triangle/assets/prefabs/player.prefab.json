@@ -52,6 +52,11 @@
           "Camera": 0
         },
         "::Veng::PlayerInput": {},
+        "::Veng::InputContextStack": {
+          "Active": [
+            16596091148679838649
+          ]
+        },
         "::Veng::Possesses": {
           "Pawn": 2
         },

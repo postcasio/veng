@@ -598,4 +598,30 @@ namespace Veng
         /// @brief Panorama height in pixels.
         u32 Height = 0;
     };
+
+    /// @brief The current input-map-format version.
+    ///
+    /// Bumped on any CookedInputMapHeader layout change; the loader rejects a blob whose
+    /// Version != this. The embedded reflection record evolves tolerantly within a fixed
+    /// version — a new action or binding field does not require a bump.
+    inline constexpr u32 CookedInputMapVersion = 1u;
+
+    /// @brief Cooked header for an input-map asset.
+    ///
+    /// An input map (InputMappingContext) declares its actions (id + name + kind) and a set of
+    /// raw-source → action bindings. Both lists ride the reflection serializer's name-keyed
+    /// WriteFields record — assetpack treats it as opaque bytes, exactly as a prefab blob treats
+    /// a component record, so this file gains no reflection dependency (cycle-avoidance rule at
+    /// the top). The runtime loader ReadFields the record and builds the resolver-ready form.
+    ///
+    /// The blob is, in order:
+    ///   CookedInputMapHeader
+    ///   context record        — WriteFields record of { vector<InputAction>, vector<Binding> }
+    struct CookedInputMapHeader
+    {
+        /// @brief Must equal CookedInputMapVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief Byte size of the reflection record following this header.
+        u32 RecordBytes = 0;
+    };
 }

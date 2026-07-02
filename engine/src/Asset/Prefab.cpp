@@ -93,6 +93,23 @@ namespace Veng
                                               registry.Info(active), registry, batch);
                     }
                 }
+                else if (field.Class == FieldClass::Array)
+                {
+                    const TypeInfo& element = registry.Info(field.ElementType);
+                    const usize count = field.ArraySize(fieldPtr);
+                    for (usize i = 0; i < count; ++i)
+                    {
+                        const void* elementPtr = field.ArrayElementConst(fieldPtr, i);
+                        if (element.Class == FieldClass::AssetHandle)
+                        {
+                            batch.TrackHandleField(elementPtr);
+                        }
+                        else if (element.Class == FieldClass::Struct)
+                        {
+                            CollectPendingHandles(elementPtr, element, registry, batch);
+                        }
+                    }
+                }
             }
         }
     }

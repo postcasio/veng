@@ -40,4 +40,13 @@ namespace Veng::Cook
     /// wants the core set plus only this importer.
     /// @param cooker  The cooker to register into.
     void RegisterLevelImporter(Cooker& cooker);
+
+    /// @brief Registers the input-map importer.
+    ///
+    /// Links libveng's reflection serializer (WriteFields) and is therefore absent from the
+    /// veng-free bootstrap cooker. Needs no game module — an input map references only engine
+    /// builtins (InputAction / Binding). Folded into RegisterBuiltinImporters; exposed
+    /// individually for a cooker that wants the core set plus only this importer.
+    /// @param cooker  The cooker to register into.
+    void RegisterInputMapImporter(Cooker& cooker);
 }

@@ -43,6 +43,8 @@ namespace VengEditor
             return "Animation";
         case AssetType::Environment:
             return "EnvironmentMap";
+        case AssetType::InputMap:
+            return "InputMap";
         }
         return "Unknown";
     }
@@ -75,6 +77,8 @@ namespace VengEditor
             return "ANM";
         case AssetType::Environment:
             return "ENV";
+        case AssetType::InputMap:
+            return "INP";
         }
         return "?";
     }
@@ -105,6 +109,8 @@ namespace VengEditor
             return {0.50f, 0.65f, 0.30f, 1.0f};
         case AssetType::Environment:
             return {0.35f, 0.50f, 0.75f, 1.0f};
+        case AssetType::InputMap:
+            return {0.70f, 0.60f, 0.35f, 1.0f};
         case AssetType::Raw:
             return {0.50f, 0.50f, 0.50f, 1.0f};
         }
