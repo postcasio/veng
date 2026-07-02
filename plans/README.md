@@ -809,6 +809,25 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   triggers/modifiers, and a global `ActionRegistry` — the **named next planset**, built on the
   per-seat resolve seam this establishes.
 
+- **[planset-43](planset-43/README.md)** — JSON serialization unified: one reflection
+  walker, enums by name (📝 proposed, 5 plans). Collapses the four hand-rolled
+  JSON⇄reflection walkers (the cooker's `PrefabImporter`/`LevelImporter`, the editor's
+  `PrefabSerialize`, MCP's `ReflectToJson` — ~2,200 near-duplicate lines) into **one
+  policy-hooked walker in `Veng/Reflection/JsonSerialize.h`**, beside the binary
+  `Serialize.h` it mirrors — which makes **nlohmann/json a PUBLIC dependency of `libveng`**
+  (a decided trade; cooked blobs stay binary, the runtime load path still parses no JSON).
+  On that consolidation it settles the enum convention the forks diverged on: **every enum
+  in asset JSON serializes as a string spelled exactly as the C++ enumerator**, through new
+  runtime-typed `EnumeratorName`/`ParseEnumValue` beside `EnumName.h`'s templated pair —
+  **hard cut** (readers accept names only; every prefab/graph/fixture JSON migrates in the
+  same plan as its reader), and the three legacy lowercase forms migrate too: material
+  `"domain"` → `"Surface"`/`"PostProcess"` (`MaterialDomain` gains a `VE_ENUM`), the
+  pack-manifest `"type"` → exact enumerator spellings (`"MaterialInstance"`, …), the raw
+  texture `"compression"` → `"ASTC"`/`"BC7"`/`"None"`. MCP's `{ value, name }` enum object
+  becomes the bare name string. `LevelImporter` gains Enum/Variant/Array support for free.
+  **Held back:** `Renderer::Format`/vertex-layout `VE_ENUM` migration, versioned JSON
+  migrations, a generated JSON-Schema surface.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
