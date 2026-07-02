@@ -11,9 +11,11 @@
 
 #include <cstring>
 #include <filesystem>
+#include <random>
 #include <string_view>
 
 #include <doctest/doctest.h>
+#include <fmt/format.h>
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/CookedBlobs.h>
@@ -25,12 +27,15 @@ using namespace Veng::Cook;
 
 namespace
 {
-    Result<ArchiveReader> CookShaderPack()
+    Result<ArchiveReader> CookShaderPack(path& outArchive)
     {
         const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
         const path packJson = fixtureDir / "shader_pack.json";
-        const path outArchive =
-            std::filesystem::temp_directory_path() / "veng_cooker_shader.vengpack";
+        // Unique per call: ctest runs each case as its own process in parallel, and a
+        // shared fixed name lets concurrent cases cook over and delete each other's archive.
+        std::random_device rng;
+        outArchive = std::filesystem::temp_directory_path() /
+                     fmt::format("veng_cooker_shader_{:08x}.vengpack", rng());
 
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
@@ -44,7 +49,8 @@ namespace
 
 TEST_CASE("Cooker: cooks a shader from .slang source via Slang reflection")
 {
-    const Result<ArchiveReader> reader = CookShaderPack();
+    path outArchive;
+    const Result<ArchiveReader> reader = CookShaderPack(outArchive);
     REQUIRE(reader.has_value());
 
     const optional<ArchiveEntry> entry = reader->Find(AssetId{0xFA1});
@@ -87,12 +93,13 @@ TEST_CASE("Cooker: cooks a shader from .slang source via Slang reflection")
     CHECK(pushConstant.StageMask == 1u); // ShaderStage::Vertex underlying value
     CHECK(std::string_view(pushConstant.Name) == "g_PushConstants");
 
-    std::filesystem::remove(std::filesystem::temp_directory_path() / "veng_cooker_shader.vengpack");
+    std::filesystem::remove(outArchive);
 }
 
 TEST_CASE("Cooker: cooks a fragment shader from .slang source via Slang reflection")
 {
-    const Result<ArchiveReader> reader = CookShaderPack();
+    path outArchive;
+    const Result<ArchiveReader> reader = CookShaderPack(outArchive);
     REQUIRE(reader.has_value());
 
     const optional<ArchiveEntry> entry = reader->Find(AssetId{0xFA2});
@@ -132,5 +139,5 @@ TEST_CASE("Cooker: cooks a fragment shader from .slang source via Slang reflecti
     CHECK(pushConstant.StageMask == 2u); // ShaderStage::Fragment underlying value
     CHECK(pushConstant.Size > 0);
 
-    std::filesystem::remove(std::filesystem::temp_directory_path() / "veng_cooker_shader.vengpack");
+    std::filesystem::remove(outArchive);
 }

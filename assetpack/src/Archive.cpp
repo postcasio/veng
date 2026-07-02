@@ -1,5 +1,7 @@
 #include <Veng/Asset/Archive.h>
 
+#include <Veng/Asset/AtomicFile.h>
+
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -120,23 +122,7 @@ namespace Veng
     VoidResult ArchiveWriter::Write(const path& filePath) const
     {
         const vector<u8> bytes = Build();
-
-        std::ofstream file(filePath, std::ios::binary | std::ios::trunc);
-        if (!file)
-        {
-            return std::unexpected(fmt::format(
-                "ArchiveWriter::Write: failed to open '{}' for writing", filePath.string()));
-        }
-
-        file.write(reinterpret_cast<const char*>(bytes.data()),
-                   static_cast<std::streamsize>(bytes.size()));
-        if (!file)
-        {
-            return std::unexpected(
-                fmt::format("ArchiveWriter::Write: failed writing to '{}'", filePath.string()));
-        }
-
-        return {};
+        return WriteFileAtomic(filePath, bytes);
     }
 
     Result<ArchiveReader> ArchiveReader::FromBytes(std::span<const u8> bytes)

@@ -83,10 +83,14 @@ function(veng_add_game NAME)
 
         set(COPIED_BESIDE_LAUNCHER)
 
+        # Each copy stages through a sibling temporary and renames into place: the
+        # rename is atomic, so a killed or concurrent build never leaves a torn
+        # artifact with a fresh mtime that later builds would treat as up to date.
         set(PROJECT_BESIDE_LAUNCHER ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_MOUNT})
         add_custom_command(
             OUTPUT ${PROJECT_BESIDE_LAUNCHER}
-            COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_OUTPUT} ${PROJECT_BESIDE_LAUNCHER}
+            COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_OUTPUT} ${PROJECT_BESIDE_LAUNCHER}.tmp
+            COMMAND ${CMAKE_COMMAND} -E rename ${PROJECT_BESIDE_LAUNCHER}.tmp ${PROJECT_BESIDE_LAUNCHER}
             DEPENDS ${PROJECT_OUTPUT}
             COMMENT "Copying cooked project beside ${NAME}-launcher")
         list(APPEND COPIED_BESIDE_LAUNCHER ${PROJECT_BESIDE_LAUNCHER})
@@ -100,7 +104,8 @@ function(veng_add_game NAME)
             set(PACK_BESIDE_LAUNCHER ${CMAKE_CURRENT_BINARY_DIR}/${PACK_MOUNT})
             add_custom_command(
                 OUTPUT ${PACK_BESIDE_LAUNCHER}
-                COMMAND ${CMAKE_COMMAND} -E copy ${PACK_OUTPUT} ${PACK_BESIDE_LAUNCHER}
+                COMMAND ${CMAKE_COMMAND} -E copy ${PACK_OUTPUT} ${PACK_BESIDE_LAUNCHER}.tmp
+                COMMAND ${CMAKE_COMMAND} -E rename ${PACK_BESIDE_LAUNCHER}.tmp ${PACK_BESIDE_LAUNCHER}
                 DEPENDS ${PACK_OUTPUT}
                 COMMENT "Copying asset pack beside ${NAME}-launcher")
             list(APPEND COPIED_BESIDE_LAUNCHER ${PACK_BESIDE_LAUNCHER})

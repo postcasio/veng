@@ -131,9 +131,8 @@ full-width random value (already >8 hex digits); when in doubt, leave it.
   the cooked blob is empty apart from the id-encoding bytes.
 - `smoke_golden` and `hello_triangle_launcher_smoke` — the migrated core/example packs cook and
   render **identically**; this change moves no rendered pixel, so the golden must **not** change.
-  A re-cook of the core pack is involved: watch the ccache `#embed` staleness trap — delete the
-  core-pack embed `.o` (or `CCACHE_DISABLE=1`) after the format migration or the runtime mounts
-  a stale pack and fails with "asset … not found".
+  A re-cook of the core pack is involved; the embed regenerates through bin2cpp as an ordinary
+  tracked source, so a plain rebuild picks it up — no ccache workaround is needed.
 - The `validation` gate (`ctest -L validation`) — green, since the render path is unchanged.
 - `sdk_conformance_install` / `sdk_conformance_buildtree` — the template's out-of-tree cook
   consumes the migrated `project.veng` + pack.

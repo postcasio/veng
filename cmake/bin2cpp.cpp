@@ -9,7 +9,9 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <random>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace
@@ -105,14 +107,39 @@ int main(int argc, char** argv)
         std::filesystem::create_directories(outputFile.parent_path(), ec);
     }
 
-    std::FILE* file = std::fopen(outputPath, "wb");
+    // Write a uniquely-named sibling temporary, then rename it over the output.
+    // The rename is atomic, so a killed or concurrent run never leaves a torn
+    // output with a fresh mtime that the build would treat as up to date.
+    std::random_device rng;
+    std::filesystem::path tempFile{outputFile};
+    tempFile += "." + std::to_string(rng()) + ".tmp";
+
+    std::FILE* file = std::fopen(tempFile.string().c_str(), "wb");
     if (file == nullptr)
     {
-        std::fprintf(stderr, "bin2cpp: cannot open output '%s'\n", outputPath);
+        std::fprintf(stderr, "bin2cpp: cannot open output '%s'\n", tempFile.string().c_str());
         return 1;
     }
-    std::fwrite(out.data(), 1, out.size(), file);
-    std::fclose(file);
+    const bool wrote = std::fwrite(out.data(), 1, out.size(), file) == out.size();
+    const bool closed = std::fclose(file) == 0;
+    if (!wrote || !closed)
+    {
+        std::error_code ec;
+        std::filesystem::remove(tempFile, ec);
+        std::fprintf(stderr, "bin2cpp: short write on '%s'\n", tempFile.string().c_str());
+        return 1;
+    }
+
+    std::error_code renameError;
+    std::filesystem::rename(tempFile, outputFile, renameError);
+    if (renameError)
+    {
+        std::error_code ec;
+        std::filesystem::remove(tempFile, ec);
+        std::fprintf(stderr, "bin2cpp: cannot rename '%s' -> '%s': %s\n", tempFile.string().c_str(),
+                     outputPath, renameError.message().c_str());
+        return 1;
+    }
 
     std::printf("bin2cpp: wrote %zu bytes as %s -> %s\n", bytes.size(), symbol, outputPath);
     return 0;

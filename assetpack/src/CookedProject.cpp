@@ -1,5 +1,7 @@
 #include <Veng/Asset/CookedProject.h>
 
+#include <Veng/Asset/AtomicFile.h>
+
 #include <cstring>
 #include <fstream>
 
@@ -109,21 +111,6 @@ namespace Veng
             std::memcpy(out.data() + cursor + sizeof(length), name.data(), name.size());
         }
 
-        std::ofstream file(filePath, std::ios::binary | std::ios::trunc);
-        if (!file)
-        {
-            return std::unexpected(fmt::format(
-                "WriteCookedProject: failed to open '{}' for writing", filePath.string()));
-        }
-
-        file.write(reinterpret_cast<const char*>(out.data()),
-                   static_cast<std::streamsize>(out.size()));
-        if (!file)
-        {
-            return std::unexpected(
-                fmt::format("WriteCookedProject: failed writing to '{}'", filePath.string()));
-        }
-
-        return {};
+        return WriteFileAtomic(filePath, out);
     }
 }

@@ -43,11 +43,11 @@ serialization — neither importer nor loader.
   the lazy inflate is not synchronized.
 - A version number the format actually checks (the on-disk `v5`) is rejected loudly on
   mismatch — a stale/foreign archive does not load silently. The version bump is **global** —
-  every `.vengpack`, including the **embedded core pack** the engine ships via `#embed`. A
-  format change re-cooks the core pack, but ccache does **not** track an `#embed`-ed file as a
-  dependency, so a stale core-pack object can mount an older pack into a `v5` runtime and fail
-  every run with "asset … not found"; rebuild the embed with `CCACHE_DISABLE=1` (or delete the
-  embed `.o`) after a format bump.
+  every `.vengpack`, including the **embedded core pack** built into `libveng`. A format
+  change re-cooks the core pack and regenerates its embed source (bin2cpp), which the build
+  and ccache track as an ordinary source dependency. `ArchiveWriter::Write` (and every other
+  cook artifact) is written atomically — a sibling temporary renamed into place — so a killed
+  or concurrent build never strands a torn pack the build would treat as up to date.
 - **`AssetType::Texture` carries a mipped, block-compressed image.** A **`CookedTextureHeader`**
   (`Format`, `Width`, `Height`, `MipCount`) is followed by the mip levels **tightly packed,
   largest-first** — no offset table, since each level's byte size derives from its halved

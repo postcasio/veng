@@ -137,7 +137,10 @@ namespace Veng
         [[nodiscard]] vector<u8> Build() const;
 
         /// @brief Writes the serialized archive to a file.
-        /// @param filePath  Destination path; the file is truncated if it already exists.
+        ///
+        /// The write is atomic (see WriteFileAtomic): the destination is replaced whole
+        /// or left untouched, never truncated in place.
+        /// @param filePath  Destination path; atomically replaced if it already exists.
         /// @return An error string on failure.
         [[nodiscard]] VoidResult Write(const path& filePath) const;
 

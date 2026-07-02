@@ -12,7 +12,13 @@
 
 file(SHA256 "${VENG_EMBED_INPUT}" embedHash)
 
-file(WRITE "${VENG_EMBED_OUTPUT}" "\
+# Written to a sibling temporary and renamed into place: the rename is atomic, so
+# a killed or concurrent run never leaves a torn shim with a fresh mtime that the
+# build would treat as up to date.
+string(RANDOM LENGTH 8 tempSuffix)
+set(tempOutput "${VENG_EMBED_OUTPUT}.${tempSuffix}.tmp")
+
+file(WRITE "${tempOutput}" "\
 // Auto-generated #embed shim — do not edit.
 // embed-content-hash: ${embedHash}
 namespace Veng {
@@ -22,3 +28,5 @@ extern const unsigned char ${VENG_EMBED_SYMBOL}[] = {
 extern const unsigned long ${VENG_EMBED_SYMBOL}Size = sizeof(${VENG_EMBED_SYMBOL});
 }
 ")
+
+file(RENAME "${tempOutput}" "${VENG_EMBED_OUTPUT}")

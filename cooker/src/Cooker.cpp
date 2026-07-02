@@ -9,6 +9,7 @@
 #include <xxhash.h>
 #include <zstd.h>
 
+#include <Veng/Asset/AtomicFile.h>
 #include <Veng/Cook/JsonFile.h>
 #include <Veng/Project/CompressionFormat.h>
 #include <Veng/Project/CompressionRole.h>
@@ -319,13 +320,6 @@ namespace Veng::Cook
     VoidResult WriteDepfile(const path& depfilePath, const path& target,
                             std::span<const path> dependencies)
     {
-        std::ofstream out(depfilePath, std::ios::binary | std::ios::trunc);
-        if (!out)
-        {
-            return std::unexpected(
-                fmt::format("depfile '{}': failed to open for writing", depfilePath.string()));
-        }
-
         // GCC/Make escaping: a space or '#' in a filename is backslash-escaped,
         // a '$' is doubled. Path separators (incl. Windows '\\') pass through.
         auto escape = [](const path& p) -> string
@@ -348,19 +342,19 @@ namespace Veng::Cook
             return escaped;
         };
 
-        out << escape(target) << ':';
+        string out = escape(target);
+        out += ':';
         for (const path& dep : dependencies)
         {
-            out << " \\\n  " << escape(dep);
+            out += " \\\n  ";
+            out += escape(dep);
         }
-        out << '\n';
+        out += '\n';
 
-        if (!out)
-        {
-            return std::unexpected(fmt::format("depfile '{}': write failed", depfilePath.string()));
-        }
-
-        return {};
+        // Atomic so a killed cook never leaves a truncated depfile behind — a torn
+        // dependency list would silently drop re-cook triggers.
+        return WriteFileAtomic(depfilePath,
+                               std::span(reinterpret_cast<const u8*>(out.data()), out.size()));
     }
 
     void Cooker::Register(Unique<AssetImporter> importer)

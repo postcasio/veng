@@ -5,8 +5,10 @@
 
 #include <cstring>
 #include <filesystem>
+#include <random>
 
 #include <doctest/doctest.h>
+#include <fmt/format.h>
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/CookedBlobs.h>
@@ -25,8 +27,11 @@ namespace
     CookedTextureHeader CookHeader(const path& packJson, const AssetId id,
                                    const BuildConfiguration* config, const path& configFile)
     {
-        const path outArchive =
-            std::filesystem::temp_directory_path() / "veng_cooker_role_resolution.vengpack";
+        // Unique per call: ctest runs each case as its own process in parallel, and a
+        // shared fixed name lets concurrent cases cook over and delete each other's archive.
+        std::random_device rng;
+        const path outArchive = std::filesystem::temp_directory_path() /
+                                fmt::format("veng_cooker_role_resolution_{:08x}.vengpack", rng());
 
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
