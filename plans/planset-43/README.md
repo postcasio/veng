@@ -1,13 +1,16 @@
 # planset-43 — JSON serialization unified: one reflection walker, enums by name
 
 **Phase goal:** one implementation of JSON⇄reflection, and one enum convention across every
-JSON surface. Today the tree carries **four near-identical hand-rolled JSON⇄reflection
+JSON surface. Today the tree carries **five near-identical hand-rolled JSON⇄reflection
 walkers** — the cooker's [PrefabImporter](../../cooker/src/Importers/PrefabImporter.cpp) and
 [LevelImporter](../../cooker/src/Importers/LevelImporter.cpp) (read), the editor's
-[PrefabSerialize](../../editor/src/PrefabSerialize.cpp) (write), and the MCP server's
-[ReflectToJson](../../mcp/src/ReflectToJson.cpp) (both) — ~2,200 lines whose mechanical core
-(Scalar/Vector/Quaternion/Matrix/String/Struct recursion) is the same code four times, forked
-by copy-paste. The binary side never had this problem: `Veng/Reflection/Serialize.h`
+[PrefabSerialize](../../editor/src/PrefabSerialize.cpp) (write) and
+[LevelEditorPanel](../../editor/src/panels/LevelEditorPanel.cpp)'s config round-trip
+(`ReadConfigObject`/`WriteConfigObject`, both — explicitly commented as "mirroring the
+cooker's LevelImporter read … so the editor writes exactly what the cooker reads"), and the
+MCP server's [ReflectToJson](../../mcp/src/ReflectToJson.cpp) (both) — ~2,350 lines whose
+mechanical core (Scalar/Vector/Quaternion/Matrix/String/Struct recursion) is the same code
+five times, forked by copy-paste. The binary side never had this problem: `Veng/Reflection/Serialize.h`
 (`WriteFields`/`ReadFields`) is the one shared walker. This planset gives the JSON direction
 the same treatment — a shared, policy-hooked walker in `Veng/Reflection/` — and uses the
 consolidation to settle the enum convention the forks diverged on: **every enum in asset JSON
@@ -27,16 +30,21 @@ all enumerator names: `"Type": "Directional"`, `"Space": "World"`, `"Provenance"
 - **The machinery half-exists and already declares the intent.** `Veng/Reflection/EnumName.h`
   ships `ParseEnum<T>`/`EnumeratorName<T>` over the `VE_ENUM` enumerator tables, documented
   as *"JSON authors an enum by name (never ordinal)"* — and the input-map path (cooker
-  importer + editor panel) already conforms. Every enum appearing in asset JSON is already
-  `VE_ENUM`-reflected. What's missing is only the **runtime-typed** (`TypeInfo`-based)
-  overloads the reflection-walking serializers need, and a shared walker to put them in.
+  importer + editor panel) already conforms. Every enum the reflection walkers bind is already
+  `VE_ENUM`-reflected (`MaterialDomain` and the texture codec, handled in Plan 03, are the
+  exceptions this planset closes). What's missing is only the **runtime-typed**
+  (`TypeInfo`-based) overloads the reflection-walking serializers need, and a shared walker to
+  put them in.
 - **Each new consumer re-forks the walker.** LevelImporter is a visibly trimmed copy of
-  PrefabImporter's `BindField`; MCP re-implemented both directions; the next JSON surface
-  would fork it a fifth time. The enum inconsistency is the direct symptom — four copies made
-  four independent calls. Consolidating first means the enum rule is implemented **once**.
+  PrefabImporter's `BindField`; the editor's level panel (`LevelEditorPanel`) is a second
+  trimmed copy; MCP re-implemented both directions; the next JSON surface would fork it a
+  sixth time. The enum inconsistency is the direct symptom — the copies made independent
+  calls. Consolidating first means the enum rule is implemented **once**.
 - **The gaps are already biting.** LevelImporter omits `Enum`/`Reference`/`Variant`/`Array`
   entirely — an enum field in level config is a hard "unsupported field class" error today,
-  so a `LevelRenderSettings` knob can't be an enum. The shared walker fixes that for free.
+  and the editor's `LevelEditorPanel` config walker has no `Enum` arm either, so the knob
+  would be uneditable there — a `LevelRenderSettings` knob can't be an enum on either side.
+  The shared walker fixes both for free.
 
 ## The unifying design
 
@@ -106,25 +114,34 @@ The walker's API names `json` types, so the engine's deliberate JSON-free postur
 (`find_dependency` in `veng-config` + an installed copy for the install-prefix mode), and
 the consumers' now-redundant PRIVATE links are dropped or kept harmlessly. The
 `sdk_conformance_*` tests are the acceptance gate that all three consumption modes still
-resolve it.
+resolve it. **This has a transitive consequence the planset owns explicitly:** `veng_mcp`
+links `veng` PUBLIC, so nlohmann now reaches mcp's consumers too — mcp's public surface is
+no longer JSON-library-free, and the `mcp_include_hygiene` test's contract narrows to
+httplib-only (re-scoped in Plan 00; the `mcp/CLAUDE.md` and root-`CLAUDE.md`
+"JSON-library-free" claims are rewritten in Plan 04). The same edge publicizes nlohmann on
+`veng::graph` and the editor framework.
 
 ## Plans
 
 | # | Plan | Summary | Status |
 |---|------|---------|--------|
-| 00 | The engine JSON serializer + enum-name core | nlohmann → PUBLIC on `veng` (build tree, SDK export/install, include_hygiene); `Veng/Reflection/JsonSerialize.h` (`JsonReadFields`/`JsonWriteFields`, all FieldClasses, the AssetHandle/Reference policy hooks, dotted-path errors); the runtime-typed `EnumeratorName`/`ParseEnumValue`/`LoadEnumBits`/`StoreEnumBits` in `EnumName.h`. Enums by name from day one. Unit-tested round-trip over a reflected fixture type. | proposed |
-| 01 | Cooker adoption: prefab + level | `PrefabImporter` and `LevelImporter` drop their `BindField`s for the shared walker (pack-resolve validation and entity-index remap as hooks; level config gains Enum/Variant/Array for free). Hard-cut enum strings; migrate the prefab JSON assets (both examples, cooker fixtures). Depends on 00. | proposed |
-| 02 | Editor + MCP adoption | `PrefabSerialize` (write inverse via the walker, live-entity `WriteReference` hook) and MCP's `ReflectToJson` (both directions) move onto the shared walker; MCP enum output becomes the bare name string. Depends on 00. | proposed |
-| 03 | Graph enums + the spelling migrations | `NodeGraphSerialize` enum properties by name (+ both sample graphs); `MaterialDomain` `VE_ENUM` + `"Surface"`/`"PostProcess"` across importer/codegen/editor + every `.vmat`; `AssetType` manifest spellings + every `.vengpack.json`; the `"compression"` escape hatch → `TextureCodec` spellings + fixtures. Depends on 00 (independent of 01/02). | proposed |
-| 04 | Docs, template co-migration check, roadmap pass | Root/engine/cooker/editor/mcp `CLAUDE.md` updates (nlohmann PUBLIC, the walker, the enum convention); `docs/guides/` pass (consuming-veng's dependency list, asset-format examples); the full verification band incl. SDK conformance; planset status. The closer. Depends on 00–03. | proposed |
+| 00 | The engine JSON serializer + enum-name core | nlohmann → PUBLIC on `veng` (build tree, SDK export/install, include_hygiene); `Veng/Reflection/JsonSerialize.h` (`JsonReadFields`/`JsonWriteFields`, all FieldClasses, the AssetHandle/Reference policy hooks, dotted-path errors); the runtime-typed `EnumeratorName`/`ParseEnumValue`/`LoadEnumBits`/`StoreEnumBits` in `EnumName.h`. Enums by name from day one. Unit-tested round-trip over a reflected fixture type. | ready |
+| 01 | Cooker adoption: prefab + level | `PrefabImporter` and `LevelImporter` drop their `BindField`s for the shared walker (pack-resolve validation and entity-index remap as hooks; level config gains Enum/Variant/Array for free). Hard-cut enum strings; migrate the prefab JSON assets (both examples, cooker fixtures). Depends on 00. | ready |
+| 02 | Editor + MCP adoption | `PrefabSerialize` (write inverse via the walker, live-entity `WriteReference` hook), `LevelEditorPanel`'s config round-trip, and MCP's `ReflectToJson` (both directions) move onto the shared walker; MCP enum output becomes the bare name string. Depends on 00; sequenced after 01. | ready |
+| 03 | Graph enums + the spelling migrations | `NodeGraphSerialize` enum properties by name (+ both sample graphs); `MaterialDomain` `VE_ENUM` + `"Surface"`/`"PostProcess"` across importer/codegen/editor + every `.vmat`; `AssetType` manifest spellings + every `.vengpack.json`; the `"compression"` escape hatch → `TextureCodec` spellings + fixtures. Depends on 00 (independent of 01/02). | ready |
+| 04 | Docs, template co-migration + conformance, roadmap pass | Root/engine/cooker/editor/mcp `CLAUDE.md` updates (nlohmann PUBLIC + the mcp/graph JSON-free-surface reversal, the walker, the enum convention); `docs/guides/` pass (consuming-veng's dependency list, asset-format examples); a cook-throughput check; the full verification band incl. SDK conformance; planset status. The closer. Depends on 00–03. | ready |
 
 > Status legend: `proposed` = drafted, awaiting review; `ready` = reviewed and approved;
 > `done` = implemented, migrated, verified, committed.
 
 ## Dependencies
 
-- **00 → {01, 02, 03} → 04.** Plan 00 is the foundation; 01, 02, and 03 are independent of
-  each other (different files, different assets) and can run in parallel; 04 closes.
+- **00 → 01 → 02, 00 → 03, {02, 03} → 04.** Plan 00 is the foundation. **01 and 02 are
+  sequenced (01 then 02, ideally one session):** 01 makes the cooker reject integer enums, so
+  the editor's writers (02) must land before any editor session produces prefabs the cooker
+  can no longer cook — the window where the editor writes integers the cooker rejects must not
+  be left open across sessions. Plan 03 is independent of 01/02 (different files, different
+  assets) and can run in parallel with them; 04 closes.
 - The asset migrations ride the plan that hard-cuts their reader (01: prefab JSONs; 03:
   graphs, `.vmat`s, pack manifests, `.tex.json`s) — **both examples co-migrate in the same
   plan as the breaking change**, per the working norms; the template's breakage surfaces in
@@ -143,7 +160,16 @@ resolve it.
   engine** — the walker sits beside the binary serializer it mirrors, every consumer already
   links `veng`, and the cost is nlohmann joining the PUBLIC dep set. The runtime still never
   *parses* JSON in the load path — cooked blobs stay binary; this is a library-surface
-  change, not a loader change.
+  change, not a loader change. **The cost is real and larger than "one PUBLIC dep":** because
+  every tool links `veng` PUBLIC, nlohmann becomes transitively public on `veng::mcp`,
+  `veng::graph`, and the editor, ending mcp's deliberately JSON-library-free surface — exactly
+  what the tiny-lib option would have preserved. nlohmann is header-only, so the runtime cost
+  is include-path propagation and SDK shipping, not a linked binary; the standing cost is that
+  naming `nlohmann::json` in a public signature weds veng's public API to that library (a
+  future swap is an API break). The engine home still wins on the single-serializer-beside-
+  its-binary-twin grounds and because every actual caller already links `veng`, but the mcp
+  hygiene guard and the JSON-free-surface docs are updated to the new posture (Plans 00, 04),
+  not left silently stale.
 - **Hard cut, no integer fallback.** Readers accept enumerator names only; every JSON asset
   in the tree migrates in the same plan as its reader. A leftover integer is a loud, located
   error naming the field. No dual-form tolerance to carry forever.
@@ -162,6 +188,11 @@ resolve it.
   hand-matches format names that already match the C++ spellings; folding the giant
   `Renderer::Format` enum into `VE_ENUM` is churn with no current payoff. Revisit if a
   second consumer needs the table.
+- **The reflected Project model's hand-parsers.** `Cooker.cpp`'s `ParseBuildConfiguration` /
+  `ParseProject` and the editor's `ProjectSettingsPanel` hand-serialize the reflected
+  `ProjectSettings`/`BuildConfiguration` — the same "next surface forks it again" pattern.
+  They already conform on enums (role/format tables are exact-spelling), so this planset
+  leaves them deliberately; folding them onto the shared walker is a natural later pass.
 - **Schema-versioned JSON migrations.** The hard cut is a one-time manual migration; a
   general versioned-migration mechanism for source JSON is deliberately not built.
 - **A JSON Schema / editor-completion surface** generated from the reflection tables — a

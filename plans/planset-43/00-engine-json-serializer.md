@@ -9,8 +9,8 @@ No consumer migrates yet — this plan is the library plus its unit tests.
 ## The starting point
 
 - `Veng/Reflection/Serialize.h` (`WriteFields`/`ReadFields`) is the shared **binary** walker;
-  the JSON direction is forked four ways (PrefabImporter, LevelImporter, PrefabSerialize,
-  ReflectToJson) with no shared core.
+  the JSON direction is forked five ways (PrefabImporter, LevelImporter, PrefabSerialize,
+  LevelEditorPanel's config round-trip, ReflectToJson) with no shared core.
 - `Veng/Reflection/EnumName.h` has the compile-time-typed `ParseEnum<T>`/`EnumeratorName<T>`
   over the `VE_ENUM` enumerator tables (`TypeInfo::Enumerators`); the reflection-walking
   serializers need the same over a runtime `TypeInfo&` (MCP hand-rolls exactly this loop).
@@ -22,8 +22,12 @@ No consumer migrates yet — this plan is the library plus its unit tests.
 
 ### 1. nlohmann/json PUBLIC on `veng`
 
-- `target_link_libraries(veng PUBLIC nlohmann_json::nlohmann_json)`; the FetchContent setup
-  moves ahead of the engine target if it isn't already.
+- `target_link_libraries(veng PUBLIC nlohmann_json::nlohmann_json)`. **Required reordering:**
+  today the nlohmann `FetchContent_Declare`/`FetchContent_MakeAvailable` block runs *after*
+  `add_subdirectory(assetpack)`/`add_subdirectory(engine)` (it sits in the graph/cooker
+  preamble). It must move **before** those `add_subdirectory` calls, or the `nlohmann_json`
+  target does not yet exist when `engine/CMakeLists.txt` names it and configure fails with an
+  unknown-target error. This is not conditional.
 - **SDK export/install:** the installed `veng-config.cmake` gains
   `find_dependency(nlohmann_json)`, and the install prefix carries nlohmann (enable the
   FetchContent'd project's install — `JSON_Install` — so the SDK is self-contained, matching
@@ -34,8 +38,16 @@ No consumer migrates yet — this plan is the library plus its unit tests.
 - Consumers' now-redundant PRIVATE links (editor, mcp, graph, cooker) are dropped where the
   transitive PUBLIC edge covers them; comments in those CMakeLists that assert "nlohmann
   stays PRIVATE / never reaches a public header" are updated to the new posture.
+- **`mcp_include_hygiene` re-scoped.** `tests/mcp_include_hygiene.cpp` links `veng::mcp`
+  alone to prove `Veng/Mcp/` public headers pull in neither nlohmann nor httplib. Once
+  `veng` carries nlohmann PUBLIC, `veng::mcp` inherits nlohmann's include path transitively
+  (through its `PUBLIC veng::veng` link), so the test can no longer distinguish "an Mcp
+  header leaks nlohmann" from "nlohmann always rides along via `veng::veng`" — its JSON half
+  stops guarding. Narrow its stated contract (and header comment) to **httplib-only**; the
+  JSON-free-surface claims in `mcp/CLAUDE.md` and root `CLAUDE.md` are rewritten in Plan 04.
 - **Acceptance:** `sdk_conformance_install` and `sdk_conformance_buildtree` green — all three
-  consumption modes resolve the new dependency.
+  consumption modes resolve the new dependency; `mcp_include_hygiene` green under its
+  narrowed (httplib-only) contract.
 
 ### 2. `Veng/Reflection/JsonSerialize.h`
 
@@ -53,15 +65,26 @@ struct JsonFieldHooks
     function<json(Entity entity)> WriteReference;
 };
 
-/// @brief Binds a name-keyed JSON object into a reflected instance (tolerant: an omitted
-///        field keeps its default; an unknown or malformed field is an error naming the
-///        dotted field path).
+/// @brief Binds a name-keyed JSON object into a reflected instance (an omitted field keeps
+///        its default; a malformed field is an error naming the dotted field path). By
+///        default an *unknown* key is also an error (the cooker's strict posture);
+///        AllowUnknownFields keeps the editor panels' tolerant read (unknown keys ignored,
+///        left for the merge-write to preserve).
 VoidResult JsonReadFields(void* obj, const TypeInfo& type, const json& value,
-                          const TypeRegistry& registry, const JsonFieldHooks& hooks = {});
+                          const TypeRegistry& registry, const JsonFieldHooks& hooks = {},
+                          bool allowUnknownFields = false);
 
-/// @brief The write inverse: a reflected instance to a name-keyed JSON object.
+/// @brief The write inverse: a reflected instance to a fresh name-keyed JSON object.
 json JsonWriteFields(const void* obj, const TypeInfo& type, const TypeRegistry& registry,
                      const JsonFieldHooks& hooks = {});
+
+/// @brief Merge-write: assigns each reflected field into an existing object in place,
+///        leaving keys the reflection layer doesn't own (comments-as-keys, hand-authored
+///        structure, the world id, future fields) untouched. This is the form the editor
+///        writers (PrefabSerialize, LevelEditorPanel) require to keep their save a no-op
+///        diff apart from the fields that changed.
+void JsonWriteFields(json& into, const void* obj, const TypeInfo& type,
+                     const TypeRegistry& registry, const JsonFieldHooks& hooks = {});
 ```
 
 - Implementation in `engine/src/Reflection/JsonSerialize.cpp`, beside `Serialize.cpp`.
@@ -100,10 +123,15 @@ void StoreEnumBits(void* fieldPtr, const TypeInfo& info, i64 value);
 
 - A `tests/unit` fixture type exercising every FieldClass (nested struct, enum, variant,
   array, asset handle, reference via a stub hook) round-trips `JsonWriteFields` →
-  `JsonReadFields` byte-identically.
+  `JsonReadFields` to a **field-wise-equal** instance (or, equivalently, write→read→write
+  produces JSON-equal output) — not a raw `memcmp`, since the fixture holds padding and
+  heap-owning members.
 - Enum cases pinned: exact-spelling write, exact-match read, unknown-name error, integer
   rejected, out-of-range value writes the decimal fallback and fails to re-read (the
   documented asymmetry).
+- Merge-write pinned: `JsonWriteFields(json& into, …)` over an object carrying an unknown
+  key leaves that key untouched while updating the reflected fields; a tolerant read
+  (`allowUnknownFields = true`) ignores the unknown key, and the strict default errors on it.
 - Dotted-path error content pinned for a nested failure.
 
 ## Verification
@@ -113,5 +141,5 @@ void StoreEnumBits(void* fieldPtr, const TypeInfo& info, i64 value);
 
 ## Out of scope
 
-- Migrating any consumer or asset (plans 01–03). The four forks still compile and run
+- Migrating any consumer or asset (plans 01–03). The five forks still compile and run
   unchanged against their old code in this plan.

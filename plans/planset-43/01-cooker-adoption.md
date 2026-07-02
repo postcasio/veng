@@ -46,8 +46,8 @@
 - Every prefab JSON with an integer enum migrates to the enumerator name:
   - `examples/hello-triangle/assets/prefabs/` — `"Type": 0` → `"Type": "Directional"`
     (and Point/Spot where used), `"Tier": 1` → `"Tier": "Local"` / `0` → `"Server"`.
-  - `examples/template/assets/prefabs/scene.prefab.json` — `"Type": "Directional"`,
-    `"Space": 1` → `"Space": "World"`.
+  - `examples/template/assets/prefabs/scene.prefab.json` — `"Type": 0` → `"Type":
+    "Directional"`, `"Space": 1` → `"Space": "World"`.
   - `tests/cooker/fixtures/prefabs/` and any other fixture with an enum field; a fixture
     that *tests* the malformed case updates its expected error to the new message.
 - Sweep for stragglers: `rg '"(Type|Tier|Space|Mode|Kind|Phase)":\s*[0-9]' --glob
@@ -67,6 +67,7 @@
 ## Out of scope
 
 - The editor's write side and MCP (Plan 02); graph/domain/manifest spellings (Plan 03).
-  Between 01 and 02 the editor still *writes* integer enums while the cooker rejects them —
-  acceptable inside one planset executed as a unit, but 01 and 02 should land close together
-  (or in one session) to keep the editor round-trip whole.
+
+Note: Plan 01 opens a window where the editor still *writes* integer enums while the cooker
+rejects them, so **01 and 02 are sequenced (01 then 02, ideally one session)** — see the
+README's Dependencies section. This is a scheduling constraint, not a scope boundary.

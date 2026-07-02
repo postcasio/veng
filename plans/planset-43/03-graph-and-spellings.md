@@ -32,10 +32,14 @@ Depends on Plan 00 (the enum-name functions); independent of Plans 01/02.
   (the hard cut), through Plan 00's `EnumeratorName`/`ParseEnumValue`.
 - The enumerator table reaches the serializer **without a TypeRegistry**, preserving the
   documented property-walk constraint: the `NodeCatalog` records each enum property type's
-  `VE_ENUM` table at registration (the authoring site has the compile-time type — a small
-  `TypeId → enumerator span` map on the catalog, or an entries pointer on the property
-  authoring helper; pick whichever reads cleaner at the `MaterialCatalog`/`MaterialMathNodes`
-  call sites).
+  `VE_ENUM` table at registration. **Mechanism:** an enumerator-span pointer attached at the
+  property-authoring helper (the authoring site has the compile-time type, so it hands the
+  `VE_ENUM` span straight in) — consistent with the reflection macros' compile-time-attached
+  metadata style, rather than a side-table `TypeId → span` map on the catalog. A
+  `TypeRegistry`-keyed lookup (mirroring `RegisterMaterialGraphTypes`, which the editor calls
+  from `EditorHost`) is a **false economy**: `GraphShaderSource.cpp`'s cook path has no
+  `TypeRegistry` in scope, so it would work for editor preview but not the offline cook — the
+  table must ride the catalog itself.
 - Migrate both sample graphs: `"Provenance": 1` → `"Provenance": "Exposed"` in
   `examples/hello-triangle/assets/shaders/brick.frag.graph.json` and
   `examples/template/assets/shaders/flat.frag.graph.json`, plus any graph fixtures under
@@ -65,11 +69,13 @@ Depends on Plan 00 (the enum-name functions); independent of Plans 01/02.
   `"InputMap"`. assetpack sits below the reflection layer, so it keeps a hand table — only
   the spellings change; everything downstream (`vengc` messages, `Verify`, the editor MCP
   asset table) follows automatically through `ToString`.
-- Migrate all five manifests: `engine/assets/core/core.vengpack.json`,
+- Migrate all five app/engine manifests: `engine/assets/core/core.vengpack.json`,
   `tests/shaders/test.vengpack.json`, `editor/assets/icons/editor_icons.vengpack.json`,
   `examples/template/assets/template.vengpack.json`,
-  `examples/hello-triangle/assets/sample.vengpack.json` — plus any `--reference` pack JSON
-  under `tests/`.
+  `examples/hello-triangle/assets/sample.vengpack.json` — **and every `*pack*.json` manifest
+  under `tests/cooker/fixtures/`** (~28 of them, cooked directly by the cooker suite, not
+  merely `--reference`d — all carry lowercase `"type"` keys and all break under the hard
+  cut), plus any `--reference` pack JSON elsewhere under `tests/`.
 
 ### 4. The raw `"compression"` escape hatch
 
@@ -87,7 +93,11 @@ Depends on Plan 00 (the enum-name functions); independent of Plans 01/02.
   `core.vengpack.json` — the manifest + `"domain"` changes run through it.
 - Sweep: `rg -i '"(surface|postprocess|astc|bc7|none|material_instance|vertex_layout|input_map)"'
   --glob '*.json' -g '!build*'` over the tree comes back with only deliberate survivors
-  (e.g. Slang entry-point names), reviewed by hand.
+  (e.g. Slang entry-point names), reviewed by hand. This regex does **not** catch the
+  single-word `"type"` spellings (`"texture"`, `"mesh"`, `"prefab"`, `"level"`, `"raw"`, …),
+  so also sweep every manifest `"type":` site directly — `rg '"type"\s*:\s*"[a-z]' --glob
+  '*vengpack*.json' --glob '*_pack*.json' -g '!build*'` must come back empty — and rely on
+  the cooker suite (which cooks the fixtures) as the loud backstop.
 
 ## Out of scope
 
