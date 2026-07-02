@@ -27,9 +27,11 @@ veng_add_game(mygame SOURCES src/main.cpp PROJECT mygame_project)
 target_link_libraries(mygame PRIVATE veng::mcp)
 ```
 
-Because the `Veng/Mcp/` public headers are JSON-library-free — a tool handler is
-`Result<string>(string_view)` — you need no nlohmann/json or httplib link of your own. The
-vendored transport and JSON library stay PRIVATE to `veng_mcp`.
+A tool handler is `Result<string>(string_view)` — no `Veng/Mcp/` header names `nlohmann::json`
+or `httplib::` directly — so you need no httplib link of your own; the vendored transport
+stays PRIVATE to `veng_mcp`. nlohmann/json reaches you anyway: `veng::mcp` links `veng::veng`
+PUBLIC, and `veng::veng` itself carries nlohmann/json PUBLIC, so it rides along with the
+`veng::mcp` link rather than being an extra dependency the library adds.
 
 ## Constructing and pumping a server
 

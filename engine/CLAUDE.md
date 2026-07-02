@@ -1101,6 +1101,41 @@ A `FieldDescriptor` additionally carries **optional editor metadata** (`DisplayN
 kept distinct from the UI label (`DisplayName`), so relabelling never breaks on-disk
 compatibility: **on-disk type identity is the `TypeId`, field identity is the name**.
 
+**`Veng/Reflection/Serialize.h` (`WriteFields`/`ReadFields`) is the shared binary walker**
+that produces the cooked blob encoding above; **`Veng/Reflection/JsonSerialize.h`
+(`JsonWriteFields`/`JsonReadFields`) is its JSON analogue**, the one walker every JSON
+asset surface binds through — the cooker's `PrefabImporter`/`LevelImporter`, the editor's
+`PrefabSerialize` and `LevelEditorPanel` config round-trip, and MCP's `ReflectToJson` all
+call it rather than each hand-rolling a `FieldClass` switch. It covers every `FieldClass`
+(Scalar/Vector/Quaternion/Matrix/String/Enum/AssetHandle/Reference/Struct/Variant/Array)
+and reports a malformed field as a **dotted field path** ("`Settings.Bloom.Kernel`: expected
+an enumerator name"), which each caller prepends its own located prefix to (file/entity,
+document, request). What differs per consumer is isolated into a small **`JsonFieldHooks`**
+policy struct — `ValidateAssetId` (a nonzero `AssetHandle` id against the caller's resolve
+context; unset accepts every id) and `ReadReference`/`WriteReference` (an `Entity` from/to
+JSON — prefab-local index, live entity, MCP's own addressing; unset makes a `Reference`
+field a located error). `JsonWriteFields` has two forms: the fresh-object overload builds a
+brand-new `json::object()`, and the **merge-write** overload (`JsonWriteFields(json& into,
+...)`) patches an existing document's reflected keys in place, leaving every other key
+untouched — the form a save-in-place writer (`PrefabSerialize`, `LevelEditorPanel`) needs to
+keep an edit a minimal diff against hand-authored source. `JsonReadFields` defaults to the
+cooker's strict posture (an unrecognized key is a located error); `allowUnknownFields = true`
+is the editor panels' tolerant read, ignoring a key the walker doesn't own so the merge-write
+can preserve it.
+
+**Every enum in asset JSON serializes as its C++ enumerator name, never an ordinal** — a hard
+cut, not a tolerated pair of forms. `EnumName.h`'s runtime-typed functions back the walker's
+`Enum` case: `EnumeratorName(const TypeInfo&, i64)` / `ParseEnumValue(const TypeInfo&,
+string_view)` look an enumerator up by a runtime `TypeInfo&` rather than a compile-time `T`
+(the templated `ParseEnum<T>`/`EnumeratorName<T>` are thin wrappers over these), and
+`LoadEnumBits`/`StoreEnumBits` read/write an enum field's backing bytes at its reflected
+`Size`. Matching is exact and case-sensitive; a JSON integer where a name is expected is a
+located error naming the field, not a silently-accepted legacy form — every enum-bearing
+asset in the tree was migrated to the exact spelling in the same pass that landed the walker.
+`EnumeratorName` keeps a documented decimal-string fallback for an out-of-range value (a
+corrupt value stays readable); `ParseEnumValue` does not accept that fallback back on read,
+which is the correct loud failure.
+
 The builtins are plain reflected components, pre-registered identically to a game's
 own: `Name` (a display label), `Transform` (**local** TRS — `Position`/`Rotation`/
 `Scale`, never a world matrix), `Hierarchy` (the intrusive scene-graph link — a `Parent`
@@ -1327,8 +1362,12 @@ to end so a minimal `main.cpp` writes none of it.
 
 `Veng/Project/` is the engine's home for **per-platform build policy** — the reflected data
 model the cooker and editor both read. `libveng` carries the structs and the enum⇄name
-tables; the JSON lives entirely in the consumers (the cooker hand-parses, the editor writes
-nlohmann), so `libveng` gains no JSON dependency.
+tables; the engine owns the JSON⇄reflection walker (`Veng/Reflection/JsonSerialize.h`,
+above) that a shared walker could bind these structs through, but the cooker's
+`ParseBuildConfiguration`/`ParseProject` (`Cooker.cpp`) and the editor's
+`ProjectSettingsPanel` still hand-parse them directly — the one reflected model in the tree
+not yet on the shared walker (a natural later pass; see `plans/future/README.md`). Cooked
+blobs stay binary regardless — the runtime load path parses no JSON either way.
 
 - **`ProjectSettings`** (`Veng/Project/ProjectSettings.h`) — one per project (the JSON file
   `project.veng`): a reflected `vector<BuildConfiguration> Configurations` (a genuine

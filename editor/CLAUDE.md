@@ -75,6 +75,14 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   is the entity-picking seam now available to it), `PrefabExplorerPanel`, and `InspectorPanel`.
   The host opens the sample prefab as the initial document; double-clicking a prefab in the
   asset browser opens another.
+- **`PrefabSerialize` is the write inverse of the cooker's `PrefabImporter`, through the same
+  shared walker.** Saving a document writes each entity's components via the **merge-write**
+  `JsonWriteFields(existingComponentJson, componentPtr, typeInfo, registry, hooks)`
+  (`Veng/Reflection/JsonSerialize.h`) — patching the reflected fields into the JSON already
+  read from source, so unknown keys (comments-as-keys, hand-authored structure) survive
+  untouched. Its `JsonFieldHooks::WriteReference` maps a live `Entity` back to a prefab-local
+  index, the inverse of the importer's `ReadReference`; enums come out as enumerator names,
+  matching what the cooker's `JsonReadFields`-based read now requires.
 - **The level editor is the game-wiring surface.** `LevelEditorPanel` (registered for
   `AssetType::Level`) **derives from** `PrefabEditorPanel`, so the viewport / explorer /
   inspector edit the level's **world prefab** with no scene-editing reimplemented, and adds two
@@ -91,8 +99,13 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   and reflection draws the config. Config edits (systems / game-mode / render) accumulate in memory and
   preview live in the viewport (render settings push straight through `ApplyLevelRenderSettings`); they
   persist only on **Save**, which writes both the world `*.prefab.json` (the base scene save) and the
-  `*.level.json` config, then recooks the level off the render thread and hot-reloads behind the stable
-  handle (the round-trip preserves unknown keys, like the texture editor). The document's unsaved-changes
+  `*.level.json` config — the config record binds through the same shared `JsonReadFields`
+  (tolerant, `allowUnknownFields = true`) and merge-write `JsonWriteFields` the cooker's
+  `LevelImporter` reads with, so the panel's config round-trip is the walker's write inverse
+  rather than a hand-mirrored copy — then recooks the level off the render thread and hot-reloads
+  behind the stable handle (the round-trip preserves unknown keys, like the texture editor). This
+  also **gains the `Enum` arm** the panel's old hand-rolled config walk never had, so an enum
+  `LevelRenderSettings` knob is editable here and saves as the enumerator name. The document's unsaved-changes
   marker and the Save action's enabled state fold the config dirtiness in alongside the command stack
   (`HasUnsavedChanges`). Play runs **exactly the level's ordered system set** through the base's play
   machinery (`GetPlaySystems`), distinct from a bare prefab document's "all registered" set.

@@ -11,13 +11,15 @@ engine surface these tools consume (reflection, the `Scene`/ECS layer, the `Asse
 viewports) is in [engine/CLAUDE.md](../engine/CLAUDE.md) and the editor tools' host in
 [editor/CLAUDE.md](../editor/CLAUDE.md).
 
-The library is **not linked by `libveng`** and adds **no dependency to any existing
-consumer**: it is a distinct `veng::mcp` target a consumer opts into, exactly as
-`veng::graph` is a distinct library the editor and cooker opt into. It stays
-**editor-free and importer-free** — the engine tools live in `libveng_mcp`; the editor
-tools register into the same server from the editor side (`editor/src/EditorMcp.{h,cpp}`).
-The public surface is **JSON-library-free**, so `veng::mcp` holds the same include-hygiene
-guarantee `libveng` does.
+The library is **not linked by `libveng`**: it is a distinct `veng::mcp` target a
+consumer opts into, exactly as `veng::graph` is a distinct library the editor and cooker
+opt into. It stays **editor-free and importer-free** — the engine tools live in
+`libveng_mcp`; the editor tools register into the same server from the editor side
+(`editor/src/EditorMcp.{h,cpp}`). No `Veng/Mcp/` header names a JSON type, but the public
+surface is **not** JSON-library-free end to end: `veng::mcp` links `veng::veng` PUBLIC,
+which itself carries nlohmann/json PUBLIC, so linking `veng::mcp` at all pulls nlohmann in
+transitively — see [The public surface](#the-public-surface-httplib-free-not-json-library-free)
+below.
 
 ## The shape — one server, a host seam, a pumped request queue
 
@@ -83,17 +85,26 @@ of the wiring.
   in-flight request with a shutdown error so its network thread unblocks, stops the listener,
   and joins.
 
-## The JSON-library-free public surface
+## The public surface: httplib-free, not JSON-library-free
 
 A tool handler is `Result<string>(string_view argsJson)` (`Veng/Mcp/McpTool.h`): it receives
 its `arguments` object as a JSON string and returns a JSON string (the tool-result payload) or
 a located error, which the server surfaces as an MCP `isError` tool result — not a JSON-RPC
-protocol error. The library parses/serializes internally with **nlohmann/json**
-(`JSON_NOEXCEPTION`, PRIVATE); cpp-httplib and the JSON type never appear in a public header.
-This keeps `veng::mcp` inside the include-hygiene guarantee — the `mcp_include_hygiene` test
-compiles every `Veng/Mcp/` header while linking only the PUBLIC deps, so a leaked backend or
-JSON include fails to build. Internally, `ReflectToJson.h` (which *does* name `nlohmann::json`)
+protocol error. No `Veng/Mcp/` header names `nlohmann::json` or `httplib::` directly — the
+library parses/serializes internally with **nlohmann/json** (`JSON_NOEXCEPTION`, PRIVATE) and
+transports over cpp-httplib (PRIVATE); `ReflectToJson.h` (which *does* name `nlohmann::json`)
 is an implementation header, never part of the public surface.
+
+That per-header discipline is no longer the whole story: `veng::mcp` links `veng::veng`
+PUBLIC, and `veng::veng` itself carries nlohmann/json PUBLIC (the engine's
+`Veng/Reflection/JsonSerialize.h` names `json` types — see
+[engine/CLAUDE.md](../engine/CLAUDE.md)), so nlohmann reaches every `veng::mcp` consumer
+transitively regardless of what an Mcp header names. **`mcp_include_hygiene`'s contract has
+narrowed to httplib-only** — it still proves no `Veng/Mcp/` header leaks the vendored
+transport, but it can no longer distinguish "an Mcp header leaks nlohmann" from "nlohmann
+always rides along via `veng::veng`," so it stops asserting the JSON half. A consumer
+picks up nlohmann the moment it links `veng::mcp` (or, for that matter, `veng::veng` alone) —
+it is not an *extra* dependency `veng::mcp` adds on top.
 
 An `McpTool` also carries an `InputSchemaJson` (surfaced verbatim as the tool's `inputSchema`
 in `tools/list`) and a `ReturnsContentBlocks` flag: a plain tool's returned JSON is wrapped in
@@ -300,12 +311,14 @@ the worked reference — its `StartMcpServerIfRequested` is that recipe, env-gat
 
 `veng_mcp` builds **unconditionally from source** when veng is built, but is linked **only**
 when a consumer names it — it is not gated by a build option, mirroring `veng::graph`'s posture.
-It links `veng::veng` PUBLIC (so a consumer resolves the house-vocabulary includes through the
-link); nlohmann/json, cpp-httplib, stb_image_write, and `Threads::Threads` are PRIVATE. It joins
-the `vengTargets` export set and installs its `Veng/Mcp/` headers beside `libveng`, so an
-out-of-tree `find_package(veng)` consumer can `target_link_libraries(app veng::mcp)` and the
-installed `veng-editor` links it. Because nlohmann/json and httplib stay PRIVATE, a consumer
-needs no extra `find_dependency` in `veng-config`.
+It links `veng::veng` PUBLIC (so a consumer resolves the house-vocabulary includes, and
+nlohmann/json transitively, through the link); cpp-httplib, stb_image_write, and
+`Threads::Threads` are PRIVATE, and `veng_mcp`'s own nlohmann/json link is a redundant PRIVATE
+edge the PUBLIC one already covers. It joins the `vengTargets` export set and installs its
+`Veng/Mcp/` headers beside `libveng`, so an out-of-tree `find_package(veng)` consumer can
+`target_link_libraries(app veng::mcp)` and the installed `veng-editor` links it. Because
+httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohmann_json)` for
+`veng::veng`, a `veng::mcp` consumer needs no *extra* `find_dependency` of its own.
 
 ## Tests
 
@@ -318,7 +331,8 @@ needs no extra `find_dependency` in `veng-config`.
 - **`mcp_mutation`** — the mutation tools behind `AllowMutations`, including the routed
   `ApplyMutation` hook.
 - **`mcp_include_hygiene`** — compiles every `Veng/Mcp/` public header linking only the PUBLIC
-  deps, guarding the JSON-library-free surface.
+  deps, guarding the surface's httplib-free contract (nlohmann is no longer distinguishable
+  from the transitive `veng::veng` edge, so the test's JSON half is retired).
 - **`mcp_conformance`** — the shipping path: drive the hello-triangle server behind `HT_MCP`,
   assert the engine tool set is present and `render.stats` executes against the primary
   viewport.

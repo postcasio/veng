@@ -119,7 +119,7 @@ an unknown device/axis/kind name. Add the source to the asset pack manifest like
 any other asset:
 
 ```json
-{ "id": 16596091148679838649, "type": "input_map", "source": "input/gameplay.inputmap.json" }
+{ "id": 16596091148679838649, "type": "InputMap", "source": "input/gameplay.inputmap.json" }
 ```
 
 The bindings are **data**, so retargeting `Jump` from Space to Enter, or adding a

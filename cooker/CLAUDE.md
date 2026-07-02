@@ -62,7 +62,8 @@ at cook time:
   serializable `ShaderInterface`; the engine then loads plain SPIR-V. (There is no
   `glslc` / `add_shaders` path — GLSL was removed project-wide.)
 - **A fragment shader's source can be a graph, not a `.slang` file.** A `*.shader.json` whose
-  `"source"` ends in `.graph.json` (plus a `"domain"`: `surface` | `postprocess`) is cooked by
+  `"source"` ends in `.graph.json` (plus a `"domain"`: `"Surface"` | `"PostProcess"`,
+  `MaterialDomain`'s exact enumerator spellings) is cooked by
   walking the graph into Slang fragment text via the shared `veng::graph` emit walk, then
   compiling and reflecting that text through the **same** `ShaderImporter` / `SlangReflect`
   SPIR-V path a hand-authored `.slang` takes — Slang loads it from a source string, since the
@@ -194,19 +195,27 @@ The **prefab-cooking path** is the one place the Vulkan-free cooker relaxes its
 separation: it links `veng::veng` and reuses `ModuleLoader` to `dlopen` a game module
 and reflect its types — scoped to that load path (the graphics stack is linked but
 never initialized). `vengc cook --module <lib>` reflects the module's component types
-into a `TypeRegistry` (ABI-version check included), so the `PrefabImporter` validates a
-prefab's components against the **real** reflected descriptors — an unknown component,
-a wrong field type, or a malformed value is a located cook-time error. A field absent
-from the source keeps its default-constructed value (schema tolerance): omission is
-allowed, type-mismatch is not.
+into a `TypeRegistry` (ABI-version check included), so the **`PrefabImporter`** binds
+each component through the shared `JsonReadFields` walker
+(`Veng/Reflection/JsonSerialize.h`) against the **real** reflected descriptors — an
+unknown component, a wrong field type, or a malformed value is a located cook-time
+error naming the walker's dotted field path, prefixed with the importer's own
+file/entity/component context. A field absent from the source keeps its
+default-constructed value (schema tolerance): omission is allowed, type-mismatch is
+not. What is genuinely the importer's own is supplied as `JsonFieldHooks`:
+`ValidateAssetId` runs the pack-resolve type check
+(`AssetTypeForHandleField`/`AssetTypeAccepted` against the resolver, reporting the
+expected asset type **by name**) and `ReadReference` maps a JSON value to the
+prefab-local entity index. Everything else — the entity/component table walk, `TypeId`
+resolution against the registry, and the `WriteFields` blob emission — stays the
+importer's own.
 
 A **`FieldClass::Variant`** field is authored as `{ "type": <fully-qualified name>, "value":
-{…fields…} }`; the importer matches `"type"` against each of the variant's alternatives by
+{…fields…} }`; the walker matches `"type"` against each of the variant's alternatives by
 its `TypeInfo.QualifiedName` (`TypeNameMatches`, strict — a leading `::` is tolerated but a
-bare unqualified name is not) — (a name not among them is a located error), selects that
-alternative, and recurses `BindField` into `"value"`, emitting the same `TypeId`
-tag-plus-record bytes the engine reader expects. An absent or empty-`"type"` variant
-stays empty.
+bare unqualified name is not) — a name not among them is a located error — selects that
+alternative, and recurses into `"value"`, emitting the same `TypeId` tag-plus-record bytes
+the engine reader expects. An absent or empty-`"type"` variant stays empty.
 
 This rests on the **GPU-free type-registration contract** (`RegisterBuiltinTypes`,
 `Register<T>()`, a module's `VengModuleRegister` touch no `Context`/device): the
@@ -215,14 +224,17 @@ test pins the contract.
 
 The **`LevelImporter`** cooks a `*.level.json` (a world prefab reference + the ordered
 system set + the game-mode/render config) into the `CookedLevel` blob, beside the
-`PrefabImporter` and on the same module-reflection relaxation. It requires the
-`--module`-loaded `TypeRegistry` **and** `SystemRegistry` (absent → a "requires
-`--module`" error), and validates the level against the **real** reflected/registered
-surface: the world-prefab reference resolves, each `systems` id resolves against the
-catalog, and the `gameMode`/`render` config validate against their reflected struct
-descriptors — the same located-error discipline `PrefabImporter` applies to components. It
-emits the two config records through libveng's `WriteFields`, so the cooker and the runtime
-loader share one encoder.
+`PrefabImporter` and on the same module-reflection relaxation, and binds its config
+records (`GameModeConfig`, `LevelRenderSettings`, the session seed) through the
+**same** `JsonReadFields` walker — no hooks of its own (a `Reference` field in level
+config is a located error, a deliberate posture rather than an unsupported-field-class
+gap). It requires the `--module`-loaded `TypeRegistry` **and** `SystemRegistry` (absent
+→ a "requires `--module`" error), and validates the level against the **real**
+reflected/registered surface: the world-prefab reference resolves, each `systems` id
+resolves against the catalog, and the `gameMode`/`render` config validate against
+their reflected struct descriptors — the same located-error discipline `PrefabImporter`
+applies to components. It emits the two config records through libveng's `WriteFields`,
+so the cooker and the runtime loader share one encoder.
 
 ## `vengc` subcommands
 

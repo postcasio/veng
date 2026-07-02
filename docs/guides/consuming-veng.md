@@ -112,6 +112,15 @@ local-checkout redirect) are supported; neither is privileged.
   downstream cook references them) and `VENG_PACKAGE_MODE` (`INSTALL` /
   `BUILD_TREE`, unset in-tree).
 
+`veng::veng` carries **nlohmann/json** as a PUBLIC dependency — the engine's
+`Veng/Reflection/JsonSerialize.h` names `json` types directly, so a consumer linking
+`veng::veng` (or anything that links it in turn: `veng::graph`, `veng::mcp`,
+`veng_editor::veng_editor`) resolves nlohmann transitively with no extra
+`find_package`/`target_link_libraries` of your own. It is FetchContent-pinned at the
+top level like every other veng dependency, `veng-config` carries a
+`find_dependency(nlohmann_json)` in the install-prefix mode, and the build-tree mode
+already has the target in scope from the engine's own configure.
+
 `veng-editor --version` prints `veng-editor <version>` and exits before opening a
 window or creating a device — the SDK identity probe. It is what the conformance
 tests run to confirm the installed/build-tree editor resolves its runtime linkage.

@@ -58,8 +58,10 @@ is thin (shared deps + `add_subdirectory` per lib).
   Context Protocol. The consumer constructs one `McpServer` from an `McpHost`, hands it the
   systems it wants reachable, and pumps it once per frame; the server runs a loopback MCP
   endpoint on a background thread and marshals every engine-touching request onto the render
-  thread. Links `veng::veng` PUBLIC; nlohmann/json + cpp-httplib (vendored) PRIVATE, so the
-  public `Veng/Mcp/` surface stays JSON-library-free. **Not** linked by `libveng` — a
+  thread. Links `veng::veng` PUBLIC (which carries nlohmann/json PUBLIC in turn, so it is now
+  transitively public on `veng::mcp` too) plus cpp-httplib (vendored) PRIVATE; no `Veng/Mcp/`
+  header names a JSON type directly, but the public surface is no longer JSON-library-free —
+  `mcp_include_hygiene` guards httplib only. **Not** linked by `libveng` — a
   distinct target a consumer opts into, exactly as `veng::graph` is. Editor-free: the engine
   tools live here, the editor registers its own into the same server (`editor/src/EditorMcp`).
 - `examples/hello-triangle/` — the canonical **maximal** sample app and the smoke
@@ -239,19 +241,26 @@ wiring lives in `cmake/Docs.cmake`; the target is absent without Doxygen.
 
 Dependencies (fmt, VMA, nfd, tinyexr, stb, ImGui, imnodes, zstd) are pulled via
 `FetchContent` with pinned tags — no system install needed beyond Vulkan, GLFW,
-glm, and zlib (`find_package`). **zstd is the one third-party codec linked into
-`libveng`** (transitively, PUBLIC through `assetpack`, which inflates compressed
-archive blobs at runtime); it adds no public-header include (the codec is a plain
-enum field, all zstd calls confined to `Archive.cpp`). The cooker's heavy/toolchain
-deps (nlohmann/json, assimp, and Slang for shader compile + reflection, plus the
-**`bc7enc_rdo` / `astc-encoder` texture encoders**) are **cooker-only** — linked into
+glm, and zlib (`find_package`). **nlohmann/json is a PUBLIC dependency of `libveng`**,
+joining glm/fmt/ImGui in the `include_hygiene` link set: the engine's
+`Veng/Reflection/JsonSerialize.h` names `json` types directly (see
+[engine/CLAUDE.md](engine/CLAUDE.md)), so every consumer that links `veng::veng` —
+`veng::graph`, `libveng_editor`, `veng::mcp`, `vengc` — now resolves nlohmann
+transitively through that one edge; their own PRIVATE nlohmann links are redundant but
+harmless. The SDK export/install carries it (`find_dependency(nlohmann_json)` in
+`veng-config`, an installed copy for the install-prefix mode). **zstd is the one
+third-party codec linked into `libveng`** (transitively, PUBLIC through `assetpack`,
+which inflates compressed archive blobs at runtime); it adds no public-header include
+(the codec is a plain enum field, all zstd calls confined to `Archive.cpp`). The
+cooker's heavy/toolchain deps (assimp, and Slang for shader compile + reflection, plus
+the **`bc7enc_rdo` / `astc-encoder` texture encoders**) are **cooker-only** — linked into
 `vengc` alone, never into `libveng` or its consumers, which load the *binary* archive
 and never parse or encode a source asset. The **optional `veng::mcp`** library adds one
-more pinned dep — **cpp-httplib** (a vendored single header, its transport TU compiled
-`-fexceptions`) — plus nlohmann/json and stb, all **PRIVATE** to `veng_mcp`: they reach
-neither `libveng` nor a `Veng/Mcp/` public header, so a consumer that links `veng::mcp`
-pulls in no new public dependency, exactly as linking `veng::graph` (which links
-nlohmann/json PRIVATE) does not.
+more pinned dep of its own — **cpp-httplib** (a vendored single header, its transport TU
+compiled `-fexceptions`) — PRIVATE to `veng_mcp`: it reaches neither `libveng` nor a
+`Veng/Mcp/` public header, so linking `veng::mcp` adds no *new* public dependency beyond
+what `veng::veng` already carries (nlohmann/json is not new — it rides in with every
+`veng::veng` link, mcp included).
 
 ### Build configurations — role on the asset, format on the platform
 
