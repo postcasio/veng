@@ -38,7 +38,7 @@
           "Damping": 5.0
         },
         "::Veng::Authority": {
-          "Tier": 1,
+          "Tier": "Local",
           "Owner": 0
         }
       }
@@ -61,7 +61,7 @@
           "Pawn": 2
         },
         "::Veng::Authority": {
-          "Tier": 1,
+          "Tier": "Local",
           "Owner": 0
         }
       }
@@ -95,7 +95,7 @@
           "TurnSpeed": 2.0
         },
         "::Veng::Authority": {
-          "Tier": 0,
+          "Tier": "Server",
           "Owner": 0
         }
       }

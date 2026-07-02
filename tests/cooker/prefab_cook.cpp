@@ -261,7 +261,7 @@ TEST_CASE("prefab cook: an unknown field is a located error")
     const Result<vector<u8>> blob = CookPrefab(packJson, &module.Types, {}, AssetId{4242});
     REQUIRE_FALSE(blob.has_value());
     CHECK(blob.error().find("Nonexistent") != string::npos);
-    CHECK(blob.error().find("not in the component's descriptor") != string::npos);
+    CHECK(blob.error().find("unknown field") != string::npos);
 }
 
 TEST_CASE("prefab cook: an omitted field keeps its default value")

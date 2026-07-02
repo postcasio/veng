@@ -12,6 +12,7 @@
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Cook/JsonFile.h>
+#include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -23,168 +24,16 @@ namespace Veng::Cook
     namespace
     {
         // Located-error prefix for a level config field.
-        string Located(const string& file, const string& section, const string& field,
-                       const string& reason)
+        string Located(const string& file, const string& section, const string& reason)
         {
-            return fmt::format("level importer: '{}': {}: field '{}': {}", file, section, field,
-                               reason);
+            return fmt::format("level importer: '{}': {}: {}", file, section, reason);
         }
 
-        // Binds one JSON value into the field at obj+field.Offset, validating it against the
-        // field's FieldClass / leaf TypeId. The level config structs are scalar/vector/handle
-        // records (game mode, render settings), so this covers Scalar, Vector, AssetHandle, and a
-        // nested Struct; an unsupported class is a located error rather than silent omission.
-        VoidResult BindField(void* obj, const FieldDescriptor& field, const json& value,
-                             const TypeRegistry& registry, const string& file,
-                             const string& section)
-        {
-            auto err = [&](const string& reason)
-            { return std::unexpected(Located(file, section, field.Name, reason)); };
-
-            void* fieldPtr = static_cast<u8*>(obj) + field.Offset;
-
-            switch (field.Class)
-            {
-            case FieldClass::Scalar:
-            {
-                if (!value.is_number() && !value.is_boolean())
-                {
-                    return err("expected a number or boolean");
-                }
-
-                const TypeId t = field.Type;
-                if (t == TypeIdOf<bool>())
-                {
-                    const bool v =
-                        value.is_boolean() ? value.get<bool>() : (value.get<f64>() != 0.0);
-                    std::memcpy(fieldPtr, &v, sizeof(v));
-                }
-                else if (t == TypeIdOf<f32>())
-                {
-                    const f32 v = value.get<f32>();
-                    std::memcpy(fieldPtr, &v, sizeof(v));
-                }
-                else if (t == TypeIdOf<i32>())
-                {
-                    const i32 v = value.get<i32>();
-                    std::memcpy(fieldPtr, &v, sizeof(v));
-                }
-                else if (t == TypeIdOf<u32>())
-                {
-                    const u32 v = value.get<u32>();
-                    std::memcpy(fieldPtr, &v, sizeof(v));
-                }
-                else if (t == TypeIdOf<u64>())
-                {
-                    const u64 v = value.get<u64>();
-                    std::memcpy(fieldPtr, &v, sizeof(v));
-                }
-                else
-                {
-                    return err("unsupported scalar leaf type");
-                }
-                return {};
-            }
-
-            case FieldClass::Vector:
-            {
-                // Components are written in the field's storage type — f32 for a float vector, u32
-                // for an unsigned-integer vector — arity = byte size / component size.
-                const bool unsignedVector = field.Type == TypeIdOf<uvec2>();
-                const usize componentSize = unsignedVector ? sizeof(u32) : sizeof(f32);
-                const usize arity = registry.Info(field.Type).Size / componentSize;
-
-                if (!value.is_array() || value.size() != arity)
-                {
-                    return err(fmt::format("expected an array of {} numbers", arity));
-                }
-                for (const json& elem : value)
-                {
-                    if (!elem.is_number())
-                    {
-                        return err("array contains a non-number element");
-                    }
-                }
-
-                if (unsignedVector)
-                {
-                    vector<u32> components;
-                    components.reserve(arity);
-                    for (const json& elem : value)
-                    {
-                        components.push_back(elem.get<u32>());
-                    }
-                    std::memcpy(fieldPtr, components.data(), arity * sizeof(u32));
-                }
-                else
-                {
-                    vector<f32> components;
-                    components.reserve(arity);
-                    for (const json& elem : value)
-                    {
-                        components.push_back(elem.get<f32>());
-                    }
-                    std::memcpy(fieldPtr, components.data(), arity * sizeof(f32));
-                }
-                return {};
-            }
-
-            case FieldClass::AssetHandle:
-            {
-                if (!value.is_number_unsigned())
-                {
-                    return err("expected an unsigned integer AssetId");
-                }
-
-                // The handle stores the AssetId at offset 0 (pinned in AssetHandle.h); write the
-                // raw id there. Residency is the runtime's job — the loader rehydrates it.
-                const u64 id = value.get<u64>();
-                std::memcpy(fieldPtr, &id, sizeof(id));
-                return {};
-            }
-
-            case FieldClass::Struct:
-            {
-                if (!value.is_object())
-                {
-                    return err("expected an object");
-                }
-
-                const TypeInfo& nested = registry.Info(field.Type);
-                for (auto it = value.begin(); it != value.end(); ++it)
-                {
-                    const FieldDescriptor* match = nullptr;
-                    for (const FieldDescriptor& nestedField : nested.Fields)
-                    {
-                        if (nestedField.Name == it.key())
-                        {
-                            match = &nestedField;
-                            break;
-                        }
-                    }
-                    if (match == nullptr)
-                    {
-                        return err(fmt::format("nested field '{}' is not in type '{}'", it.key(),
-                                               nested.Name));
-                    }
-                    const VoidResult bound =
-                        BindField(fieldPtr, *match, it.value(), registry, file, section);
-                    if (!bound)
-                    {
-                        return bound;
-                    }
-                }
-                return {};
-            }
-
-            default:
-                return err("unsupported field class in level config");
-            }
-        }
-
-        // Binds a JSON config object into a default-constructed instance of `type`, validating
-        // each field, then serializes the instance via WriteFields into `out`. Omitted fields
+        // Binds a JSON config object into a default-constructed instance of `type` through the
+        // shared walker, then serializes the instance via WriteFields into `out`. Omitted fields
         // keep their default (schema tolerance); an unknown or malformed field is a located error.
+        // Reference stays unset, so a Reference field in level config is a located error — the
+        // level config records (game mode, render settings) name no entity.
         Result<vector<u8>> CookConfigRecord(const json& configJson, const TypeInfo& type,
                                             const TypeRegistry& registry, const string& file,
                                             const string& section)
@@ -192,30 +41,10 @@ namespace Veng::Cook
             vector<u8> instance(type.Size);
             type.DefaultConstruct(instance.data());
 
-            VoidResult bindResult{};
-            for (auto it = configJson.begin(); it != configJson.end(); ++it)
+            VoidResult bindResult = JsonReadFields(instance.data(), type, configJson, registry);
+            if (!bindResult)
             {
-                const FieldDescriptor* match = nullptr;
-                for (const FieldDescriptor& f : type.Fields)
-                {
-                    if (f.Name == it.key())
-                    {
-                        match = &f;
-                        break;
-                    }
-                }
-                if (match == nullptr)
-                {
-                    bindResult = std::unexpected(Located(
-                        file, section, it.key(), "field is not in the config's descriptor"));
-                    break;
-                }
-                bindResult =
-                    BindField(instance.data(), *match, it.value(), registry, file, section);
-                if (!bindResult)
-                {
-                    break;
-                }
+                bindResult = std::unexpected(Located(file, section, bindResult.error()));
             }
 
             vector<u8> record;

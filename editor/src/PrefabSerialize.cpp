@@ -3,6 +3,7 @@
 #include "JsonUtil.h"
 
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Reflection/EnumName.h>
 #include <Veng/Reflection/FieldDescriptor.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -157,12 +158,10 @@ namespace VengEditor
 
             case FieldClass::Enum:
             {
-                // The low `size` bytes of the backing integer, written as an integer — the inverse
-                // of BindField's low-byte enum write.
-                const usize size = registry.Info(field.Type).Size;
-                u64 bits = 0;
-                std::memcpy(&bits, fieldPtr, size);
-                return static_cast<i64>(bits);
+                // Written as the enumerator's authored name — the cooker's JsonReadFields
+                // accepts a string only, never an ordinal.
+                const TypeInfo& info = registry.Info(field.Type);
+                return EnumeratorName(info, LoadEnumBits(fieldPtr, info));
             }
 
             case FieldClass::Reference:

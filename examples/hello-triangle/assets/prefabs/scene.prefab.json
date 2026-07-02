@@ -4481,7 +4481,7 @@
           ]
         },
         "::Veng::Light": {
-          "Type": 0,
+          "Type": "Directional",
           "Direction": [
             -0.3,
             -1.0,

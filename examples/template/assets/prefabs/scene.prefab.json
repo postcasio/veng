@@ -28,7 +28,7 @@
           "Scale": [1.0, 1.0, 1.0]
         },
         "::Veng::Light": {
-          "Type": 0,
+          "Type": "Directional",
           "Direction": [-0.324442, -0.811107, -0.486664],
           "Color": [1.0, 1.0, 1.0],
           "Intensity": 3.0
@@ -47,7 +47,7 @@
         },
         "::Veng::ConstantMotion": {
           "AngularVelocity": [0.0, 0.6, 0.0],
-          "Space": 1
+          "Space": "World"
         },
         "::Veng::MeshRenderer": {
           "Source": {

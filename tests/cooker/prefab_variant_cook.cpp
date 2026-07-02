@@ -211,8 +211,8 @@ TEST_CASE("prefab variant cook: a nested field not on the chosen alternative is 
 
     const Result<vector<u8>> blob = CookVariantPrefab("prefab_variant_badnested", fields, registry);
     REQUIRE_FALSE(blob.has_value());
-    CHECK(blob.error().find("Width") != string::npos);
-    CHECK(blob.error().find("SphereShape") != string::npos);
+    CHECK(blob.error().find("Shape.value.Width") != string::npos);
+    CHECK(blob.error().find("unknown field") != string::npos);
 }
 
 TEST_CASE("prefab variant cook: an omitted variant field loads empty")
