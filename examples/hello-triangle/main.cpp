@@ -22,7 +22,10 @@
 #include <Veng/Mcp/McpServerInfo.h>
 
 #include <Veng/Input.h>
+#include <Veng/Input/Actions.h>
+#include <Veng/Input/RawInput.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/AnimationSystem.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/CameraRig.h>
@@ -80,93 +83,105 @@ public:
 
 VE_SYSTEM(SpinnerSystem, 0xB5BB5153EC6ACDDEULL, "Spinner");
 
-// The game's button-bit layout for a PlayerInput's bitset. Bit meanings are game
-// policy; the engine treats the bitset as opaque.
-enum class PlayerButton : u32
+// The game's named input actions. Each is a minted ActionId a control system references and
+// a binding context targets — the AssetId pattern for input. An action exists by being
+// declared in a context, so there is no registry.
+namespace Actions
 {
-    Jump = 1u << 0,
-};
+    // Movement axes: X strafes (D +1 / A -1), Y advances (W +1 / S -1).
+    constexpr ActionId Move{0x74080D78CF763EC4ULL};
+    // Look axes: raw mouse delta (X yaw, Y pitch).
+    constexpr ActionId Look{0x6DB6F4088653942DULL};
+    // Jump button.
+    constexpr ActionId Jump{0xB64A2DFE34C4E523ULL};
+}
 
-// Maps a captured PlayerInput snapshot to an abstract Intent — the game-specific control
-// policy. Pure: the same snapshot always yields the same Intent, whether it came from the
-// device, a recording, or the wire, so it is unit-testable without an Input or a scene.
+// The gameplay input context: WASD → the 2D Move action, the mouse delta → the 2D Look
+// action, Space → the Jump button. Seeded onto a seat's InputContextStack when gameplay
+// has focus; Plan 02 replaces this in-C++ context with a cooked InputMappingContext asset.
+ResolvedContext GameplayContext()
+{
+    using Src = InputSource;
+    return ResolvedContext{
+        .Actions = {InputAction{.Id = Actions::Move, .Name = "Move", .Kind = ActionKind::Axis2D},
+                    InputAction{.Id = Actions::Look, .Name = "Look", .Kind = ActionKind::Axis2D},
+                    InputAction{.Id = Actions::Jump, .Name = "Jump", .Kind = ActionKind::Button}},
+        .Bindings = {Binding{.Source = Src{.Device = InputDeviceType::Keyboard,
+                                           .Control = static_cast<u32>(Key::D)},
+                             .Action = Actions::Move,
+                             .Axis = AxisComponent::X,
+                             .Scale = 1.0f},
+                     Binding{.Source = Src{.Device = InputDeviceType::Keyboard,
+                                           .Control = static_cast<u32>(Key::A)},
+                             .Action = Actions::Move,
+                             .Axis = AxisComponent::X,
+                             .Scale = -1.0f},
+                     Binding{.Source = Src{.Device = InputDeviceType::Keyboard,
+                                           .Control = static_cast<u32>(Key::W)},
+                             .Action = Actions::Move,
+                             .Axis = AxisComponent::Y,
+                             .Scale = 1.0f},
+                     Binding{.Source = Src{.Device = InputDeviceType::Keyboard,
+                                           .Control = static_cast<u32>(Key::S)},
+                             .Action = Actions::Move,
+                             .Axis = AxisComponent::Y,
+                             .Scale = -1.0f},
+                     Binding{.Source = Src{.Device = InputDeviceType::MouseAxis,
+                                           .Control = RawInput::MouseAxisX},
+                             .Action = Actions::Look,
+                             .Axis = AxisComponent::X,
+                             .Scale = 1.0f},
+                     Binding{.Source = Src{.Device = InputDeviceType::MouseAxis,
+                                           .Control = RawInput::MouseAxisY},
+                             .Action = Actions::Look,
+                             .Axis = AxisComponent::Y,
+                             .Scale = 1.0f},
+                     Binding{.Source = Src{.Device = InputDeviceType::Keyboard,
+                                           .Control = static_cast<u32>(Key::Space)},
+                             .Action = Actions::Jump,
+                             .Axis = AxisComponent::Whole,
+                             .Scale = 1.0f}}};
+}
+
+// Maps a resolved PlayerInput to an abstract Intent — the game-specific control policy,
+// reading actions by name. Pure: the same action state always yields the same Intent,
+// whether the actions came from the device, a recording, or the wire, so it is unit-testable
+// without an Input or a scene. WASD advances in the pawn's local frame — the pawn faces its
+// local -Z (the follow camera trails behind looking that way), so the forward action drives
+// move toward -Z. Only the yaw drives the pawn; pitch tilts the follow camera, not the body,
+// and is applied in the control system. The Mover's TurnSpeed scales the yaw.
 Intent MapInputToIntent(const PlayerInput& input)
 {
+    // Mouse X yaws the pawn, negated so moving the mouse right turns the view right (the
+    // engine integrates Look.x * TurnSpeed * delta about world up).
+    constexpr f32 YawSensitivity = 0.05f;
+    const vec2 move = input.GetValue(Actions::Move);
+    const vec2 look = input.GetValue(Actions::Look);
+
     Intent intent;
-    intent.Move = input.Move;
-    // Only the yaw drives the pawn; the pitch tilts the follow camera, not the body. The
-    // Mover's TurnSpeed scales the yaw.
-    intent.Look = vec2(input.Look.x, 0.0f);
-    intent.Actions = input.Buttons;
+    intent.Move = vec3(move.x, 0.0f, -move.y);
+    intent.Look = vec2(-look.x * YawSensitivity, 0.0f);
+    intent.Actions = input.IsHeld(Actions::Jump) ? 1u : 0u;
     return intent;
 }
 
-// The game-specific control system: reads the always-present Veng::Input each tick into
-// the local player's PlayerInput snapshot, then maps that snapshot to the possessed pawn's
-// Intent through MapInputToIntent. It reads Input unconditionally — in headless the service
-// reports all-zeros, so it naturally produces a zero Intent and the pawn stays put, with no
-// null to guard. It writes Intent through the scene accessor, never a retained reference.
+// The game-specific control system: reads each seat's resolved PlayerInput (filled by the
+// engine's InputMappingSystem, which must run before this) and maps it to the possessed
+// pawn's Intent through MapInputToIntent. It reads no raw device state — in headless the
+// resolved actions are all-None, so it produces a zero Intent and the pawn stays put, with
+// no null to guard. It writes Intent through the scene accessor, never a retained reference.
 class ControlSystem final : public SceneSystem
 {
 public:
-    void OnUpdate(Scene& scene, const f32, const SystemContext& context) override
+    void OnUpdate(Scene& scene, const f32, const SystemContext&) override
     {
-        const Input& input = context.Input;
-
-        // Control runs only while the cursor is captured (gameplay focus). Released for the
-        // debug UI, the snapshot still mirrors input, so gating on capture leaves the pawn
-        // and follow camera still while ImGui owns the mouse — all axes read zero.
-        const bool active = input.IsMouseCaptured();
-
-        // WASD strafes/advances in the pawn's local frame; Space requests a jump action.
-        // The pawn faces its local -Z (the camera trails behind looking that way), so W
-        // advances toward -Z and S retreats toward +Z.
-        vec3 move{0.0f};
-        u32 buttons = 0;
-        if (active)
-        {
-            if (input.IsKeyDown(Key::W))
-            {
-                move.z -= 1.0f;
-            }
-            if (input.IsKeyDown(Key::S))
-            {
-                move.z += 1.0f;
-            }
-            if (input.IsKeyDown(Key::D))
-            {
-                move.x += 1.0f;
-            }
-            if (input.IsKeyDown(Key::A))
-            {
-                move.x -= 1.0f;
-            }
-
-            if (input.IsKeyDown(Key::Space))
-            {
-                buttons |= static_cast<u32>(PlayerButton::Jump);
-            }
-        }
-
-        // GetMouseDelta is raw pixels. Mouse X yaws the pawn, negated so moving the mouse
-        // right turns the view right (the engine integrates Look.x * TurnSpeed * delta about
-        // world up). Mouse Y tilts the follow camera; it accumulates as a direct, clamped
-        // angle below, so it uses its own small per-pixel scale rather than the yaw rate.
-        constexpr f32 YawSensitivity = 0.05f;
-        constexpr f32 PitchSensitivity = 0.005f;
-        const vec2 mouse = active ? input.GetMouseDelta() : vec2(0.0f);
-        const vec2 look = {-mouse.x * YawSensitivity, 0.0f};
-        const f32 cameraPitchDelta = -mouse.y * PitchSensitivity;
-
         scene.Each<PlayerInput, Possesses>(
             [&](const Entity seat, PlayerInput& player, Possesses& possesses)
             {
-                player.Move = move;
-                player.Look = look;
-                player.Buttons = buttons;
-
                 // Mouse Y pitches the seat's follow camera around the pawn, clamped so it
                 // never orbits over the top or under the floor — the body stays upright.
+                constexpr f32 PitchSensitivity = 0.005f;
+                const f32 cameraPitchDelta = -player.GetValue(Actions::Look).y * PitchSensitivity;
                 if (const Viewer* viewer = scene.TryGet<Viewer>(seat);
                     viewer != nullptr && viewer->Camera != Entity::Null &&
                     scene.IsAlive(viewer->Camera) && scene.Has<CameraFollow>(viewer->Camera))
@@ -411,6 +426,48 @@ protected:
         else if (GetInput().WasMouseButtonPressed(MouseButton::Left) && !UI::WantCaptureMouse())
         {
             GetInputRouter().PushFocus(InputFocus::Gameplay);
+        }
+
+        // The gameplay context is active exactly while gameplay has focus: pushing it onto each
+        // seat's InputContextStack lets InputMappingSystem resolve WASD/mouse/Space; popping it
+        // (an empty stack) resolves every action to None, so the pawn and follow camera stay
+        // still while ImGui owns the mouse — the InputContextStack replacing the old raw-capture
+        // gate. The seat is spawned by the game-mode rule, so this runs each frame outside any
+        // iteration once the seat exists.
+        SyncGameplayContext(GetInputRouter().IsGameplayFocused());
+    }
+
+    // Pushes or pops the gameplay context on every seat's InputContextStack so it matches the
+    // current gameplay focus. Idempotent: a focused seat with the context already active, or an
+    // unfocused seat with an empty stack, is left untouched, so it is safe to call every frame.
+    void SyncGameplayContext(const bool focused)
+    {
+        Scene* world = GetWorld();
+        if (world == nullptr)
+        {
+            return;
+        }
+
+        // Collect seats first: adding an InputContextStack is a structural change, illegal
+        // during a View/Each iteration, so the mutation runs after the query closes.
+        vector<Entity> seats;
+        world->Each<Viewer, PlayerInput>([&](const Entity seat, Viewer&, PlayerInput&)
+                                         { seats.emplace_back(seat); });
+
+        for (const Entity seat : seats)
+        {
+            InputContextStack& stack = world->Has<InputContextStack>(seat)
+                                           ? world->Get<InputContextStack>(seat)
+                                           : world->Add<InputContextStack>(seat, {});
+            const bool active = !stack.Active.empty();
+            if (focused && !active)
+            {
+                stack.Active.emplace_back(GameplayContext());
+            }
+            else if (!focused && active)
+            {
+                stack.Active.clear();
+            }
         }
     }
 

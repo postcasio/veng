@@ -38,6 +38,7 @@
 #include <Veng/Event.h>
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
+#include <Veng/Input/RawInput.h>
 #include <Veng/Log.h>
 #include <Veng/Result.h>
 #include <Veng/Time.h>
@@ -83,6 +84,7 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/Resolve.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>

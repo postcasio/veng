@@ -14,11 +14,17 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <algorithm>
+#include <array>
+
 #include <Veng/Input.h>
+#include <Veng/Input/Actions.h>
+#include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/Resolve.h>
 #include <Veng/Scene/Scene.h>
@@ -56,15 +62,75 @@ namespace
         }
     };
 
+    // The game's named actions, mirroring the example so the produced Intent is asserted
+    // without linking the game module. Arbitrary distinct non-zero ids.
+    constexpr ActionId Move{0xA1};
+    constexpr ActionId Look{0xB2};
+    constexpr ActionId Jump{0xC3};
+
+    // Builds a resolved PlayerInput carrying the given action values — the shape the engine's
+    // InputMappingSystem produces from a seat's contexts, hand-built here so the mapping is
+    // testable without the resolver.
+    PlayerInput MakeInput(const vec2 move, const vec2 look, const bool jump)
+    {
+        PlayerInput input;
+        input.State.Actions = {
+            ActionSample{.Id = Move, .Value = move, .Phase = ActionPhase::Ongoing},
+            ActionSample{.Id = Look, .Value = look, .Phase = ActionPhase::Ongoing},
+            ActionSample{.Id = Jump,
+                         .Value = vec2(jump ? 1.0f : 0.0f, 0.0f),
+                         .Phase = jump ? ActionPhase::Ongoing : ActionPhase::None}};
+        return input;
+    }
+
     // The control mapping under test mirrors the example's PlayerInput → Intent policy,
-    // so this suite can assert the produced Intent without linking the game module.
+    // reading actions by name, so this suite asserts the produced Intent without the game
+    // module. Move.x strafes, Move.y advances (mapped to -Z, the pawn's forward); only the
+    // yaw drives the pawn (pitch tilts the follow camera).
     Intent MapInputToIntent(const PlayerInput& input)
     {
+        constexpr f32 YawSensitivity = 0.05f;
+        const vec2 move = input.GetValue(Move);
+        const vec2 look = input.GetValue(Look);
+
         Intent intent;
-        intent.Move = input.Move;
-        intent.Look = input.Look;
-        intent.Actions = input.Buttons;
+        intent.Move = vec3(move.x, 0.0f, -move.y);
+        intent.Look = vec2(-look.x * YawSensitivity, 0.0f);
+        intent.Actions = input.IsHeld(Jump) ? 1u : 0u;
         return intent;
+    }
+
+    // Keyboard control codes the fake and the bindings agree on.
+    constexpr u32 KeyW = 1;
+    constexpr u32 KeyD = 2;
+
+    // A scripted raw input surface: keys down are a set, neutral by default.
+    struct FakeRawInput final : RawInputView
+    {
+        vector<u32> KeysDown;
+
+        [[nodiscard]] bool IsKeyDown(u32 code) const override
+        {
+            return std::ranges::find(KeysDown, code) != KeysDown.end();
+        }
+        [[nodiscard]] bool IsButtonDown(InputDeviceType, u32) const override { return false; }
+        [[nodiscard]] f32 GetAxis(InputDeviceType, u32) const override { return 0.0f; }
+    };
+
+    // A WASD → 2D Move + Jump context mirroring the example's gameplay bindings.
+    ResolvedContext GameplayContext()
+    {
+        return ResolvedContext{
+            .Actions = {InputAction{.Id = Move, .Name = "Move", .Kind = ActionKind::Axis2D},
+                        InputAction{.Id = Jump, .Name = "Jump", .Kind = ActionKind::Button}},
+            .Bindings = {Binding{.Source = {.Device = InputDeviceType::Keyboard, .Control = KeyD},
+                                 .Action = Move,
+                                 .Axis = AxisComponent::X,
+                                 .Scale = 1.0f},
+                         Binding{.Source = {.Device = InputDeviceType::Keyboard, .Control = KeyW},
+                                 .Action = Move,
+                                 .Axis = AxisComponent::Y,
+                                 .Scale = 1.0f}}};
     }
 
     Entity MakePawn(Scene& scene, vec3 position, const Mover& mover)
@@ -163,29 +229,26 @@ TEST_CASE("MovementSystem falls back to a default Mover when a pawn has none")
     CHECK(VecApprox(scene->Get<Transform>(pawn).Position, vec3(0.0f, 0.0f, 4.0f)));
 }
 
-TEST_CASE("Control mapping turns a synthetic PlayerInput into the expected Intent")
+TEST_CASE("Control mapping turns a resolved PlayerInput into the expected Intent")
 {
-    const PlayerInput input{
-        .Move = vec3(1.0f, 0.0f, -1.0f), .Look = vec2(0.2f, -0.1f), .Buttons = 0b101u};
+    // Move.x = strafe right, Move.y = advance forward; forward maps to the pawn's local -Z.
+    const PlayerInput input = MakeInput(vec2(1.0f, 1.0f), vec2(0.2f, -0.1f), true);
     const Intent intent = MapInputToIntent(input);
 
     CHECK(VecApprox(intent.Move, vec3(1.0f, 0.0f, -1.0f)));
-    CHECK(intent.Look.x == doctest::Approx(0.2f));
-    CHECK(intent.Look.y == doctest::Approx(-0.1f));
-    CHECK(intent.Actions == 0b101u);
+    // Yaw is the negated mouse-X delta scaled by the sensitivity; pitch does not drive the pawn.
+    CHECK(intent.Look.x == doctest::Approx(-0.2f * 0.05f));
+    CHECK(intent.Look.y == doctest::Approx(0.0f));
+    CHECK(intent.Actions == 1u);
 }
 
-TEST_CASE("A headless Input reads all-zeros, so the produced Intent is zero and nothing moves")
+TEST_CASE("A neutral resolved PlayerInput produces a zero Intent and nothing moves")
 {
-    // The control system reads Veng::Input unconditionally; the headless service reports the
-    // neutral all-zeros state, identical to an idle windowed frame.
-    const Input headless{nullptr};
-    PlayerInput captured;
-    captured.Move = vec3(headless.IsKeyDown(Key::D) ? 1.0f : 0.0f, 0.0f,
-                         headless.IsKeyDown(Key::W) ? 1.0f : 0.0f);
-    captured.Look = headless.GetMouseDelta();
+    // In headless the InputMappingSystem resolves every action to None over the neutral
+    // snapshot, so the seat's PlayerInput carries no active actions — an empty ActionState.
+    const PlayerInput neutral;
 
-    const Intent intent = MapInputToIntent(captured);
+    const Intent intent = MapInputToIntent(neutral);
     CHECK(VecApprox(intent.Move, vec3(0.0f)));
     CHECK(intent.Look.x == doctest::Approx(0.0f));
     CHECK(intent.Look.y == doctest::Approx(0.0f));
@@ -270,4 +333,90 @@ TEST_CASE("Moving a possessed pawn does not change a Viewer's resolved camera")
     const optional<CameraView> after = ResolveCameraView(*scene, seat, 1.0f);
     REQUIRE(after.has_value());
     CHECK(VecApprox(after->GetPosition(), before->GetPosition()));
+}
+
+TEST_CASE("End to end: scripted raw input resolves into PlayerInput and maps to the pawn's Intent")
+{
+    // The joined-up path the pure action_resolve suite does not cover: resolve a scripted
+    // raw snapshot against a seat's context into a PlayerInput, then map it to an Intent.
+    // D + W presses drive Move right and forward; forward maps to the pawn's local -Z.
+    FakeRawInput raw;
+    raw.KeysDown = {KeyD, KeyW};
+
+    const ResolvedContext context = GameplayContext();
+    const std::array active{context};
+
+    PlayerInput player;
+    player.State = ResolveActions(active, raw, player.State);
+
+    CHECK(player.GetValue(Move).x == doctest::Approx(1.0f));
+    CHECK(player.GetValue(Move).y == doctest::Approx(1.0f));
+
+    const Intent intent = MapInputToIntent(player);
+    CHECK(VecApprox(intent.Move, vec3(1.0f, 0.0f, -1.0f)));
+
+    // Feeding the produced Intent through the movement system moves the pawn on -Z (forward).
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+    const Entity pawn = MakePawn(*scene, vec3(0.0f), Mover{.MoveSpeed = 2.0f, .TurnSpeed = 1.0f});
+    scene->Get<Intent>(pawn) = intent;
+
+    MovementSystem movement;
+    ContextStorage storage;
+    movement.OnUpdate(*scene, 1.0f, storage.Make());
+
+    // Move = (1,0,-1) at speed 2 over 1s, no rotation: +2 on X, -2 on Z.
+    CHECK(VecApprox(scene->Get<Transform>(pawn).Position, vec3(2.0f, 0.0f, -2.0f)));
+}
+
+TEST_CASE("InputMappingSystem resolves each seat's PlayerInput; a neutral snapshot yields all-None")
+{
+    // The system wiring itself, driven with a real headless Input (all-zeros). The seat carries
+    // a Viewer + InputContextStack + PlayerInput; the neutral snapshot resolves every declared
+    // action to a None sample with zero value — the headless contract with no guard.
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    const Entity seat = scene->CreateEntity();
+    scene->Add<Viewer>(seat, Viewer{});
+    scene->Add<PlayerInput>(seat, PlayerInput{});
+    scene->Add<InputContextStack>(seat, InputContextStack{.Active = {GameplayContext()}});
+
+    InputMappingSystem mapping;
+    ContextStorage storage;
+    mapping.OnUpdate(*scene, 0.016f, storage.Make());
+
+    const PlayerInput& resolved = scene->Get<PlayerInput>(seat);
+    // Both declared actions get a sample even with no active binding.
+    REQUIRE(resolved.State.Actions.size() == 2);
+    CHECK(VecApprox(vec3(resolved.GetValue(Move), 0.0f), vec3(0.0f)));
+    CHECK_FALSE(resolved.IsHeld(Jump));
+    CHECK_FALSE(resolved.WasTriggered(Jump));
+}
+
+TEST_CASE(
+    "A PlayerInput entity round-trips through the reflection serializer's new ActionState shape")
+{
+    const TypeRegistry registry = MakeRegistry();
+
+    // A resolved PlayerInput carrying a Move axis and a triggered Jump — the shape a prefab
+    // persists and a net layer replicates.
+    PlayerInput src;
+    src.State.Actions = {
+        ActionSample{.Id = Move, .Value = vec2(0.5f, -0.25f), .Phase = ActionPhase::Ongoing},
+        ActionSample{.Id = Jump, .Value = vec2(1.0f, 0.0f), .Phase = ActionPhase::Started}};
+
+    vector<u8> bytes;
+    WriteFields(bytes, &src, registry.Info(registry.IdOf<PlayerInput>()), registry);
+
+    PlayerInput dst;
+    const VoidResult read =
+        ReadFields(bytes, &dst, registry.Info(registry.IdOf<PlayerInput>()), registry);
+    REQUIRE(read.has_value());
+
+    REQUIRE(dst.State.Actions.size() == 2);
+    CHECK(dst.GetValue(Move).x == doctest::Approx(0.5f));
+    CHECK(dst.GetValue(Move).y == doctest::Approx(-0.25f));
+    CHECK(dst.WasTriggered(Jump));
+    CHECK(dst.IsHeld(Jump));
 }

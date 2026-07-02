@@ -31,6 +31,7 @@ add_library(veng SHARED
         src/ExecutableDirectory.cpp
         src/Input.cpp
         src/Input/Actions.cpp
+        src/Input/RawInput.cpp
         src/InputRouter.cpp
         src/Log.cpp
         src/Math/AABB.cpp
@@ -58,6 +59,7 @@ add_library(veng SHARED
         src/Scene/Camera.cpp
         src/Scene/CameraRig.cpp
         src/Scene/ComponentPool.cpp
+        src/Scene/InputMappingSystem.cpp
         src/Scene/Motion.cpp
         src/Scene/Movement.cpp
         src/Scene/Resolve.cpp

@@ -26,6 +26,8 @@ namespace Veng
         // The control pipeline: per-player snapshot, abstract command, seat→pawn link,
         // and per-pawn movement tuning.
         registry.Register<PlayerInput>();
+        // Runtime-only seat scratch (VE_TYPE, no fields); pooled by the Scene, never serialized.
+        registry.Register<InputContextStack>();
         registry.Register<Intent>();
         registry.Register<Possesses>();
         registry.Register<Mover>();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Input/Actions.h>
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Reflection/Reflect.h>
@@ -298,22 +299,59 @@ namespace Veng
         f32 OuterCone{0.5f};
     };
 
-    /// @brief Per-player input snapshot — the serializable control chokepoint.
+    /// @brief Per-seat resolved input for this tick — the serializable action snapshot.
     ///
-    /// Captures this tick's control state for one player: movement axes, look axes,
-    /// and a button bitset. For a local player it is filled each tick from the engine
-    /// Veng::Input service; a remote player's would be filled from the wire. It is a
-    /// component snapshot rather than a direct device read so the downstream control
-    /// system runs identically regardless of where the input originated — the seam a
-    /// net layer serializes and replays.
+    /// The resolved values of the seat's active actions this tick (see Veng/Input/Actions.h),
+    /// produced by InputMappingSystem from the seat's InputContextStack. It is the control
+    /// chokepoint a net layer replicates and the uniform surface a control system reads by
+    /// action id — filled locally for an owned seat, from the wire for a remote one. It
+    /// serializes through the reflection serializer's name-keyed FieldClass::Array encoding
+    /// for its ActionState, each sample self-describing by its ActionId; there is no bespoke
+    /// wire format. The Get*/Was* methods delegate to State, a read-through convenience so a
+    /// control system reads input.WasTriggered(Actions::Jump) directly.
     struct PlayerInput
     {
-        /// @brief Movement axes this tick: X strafe, Y vertical, Z forward, each in [-1, 1].
-        vec3 Move{0.0f};
-        /// @brief Look axes this tick: X yaw, Y pitch, in arbitrary device units.
-        vec2 Look{0.0f};
-        /// @brief Pressed-button bitset; bit meanings are game policy.
-        u32 Buttons = 0;
+        /// @brief The resolved action set for the seat this tick.
+        ActionState State;
+
+        /// @brief Resolved value of an action, or zero when absent.
+        /// @param id  The action to look up.
+        /// @return The action's Value, or a zero vector when absent.
+        [[nodiscard]] vec2 GetValue(ActionId id) const { return State.GetValue(id); }
+
+        /// @brief Resolved x component of an action, the 1D-axis convenience.
+        /// @param id  The action to look up.
+        /// @return The action's Value.x, or zero when absent.
+        [[nodiscard]] f32 GetAxis(ActionId id) const { return State.GetAxis(id); }
+
+        /// @brief Whether an action is currently active (Started or Ongoing).
+        /// @param id  The action to look up.
+        /// @return True while the action is held.
+        [[nodiscard]] bool IsHeld(ActionId id) const { return State.IsHeld(id); }
+
+        /// @brief Whether an action became active this tick (Started).
+        /// @param id  The action to look up.
+        /// @return True on the tick the action activated.
+        [[nodiscard]] bool WasTriggered(ActionId id) const { return State.WasTriggered(id); }
+
+        /// @brief Whether an action was released this tick (Completed).
+        /// @param id  The action to look up.
+        /// @return True on the tick the action released.
+        [[nodiscard]] bool WasReleased(ActionId id) const { return State.WasReleased(id); }
+    };
+
+    /// @brief The ordered active input contexts for a seat, highest priority last.
+    ///
+    /// InputMappingSystem resolves these against the raw snapshot into the seat's PlayerInput.
+    /// Gameplay systems push/pop entries to switch schemes (enter a vehicle, open a modal). The
+    /// fine-grained, per-seat sibling of the InputRouter's coarse focus stack.
+    ///
+    /// This holds resolver-ready ResolvedContexts directly, seeded in C++: it is runtime-only
+    /// seat scratch, neither serialized nor reflected.
+    struct InputContextStack
+    {
+        /// @brief The active contexts, lowest priority first; resolved as a stack each tick.
+        vector<ResolvedContext> Active;
     };
 
     /// @brief Abstract, source-agnostic command for what a pawn wants to do this tick.
@@ -674,10 +712,13 @@ VE_FIELD(OuterCone, .DisplayName = "Outer Cone",
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PlayerInput, 0x5401D36B1EF55045ULL)
-VE_FIELD(Move, .DisplayName = "Move")
-VE_FIELD(Look, .DisplayName = "Look")
-VE_FIELD(Buttons, .DisplayName = "Buttons")
+VE_FIELD(State, .DisplayName = "State")
 VE_REFLECT_END();
+
+// Runtime-only seat scratch: it carries a TypeId so a Scene can pool it, but declares no
+// reflected fields, so it serializes to nothing (its Active contexts are seeded in C++,
+// never persisted). Plan 02 reshapes it into a reflected AssetHandle array.
+VE_TYPE(::Veng::InputContextStack, 0x89B0625016A01BE2ULL);
 
 VE_REFLECT(::Veng::Intent, 0x27F416122B525965ULL)
 VE_FIELD(Move, .DisplayName = "Move")
